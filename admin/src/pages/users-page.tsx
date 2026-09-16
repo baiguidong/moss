@@ -157,6 +157,9 @@ const SCOPE_LABELS: Record<string, string> = {
   'sessions:list': '查看自己的会话',
   'sessions:list:any': '查看所有会话',
   'sessions:attach:any': '接入任意会话',
+  'im:use': '使用即时消息',
+  'directory:read': '查看组织通讯录',
+  'im:group:create': '创建群聊',
   'admin:users': '管理用户与部门',
   'admin:api_keys': '管理 API Keys',
   'admin:roles': '管理角色与授权',
@@ -170,6 +173,7 @@ const SCOPE_LABELS: Record<string, string> = {
 
 const PERMISSION_GROUP_LABELS: Record<PermissionDefinition['group'], string> = {
   session: '会话',
+  communication: '沟通协作',
   'agent-mail': 'Agent Mail',
   administration: '系统管理',
   ragflow: '知识库',

@@ -395,6 +395,35 @@ export class AuthService {
     }
   }
 
+  listDirectory(orgId: string): {
+    departments: SanitizedAuthCenterDepartment[]
+    users: Array<Pick<SanitizedAuthCenterUser, 'id' | 'name' | 'email' | 'departmentId' | 'status'>>
+  } {
+    const users = this.db.listUsersByOrg(orgId).filter(user => user.status === 'active')
+    const userCountByDepartment = users.reduce((counts, user) => {
+      if (user.departmentId) {
+        counts.set(user.departmentId, (counts.get(user.departmentId) ?? 0) + 1)
+      }
+      return counts
+    }, new Map<string, number>())
+    return {
+      departments: this.db.listDepartmentsByOrg(orgId).map(department => ({
+        ...department,
+        userCount: userCountByDepartment.get(department.id) ?? 0,
+      })),
+      users: users.map(user => {
+        const sanitized = sanitizeUser(user)
+        return {
+          id: sanitized.id,
+          name: sanitized.name,
+          email: sanitized.email,
+          departmentId: sanitized.departmentId,
+          status: sanitized.status,
+        }
+      }),
+    }
+  }
+
   listRoles(orgId: string): { roles: RoleDefinition[] } {
     return { roles: this.db.listRolesByOrg(orgId).map(role => this.roleDefinition(role)) }
   }

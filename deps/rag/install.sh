@@ -5,9 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 STAGE_DIR="${1:-$SCRIPT_DIR}"
 INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/opt/moss-ragflow}"
 ENV_FILE="$INSTALL_DIR/.env"
-ENV_TEMPLATE="$STAGE_DIR/env.example"
-[[ -f "$ENV_TEMPLATE" ]] || ENV_TEMPLATE="$STAGE_DIR/.env.example"
-[[ -f "$ENV_TEMPLATE" ]] || { echo "ERROR: env.example is missing from $STAGE_DIR" >&2; exit 1; }
+ENV_TEMPLATE="$STAGE_DIR/.env.example"
+[[ -f "$ENV_TEMPLATE" ]] || { echo "ERROR: .env.example is missing from $STAGE_DIR" >&2; exit 1; }
 PULL_IMAGES="${PULL_IMAGES:-1}"
 BUILD_EXTENDED_MCP="${BUILD_EXTENDED_MCP:-1}"
 ALLOW_LOW_RESOURCES="${ALLOW_LOW_RESOURCES:-1}"
@@ -21,15 +20,25 @@ json_field() {
 }
 
 [[ "$EUID" -eq 0 ]] || die "run as root"
+[[ "$(uname -s)" == "Linux" ]] || die "the installer requires Linux"
 [[ "$(uname -m)" == "x86_64" ]] || die "the bundled Infinity image currently requires Linux x86_64"
-command -v docker >/dev/null || die "Docker Engine is required"
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 
-if ! command -v curl >/dev/null; then
-  command -v apt-get >/dev/null || die "missing command: curl"
+missing_commands=()
+for command in curl jq; do
+  command -v "$command" >/dev/null || missing_commands+=("$command")
+done
+if ((${#missing_commands[@]})); then
   log "Installing host prerequisites"
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl
+  if command -v apt-get >/dev/null; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl jq
+  elif command -v dnf >/dev/null; then
+    dnf install -y ca-certificates curl jq
+  elif command -v yum >/dev/null; then
+    yum install -y ca-certificates curl jq
+  else
+    die "missing commands: ${missing_commands[*]} (install them and retry)"
+  fi
 fi
 
 log "Installing deployment files under $INSTALL_DIR"
@@ -40,11 +49,15 @@ if [[ "$stage_real" != "$install_real" ]]; then
   install -m 0644 "$STAGE_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
   install -m 0644 "$STAGE_DIR/docker-compose.gpu.yml" "$INSTALL_DIR/docker-compose.gpu.yml"
   install -m 0644 "$STAGE_DIR/docker-compose.native-mcp.yml" "$INSTALL_DIR/docker-compose.native-mcp.yml"
-  install -m 0644 "$ENV_TEMPLATE" "$INSTALL_DIR/env.example"
+  install -m 0644 "$ENV_TEMPLATE" "$INSTALL_DIR/.env.example"
   install -m 0755 "$STAGE_DIR/install.sh" "$INSTALL_DIR/install.sh"
   install -m 0755 "$STAGE_DIR/ragflowctl" "$INSTALL_DIR/ragflowctl"
   install -m 0755 "$STAGE_DIR/start.sh" "$INSTALL_DIR/start.sh"
   install -m 0755 "$STAGE_DIR/stop.sh" "$INSTALL_DIR/stop.sh"
+  [[ ! -f "$STAGE_DIR/package.sh" ]] || install -m 0755 "$STAGE_DIR/package.sh" "$INSTALL_DIR/package.sh"
+  [[ ! -f "$STAGE_DIR/README.md" ]] || install -m 0644 "$STAGE_DIR/README.md" "$INSTALL_DIR/README.md"
+  [[ ! -f "$STAGE_DIR/MOSS_RAG_MCP_DESIGN.md" ]] \
+    || install -m 0644 "$STAGE_DIR/MOSS_RAG_MCP_DESIGN.md" "$INSTALL_DIR/MOSS_RAG_MCP_DESIGN.md"
   rm -rf "$INSTALL_DIR/config" "$INSTALL_DIR/mcp-extended" "$INSTALL_DIR/scripts"
   cp -a "$STAGE_DIR/config" "$STAGE_DIR/mcp-extended" "$STAGE_DIR/scripts" "$INSTALL_DIR/"
 fi
@@ -52,7 +65,7 @@ find "$INSTALL_DIR" -type f -name '._*' -delete
 chmod 0755 "$INSTALL_DIR/scripts/"*.sh
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  install -m 0600 "$INSTALL_DIR/env.example" "$ENV_FILE"
+  install -m 0600 "$INSTALL_DIR/.env.example" "$ENV_FILE"
 fi
 chmod 0600 "$ENV_FILE"
 
@@ -152,6 +165,13 @@ set_env MOSS_RAG_MCP_PUBLIC_URL "$moss_public_url"
 
 for key in MYSQL_PASSWORD MINIO_PASSWORD REDIS_PASSWORD ADMIN_DEFAULT_PASSWORD MOSS_RAGFLOW_GATEWAY_TOKEN; do
   ensure_secret "$key"
+done
+
+[[ "$BUILD_EXTENDED_MCP" == "0" || "$BUILD_EXTENDED_MCP" == "1" ]] \
+  || die "BUILD_EXTENDED_MCP must be 0 or 1"
+for key in PULL_IMAGES ALLOW_LOW_RESOURCES CHECK_ONLY; do
+  value="${!key}"
+  [[ "$value" == "0" || "$value" == "1" ]] || die "$key must be 0 or 1"
 done
 
 project_name="$(env_value COMPOSE_PROJECT_NAME)"

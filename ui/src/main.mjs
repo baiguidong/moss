@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, screen, session, shell, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -103,6 +103,7 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
+import { createOpenIMIntegration } from './openim/openim-integration.mjs';
 import {
   createBrowserViewManager,
   registerBrowserViewIpcHandlers,
@@ -662,6 +663,20 @@ fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_PROJECTS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_LIBRARY_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
+const openIMIntegration = createOpenIMIntegration({
+  app,
+  ipcMain,
+  desktopCapturer,
+  dialog,
+  nativeImage,
+  screen,
+  shell,
+  systemPreferences,
+  mossHome: MOSS_HOME,
+  allowMediaRoot,
+  resolveMossServerConnection: () => resolveRemoteDirectConnection(),
+  log: mossLog,
+});
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
 allowMediaRoot(REMOTE_PREVIEW_CACHE_DIR);
@@ -8486,6 +8501,7 @@ function createWindow() {
     },
   });
   mainWindow.maximize();
+  openIMIntegration.attach(mainWindow.webContents);
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getAppTokenFromUrl(params?.src || '');

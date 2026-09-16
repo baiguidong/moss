@@ -70,9 +70,9 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "library" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "library" | "mail" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "library" | "mail" | "openim" | "cron" | "audit">;
 
 export function getSidebarMoreViews({
   libraryEnabled,
@@ -86,6 +86,7 @@ export function getSidebarMoreViews({
   return [
     ...(libraryEnabled ? ["library" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
+    "openim",
     "audit",
     "cron",
   ];
@@ -94,6 +95,7 @@ export function getSidebarMoreViews({
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
   library: { label: "资料库", icon: BookOpen },
   mail: { label: "协作邮箱", icon: Mail },
+  openim: { label: "即时消息", icon: MessageSquareText },
   audit: { label: "审计中心", icon: ShieldCheck },
   cron: { label: "定时任务", icon: AlarmClock },
 };

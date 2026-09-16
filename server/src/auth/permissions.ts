@@ -2,7 +2,7 @@ export type PermissionDefinition = {
   code: string
   name: string
   description: string
-  group: 'session' | 'agent-mail' | 'administration' | 'ragflow'
+  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow'
   protected?: boolean
 }
 
@@ -21,6 +21,9 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
   { code: 'sessions:list', name: '查看自己的会话', description: '查看本人创建的会话。', group: 'session' },
   { code: 'sessions:list:any', name: '查看所有会话', description: '查看组织内所有用户的会话。', group: 'session' },
   { code: 'sessions:attach:any', name: '接入任意会话', description: '接入组织内任意用户的会话。', group: 'session' },
+  { code: 'im:use', name: '使用即时消息', description: '登录即时消息并收发消息。', group: 'communication' },
+  { code: 'directory:read', name: '查看组织通讯录', description: '查看当前组织的部门和启用用户。', group: 'communication' },
+  { code: 'im:group:create', name: '创建群聊', description: '从组织通讯录选择成员创建群聊。', group: 'communication' },
   { code: 'agent-mail:send', name: '发送 Agent Mail', description: '通过 Agent Mail 发送消息。', group: 'agent-mail' },
   { code: 'agent-mail:receive', name: '接收 Agent Mail', description: '接收和管理 Agent Mail 消息。', group: 'agent-mail' },
   { code: 'admin:users', name: '管理用户与部门', description: '管理权限范围内的用户和部门。', group: 'administration' },
@@ -47,6 +50,9 @@ export const BUILTIN_ROLE_TEMPLATES: BuiltinRoleTemplate[] = [
       'sessions:create',
       'sessions:attach',
       'sessions:list',
+      'im:use',
+      'directory:read',
+      'im:group:create',
       'agent-mail:send',
       'agent-mail:receive',
       'admin:users',
@@ -63,6 +69,9 @@ export const BUILTIN_ROLE_TEMPLATES: BuiltinRoleTemplate[] = [
       'sessions:create',
       'sessions:attach',
       'sessions:list',
+      'im:use',
+      'directory:read',
+      'im:group:create',
       'agent-mail:send',
       'agent-mail:receive',
       'ragflow:read',

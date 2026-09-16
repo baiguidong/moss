@@ -77,6 +77,12 @@ export function getDefaultServerConfig(): ServerFileConfig {
       passwordLength: 6,
       requestTimeoutMs: 15_000,
     },
+    openim: {
+      enabled: false,
+      instanceId: 'default',
+      adminUserId: 'imAdmin',
+      requestTimeoutMs: 15_000,
+    },
   }
 }
 
@@ -140,6 +146,17 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       userDomain: process.env.MOSS_RAGFLOW_USER_DOMAIN || raw.ragflow.userDomain,
       passwordLength: Number(process.env.MOSS_RAGFLOW_PASSWORD_LENGTH) || raw.ragflow.passwordLength,
       requestTimeoutMs: raw.ragflow.requestTimeoutMs,
+    },
+    openim: {
+      enabled: raw.openim.enabled,
+      instanceId: raw.openim.instanceId,
+      apiUrl: raw.openim.apiUrl?.replace(/\/+$/, ''),
+      wsUrl: raw.openim.wsUrl?.replace(/\/+$/, ''),
+      chatUrl: raw.openim.chatUrl?.replace(/\/+$/, ''),
+      adminUserId: raw.openim.adminUserId,
+      secret: raw.openim.secret,
+      webhookSecret: raw.openim.webhookSecret,
+      requestTimeoutMs: raw.openim.requestTimeoutMs,
     },
   }
 }

@@ -8,6 +8,12 @@ import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
 import { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
+import { OpenIMIntegrationService } from './openim/service.js'
+import {
+  getSystemSettings,
+  toOpenIMServerConfig,
+  updateSystemSettings,
+} from './systemSettings.js'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -44,6 +50,39 @@ export async function startStandaloneDirectConnectServer(
     rootDir: config.rootDir,
     config: config.ragflow,
   })
+  let systemSettings = getSystemSettings()
+  const legacyOpenIM = config.openim
+  if (
+    !systemSettings.openIM.configured &&
+    legacyOpenIM &&
+    Boolean(
+      legacyOpenIM.enabled ||
+      legacyOpenIM.apiUrl ||
+      legacyOpenIM.wsUrl ||
+      legacyOpenIM.chatUrl ||
+      legacyOpenIM.secret ||
+      legacyOpenIM.webhookSecret
+    )
+  ) {
+    systemSettings = updateSystemSettings({
+      openIM: {
+        enabled: legacyOpenIM.enabled,
+        instanceId: legacyOpenIM.instanceId,
+        apiUrl: legacyOpenIM.apiUrl || '',
+        wsUrl: legacyOpenIM.wsUrl || '',
+        chatUrl: legacyOpenIM.chatUrl || '',
+        adminUserId: legacyOpenIM.adminUserId,
+        secret: legacyOpenIM.secret || '',
+        webhookSecret: legacyOpenIM.webhookSecret || '',
+        requestTimeoutMs: legacyOpenIM.requestTimeoutMs,
+      },
+    })
+  }
+  const openIMIntegration = new OpenIMIntegrationService({
+    db: store.db,
+    config: toOpenIMServerConfig(systemSettings.openIM),
+    authService,
+  })
 
   const logger = createServerLogger()
   const server = startServer(
@@ -53,6 +92,7 @@ export async function startStandaloneDirectConnectServer(
     logger,
     appRuntime,
     ragflowIntegration,
+    openIMIntegration,
   )
   const actualPort = (await server.ready) ?? config.port
   const connectHost =

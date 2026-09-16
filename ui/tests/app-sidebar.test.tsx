@@ -51,15 +51,16 @@ describe('app sidebar more menu', () => {
     expect(html).toContain('title="更多"');
     expect(html).not.toContain('title="资料库"');
     expect(html).not.toContain('title="协作邮箱"');
+    expect(html).not.toContain('title="即时消息"');
     expect(html).not.toContain('title="审计中心"');
     expect(html).not.toContain('title="定时任务"');
   });
 
   test('builds menu entries from feature availability', () => {
     expect(getSidebarMoreViews({ libraryEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
-      .toEqual(['audit', 'cron']);
+      .toEqual(['openim', 'audit', 'cron']);
     expect(getSidebarMoreViews({ libraryEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['library', 'mail', 'audit', 'cron']);
+      .toEqual(['library', 'mail', 'openim', 'audit', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {

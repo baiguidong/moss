@@ -1,0 +1,35 @@
+url: "__MOSS_CALLBACK_URL__"
+
+beforeSendSingleMsg:
+  enable: true
+  timeout: 5
+  failedContinue: false
+  allowedTypes: []
+  deniedTypes: []
+
+beforeSendGroupMsg:
+  enable: true
+  timeout: 5
+  failedContinue: false
+  allowedTypes: []
+  deniedTypes: []
+
+beforeCreateGroup:
+  enable: true
+  timeout: 5
+  failedContinue: false
+
+beforeMemberJoinGroup:
+  enable: true
+  timeout: 5
+  failedContinue: false
+
+beforeApplyJoinGroup:
+  enable: true
+  timeout: 5
+  failedContinue: false
+
+beforeInviteUserToGroup:
+  enable: true
+  timeout: 5
+  failedContinue: false

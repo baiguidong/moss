@@ -59,7 +59,7 @@ export interface PermissionDefinition {
   code: string
   name: string
   description: string
-  group: 'session' | 'agent-mail' | 'administration' | 'ragflow'
+  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow'
   protected?: boolean
 }
 
@@ -214,6 +214,19 @@ export interface SystemSettingsServerRuntime {
   dockerImage: string
 }
 
+export interface SystemSettingsOpenIM {
+  configured: boolean
+  enabled: boolean
+  instanceId: string
+  apiUrl: string
+  wsUrl: string
+  chatUrl: string
+  adminUserId: string
+  secret: string
+  webhookSecret: string
+  requestTimeoutMs: number
+}
+
 export interface SystemSettings {
   bypassPermissions: boolean
   model: string
@@ -224,6 +237,7 @@ export interface SystemSettings {
   apiKey: string
   image: SystemSettingsImage
   serverRuntime: SystemSettingsServerRuntime
+  openIM: SystemSettingsOpenIM
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -251,6 +265,7 @@ export interface UpdateSystemSettingsRequest {
     }
   }
   serverRuntime?: Partial<SystemSettingsServerRuntime>
+  openIM?: Partial<Omit<SystemSettingsOpenIM, 'configured'>>
 }
 
 // Direct Connect Server Types

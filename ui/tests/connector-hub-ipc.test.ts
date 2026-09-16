@@ -64,7 +64,7 @@ describe('connector catalog pruning', () => {
     const catalogIds = catalog.connectors.map((connector: { id: string }) => connector.id);
     const zipEntries = Object.keys(zip.files);
 
-    expect(catalogIds).toHaveLength(116);
+    expect(catalogIds).toHaveLength(115);
     for (const id of REMOVED_CONNECTOR_IDS) {
       expect(catalogIds).not.toContain(id);
       expect(zipEntries.some((entry) => entry.startsWith(`connectors/${id}/`))).toBe(false);
@@ -100,7 +100,7 @@ describe('connector catalog pruning', () => {
     expect(zip.file('icons/shareone.png')).not.toBeNull();
   });
 
-  it('packages RAGFlow as an authenticated MCP connector with upload guidance', async () => {
+  it('packages RAGFlow with selectable Moss session and API key authentication', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
       new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
     ));
@@ -117,20 +117,31 @@ describe('connector catalog pruning', () => {
       id: 'ragflow',
       source: 'ragflow',
       type: 'mcp',
-      auth_mode: 'api-key',
+      auth_mode: 'selectable',
     });
-    expect(mcp.mcpServers.ragflow).toMatchObject({
+    expect(mcp).toMatchObject({
+      variantField: 'RAGFLOW_AUTH_MODE',
+      defaultVariant: 'moss-server',
+    });
+    expect(mcp.variants['moss-server'].mcpServers.ragflow).toMatchObject({
+      type: 'streamableHttp',
+      url: 'http://${MOSS_RAG_MCP_ADDRESS}/mcp',
+      headers: { Authorization: 'Bearer ${MOSS_SERVER_AUTH_TOKEN}' },
+    });
+    expect(mcp.variants['api-key'].mcpServers.ragflow).toMatchObject({
       type: 'streamableHttp',
       url: 'http://${RAGFLOW_MCP_ADDRESS}/mcp',
       headers: { Authorization: 'Bearer ${RAGFLOW_API_KEY}' },
     });
     expect(credentialSchema.fields.map((field: { key: string }) => field.key)).toEqual([
+      'RAGFLOW_AUTH_MODE',
+      'MOSS_RAG_MCP_ADDRESS',
       'RAGFLOW_MCP_ADDRESS',
       'RAGFLOW_API_KEY',
     ]);
-    expect(credentialSchema.fields[0].defaultValue).toBeUndefined();
-    const normalizedMcp = normalizeConnectorMcpConfig('ragflow', mcp, {});
-    expect(applyConnectorCredentials(normalizedMcp.mcpServers.ragflow, {
+    expect(credentialSchema.fields[0].defaultValue).toBe('moss-server');
+    const apiKeyMcp = normalizeConnectorMcpConfig('ragflow', mcp.variants['api-key'], {});
+    expect(applyConnectorCredentials(apiKeyMcp.mcpServers.ragflow, {
       RAGFLOW_MCP_ADDRESS: '10.0.1.180:9385',
       RAGFLOW_API_KEY: 'secret',
     })).toEqual({
@@ -138,39 +149,8 @@ describe('connector catalog pruning', () => {
       url: 'http://10.0.1.180:9385/mcp',
       headers: { Authorization: 'Bearer secret' },
     });
-    expect(zip.file('connectors/ragflow/skills/SKILL.md')).not.toBeNull();
-    expect(zip.file('icons/ragflow.svg')).not.toBeNull();
-  });
-
-  it('packages Moss RAG as a Moss-authenticated permission-aware connector', async () => {
-    const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
-    ));
-    const catalog = JSON.parse(await zip
-      .file('.codebuddy-connector/connectors.json')!
-      .async('text'));
-    const connector = catalog.connectors.find((entry: { id: string }) => entry.id === 'moss-rag');
-    const mcp = JSON.parse(await zip.file('connectors/moss-rag/mcp.json')!.async('text'));
-    const credentialSchema = JSON.parse(await zip
-      .file('connectors/moss-rag/token-schema.json')!
-      .async('text'));
-
-    expect(connector).toMatchObject({
-      id: 'moss-rag',
-      source: 'moss-rag',
-      type: 'mcp',
-      auth_mode: 'moss-session',
-    });
-    expect(mcp.mcpServers['moss-rag']).toMatchObject({
-      type: 'streamableHttp',
-      url: 'http://${MOSS_RAG_MCP_ADDRESS}/mcp',
-      headers: { Authorization: 'Bearer ${MOSS_SERVER_AUTH_TOKEN}' },
-    });
-    expect(credentialSchema.fields.map((field: { key: string }) => field.key)).toEqual([
-      'MOSS_RAG_MCP_ADDRESS',
-    ]);
-    const normalizedMcp = normalizeConnectorMcpConfig('moss-rag', mcp, {});
-    expect(applyConnectorCredentials(normalizedMcp.mcpServers['moss-rag'], {
+    const mossSessionMcp = normalizeConnectorMcpConfig('ragflow', mcp.variants['moss-server'], {});
+    expect(applyConnectorCredentials(mossSessionMcp.mcpServers.ragflow, {
       MOSS_RAG_MCP_ADDRESS: 'rag.company.local:9386',
       MOSS_SERVER_AUTH_TOKEN: 'moss_access_test.secret',
     })).toEqual({
@@ -178,8 +158,10 @@ describe('connector catalog pruning', () => {
       url: 'http://rag.company.local:9386/mcp',
       headers: { Authorization: 'Bearer moss_access_test.secret' },
     });
-    expect(zip.file('connectors/moss-rag/skills/SKILL.md')).not.toBeNull();
-    expect(zip.file('icons/moss-rag.svg')).not.toBeNull();
+    expect(catalog.connectors.some((entry: { id: string }) => entry.id === 'moss-rag')).toBe(false);
+    expect(zip.file('connectors/moss-rag/mcp.json')).toBeNull();
+    expect(zip.file('connectors/ragflow/skills/SKILL.md')).not.toBeNull();
+    expect(zip.file('icons/ragflow.svg')).not.toBeNull();
   });
 
   it('distinguishes the China and global Kling AI connectors', async () => {

@@ -39,15 +39,10 @@ try {
     JSON.stringify(['sessions:create', 'sessions:attach', 'sessions:list']),
     bobOAuthKey.key.id,
   )
-  authService.requireScope({
-    rawToken: 'legacy-access-token',
-    userId: bob.id,
-    orgId: aliceAuth.orgId,
-    role: 'user',
-    scopes: ['sessions:create', 'sessions:attach', 'sessions:list'],
-    keyId: bobOAuthKey.key.id,
-  }, 'agent-mail:receive')
   const bobLogin = authService.issueTokenFromApiKey(bobOAuthKey.api_key)
+  const bobAuth = authService.verifyAccessToken(bobLogin.access_token)
+  assert.ok(bobAuth)
+  authService.requireScope(bobAuth, 'agent-mail:receive')
   assert.ok(bobLogin.scopes.includes('agent-mail:receive'))
   const migratedScopes = JSON.parse(String(
     (db.prepare(`SELECT scopes_json FROM api_keys WHERE id = ?`).get(bobOAuthKey.key.id) as any).scopes_json,

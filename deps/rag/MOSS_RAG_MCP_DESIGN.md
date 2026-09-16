@@ -43,7 +43,7 @@ Moss RAG MCP 不接受客户端声明的权限，而是完全使用 Moss Server 
 
 ## 部署配置
 
-RAGFlow、官方 MCP、Extended MCP 和 Moss RAG MCP 由 `ragflow/docker-compose.yml` 部署。三个 MCP 分别由 `ENABLE_NATIVE_MCP`、`ENABLE_EXTENDED_MCP`、`ENABLE_MOSS_RAG_MCP` 控制，默认全部开启。
+RAGFlow、官方 MCP、Extended MCP 和 Moss RAG MCP 由 `deps/rag/docker-compose.yml` 部署。三个 MCP 分别由 `ENABLE_NATIVE_MCP`、`ENABLE_EXTENDED_MCP`、`ENABLE_MOSS_RAG_MCP` 控制，默认全部开启。
 
 目标服务器差异全部放在 `/opt/moss-ragflow/.env`。Moss Server 地址通过 `MOSS_RAG_MCP_MOSS_SERVER_URL` 注入 Sidecar，任何机器 IP 都不编译进镜像或连接器源码。
 

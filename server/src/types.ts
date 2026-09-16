@@ -98,6 +98,22 @@ export const serverFileConfigSchema = lazySchema(() =>
       passwordLength: 6,
       requestTimeoutMs: 15_000,
     }),
+    openim: z.object({
+      enabled: z.boolean().default(false),
+      instanceId: z.string().min(1).default('default'),
+      apiUrl: z.string().min(1).optional(),
+      wsUrl: z.string().min(1).optional(),
+      chatUrl: z.string().min(1).optional(),
+      adminUserId: z.string().min(1).default('imAdmin'),
+      secret: z.string().min(1).optional(),
+      webhookSecret: z.string().min(16).optional(),
+      requestTimeoutMs: z.number().int().min(1_000).default(15_000),
+    }).default({
+      enabled: false,
+      instanceId: 'default',
+      adminUserId: 'imAdmin',
+      requestTimeoutMs: 15_000,
+    }),
   }),
 )
 
@@ -142,6 +158,17 @@ export type ServerConfig = {
     gatewayToken?: string
     userDomain?: string
     passwordLength?: number
+    requestTimeoutMs: number
+  }
+  openim?: {
+    enabled: boolean
+    instanceId: string
+    apiUrl?: string
+    wsUrl?: string
+    chatUrl?: string
+    adminUserId: string
+    secret?: string
+    webhookSecret?: string
     requestTimeoutMs: number
   }
 }
