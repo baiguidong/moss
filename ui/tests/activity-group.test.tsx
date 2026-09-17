@@ -8,6 +8,7 @@ import {
   type ActivityStep,
 } from '../src/renderer-react/components/chat/activity-group';
 import { ToolCallGroup } from '../src/renderer-react/components/chat/tool-call-group';
+import { normalizeToolHeaderSubject } from '../src/renderer-react/components/chat/tool-call-block';
 import { ToolDisplaySettingsProvider } from '../src/renderer-react/components/chat/tool-display-settings';
 import { thinkingPreview } from '../src/renderer-react/components/chat/thinking-block';
 import type { ThinkingRenderMessage, ToolUseRenderMessage } from '../src/renderer-react/lib/agent-transcript';
@@ -161,9 +162,33 @@ describe('merged activity group', () => {
     expect(markup).toContain('data-tool-call-chrome="row"');
     expect(markup).toContain('aria-label="工具调用"');
     expect(markup).toContain('h-7 w-7 shrink-0');
-    expect(markup).toContain('items-center gap-3');
+    expect(markup).toContain('items-start gap-3');
     expect(markup).toContain('lucide-wrench');
     expect(markup).not.toContain('lucide-file-plus-2');
+  });
+
+  it('keeps a multiline Bash command on one header line with its icon at the top', () => {
+    const command = "ls /tmp && python3 - <<'PY'\nprint('one')\nprint('two')\nPY";
+    expect(normalizeToolHeaderSubject(command, true)).toBe(
+      "ls /tmp && python3 - <<'PY' print('one') print('two') PY",
+    );
+
+    const bash = tool('bash-multiline', 'Bash', { command });
+    const markup = renderToStaticMarkup(
+      <ToolDisplaySettingsProvider toolDisplayMode="merged">
+        <ActivityGroup
+          steps={[{ kind: 'tool', toolCall: bash }]}
+          toolCalls={[bash]}
+          mergeable
+          resultMap={new Map()}
+          childToolCallsByParent={new Map()}
+        />
+      </ToolDisplaySettingsProvider>,
+    );
+    expect(markup).toContain('data-row-tool-icon="true"');
+    expect(markup).toContain('self-start');
+    expect(markup).toContain('items-start gap-3');
+    expect(markup).toContain('white-space:nowrap');
   });
 
   it('uses the current thought while streaming and a useful opening when settled', () => {

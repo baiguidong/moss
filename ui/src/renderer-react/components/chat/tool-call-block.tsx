@@ -82,9 +82,18 @@ function StatusDot({
   );
 }
 
-function InlineSyntax({ code, language }: { code: string; language: string }) {
+function InlineSyntax({
+  code,
+  language,
+  singleLine = false,
+}: {
+  code: string;
+  language: string;
+  singleLine?: boolean;
+}) {
   const [dark, setDark] = React.useState(
-    () => document.documentElement.getAttribute("data-theme") === "dark",
+    () => typeof document !== "undefined"
+      && document.documentElement.getAttribute("data-theme") === "dark",
   );
 
   React.useEffect(() => {
@@ -113,7 +122,7 @@ function InlineSyntax({ code, language }: { code: string; language: string }) {
         fontFamily: "inherit",
         fontSize: "inherit",
         lineHeight: "inherit",
-        whiteSpace: "pre-wrap",
+        whiteSpace: singleLine ? "nowrap" : "pre-wrap",
       }}
     >
       {code}
@@ -152,15 +161,20 @@ function buildSubject(toolCall: ToolUseRenderMessage, kind: ToolKind) {
   return summary === toolCall.displayName ? "" : summary;
 }
 
+export function normalizeToolHeaderSubject(subject: string, singleLine: boolean) {
+  return singleLine ? subject.replace(/\s+/g, " ").trim() : subject;
+}
+
 function RowToolIcon({ active }: {
   active: boolean;
 }) {
   return (
     <span
       className={cn(
-        "flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)]",
+        "flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)]",
         active ? "text-primary" : "text-muted-foreground",
       )}
+      data-row-tool-icon="true"
       title="工具调用"
       role="img"
       aria-label="工具调用"
@@ -440,6 +454,7 @@ export function ToolCallBlock({
     .filter(Boolean)
     .join("\n");
   const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
+  const headerSubject = normalizeToolHeaderSubject(subject, isRow);
   const rowResultSummary = executionState === "running"
     ? "执行中"
     : executionState === "failed"
@@ -469,7 +484,7 @@ export function ToolCallBlock({
       <div
         className={cn(
           isRow
-            ? "-mx-2 flex min-h-7 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-md px-2 py-1 transition-colors hover:bg-muted/45"
+            ? "-mx-2 flex min-h-7 w-[calc(100%+1rem)] min-w-0 items-start gap-3 rounded-md px-2 py-1 transition-colors hover:bg-muted/45"
             : TOOL_CALL_HEADER_CLASS_NAME,
           !isRow && hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}
@@ -499,13 +514,15 @@ export function ToolCallBlock({
             )}>
               {isRow ? toolCall.displayName || toolCall.toolName : buildHeadline(toolCall, kind)}
             </span>
-            {subject ? (
+            {headerSubject ? (
               <span className={cn(
                 "ml-1",
                 isRow ? "text-muted-foreground" : "text-[color:var(--color-repl-code-fg)]",
                 kind === "bash" && "font-mono",
               )}>
-                {kind === "bash" ? <InlineSyntax code={subject} language="bash" /> : subject}
+                {kind === "bash" ? (
+                  <InlineSyntax code={headerSubject} language="bash" singleLine={isRow} />
+                ) : headerSubject}
               </span>
             ) : null}
             {diffStats ? (
