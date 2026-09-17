@@ -9,6 +9,8 @@ import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { createUsageLedger } from './usage-ledger.mjs';
+import { createMemoryCatalog } from './memory-catalog.mjs';
 import {
   decodeWorkspaceTextBuffer,
   getWorkspaceFilePreviewInfo,
@@ -34,9 +36,11 @@ import {
   getConnectorProviderAuthUrl,
   getConnectorProviderAuthContext,
   getRemoteDirectCredentials,
+  getWebSearchCredentials,
   clearConnectorMcpAccessToken,
   registerConnectorHubIpcHandlers,
   saveRemoteDirectCredentials,
+  saveWebSearchCredentials,
   setupConnectorCli,
   updateConnectorMcpAuthState,
 } from './connector-hub-ipc.mjs';
@@ -45,6 +49,10 @@ import {
   scheduleMcpRuntimeReload,
 } from './mcp-runtime-reload.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
+import {
+  createAgentTeamsService,
+  isAgentTeamContinuationPrompt,
+} from './agent-teams/agent-teams-service.mjs';
 import {
   createMossAppEventHandler,
   listAllStoredApps,
@@ -128,6 +136,7 @@ import {
   getUniqueForkTitle,
 } from './shared/session-fork.mjs';
 import {
+  isAgentTeamSidechain,
   isSubAgentFailureEntry,
   resolveSubAgentStatus,
 } from './shared/subagent-lifecycle.mjs';
@@ -169,6 +178,12 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   normalizeDesktopSettings,
 } from './desktop-settings.mjs';
+import {
+  createWebSearchCapabilityStore,
+  getWebSearchCapabilityFingerprint,
+  resolveWebSearchProviders,
+  toPublicWebSearchSettings,
+} from './web-search-capability.mjs';
 import {
   isValidMcpServerName,
   normalizeMcpStore,
@@ -308,6 +323,7 @@ const LIBRARY_FEATURE_FLAGS = Object.freeze({
 });
 const MOSS_BUNDLED_APPS_WORKSPACE_DIR = path.join(MOSS_HOME, 'bundled-apps-workspace');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
+const WEB_SEARCH_CAPABILITIES_PATH = path.join(MOSS_HOME, 'web-search-capabilities.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 const RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb']);
@@ -596,6 +612,9 @@ let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let desktopAppRuntime = null;
 let desktopAppShutdownComplete = false;
+let agentTeamsService = null;
+let agentTeamShutdownComplete = false;
+let agentTeamShutdownPromise = null;
 let localAuditService = null;
 let libraryService = null;
 let libraryExtensionManager = null;
@@ -645,6 +664,7 @@ const projectCoordinatorTaskRuns = new Map();
 const projectTaskCancellationRequests = new Set();
 const sessionPromptQueues = new Map();
 const sessionSendQueues = new Map();
+const agentTeamSessionShutdowns = new Map();
 const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
 const appWindows = new Map();
@@ -713,6 +733,13 @@ const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 try { sessionDb.exec('PRAGMA journal_mode=WAL'); } catch {}
 try { sessionDb.exec('PRAGMA synchronous=NORMAL'); } catch {}
 try { sessionDb.exec('PRAGMA busy_timeout=5000'); } catch {}
+const usageLedger = createUsageLedger(sessionDb);
+const memoryCatalog = createMemoryCatalog({
+  mossHome: MOSS_HOME,
+  listProjects: () => listProjects(),
+  getProjectMemory,
+  listSessions: () => listVisibleSessionSummaries(),
+});
 const feishuAdapterStore = createFeishuAdapterStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
@@ -983,9 +1010,42 @@ const desktopSettingsStore = createDesktopSettingsStore({
   settingsPath: DESKTOP_SETTINGS_PATH,
   log: mossLog,
 });
+const webSearchCapabilityStore = createWebSearchCapabilityStore({
+  storagePath: WEB_SEARCH_CAPABILITIES_PATH,
+  log: mossLog,
+});
 const localSettingsAuthConfig = desktopSettingsStore.authConfig;
 let desktopSettingsState = desktopSettingsStore.state;
 let desktopSettings = desktopSettingsStore.value;
+let webSearchProbePromise = null;
+let webSearchProbeFingerprint = null;
+let webSearchProbeTimer = null;
+
+try {
+  const storedWebSearchCredentials = getWebSearchCredentials();
+  const tavilyApiKey = desktopSettings.webSearch?.tavilyApiKey
+    || storedWebSearchCredentials.tavilyApiKey;
+  const braveApiKey = desktopSettings.webSearch?.braveApiKey
+    || storedWebSearchCredentials.braveApiKey;
+  if (tavilyApiKey || braveApiKey) {
+    saveWebSearchCredentials({ tavilyApiKey, braveApiKey });
+    const hydrated = normalizeDesktopSettings({
+      ...desktopSettings,
+      webSearch: {
+        ...desktopSettings.webSearch,
+        tavilyApiKey,
+        braveApiKey,
+      },
+    }, desktopSettings);
+    const snapshot = desktopSettingsStore.save(hydrated);
+    desktopSettingsState = snapshot.state;
+    desktopSettings = snapshot.value;
+  }
+} catch (error) {
+  mossLog('error', 'web-search', 'Failed to load encrypted WebSearch credentials', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
 
 function getRemoteCredentialServerUrl(rawServerUrl) {
   try {
@@ -1060,7 +1120,141 @@ const {
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
 
 function getDesktopSettingsPayload(extra = {}) {
-  return desktopSettingsStore.getPayload(extra);
+  const fingerprint = getCurrentWebSearchCapabilityFingerprint();
+  const capability = webSearchCapabilityStore.get(fingerprint);
+  const detecting = Boolean(
+    webSearchProbePromise && webSearchProbeFingerprint === fingerprint,
+  );
+  return {
+    ...desktopSettingsStore.getPayload(extra),
+    webSearch: toPublicWebSearchSettings(
+      desktopSettings.webSearch,
+      capability,
+      detecting,
+    ),
+  };
+}
+
+function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
+  return getWebSearchCapabilityFingerprint({
+    url: settings.url,
+    model: settings.model,
+    apiKey: settings.apiKey,
+  });
+}
+
+function getRuntimeWebSearchSettings(settings = desktopSettings) {
+  const capability = webSearchCapabilityStore.get(
+    getCurrentWebSearchCapabilityFingerprint(settings),
+  );
+  return {
+    mode: settings.webSearch?.mode || 'auto',
+    tavilyApiKey: settings.webSearch?.tavilyApiKey || '',
+    braveApiKey: settings.webSearch?.braveApiKey || '',
+    nativeCapability: capability?.status || 'unknown',
+  };
+}
+
+function shouldDetectNativeWebSearch(settings = desktopSettings) {
+  if (getDesktopAgentMode(settings) !== 'local') return false;
+  const webSearch = settings.webSearch || {};
+  if (webSearch.mode === 'disabled') return false;
+  if (webSearch.mode === 'native') return true;
+  return webSearch.mode === 'auto'
+    && !webSearch.tavilyApiKey
+    && !webSearch.braveApiKey;
+}
+
+function reloadAgentRuntimesAfterWebSearchChange() {
+  let skippedSessionCount = 0;
+  for (const sessionRecord of sessions.values()) {
+    if (!sessionRecord.runtime) continue;
+    if (sessionRecord.busy || hasActiveAgentTeam(sessionRecord)) {
+      sessionRecord.pendingMcpRuntimeReload = true;
+      skippedSessionCount += 1;
+      continue;
+    }
+    disposeRuntime(sessionRecord);
+  }
+  return skippedSessionCount;
+}
+
+async function detectNativeWebSearchCapability({ force = false } = {}) {
+  const fingerprint = getCurrentWebSearchCapabilityFingerprint();
+  if (!force) {
+    const cached = webSearchCapabilityStore.get(fingerprint);
+    if (cached && cached.reasonCode !== 'probe-failed') return cached;
+    if (!shouldDetectNativeWebSearch()) return null;
+  }
+  if (webSearchProbePromise && webSearchProbeFingerprint === fingerprint) {
+    return webSearchProbePromise;
+  }
+
+  const settingsSnapshot = {
+    model: desktopSettings.model,
+    url: desktopSettings.url,
+    apiKey: desktopSettings.apiKey,
+  };
+  webSearchProbeFingerprint = fingerprint;
+
+  const probe = (async () => {
+    try {
+      const mod = await getClaudeRuntimeModule();
+      if (typeof mod.probeWebSearchCapability !== 'function') {
+        throw new Error('electron-direct.mjs does not export probeWebSearchCapability.');
+      }
+      const result = await mod.probeWebSearchCapability({
+        ...settingsSnapshot,
+        timeoutMs: 20_000,
+      });
+      const saved = webSearchCapabilityStore.set(fingerprint, result);
+      mossLog('info', 'web-search', 'Native WebSearch capability probe completed', {
+        model: settingsSnapshot.model,
+        status: saved.status,
+        format: saved.format,
+      });
+      return saved;
+    } catch (error) {
+      mossLog('warn', 'web-search', 'Native WebSearch capability probe failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return webSearchCapabilityStore.set(fingerprint, {
+        status: 'unknown',
+        format: null,
+        reasonCode: 'probe-failed',
+      });
+    } finally {
+      if (webSearchProbeFingerprint === fingerprint) {
+        webSearchProbePromise = null;
+        webSearchProbeFingerprint = null;
+      }
+    }
+  })();
+  webSearchProbePromise = probe;
+  emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
+
+  const result = await probe;
+  invalidateEmbeddedSettingsCache();
+  const skippedSessionCount = reloadAgentRuntimesAfterWebSearchChange();
+  emitToRenderer('agent:settings-changed', getDesktopSettingsPayload({
+    skippedSessionCount,
+  }));
+  return result;
+}
+
+function scheduleNativeWebSearchCapabilityDetection(delayMs = 1_200) {
+  if (webSearchProbeTimer) {
+    clearTimeout(webSearchProbeTimer);
+    webSearchProbeTimer = null;
+  }
+  if (!shouldDetectNativeWebSearch()) return;
+  const cached = webSearchCapabilityStore.get(getCurrentWebSearchCapabilityFingerprint());
+  if (cached && cached.reasonCode !== 'probe-failed') return;
+  webSearchProbeTimer = setTimeout(() => {
+    webSearchProbeTimer = null;
+    void detectNativeWebSearchCapability().catch(() => {});
+  }, delayMs);
+  webSearchProbeTimer.unref?.();
 }
 
 function saveDesktopSettings(nextSettings) {
@@ -1887,7 +2081,11 @@ async function createProject(payload = {}) {
 function invalidateProjectSessionRuntimes(projectId) {
   for (const sessionRecord of sessions.values()) {
     if (sessionRecord.projectId !== projectId || !sessionRecord.runtime) continue;
-    if (sessionRecord.busy || getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker)) {
+    if (
+      sessionRecord.busy
+      || hasActiveAgentTeam(sessionRecord)
+      || getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker)
+    ) {
       sessionRecord.pendingMcpRuntimeReload = true;
     } else {
       disposeRuntime(sessionRecord);
@@ -2502,7 +2700,7 @@ async function driveProjectCoordinatorTaskNow(sessionRecord, {
       if (isProjectTaskStopRequested(sessionRecord)) {
         throw new Error('任务已停止。');
       }
-      applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime);
+      applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime, hasActiveAgentTeam);
       for (const worker of currentBatch) knownWorkerIds.add(worker.id);
       finalTurn = await runSessionPrompt({
         sessionRecord,
@@ -2721,7 +2919,11 @@ function saveDesktopMcpStore(store) {
 }
 
 function resetLocalRuntimesForMcpReload() {
-  return scheduleMcpRuntimeReload(sessions.values(), disposeRuntime);
+  return scheduleMcpRuntimeReload(
+    sessions.values(),
+    disposeRuntime,
+    hasActiveAgentTeam,
+  );
 }
 
 function getDesktopMcpPayload(extra = {}) {
@@ -3111,6 +3313,21 @@ function buildProjectSystemPrompt(sessionRecord) {
   return lines.join('\n');
 }
 
+function recordUsageForSession(event, sessionRecord) {
+  if (!sessionRecord?.id) return;
+  try {
+    usageLedger.record(event, {
+      sessionId: sessionRecord.id,
+      projectId: sessionRecord.projectId || null,
+    });
+  } catch (error) {
+    mossLog('warn', 'usage-ledger', 'Unable to persist model usage', {
+      sessionId: sessionRecord.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const connectorRuntimeCredentials = await resolveSessionConnectorRuntimeCredentials(sessionRecord);
@@ -3139,6 +3356,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
+    webSearch: getRuntimeWebSearchSettings(),
     mcpServers: getSessionMcpServers(sessionRecord, connectorRuntimeCredentials),
     libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     addDirs: getSessionAddDirs(sessionRecord),
@@ -3148,7 +3366,11 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     environment: {
       ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
-      MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(desktopSettings.advanced),
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: desktopSettings.agentTeamsEnabled === true ? '1' : '0',
+      MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
+        ...desktopSettings.advanced,
+        moss_response_language: desktopSettings.language,
+      }),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
       MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
     },
@@ -3180,6 +3402,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
             } : undefined,
           }
         : { kind: 'session', sessionId: sessionRecord.id })
+      : undefined,
+    onUsage: sessionRecord?.id
+      ? (event) => recordUsageForSession(event, sessionRecord)
       : undefined,
     agentMailEnabled:
       desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true,
@@ -3265,7 +3490,10 @@ function createRemoteDirectRuntime({
           authToken,
           dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
           assistantName: sessionRecord.assistantName,
-          advancedSettings: desktopSettings.advanced,
+          advancedSettings: {
+            ...desktopSettings.advanced,
+            moss_response_language: desktopSettings.language,
+          },
           autoMemory: desktopSettings.autoMemory,
           sessionMemory: desktopSettings.sessionMemory,
         });
@@ -3480,11 +3708,42 @@ function createRemoteDirectRuntime({
 }
 
 function refreshDesktopSettings(payload = {}) {
+  const sourcePayload = payload && typeof payload === 'object' ? payload : {};
+  const webSearchPayload = sourcePayload.webSearch
+    && typeof sourcePayload.webSearch === 'object'
+    && !Array.isArray(sourcePayload.webSearch)
+    ? sourcePayload.webSearch
+    : null;
+  let normalizedPayload = sourcePayload;
+  if (webSearchPayload) {
+    const currentWebSearch = desktopSettings.webSearch || {};
+    normalizedPayload = {
+      ...sourcePayload,
+      webSearch: {
+        ...currentWebSearch,
+        ...(Object.prototype.hasOwnProperty.call(webSearchPayload, 'mode')
+          ? { mode: webSearchPayload.mode }
+          : {}),
+        tavilyApiKey: webSearchPayload.clearTavilyApiKey === true
+          ? ''
+          : (typeof webSearchPayload.tavilyApiKey === 'string'
+              && webSearchPayload.tavilyApiKey.trim())
+            ? webSearchPayload.tavilyApiKey.trim()
+            : currentWebSearch.tavilyApiKey || '',
+        braveApiKey: webSearchPayload.clearBraveApiKey === true
+          ? ''
+          : (typeof webSearchPayload.braveApiKey === 'string'
+              && webSearchPayload.braveApiKey.trim())
+            ? webSearchPayload.braveApiKey.trim()
+            : currentWebSearch.braveApiKey || '',
+      },
+    };
+  }
   // 这里不再只保留标准 key，而是将 payload 合并到现有的 desktopSettings 中
   // 这样可以保留用户手动在 settings.json 中添加的自定义 key（如 env, apiBaseUrl 等）
   let nextSettings = {
     ...desktopSettings,
-    ...normalizeDesktopSettings(payload, desktopSettings)
+    ...normalizeDesktopSettings(normalizedPayload, desktopSettings)
   };
   const previousServerUrl = getRemoteCredentialServerUrl(
     desktopSettings.remoteDirectServerUrl,
@@ -3525,6 +3784,12 @@ function refreshDesktopSettings(payload = {}) {
       userPassword: nextSettings.remoteDirectUserPassword,
     });
   }
+  if (webSearchPayload) {
+    saveWebSearchCredentials({
+      tavilyApiKey: nextSettings.webSearch?.tavilyApiKey || '',
+      braveApiKey: nextSettings.webSearch?.braveApiKey || '',
+    });
+  }
   saveDesktopSettings(nextSettings);
   if (
     Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
@@ -3552,7 +3817,7 @@ function refreshDesktopSettings(payload = {}) {
         sessionRecord.agentMode = getDesktopAgentMode(nextSettings);
       }
       if (!sessionRecord.runtime) continue;
-      if (sessionRecord.busy) {
+      if (sessionRecord.busy || hasActiveAgentTeam(sessionRecord)) {
         sessionRecord.pendingMcpRuntimeReload = true;
         skippedSessionCount += 1;
         continue;
@@ -3564,6 +3829,15 @@ function refreshDesktopSettings(payload = {}) {
   emitToRenderer('agent:settings-changed', getDesktopSettingsPayload({
     skippedSessionCount,
   }));
+
+  const nativeDetectionMayHaveChanged = webSearchPayload
+    || Object.prototype.hasOwnProperty.call(sourcePayload, 'model')
+    || Object.prototype.hasOwnProperty.call(sourcePayload, 'url')
+    || Object.prototype.hasOwnProperty.call(sourcePayload, 'apiKey')
+    || Object.prototype.hasOwnProperty.call(sourcePayload, 'models');
+  if (nativeDetectionMayHaveChanged) {
+    scheduleNativeWebSearchCapabilityDetection();
+  }
 
   return getDesktopSettingsPayload({
     skippedSessionCount,
@@ -4576,6 +4850,8 @@ async function runSessionPromptNow({
   agentMailTurn = null,
 }) {
   if (resetRuntimeBeforePrompt) {
+    await shutdownSessionAgentTeam(sessionRecord);
+    await agentTeamsService?.checkNow();
     disposeRuntime(sessionRecord);
     sessionRecord.underlyingSessionId = null;
     sessionRecord.resumeReadOnlyReason = null;
@@ -4855,7 +5131,10 @@ async function runSessionPromptNow({
     if (applyPendingMcpRuntimeReload(
       sessionRecord,
       disposeRuntime,
-      (record) => Boolean(record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
+      (record) => Boolean(
+        hasActiveAgentTeam(record)
+        || (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
+      ),
     )) {
       mossLog('info', 'mcp', 'Reloaded session runtime after deferred MCP update', {
         sessionId: sessionRecord.id,
@@ -4955,6 +5234,10 @@ function buildProjectConversationExcerpt(history, maxChars = 60000) {
 
 function buildProjectFinalizerPrompt({ project, sessionRecord, memory, transcript }) {
   const manifest = sessionRecord.projectResourceManifest || {};
+  const responseLanguage = desktopSettings.language || 'chinese';
+  const projectMemoryHeading = responseLanguage === 'chinese'
+    ? '# 项目记忆'
+    : '# Project Memory';
   return [
     `Project: ${project.name} (${project.id})`,
     `Session: ${sessionRecord.title} (${sessionRecord.id})`,
@@ -4974,7 +5257,7 @@ function buildProjectFinalizerPrompt({ project, sessionRecord, memory, transcrip
     '',
     'Return one JSON object with exactly these fields:',
     '{',
-    '  "conclusion": "concise final conclusion in Chinese",',
+    `  "conclusion": "concise final conclusion in ${responseLanguage}",`,
     '  "decisions": ["durable decisions only"],',
     '  "facts": ["confirmed reusable facts only"],',
     '  "completedWork": ["work actually completed"],',
@@ -4990,7 +5273,8 @@ function buildProjectFinalizerPrompt({ project, sessionRecord, memory, transcrip
     '- Only include confirmed outcomes; do not turn guesses into facts.',
     '- Exclude passwords, access tokens, OAuth codes, authorization URLs, and other credentials from every field.',
     '- assetCandidates must contain generated output files, never user input attachments, caches, dependencies, or temporary files.',
-    '- projectMemory must use concise Chinese section headings and start with "# 项目记忆".',
+    `- Write every human-readable JSON field and projectMemory heading/body in ${responseLanguage}. Keep paths, code identifiers, commands, and technical terms unchanged.`,
+    `- projectMemory must start with "${projectMemoryHeading}".`,
     '- In projectMemory, reference published outputs by asset name or project-relative path. Never preserve session or worker workspace paths.',
     '- Keep projectMemory under 20000 characters.',
   ].join('\n');
@@ -5034,10 +5318,14 @@ async function generateProjectSessionFinalization(project, sessionRecord, memory
       environment: {
         MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
         MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
+        MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
+          moss_response_language: desktopSettings.language,
+        }),
       },
       projectDir: finalizerDir,
       taskScope: { kind: 'session', sessionId: finalizerId },
       coordinatorMode: false,
+      onUsage: (event) => recordUsageForSession(event, sessionRecord),
       onPermissionRequest: async () => ({
         behavior: 'deny',
         message: 'Project memory finalization does not allow tool use.',
@@ -5322,6 +5610,8 @@ async function completeProjectSessionNow(sessionId) {
         updatedAt: Math.max(commitProject.updatedAt || 0, completedAt),
       });
     });
+    await shutdownSessionAgentTeam(sessionRecord);
+    await agentTeamsService?.checkNow();
     disposeRuntime(sessionRecord);
     invalidateProjectSessionRuntimes(project.id);
     try {
@@ -6597,6 +6887,7 @@ function attachBackgroundTaskWatcher(sessionRecord) {
     emitToRenderer('agent:background-tasks', { sessionId: sessionRecord.id, tasks });
   };
   const unsubscribe = runtime.subscribe(() => {
+    scheduleSubAgentSessionSync(sessionRecord);
     if (!timer) {
       timer = setTimeout(emitSnapshot, BACKGROUND_TASK_EMIT_DELAY_MS);
     }
@@ -7275,7 +7566,11 @@ async function updateSessionConnectors(sessionRecord, connectorIds) {
   sessionRecord.updatedAt = Date.now();
   let skippedBusyRuntime = false;
   if (sessionRecord.runtime) {
-    if (sessionRecord.busy || (sessionRecord.projectId && getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker))) {
+    if (
+      sessionRecord.busy
+      || hasActiveAgentTeam(sessionRecord)
+      || (sessionRecord.projectId && getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker))
+    ) {
       sessionRecord.pendingMcpRuntimeReload = true;
       skippedBusyRuntime = true;
     } else {
@@ -7375,6 +7670,21 @@ function parseSubAgentTranscript(raw) {
   return { history, failed, terminalStatus };
 }
 
+async function removeMirroredAgentTeamSidechain(id) {
+  const existing = subAgentSessions.get(id);
+  if (!existing) return false;
+  if (existing.persistTimer) {
+    clearTimeout(existing.persistTimer);
+    existing.persistTimer = null;
+  }
+  closeWorkspaceWatcher(existing);
+  subAgentSessions.delete(id);
+  deletePersistedSession(id);
+  await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
+  emitToRenderer('agent:session-removed', { sessionId: id });
+  return true;
+}
+
 async function syncSubAgentSessionsForParent(parentSession) {
   const isLiveParent = () => Boolean(
     parentSession &&
@@ -7428,6 +7738,10 @@ async function syncSubAgentSessionsForParent(parentSession) {
       } catch {
         continue;
       }
+    }
+    if (isAgentTeamSidechain(meta, parsed.history)) {
+      await removeMirroredAgentTeamSidechain(id);
+      continue;
     }
     if (!isLiveParent()) return synced;
     const title = typeof meta?.description === 'string' && meta.description.trim()
@@ -7645,6 +7959,39 @@ function disposeRuntime(sessionRecord) {
   sessionRecord.runtime.dispose();
   sessionRecord.runtime = null;
   schedulePersistSession(sessionRecord, true);
+}
+
+function hasActiveAgentTeam(sessionRecord) {
+  try {
+    return Boolean(sessionRecord?.runtime?.getAppState?.()?.teamContext?.teamName);
+  } catch {
+    return false;
+  }
+}
+
+async function shutdownSessionAgentTeam(sessionRecord) {
+  const pending = agentTeamSessionShutdowns.get(sessionRecord?.id);
+  if (pending) return pending;
+  if (!hasActiveAgentTeam(sessionRecord)) return false;
+  const operation = (async () => {
+    try {
+      sessionRecord.runtime?.abort?.();
+      await sessionRecord.runtime?.shutdownAgentTeam?.();
+      return true;
+    } catch (error) {
+      mossLog('warn', 'agent-teams', 'Unable to clean up session Agent Team', {
+        sessionId: sessionRecord.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  })();
+  agentTeamSessionShutdowns.set(sessionRecord.id, operation);
+  return operation.finally(() => {
+    if (agentTeamSessionShutdowns.get(sessionRecord.id) === operation) {
+      agentTeamSessionShutdowns.delete(sessionRecord.id);
+    }
+  });
 }
 
 function closeWorkspaceWatcher(sessionRecord) {
@@ -9838,6 +10185,25 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     getWindow: () => mainWindow,
   });
 
+  agentTeamsService = createAgentTeamsService({
+    mossHome: MOSS_HOME,
+    getSessionRecords: () => sessions.values(),
+    getSessionDir: getLocalSessionDir,
+    emit: emitToRenderer,
+    log: mossLog,
+  });
+  agentTeamsService.start();
+  // Older builds mirrored each Team member turn as a coordinator child session.
+  const mirroredTeamParents = new Set(
+    Array.from(subAgentSessions.values())
+      .map((record) => record.parentSessionId)
+      .filter(Boolean),
+  );
+  void Promise.allSettled(Array.from(mirroredTeamParents).map((parentSessionId) => {
+    const parent = sessions.get(parentSessionId);
+    return parent ? syncSubAgentSessionsBestEffort(parent) : Promise.resolve();
+  }));
+
   // Initialize custom protocols used by workspace media and plugin apps.
   try {
     installMediaProtocol(protocol);
@@ -9864,25 +10230,51 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   mossLog('info', 'app', 'Application ready');
   prewarmLocalAgentGlobalInit();
+  scheduleNativeWebSearchCapabilityDetection(0);
 });
 
 app.on('window-all-closed', () => {
-  for (const sessionRecord of sessions.values()) {
+  if (process.platform !== 'darwin') {
+    app.quit();
+    return;
+  }
+
+  // On macOS the app stays alive after the last window closes. Retire live
+  // teams before disposing their embedded runtimes so they reopen as history.
+  void Promise.allSettled(Array.from(sessions.values()).map(async (sessionRecord) => {
+    await shutdownSessionAgentTeam(sessionRecord);
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
-  }
-  // Sub-agent / execution sessions each own a child runtime process. On macOS the
-  // app stays alive after all windows close, so without this they leak as zombies.
+  })).then(() => agentTeamsService?.checkNow());
   for (const sessionRecord of subAgentSessions.values()) {
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
   }
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
 });
 
 app.on('before-quit', (event) => {
+  if (!agentTeamShutdownComplete) {
+    const activeTeamSessions = Array.from(sessions.values()).filter(hasActiveAgentTeam);
+    if (activeTeamSessions.length > 0) {
+      event.preventDefault();
+      if (!agentTeamShutdownPromise) {
+        agentTeamShutdownPromise = Promise.allSettled(
+          activeTeamSessions.map(shutdownSessionAgentTeam),
+        ).then(async () => {
+          await agentTeamsService?.checkNow();
+        }).finally(() => {
+          agentTeamShutdownComplete = true;
+          agentTeamShutdownPromise = null;
+          app.quit();
+        });
+      }
+      return;
+    }
+    agentTeamShutdownComplete = true;
+  }
+
+  agentTeamsService?.stop();
+  agentTeamsService = null;
   void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true });
   void agentMailPoller?.stop();
   agentMailPoller = null;
@@ -9898,6 +10290,14 @@ app.on('before-quit', (event) => {
   libraryService = null;
   libraryExtensionManager?.dispose?.();
   libraryExtensionManager = null;
+  for (const sessionRecord of sessions.values()) {
+    closeWorkspaceWatcher(sessionRecord);
+    disposeRuntime(sessionRecord);
+  }
+  for (const sessionRecord of subAgentSessions.values()) {
+    closeWorkspaceWatcher(sessionRecord);
+    disposeRuntime(sessionRecord);
+  }
   if (desktopAppRuntime && !desktopAppShutdownComplete) {
     event.preventDefault();
     void desktopAppRuntime.shutdown().finally(() => {
@@ -9940,6 +10340,10 @@ ipcMain.handle('agent:get-remote-identity', async () => {
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:probe-web-search', async () => {
+  await detectNativeWebSearchCapability({ force: true });
+  return getDesktopSettingsPayload();
+});
 ipcMain.handle('agent-mail:get-status', () => ({ ...agentMailStatus }));
 ipcMain.handle('agent-mail:list-pending', () => agentMailPoller?.listManual() || []);
 ipcMain.handle('agent-mail:list', async (_event, payload = {}) => {
@@ -10501,6 +10905,9 @@ ipcMain.handle('agent:get-adapter-status', async () => (
     ? refreshRemoteFeishuStatus()
     : getFeishuAdapterStatus()
 ));
+ipcMain.handle('usage:get-overview', () => usageLedger.getOverview());
+ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
+ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
 
 ipcMain.handle('notification:list', () => appNotificationBroker.list());
 ipcMain.handle('notification:create', (_event, { notification, options } = {}) => (
@@ -10653,6 +11060,20 @@ ipcMain.handle('agent:list-sessions', async () => {
     syncSubAgentSessionsBestEffort(record)
   )));
   return listVisibleSessionSummaries();
+});
+
+ipcMain.handle('agent-teams:list', async (_event, { sessionId } = {}) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  await agentTeamsService?.checkNow();
+  return agentTeamsService?.getSessionState(sessionRecord.id)
+    || { sessionId: sessionRecord.id, teams: [] };
+});
+
+ipcMain.handle('agent-teams:refresh', async (_event, { sessionId } = {}) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  await agentTeamsService?.checkNow();
+  return agentTeamsService?.getSessionState(sessionRecord.id)
+    || { sessionId: sessionRecord.id, teams: [] };
 });
 
 ipcMain.handle('agent:sync-remote-sessions', async () => {
@@ -11015,6 +11436,12 @@ async function deleteSessionRecordById(sessionId) {
   await rejectPendingQuestionRequestsForSession(
     sessionRecord.id,
     'Question canceled because the session was deleted.',
+  );
+  await shutdownSessionAgentTeam(sessionRecord);
+  await agentTeamsService?.checkNow();
+  await agentTeamsService?.discardTerminalReceiptsForSession(
+    sessionRecord.id,
+    sessionRecord.underlyingSessionId,
   );
   disposeRuntime(sessionRecord);
   if (activeProjectTaskRun) {
@@ -11938,6 +12365,21 @@ async function sendAgentPromptNow(event, {
   const visibleUserPrompt = promptSpill
     ? buildLargePromptVisiblePrompt(promptSpill)
     : trimmedPrompt;
+  let agentTeamRecovery = null;
+  if (
+    !isPlanOnly
+    && !hasActiveAgentTeam(sessionRecord)
+    && isAgentTeamContinuationPrompt(visibleUserPrompt)
+  ) {
+    try {
+      agentTeamRecovery = await agentTeamsService?.prepareRecoveryForTurn(sessionRecord.id) || null;
+    } catch (error) {
+      mossLog('warn', 'agent-teams', 'Unable to prepare interrupted Agent Team recovery', {
+        sessionId: sessionRecord.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const visibleFileAttachments = filePaths.map((filePath, index) => (
     visibleAttachmentReferences[index] || filePath
   ));
@@ -12000,6 +12442,7 @@ async function sendAgentPromptNow(event, {
     : [
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
+      agentTeamRecovery?.instruction || '',
       effectivePrompt + attachmentSuffix + libraryContextSuffix,
     ].filter(Boolean).join('\n\n');
 
@@ -12075,8 +12518,28 @@ async function sendAgentPromptNow(event, {
     throw error;
   }
 
+  const turnConclusion = String(turn.latestAssistantText || turn.streamedAssistantText || '').trim();
+  if (agentTeamRecovery?.mode === 'finish_summary') {
+    const latestTurnResult = sessionRecord.history.findLast((event) => event?.type === 'result');
+    const turnSucceeded = latestTurnResult?.subtype === 'success'
+      && latestTurnResult?.is_error !== true;
+    try {
+      await agentTeamsService?.reconcileRecoveryTurn(
+        sessionRecord.id,
+        agentTeamRecovery.incarnationId,
+        agentTeamRecovery.attemptId,
+        { assistantText: turnConclusion, turnSucceeded },
+      );
+    } catch (error) {
+      mossLog('warn', 'agent-teams', 'Unable to finalize recovered Agent Team archive', {
+        sessionId: sessionRecord.id,
+        incarnationId: agentTeamRecovery.incarnationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (sessionRecord.projectId && !isPlanOnly && !isProjectTaskStopRequested(sessionRecord)) {
-    const turnConclusion = String(turn.latestAssistantText || turn.streamedAssistantText || '').trim();
     await appendProjectEvent(sessionRecord.projectId, {
       type: 'session.turn_completed',
       summary: `会话推进：${sessionRecord.title}${turnConclusion ? `。${normalizePreviewText(turnConclusion, 100)}` : ''}`,

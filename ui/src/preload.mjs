@@ -23,6 +23,14 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   getAuthDebug: () => ipcRenderer.invoke('agent:get-auth-debug'),
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   updateSettings: (payload) => ipcRenderer.invoke('agent:update-settings', payload),
+  probeWebSearch: () => ipcRenderer.invoke('agent:probe-web-search'),
+  usage: {
+    getOverview: () => ipcRenderer.invoke('usage:get-overview'),
+  },
+  memory: {
+    getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),
+    readEntry: (payload) => ipcRenderer.invoke('memory:read-entry', payload),
+  },
   openIM: {
     getConfig: () => ipcRenderer.invoke('openim:get-config'),
     createSession: () => ipcRenderer.invoke('openim:create-session'),
@@ -126,6 +134,15 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionAutoCollapseToolCalls: (payload) => ipcRenderer.invoke('agent:set-session-auto-collapse-tool-calls', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
+  agentTeams: {
+    list: (payload) => ipcRenderer.invoke('agent-teams:list', payload),
+    refresh: (payload) => ipcRenderer.invoke('agent-teams:refresh', payload),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('agent-teams:changed', handler);
+      return () => ipcRenderer.off('agent-teams:changed', handler);
+    },
+  },
   setConnectorAuthStatus: (payload) => ipcRenderer.invoke('agent:set-connector-auth-status', payload),
   listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
   getInstalledConnectors: () => ipcRenderer.invoke('connector-hub:get-installed'),

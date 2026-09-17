@@ -130,3 +130,12 @@ export const CHAT_MODE_DISALLOWED_TOOLS = new Set([
   TEAM_CREATE_TOOL_NAME,
   TEAM_DELETE_TOOL_NAME,
 ])
+
+/** Orchestration tools restored to Chat only after the explicit Agent Teams opt-in. */
+export const AGENT_TEAMS_CHAT_ALLOWED_TOOLS = new Set([
+  AGENT_TOOL_NAME,
+  LEGACY_AGENT_TOOL_NAME,
+  SEND_MESSAGE_TOOL_NAME,
+  TEAM_CREATE_TOOL_NAME,
+  TEAM_DELETE_TOOL_NAME,
+])

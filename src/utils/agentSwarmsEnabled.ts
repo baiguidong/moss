@@ -1,4 +1,5 @@
 import { isEnvTruthy } from './envUtils.js'
+import { getSessionEnvironmentContext } from './sessionIdContext.js'
 
 /**
  * Check if --agent-teams flag is provided via CLI.
@@ -17,6 +18,11 @@ function isAgentTeamsFlagSet(): boolean {
  * the --agent-teams CLI flag.
  */
 export function isAgentSwarmsEnabled(): boolean {
+  const sessionOverride = getSessionEnvironmentContext()
+    ?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+  if (sessionOverride !== undefined) {
+    return isEnvTruthy(sessionOverride)
+  }
   return (
     isEnvTruthy(process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS) ||
     isAgentTeamsFlagSet()

@@ -12,6 +12,7 @@ import {
 import { getDestructiveCommandWarning as getBashDestructiveCommandWarning } from '../tools/BashTool/destructiveCommandWarning.js'
 import { getDestructiveCommandWarning as getPowerShellDestructiveCommandWarning } from '../tools/PowerShellTool/destructiveCommandWarning.js'
 import { isAgentSwarmsEnabled } from './agentSwarmsEnabled.js'
+import { runWithSessionIdContext } from './sessionIdContext.js'
 import { getOpusDefaultEffortConfig } from './effort.js'
 import { addLineNumbers } from './file.js'
 import { getMossMds, type MemoryFileInfo } from './mossmd.js'
@@ -131,6 +132,24 @@ describe('solidified feature behavior', () => {
   test('enables Agent Teams through explicit environment opt-in', () => {
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1'
     expect(isAgentSwarmsEnabled()).toBe(true)
+  })
+
+  test('prefers a session-scoped Agent Teams setting over the process environment', () => {
+    process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1'
+    expect(runWithSessionIdContext(
+      'session-agent-teams-disabled' as any,
+      null,
+      () => isAgentSwarmsEnabled(),
+      undefined,
+      { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '0' },
+    )).toBe(false)
+    expect(runWithSessionIdContext(
+      'session-agent-teams-enabled' as any,
+      null,
+      () => isAgentSwarmsEnabled(),
+      undefined,
+      { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' },
+    )).toBe(true)
   })
 
   test('uses fixed Opus effort recommendation copy', () => {

@@ -8,6 +8,7 @@ import {
   MoonStar,
   Palette,
   RefreshCw,
+  Save,
   Search,
   SlidersHorizontal,
   SunMedium,
@@ -30,7 +31,7 @@ import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpSer
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -120,6 +121,21 @@ const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
   model: '',
 };
 
+const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
+  mode: 'auto',
+  tavilyApiKey: '',
+  braveApiKey: '',
+  tavilyConfigured: false,
+  braveConfigured: false,
+  nativeCapability: {
+    status: 'unknown',
+    format: null,
+    checkedAt: null,
+    reasonCode: 'not-detected',
+  },
+  activeProvider: null,
+};
+
 const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
   minimax: 'https://api.minimaxi.com/v1/image_generation',
   openai: 'https://api.openai.com/v1',
@@ -144,7 +160,7 @@ const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemor
 const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> = {
   enabled: true,
   extractionEnabled: false,
-  extractionIntervalTurns: 1,
+  extractionIntervalTurns: 5,
   pastContextSearchEnabled: false,
   dreamEnabled: false,
   dreamMinHours: 24,
@@ -182,12 +198,17 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'basic-info',
         title: '基本信息',
-        keywords: ['连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash'],
+        keywords: ['回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'],
       },
       {
         id: 'model',
         title: '模型',
         keywords: ['文本模型', '图片模型', 'model', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url'],
+      },
+      {
+        id: 'web-search',
+        title: '网页搜索',
+        keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'],
       },
     ],
   },
@@ -1136,6 +1157,10 @@ export function SettingsView({
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [remoteAuthError, setRemoteAuthError] = React.useState('');
   const [remoteIdentity, setRemoteIdentity] = React.useState<{ userName: string; userEmail: string } | null>(null);
+  const [tavilyApiKeyDraft, setTavilyApiKeyDraft] = React.useState('');
+  const [braveApiKeyDraft, setBraveApiKeyDraft] = React.useState('');
+  const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
+  const [webSearchError, setWebSearchError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>('basic');
   const [activeSection, setActiveSection] = React.useState<SectionId>('basic-info');
@@ -1143,6 +1168,7 @@ export function SettingsView({
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     'basic-info': null,
     model: null,
+    'web-search': null,
     library: null,
     mcp: null,
     feishu: null,
@@ -1181,6 +1207,10 @@ export function SettingsView({
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
+  const webSearchDraft = {
+    ...DEFAULT_WEB_SEARCH_SETTINGS,
+    ...(settingsDraft?.webSearch || {}),
+  };
   const sessionMemoryDraft = {
     ...DEFAULT_SESSION_MEMORY_SETTINGS,
     ...(settingsDraft?.sessionMemory || {}),
@@ -1279,6 +1309,71 @@ export function SettingsView({
     void autoSaveSettings(key, value);
   };
 
+  const updateWebSearchMode = (mode: NonNullable<DesktopSettings['webSearch']>['mode']) => {
+    setWebSearchError('');
+    updateSetting('webSearch', {
+      ...webSearchDraft,
+      mode,
+      tavilyApiKey: '',
+      braveApiKey: '',
+    });
+  };
+
+  const saveWebSearchApiKey = async (provider: 'tavily' | 'brave') => {
+    const value = provider === 'tavily'
+      ? tavilyApiKeyDraft.trim()
+      : braveApiKeyDraft.trim();
+    if (!value) return;
+    setWebSearchAction(provider);
+    setWebSearchError('');
+    try {
+      const saved = await window.agentDesktop.updateSettings({
+        webSearch: provider === 'tavily'
+          ? { tavilyApiKey: value }
+          : { braveApiKey: value },
+      });
+      setSettingsDraft(saved);
+      if (provider === 'tavily') setTavilyApiKeyDraft('');
+      else setBraveApiKeyDraft('');
+    } catch (error) {
+      setWebSearchError(cleanIpcErrorMessage(error));
+    } finally {
+      setWebSearchAction('idle');
+    }
+  };
+
+  const clearWebSearchApiKey = async (provider: 'tavily' | 'brave') => {
+    setWebSearchAction(provider);
+    setWebSearchError('');
+    try {
+      const saved = await window.agentDesktop.updateSettings({
+        webSearch: provider === 'tavily'
+          ? { clearTavilyApiKey: true }
+          : { clearBraveApiKey: true },
+      });
+      setSettingsDraft(saved);
+      if (provider === 'tavily') setTavilyApiKeyDraft('');
+      else setBraveApiKeyDraft('');
+    } catch (error) {
+      setWebSearchError(cleanIpcErrorMessage(error));
+    } finally {
+      setWebSearchAction('idle');
+    }
+  };
+
+  const probeNativeWebSearch = async () => {
+    setWebSearchAction('probe');
+    setWebSearchError('');
+    try {
+      const saved = await window.agentDesktop.probeWebSearch();
+      setSettingsDraft(saved);
+    } catch (error) {
+      setWebSearchError(cleanIpcErrorMessage(error));
+    } finally {
+      setWebSearchAction('idle');
+    }
+  };
+
   const authenticateRemoteServer = async () => {
     const serverUrl = settingsDraft?.remoteDirectServerUrl?.trim() || '';
     if (!serverUrl) {
@@ -1370,6 +1465,28 @@ export function SettingsView({
     if (!value) return;
     void navigator.clipboard.writeText(value);
   };
+
+  const nativeWebSearchStatus = webSearchDraft.nativeCapability?.status || 'unknown';
+  const nativeWebSearchStatusLabel = nativeWebSearchStatus === 'supported'
+    ? '已检测到当前 endpoint 原生搜索可用'
+    : nativeWebSearchStatus === 'compatible'
+      ? '已检测到当前 endpoint 原生搜索可用（兼容模式）'
+      : nativeWebSearchStatus === 'unsupported'
+        ? '当前 endpoint 不支持原生搜索'
+        : nativeWebSearchStatus === 'detecting'
+          ? '正在检测当前 endpoint'
+          : webSearchDraft.nativeCapability?.reasonCode === 'not-detected'
+            ? '尚未检测当前 endpoint'
+            : '检测结果不确定，可重新检测';
+  const activeWebSearchProviderLabel = webSearchDraft.activeProvider === 'tavily'
+    ? 'Tavily'
+    : webSearchDraft.activeProvider === 'brave'
+      ? 'Brave Search'
+      : webSearchDraft.activeProvider === 'native'
+        ? '当前 endpoint 原生搜索'
+        : nativeWebSearchStatus === 'detecting'
+          ? '检测中，暂不暴露 WebSearch'
+          : '未向模型暴露 WebSearch';
 
   if (!settingsDraft) {
     return (
@@ -1501,6 +1618,32 @@ export function SettingsView({
                     }}
                   >
                     <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                      对话
+                    </div>
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="回复语言"
+                        description="同时用于新回复和新生成的会话、项目与全局记忆；已有记忆保持原文。"
+                        controlClassName="sm:w-[220px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.language || 'chinese'}
+                          aria-label="回复语言"
+                          onChange={(event) => updateSetting('language', event.target.value)}
+                        >
+                          <option value="chinese">中文</option>
+                          <option value="english">English</option>
+                          <option value="japanese">日本語</option>
+                          <option value="korean">한국어</option>
+                          <option value="spanish">Español</option>
+                          <option value="french">Français</option>
+                          <option value="german">Deutsch</option>
+                        </select>
+                      </SettingsRow>
+                    </SettingsGroup>
+
+                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
                       连接
                     </div>
                     <div className="space-y-3">
@@ -1523,6 +1666,24 @@ export function SettingsView({
                                 }
                               }}
                               label="本地模式"
+                            />
+                          </div>
+                        </SettingsRow>
+                      </SettingsGroup>
+
+                      {/* Agent Teams */}
+                      <SettingsGroup>
+                        <SettingsRow
+                          title="Agent Teams 智能体团队"
+                          description="允许本地 Agent 创建协作团队、共享任务依赖并通过消息协调。新运行时生效。"
+                          controlClassName="sm:w-[56px]"
+                        >
+                          <div className="flex justify-start sm:justify-end">
+                            <Toggle
+                              checked={settingsDraft.agentTeamsEnabled === true}
+                              disabled={!(settingsDraft.localEnabled ?? true)}
+                              onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
+                              label="启用 Agent Teams"
                             />
                           </div>
                         </SettingsRow>
@@ -1841,7 +2002,7 @@ export function SettingsView({
 
                       <SettingsRow
                         title="快速网页搜索"
-                        description="网页搜索使用小型快速模型并关闭 thinking，降低搜索延迟和成本。"
+                        description="使用快速模型并关闭 thinking，降低搜索延迟和成本。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
@@ -1852,6 +2013,7 @@ export function SettingsView({
                           />
                         </div>
                       </SettingsRow>
+
                     </SettingsGroup>
                   </SettingsSection>
                 ) : null}
@@ -2143,23 +2305,6 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
-                        title="提取间隔"
-                        description="每累计多少轮会话执行一次自动提取。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={10000}
-                          className={FIELD_CLASS_NAME}
-                          value={autoMemoryDraft.extractionIntervalTurns ?? DEFAULT_AUTO_MEMORY_SETTINGS.extractionIntervalTurns}
-                          onChange={(event) => updateAutoMemorySettings({
-                            extractionIntervalTurns: Number.parseInt(event.target.value || '1', 10),
-                          })}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
                         title="Dream 最短间隔"
                         description="两次后台整理之间至少间隔的小时数。"
                         controlClassName="sm:w-[160px]"
@@ -2264,7 +2409,7 @@ export function SettingsView({
 
                       <SettingsRow
                         title="自动提取"
-                        description="每轮结束后从新增对话中提取值得长期保留的信息。"
+                        description="定期从新增对话中提取跨项目仍有价值的长期信息。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
@@ -2273,6 +2418,28 @@ export function SettingsView({
                             onCheckedChange={(checked) => updateAutoMemorySettings({ extractionEnabled: checked })}
                             label="自动提取长期记忆"
                           />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="自动提取间隔"
+                        description="推荐 5 轮；1 表示每轮检查，数值越大越克制。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <div className="flex items-center justify-end gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={10000}
+                            className={FIELD_CLASS_NAME}
+                            value={autoMemoryDraft.extractionIntervalTurns ?? DEFAULT_AUTO_MEMORY_SETTINGS.extractionIntervalTurns}
+                            disabled={!autoMemoryDraft.extractionEnabled}
+                            aria-label="自动提取间隔"
+                            onChange={(event) => updateAutoMemorySettings({
+                              extractionIntervalTurns: Number.parseInt(event.target.value || '1', 10),
+                            })}
+                          />
+                          <span className="shrink-0 text-xs text-muted-foreground">轮</span>
                         </div>
                       </SettingsRow>
 
@@ -2514,6 +2681,153 @@ export function SettingsView({
                         />
                       </SettingsRow>
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'web-search') ? (
+                  <SettingsSection
+                    id="web-search"
+                    title="网页搜索"
+                    sectionRef={(element) => {
+                      sectionRefs.current['web-search'] = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="搜索方式"
+                        description={`当前生效：${activeWebSearchProviderLabel}`}
+                        controlClassName="sm:w-[260px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={webSearchDraft.mode}
+                          aria-label="网页搜索方式"
+                          onChange={(event) => updateWebSearchMode(
+                            event.target.value as NonNullable<DesktopSettings['webSearch']>['mode'],
+                          )}
+                        >
+                          <option value="auto">自动（Tavily → Brave → 原生）</option>
+                          <option value="tavily">仅 Tavily</option>
+                          <option value="brave">仅 Brave Search</option>
+                          <option value="native">仅 endpoint 原生搜索</option>
+                          <option value="disabled">禁用</option>
+                        </select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Tavily API Key"
+                        description={webSearchDraft.tavilyConfigured ? '已安全保存' : '未配置'}
+                        controlClassName="sm:w-[420px]"
+                      >
+                        <div className="flex w-full items-center gap-2">
+                          <Input
+                            type="password"
+                            className={cn(FIELD_CLASS_NAME, 'min-w-0 flex-1 font-mono text-xs')}
+                            value={tavilyApiKeyDraft}
+                            aria-label="Tavily API Key"
+                            onChange={(event) => setTavilyApiKeyDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') void saveWebSearchApiKey('tavily');
+                            }}
+                            placeholder={webSearchDraft.tavilyConfigured ? '输入新密钥以替换' : 'tvly-...'}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 w-9 shrink-0 rounded-xl p-0"
+                            disabled={!tavilyApiKeyDraft.trim() || webSearchAction !== 'idle'}
+                            onClick={() => void saveWebSearchApiKey('tavily')}
+                            title="保存 Tavily API Key"
+                            aria-label="保存 Tavily API Key"
+                          >
+                            <Save className="h-4 w-4" />
+                          </Button>
+                          {webSearchDraft.tavilyConfigured ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 w-9 shrink-0 rounded-xl p-0"
+                              disabled={webSearchAction !== 'idle'}
+                              onClick={() => void clearWebSearchApiKey('tavily')}
+                              title="删除 Tavily API Key"
+                              aria-label="删除 Tavily API Key"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Brave Search API Key"
+                        description={webSearchDraft.braveConfigured ? '已安全保存' : '未配置'}
+                        controlClassName="sm:w-[420px]"
+                      >
+                        <div className="flex w-full items-center gap-2">
+                          <Input
+                            type="password"
+                            className={cn(FIELD_CLASS_NAME, 'min-w-0 flex-1 font-mono text-xs')}
+                            value={braveApiKeyDraft}
+                            aria-label="Brave Search API Key"
+                            onChange={(event) => setBraveApiKeyDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') void saveWebSearchApiKey('brave');
+                            }}
+                            placeholder={webSearchDraft.braveConfigured ? '输入新密钥以替换' : 'BSA...'}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 w-9 shrink-0 rounded-xl p-0"
+                            disabled={!braveApiKeyDraft.trim() || webSearchAction !== 'idle'}
+                            onClick={() => void saveWebSearchApiKey('brave')}
+                            title="保存 Brave Search API Key"
+                            aria-label="保存 Brave Search API Key"
+                          >
+                            <Save className="h-4 w-4" />
+                          </Button>
+                          {webSearchDraft.braveConfigured ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 w-9 shrink-0 rounded-xl p-0"
+                              disabled={webSearchAction !== 'idle'}
+                              onClick={() => void clearWebSearchApiKey('brave')}
+                              title="删除 Brave Search API Key"
+                              aria-label="删除 Brave Search API Key"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Endpoint 原生搜索"
+                        description={nativeWebSearchStatusLabel}
+                        controlClassName="sm:w-[120px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 w-9 rounded-xl p-0"
+                            disabled={webSearchAction !== 'idle' || nativeWebSearchStatus === 'detecting'}
+                            onClick={() => void probeNativeWebSearch()}
+                            title="重新检测原生搜索"
+                            aria-label="重新检测原生搜索"
+                          >
+                            <RefreshCw className={cn(
+                              'h-4 w-4',
+                              (webSearchAction === 'probe' || nativeWebSearchStatus === 'detecting') && 'animate-spin',
+                            )} />
+                          </Button>
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+                    {webSearchError ? (
+                      <p className="mt-3 px-1 text-xs text-destructive">{webSearchError}</p>
+                    ) : null}
                   </SettingsSection>
                 ) : null}
 

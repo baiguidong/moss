@@ -29,11 +29,34 @@ describe('desktop chat tool pool', () => {
       'Read',
       'Bash',
       'library_write',
-    ))
+    ), false)
     expect(filtered.map(tool => tool.name)).toEqual([
       'Read',
       'Bash',
       'library_write',
+    ])
+  })
+
+  test('restores only the Agent Teams lifecycle tools after explicit opt-in', () => {
+    const filtered = applyChatToolFilter(tools(
+      'Agent',
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'SendMessage',
+      'TeamCreate',
+      'TeamDelete',
+      'Read',
+      'Bash',
+    ), true)
+    expect(filtered.map(tool => tool.name)).toEqual([
+      'Agent',
+      'Task',
+      'SendMessage',
+      'TeamCreate',
+      'TeamDelete',
+      'Read',
+      'Bash',
     ])
   })
 })

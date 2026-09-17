@@ -494,21 +494,137 @@ export async function blockTask(
     return false
   }
 
-  // Update source task: A blocks B
-  if (!fromTask.blocks.includes(toTaskId)) {
-    await updateTask(taskListId, fromTaskId, {
-      blocks: [...fromTask.blocks, toTaskId],
-    })
-  }
-
-  // Update target task: B is blockedBy A
-  if (!toTask.blockedBy.includes(fromTaskId)) {
-    await updateTask(taskListId, toTaskId, {
-      blockedBy: [...toTask.blockedBy, fromTaskId],
-    })
-  }
+  await appendTaskRelation(taskListId, fromTaskId, 'blocks', toTaskId)
+  await appendTaskRelation(taskListId, toTaskId, 'blockedBy', fromTaskId)
 
   return true
+}
+
+async function appendTaskRelation(
+  taskListId: string,
+  taskId: string,
+  field: 'blocks' | 'blockedBy',
+  relatedTaskId: string,
+): Promise<void> {
+  const taskPath = getTaskPath(taskListId, taskId)
+  let release: (() => Promise<void>) | undefined
+  try {
+    release = await lockfile.lock(taskPath, LOCK_OPTIONS)
+    const task = await getTask(taskListId, taskId)
+    if (!task || task[field].includes(relatedTaskId)) return
+    await updateTaskUnsafe(taskListId, taskId, {
+      [field]: [...task[field], relatedTaskId],
+    })
+  } finally {
+    await release?.()
+  }
+}
+
+export async function ensureTeamMemberTask(params: {
+  teamName: string
+  agentId: string
+  agentName: string
+  subject: string
+  description: string
+  taskId?: string
+}): Promise<string> {
+  const taskListId = getTaskListIdForScope({
+    kind: 'team',
+    teamId: params.teamName,
+  })
+  const tasks = await listTasks(taskListId)
+  const requestedTask = params.taskId
+    ? tasks.find(task => task.id === params.taskId)
+    : undefined
+  if (params.taskId && !requestedTask) {
+    throw new Error(
+      `Cannot spawn ${params.agentName}: shared team task #${params.taskId} does not exist.`,
+    )
+  }
+  if (requestedTask?.status === 'completed') {
+    throw new Error(
+      `Cannot spawn ${params.agentName}: shared team task #${requestedTask.id} is already completed.`,
+    )
+  }
+  if (
+    requestedTask?.owner &&
+    requestedTask.owner !== params.agentName &&
+    requestedTask.owner !== params.agentId
+  ) {
+    throw new Error(
+      `Cannot spawn ${params.agentName}: shared team task #${requestedTask.id} is owned by ${requestedTask.owner}.`,
+    )
+  }
+  const existing = requestedTask ?? tasks.find(task => (
+    task.status !== 'completed' &&
+    (task.metadata?.agentTeamAgentId === params.agentId ||
+      task.owner === params.agentName ||
+      task.owner === params.agentId)
+  ))
+  const assignmentMetadata = {
+    ...(existing?.metadata ?? {}),
+    agentTeamAgentId: params.agentId,
+    agentTeamAgentName: params.agentName,
+    agentTeamAssignment: true,
+  }
+
+  const aggregateTask = tasks.find(task => (
+    existing?.blocks.includes(task.id) &&
+    task.status !== 'completed'
+  )) ?? [...tasks].reverse().find(task => (
+    task.id !== existing?.id &&
+    task.status !== 'completed' &&
+    (task.owner === 'team-lead' || task.metadata?.agentTeamAggregate === true) &&
+    task.metadata?.agentTeamAssignment !== true
+  ))
+
+  if (existing) {
+    await updateTask(taskListId, existing.id, {
+      owner: params.agentName,
+      status: 'in_progress',
+      blocks: aggregateTask && !existing.blocks.includes(aggregateTask.id)
+        ? [...existing.blocks, aggregateTask.id]
+        : existing.blocks,
+      metadata: assignmentMetadata,
+    })
+    if (aggregateTask) {
+      await appendTaskRelation(
+        taskListId,
+        aggregateTask.id,
+        'blockedBy',
+        existing.id,
+      )
+      const refreshedAggregate = await getTask(taskListId, aggregateTask.id)
+      if (refreshedAggregate?.status === 'in_progress') {
+        await updateTask(taskListId, aggregateTask.id, { status: 'pending' })
+      }
+    }
+    return existing.id
+  }
+
+  const taskId = await createTask(taskListId, {
+    subject: params.subject || params.agentName,
+    description: params.description,
+    activeForm: params.subject || `Working as ${params.agentName}`,
+    owner: params.agentName,
+    status: 'in_progress',
+    blocks: aggregateTask ? [aggregateTask.id] : [],
+    blockedBy: [],
+    metadata: assignmentMetadata,
+  })
+  if (aggregateTask) {
+    await appendTaskRelation(
+      taskListId,
+      aggregateTask.id,
+      'blockedBy',
+      taskId,
+    )
+    const refreshedAggregate = await getTask(taskListId, aggregateTask.id)
+    if (refreshedAggregate?.status === 'in_progress') {
+      await updateTask(taskListId, aggregateTask.id, { status: 'pending' })
+    }
+  }
+  return taskId
 }
 
 export type ClaimTaskResult = {

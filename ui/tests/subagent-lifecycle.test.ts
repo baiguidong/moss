@@ -1,10 +1,26 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isAgentTeamSidechain,
   isSubAgentFailureEntry,
   resolveSubAgentStatus,
 } from '../src/shared/subagent-lifecycle.mjs';
 
 describe('sub-agent lifecycle', () => {
+  test('keeps Agent Team member sidechains out of coordinator children', () => {
+    expect(isAgentTeamSidechain({ teamName: 'system-check' }, [])).toBe(true);
+    expect(isAgentTeamSidechain({}, [{
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<teammate-message teammate_id="team-lead">work</teammate-message>',
+      },
+    }])).toBe(true);
+    expect(isAgentTeamSidechain({ agentType: 'general-purpose' }, [{
+      type: 'user',
+      message: { role: 'user', content: 'ordinary coordinator work' },
+    }])).toBe(false);
+  });
+
   test('recognizes structured API failures without relying on display text', () => {
     expect(isSubAgentFailureEntry({
       type: 'assistant',

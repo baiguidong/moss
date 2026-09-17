@@ -140,6 +140,42 @@ export function saveRemoteDirectCredentials({ serverUrl, apiKey, userPassword })
   });
 }
 
+export function getWebSearchCredentials() {
+  const credentials = readConnectorCredentials();
+  const records = isPlainObject(credentials.webSearchCredentials)
+    ? credentials.webSearchCredentials
+    : {};
+  return {
+    tavilyApiKey: normalizeString(records.tavilyApiKey?.value),
+    braveApiKey: normalizeString(records.braveApiKey?.value),
+  };
+}
+
+export function saveWebSearchCredentials({ tavilyApiKey, braveApiKey }) {
+  const updatedAt = new Date().toISOString();
+  connectorCredentialStore.update((current) => {
+    const records = {};
+    if (normalizeString(tavilyApiKey)) {
+      records.tavilyApiKey = {
+        value: normalizeString(tavilyApiKey),
+        field: 'tavilyApiKey',
+        updatedAt,
+      };
+    }
+    if (normalizeString(braveApiKey)) {
+      records.braveApiKey = {
+        value: normalizeString(braveApiKey),
+        field: 'braveApiKey',
+        updatedAt,
+      };
+    }
+    return {
+      ...current,
+      webSearchCredentials: records,
+    };
+  });
+}
+
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }

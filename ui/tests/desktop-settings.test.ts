@@ -18,6 +18,24 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('defaults replies and newly generated memories to Chinese', () => {
+    expect(normalizeDesktopSettings({}).language).toBe('chinese');
+    expect(normalizeDesktopSettings({ language: ' english ' }).language).toBe('english');
+    expect(normalizeDesktopSettings(
+      { model: 'next-model' },
+      { language: 'japanese' },
+    ).language).toBe('japanese');
+  });
+
+  it('keeps Agent Teams opt-in and persists an explicit boolean', () => {
+    expect(normalizeDesktopSettings({}).agentTeamsEnabled).toBe(false);
+    expect(normalizeDesktopSettings({ agentTeamsEnabled: true }).agentTeamsEnabled).toBe(true);
+    expect(normalizeDesktopSettings(
+      { model: 'next-model' },
+      { agentTeamsEnabled: true },
+    ).agentTeamsEnabled).toBe(true);
+  });
+
   it('keeps Library Agent tools opt-in and normalizes the persisted switch', () => {
     expect(normalizeDesktopSettings({}).library).toEqual({
       enabled: false,
@@ -130,6 +148,7 @@ describe('desktop settings', () => {
   });
 
   it('normalizes Moss auto-memory settings and legacy aliases', () => {
+    expect(normalizeDesktopSettings({}).autoMemory.extractionIntervalTurns).toBe(5);
     expect(normalizeDesktopSettings({
       autoMemoryEnabled: false,
       autoDreamEnabled: true,
@@ -291,5 +310,37 @@ describe('desktop settings', () => {
     expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
     expect(persisted.remoteDirect.userName).toBe('Moss User');
     expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
+  });
+
+  it('persists the WebSearch mode without writing provider credentials', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-desktop-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    const saved = store.save({
+      ...store.value,
+      webSearch: {
+        mode: 'auto',
+        tavilyApiKey: 'tvly-private-value',
+        braveApiKey: 'brave-private-value',
+      },
+    });
+
+    expect(saved.value.webSearch).toMatchObject({
+      mode: 'auto',
+      tavilyApiKey: 'tvly-private-value',
+      braveApiKey: 'brave-private-value',
+    });
+    expect(store.getPayload().webSearch).toMatchObject({
+      tavilyApiKey: '',
+      braveApiKey: '',
+      tavilyConfigured: true,
+      braveConfigured: true,
+    });
+    const serialized = fs.readFileSync(settingsPath, 'utf8');
+    expect(serialized).not.toContain('tvly-private-value');
+    expect(serialized).not.toContain('brave-private-value');
+    expect(JSON.parse(serialized).webSearch).toEqual({ mode: 'auto' });
   });
 });

@@ -1,10 +1,9 @@
 /**
  * Memory type taxonomy.
  *
- * Memories are constrained to four types capturing context NOT derivable
- * from the current project state. Code patterns, architecture, git history,
- * and file structure are derivable (via grep/git/AGENTS.md) and should NOT
- * be saved as memories.
+ * `project` remains parseable for legacy files, but new global memories are
+ * constrained to user / feedback / reference. Project-scoped facts belong in
+ * Moss project memory instead of the cross-project global directory.
  *
  * The prompt text is kept flat so edits do not require reasoning through a
  * helper's conditional rendering.
@@ -14,6 +13,12 @@ export const MEMORY_TYPES = [
   'user',
   'feedback',
   'project',
+  'reference',
+] as const
+
+export const GLOBAL_MEMORY_TYPES = [
+  'user',
+  'feedback',
   'reference',
 ] as const
 
@@ -35,7 +40,7 @@ export function parseMemoryType(raw: unknown): MemoryType | undefined {
 export const TYPES_SECTION_INDIVIDUAL: readonly string[] = [
   '## Types of memory',
   '',
-  'There are several discrete types of memory that you can store in your memory system:',
+  'Global memory supports only these cross-project memory types:',
   '',
   '<types>',
   '<type>',
@@ -69,20 +74,6 @@ export const TYPES_SECTION_INDIVIDUAL: readonly string[] = [
   '    </examples>',
   '</type>',
   '<type>',
-  '    <name>project</name>',
-  '    <description>Information that you learn about ongoing work, goals, initiatives, bugs, or incidents within the project that is not otherwise derivable from the code or git history. Project memories help you understand the broader context and motivation behind the work the user is doing within this working directory.</description>',
-  '    <when_to_save>When you learn who is doing what, why, or by when. These states change relatively quickly so try to keep your understanding of this up to date. Always convert relative dates in user messages to absolute dates when saving (e.g., "Thursday" → "2026-03-05"), so the memory remains interpretable after time passes.</when_to_save>',
-  "    <how_to_use>Use these memories to more fully understand the details and nuance behind the user's request and make better informed suggestions.</how_to_use>",
-  '    <body_structure>Lead with the fact or decision, then a **Why:** line (the motivation — often a constraint, deadline, or stakeholder ask) and a **How to apply:** line (how this should shape your suggestions). Project memories decay fast, so the why helps future-you judge whether the memory is still load-bearing.</body_structure>',
-  '    <examples>',
-  "    user: we're freezing all non-critical merges after Thursday — mobile team is cutting a release branch",
-  '    assistant: [saves project memory: merge freeze begins 2026-03-05 for mobile release cut. Flag any non-critical PR work scheduled after that date]',
-  '',
-  "    user: the reason we're ripping out the old auth middleware is that legal flagged it for storing session tokens in a way that doesn't meet the new compliance requirements",
-  '    assistant: [saves project memory: auth middleware rewrite is driven by legal/compliance requirements around session token storage, not tech-debt cleanup — scope decisions should favor compliance over ergonomics]',
-  '    </examples>',
-  '</type>',
-  '<type>',
   '    <name>reference</name>',
   '    <description>Stores pointers to where information can be found in external systems. These memories allow you to remember where to look to find up-to-date information outside of the project directory.</description>',
   '    <when_to_save>When you learn about resources in external systems and their purpose. For example, that bugs are tracked in a specific project in Linear or that feedback can be found in a specific Slack channel.</when_to_save>',
@@ -97,6 +88,19 @@ export const TYPES_SECTION_INDIVIDUAL: readonly string[] = [
   '</type>',
   '</types>',
   '',
+]
+
+export const GLOBAL_MEMORY_ADMISSION_SECTION: readonly string[] = [
+  '## Global-memory admission gate',
+  '',
+  'Save a global memory only when every condition below is true:',
+  '',
+  '- It will remain useful in future conversations across unrelated projects, not only in the current repository, task, incident, or setup attempt.',
+  '- It is expected to stay valid for weeks or months, or the user explicitly stated a durable personal preference.',
+  '- It cannot be recovered reliably from source code, git history, project instructions, documentation, or the current state of an external system.',
+  '- It changes how you should collaborate with this user or points to a stable external resource they repeatedly use.',
+  '',
+  'Project-specific decisions, status, failures, deadlines, paths, implementation details, and work history belong in Moss Project Memory, never global memory. Do not create new global memories with `type: project`. When uncertain, do not save anything.',
 ]
 
 /**
@@ -185,9 +189,9 @@ export const MEMORY_FRONTMATTER_EXAMPLE: readonly string[] = [
   '---',
   'name: {{memory name}}',
   'description: {{one-line description — used to decide relevance in future conversations, so be specific}}',
-  `type: {{${MEMORY_TYPES.join(', ')}}}`,
+  `type: {{${GLOBAL_MEMORY_TYPES.join(', ')}}}`,
   '---',
   '',
-  '{{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}',
+  '{{memory content — for feedback memories, structure as: rule, then **Why:** and **How to apply:** lines}}',
   '```',
 ]

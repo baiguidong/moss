@@ -4,6 +4,10 @@ import { roughTokenCountEstimation } from '../../services/tokenEstimation.js'
 import { getMossConfigHomeDir } from '../../utils/envUtils.js'
 import { getErrnoCode, toError } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
+import {
+  getMemoryLanguageInstruction,
+  isChineseResponseLanguage,
+} from '../responseLanguage.js'
 
 const MAX_SECTION_LENGTH = 2000
 const MAX_TOTAL_SESSION_MEMORY_TOKENS = 12000
@@ -40,7 +44,55 @@ _If the user asked a specific output such as an answer to a question, a table, o
 _Step by step, what was attempted, done? Very terse summary for each step_
 `
 
+export const DEFAULT_SESSION_MEMORY_TEMPLATE_ZH = `
+# 会话标题
+_用 5-10 个词概括本次会话，简短明确，不写空话_
+
+# 当前状态
+_当前正在处理什么？哪些任务尚未完成？下一步是什么？_
+
+# 任务说明
+_用户要求构建或完成什么？有哪些设计决定和必要背景？_
+
+# 文件与函数
+_哪些文件最重要？它们包含什么，为什么相关？_
+
+# 工作流程
+_通常按什么顺序运行哪些命令？输出不直观时应如何理解？_
+
+# 错误与修正
+_遇到了哪些错误，如何修复？用户纠正了什么？哪些失败方案不应重试？_
+
+# 代码库与系统说明
+_重要系统组件有哪些？它们如何工作和协作？_
+
+# 经验
+_哪些做法有效，哪些无效，应避免什么？不要重复其他章节的内容_
+
+# 关键结果
+_若用户要求具体答案、表格或文档，在这里保留完整准确的结果_
+
+# 工作记录
+_按步骤简要记录尝试和已完成事项_
+`
+
+export function getDefaultSessionMemoryTemplate(): string {
+  return isChineseResponseLanguage()
+    ? DEFAULT_SESSION_MEMORY_TEMPLATE_ZH
+    : DEFAULT_SESSION_MEMORY_TEMPLATE
+}
+
 function getDefaultUpdatePrompt(): string {
+  const sectionHeaderExample = isChineseResponseLanguage()
+    ? '# 任务说明'
+    : '# Task specification'
+  const currentStateHeading = isChineseResponseLanguage()
+    ? '当前状态'
+    : 'Current State'
+  const keyResultsHeading = isChineseResponseLanguage()
+    ? '关键结果'
+    : 'Key results'
+
   return `IMPORTANT: This message and these instructions are NOT part of the actual user conversation. Do NOT include any references to "note-taking", "session notes extraction", or these update instructions in the notes content.
 
 Based on the user conversation above (EXCLUDING this note-taking instruction message as well as system prompt, claude.md entries, or any past session summaries), update the session notes file.
@@ -54,7 +106,7 @@ Your ONLY task is to use the Edit tool to update the notes file, then stop. You 
 
 CRITICAL RULES FOR EDITING:
 - The file must maintain its exact structure with all sections, headers, and italic descriptions intact
--- NEVER modify, delete, or add section headers (the lines starting with '#' like # Task specification)
+-- NEVER modify, delete, or add section headers (the lines starting with '#' like ${sectionHeaderExample})
 -- NEVER modify or delete the italic _section description_ lines (these are the lines in italics immediately following each header - they start and end with underscores)
 -- The italic _section descriptions_ are TEMPLATE INSTRUCTIONS that must be preserved exactly as-is - they guide what content belongs in each section
 -- ONLY update the actual content that appears BELOW the italic _section descriptions_ within each existing section
@@ -62,11 +114,11 @@ CRITICAL RULES FOR EDITING:
 - Do NOT reference this note-taking process or instructions anywhere in the notes
 - It's OK to skip updating a section if there are no substantial new insights to add. Do not add filler content like "No info yet", just leave sections blank/unedited if appropriate.
 - Write DETAILED, INFO-DENSE content for each section - include specifics like file paths, function names, error messages, exact commands, technical details, etc.
-- For "Key results", include the complete, exact output the user requested (e.g., full table, full answer, etc.)
+- For "${keyResultsHeading}", include the complete, exact output the user requested (e.g., full table, full answer, etc.)
 - Do not include information that's already in the project instruction files included in the context
 - Keep each section under ~${MAX_SECTION_LENGTH} tokens/words - if a section is approaching this limit, condense it by cycling out less important details while preserving the most critical information
 - Focus on actionable, specific information that would help someone understand or recreate the work discussed in the conversation
-- IMPORTANT: Always update "Current State" to reflect the most recent work - this is critical for continuity after compaction
+- IMPORTANT: Always update "${currentStateHeading}" to reflect the most recent work - this is critical for continuity after compaction
 
 Use the Edit tool with file_path: {{notesPath}}
 
@@ -96,10 +148,10 @@ export async function loadSessionMemoryTemplate(): Promise<string> {
   } catch (e: unknown) {
     const code = getErrnoCode(e)
     if (code === 'ENOENT') {
-      return DEFAULT_SESSION_MEMORY_TEMPLATE
+      return getDefaultSessionMemoryTemplate()
     }
     logError(toError(e))
-    return DEFAULT_SESSION_MEMORY_TEMPLATE
+    return getDefaultSessionMemoryTemplate()
   }
 }
 
@@ -182,7 +234,7 @@ function generateSectionReminders(
 
   if (overBudget) {
     parts.push(
-      `\n\nCRITICAL: The session memory file is currently ~${totalTokens} tokens, which exceeds the maximum of ${MAX_TOTAL_SESSION_MEMORY_TOKENS} tokens. You MUST condense the file to fit within this budget. Aggressively shorten oversized sections by removing less important details, merging related items, and summarizing older entries. Prioritize keeping "Current State" and "Errors & Corrections" accurate and detailed.`,
+      `\n\nCRITICAL: The session memory file is currently ~${totalTokens} tokens, which exceeds the maximum of ${MAX_TOTAL_SESSION_MEMORY_TOKENS} tokens. You MUST condense the file to fit within this budget. Aggressively shorten oversized sections by removing less important details, merging related items, and summarizing older entries. Prioritize keeping the current state and error/correction sections accurate and detailed.`,
     )
   }
 
@@ -220,7 +272,9 @@ function substituteVariables(
 export async function isSessionMemoryEmpty(content: string): Promise<boolean> {
   const template = await loadSessionMemoryTemplate()
   // Compare trimmed content to detect if it's just the template
-  return content.trim() === template.trim()
+  const normalized = content.trim()
+  return [template, DEFAULT_SESSION_MEMORY_TEMPLATE, DEFAULT_SESSION_MEMORY_TEMPLATE_ZH]
+    .some(candidate => normalized === candidate.trim())
 }
 
 export async function buildSessionMemoryUpdatePrompt(
@@ -243,7 +297,7 @@ export async function buildSessionMemoryUpdatePrompt(
   const basePrompt = substituteVariables(promptTemplate, variables)
 
   // Add section size reminders and/or total budget warnings
-  return basePrompt + sectionReminders
+  return `${basePrompt}${sectionReminders}\n\n${getMemoryLanguageInstruction()}`
 }
 
 /**

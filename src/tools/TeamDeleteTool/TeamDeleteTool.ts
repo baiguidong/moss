@@ -6,10 +6,10 @@ import { buildTool, type ToolDef } from '../../Tool.js'
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
-import { TEAM_LEAD_NAME } from '../../utils/swarm/constants.js'
 import {
   cleanupTeamDirectories,
   readTeamFile,
+  type TeamTerminalReceipt,
   unregisterTeamForSessionCleanup,
 } from '../../utils/swarm/teamHelpers.js'
 import { clearTeammateColors } from '../../utils/swarm/teammateLayoutManager.js'
@@ -25,6 +25,9 @@ export type Output = {
   success: boolean
   message: string
   team_name?: string
+  incarnation_id?: string
+  final_tasks?: TeamTerminalReceipt['tasks']
+  task_list_snapshot_at?: string
 }
 
 export type Input = z.infer<InputSchema>
@@ -72,6 +75,7 @@ export const TeamDeleteTool: Tool<InputSchema, Output> = buildTool({
     const { setAppState, getAppState } = context
     const appState = getAppState()
     const teamName = appState.teamContext?.teamName
+    let terminalReceipt: TeamTerminalReceipt | undefined
 
     if (teamName) {
       // Read team config to check for active members
@@ -79,26 +83,24 @@ export const TeamDeleteTool: Tool<InputSchema, Output> = buildTool({
       if (teamFile) {
         // Filter out the team lead - only count non-lead members
         const nonLeadMembers = teamFile.members.filter(
-          m => m.name !== TEAM_LEAD_NAME,
+          m => m.agentId !== teamFile.leadAgentId,
         )
 
-        // Separate truly active members from idle/dead ones
-        // Members with isActive === false are idle (finished their turn or crashed)
-        const activeMembers = nonLeadMembers.filter(m => m.isActive !== false)
-
-        if (activeMembers.length > 0) {
-          const memberNames = activeMembers.map(m => m.name).join(', ')
+        // Idle teammates are still alive and polling their mailbox. Cleanup is
+        // only safe once shutdown approval has removed them from the roster.
+        if (nonLeadMembers.length > 0) {
+          const memberNames = nonLeadMembers.map(m => m.name).join(', ')
           return {
             data: {
               success: false,
-              message: `Cannot cleanup team with ${activeMembers.length} active member(s): ${memberNames}. Use requestShutdown to gracefully terminate teammates first.`,
+              message: `Cannot cleanup team with ${nonLeadMembers.length} registered member(s): ${memberNames}. Use requestShutdown and wait for approval first.`,
               team_name: teamName,
             },
           }
         }
       }
 
-      await cleanupTeamDirectories(teamName)
+      const receipt = await cleanupTeamDirectories(teamName, { reason: 'completed' })
       // Already cleaned — don't try again on gracefulShutdown.
       unregisterTeamForSessionCleanup(teamName)
 
@@ -113,6 +115,7 @@ export const TeamDeleteTool: Tool<InputSchema, Output> = buildTool({
         team_name:
           teamName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       })
+      terminalReceipt = receipt
     }
 
     // Clear team context and inbox from app state
@@ -131,6 +134,9 @@ export const TeamDeleteTool: Tool<InputSchema, Output> = buildTool({
           ? `Cleaned up directories and worktrees for team "${teamName}"`
           : 'No team name found, nothing to clean up',
         team_name: teamName,
+        incarnation_id: terminalReceipt?.incarnationId,
+        final_tasks: terminalReceipt?.tasks,
+        task_list_snapshot_at: terminalReceipt?.capturedAt,
       },
     }
   },

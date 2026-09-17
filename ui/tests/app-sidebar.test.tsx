@@ -15,7 +15,7 @@ function renderSidebar({
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
-  activeView?: 'chat' | 'skills' | 'experts' | 'connectors';
+  activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
@@ -58,9 +58,9 @@ describe('app sidebar more menu', () => {
 
   test('builds menu entries from feature availability', () => {
     expect(getSidebarMoreViews({ libraryEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
-      .toEqual(['openim', 'audit', 'cron']);
+      .toEqual(['overview', 'openim', 'audit', 'cron']);
     expect(getSidebarMoreViews({ libraryEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['library', 'mail', 'openim', 'audit', 'cron']);
+      .toEqual(['overview', 'library', 'mail', 'openim', 'audit', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {

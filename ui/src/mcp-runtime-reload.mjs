@@ -1,11 +1,15 @@
-export function scheduleMcpRuntimeReload(sessionRecords, disposeRuntime) {
+export function scheduleMcpRuntimeReload(
+  sessionRecords,
+  disposeRuntime,
+  shouldDefer = () => false,
+) {
   let resetSessionCount = 0;
   let skippedBusySessionCount = 0;
 
   for (const sessionRecord of sessionRecords) {
     if (sessionRecord.agentMode === 'remote-direct') continue;
     if (!sessionRecord.runtime) continue;
-    if (sessionRecord.busy) {
+    if (sessionRecord.busy || shouldDefer(sessionRecord)) {
       sessionRecord.pendingMcpRuntimeReload = true;
       skippedBusySessionCount += 1;
       continue;

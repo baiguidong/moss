@@ -38,11 +38,13 @@ This creates:
 
 1. **Create a team** with TeamCreate - this creates both the team and its task list
 2. **Create tasks** using the Task tools (TaskCreate, TaskList, etc.) - they automatically use the team's task list
-3. **Spawn teammates** using the Agent tool with \`team_name\` and \`name\` parameters to create teammates that join the team
-4. **Assign tasks** using TaskUpdate with \`owner\` to give tasks to idle teammates
+3. **Spawn teammates** using the Agent tool with \`team_name\`, \`name\`, and the existing \`task_id\` returned by TaskCreate. Each teammate must be bound to exactly one member task
+4. **Task binding assigns ownership** automatically. Use TaskUpdate with \`owner\` only when deliberately reassigning later work
 5. **Teammates work on assigned tasks** and mark them completed via TaskUpdate
 6. **Teammates go idle between turns** - after each turn, teammates automatically go idle and send a notification. IMPORTANT: Be patient with idle teammates! Don't comment on their idleness until it actually impacts your work.
-7. **Shutdown your team** - when the task is completed, gracefully shut down your teammates via SendMessage with \`message: {type: "shutdown_request"}\`.
+7. **Shutdown your team** - when the task is completed, gracefully shut down every teammate via SendMessage with \`message: {type: "shutdown_request"}\`. Wait for each approval, then call TeamDelete to archive the final task state and release the live team name.
+
+The shared task list must represent the actual parallel workflow. Create one task per independently assigned teammate or work unit; never replace those tasks with one umbrella task owned by the team lead. If the lead must synthesize a final result, create a separate lead-owned summary task and make every member task block it. Pass each member task's ID as \`task_id\` when calling Agent. The runtime can recover a \`Task #N\` reference from the prompt for compatibility, but explicit \`task_id\` is required for a reliable one-task/one-member DAG.
 
 ## Task Ownership
 
@@ -95,10 +97,10 @@ Use the Read tool to read ~/.moss/teams/{team-name}/config.json
 Teams share a task list that all teammates can access at \`~/.moss/tasks/{team-name}/\`.
 
 Teammates should:
-1. Check TaskList periodically, **especially after completing each task**, to find available work or see newly unblocked tasks
-2. Claim unassigned, unblocked tasks with TaskUpdate (set \`owner\` to your name). **Prefer tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones
+1. Work only on the task bound to you by the team lead, unless the lead explicitly sends a follow-up assignment
+2. Never claim a lead-owned summary task or another member's task after completing your bound task
 3. Create new tasks with \`TaskCreate\` when identifying additional work
-4. Mark tasks as completed with \`TaskUpdate\` when done, then check TaskList for next work
+4. Mark the bound task as completed with \`TaskUpdate\` when done, report to the team lead, then wait
 5. Coordinate with other teammates by reading the task list status
 6. If all available tasks are blocked, notify the team lead or help resolve blocking tasks
 

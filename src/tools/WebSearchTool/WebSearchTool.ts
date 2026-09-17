@@ -2,18 +2,32 @@ import type {
   BetaContentBlock,
   BetaWebSearchTool20250305,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
-import { getAPIProvider } from 'src/utils/model/providers.js'
 import type { PermissionResult } from 'src/utils/permissions/PermissionResult.js'
 import { z } from 'zod/v4'
 import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import { queryModelWithStreaming } from '../../services/api/claude.js'
-import { buildTool, type ToolDef } from '../../Tool.js'
+import {
+  buildTool,
+  type ToolCallProgress,
+  type ToolDef,
+  type ToolUseContext,
+} from '../../Tool.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { logError } from '../../utils/log.js'
 import { createUserMessage } from '../../utils/messages.js'
 import { getMainLoopModel, getSmallFastModel } from '../../utils/model/model.js'
 import { jsonParse, jsonStringify } from '../../utils/slowOperations.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
+import {
+  getApiKeyForProvider,
+  getConfiguredWebSearchSettings,
+  getWebSearchCandidates,
+  isWebSearchEnabledForModel,
+  makeWebSearchUnavailableOutput,
+  markNativeWebSearchUnsupported,
+  searchWithExternalProvider,
+  shouldFallbackFromNativeError,
+} from './backend.js'
 import { getWebSearchPrompt, WEB_SEARCH_TOOL_NAME } from './prompt.js'
 import {
   getToolUseSummary,
@@ -37,12 +51,13 @@ const inputSchema = lazySchema(() =>
 )
 type InputSchema = ReturnType<typeof inputSchema>
 
-type Input = z.infer<InputSchema>
+export type Input = z.infer<InputSchema>
 
 const searchResultSchema = lazySchema(() => {
   const searchHitSchema = z.object({
     title: z.string().describe('The title of the search result'),
     url: z.string().describe('The URL of the search result'),
+    snippet: z.string().optional().describe('A relevant result excerpt'),
   })
 
   return z.object({
@@ -149,6 +164,109 @@ function makeOutputFromSearchResponse(
   }
 }
 
+async function callNativeWebSearch(
+  input: Input,
+  context: ToolUseContext,
+  onProgress: ToolCallProgress<WebSearchProgress> | undefined,
+  startTime: number,
+) {
+  const { query } = input
+  const userMessage = createUserMessage({
+    content: 'Perform a web search for the query: ' + query,
+  })
+  const useFastWebSearch = getAdvancedSetting('moss_fast_web_search')
+  const appState = context.getAppState()
+  const queryStream = queryModelWithStreaming({
+    messages: [userMessage],
+    systemPrompt: asSystemPrompt([
+      'You are an assistant for performing a web search tool use',
+    ]),
+    thinkingConfig: useFastWebSearch
+      ? { type: 'disabled' as const }
+      : context.options.thinkingConfig,
+    tools: [],
+    signal: context.abortController.signal,
+    options: {
+      getToolPermissionContext: async () => appState.toolPermissionContext,
+      model: useFastWebSearch ? getSmallFastModel() : context.options.mainLoopModel,
+      toolChoice: useFastWebSearch ? { type: 'tool', name: 'web_search' } : undefined,
+      isNonInteractiveSession: context.options.isNonInteractiveSession,
+      hasAppendSystemPrompt: !!context.options.appendSystemPrompt,
+      extraToolSchemas: [makeToolSchema(input)],
+      querySource: 'web_search_tool',
+      agents: context.options.agentDefinitions.activeAgents,
+      mcpTools: [],
+      agentId: context.agentId,
+      effortValue: appState.effortValue,
+    },
+  })
+
+  const allContentBlocks: BetaContentBlock[] = []
+  let currentToolUseId: string | null = null
+  let currentToolUseJson = ''
+  let progressCounter = 0
+  const toolUseQueries = new Map<string, string>()
+
+  for await (const event of queryStream) {
+    if (event.type === 'assistant') {
+      allContentBlocks.push(...event.message.content)
+      continue
+    }
+    if (
+      event.type === 'stream_event'
+      && event.event?.type === 'content_block_start'
+    ) {
+      const contentBlock = event.event.content_block
+      if (contentBlock?.type === 'server_tool_use') {
+        currentToolUseId = contentBlock.id
+        currentToolUseJson = ''
+        continue
+      }
+      if (contentBlock?.type === 'web_search_tool_result') {
+        const actualQuery = toolUseQueries.get(contentBlock.tool_use_id) || query
+        progressCounter += 1
+        onProgress?.({
+          toolUseID: contentBlock.tool_use_id || `search-progress-${progressCounter}`,
+          data: {
+            type: 'search_results_received',
+            resultCount: Array.isArray(contentBlock.content) ? contentBlock.content.length : 0,
+            query: actualQuery,
+          },
+        })
+      }
+    }
+    if (
+      currentToolUseId
+      && event.type === 'stream_event'
+      && event.event?.type === 'content_block_delta'
+    ) {
+      const delta = event.event.delta
+      if (delta?.type !== 'input_json_delta' || !delta.partial_json) continue
+      currentToolUseJson += delta.partial_json
+      try {
+        const queryMatch = currentToolUseJson.match(/"query"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+        if (!queryMatch?.[1]) continue
+        const actualQuery = jsonParse('"' + queryMatch[1] + '"')
+        if (toolUseQueries.get(currentToolUseId) === actualQuery) continue
+        toolUseQueries.set(currentToolUseId, actualQuery)
+        progressCounter += 1
+        onProgress?.({
+          toolUseID: `search-progress-${progressCounter}`,
+          data: { type: 'query_update', query: actualQuery },
+        })
+      } catch {}
+    }
+  }
+
+  return {
+    data: makeOutputFromSearchResponse(
+      allContentBlocks,
+      query,
+      (performance.now() - startTime) / 1000,
+    ),
+  }
+}
+
 export const WebSearchTool = buildTool({
   name: WEB_SEARCH_TOOL_NAME,
   searchHint: 'search the web for current information',
@@ -166,30 +284,7 @@ export const WebSearchTool = buildTool({
     return summary ? `Searching for ${summary}` : 'Searching the web'
   },
   isEnabled() {
-    const provider = getAPIProvider()
-    const model = getMainLoopModel()
-
-    // Enable for firstParty
-    if (provider === 'firstParty') {
-      return true
-    }
-
-    // Enable for Vertex AI with supported models (Claude 4.0+)
-    if (provider === 'vertex') {
-      const supportsWebSearch =
-        model.includes('claude-opus-4') ||
-        model.includes('claude-sonnet-4') ||
-        model.includes('claude-haiku-4')
-
-      return supportsWebSearch
-    }
-
-    // Foundry only ships models that already support Web Search
-    if (provider === 'foundry') {
-      return true
-    }
-
-    return false
+    return isWebSearchEnabledForModel(getMainLoopModel())
   },
   get inputSchema(): InputSchema {
     return inputSchema()
@@ -250,147 +345,53 @@ export const WebSearchTool = buildTool({
   },
   async call(input, context, _canUseTool, _parentMessage, onProgress) {
     const startTime = performance.now()
-    const { query } = input
-    const userMessage = createUserMessage({
-      content: 'Perform a web search for the query: ' + query,
-    })
-    const toolSchema = makeToolSchema(input)
+    const settings = getConfiguredWebSearchSettings(context.options.mainLoopModel)
+    const candidates = getWebSearchCandidates(context.options.mainLoopModel, settings)
+    const failures: string[] = []
 
-    const useHaiku = getAdvancedSetting('moss_fast_web_search')
-
-    const appState = context.getAppState()
-    const queryStream = queryModelWithStreaming({
-      messages: [userMessage],
-      systemPrompt: asSystemPrompt([
-        'You are an assistant for performing a web search tool use',
-      ]),
-      thinkingConfig: useHaiku
-        ? { type: 'disabled' as const }
-        : context.options.thinkingConfig,
-      tools: [],
-      signal: context.abortController.signal,
-      options: {
-        getToolPermissionContext: async () => appState.toolPermissionContext,
-        model: useHaiku ? getSmallFastModel() : context.options.mainLoopModel,
-        toolChoice: useHaiku ? { type: 'tool', name: 'web_search' } : undefined,
-        isNonInteractiveSession: context.options.isNonInteractiveSession,
-        hasAppendSystemPrompt: !!context.options.appendSystemPrompt,
-        extraToolSchemas: [toolSchema],
-        querySource: 'web_search_tool',
-        agents: context.options.agentDefinitions.activeAgents,
-        mcpTools: [],
-        agentId: context.agentId,
-        effortValue: appState.effortValue,
-      },
-    })
-
-    const allContentBlocks: BetaContentBlock[] = []
-    let currentToolUseId = null
-    let currentToolUseJson = ''
-    let progressCounter = 0
-    const toolUseQueries = new Map() // Map of tool_use_id to query
-
-    for await (const event of queryStream) {
-      if (event.type === 'assistant') {
-        allContentBlocks.push(...event.message.content)
-        continue
-      }
-
-      // Track tool use ID when server_tool_use starts
-      if (
-        event.type === 'stream_event' &&
-        event.event?.type === 'content_block_start'
-      ) {
-        const contentBlock = event.event.content_block
-        if (contentBlock && contentBlock.type === 'server_tool_use') {
-          currentToolUseId = contentBlock.id
-          currentToolUseJson = ''
-          // Note: The ServerToolUseBlock doesn't contain input.query
-          // The actual query comes through input_json_delta events
-          continue
+    for (const provider of candidates) {
+      try {
+        if (provider === 'native') {
+          return await callNativeWebSearch(input, context, onProgress, startTime)
         }
-      }
-
-      // Accumulate JSON for current tool use
-      if (
-        currentToolUseId &&
-        event.type === 'stream_event' &&
-        event.event?.type === 'content_block_delta'
-      ) {
-        const delta = event.event.delta
-        if (delta?.type === 'input_json_delta' && delta.partial_json) {
-          currentToolUseJson += delta.partial_json
-
-          // Try to extract query from partial JSON for progress updates
-          try {
-            // Look for a complete query field
-            const queryMatch = currentToolUseJson.match(
-              /"query"\s*:\s*"((?:[^"\\]|\\.)*)"/,
-            )
-            if (queryMatch && queryMatch[1]) {
-              // The regex properly handles escaped characters
-              const query = jsonParse('"' + queryMatch[1] + '"')
-
-              if (
-                !toolUseQueries.has(currentToolUseId) ||
-                toolUseQueries.get(currentToolUseId) !== query
-              ) {
-                toolUseQueries.set(currentToolUseId, query)
-                progressCounter++
-                if (onProgress) {
-                  onProgress({
-                    toolUseID: `search-progress-${progressCounter}`,
-                    data: {
-                      type: 'query_update',
-                      query,
-                    },
-                  })
-                }
-              }
-            }
-          } catch {
-            // Ignore parsing errors for partial JSON
-          }
+        const apiKey = getApiKeyForProvider(provider, settings)
+        if (!apiKey) continue
+        const data = await searchWithExternalProvider(
+          provider,
+          input,
+          apiKey,
+          context.abortController.signal,
+        )
+        onProgress?.({
+          toolUseID: `${provider}-web-search`,
+          data: {
+            type: 'search_results_received',
+            resultCount: typeof data.results[1] === 'object'
+              ? data.results[1].content.length
+              : 0,
+            query: input.query,
+          },
+        })
+        return { data }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push(`${provider}: ${message}`)
+        if (provider === 'native' && shouldFallbackFromNativeError(error)) {
+          markNativeWebSearchUnsupported(context.options.mainLoopModel)
         }
-      }
-
-      // Yield progress when search results come in
-      if (
-        event.type === 'stream_event' &&
-        event.event?.type === 'content_block_start'
-      ) {
-        const contentBlock = event.event.content_block
-        if (contentBlock && contentBlock.type === 'web_search_tool_result') {
-          // Get the actual query that was used for this search
-          const toolUseId = contentBlock.tool_use_id
-          const actualQuery = toolUseQueries.get(toolUseId) || query
-          const content = contentBlock.content
-
-          progressCounter++
-          if (onProgress) {
-            onProgress({
-              toolUseID: toolUseId || `search-progress-${progressCounter}`,
-              data: {
-                type: 'search_results_received',
-                resultCount: Array.isArray(content) ? content.length : 0,
-                query: actualQuery,
-              },
-            })
-          }
-        }
+        if (settings.mode !== 'auto') throw error
       }
     }
 
-    // Process the final result
-    const endTime = performance.now()
-    const durationSeconds = (endTime - startTime) / 1000
-
-    const data = makeOutputFromSearchResponse(
-      allContentBlocks,
-      query,
-      durationSeconds,
-    )
-    return { data }
+    return {
+      data: makeWebSearchUnavailableOutput(
+        input.query,
+        (performance.now() - startTime) / 1000,
+        failures.length > 0
+          ? `Web search failed: ${failures.join('; ')}`
+          : 'Web search is not configured for this model endpoint.',
+      ),
+    }
   },
   mapToolResultToToolResultBlockParam(output, toolUseID) {
     const { query, results } = output

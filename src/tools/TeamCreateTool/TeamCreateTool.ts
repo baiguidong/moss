@@ -1,4 +1,5 @@
 import { z } from 'zod/v4'
+import { randomUUID } from 'node:crypto'
 import { getSessionId } from '../../bootstrap/state.js'
 import { logEvent } from '../../services/analytics/index.js'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../../services/analytics/metadata.js'
@@ -21,6 +22,7 @@ import {
   readTeamFile,
   registerTeamForSessionCleanup,
   sanitizeName,
+  withTeamNameLock,
   writeTeamFileAsync,
 } from '../../utils/swarm/teamHelpers.js'
 import { assignTeammateColor } from '../../utils/swarm/teammateLayoutManager.js'
@@ -58,20 +60,6 @@ export type Output = {
 }
 
 export type Input = z.infer<InputSchema>
-
-/**
- * Generates a unique team name by checking if the provided name already exists.
- * If the name already exists, generates a new word slug.
- */
-function generateUniqueTeamName(providedName: string): string {
-  // If the team doesn't exist, use the provided name
-  if (!readTeamFile(providedName)) {
-    return providedName
-  }
-
-  // Team exists, generate a new unique name
-  return generateWordSlug()
-}
 
 export const TeamCreateTool: Tool<InputSchema, Output> = buildTool({
   name: TEAM_CREATE_TOOL_NAME,
@@ -138,11 +126,6 @@ export const TeamCreateTool: Tool<InputSchema, Output> = buildTool({
       )
     }
 
-    // If team already exists, generate a unique name instead of failing
-    const finalTeamName = generateUniqueTeamName(team_name)
-
-    // Generate a deterministic agent ID for the team lead
-    const leadAgentId = formatAgentId(TEAM_LEAD_NAME, finalTeamName)
     const leadAgentType = agent_type || TEAM_LEAD_NAME
     // Get the team lead's current model from AppState (handles session model, settings, CLI override)
     const leadModel = parseUserSpecifiedModel(
@@ -150,30 +133,51 @@ export const TeamCreateTool: Tool<InputSchema, Output> = buildTool({
         appState.mainLoopModel ??
         getDefaultMainLoopModel(),
     )
+    const cwd = getCwd()
 
-    const teamFilePath = getTeamFilePath(finalTeamName)
+    type CreatedTeam = {
+      finalTeamName: string
+      leadAgentId: string
+      teamFilePath: string
+    }
+    let candidateName = team_name
+    let createdTeam: CreatedTeam | undefined
+    while (!createdTeam) {
+      createdTeam = await withTeamNameLock(candidateName, async () => {
+        if (readTeamFile(candidateName)) return undefined
 
-    const teamFile: TeamFile = {
-      name: finalTeamName,
-      description: _description,
-      createdAt: Date.now(),
-      leadAgentId,
-      leadSessionId: getSessionId(), // Store actual session ID for team discovery
-      members: [
-        {
-          agentId: leadAgentId,
-          name: TEAM_LEAD_NAME,
-          agentType: leadAgentType,
-          model: leadModel,
-          joinedAt: Date.now(),
-          tmuxPaneId: '',
-          cwd: getCwd(),
-          subscriptions: [],
-        },
-      ],
+        const finalTeamName = candidateName
+        const leadAgentId = formatAgentId(TEAM_LEAD_NAME, finalTeamName)
+        const teamFilePath = getTeamFilePath(finalTeamName)
+        const createdAt = Date.now()
+        const teamFile: TeamFile = {
+          name: finalTeamName,
+          description: _description,
+          createdAt,
+          incarnationId: randomUUID(),
+          leadAgentId,
+          leadSessionId: getSessionId(),
+          members: [
+            {
+              agentId: leadAgentId,
+              name: TEAM_LEAD_NAME,
+              agentType: leadAgentType,
+              model: leadModel,
+              joinedAt: createdAt,
+              tmuxPaneId: '',
+              cwd,
+              subscriptions: [],
+            },
+          ],
+        }
+
+        await writeTeamFileAsync(finalTeamName, teamFile)
+        return { finalTeamName, leadAgentId, teamFilePath }
+      })
+      if (!createdTeam) candidateName = generateWordSlug()
     }
 
-    await writeTeamFileAsync(finalTeamName, teamFile)
+    const { finalTeamName, leadAgentId, teamFilePath } = createdTeam
     // Track for session-end cleanup — teams were left on disk forever
     // unless explicitly TeamDelete'd (gh-32730).
     registerTeamForSessionCleanup(finalTeamName)
@@ -206,7 +210,7 @@ export const TeamCreateTool: Tool<InputSchema, Output> = buildTool({
             color: assignTeammateColor(leadAgentId),
             tmuxSessionName: '',
             tmuxPaneId: '',
-            cwd: getCwd(),
+            cwd,
             spawnedAt: Date.now(),
           },
         },

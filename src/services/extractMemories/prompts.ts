@@ -10,6 +10,7 @@
  */
 
 import {
+  GLOBAL_MEMORY_ADMISSION_SECTION,
   MEMORY_FRONTMATTER_EXAMPLE,
   TYPES_SECTION_INDIVIDUAL,
   WHAT_NOT_TO_SAVE_SECTION,
@@ -20,6 +21,7 @@ import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
 import { GLOB_TOOL_NAME } from '../../tools/GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from '../../tools/GrepTool/prompt.js'
+import { getMemoryLanguageInstruction } from '../responseLanguage.js'
 
 /**
  * Shared opener for both extract-prompt variants.
@@ -43,7 +45,7 @@ function opener(newMessageCount: number, existingMemories: string): string {
 
 /**
  * Build the extraction prompt for auto memory.
- * Four-type taxonomy, no scope guidance (single directory).
+ * Cross-project global taxonomy with a strict admission gate.
  */
 export function buildExtractAutoOnlyPrompt(
   newMessageCount: number,
@@ -70,6 +72,12 @@ export function buildExtractAutoOnlyPrompt(
     opener(newMessageCount, existingMemories),
     '',
     'If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.',
+    '',
+    '## Memory language',
+    '',
+    getMemoryLanguageInstruction(),
+    '',
+    ...GLOBAL_MEMORY_ADMISSION_SECTION,
     '',
     ...TYPES_SECTION_INDIVIDUAL,
     ...WHAT_NOT_TO_SAVE_SECTION,

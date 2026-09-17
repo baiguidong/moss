@@ -81,10 +81,17 @@ import { emitTaskTerminatedSdk } from '../sdkEventQueue.js'
 import { sleep } from '../sleep.js'
 import { jsonStringify } from '../slowOperations.js'
 import { asSystemPrompt } from '../systemPromptType.js'
-import { claimTask, listTasks, type Task, updateTask } from '../tasks.js'
+import {
+  claimTask,
+  getTaskListIdForScope,
+  listTasks,
+  type Task,
+  updateTask,
+} from '../tasks.js'
 import type { TeammateContext } from '../teammateContext.js'
 import { runWithTeammateContext } from '../teammateContext.js'
 import {
+  createShutdownApprovedMessage,
   createIdleNotification,
   getLastPeerDmSummary,
   isPermissionResponse,
@@ -104,10 +111,46 @@ import {
   sendPermissionRequestViaMailbox,
 } from './permissionSync.js'
 import { TEAMMATE_SYSTEM_PROMPT_ADDENDUM } from './teammatePromptAddendum.js'
+import {
+  removeMemberByAgentIdAsync,
+  setMemberActive,
+} from './teamHelpers.js'
 
 type SetAppStateFn = (updater: (prev: AppState) => AppState) => void
 
 const PERMISSION_POLL_INTERVAL_MS = 500
+
+async function persistMemberActivity(
+  identity: TeammateIdentity,
+  isActive: boolean,
+): Promise<void> {
+  try {
+    await setMemberActive(
+      identity.teamName,
+      identity.agentName,
+      isActive,
+    )
+  } catch (error) {
+    logForDebugging(
+      `[inProcessRunner] Failed to persist ${identity.agentId} activity: ${error}`,
+    )
+  }
+}
+
+async function sharedTaskWasExplicitlyCompleted(
+  taskListId: string,
+  taskId: string,
+): Promise<boolean> {
+  try {
+    const tasks = await listTasks(taskListId)
+    return tasks.some(task => task.id === taskId && task.status === 'completed')
+  } catch (error) {
+    logForDebugging(
+      `[inProcessRunner] Failed to refresh shared task #${taskId}: ${error}`,
+    )
+    return false
+  }
+}
 
 /**
  * Creates a canUseTool function for in-process teammates that properly resolves
@@ -446,6 +489,8 @@ export type InProcessRunnerConfig = {
   taskId: string
   /** Initial prompt for the teammate */
   prompt: string
+  /** Shared team task represented by the initial assignment. */
+  sharedTaskId?: string
   /** Optional agent definition (for specialized agents) */
   agentDefinition?: CustomAgentDefinition
   /** Teammate context for AsyncLocalStorage */
@@ -533,6 +578,22 @@ async function sendMessageToLeader(
   )
 }
 
+export async function approveIdleInProcessShutdown(
+  identity: TeammateIdentity,
+  requestId: string,
+): Promise<void> {
+  await sendMessageToLeader(
+    identity.agentName,
+    jsonStringify(createShutdownApprovedMessage({
+      requestId,
+      from: identity.agentName,
+      backendType: 'in-process',
+    })),
+    identity.color,
+    identity.teamName,
+  )
+}
+
 /**
  * Sends idle notification to the leader via file-based mailbox.
  * Uses agentName (not agentId) for consistency with process-based teammates.
@@ -595,7 +656,7 @@ function formatTaskAsPrompt(task: Task): string {
 async function tryClaimNextTask(
   taskListId: string,
   agentName: string,
-): Promise<string | undefined> {
+): Promise<{ taskId: string; prompt: string } | undefined> {
   try {
     const tasks = await listTasks(taskListId)
     const availableTask = findAvailableTask(tasks)
@@ -620,7 +681,10 @@ async function tryClaimNextTask(
       `[inProcessRunner] Claimed task #${availableTask.id}: ${availableTask.subject}`,
     )
 
-    return formatTaskAsPrompt(availableTask)
+    return {
+      taskId: availableTask.id,
+      prompt: formatTaskAsPrompt(availableTask),
+    }
   } catch (err) {
     logForDebugging(`[inProcessRunner] Error checking task list: ${err}`)
     return undefined
@@ -644,6 +708,11 @@ type WaitResult =
       summary?: string
     }
   | {
+      type: 'task_assignment'
+      taskId: string
+      message: string
+    }
+  | {
       type: 'aborted'
     }
 
@@ -655,7 +724,7 @@ type WaitResult =
  * - Abort signal
  *
  * This keeps the teammate alive in 'idle' state instead of terminating.
- * Does NOT auto-approve shutdown - the model should make that decision.
+ * Idle in-process teammates auto-approve shutdown without another model turn.
  */
 async function waitForNextPromptOrShutdown(
   identity: TeammateIdentity,
@@ -663,7 +732,7 @@ async function waitForNextPromptOrShutdown(
   taskId: string,
   getAppState: () => AppState,
   setAppState: SetAppStateFn,
-  taskListId: string,
+  taskListId?: string,
 ): Promise<WaitResult> {
   const POLL_INTERVAL_MS = 500
 
@@ -769,7 +838,7 @@ async function waitForNextPromptOrShutdown(
         )
         return {
           type: 'shutdown_request',
-          request: shutdownParsed,
+          request: shutdownParsed!,
           originalMessage: msg.text,
         }
       }
@@ -821,13 +890,17 @@ async function waitForNextPromptOrShutdown(
       // Continue polling even if one read fails
     }
 
-    // Check the team's task list for unclaimed tasks
-    const taskPrompt = await tryClaimNextTask(taskListId, identity.agentName)
-    if (taskPrompt) {
-      return {
-        type: 'new_message',
-        message: taskPrompt,
-        from: 'task-list',
+    // Legacy teammates without a bound assignment may self-claim work. A
+    // teammate spawned for a specific task waits for an explicit follow-up so
+    // it cannot consume a lead-owned aggregate or repeat another member's job.
+    if (taskListId) {
+      const taskAssignment = await tryClaimNextTask(taskListId, identity.agentName)
+      if (taskAssignment) {
+        return {
+          type: 'task_assignment',
+          taskId: taskAssignment.taskId,
+          message: taskAssignment.prompt,
+        }
       }
     }
   }
@@ -858,6 +931,7 @@ export async function runInProcessTeammate(
     identity,
     taskId,
     prompt,
+    sharedTaskId,
     description,
     agentDefinition,
     teammateContext,
@@ -976,12 +1050,11 @@ export async function runInProcessTeammate(
   )
   let currentPrompt = wrappedInitialPrompt
   let shouldExit = false
-
-  // Try to claim an available task immediately so the UI can show activity
-  // from the very start. The idle loop handles claiming for subsequent tasks.
-  // Use parentSessionId as the task list ID since the leader creates tasks
-  // under its session ID, not the team name.
-  await tryClaimNextTask(identity.parentSessionId, identity.agentName)
+  let activeSharedTaskId = sharedTaskId
+  const teamTaskListId = getTaskListIdForScope({
+    kind: 'team',
+    teamId: identity.teamName,
+  })
 
   try {
     // Add initial prompt to task.messages for display (wrapped with XML)
@@ -1121,6 +1194,8 @@ export async function runInProcessTeammate(
       // Track if this iteration was interrupted by work abort (not lifecycle abort)
       let workWasAborted = false
 
+      await persistMemberActivity(identity, true)
+
       // Run agent within contexts
       await runWithTeammateContext(teammateContext, async () => {
         return runWithAgentContext(agentContext, async () => {
@@ -1165,6 +1240,9 @@ export async function runInProcessTeammate(
             availableTools: toolUseContext.options.tools,
             allowedTools,
             contentReplacementState: teammateReplacementState,
+            agentName: identity.agentName,
+            teamName: identity.teamName,
+            description,
           })) {
             // Check lifecycle abort first (kills whole teammate)
             if (abortController.signal.aborted) {
@@ -1273,6 +1351,16 @@ export async function runInProcessTeammate(
         )
       }
 
+      if (
+        activeSharedTaskId &&
+        await sharedTaskWasExplicitlyCompleted(
+          teamTaskListId,
+          activeSharedTaskId,
+        )
+      ) {
+        activeSharedTaskId = undefined
+      }
+
       // Check if already idle before updating (to skip duplicate notification)
       const prevAppState = toolUseContext.getAppState()
       const prevTask = prevAppState.tasks[taskId]
@@ -1289,6 +1377,7 @@ export async function runInProcessTeammate(
         },
         setAppState,
       )
+      await persistMemberActivity(identity, false)
 
       // Note: We do NOT automatically send the teammate's response to the leader.
       // Teammates should use the Teammate tool to communicate with the leader.
@@ -1322,22 +1411,30 @@ export async function runInProcessTeammate(
         taskId,
         toolUseContext.getAppState,
         setAppState,
-        identity.parentSessionId,
+        sharedTaskId ? undefined : teamTaskListId,
       )
 
       switch (waitResult.type) {
         case 'shutdown_request':
-          // Pass shutdown request to model for decision
-          // Format as teammate-message for consistency with how tmux teammates receive it
-          // The model will use approveShutdown or rejectShutdown tool
+          // The teammate is idle, so no unfinished model turn needs protection.
+          // Approve in the runtime to avoid replaying completed work in a new
+          // sidechain transcript just to acknowledge shutdown.
           logForDebugging(
-            `[inProcessRunner] ${identity.agentId} received shutdown request - passing to model`,
+            `[inProcessRunner] ${identity.agentId} auto-approving shutdown request`,
           )
+          await approveIdleInProcessShutdown(
+            identity,
+            waitResult.request.requestId,
+          )
+          shouldExit = true
+          break
+
+        case 'task_assignment':
+          activeSharedTaskId = waitResult.taskId
           currentPrompt = formatAsTeammateMessage(
-            waitResult.request?.from || 'team-lead',
-            waitResult.originalMessage,
+            'task-list',
+            waitResult.message,
           )
-          // Add shutdown request to task.messages for transcript display
           appendTeammateMessage(
             taskId,
             createUserMessage({ content: currentPrompt }),
@@ -1434,6 +1531,25 @@ export async function runInProcessTeammate(
       `[inProcessRunner] Agent ${identity.agentId} failed: ${errorMessage}`,
     )
 
+    // Keep the runner task live until the failure message is durable. Otherwise
+    // the lead can observe zero running members and finish before polling it.
+    try {
+      await sendIdleNotification(
+        identity.agentName,
+        identity.color,
+        identity.teamName,
+        {
+          idleReason: 'failed',
+          completedStatus: 'failed',
+          failureReason: errorMessage,
+        },
+      )
+    } catch (notificationError) {
+      logForDebugging(
+        `[inProcessRunner] Failed to notify lead about ${identity.agentId}: ${notificationError}`,
+      )
+    }
+
     // Mark task as failed and notify any waiters
     let alreadyTerminal = false
     let toolUseId: string | undefined
@@ -1476,17 +1592,26 @@ export async function runInProcessTeammate(
       })
     }
 
-    // Send idle notification with failure via file-based mailbox
-    await sendIdleNotification(
-      identity.agentName,
-      identity.color,
-      identity.teamName,
-      {
-        idleReason: 'failed',
-        completedStatus: 'failed',
-        failureReason: errorMessage,
-      },
-    )
+    await persistMemberActivity(identity, false)
+    try {
+      await removeMemberByAgentIdAsync(identity.teamName, identity.agentId)
+    } catch (cleanupError) {
+      logForDebugging(
+        `[inProcessRunner] Failed to remove ${identity.agentId} from team file: ${cleanupError}`,
+      )
+    }
+    setAppState(prev => {
+      if (!prev.teamContext?.teammates?.[identity.agentId]) return prev
+      const { [identity.agentId]: _, ...remainingTeammates } =
+        prev.teamContext.teammates
+      return {
+        ...prev,
+        teamContext: {
+          ...prev.teamContext,
+          teammates: remainingTeammates,
+        },
+      }
+    })
 
     return {
       success: false,

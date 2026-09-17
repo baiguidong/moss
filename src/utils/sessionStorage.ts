@@ -310,6 +310,8 @@ export type AgentMetadata = {
   agentType: string
   /** Stable caller-assigned name used to route SendMessage after restart. */
   agentName?: string
+  /** Agent Team ownership. Team sidechains are rendered in the team workbench. */
+  teamName?: string
   /** Worktree path if the agent was spawned with isolation: "worktree" */
   worktreePath?: string
   /** Original task description from the AgentTool input. Persisted so a

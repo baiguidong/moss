@@ -89,6 +89,101 @@ export type SessionDetail = SessionSummary & {
 
 export type AgentEvent = Record<string, any>;
 
+export type UsageDailySummary = {
+  day: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  requestCount: number;
+};
+
+export type UsageOverview = {
+  generatedAt: number;
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    totalTokens: number;
+    requestCount: number;
+    activeDays: number;
+    peakDay: string | null;
+    peakTokens: number;
+    currentStreak: number;
+    longestStreak: number;
+    todayTokens: number;
+  };
+  daily: UsageDailySummary[];
+};
+
+export type MemoryGlobalEntry = {
+  id: string;
+  path: string;
+  title: string;
+  description: string;
+  type: string;
+  isIndex: boolean;
+  indexed: boolean;
+  bytes: number;
+  updatedAt: number;
+  readable: boolean;
+};
+
+export type MemoryProjectHistoryEntry = {
+  id: string;
+  sessionId: string;
+  title: string;
+  conclusion: string;
+  bytes: number;
+  updatedAt: number;
+  readable: boolean;
+};
+
+export type MemoryProjectEntry = {
+  id: string;
+  name: string;
+  updatedAt: number;
+  version: number;
+  memoryUpdatedAt: number | null;
+  finalizedSessionCount: number;
+  hasOverview: boolean;
+  history: MemoryProjectHistoryEntry[];
+};
+
+export type MemorySessionEntry = {
+  id: string;
+  title: string;
+  projectId: string | null;
+  projectName: string | null;
+  agentMode: 'local' | 'remote-direct';
+  busy: boolean;
+  createdAt: number;
+  updatedAt: number;
+  hasSummary: boolean;
+  summaryUpdatedAt: number | null;
+  bytes: number;
+  readable: boolean;
+};
+
+export type MemoryCatalog = {
+  generatedAt: number;
+  global: {
+    rootLabel: string;
+    files: MemoryGlobalEntry[];
+  };
+  projects: MemoryProjectEntry[];
+  sessions: MemorySessionEntry[];
+};
+
+export type MemoryEntryContent = {
+  content: string;
+  updatedAt: number | null;
+  bytes: number;
+  readable: boolean;
+};
+
 export type SessionTaskStatus = 'pending' | 'in_progress' | 'completed';
 
 export type SessionTask = {
@@ -99,6 +194,88 @@ export type SessionTask = {
   activeForm?: string;
   owner?: string | null;
   blockedBy: string[];
+};
+
+export type AgentTeamRunStatus = 'live' | 'completed' | 'interrupted';
+export type AgentTeamPhase = 'forming' | 'ready' | 'executing' | 'blocked' | 'wrapping_up' | 'completed' | 'interrupted';
+
+export type AgentTeamMember = {
+  agentId: string;
+  name: string;
+  agentType: string;
+  model: string;
+  color: string;
+  joinedAt: number | null;
+  cwd: string;
+  status: 'running' | 'idle';
+};
+
+export type AgentTeamTask = {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm: string;
+  owner: string | null;
+  status: SessionTaskStatus;
+  blocked: boolean;
+  blocks: string[];
+  blockedBy: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type AgentTeamMessage = {
+  id: string;
+  to: string;
+  from: string;
+  text: string;
+  timestamp: string;
+  read: boolean;
+  color: string;
+  summary: string;
+};
+
+export type AgentTeamSnapshot = {
+  capturedAt: string;
+  phase: AgentTeamPhase;
+  taskCounts: { total: number; completed: number; inProgress: number; pending: number; blocked: number };
+  team: {
+    name: string;
+    description: string;
+    createdAt: number;
+    leadAgentId: string;
+    leadSessionId: string;
+    members: AgentTeamMember[];
+  };
+  tasks: AgentTeamTask[];
+  messages: AgentTeamMessage[];
+  recovery?: {
+    type: 'desktop_restart_continuation';
+    recoveredAt: string;
+  };
+};
+
+export type AgentTeamRun = {
+  schemaVersion: 1;
+  sessionId: string;
+  incarnationId: string;
+  teamName: string;
+  status: AgentTeamRunStatus;
+  createdAt: number;
+  updatedAt: string;
+  deletedAt: string | null;
+  snapshots: AgentTeamSnapshot[];
+  recoveryAttempt?: {
+    id: string;
+    mode: 'finish_summary' | 'rerun_missing_members';
+    startedAt: number;
+    status: 'active' | 'completed';
+    completedAt?: number;
+  };
+};
+
+export type AgentTeamsSessionState = {
+  sessionId: string;
+  teams: AgentTeamRun[];
 };
 
 export type ProjectTaskStatus = 'working' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped';
@@ -712,14 +889,32 @@ export type DesktopSettings = {
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
   remoteEnabled: boolean;
+  agentTeamsEnabled: boolean;
   bypassPermissions: boolean;
   model: string;
   maxTurns: number;
+  language: string;
   appendSystemPrompt: string;
   thinkingMode: 'adaptive' | 'enabled' | 'disabled';
   thinkingBudgetTokens: number;
   url: string;
   apiKey: string;
+  webSearch?: {
+    mode: 'auto' | 'tavily' | 'brave' | 'native' | 'disabled';
+    tavilyApiKey?: string;
+    braveApiKey?: string;
+    tavilyConfigured?: boolean;
+    braveConfigured?: boolean;
+    clearTavilyApiKey?: boolean;
+    clearBraveApiKey?: boolean;
+    nativeCapability?: {
+      status: 'supported' | 'compatible' | 'unsupported' | 'unknown' | 'detecting';
+      format: 'structured' | 'compatible-text' | null;
+      checkedAt: number | null;
+      reasonCode: string | null;
+    };
+    activeProvider?: 'tavily' | 'brave' | 'native' | null;
+  };
   image: {
     provider: string;
     url: string;
@@ -1203,7 +1398,22 @@ declare global {
       ensureManagedRuntimes: (payload?: { node?: boolean; python?: boolean; git?: boolean }) => Promise<Record<string, unknown>>;
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
-      updateSettings: (payload: Partial<DesktopSettings>) => Promise<DesktopSettings>;
+      updateSettings: (payload: Partial<Omit<DesktopSettings, 'webSearch'>> & {
+        webSearch?: Partial<NonNullable<DesktopSettings['webSearch']>>;
+      }) => Promise<DesktopSettings>;
+      probeWebSearch: () => Promise<DesktopSettings>;
+      usage: {
+        getOverview: () => Promise<UsageOverview>;
+      };
+      memory: {
+        getCatalog: () => Promise<MemoryCatalog>;
+        readEntry: (payload:
+          | { scope: 'global'; path: string }
+          | { scope: 'project'; projectId: string; kind: 'overview' }
+          | { scope: 'project'; projectId: string; kind: 'history'; sessionId: string }
+          | { scope: 'session'; sessionId: string }
+        ) => Promise<MemoryEntryContent>;
+      };
       openIM: {
         getConfig: () => Promise<{
           available: boolean;
@@ -1397,6 +1607,11 @@ declare global {
       setSessionAutoCollapseToolCalls: (payload: { sessionId: string; enabled: boolean }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
+      agentTeams: {
+        list: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
+        refresh: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
+        onChanged: (callback: (payload: AgentTeamsSessionState) => void) => () => void;
+      };
       setConnectorAuthStatus: (payload: { sessionId: string; connectorId: string; connectorName?: string; status: 'pending' | 'success' | 'failed'; message?: string }) => Promise<SessionDetail>;
       listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;
       getInstalledConnectors: () => Promise<{ success?: boolean; data?: InstalledConnector[]; error?: string }>;

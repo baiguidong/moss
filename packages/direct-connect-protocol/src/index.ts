@@ -41,12 +41,13 @@ export type AdvancedSettings = {
   moss_request_attribution_enabled: boolean
   moss_context_compaction_strategy: 'proactive' | 'reactive'
   moss_session_debug_logging: boolean
+  moss_response_language?: string
 }
 
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
   enabled: true,
   extractionEnabled: false,
-  extractionIntervalTurns: 1,
+  extractionIntervalTurns: 5,
   pastContextSearchEnabled: false,
   dreamEnabled: false,
   dreamMinHours: 24,
@@ -142,6 +143,7 @@ export const advancedSettingsSchema = lazySchema(() =>
     moss_request_attribution_enabled: z.boolean().optional(),
     moss_context_compaction_strategy: z.enum(['proactive', 'reactive']).optional(),
     moss_session_debug_logging: z.boolean().optional(),
+    moss_response_language: z.string().trim().min(1).max(80).optional(),
   }),
 )
 

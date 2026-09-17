@@ -4,6 +4,14 @@ export type SessionApiOverrides = {
   mossBaseUrl?: string
   mossAuthToken?: string
   mossModel?: string
+  webSearch?: SessionWebSearchSettings
+}
+
+export type SessionWebSearchSettings = {
+  mode: 'auto' | 'tavily' | 'brave' | 'native' | 'disabled'
+  tavilyApiKey?: string
+  braveApiKey?: string
+  nativeCapability?: 'supported' | 'compatible' | 'unsupported' | 'unknown'
 }
 
 const sessionApiOverridesStorage = new AsyncLocalStorage<SessionApiOverrides>()
@@ -22,6 +30,10 @@ export function getSessionMossAuthToken(): string | undefined {
 
 export function getSessionMossModel(): string | undefined {
   return sessionApiOverridesStorage.getStore()?.mossModel
+}
+
+export function getSessionWebSearchSettings(): SessionWebSearchSettings | undefined {
+  return sessionApiOverridesStorage.getStore()?.webSearch
 }
 
 export function resolveSessionMossModel(model: string): string {

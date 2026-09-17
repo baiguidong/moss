@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { mkdir, readFile, rm, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
+import { mkdir, readFile, rename, rm, writeFile } from 'fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { dirname, join } from 'path'
 import { z } from 'zod/v4'
 import { getSessionCreatedTeams } from '../../bootstrap/state.js'
 import { logForDebugging } from '../debug.js'
@@ -11,10 +12,34 @@ import { gitExe } from '../git.js'
 import { lazySchema } from '../lazySchema.js'
 import type { PermissionMode } from '../permissions/PermissionMode.js'
 import { jsonParse, jsonStringify } from '../slowOperations.js'
-import { getTasksDir, notifyTasksUpdated } from '../tasks.js'
+import { getTasksDir, listTasks, notifyTasksUpdated, type Task } from '../tasks.js'
 import { getAgentName, getTeamName, isTeammate } from '../teammate.js'
+import * as lockfile from '../lockfile.js'
 import { type BackendType, isPaneBackend } from './backends/types.js'
 import { TEAM_LEAD_NAME } from './constants.js'
+
+const TEAM_NAME_LOCK_OPTIONS = {
+  retries: { retries: 30, minTimeout: 5, maxTimeout: 100 },
+}
+
+export type TeamTerminalReceipt = {
+  schemaVersion: 1
+  incarnationId: string
+  teamName: string
+  capturedAt: string
+  reason: 'completed' | 'interrupted'
+  team: TeamFile | null
+  tasks: Task[]
+  messages: Array<{
+    to: string
+    from: string
+    text: string
+    timestamp: string
+    read: boolean
+    color?: string
+    summary?: string
+  }>
+}
 
 export const inputSchema = lazySchema(() =>
   z.strictObject({
@@ -65,6 +90,7 @@ export type TeamFile = {
   name: string
   description?: string
   createdAt: number
+  incarnationId?: string
   leadAgentId: string
   leadSessionId?: string // Actual session UUID of the leader (for discovery)
   hiddenPaneIds?: string[] // Pane IDs that are currently hidden from the UI
@@ -347,6 +373,28 @@ export function removeMemberByAgentId(
   return true
 }
 
+export async function removeMemberByAgentIdAsync(
+  teamName: string,
+  agentId: string,
+): Promise<boolean> {
+  return withTeamNameLock(teamName, async () => {
+    const teamFile = await readTeamFileAsync(teamName)
+    if (!teamFile) return false
+    const updatedMembers = teamFile.members.filter(
+      member => member.agentId !== agentId,
+    )
+    if (updatedMembers.length === teamFile.members.length) return false
+    await writeTeamFileAsync(teamName, {
+      ...teamFile,
+      members: updatedMembers,
+    })
+    logForDebugging(
+      `[TeammateTool] Removed member ${agentId} from team ${teamName}`,
+    )
+    return true
+  })
+}
+
 /**
  * Sets a team member's permission mode.
  * Called when the team leader changes a teammate's mode via the TeamsDialog.
@@ -456,32 +504,30 @@ export async function setMemberActive(
   memberName: string,
   isActive: boolean,
 ): Promise<void> {
-  const teamFile = await readTeamFileAsync(teamName)
-  if (!teamFile) {
+  await withTeamNameLock(teamName, async () => {
+    const teamFile = await readTeamFileAsync(teamName)
+    if (!teamFile) {
+      logForDebugging(
+        `[TeammateTool] Cannot set member active: team ${teamName} not found`,
+      )
+      return
+    }
+
+    const member = teamFile.members.find(m => m.name === memberName)
+    if (!member) {
+      logForDebugging(
+        `[TeammateTool] Cannot set member active: member ${memberName} not found in team ${teamName}`,
+      )
+      return
+    }
+
+    if (member.isActive === isActive) return
+    member.isActive = isActive
+    await writeTeamFileAsync(teamName, teamFile)
     logForDebugging(
-      `[TeammateTool] Cannot set member active: team ${teamName} not found`,
+      `[TeammateTool] Set member ${memberName} in team ${teamName} to ${isActive ? 'active' : 'idle'}`,
     )
-    return
-  }
-
-  const member = teamFile.members.find(m => m.name === memberName)
-  if (!member) {
-    logForDebugging(
-      `[TeammateTool] Cannot set member active: member ${memberName} not found in team ${teamName}`,
-    )
-    return
-  }
-
-  // Only write if the value is actually changing
-  if (member.isActive === isActive) {
-    return
-  }
-
-  member.isActive = isActive
-  await writeTeamFileAsync(teamName, teamFile)
-  logForDebugging(
-    `[TeammateTool] Set member ${memberName} in team ${teamName} to ${isActive ? 'active' : 'idle'}`,
-  )
+  })
 }
 
 /**
@@ -569,6 +615,23 @@ export function unregisterTeamForSessionCleanup(teamName: string): void {
   getSessionCreatedTeams().delete(teamName)
 }
 
+/** Serialize the existence check and initial write for one canonical team name. */
+export async function withTeamNameLock<T>(
+  teamName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const locksDir = join(getTeamsDir(), '.locks')
+  await mkdir(locksDir, { recursive: true })
+  const lockPath = join(locksDir, `${sanitizeName(teamName)}.lock`)
+  await writeFile(lockPath, '', { flag: 'a' })
+  const release = await lockfile.lock(lockPath, TEAM_NAME_LOCK_OPTIONS)
+  try {
+    return await operation()
+  } finally {
+    await release()
+  }
+}
+
 /**
  * Clean up all teams created this session that weren't explicitly deleted.
  * Registered with gracefulShutdown from init.ts.
@@ -585,7 +648,9 @@ export async function cleanupSessionTeams(): Promise<void> {
   // (TeamDeleteTool's path doesn't need this — by then teammates have
   // gracefully exited and useInboxPoller has already closed their panes.)
   await Promise.allSettled(teams.map(name => killOrphanedTeammatePanes(name)))
-  await Promise.allSettled(teams.map(name => cleanupTeamDirectories(name)))
+  await Promise.allSettled(teams.map(name => cleanupTeamDirectories(name, {
+    reason: 'interrupted',
+  })))
   sessionCreatedTeams.clear()
 }
 
@@ -595,7 +660,7 @@ export async function cleanupSessionTeams(): Promise<void> {
  * Dynamic imports avoid adding registry/detection to this module's static
  * dep graph — this only runs at shutdown, so the import cost is irrelevant.
  */
-async function killOrphanedTeammatePanes(teamName: string): Promise<void> {
+export async function killOrphanedTeammatePanes(teamName: string): Promise<void> {
   const teamFile = readTeamFile(teamName)
   if (!teamFile) return
 
@@ -638,11 +703,72 @@ async function killOrphanedTeammatePanes(teamName: string): Promise<void> {
  * Also cleans up git worktrees created for teammates.
  * Called when a swarm session is terminated.
  */
-export async function cleanupTeamDirectories(teamName: string): Promise<void> {
+export async function cleanupTeamDirectories(
+  teamName: string,
+  options: { reason?: TeamTerminalReceipt['reason'] } = {},
+): Promise<TeamTerminalReceipt> {
+  return withTeamNameLock(teamName, () => cleanupTeamDirectoriesLocked(teamName, options))
+}
+
+async function cleanupTeamDirectoriesLocked(
+  teamName: string,
+  options: { reason?: TeamTerminalReceipt['reason'] },
+): Promise<TeamTerminalReceipt> {
   const sanitizedName = sanitizeName(teamName)
 
   // Read team file to get worktree paths BEFORE deleting the team directory
   const teamFile = readTeamFile(teamName)
+  const tasks = await listTasks(sanitizedName)
+  const messages: TeamTerminalReceipt['messages'] = []
+  const inboxDir = join(getTeamDir(teamName), 'inboxes')
+  try {
+    for (const file of readdirSync(inboxDir).filter(file => file.endsWith('.json')).sort()) {
+      const to = file.replace(/\.json$/, '')
+      const values = jsonParse(readFileSync(join(inboxDir, file), 'utf8'))
+      if (!Array.isArray(values)) continue
+      for (const value of values) {
+        if (!value || typeof value !== 'object') continue
+        const entry = value as Record<string, unknown>
+        messages.push({
+          to,
+          from: typeof entry.from === 'string' ? entry.from : 'unknown',
+          text: typeof entry.text === 'string' ? entry.text : '',
+          timestamp: typeof entry.timestamp === 'string'
+            ? entry.timestamp
+            : new Date().toISOString(),
+          read: entry.read === true,
+          ...(typeof entry.color === 'string' ? { color: entry.color } : {}),
+          ...(typeof entry.summary === 'string' ? { summary: entry.summary } : {}),
+        })
+      }
+    }
+  } catch {
+    // A team can have no inboxes when it never spawned a teammate.
+  }
+  const createdAt = teamFile?.createdAt ?? Date.now()
+  const configuredIncarnationId = teamFile?.incarnationId
+  const incarnationId = configuredIncarnationId && /^[a-zA-Z0-9_-]{8,120}$/.test(configuredIncarnationId)
+    ? configuredIncarnationId
+    : createHash('sha256')
+      .update(`${teamName}\0${createdAt}\0${teamFile?.leadSessionId ?? ''}`)
+      .digest('hex')
+      .slice(0, 24)
+  const receipt: TeamTerminalReceipt = {
+    schemaVersion: 1,
+    incarnationId,
+    teamName,
+    capturedAt: new Date().toISOString(),
+    reason: options.reason ?? 'completed',
+    team: teamFile,
+    tasks,
+    messages,
+  }
+  const terminalDir = join(dirname(getTasksDir(sanitizedName)), '.agent-team-terminals')
+  await mkdir(terminalDir, { recursive: true })
+  const terminalPath = join(terminalDir, `${incarnationId}.json`)
+  const temporaryPath = `${terminalPath}.${process.pid}.${randomUUID()}.tmp`
+  await writeFile(temporaryPath, `${jsonStringify(receipt, null, 2)}\n`, 'utf8')
+  await rename(temporaryPath, terminalPath)
   const worktreePaths: string[] = []
   if (teamFile) {
     for (const member of teamFile.members) {
@@ -680,4 +806,6 @@ export async function cleanupTeamDirectories(teamName: string): Promise<void> {
       `[TeammateTool] Failed to clean up tasks directory ${tasksDir}: ${errorMessage(error)}`,
     )
   }
+
+  return receipt
 }

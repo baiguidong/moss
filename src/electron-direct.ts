@@ -11,10 +11,14 @@ import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
-import { CHAT_MODE_DISALLOWED_TOOLS } from './constants/tools.js'
+import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
-import { applyChatToolFilter, mergeAndFilterTools } from './utils/toolPool.js'
+import {
+  applyChatToolFilter,
+  isChatModeToolAllowed,
+  mergeAndFilterTools,
+} from './utils/toolPool.js'
 import { getCommands } from './commands.js'
 import { createFileStateCacheWithSizeLimit } from './utils/fileStateCache.js'
 import { getGlobalConfig } from './utils/config.js'
@@ -34,7 +38,7 @@ import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchem
 import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
 import { shouldBypassDesktopToolPermission } from './utils/permissions/desktopPermissionMode.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
-import { dequeue, peek } from './utils/messageQueueManager.js'
+import { dequeue } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
 import { findGitRoot } from './utils/git.js'
@@ -74,16 +78,34 @@ import {
 import {
   discardSessionTaskScope,
   getTaskListIdForSession,
+  unassignTeammateTasks,
 } from './utils/tasks.js'
 import {
   runWithSessionApiOverrides,
   runWithSessionApiOverridesGenerator,
   type SessionApiOverrides,
+  type SessionWebSearchSettings,
 } from './utils/sessionApiOverrides.js'
 import { updateSessionName } from './utils/concurrentSessions.js'
 import { getRunningTasks } from './utils/task/framework.js'
 import { isBackgroundTask } from './tasks/types.js'
 import { sleep } from './utils/sleep.js'
+import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js'
+import { isTeamLead } from './utils/teammate.js'
+import {
+  isShutdownApproved,
+  markMessagesAsRead,
+  readUnreadMessages,
+} from './utils/teammateMailbox.js'
+import { probeNativeWebSearch } from './tools/WebSearchTool/nativeProbe.js'
+import {
+  cleanupTeamDirectories,
+  killOrphanedTeammatePanes,
+  removeTeammateFromTeamFile,
+  unregisterTeamForSessionCleanup,
+} from './utils/swarm/teamHelpers.js'
+import { TEAM_LEAD_NAME } from './utils/swarm/constants.js'
+import { killInProcessTeammate } from './utils/swarm/spawnInProcess.js'
 import {
   prepareSessionResume,
   type PreparedSessionResume,
@@ -119,6 +141,10 @@ import {
 import { resolveSessionFilePath } from './utils/sessionStoragePortable.js'
 import { initBundledSkills } from './skills/bundled/index.js'
 import { logForDiagnosticsNoPII } from './utils/diagLogs.js'
+import {
+  registerModelUsageEventListener,
+  type ModelUsageEvent,
+} from './utils/modelUsageEvents.js'
 import {
   headlessProfilerStartTurn,
   logHeadlessProfilerTurn,
@@ -284,6 +310,8 @@ export interface ClaudeSessionOptions {
   url?: string
   /** 覆盖默认 API token（仅应用于当前 embedded session） */
   apiKey?: string
+  /** Desktop-resolved WebSearch providers and native endpoint capability. */
+  webSearch?: SessionWebSearchSettings
   /** 系统提示词（替代默认主身份） */
   customSystemPrompt?: string
   /** 系统提示词补充内容（追加到主系统提示词之后） */
@@ -309,6 +337,8 @@ export interface ClaudeSessionOptions {
   coordinatorMode?: boolean
   /** App 事件回调，用于 MossTool 保存/打开 app */
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  /** 每次模型请求完成后的 token 用量事件。 */
+  onUsage?: (event: ModelUsageEvent) => void
   /** Dynamically expose authenticated Moss Server Agent Mail operations. */
   agentMailEnabled?: boolean
   /** Expose Moss Library as first-party in-process tools. */
@@ -340,6 +370,7 @@ type ResolvedClaudeSessionOptions = {
   model: string
   url?: string
   apiKey?: string
+  webSearch?: SessionWebSearchSettings
   customSystemPrompt?: string
   appendSystemPrompt: string
   permissionMode: PermissionMode
@@ -491,7 +522,7 @@ async function runDesktopPermissionRequestHooks(
 }
 
 function buildSessionApiOverrides(
-  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey' | 'model'>,
+  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey' | 'model' | 'webSearch'>,
 ): SessionApiOverrides | undefined {
   const mossBaseUrl = normalizeMossBaseUrl(
     typeof opts.url === 'string' ? opts.url : undefined,
@@ -501,7 +532,7 @@ function buildSessionApiOverrides(
   const mossModel =
     typeof opts.model === 'string' ? opts.model.trim() || undefined : undefined
 
-  if (!mossBaseUrl && !mossAuthToken && !mossModel) {
+  if (!mossBaseUrl && !mossAuthToken && !mossModel && !opts.webSearch) {
     return undefined
   }
 
@@ -509,7 +540,24 @@ function buildSessionApiOverrides(
     ...(mossBaseUrl ? { mossBaseUrl } : {}),
     ...(mossAuthToken ? { mossAuthToken } : {}),
     ...(mossModel ? { mossModel } : {}),
+    ...(opts.webSearch ? { webSearch: opts.webSearch } : {}),
   }
+}
+
+export async function probeWebSearchCapability(options: {
+  model: string
+  url?: string
+  apiKey?: string
+  timeoutMs?: number
+}) {
+  const overrides = buildSessionApiOverrides({
+    model: options.model,
+    url: options.url,
+    apiKey: options.apiKey,
+  })
+  return runWithSessionApiOverrides(overrides, () => (
+    probeNativeWebSearch(options.model, { timeoutMs: options.timeoutMs })
+  ))
 }
 
 
@@ -558,6 +606,7 @@ export class ClaudeSession {
   #storageActivated = false
   #sessionApiOverrides: SessionApiOverrides | undefined
   #workspaceRegistryIds: string[] = []
+  #unregisterUsageListener: (() => void) | null = null
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
@@ -583,6 +632,14 @@ export class ClaudeSession {
     ].filter((sessionId, index, values) =>
       Boolean(sessionId) && values.indexOf(sessionId) === index,
     )
+    if (opts.onUsage) {
+      const unregister = this.#workspaceRegistryIds.map(sessionId =>
+        registerModelUsageEventListener(sessionId, opts.onUsage!),
+      )
+      this.#unregisterUsageListener = () => {
+        for (const removeListener of unregister) removeListener()
+      }
+    }
     for (const sessionId of this.#workspaceRegistryIds) {
       registerSessionWorkspaceDirectories(
         sessionId,
@@ -596,6 +653,7 @@ export class ClaudeSession {
       model: opts.model ?? 'claude-sonnet-4-6',
       url: opts.url,
       apiKey: opts.apiKey,
+      webSearch: opts.webSearch,
       customSystemPrompt: opts.customSystemPrompt,
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
@@ -745,7 +803,7 @@ export class ClaudeSession {
     const canUseTool: CanUseToolFn = async (tool, input, ctx, msg, id, forceDecision) => {
       if (
         !this.#opts.coordinatorMode &&
-        CHAT_MODE_DISALLOWED_TOOLS.has(tool.name)
+        !isChatModeToolAllowed(tool.name)
       ) {
         return {
           behavior: 'deny',
@@ -1039,6 +1097,10 @@ export class ClaudeSession {
           },
         ),
       )
+      const sessionStore = this.#store
+      if (!sessionStore) {
+        throw new Error('Session store was not initialized')
+      }
       logForDiagnosticsNoPII('info', 'local_agent_send_engine_ready', {
         duration_ms: Date.now() - getEngineStart,
         reused_engine: hadEngineAtStart,
@@ -1073,10 +1135,6 @@ export class ClaudeSession {
           ? dequeue(isCurrentSessionMainThreadCommand)
           : undefined
 
-      const hasQueuedMainThreadTaskNotification = () =>
-        this.#opts.coordinatorMode &&
-        peek(isCurrentSessionMainThreadCommand) !== undefined
-
       const hasRunningBackgroundTasks = () => {
         if (!this.#opts.coordinatorMode) return false
         const state = this.#store?.getState()
@@ -1084,6 +1142,73 @@ export class ClaudeSession {
         return getRunningTasks(state).some(
           task => isBackgroundTask(task) && task.type !== 'in_process_teammate',
         )
+      }
+
+      const hasRunningAgentTeamMembers = () => {
+        if (!isAgentSwarmsEnabled()) return false
+        const state = sessionStore.getState()
+        if (!isTeamLead(state.teamContext)) return false
+        const teamName = state.teamContext?.teamName
+        return getRunningTasks(state).some(
+          task =>
+            task.type === 'in_process_teammate' &&
+            task.identity.teamName === teamName &&
+            task.identity.agentId !== state.teamContext?.leadAgentId,
+        )
+      }
+
+      const pollAgentTeamInbox = async (): Promise<string | undefined> => {
+        if (!isAgentSwarmsEnabled()) return undefined
+        const state = sessionStore.getState()
+        const teamContext = state.teamContext
+        if (!teamContext || !isTeamLead(teamContext)) return undefined
+
+        const unread = await readUnreadMessages(
+          TEAM_LEAD_NAME,
+          teamContext.teamName,
+        )
+        if (unread.length === 0) return undefined
+
+        await markMessagesAsRead(TEAM_LEAD_NAME, teamContext.teamName)
+        for (const message of unread) {
+          const approval = isShutdownApproved(message.text)
+          if (!approval?.from) continue
+          const teammateId = Object.entries(teamContext.teammates).find(
+            ([, teammate]) => teammate.name === approval.from,
+          )?.[0]
+          if (!teammateId) continue
+
+          removeTeammateFromTeamFile(teamContext.teamName, {
+            agentId: teammateId,
+            name: approval.from,
+          })
+          await unassignTeammateTasks(
+            teamContext.teamName,
+            teammateId,
+            approval.from,
+            'shutdown',
+          )
+          sessionStore.setState(previous => {
+            if (!previous.teamContext?.teammates) return previous
+            const { [teammateId]: _removed, ...remainingTeammates } =
+              previous.teamContext.teammates
+            return {
+              ...previous,
+              teamContext: {
+                ...previous.teamContext,
+                teammates: remainingTeammates,
+              },
+            }
+          })
+        }
+
+        return unread
+          .map(message => {
+            const color = message.color ? ` color="${message.color}"` : ''
+            const summary = message.summary ? ` summary="${message.summary}"` : ''
+            return `<${TEAMMATE_MESSAGE_TAG} teammate_id="${message.from}"${color}${summary}>\n${message.text}\n</${TEAMMATE_MESSAGE_TAG}>`
+          })
+          .join('\n\n')
       }
 
       // QueryEngine.submitMessage 是 AsyncGenerator
@@ -1145,10 +1270,9 @@ export class ClaudeSession {
                   mode: 'prompt',
                 }
 
-                // Mirror CLI coordinator semantics: keep the foreground send alive
-                // while background tasks are still running so task notifications
-                // can trigger follow-up turns without waiting for new user input.
-                do {
+                // Keep the foreground send alive for coordinator workers and
+                // Agent Teams so their asynchronous results can drive follow-up turns.
+                while (true) {
                   if (waitSignal?.aborted) {
                     break
                   }
@@ -1172,16 +1296,23 @@ export class ClaudeSession {
                     continue
                   }
 
-                  if (!hasRunningBackgroundTasks()) {
+                  const teammateMessage = await pollAgentTeamInbox()
+                  if (teammateMessage) {
+                    nextTurn = {
+                      value: teammateMessage,
+                      mode: 'prompt',
+                      uuid: randomUUID(),
+                    }
+                    continue
+                  }
+
+                  const hasTeamMembers = hasRunningAgentTeamMembers()
+                  if (!hasRunningBackgroundTasks() && !hasTeamMembers) {
                     break
                   }
 
-                  await sleep(100, waitSignal, { unref: true })
-                } while (
-                  nextTurn !== undefined ||
-                  hasQueuedMainThreadTaskNotification() ||
-                  hasRunningBackgroundTasks()
-                )
+                  await sleep(hasTeamMembers ? 250 : 100, waitSignal, { unref: true })
+                }
 
                 if (finalResult) {
                   yield finalResult
@@ -1215,6 +1346,29 @@ export class ClaudeSession {
     this.#queue.shift()!()
   }
 
+  /** Stop and archive the Agent Team owned by this embedded session. */
+  async shutdownAgentTeam(): Promise<void> {
+    const store = this.#store
+    const teamName = store?.getState().teamContext?.teamName
+    if (!store || !teamName) return
+
+    const state = store.getState()
+    for (const [taskId, task] of Object.entries(state.tasks)) {
+      if (task.type === 'in_process_teammate' && task.status === 'running') {
+        killInProcessTeammate(taskId, update => store.setState(update))
+      }
+    }
+
+    await killOrphanedTeammatePanes(teamName)
+    await cleanupTeamDirectories(teamName, { reason: 'interrupted' })
+    unregisterTeamForSessionCleanup(teamName)
+    store.setState(previous => ({
+      ...previous,
+      teamContext: undefined,
+      inbox: { messages: [] },
+    }))
+  }
+
   /** 销毁 session，释放资源（后续 send() 会抛错） */
   dispose() {
     this.#disposed = true
@@ -1223,6 +1377,8 @@ export class ClaudeSession {
     if (this.#opts.onAppEvent) {
       unregisterAppEventBridge(this.sessionId, this.#opts.onAppEvent)
     }
+    this.#unregisterUsageListener?.()
+    this.#unregisterUsageListener = null
     // Drop per-session state so long-lived desktop processes don't
     // accumulate records for disposed sessions.
     discardSessionStorageRecord(this.sessionId)

@@ -23,6 +23,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderKanban,
+  ChartNoAxesCombined,
   Plug,
   ShieldCheck,
 } from "lucide-react";
@@ -70,9 +71,9 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "overview" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "library" | "mail" | "openim" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "overview" | "library" | "mail" | "openim" | "cron" | "audit">;
 
 export function getSidebarMoreViews({
   libraryEnabled,
@@ -84,6 +85,7 @@ export function getSidebarMoreViews({
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
+    "overview",
     ...(libraryEnabled ? ["library" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
     "openim",
@@ -93,6 +95,7 @@ export function getSidebarMoreViews({
 }
 
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
+  overview: { label: "概览", icon: ChartNoAxesCombined },
   library: { label: "资料库", icon: BookOpen },
   mail: { label: "协作邮箱", icon: Mail },
   openim: { label: "即时消息", icon: MessageSquareText },

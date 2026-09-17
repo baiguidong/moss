@@ -64,6 +64,7 @@ import {
 } from '../../utils/swarm/teammateLayoutManager.js'
 import { getHardcodedTeammateModelFallback } from '../../utils/swarm/teammateModel.js'
 import { registerTask } from '../../utils/task/framework.js'
+import { ensureTeamMemberTask } from '../../utils/tasks.js'
 import { writeToMailbox } from '../../utils/teammateMailbox.js'
 import type { CustomAgentDefinition } from '../AgentTool/loadAgentsDir.js'
 import { isCustomAgent } from '../AgentTool/loadAgentsDir.js'
@@ -121,6 +122,7 @@ export type SpawnOutput = {
 export type SpawnTeammateConfig = {
   name: string
   prompt: string
+  task_id?: string
   team_name?: string
   cwd?: string
   use_splitpane?: boolean
@@ -138,6 +140,7 @@ export type SpawnTeammateConfig = {
 type SpawnInput = {
   name: string
   prompt: string
+  task_id?: string
   team_name?: string
   cwd?: string
   use_splitpane?: boolean
@@ -146,6 +149,33 @@ type SpawnInput = {
   agent_type?: string
   description?: string
   invokingRequestId?: string
+}
+
+function extractReferencedTaskId(prompt: string): string | undefined {
+  return /\btask\s*#\s*([a-z0-9_-]+)/i.exec(prompt)?.[1]
+}
+
+async function bindSpawnToSharedTask(
+  input: SpawnInput,
+  teamName: string,
+  teammateId: string,
+  teammateName: string,
+): Promise<{ sharedTaskId: string; assignedPrompt: string }> {
+  const sharedTaskId = await ensureTeamMemberTask({
+    teamName,
+    agentId: teammateId,
+    agentName: teammateName,
+    subject: input.description || teammateName,
+    description: input.prompt,
+    taskId: input.task_id ?? extractReferencedTaskId(input.prompt),
+  })
+  return {
+    sharedTaskId,
+    assignedPrompt: [
+      input.prompt,
+      `Your shared team task is #${sharedTaskId}. Work only on this assignment, report the result to team-lead, explicitly mark the task completed only after the assignment is finished, and do not repeat it after reporting.`,
+    ].join('\n\n'),
+  }
 }
 
 // ============================================================================
@@ -365,6 +395,12 @@ async function handleSpawnSplitPane(
 
   // Check if we're inside tmux to determine session naming
   const insideTmux = await isInsideTmux()
+  const { assignedPrompt } = await bindSpawnToSharedTask(
+    input,
+    teamName,
+    teammateId,
+    sanitizedName,
+  )
 
   // Assign a unique color to this teammate
   const teammateColor = assignTeammateColor(teammateId)
@@ -465,7 +501,7 @@ async function handleSpawnSplitPane(
     sanitizedName,
     teamName,
     teammateColor,
-    prompt,
+    prompt: assignedPrompt,
     plan_mode_required,
     paneId,
     insideTmux,
@@ -485,7 +521,7 @@ async function handleSpawnSplitPane(
     name: sanitizedName,
     agentType: agent_type,
     model,
-    prompt,
+    prompt: assignedPrompt,
     color: teammateColor,
     planModeRequired: plan_mode_required,
     joinedAt: Date.now(),
@@ -493,6 +529,7 @@ async function handleSpawnSplitPane(
     cwd: workingDir,
     subscriptions: [],
     backendType: detectionResult.backend.type,
+    isActive: true,
   })
   await writeTeamFileAsync(teamName, teamFile)
 
@@ -502,7 +539,7 @@ async function handleSpawnSplitPane(
     sanitizedName,
     {
       from: TEAM_LEAD_NAME,
-      text: prompt,
+      text: assignedPrompt,
       timestamp: new Date().toISOString(),
     },
     teamName,
@@ -567,6 +604,12 @@ async function handleSpawnSeparateWindow(
 
   // Ensure the swarm session exists
   await ensureSession(SWARM_SESSION_NAME)
+  const { assignedPrompt } = await bindSpawnToSharedTask(
+    input,
+    teamName,
+    teammateId,
+    sanitizedName,
+  )
 
   // Assign a unique color to this teammate
   const teammateColor = assignTeammateColor(teammateId)
@@ -679,7 +722,7 @@ async function handleSpawnSeparateWindow(
     sanitizedName,
     teamName,
     teammateColor,
-    prompt,
+    prompt: assignedPrompt,
     plan_mode_required,
     paneId,
     insideTmux: false,
@@ -699,7 +742,7 @@ async function handleSpawnSeparateWindow(
     name: sanitizedName,
     agentType: agent_type,
     model,
-    prompt,
+    prompt: assignedPrompt,
     color: teammateColor,
     planModeRequired: plan_mode_required,
     joinedAt: Date.now(),
@@ -707,6 +750,7 @@ async function handleSpawnSeparateWindow(
     cwd: workingDir,
     subscriptions: [],
     backendType: 'tmux', // This handler always uses tmux directly
+    isActive: true,
   })
   await writeTeamFileAsync(teamName, teamFile)
 
@@ -716,7 +760,7 @@ async function handleSpawnSeparateWindow(
     sanitizedName,
     {
       from: TEAM_LEAD_NAME,
-      text: prompt,
+      text: assignedPrompt,
       timestamp: new Date().toISOString(),
     },
     teamName,
@@ -858,6 +902,13 @@ async function handleSpawnInProcess(
   // Generate deterministic agent ID from name and team
   const teammateId = formatAgentId(sanitizedName, teamName)
 
+  const { sharedTaskId, assignedPrompt } = await bindSpawnToSharedTask(
+    input,
+    teamName,
+    teammateId,
+    sanitizedName,
+  )
+
   // Assign a unique color to this teammate
   const teammateColor = assignTeammateColor(teammateId)
 
@@ -878,7 +929,7 @@ async function handleSpawnInProcess(
   const config: InProcessSpawnConfig = {
     name: sanitizedName,
     teamName,
-    prompt,
+    prompt: assignedPrompt,
     color: teammateColor,
     planModeRequired: plan_mode_required ?? false,
     model,
@@ -894,36 +945,6 @@ async function handleSpawnInProcess(
   logForDebugging(
     `[handleSpawnInProcess] spawn result: taskId=${result.taskId}, hasContext=${!!result.teammateContext}, hasAbort=${!!result.abortController}`,
   )
-
-  // Start the agent execution loop (fire-and-forget)
-  if (result.taskId && result.teammateContext && result.abortController) {
-    startInProcessTeammate({
-      identity: {
-        agentId: teammateId,
-        agentName: sanitizedName,
-        teamName,
-        color: teammateColor,
-        planModeRequired: plan_mode_required ?? false,
-        parentSessionId: result.teammateContext.parentSessionId,
-      },
-      taskId: result.taskId,
-      prompt,
-      description: input.description,
-      model,
-      agentDefinition,
-      teammateContext: result.teammateContext,
-      // Strip messages: the teammate never reads toolUseContext.messages
-      // (it builds its own history via allMessages in inProcessRunner).
-      // Passing the parent's full conversation here would pin it for the
-      // teammate's lifetime, surviving /clear and auto-compact.
-      toolUseContext: { ...context, messages: [] },
-      abortController: result.abortController,
-      invokingRequestId: input.invokingRequestId,
-    })
-    logForDebugging(
-      `[handleSpawnInProcess] Started agent execution for ${teammateId}`,
-    )
-  }
 
   // Track the teammate in AppState's teamContext
   // Auto-register leader if spawning without prior spawnTeam call
@@ -985,7 +1006,7 @@ async function handleSpawnInProcess(
     name: sanitizedName,
     agentType: agent_type,
     model,
-    prompt,
+    prompt: assignedPrompt,
     color: teammateColor,
     planModeRequired: plan_mode_required,
     joinedAt: Date.now(),
@@ -993,8 +1014,38 @@ async function handleSpawnInProcess(
     cwd: getCwd(),
     subscriptions: [],
     backendType: 'in-process',
+    isActive: true,
   })
   await writeTeamFileAsync(teamName, teamFile)
+
+  // Register the member before execution starts so active/idle/failure
+  // transitions cannot race with the team file write.
+  if (result.taskId && result.teammateContext && result.abortController) {
+    startInProcessTeammate({
+      identity: {
+        agentId: teammateId,
+        agentName: sanitizedName,
+        teamName,
+        color: teammateColor,
+        planModeRequired: plan_mode_required ?? false,
+        parentSessionId: result.teammateContext.parentSessionId,
+      },
+      taskId: result.taskId,
+      prompt: assignedPrompt,
+      sharedTaskId,
+      description: input.description,
+      model,
+      agentDefinition,
+      teammateContext: result.teammateContext,
+      // The teammate builds and owns its conversation history.
+      toolUseContext: { ...context, messages: [] },
+      abortController: result.abortController,
+      invokingRequestId: input.invokingRequestId,
+    })
+    logForDebugging(
+      `[handleSpawnInProcess] Started agent execution for ${teammateId}`,
+    )
+  }
 
   // Note: Do NOT send the prompt via mailbox for in-process teammates.
   // In-process teammates receive the prompt directly via startInProcessTeammate().

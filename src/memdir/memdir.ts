@@ -10,6 +10,7 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../services/analytics/index.js'
+import { getMemoryLanguageInstruction } from '../services/responseLanguage.js'
 import { GREP_TOOL_NAME } from '../tools/GrepTool/prompt.js'
 import { FILE_READ_TOOL_NAME } from '../tools/FileReadTool/prompt.js'
 import { isReplModeEnabled } from '../tools/REPLTool/constants.js'
@@ -18,6 +19,7 @@ import { hasEmbeddedSearchTools } from '../utils/embeddedTools.js'
 import { formatFileSize } from '../utils/format.js'
 import { getProjectDir } from '../utils/sessionStorage.js'
 import {
+  GLOBAL_MEMORY_ADMISSION_SECTION,
   MEMORY_FRONTMATTER_EXAMPLE,
   TRUSTING_RECALL_SECTION,
   TYPES_SECTION_INDIVIDUAL,
@@ -202,6 +204,10 @@ export function buildMemoryLines(
     '- Organize memory semantically by topic, not chronologically',
     '- Update or remove memories that turn out to be wrong or outdated',
     '- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.',
+    '',
+    '## Memory language',
+    '',
+    getMemoryLanguageInstruction(),
   ]
 
   const mainSessionRecall = [
@@ -221,6 +227,8 @@ export function buildMemoryLines(
     "You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.",
     '',
     'If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.',
+    '',
+    ...GLOBAL_MEMORY_ADMISSION_SECTION,
     '',
     ...TYPES_SECTION_INDIVIDUAL,
     ...WHAT_NOT_TO_SAVE_SECTION,

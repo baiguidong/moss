@@ -103,6 +103,7 @@ const fullInputSchema = lazySchema(() => {
   const multiAgentInputSchema = z.object({
     name: z.string().optional().describe('Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running.'),
     team_name: z.string().optional().describe('Team name for spawning. Uses current team context if omitted.'),
+    task_id: z.string().optional().describe('Existing shared team task ID assigned to this teammate. Pass the TaskCreate result when spawning a named team member.'),
     mode: permissionModeSchema().optional().describe('Permission mode for spawned teammate (e.g., "plan" to require plan approval).')
   });
   return baseInputSchema().merge(multiAgentInputSchema).extend({
@@ -138,6 +139,7 @@ type InputSchema = ReturnType<typeof inputSchema>;
 type AgentToolInput = z.infer<ReturnType<typeof baseInputSchema>> & {
   name?: string;
   team_name?: string;
+  task_id?: string;
   mode?: z.infer<ReturnType<typeof permissionModeSchema>>;
   isolation?: 'worktree';
 };
@@ -235,6 +237,7 @@ export const AgentTool = buildTool({
     run_in_background,
     name,
     team_name,
+    task_id,
     mode: spawnMode,
     isolation,
     connector_ids,
@@ -304,6 +307,7 @@ export const AgentTool = buildTool({
         name,
         prompt,
         description,
+        task_id,
         team_name: teamName,
         use_splitpane: true,
         plan_mode_required: spawnMode === 'plan',

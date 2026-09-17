@@ -55,6 +55,23 @@ describe('MCP runtime reload', () => {
     expect(applyPendingMcpRuntimeReload(session, dispose, shouldDefer)).toBe(true);
     expect(disposed).toEqual([session]);
   });
+
+  it('does not schedule an immediate reload while an Agent Team is alive', () => {
+    const session = { agentMode: 'local', busy: false, runtime: {}, hasActiveTeam: true };
+    const disposed: unknown[] = [];
+    const shouldDefer = (record: typeof session) => record.hasActiveTeam;
+
+    expect(scheduleMcpRuntimeReload(
+      [session],
+      (record) => disposed.push(record),
+      shouldDefer,
+    )).toEqual({
+      resetSessionCount: 0,
+      skippedBusySessionCount: 1,
+    });
+    expect(session.pendingMcpRuntimeReload).toBe(true);
+    expect(disposed).toEqual([]);
+  });
 });
 
 describe('connector authentication tool result', () => {

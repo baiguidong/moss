@@ -2,11 +2,13 @@ import { feature } from 'bun:bundle'
 import partition from 'lodash-es/partition.js'
 import uniqBy from 'lodash-es/uniqBy.js'
 import {
+  AGENT_TEAMS_CHAT_ALLOWED_TOOLS,
   CHAT_MODE_DISALLOWED_TOOLS,
   COORDINATOR_MODE_ALLOWED_TOOLS,
 } from '../constants/tools.js'
 import { isMcpTool } from '../services/mcp/utils.js'
 import type { Tool, ToolPermissionContext, Tools } from '../Tool.js'
+import { isAgentSwarmsEnabled } from './agentSwarmsEnabled.js'
 
 // MCP tool name suffixes for PR activity subscription. These are lightweight
 // orchestration actions the coordinator calls directly rather than delegating
@@ -43,8 +45,21 @@ export function applyCoordinatorToolFilter(tools: Tools): Tools {
   )
 }
 
-export function applyChatToolFilter(tools: Tools): Tools {
-  return tools.filter(tool => !CHAT_MODE_DISALLOWED_TOOLS.has(tool.name))
+export function isChatModeToolAllowed(
+  toolName: string,
+  agentTeamsEnabled = isAgentSwarmsEnabled(),
+): boolean {
+  return (
+    !CHAT_MODE_DISALLOWED_TOOLS.has(toolName) ||
+    (agentTeamsEnabled && AGENT_TEAMS_CHAT_ALLOWED_TOOLS.has(toolName))
+  )
+}
+
+export function applyChatToolFilter(
+  tools: Tools,
+  agentTeamsEnabled = isAgentSwarmsEnabled(),
+): Tools {
+  return tools.filter(tool => isChatModeToolAllowed(tool.name, agentTeamsEnabled))
 }
 
 /**

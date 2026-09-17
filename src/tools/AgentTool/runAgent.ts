@@ -246,6 +246,7 @@ export async function* runAgent({
   workspacePath,
   projectResources,
   agentName,
+  teamName,
   description,
   transcriptSubdir,
   onQueryProgress,
@@ -309,6 +310,8 @@ export async function* runAgent({
   }
   /** Stable name assigned by the parent coordinator. */
   agentName?: string
+  /** Team owning this sidechain. Team members are not coordinator children. */
+  teamName?: string
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -702,6 +705,7 @@ export async function* runAgent({
   await writeAgentMetadata(agentId, {
     agentType: agentDefinition.agentType,
     ...(agentName && { agentName }),
+    ...(teamName && { teamName }),
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
     ...(workspacePath && { workspacePath }),

@@ -5,6 +5,7 @@ import {
   ENTRYPOINT_NAME,
   MAX_ENTRYPOINT_LINES,
 } from '../../memdir/memdir.js'
+import { getMemoryLanguageInstruction } from '../responseLanguage.js'
 
 export function buildConsolidationPrompt(
   memoryRoot: string,
@@ -14,6 +15,8 @@ export function buildConsolidationPrompt(
   return `# Dream: Memory Consolidation
 
 You are performing a dream — a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
+
+${getMemoryLanguageInstruction()}
 
 Memory directory: \`${memoryRoot}\`
 ${DIR_EXISTS_GUIDANCE}
@@ -57,6 +60,7 @@ Update \`${ENTRYPOINT_NAME}\` so it stays under ${MAX_ENTRYPOINT_LINES} lines AN
 - Demote verbose entries: if an index line is over ~200 chars, it's carrying content that belongs in the topic file — shorten the line, move the detail
 - Add pointers to newly important memories
 - Resolve contradictions — if two files disagree, fix the wrong one
+- Treat legacy global memories with \`type: project\` as out of scope. Remove them from \`${ENTRYPOINT_NAME}\`; delete them when they are merely project status/history, or rewrite them as user/feedback/reference only when they genuinely pass the cross-project global-memory admission gate.
 
 ---
 

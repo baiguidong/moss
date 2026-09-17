@@ -29,11 +29,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { ToolDisplaySettingsProvider } from "@/components/chat/tool-display-settings";
+import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 import { FilePreview } from "@/components/file-preview";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
-import type { BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
+import type { AgentTeamsSessionState, BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
@@ -2063,6 +2064,7 @@ export function ChatArea({
   autoCollapseToolCalls = false,
   onToggleAutoCollapseToolCalls,
   toolDisplaySettingBusy = false,
+  agentTeams,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -2122,10 +2124,16 @@ export function ChatArea({
   autoCollapseToolCalls?: boolean;
   onToggleAutoCollapseToolCalls?: () => void;
   toolDisplaySettingBusy?: boolean;
+  agentTeams?: AgentTeamsSessionState | null;
 }) {
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
+  const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    setAgentTeamsOpen(false);
+  }, [sessionId]);
 
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
@@ -2169,6 +2177,9 @@ export function ChatArea({
   const composerActivity = React.useMemo(
     () => deriveComposerActivity(messages, loading),
     [messages, loading],
+  );
+  const showAgentTeamsWorkbench = Boolean(
+    agentTeamsOpen && agentTeams && agentTeams.teams.length > 0,
   );
 
   React.useEffect(() => {
@@ -2248,35 +2259,44 @@ export function ChatArea({
         forkDisabledReason={forkDisabledReason}
       />
 
-      <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
-        <MessageListPane
-          key={sessionId || "default"}
-          ref={virtualListRef}
-          className="flex-1"
-          messages={messages}
-          workspace={sessionWorkspace}
-          loading={loading}
-          loadingStartTime={loadingStartTime}
-          loadingTokens={turnTokens}
-          focusedToolUseId={focusedToolUseId}
-          contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
-          footer={pendingPlanApproval ? (
-            <PlanApprovalCard
-              pendingPlanApproval={pendingPlanApproval}
-              busy={planDecisionBusy || loading}
-              onApprove={onApprovePlan}
-              onReject={onRejectPlan}
-            />
-          ) : undefined}
-        />
-      </ToolDisplaySettingsProvider>
+      {!agentTeamsOpen && agentTeams && agentTeams.teams.length > 0 ? (
+        <AgentTeamsStrip state={agentTeams} onOpen={() => setAgentTeamsOpen(true)} />
+      ) : null}
+
+      {showAgentTeamsWorkbench && agentTeams ? (
+        <AgentTeamsWorkbench state={agentTeams} onClose={() => setAgentTeamsOpen(false)} />
+      ) : (
+        <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
+          <MessageListPane
+            key={sessionId || "default"}
+            ref={virtualListRef}
+            className="flex-1"
+            messages={messages}
+            workspace={sessionWorkspace}
+            loading={loading}
+            loadingStartTime={loadingStartTime}
+            loadingTokens={turnTokens}
+            focusedToolUseId={focusedToolUseId}
+            contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
+            footer={pendingPlanApproval ? (
+              <PlanApprovalCard
+                pendingPlanApproval={pendingPlanApproval}
+                busy={planDecisionBusy || loading}
+                onApprove={onApprovePlan}
+                onReject={onRejectPlan}
+              />
+            ) : undefined}
+          />
+        </ToolDisplaySettingsProvider>
+      )}
 
 
-      <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
-        <div className={cn(
-          "mx-auto w-full min-w-0",
-          MAIN_CHAT_CONTENT_CLASS_NAME,
-        )}>
+      {!showAgentTeamsWorkbench ? (
+        <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
+          <div className={cn(
+            "mx-auto w-full min-w-0",
+            MAIN_CHAT_CONTENT_CLASS_NAME,
+          )}>
           {childSessions.length > 0 ? (
             <div
               className="mb-2 flex h-10 min-w-0 items-center justify-start overflow-hidden text-[11px] text-muted-foreground"
@@ -2379,8 +2399,9 @@ export function ChatArea({
             onToggleConnector={onToggleConnector}
             onOpenConnectorHub={onOpenConnectorHub}
           />
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

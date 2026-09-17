@@ -5,7 +5,7 @@ import { getCwd } from '../utils/cwd.js'
 import { getIsNonInteractiveSession } from '../bootstrap/state.js'
 import { getCurrentWorktreeSession } from '../utils/worktree.js'
 import { getSessionStartDate } from './common.js'
-import { getInitialSettings } from '../utils/settings/settings.js'
+import { getResponseLanguage } from '../services/responseLanguage.js'
 import {
   AGENT_TOOL_NAME,
   VERIFICATION_AGENT_TYPE,
@@ -396,7 +396,6 @@ export async function getSystemPrompt(
     computeSimpleEnvInfo(model, additionalWorkingDirectories),
   ])
 
-  const settings = getInitialSettings()
   const enabledTools = new Set(tools.map(_ => _.name))
 
   if (
@@ -411,7 +410,7 @@ ${CYBER_RISK_INSTRUCTION}`,
       getSystemRemindersSection(),
       await loadMemoryPrompt(),
       envInfo,
-      getLanguageSection(settings.language),
+      getLanguageSection(getResponseLanguage()),
       // When delta enabled, instructions are announced via persisted
       // mcp_instructions_delta attachments (attachments.ts) instead.
       isMcpInstructionsDeltaEnabled()
@@ -433,7 +432,7 @@ ${CYBER_RISK_INSTRUCTION}`,
       computeSimpleEnvInfo(model, additionalWorkingDirectories),
     ),
     systemPromptSection('language', () =>
-      getLanguageSection(settings.language),
+      getLanguageSection(getResponseLanguage()),
     ),
     systemPromptSection('output_style', () =>
       getOutputStyleSection(outputStyleConfig),

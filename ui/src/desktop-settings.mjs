@@ -8,6 +8,7 @@ import {
 } from './appearance-settings.mjs';
 import { normalizeMcpStore } from './desktop-mcp-settings.mjs';
 import { normalizeAgentMailSessionMode } from './agent-mail-context.mjs';
+import { normalizeWebSearchSettings } from './web-search-capability.mjs';
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 
@@ -15,14 +16,21 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
   remoteEnabled: false,
+  agentTeamsEnabled: false,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
   maxTurns: 100,
+  language: 'chinese',
   appendSystemPrompt: '',
   thinkingMode: 'adaptive',
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
+  webSearch: {
+    mode: 'auto',
+    tavilyApiKey: '',
+    braveApiKey: '',
+  },
   image: {
     provider: 'minimax',
     url: 'https://api.minimaxi.com/v1/image_generation',
@@ -42,7 +50,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   autoMemory: {
     enabled: true,
     extractionEnabled: false,
-    extractionIntervalTurns: 1,
+    extractionIntervalTurns: 5,
     pastContextSearchEnabled: false,
     dreamEnabled: false,
     dreamMinHours: 24,
@@ -256,6 +264,12 @@ export function normalizeDesktopSettings(input, existing = {}) {
   const sourceRemoteDirect = objectField(source, 'remoteDirect');
   const existingRemoteDirect = objectField(existing, 'remoteDirect');
 
+  if (source.agentTeamsEnabled !== undefined) {
+    result.agentTeamsEnabled = source.agentTeamsEnabled === true;
+  } else if (typeof result.agentTeamsEnabled !== 'boolean') {
+    result.agentTeamsEnabled = DEFAULT_DESKTOP_SETTINGS.agentTeamsEnabled;
+  }
+
   if (source.agentMode !== undefined) {
     result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
   } else if (result.agentMode === undefined) {
@@ -295,6 +309,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
     boundedInt(existingText.maxTurns, 1, 10_000) ??
     DEFAULT_DESKTOP_SETTINGS.maxTurns;
 
+  result.language =
+    ownStringField(source, 'language') ??
+    stringField(result, 'language') ??
+    DEFAULT_DESKTOP_SETTINGS.language;
+
   result.thinkingMode =
     source.thinkingMode ??
     sourceTextThinking.mode ??
@@ -332,6 +351,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
       stringField(result, 'apiKey'),
       stringField(existingText, 'apiKey'),
     ) || DEFAULT_DESKTOP_SETTINGS.apiKey;
+
+  result.webSearch = normalizeWebSearchSettings(
+    source.webSearch,
+    result.webSearch || DEFAULT_DESKTOP_SETTINGS.webSearch,
+  );
 
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
@@ -902,6 +926,9 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     ...normalizedSettings,
     models,
     remoteDirect,
+    webSearch: {
+      mode: normalizedSettings.webSearch?.mode || DEFAULT_DESKTOP_SETTINGS.webSearch.mode,
+    },
     env,
   };
   deleteLegacyServerSettings(toSave);
@@ -958,6 +985,13 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
     getPayload(extra = {}) {
       return {
         ...value,
+        webSearch: {
+          mode: value.webSearch?.mode || DEFAULT_DESKTOP_SETTINGS.webSearch.mode,
+          tavilyApiKey: '',
+          braveApiKey: '',
+          tavilyConfigured: Boolean(value.webSearch?.tavilyApiKey),
+          braveConfigured: Boolean(value.webSearch?.braveApiKey),
+        },
         adapters: maskAdapterSettings(value.adapters),
         settingsPath: state.path,
         settingsExists: state.exists,

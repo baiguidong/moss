@@ -157,6 +157,7 @@ import {
 import { returnValue } from 'src/utils/generators.js'
 import { headlessProfilerCheckpoint } from 'src/utils/headlessProfiler.js'
 import { isMcpInstructionsDeltaEnabled } from 'src/utils/mcpInstructionsDelta.js'
+import { emitModelUsageEvent } from 'src/utils/modelUsageEvents.js'
 import { calculateUSDCost } from 'src/utils/modelCost.js'
 import { endQueryProfile, queryCheckpoint } from 'src/utils/queryProfiler.js'
 import {
@@ -1645,6 +1646,7 @@ async function* queryModel(
   let partialMessage: BetaMessage | undefined = undefined
   const contentBlocks: BetaContentBlock[] = []
   let usage: NonNullableUsage = EMPTY_USAGE
+  const usageEventId = randomUUID()
   let costUSD = 0
   let stopReason: BetaStopReason | null = null
   let didFallBackToNonStreaming = false
@@ -2689,6 +2691,26 @@ async function* queryModel(
         fallbackUsage,
         options.model,
       )
+    }
+
+    const totalTokens =
+      usage.input_tokens +
+      usage.output_tokens +
+      usage.cache_read_input_tokens +
+      usage.cache_creation_input_tokens
+    if (totalTokens > 0) {
+      emitModelUsageEvent({
+        eventId: streamRequestId || usageEventId,
+        occurredAt: Date.now(),
+        requestId: streamRequestId ?? undefined,
+        model: resolvedModel,
+        querySource: options.querySource,
+        agentId: options.agentId,
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        cacheReadTokens: usage.cache_read_input_tokens,
+        cacheWriteTokens: usage.cache_creation_input_tokens,
+      })
     }
   }
 

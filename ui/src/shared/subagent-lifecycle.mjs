@@ -10,6 +10,19 @@ export function isSubAgentFailureEntry(entry) {
     (typeof entry.error === 'string' && entry.error.trim().length > 0);
 }
 
+export function isAgentTeamSidechain(metadata, history) {
+  if (typeof metadata?.teamName === 'string' && metadata.teamName.trim()) {
+    return true;
+  }
+  return Array.isArray(history) && history.some((entry) => {
+    if (entry?.type !== 'user' || entry?.message?.role !== 'user') return false;
+    const content = entry.message.content;
+    return typeof content === 'string' &&
+      content.includes('<teammate-message') &&
+      content.includes('teammate_id="team-lead"');
+  });
+}
+
 export function resolveSubAgentStatus({
   metadataStatus,
   transcriptStatus,

@@ -496,6 +496,16 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Skip the WebFetch blocklist check for enterprise environments with restrictive security policies',
         ),
+      webSearch: z
+        .object({
+          mode: z
+            .enum(['auto', 'native', 'tavily', 'brave', 'disabled'])
+            .optional(),
+          tavilyApiKey: z.string().optional(),
+          braveApiKey: z.string().optional(),
+        })
+        .optional()
+        .describe('Configures native and external WebSearch backends'),
       sandbox: SandboxSettingsSchema().optional(),
       spinnerTipsEnabled: z
         .boolean()

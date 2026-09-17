@@ -3,6 +3,7 @@ import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
+import { OverviewView } from '@/components/overview-view';
 import { LibraryView } from '@/components/library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
@@ -45,6 +46,7 @@ import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
   AgentEvent,
+  AgentTeamsSessionState,
   AppVersion,
   AuditAlert,
   BackgroundTaskInfo,
@@ -488,6 +490,7 @@ export default function App() {
   const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
+  const [agentTeamsBySession, setAgentTeamsBySession] = React.useState<Record<string, AgentTeamsSessionState>>({});
   const [input, setInput] = React.useState('');
   const [pendingNewSessionContext, setPendingNewSessionContext] = React.useState<PendingNewSessionContext | null>(null);
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
@@ -835,6 +838,19 @@ export default function App() {
   }, [activeSessionId]);
 
   React.useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    void window.agentDesktop.agentTeams.list({ sessionId: activeSessionId })
+      .then((state) => {
+        if (!cancelled) {
+          setAgentTeamsBySession((previous) => ({ ...previous, [state.sessionId]: state }));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+
+  React.useEffect(() => {
     layoutRef.current = layout;
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
   }, [layout]);
@@ -1154,6 +1170,11 @@ export default function App() {
       setBackgroundTasks((prev) => ({ ...prev, [payload.sessionId]: payload.tasks ?? [] }));
     });
 
+    const offAgentTeamsChanged = window.agentDesktop.agentTeams.onChanged((payload) => {
+      if (!payload?.sessionId) return;
+      setAgentTeamsBySession((previous) => ({ ...previous, [payload.sessionId]: payload }));
+    });
+
     const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
       if (!payload?.requestId || !payload?.sessionId) return;
       updateQuestionRequests((prev) => [
@@ -1212,6 +1233,11 @@ export default function App() {
 
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
+      setAgentTeamsBySession((previous) => {
+        const next = { ...previous };
+        delete next[sessionId];
+        return next;
+      });
       updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
       if (sessionId === activeSessionIdRef.current) {
         navigateToHome();
@@ -1267,6 +1293,7 @@ export default function App() {
       offEvent();
       offState();
       offBackgroundTasks();
+      offAgentTeamsChanged();
       offQuestionRequest();
       offQuestionResolved();
       offMeta();
@@ -2512,6 +2539,7 @@ export default function App() {
                 onComposerAttachmentsChange={setComposerAttachments}
                 contextUsage={contextUsage}
                 turnTokens={turnTokens}
+                agentTeams={agentTeamsBySession[activeSessionId] ?? null}
               />
             ) : (
               <ChatArea
@@ -2554,6 +2582,8 @@ export default function App() {
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
+          ) : activeView === 'overview' ? (
+            <OverviewView />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} />
           ) : activeView === 'audit' ? (

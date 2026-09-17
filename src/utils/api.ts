@@ -74,7 +74,7 @@ export type SystemPromptBlock = {
 // Fields to filter from tool schemas when swarms are not enabled
 const SWARM_FIELDS_BY_TOOL: Record<string, string[]> = {
   [EXIT_PLAN_MODE_V2_TOOL_NAME]: ['launchSwarm', 'teammateCount'],
-  [AGENT_TOOL_NAME]: ['name', 'team_name', 'mode'],
+  [AGENT_TOOL_NAME]: ['name', 'team_name', 'task_id', 'mode'],
 }
 
 /**
@@ -132,10 +132,13 @@ export async function toolToAPISchema(
   // call — name-only keying returned a stale schema (5.4% → 51% err rate, see
   // PR#25424). MCP tools also set inputJSONSchema but each has a stable schema,
   // so including it preserves their GB-flip cache stability.
-  const cacheKey =
+  const baseCacheKey =
     'inputJSONSchema' in tool && tool.inputJSONSchema
       ? `${tool.name}:${jsonStringify(tool.inputJSONSchema)}`
       : tool.name
+  const cacheKey = SWARM_FIELDS_BY_TOOL[tool.name]
+    ? `${baseCacheKey}:agent-teams=${isAgentSwarmsEnabled() ? 'on' : 'off'}`
+    : baseCacheKey
   const cache = getToolSchemaCache()
   let base = cache.get(cacheKey)
   if (!base) {
