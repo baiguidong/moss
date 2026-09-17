@@ -11,6 +11,7 @@ import {
   FileText,
   FolderOpen,
   GitFork,
+  ListTree,
   LoaderCircle,
   Plus,
   Send,
@@ -30,6 +31,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { ToolDisplaySettingsProvider } from "@/components/chat/tool-display-settings";
 import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
+import {
+  CoordinatorWorkersSummary,
+  CoordinatorWorkersView,
+} from "@/components/coordinator-workers-view";
 import { FilePreview } from "@/components/file-preview";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
@@ -107,7 +112,7 @@ function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
   return parts.join("\n\n");
 }
 
-function SessionTabBar({
+export function SessionTabBar({
   title,
   leftCollapsed,
   rightCollapsed,
@@ -124,6 +129,9 @@ function SessionTabBar({
   onFork,
   forking,
   forkDisabledReason,
+  childSessions,
+  onOpenWorkers,
+  onSelectWorker,
 }: {
   title: string;
   leftCollapsed: boolean;
@@ -141,6 +149,9 @@ function SessionTabBar({
   onFork?: () => void;
   forking?: boolean;
   forkDisabledReason?: string | null;
+  childSessions: SessionSummary[];
+  onOpenWorkers: () => void;
+  onSelectWorker: (workerId: string) => void;
 }) {
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
@@ -172,7 +183,10 @@ function SessionTabBar({
     : outline;
 
   return (
-    <div className="relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur">
+    <div
+      className="relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur"
+      aria-label={title ? `会话操作：${title}` : "会话操作"}
+    >
       <div className={cn(
         "mx-auto flex w-full min-w-0 items-center justify-between gap-3",
         MAIN_CHAT_CONTENT_CLASS_NAME,
@@ -187,62 +201,69 @@ function SessionTabBar({
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
-        <div ref={outlineRef} className="relative min-w-0 flex-1">
-          <button
-            type="button"
-            className="w-full min-w-0 rounded-full border border-border/75 bg-card/88 px-4 py-1.5 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.7)] transition-colors hover:bg-card"
-            title="点击查看会话大纲"
-            onClick={() => setOutlineOpen((prev) => !prev)}
-          >
-            <div className="flex min-w-0 items-center justify-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">
-                {title || "New Session"}
-              </span>
-            </div>
-          </button>
-          {outlineOpen && (
-            <div className="absolute left-1/2 top-full z-50 mt-1 w-[420px] max-w-[80vw] -translate-x-1/2 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
-              <div className="border-b border-border/50 p-2">
-                <input
-                  value={outlineQuery}
-                  onChange={(e) => setOutlineQuery(e.target.value)}
-                  placeholder="搜索对话轮次..."
-                  className="w-full rounded-lg border border-border/60 bg-background/70 px-2.5 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
-                />
-              </div>
-              <div className="max-h-72 overflow-y-auto py-1">
-                {filteredOutline.length === 0 ? (
-                  <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                    {outline.length === 0 ? "还没有对话轮次" : "无匹配结果"}
-                  </div>
-                ) : (
-                  filteredOutline.map((entry, index) => (
-                    <button
-                      key={entry.messageId}
-                      type="button"
-                      className="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-muted/40"
-                      onClick={() => {
-                        onJumpToOutlineItem(entry.messageId);
-                        setOutlineOpen(false);
-                      }}
-                    >
-                      <span className="truncate text-xs font-medium text-foreground">
-                        {index + 1}. {entry.question || "（附件消息）"}
-                      </span>
-                      {entry.answerPreview && (
-                        <span className="truncate text-[11px] text-muted-foreground">
-                          {entry.answerPreview}
-                        </span>
-                      )}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <CoordinatorWorkersSummary
+          workers={childSessions}
+          onOpen={onOpenWorkers}
+          onSelect={onSelectWorker}
+        />
 
         <div className="flex shrink-0 items-center gap-1">
+          <div ref={outlineRef} className="relative inline-flex">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn("h-8 w-8 rounded-full", outlineOpen && "text-primary")}
+                  onClick={() => setOutlineOpen((prev) => !prev)}
+                  aria-label="查看会话大纲"
+                >
+                  <ListTree className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>会话大纲</TooltipContent>
+            </Tooltip>
+            {outlineOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-[420px] max-w-[80vw] overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
+                <div className="border-b border-border/50 p-2">
+                  <input
+                    value={outlineQuery}
+                    onChange={(e) => setOutlineQuery(e.target.value)}
+                    placeholder="搜索对话轮次..."
+                    className="w-full rounded-lg border border-border/60 bg-background/70 px-2.5 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
+                  />
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {filteredOutline.length === 0 ? (
+                    <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                      {outline.length === 0 ? "还没有对话轮次" : "无匹配结果"}
+                    </div>
+                  ) : (
+                    filteredOutline.map((entry, index) => (
+                      <button
+                        key={entry.messageId}
+                        type="button"
+                        className="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-muted/40"
+                        onClick={() => {
+                          onJumpToOutlineItem(entry.messageId);
+                          setOutlineOpen(false);
+                        }}
+                      >
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {index + 1}. {entry.question || "（附件消息）"}
+                        </span>
+                        {entry.answerPreview && (
+                          <span className="truncate text-[11px] text-muted-foreground">
+                            {entry.answerPreview}
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -2130,9 +2151,13 @@ export function ChatArea({
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
   const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
+  const [coordinatorWorkersOpen, setCoordinatorWorkersOpen] = React.useState(false);
+  const [selectedCoordinatorWorkerId, setSelectedCoordinatorWorkerId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setAgentTeamsOpen(false);
+    setCoordinatorWorkersOpen(false);
+    setSelectedCoordinatorWorkerId(null);
   }, [sessionId]);
 
   React.useEffect(() => {
@@ -2181,6 +2206,13 @@ export function ChatArea({
   const showAgentTeamsWorkbench = Boolean(
     agentTeamsOpen && agentTeams && agentTeams.teams.length > 0,
   );
+  const showCoordinatorWorkers = coordinatorWorkersOpen && childSessions.length > 0;
+
+  React.useEffect(() => {
+    if (childSessions.length > 0) return;
+    setCoordinatorWorkersOpen(false);
+    setSelectedCoordinatorWorkerId(null);
+  }, [childSessions.length]);
 
   React.useEffect(() => {
     if (hasActiveSession) {
@@ -2257,14 +2289,38 @@ export function ChatArea({
         onFork={onForkSession}
         forking={forkingSession}
         forkDisabledReason={forkDisabledReason}
+        childSessions={childSessions}
+        onOpenWorkers={() => {
+          setAgentTeamsOpen(false);
+          setSelectedCoordinatorWorkerId(null);
+          setCoordinatorWorkersOpen(true);
+        }}
+        onSelectWorker={(workerId) => {
+          setAgentTeamsOpen(false);
+          setSelectedCoordinatorWorkerId(workerId);
+          setCoordinatorWorkersOpen(true);
+        }}
       />
 
-      {!agentTeamsOpen && agentTeams && agentTeams.teams.length > 0 ? (
-        <AgentTeamsStrip state={agentTeams} onOpen={() => setAgentTeamsOpen(true)} />
+      {!agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
+        <AgentTeamsStrip state={agentTeams} onOpen={() => {
+          setCoordinatorWorkersOpen(false);
+          setAgentTeamsOpen(true);
+        }} />
       ) : null}
 
       {showAgentTeamsWorkbench && agentTeams ? (
         <AgentTeamsWorkbench state={agentTeams} onClose={() => setAgentTeamsOpen(false)} />
+      ) : showCoordinatorWorkers ? (
+        <CoordinatorWorkersView
+          workers={childSessions}
+          selectedWorkerId={selectedCoordinatorWorkerId}
+          onClose={() => {
+            setCoordinatorWorkersOpen(false);
+            setSelectedCoordinatorWorkerId(null);
+          }}
+          onOpenWorker={(workerId) => onOpenChildSession?.(workerId)}
+        />
       ) : (
         <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
           <MessageListPane
@@ -2292,56 +2348,12 @@ export function ChatArea({
       )}
 
 
-      {!showAgentTeamsWorkbench ? (
+      {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
         <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
           <div className={cn(
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
           )}>
-          {childSessions.length > 0 ? (
-            <div
-              className="mb-2 flex h-10 min-w-0 items-center justify-start overflow-hidden text-[11px] text-muted-foreground"
-              aria-label={`${childSessions.length} 个子任务`}
-            >
-              <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-                {childSessions.slice(0, 10).map((child) => {
-                  const status = child.subagentStatus === 'running' || child.busy
-                    ? '运行中'
-                    : child.subagentStatus === 'failed' ? '失败' : '已完成';
-                  return (
-                    <Tooltip key={child.id}>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="relative flex h-8 max-w-48 shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-card px-2 transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          aria-label={`打开子任务：${child.title}，${status}`}
-                          onClick={() => onOpenChildSession?.(child.id)}
-                        >
-                          <img src="./build/icon.png" alt="" className={cn("h-4 w-4 shrink-0 object-contain", status === '运行中' && "animate-spin")} />
-                          <span className="truncate">{child.title}</span>
-                          <span
-                            className={cn(
-                              "absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full border border-card",
-                              status === '运行中'
-                                ? "bg-sky-500"
-                                : status === '失败' ? "bg-destructive" : "bg-emerald-500",
-                            )}
-                            aria-hidden="true"
-                          />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>{child.title} · {status}</TooltipContent>
-                    </Tooltip>
-                  );
-                })}
-                {childSessions.length > 10 ? (
-                  <span className="flex h-8 shrink-0 items-center rounded-lg border border-border/60 px-2 text-[10px] tabular-nums">
-                    +{childSessions.length - 10}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
           {backgroundTasks && backgroundTasks.length > 0 && (
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks} />
           )}
