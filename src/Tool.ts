@@ -315,6 +315,13 @@ export type MossAppEvent =
   | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
   | { type: 'app_get_versions'; input: { name: string } }
   | { type: 'browser_open'; input: MossBrowserOpenInput }
+  | { type: 'browser_snapshot'; input: MossBrowserSnapshotInput }
+  | { type: 'browser_click'; input: MossBrowserElementActionInput & { click_count?: 1 | 2 } }
+  | { type: 'browser_type'; input: MossBrowserElementActionInput & { text: string; clear?: boolean; submit?: boolean } }
+  | { type: 'browser_press'; input: MossBrowserTabInput & { key: MossBrowserKey } }
+  | { type: 'browser_scroll'; input: MossBrowserTabInput & { delta_x?: number; delta_y?: number } }
+  | { type: 'browser_wait'; input: MossBrowserTabInput & { text?: string; url_contains?: string; timeout_ms?: number } }
+  | { type: 'browser_reload'; input: MossBrowserTabInput }
   | { type: 'connector_cli_setup'; input: MossConnectorCliSetupInput }
   | { type: 'connector_mcp_authenticate'; input: MossConnectorMcpAuthenticateInput }
   | { type: 'image_generate'; input: MossImageGenerateInput }
@@ -386,6 +393,31 @@ export type MossBrowserOpenInput = {
   query?: string
   engine?: 'baidu' | 'google' | 'bing'
 }
+
+export type MossBrowserTabInput = {
+  tab_id?: string
+}
+
+export type MossBrowserSnapshotInput = MossBrowserTabInput & {
+  full_page?: boolean
+}
+
+export type MossBrowserElementActionInput = MossBrowserTabInput & {
+  snapshot_id: string
+  ref: string
+}
+
+export type MossBrowserKey =
+  | 'Enter'
+  | 'Tab'
+  | 'Escape'
+  | 'ArrowUp'
+  | 'ArrowDown'
+  | 'ArrowLeft'
+  | 'ArrowRight'
+  | 'Backspace'
+  | 'Delete'
+  | 'Space'
 
 export type MossConnectorCliSetupInput = {
   connector_id: string
@@ -484,6 +516,9 @@ export type MossAppEventResult =
       items?: unknown[]
       resource?: unknown
       libraryWrite?: unknown
+      browser?: unknown
+      imageBase64?: string
+      imageMediaType?: 'image/png' | 'image/jpeg'
     }
   | { ok: false; error: string }
 

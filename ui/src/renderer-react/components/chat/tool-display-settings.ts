@@ -3,20 +3,27 @@
 import * as React from "react";
 import type { ToolStatus } from "@/lib/agent-transcript";
 
+export const TOOL_DISPLAY_MODES = ["expanded", "collapsed", "merged"] as const;
+export type ToolDisplayMode = typeof TOOL_DISPLAY_MODES[number];
+
 type ToolDisplaySettings = {
-  autoCollapseToolCalls: boolean;
+  toolDisplayMode: ToolDisplayMode;
 };
 
 const ToolDisplaySettingsContext = React.createContext<ToolDisplaySettings>({
-  autoCollapseToolCalls: false,
+  toolDisplayMode: "expanded",
 });
 
 export type ToolExecutionState = "running" | "completed" | "failed";
 
-export function resolveAutoCollapseToolCalls(
-  sessionOverride: boolean | null | undefined,
-  globalDefault: boolean,
-) {
+export function isToolDisplayMode(value: unknown): value is ToolDisplayMode {
+  return typeof value === "string" && TOOL_DISPLAY_MODES.includes(value as ToolDisplayMode);
+}
+
+export function resolveToolDisplayMode(
+  sessionOverride: ToolDisplayMode | null | undefined,
+  globalDefault: ToolDisplayMode,
+): ToolDisplayMode {
   return sessionOverride ?? globalDefault;
 }
 
@@ -35,26 +42,34 @@ export function getToolExecutionState({
 }
 
 export function shouldAutoCollapseToolCall({
-  enabled,
+  mode,
   status,
   failed,
   hasResult,
 }: {
-  enabled: boolean;
+  mode: ToolDisplayMode;
   status: ToolStatus;
   failed: boolean;
   hasResult: boolean;
 }) {
-  return enabled && getToolExecutionState({ status, failed, hasResult }) !== "running";
+  return mode === "collapsed"
+    && getToolExecutionState({ status, failed, hasResult }) !== "running";
+}
+
+export function shouldExpandThinking(
+  mode: ToolDisplayMode,
+  isActive: boolean,
+) {
+  return mode === "expanded" || (mode === "collapsed" && isActive);
 }
 
 export function ToolDisplaySettingsProvider({
-  autoCollapseToolCalls,
+  toolDisplayMode,
   children,
 }: ToolDisplaySettings & { children: React.ReactNode }) {
   const value = React.useMemo(
-    () => ({ autoCollapseToolCalls }),
-    [autoCollapseToolCalls],
+    () => ({ toolDisplayMode }),
+    [toolDisplayMode],
   );
   return React.createElement(ToolDisplaySettingsContext.Provider, { value }, children);
 }

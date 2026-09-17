@@ -43,7 +43,7 @@ type SettingsViewProps = {
   setThemeMode: (mode: ThemeMode) => void;
   cssThemeId: string;
   setCssThemeId: (id: string) => void;
-  onAutoCollapseToolCallsChange: (enabled: boolean) => void;
+  onToolDisplayModeChange: (mode: DesktopSettings['appearance']['toolDisplayMode']) => void;
   onAppearancePreview: (patch: Partial<DesktopSettings['appearance']>) => void;
   onAppearanceCommit: (patch: Partial<DesktopSettings['appearance']>) => void;
   buddyEnabled: boolean;
@@ -1147,7 +1147,7 @@ export function SettingsView({
   setThemeMode,
   cssThemeId,
   setCssThemeId,
-  onAutoCollapseToolCallsChange,
+  onToolDisplayModeChange,
   onAppearancePreview,
   onAppearanceCommit,
   buddyEnabled,
@@ -3034,15 +3034,36 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
-                        title="自动折叠工具调用"
-                        controlClassName="sm:w-[56px]"
+                        title="工具展示"
+                        description="控制工具调用在所有会话中的默认展示方式"
+                        controlClassName="sm:w-auto"
                       >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={settingsDraft.appearance.autoCollapseToolCalls ?? false}
-                            onCheckedChange={onAutoCollapseToolCallsChange}
-                            label="自动折叠工具调用"
-                          />
+                        <div
+                          role="radiogroup"
+                          aria-label="工具展示方式"
+                          className="inline-flex h-8 items-center rounded-md border border-border/70 bg-muted/35 p-0.5"
+                        >
+                          {([
+                            ["expanded", "展开"],
+                            ["collapsed", "折叠"],
+                            ["merged", "合并"],
+                          ] as const).map(([mode, label]) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              role="radio"
+                              aria-checked={settingsDraft.appearance.toolDisplayMode === mode}
+                              className={cn(
+                                "h-7 rounded px-3 text-xs transition-colors",
+                                settingsDraft.appearance.toolDisplayMode === mode
+                                  ? "bg-background font-medium text-foreground shadow-sm"
+                                  : "text-muted-foreground hover:text-foreground",
+                              )}
+                              onClick={() => onToolDisplayModeChange(mode)}
+                            >
+                              {label}
+                            </button>
+                          ))}
                         </div>
                       </SettingsRow>
                     </SettingsGroup>

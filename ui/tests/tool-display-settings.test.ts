@@ -1,21 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 import {
   getToolExecutionState,
-  resolveAutoCollapseToolCalls,
+  resolveToolDisplayMode,
   shouldAutoCollapseToolCall,
+  shouldExpandThinking,
 } from '../src/renderer-react/components/chat/tool-display-settings';
 
 describe('tool display settings', () => {
   it('uses the session setting before the global default', () => {
-    expect(resolveAutoCollapseToolCalls(true, false)).toBe(true);
-    expect(resolveAutoCollapseToolCalls(false, true)).toBe(false);
-    expect(resolveAutoCollapseToolCalls(null, true)).toBe(true);
-    expect(resolveAutoCollapseToolCalls(undefined, false)).toBe(false);
+    expect(resolveToolDisplayMode('merged', 'expanded')).toBe('merged');
+    expect(resolveToolDisplayMode('collapsed', 'merged')).toBe('collapsed');
+    expect(resolveToolDisplayMode(null, 'merged')).toBe('merged');
+    expect(resolveToolDisplayMode(undefined, 'expanded')).toBe('expanded');
   });
 
   it('keeps the current expanded behavior when automatic collapse is disabled', () => {
     expect(shouldAutoCollapseToolCall({
-      enabled: false,
+      mode: 'expanded',
       status: 'success',
       failed: false,
       hasResult: true,
@@ -24,25 +25,25 @@ describe('tool display settings', () => {
 
   it('keeps only actively executing tools expanded', () => {
     expect(shouldAutoCollapseToolCall({
-      enabled: true,
+      mode: 'collapsed',
       status: 'running',
       failed: false,
       hasResult: false,
     })).toBe(false);
     expect(shouldAutoCollapseToolCall({
-      enabled: true,
+      mode: 'collapsed',
       status: 'pending',
       failed: false,
       hasResult: false,
     })).toBe(false);
     expect(shouldAutoCollapseToolCall({
-      enabled: true,
+      mode: 'collapsed',
       status: 'success',
       failed: false,
       hasResult: true,
     })).toBe(true);
     expect(shouldAutoCollapseToolCall({
-      enabled: true,
+      mode: 'collapsed',
       status: 'error',
       failed: true,
       hasResult: true,
@@ -51,7 +52,7 @@ describe('tool display settings', () => {
 
   it('collapses as soon as a pending tool receives a terminal result', () => {
     expect(shouldAutoCollapseToolCall({
-      enabled: true,
+      mode: 'collapsed',
       status: 'pending',
       failed: false,
       hasResult: true,
@@ -79,5 +80,13 @@ describe('tool display settings', () => {
       failed: false,
       hasResult: false,
     })).toBe('running');
+  });
+
+  it('applies tool display modes to thinking content', () => {
+    expect(shouldExpandThinking('expanded', false)).toBe(true);
+    expect(shouldExpandThinking('collapsed', true)).toBe(true);
+    expect(shouldExpandThinking('collapsed', false)).toBe(false);
+    expect(shouldExpandThinking('merged', true)).toBe(false);
+    expect(shouldExpandThinking('merged', false)).toBe(false);
   });
 });

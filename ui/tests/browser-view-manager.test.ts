@@ -18,6 +18,39 @@ class FakeWebContents extends EventEmitter {
   reloaded = false;
   devToolsOpen = false;
   windowOpenHandler: ((details: Record<string, unknown>) => Record<string, unknown>) | null = null;
+  executedScripts: string[] = [];
+  inputEvents: Array<Record<string, unknown>> = [];
+  insertedTexts: string[] = [];
+  capturePageError = false;
+  inspectionOverride: Record<string, unknown> | null | undefined = undefined;
+  debuggerAttached = false;
+  debugger = {
+    isAttached: () => this.debuggerAttached,
+    attach: () => { this.debuggerAttached = true; },
+    detach: () => { this.debuggerAttached = false; },
+    sendCommand: (command: string) => {
+      if (command === 'Page.getLayoutMetrics') {
+        return Promise.resolve({
+          cssVisualViewport: { clientWidth: 800, clientHeight: 600 },
+          cssContentSize: { width: 800, height: 1200 },
+        });
+      }
+      if (command === 'Page.captureScreenshot') {
+        return Promise.resolve({ data: Buffer.from('debugger-screenshot-data').toString('base64') });
+      }
+      return Promise.resolve({});
+    },
+  };
+  pageSnapshot = {
+    url: 'https://example.test/form',
+    title: 'Example form',
+    viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0, documentWidth: 800, documentHeight: 1200 },
+    text: 'Name Submit',
+    elements: [
+      { tag: 'input', role: '', type: 'text', name: 'Name', editable: true, disabled: false, _path: 'html:nth-of-type(1)>body:nth-of-type(1)>input:nth-of-type(1)', rect: { x: 20, y: 30, width: 200, height: 40 } },
+      { tag: 'button', role: '', type: '', name: 'Submit', editable: false, disabled: false, _path: 'html:nth-of-type(1)>body:nth-of-type(1)>button:nth-of-type(1)', rect: { x: 20, y: 90, width: 100, height: 40 } },
+    ],
+  };
   history = {
     back: false,
     forward: false,
@@ -51,6 +84,38 @@ class FakeWebContents extends EventEmitter {
   isDevToolsOpened() { return this.devToolsOpen; }
   openDevTools() { this.devToolsOpen = true; this.emit('devtools-opened'); }
   closeDevTools() { this.devToolsOpen = false; this.emit('devtools-closed'); }
+  executeJavaScript(script: string) {
+    this.executedScripts.push(script);
+    if (script.includes('collectBrowserAgentPage')) return Promise.resolve(this.pageSnapshot);
+    if (script.includes('inspectBrowserAgentPoint')) {
+      if (this.inspectionOverride !== undefined) return Promise.resolve(this.inspectionOverride);
+      const match = script.match(/\)\((\d+), (\d+)\)$/);
+      const x = Number(match?.[1]);
+      const y = Number(match?.[2]);
+      const element = this.pageSnapshot.elements.find((candidate) => (
+        x >= candidate.rect.x
+        && x <= candidate.rect.x + candidate.rect.width
+        && y >= candidate.rect.y
+        && y <= candidate.rect.y + candidate.rect.height
+      ));
+      return Promise.resolve(element || null);
+    }
+    if (script.includes('readBrowserAgentWaitState')) {
+      return Promise.resolve({ url: this.url, title: this.title, textMatched: true, urlMatched: true });
+    }
+    if (script.includes('window.scrollBy')) return Promise.resolve({ scrollX: 0, scrollY: 600 });
+    return Promise.resolve(null);
+  }
+  capturePage() {
+    if (this.capturePageError) return Promise.reject(new Error('Current display surface not available for capture'));
+    return Promise.resolve({
+      getSize: () => ({ width: 800, height: 600 }),
+      toPNG: () => Buffer.from('png-data'),
+      toJPEG: () => Buffer.from('jpeg-data'),
+    });
+  }
+  sendInputEvent(event: Record<string, unknown>) { this.inputEvents.push(event); }
+  insertText(text: string) { this.insertedTexts.push(text); }
 }
 
 class FakeView {
@@ -418,5 +483,204 @@ describe('BrowserViewManager', () => {
       url: BROWSER_DEFAULT_URL,
       connectorAuth: null,
     });
+  });
+
+  it('captures an agent snapshot and drives only referenced elements from that snapshot', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-agent', url: 'https://example.test/form' });
+    const tabId = opened.activeTabId;
+    const webContents = views[1]!.view.webContents;
+
+    const snapshot = await manager.agentSnapshot({ sessionId: 'session-agent', tabId });
+    expect(typeof snapshot.snapshotId).toBe('string');
+    expect(snapshot).toMatchObject({
+      tabId,
+      imageMediaType: 'image/png',
+      imageWidth: 800,
+      imageHeight: 600,
+      elements: [
+        { ref: 'e1', name: 'Name' },
+        { ref: 'e2', name: 'Submit' },
+      ],
+    });
+
+    await manager.agentType({
+      sessionId: 'session-agent',
+      tabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e1',
+      text: 'Moss',
+      submit: true,
+    });
+    expect(webContents.insertedTexts).toEqual(['Moss']);
+    expect(webContents.inputEvents).toContainEqual(expect.objectContaining({ type: 'mouseDown', x: 120, y: 50 }));
+    expect(webContents.inputEvents).toContainEqual(expect.objectContaining({ type: 'keyDown', keyCode: 'Enter' }));
+  });
+
+  it('rejects stale element references after navigation and invalidates refs after scrolling', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-stale', url: 'https://example.test' });
+    const tabId = opened.activeTabId;
+    const snapshot = await manager.agentSnapshot({ sessionId: 'session-stale', tabId });
+
+    views[1]!.view.webContents.emit('did-start-loading');
+    await expect(manager.agentClick({
+      sessionId: 'session-stale',
+      tabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e2',
+    })).rejects.toThrow('stale');
+
+    const nextSnapshot = await manager.agentSnapshot({ sessionId: 'session-stale', tabId });
+    await manager.agentScroll({ sessionId: 'session-stale', tabId, deltaY: 600 });
+    await expect(manager.agentClick({
+      sessionId: 'session-stale',
+      tabId,
+      snapshotId: nextSnapshot.snapshotId,
+      ref: 'e2',
+    })).rejects.toThrow('stale');
+  });
+
+  it('does not return a snapshot when the page crosses origins during inspection', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-origin', url: 'http://localhost:5173' });
+    const tabId = opened.activeTabId;
+    views[1]!.view.webContents.pageSnapshot = {
+      ...views[1]!.view.webContents.pageSnapshot,
+      url: 'https://account.example.test/private',
+    };
+
+    await expect(manager.agentSnapshot({ sessionId: 'session-origin', tabId }))
+      .rejects.toThrow('different site');
+  });
+
+  it('falls back to a debugger screenshot when a detached native view has no capture surface', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-capture', url: 'https://example.test' });
+    const webContents = views[1]!.view.webContents;
+    webContents.capturePageError = true;
+
+    const snapshot = await manager.agentSnapshot({
+      sessionId: 'session-capture',
+      tabId: opened.activeTabId,
+    });
+    expect(snapshot).toMatchObject({
+      imageMediaType: 'image/jpeg',
+      imageWidth: 800,
+      imageHeight: 600,
+      fullPage: false,
+    });
+    expect(Buffer.from(snapshot.imageBase64, 'base64').toString()).toBe('debugger-screenshot-data');
+    expect(webContents.debuggerAttached).toBe(false);
+  });
+
+  it('revalidates the live DOM before clicking a snapshot coordinate', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-layout', url: 'https://example.test' });
+    const webContents = views[1]!.view.webContents;
+    const snapshot = await manager.agentSnapshot({ sessionId: 'session-layout', tabId: opened.activeTabId });
+    webContents.inspectionOverride = {
+      ...webContents.pageSnapshot.elements[1],
+      name: 'Delete account',
+    };
+
+    await expect(manager.agentClick({
+      sessionId: 'session-layout',
+      tabId: opened.activeTabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e2',
+    })).rejects.toThrow('moved or changed');
+    expect(webContents.inputEvents).toHaveLength(0);
+  });
+
+  it('rejects semantic changes from an unnamed control and an input becoming read-only', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-semantics', url: 'https://example.test' });
+    const webContents = views[1]!.view.webContents;
+    webContents.pageSnapshot = {
+      ...webContents.pageSnapshot,
+      elements: [{
+        ...webContents.pageSnapshot.elements[0],
+        name: '',
+      }],
+    };
+    const snapshot = await manager.agentSnapshot({
+      sessionId: 'session-semantics',
+      tabId: opened.activeTabId,
+    });
+    webContents.inspectionOverride = {
+      ...webContents.pageSnapshot.elements[0],
+      name: 'Delete account',
+    };
+    await expect(manager.agentClick({
+      sessionId: 'session-semantics',
+      tabId: opened.activeTabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e1',
+    })).rejects.toThrow('moved or changed');
+
+    webContents.inspectionOverride = {
+      ...webContents.pageSnapshot.elements[0],
+      editable: false,
+    };
+    await expect(manager.agentType({
+      sessionId: 'session-semantics',
+      tabId: opened.activeTabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e1',
+      text: 'Moss',
+    })).rejects.toThrow('moved or changed');
+    expect(webContents.inputEvents).toHaveLength(0);
+  });
+
+  it('blocks password entry and clears console messages across navigation', async () => {
+    const { manager, views } = createHarness();
+    const opened = manager.openTab({ sessionId: 'session-password', url: 'https://example.test' });
+    const webContents = views[1]!.view.webContents;
+    webContents.pageSnapshot = {
+      ...webContents.pageSnapshot,
+      elements: [{
+        tag: 'input',
+        role: '',
+        type: 'password',
+        name: 'Password',
+        editable: false,
+        disabled: false,
+        _path: 'html:nth-of-type(1)>body:nth-of-type(1)>input:nth-of-type(1)',
+        rect: { x: 20, y: 30, width: 200, height: 40 },
+      }],
+    };
+    webContents.emit('console-message', {}, {
+      level: 'error',
+      message: 'private-page-error',
+      lineNumber: 2,
+      sourceId: 'https://example.test/account?token=secret',
+    });
+    const snapshot = await manager.agentSnapshot({ sessionId: 'session-password', tabId: opened.activeTabId });
+    expect(snapshot.consoleMessages).toHaveLength(1);
+    await expect(manager.agentType({
+      sessionId: 'session-password',
+      tabId: opened.activeTabId,
+      snapshotId: snapshot.snapshotId,
+      ref: 'e1',
+      text: 'secret',
+    })).rejects.toThrow('password fields');
+
+    webContents.emit('did-start-loading');
+    const nextSnapshot = await manager.agentSnapshot({ sessionId: 'session-password', tabId: opened.activeTabId });
+    expect(nextSnapshot.consoleMessages).toEqual([]);
+  });
+
+  it('does not automate connector or MCP authorization tabs', () => {
+    const { manager } = createHarness();
+    const opened = manager.openTab({
+      sessionId: 'session-auth-agent',
+      url: 'https://auth.example.test',
+      mcpAuth: { serverName: 'demo' },
+    });
+    expect(() => manager.getAgentPageInfo({
+      sessionId: 'session-auth-agent',
+      tabId: opened.activeTabId,
+    })).toThrow('Authorization pages');
   });
 });

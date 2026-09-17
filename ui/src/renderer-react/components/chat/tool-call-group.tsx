@@ -8,7 +8,10 @@ import {
   TOOL_CALL_FRAME_CLASS_NAME,
   TOOL_CALL_HEADER_CLASS_NAME,
 } from "@/components/chat/tool-call-frame";
-import { useToolDisplaySettings } from "@/components/chat/tool-display-settings";
+import {
+  useToolDisplaySettings,
+  type ToolDisplayMode,
+} from "@/components/chat/tool-display-settings";
 import type { ToolResultRenderMessage, ToolUseRenderMessage } from "@/lib/agent-transcript";
 
 type Props = {
@@ -73,10 +76,10 @@ export function groupToolCallsForDisplay(toolCalls: ToolUseRenderMessage[]): Too
 }
 
 export function shouldExpandExploredGroup(
-  autoCollapseToolCalls: boolean,
+  toolDisplayMode: ToolDisplayMode,
   containsFocusedTool: boolean,
 ) {
-  return containsFocusedTool || !autoCollapseToolCalls;
+  return containsFocusedTool || toolDisplayMode === "expanded";
 }
 
 function toolTreeHasUseId(
@@ -148,7 +151,7 @@ function ToolCallRun({
   focusedToolUseId,
   explored = false,
 }: Omit<Props, "embedded"> & { explored?: boolean }) {
-  const { autoCollapseToolCalls } = useToolDisplaySettings();
+  const { toolDisplayMode } = useToolDisplaySettings();
   const containsFocusedTool = Boolean(
     explored
     && focusedToolUseId
@@ -157,12 +160,12 @@ function ToolCallRun({
     )),
   );
   const [exploredExpanded, setExploredExpanded] = React.useState(
-    shouldExpandExploredGroup(autoCollapseToolCalls, containsFocusedTool),
+    shouldExpandExploredGroup(toolDisplayMode, containsFocusedTool),
   );
 
   React.useEffect(() => {
-    setExploredExpanded(shouldExpandExploredGroup(autoCollapseToolCalls, containsFocusedTool));
-  }, [autoCollapseToolCalls, containsFocusedTool]);
+    setExploredExpanded(shouldExpandExploredGroup(toolDisplayMode, containsFocusedTool));
+  }, [toolDisplayMode, containsFocusedTool]);
 
   const explorationSummary = getExplorationSummary(toolCalls, resultMap);
   const failed = explored && explorationSummary.failed > 0;
@@ -175,7 +178,8 @@ function ToolCallRun({
   return (
     <div className="flex min-w-0 items-start gap-2">
       <div
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
+        data-tool-group-icon="true"
+        className="flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
         title="工具调用"
         role="img"
         aria-label="工具调用"

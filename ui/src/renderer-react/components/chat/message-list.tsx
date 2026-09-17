@@ -1,17 +1,26 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
 import { AssistantMessage } from "@/components/chat/assistant-message";
+import {
+  ActivityGroup,
+  type ActivityStep,
+} from "@/components/chat/activity-group";
 import { ThinkingBlock } from "@/components/chat/thinking-block";
-import { ToolCallGroup } from "@/components/chat/tool-call-group";
 import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
 import { TurnChangeCard } from "@/components/chat/turn-change-card";
+import {
+  buildConversationNavigationItems,
+  ConversationNavigator,
+  getActiveConversationNavigationItemId,
+  type ConversationNavigationItem,
+} from "@/components/chat/conversation-navigator";
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
-import { extractShellResult } from "@/components/chat/tool-utils";
+import { extractShellResult, getToolKind } from "@/components/chat/tool-utils";
 import type {
   ToolResultRenderMessage,
   ToolUseRenderMessage,
@@ -24,6 +33,8 @@ type RenderItem =
       kind: "tool_group";
       id: string;
       toolCalls: ToolUseRenderMessage[];
+      steps: ActivityStep[];
+      mergeable: boolean;
     }
   | {
       kind: "message";
@@ -32,7 +43,11 @@ type RenderItem =
 
 function getRenderItemTurnId(item: RenderItem): string | undefined {
   if (item.kind === "message") return item.message.turnId;
-  return item.toolCalls.find((toolCall) => toolCall.turnId)?.turnId;
+  for (const step of item.steps) {
+    const turnId = step.kind === "thinking" ? step.message.turnId : step.toolCall.turnId;
+    if (turnId) return turnId;
+  }
+  return undefined;
 }
 
 function getRenderItemId(item: RenderItem): string {
@@ -88,16 +103,32 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
   const toolUseIds = new Set<string>();
   let activeToolGroup: Extract<RenderItem, { kind: "tool_group" }> | null = null;
 
+  const beginToolGroup = (id: string, mergeable: boolean) => {
+    const group: Extract<RenderItem, { kind: "tool_group" }> = {
+      kind: "tool_group",
+      id: `group-${id}`,
+      toolCalls: [],
+      steps: [],
+      mergeable,
+    };
+    activeToolGroup = group;
+    renderItems.push(group);
+  };
+
   const appendTopLevelToolCall = (toolCall: ToolUseRenderMessage) => {
+    const mergeable = isMergeableActivityTool(toolCall);
+    if (activeToolGroup && activeToolGroup.mergeable !== mergeable) activeToolGroup = null;
     if (!activeToolGroup) {
-      activeToolGroup = {
-        kind: "tool_group",
-        id: `group-${toolCall.id}`,
-        toolCalls: [],
-      };
-      renderItems.push(activeToolGroup);
+      beginToolGroup(toolCall.id, mergeable);
     }
-    activeToolGroup.toolCalls.push(toolCall);
+    activeToolGroup!.toolCalls.push(toolCall);
+    activeToolGroup!.steps.push({ kind: "tool", toolCall });
+    if (!mergeable) activeToolGroup = null;
+  };
+
+  const appendThinking = (message: Extract<TranscriptRenderMessage, { type: "thinking" }>) => {
+    if (!activeToolGroup || !activeToolGroup.mergeable) beginToolGroup(message.id, true);
+    activeToolGroup!.steps.push({ kind: "thinking", message });
   };
 
   for (const message of messages) {
@@ -112,6 +143,11 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
     if (message.type === "user_text") {
       activeToolGroup = null;
       renderItems.push({ kind: "message", message });
+      continue;
+    }
+
+    if (message.type === "thinking") {
+      appendThinking(message);
       continue;
     }
 
@@ -174,6 +210,17 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
   }
 
   return { renderItems, resultMap, childToolCallsByParent };
+}
+
+export function isMergeableActivityTool(toolCall: ToolUseRenderMessage) {
+  const normalized = toolCall.toolName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (getToolKind(toolCall.toolName, toolCall.input) === "agent") return false;
+  return !normalized.includes("askuserquestion")
+    && !normalized.includes("enterplanmode")
+    && !normalized.includes("exitplanmode")
+    && !normalized.includes("imagegen")
+    && !normalized.includes("generateimage")
+    && !normalized.includes("memory");
 }
 
 function BashCommandBlock({
@@ -254,16 +301,19 @@ function renderTranscriptItem(
   resultMap: Map<string, ToolResultRenderMessage>,
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
   focusedToolUseId?: string,
+  isLive = false,
 ) {
   if (item.kind === "tool_group") {
     return (
       <div key={item.id} className="group min-w-0 w-full" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
-        <ToolCallGroup
+        <ActivityGroup
+          steps={item.steps}
           toolCalls={item.toolCalls}
+          mergeable={item.mergeable}
           resultMap={resultMap}
           childToolCallsByParent={childToolCallsByParent}
-          embedded
           focusedToolUseId={focusedToolUseId}
+          isLive={isLive}
         />
       </div>
     );
@@ -346,8 +396,10 @@ function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; token
 
 function extractItemCopyText(item: RenderItem): string {
   if (item.kind === "tool_group") {
-    return item.toolCalls
-      .map((toolCall) => `${toolCall.displayName || toolCall.toolName}${toolCall.inputText ? `: ${toolCall.inputText}` : ""}`)
+    return item.steps
+      .map((step) => step.kind === "thinking"
+        ? step.message.content
+        : `${step.toolCall.displayName || step.toolCall.toolName}${step.toolCall.inputText ? `: ${step.toolCall.inputText}` : ""}`)
       .join("\n");
   }
   const message = item.message;
@@ -448,6 +500,7 @@ function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
 }
 
 export type VirtualMessageListHandle = {
+  scrollToTop: (behavior?: "auto" | "smooth") => void;
   scrollToBottom: (behavior?: "auto" | "smooth") => void;
   scrollToMessage: (messageId: string) => void;
   scrollToTool: (toolUseId: string) => void;
@@ -489,6 +542,7 @@ export const VirtualMessageList = React.forwardRef<
     loadingTokens?: number;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
+    onAtTopChange?: (atTop: boolean) => void;
     onAtBottomChange?: (atBottom: boolean) => void;
     focusedToolUseId?: string;
     contentClassName?: string;
@@ -503,6 +557,7 @@ export const VirtualMessageList = React.forwardRef<
     loadingTokens,
     footer,
     emptyState,
+    onAtTopChange,
     onAtBottomChange,
     focusedToolUseId,
     contentClassName,
@@ -519,6 +574,9 @@ export const VirtualMessageList = React.forwardRef<
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
   renderItemsRef.current = renderItems;
   const [contextMenu, setContextMenu] = React.useState<MessageContextMenuState | null>(null);
+  const [visibleStartIndex, setVisibleStartIndex] = React.useState(() => Math.max(0, renderItems.length - 1));
+  const [highlightedMessageId, setHighlightedMessageId] = React.useState<string | null>(null);
+  const highlightTimerRef = React.useRef<number | null>(null);
   const [turnChanges, setTurnChanges] = React.useState<Map<string, TurnChangeSummary>>(new Map());
   const [rewindSupport, setRewindSupport] = React.useState<TurnChangesPayload["rewind"]>({
     supported: false,
@@ -553,6 +611,37 @@ export const VirtualMessageList = React.forwardRef<
     return result;
   }, [renderItems]);
 
+  const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
+    renderItems.flatMap((item, renderIndex) => (
+      item.kind === "message" && item.message.type === "user_text"
+        ? [{
+            id: item.message.id,
+            content: item.message.content || item.message.attachments
+              ?.map((attachment) => attachment.name || attachment.path.split(/[\\/]/).at(-1) || attachment.path)
+              .join(", ") || "",
+            renderIndex,
+            attachmentCount: item.message.attachments?.length || 0,
+          }]
+        : []
+    )),
+  ), [renderItems]);
+  const activeConversationItemId = getActiveConversationNavigationItemId(
+    conversationNavigationItems,
+    visibleStartIndex,
+  );
+  const resolvedContentClassName = cn(
+    contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+    conversationNavigationItems.length >= 4 && "md:pl-12",
+  );
+
+  React.useEffect(() => () => {
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+  }, []);
+
+  const scrollToTop = React.useCallback((behavior: "auto" | "smooth" = "smooth") => {
+    virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior });
+  }, []);
+
   const scrollToBottom = React.useCallback((behavior: "auto" | "smooth" = "smooth") => {
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
@@ -565,7 +654,9 @@ export const VirtualMessageList = React.forwardRef<
     const index = renderItemsRef.current.findIndex((item) =>
       item.kind === "message"
         ? item.message.id === messageId
-        : item.toolCalls.some((toolCall) => toolCall.id === messageId));
+        : item.steps.some((step) => (
+          step.kind === "thinking" ? step.message.id === messageId : step.toolCall.id === messageId
+        )));
     if (index >= 0) {
       virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "smooth" });
     }
@@ -578,7 +669,26 @@ export const VirtualMessageList = React.forwardRef<
     }
   }, [childToolCallsByParent]);
 
-  React.useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage, scrollToTool }), [scrollToBottom, scrollToMessage, scrollToTool]);
+  const navigateToConversationItem = React.useCallback((item: ConversationNavigationItem) => {
+    setHighlightedMessageId(item.id);
+    virtuosoRef.current?.scrollToIndex({
+      index: item.renderIndex,
+      align: "start",
+      behavior: Math.abs(item.renderIndex - visibleStartIndex) <= 8 ? "smooth" : "auto",
+    });
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) => current === item.id ? null : current);
+      highlightTimerRef.current = null;
+    }, 1400);
+  }, [visibleStartIndex]);
+
+  React.useImperativeHandle(ref, () => ({
+    scrollToTop,
+    scrollToBottom,
+    scrollToMessage,
+    scrollToTool,
+  }), [scrollToBottom, scrollToMessage, scrollToTool, scrollToTop]);
 
   // followOutput only reacts to item-count changes; streaming grows the last
   // item's content without adding items, so keep following manually while the
@@ -621,17 +731,25 @@ export const VirtualMessageList = React.forwardRef<
         className="h-full min-w-0"
         data={renderItems}
         computeItemKey={(_index, item) => (item.kind === "tool_group" ? item.id : item.message.id)}
-        context={{ footer, loading, loadingStartTime, loadingTokens, contentClassName }}
+        context={{
+          footer,
+          loading,
+          loadingStartTime,
+          loadingTokens,
+          contentClassName: resolvedContentClassName,
+        }}
         followOutput={(isAtBottom) => (isAtBottom ? "auto" : false)}
+        atTopStateChange={onAtTopChange}
         atBottomThreshold={120}
         atBottomStateChange={(atBottom) => {
           atBottomRef.current = atBottom;
           onAtBottomChange?.(atBottom);
         }}
+        rangeChanged={(range) => setVisibleStartIndex(range.startIndex)}
         initialTopMostItemIndex={Math.max(0, renderItems.length - 1)}
         increaseViewportBy={{ top: 400, bottom: 400 }}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
-        itemContent={(_index, item) => {
+        itemContent={(index, item) => {
           const turnId = getRenderItemTurnId(item);
           const turnChange = turnId ? turnChanges.get(turnId) : undefined;
           const showTurnChange = Boolean(
@@ -644,8 +762,11 @@ export const VirtualMessageList = React.forwardRef<
           <div
             data-chat-message-list
             className={cn(
-              "mx-auto w-full min-w-0 py-0.5",
-              contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+              "mx-auto w-full min-w-0 rounded-lg py-0.5 transition-[background-color,box-shadow] duration-300",
+              item.kind === "message"
+                && item.message.id === highlightedMessageId
+                && "bg-[#a24632]/6 shadow-[inset_3px_0_0_#a24632] dark:bg-[#ef8d78]/8 dark:shadow-[inset_3px_0_0_#ef8d78]",
+              resolvedContentClassName,
             )}
             onContextMenu={(e) => {
               const selection = window.getSelection()?.toString() ?? "";
@@ -655,7 +776,13 @@ export const VirtualMessageList = React.forwardRef<
               setContextMenu({ x: e.clientX, y: e.clientY, messageText });
             }}
           >
-            {renderTranscriptItem(item, resultMap, childToolCallsByParent, focusedToolUseId)}
+            {renderTranscriptItem(
+              item,
+              resultMap,
+              childToolCallsByParent,
+              focusedToolUseId,
+              Boolean(loading && index === renderItems.length - 1),
+            )}
             {showTurnChange && turnChange ? (
               <TurnChangeCard
                 sessionId={sessionId}
@@ -667,6 +794,11 @@ export const VirtualMessageList = React.forwardRef<
           </div>
           );
         }}
+      />
+      <ConversationNavigator
+        items={conversationNavigationItems}
+        activeItemId={activeConversationItemId}
+        onNavigate={navigateToConversationItem}
       />
     </WorkspacePathProvider>
   );
@@ -695,27 +827,57 @@ export const MessageListPane = React.forwardRef<
   React.useImperativeHandle(
     ref,
     () => ({
+      scrollToTop: (behavior) => innerRef.current?.scrollToTop(behavior),
       scrollToBottom: (behavior) => innerRef.current?.scrollToBottom(behavior),
       scrollToMessage: (messageId) => innerRef.current?.scrollToMessage(messageId),
       scrollToTool: (toolUseId) => innerRef.current?.scrollToTool(toolUseId),
     }),
     [],
   );
+  const [atTop, setAtTop] = React.useState(false);
   const [atBottom, setAtBottom] = React.useState(true);
+  const longConversation = React.useMemo(
+    () => listProps.messages.filter((message) => (
+      message.type === "user_text"
+      && Boolean(message.content.trim() || message.attachments?.length)
+    )).length >= 4,
+    [listProps.messages],
+  );
 
   return (
     <div className={cn("relative min-h-0 min-w-0", className)}>
-      <VirtualMessageList ref={innerRef} onAtBottomChange={setAtBottom} {...listProps} />
-      {!atBottom && (
-        <button
-          type="button"
-          className="absolute bottom-4 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-card/95 text-muted-foreground shadow-lg backdrop-blur transition-colors hover:text-foreground"
-          title="回到底部"
-          onClick={() => innerRef.current?.scrollToBottom("smooth")}
-        >
-          <ChevronDown className="h-4 w-4" />
-        </button>
-      )}
+      <VirtualMessageList
+        ref={innerRef}
+        onAtTopChange={setAtTop}
+        onAtBottomChange={setAtBottom}
+        {...listProps}
+      />
+      {longConversation && (!atTop || !atBottom) ? (
+        <div className="absolute bottom-4 right-5 z-30 flex flex-col items-end gap-2">
+          {!atTop ? (
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/92 px-3 text-[11px] font-medium text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
+              title="回到顶部"
+              onClick={() => innerRef.current?.scrollToTop("auto")}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+              回到顶部
+            </button>
+          ) : null}
+          {!atBottom ? (
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/92 px-3 text-[11px] font-medium text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
+              title="回到最新"
+              onClick={() => innerRef.current?.scrollToBottom("auto")}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+              回到最新
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 });

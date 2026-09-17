@@ -36,7 +36,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
     appearance: {
       themeMode: 'system',
       cssThemeId: 'default',
-      autoCollapseToolCalls: false,
+      toolDisplayMode: 'expanded',
       chatFontSize: 14,
       chatLineHeight: 1.55,
       chatMessageSpacing: 10,
@@ -75,7 +75,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
       setThemeMode={() => {}}
       cssThemeId="default"
       setCssThemeId={() => {}}
-      onAutoCollapseToolCallsChange={() => {}}
+      onToolDisplayModeChange={() => {}}
       onAppearancePreview={() => {}}
       onAppearanceCommit={() => {}}
       buddyEnabled={false}

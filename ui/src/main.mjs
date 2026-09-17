@@ -122,6 +122,14 @@ import {
   registerBrowserViewIpcHandlers,
 } from './browser-view-manager.mjs';
 import {
+  describeBrowserAutomationAction,
+  getBrowserAutomationOrigin,
+  isBrowserAutomationFileWithinRoot,
+  isBrowserAutomationAction,
+  isLocalDevelopmentBrowserUrl,
+  redactBrowserAutomationUrl,
+} from './browser-agent-policy.mjs';
+import {
   MEDIA_SCHEME,
   installMediaProtocol,
   allowMediaRoot,
@@ -612,6 +620,8 @@ let previewWindowReady = false;
 let revealPreviewWindowWhenReady = false;
 let pendingPreviewMessages = [];
 let browserViewManager = null;
+const browserAutomationSessionOrigins = new Map();
+const pendingBrowserAutomationGrants = new Map();
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
@@ -866,6 +876,11 @@ const persistSessionStmt = (() => {
     // Column may already exist or table doesn't exist yet
   }
   try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN tool_display_mode TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
     sessionDb.exec(`ALTER TABLE sessions ADD COLUMN rewind_message_id TEXT`);
   } catch {
     // Column may already exist or table doesn't exist yet
@@ -906,6 +921,7 @@ const persistSessionStmt = (() => {
       project_task_error TEXT,
       project_task_completed_at INTEGER,
       auto_collapse_tool_calls INTEGER,
+      tool_display_mode TEXT,
       rewind_message_id TEXT,
       rewind_created_at INTEGER
     )
@@ -917,9 +933,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, rewind_message_id, rewind_created_at
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -950,6 +966,7 @@ const persistSessionStmt = (() => {
       project_task_error = excluded.project_task_error,
       project_task_completed_at = excluded.project_task_completed_at,
       auto_collapse_tool_calls = excluded.auto_collapse_tool_calls,
+      tool_display_mode = excluded.tool_display_mode,
       rewind_message_id = excluded.rewind_message_id,
       rewind_created_at = excluded.rewind_created_at
   `);
@@ -986,6 +1003,7 @@ const loadSessionsStmt = sessionDb.prepare(`
     project_task_error,
     project_task_completed_at,
     auto_collapse_tool_calls,
+    tool_display_mode,
     rewind_message_id,
     rewind_created_at
   FROM sessions
@@ -1022,6 +1040,7 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     project_task_error,
     project_task_completed_at,
     auto_collapse_tool_calls,
+    tool_display_mode,
     rewind_message_id,
     rewind_created_at
   FROM sessions
@@ -3883,6 +3902,14 @@ function normalizeOriginChannel(value, sessionKind) {
   return 'desktop';
 }
 
+function normalizeToolDisplayMode(value, legacyAutoCollapse = null) {
+  if (value === 'expanded' || value === 'collapsed' || value === 'merged') return value;
+  if (typeof legacyAutoCollapse === 'boolean') {
+    return legacyAutoCollapse ? 'collapsed' : 'expanded';
+  }
+  return null;
+}
+
 function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
   return [
     sessionRecord.id,
@@ -3916,6 +3943,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     typeof sessionRecord.autoCollapseToolCalls === 'boolean'
       ? (sessionRecord.autoCollapseToolCalls ? 1 : 0)
       : null,
+    normalizeToolDisplayMode(sessionRecord.toolDisplayMode),
     sessionRecord.rewindMessageId || null,
     Number.isFinite(sessionRecord.rewindCreatedAt) ? sessionRecord.rewindCreatedAt : null,
   ];
@@ -3989,9 +4017,10 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     projectTaskCompletedAt: Number.isFinite(sessionRecord.projectTaskCompletedAt)
       ? sessionRecord.projectTaskCompletedAt
       : null,
-    autoCollapseToolCalls: typeof sessionRecord.autoCollapseToolCalls === 'boolean'
-      ? sessionRecord.autoCollapseToolCalls
-      : null,
+    toolDisplayMode: normalizeToolDisplayMode(
+      sessionRecord.toolDisplayMode,
+      sessionRecord.autoCollapseToolCalls,
+    ),
   };
 }
 
@@ -4125,9 +4154,10 @@ function hydratePersistedSessions() {
       projectTaskCompletedAt: Number.isFinite(row.project_task_completed_at)
         ? row.project_task_completed_at
         : null,
-      autoCollapseToolCalls: row.auto_collapse_tool_calls == null
-        ? null
-        : Boolean(row.auto_collapse_tool_calls),
+      toolDisplayMode: normalizeToolDisplayMode(
+        row.tool_display_mode,
+        row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
+      ),
       rewindMessageId: row.rewind_message_id || null,
       rewindCreatedAt: Number.isFinite(row.rewind_created_at) ? row.rewind_created_at : null,
     };
@@ -4189,9 +4219,10 @@ function hydratePersistedSessions() {
       projectTaskPrompt: '',
       projectTaskError: '',
       projectTaskCompletedAt: null,
-      autoCollapseToolCalls: row.auto_collapse_tool_calls == null
-        ? null
-        : Boolean(row.auto_collapse_tool_calls),
+      toolDisplayMode: normalizeToolDisplayMode(
+        row.tool_display_mode,
+        row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
+      ),
       rewindMessageId: null,
       rewindCreatedAt: null,
     };
@@ -4443,9 +4474,10 @@ function getSessionSummary(sessionRecord) {
       ? sessions.get(sessionRecord.sourceSessionId)?.title || null
       : null,
     cronTaskId: sessionRecord.cronTaskId || null,
-    autoCollapseToolCalls: typeof sessionRecord.autoCollapseToolCalls === 'boolean'
-      ? sessionRecord.autoCollapseToolCalls
-      : null,
+    toolDisplayMode: normalizeToolDisplayMode(
+      sessionRecord.toolDisplayMode,
+      sessionRecord.autoCollapseToolCalls,
+    ),
     isSubAgent: Boolean(sessionRecord.isSubAgent),
     parentSessionId: sessionRecord.parentSessionId || null,
     sessionRole: sessionRecord.sessionRole || 'chat',
@@ -6223,6 +6255,7 @@ async function requestSessionToolPermission(
       source: 'session:tool-permission',
       toolName,
       title: dialogCopy.title,
+      toolInput: input,
     },
   }, request);
   if (decision.behavior !== 'allow') return decision;
@@ -6232,6 +6265,175 @@ async function requestSessionToolPermission(
   return resolved.behavior === 'allow'
     ? { ...resolved, updatedInput: input }
     : resolved;
+}
+
+function getBrowserAutomationFingerprint(action, input = {}) {
+  const fieldsByAction = {
+    browser_snapshot: ['tab_id', 'full_page'],
+    browser_click: ['tab_id', 'snapshot_id', 'ref', 'click_count'],
+    browser_type: ['tab_id', 'snapshot_id', 'ref', 'text', 'clear', 'submit'],
+    browser_press: ['tab_id', 'key'],
+    browser_scroll: ['tab_id', 'delta_x', 'delta_y'],
+    browser_wait: ['tab_id', 'text', 'url_contains', 'timeout_ms'],
+    browser_reload: ['tab_id'],
+  };
+  const allowedFields = new Set(fieldsByAction[action] || []);
+  const entries = Object.entries(isPlainObject(input) ? input : {})
+    .filter(([key, value]) => allowedFields.has(key) && value !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify({ action: String(action || ''), input: Object.fromEntries(entries) });
+}
+
+function rememberBrowserAutomationOrigin(sessionId, origin) {
+  let origins = browserAutomationSessionOrigins.get(sessionId);
+  if (!origins) {
+    origins = new Set();
+    browserAutomationSessionOrigins.set(sessionId, origins);
+  }
+  origins.add(origin);
+}
+
+function addPendingBrowserAutomationGrant(sessionId, grant) {
+  const now = Date.now();
+  const grants = (pendingBrowserAutomationGrants.get(sessionId) || [])
+    .filter((candidate) => candidate.expiresAt > now);
+  grants.push({ ...grant, expiresAt: now + 60_000 });
+  pendingBrowserAutomationGrants.set(sessionId, grants.slice(-20));
+}
+
+function consumePendingBrowserAutomationGrant(sessionId, grant) {
+  const now = Date.now();
+  const grants = (pendingBrowserAutomationGrants.get(sessionId) || [])
+    .filter((candidate) => candidate.expiresAt > now);
+  const index = grants.findIndex((candidate) => (
+    candidate.tabId === grant.tabId
+    && candidate.fingerprint === grant.fingerprint
+  ));
+  if (index < 0) {
+    pendingBrowserAutomationGrants.set(sessionId, grants);
+    return false;
+  }
+  const [consumed] = grants.splice(index, 1);
+  if (grants.length > 0) pendingBrowserAutomationGrants.set(sessionId, grants);
+  else pendingBrowserAutomationGrants.delete(sessionId);
+  return consumed.origin === grant.origin;
+}
+
+function isSessionWorkspaceBrowserFileUrl(sessionRecord, rawUrl) {
+  const workspace = getSessionWorkspaceRoot(sessionRecord) || sessionRecord?.workspace;
+  return isBrowserAutomationFileWithinRoot(rawUrl, workspace);
+}
+
+function isBrowserAutomationAutoAllowed(sessionRecord, rawUrl) {
+  return isLocalDevelopmentBrowserUrl(rawUrl)
+    || isSessionWorkspaceBrowserFileUrl(sessionRecord, rawUrl);
+}
+
+function authorizeBrowserAutomationEvent(event, sessionRecord) {
+  const page = browserViewManager.getAgentPageInfo({
+    sessionId: sessionRecord.id,
+    tabId: event.input?.tab_id,
+  });
+  const origin = getBrowserAutomationOrigin(page.url);
+  if (desktopSettings.bypassPermissions || isBrowserAutomationAutoAllowed(sessionRecord, page.url)) return page;
+  if (browserAutomationSessionOrigins.get(sessionRecord.id)?.has(origin)) return page;
+  const fingerprint = getBrowserAutomationFingerprint(event.type, event.input);
+  if (consumePendingBrowserAutomationGrant(sessionRecord.id, {
+    origin,
+    tabId: page.tabId,
+    fingerprint,
+  })) return page;
+  throw new Error(`Browser permission is required for ${origin}.`);
+}
+
+function sanitizeBrowserAutomationResult(result) {
+  if (!isPlainObject(result)) return result;
+  return {
+    ...result,
+    ...(typeof result.url === 'string' ? { url: redactBrowserAutomationUrl(result.url) } : {}),
+    ...(isPlainObject(result.state) && typeof result.state.url === 'string'
+      ? { state: { ...result.state, url: redactBrowserAutomationUrl(result.state.url) } }
+      : {}),
+    ...(Array.isArray(result.consoleMessages)
+      ? {
+          consoleMessages: result.consoleMessages.map((entry) => (
+            isPlainObject(entry) && typeof entry.source === 'string' && /^[a-z][a-z0-9+.-]*:/i.test(entry.source)
+              ? { ...entry, source: redactBrowserAutomationUrl(entry.source) }
+              : entry
+          )),
+        }
+      : {}),
+  };
+}
+
+async function requestBrowserAutomationPermission(sessionRecord, toolName, input, request = {}) {
+  if (!browserViewManager) {
+    return { behavior: 'deny', message: 'Moss browser is not ready.' };
+  }
+  if (sessionRecord?.agentMode === 'remote-direct') {
+    return { behavior: 'deny', message: 'Remote Direct sessions cannot control the local Moss browser.' };
+  }
+
+  let page;
+  try {
+    page = browserViewManager.getAgentPageInfo({
+      sessionId: sessionRecord.id,
+      tabId: input?.tab_id,
+    });
+  } catch (error) {
+    return { behavior: 'deny', message: error instanceof Error ? error.message : String(error) };
+  }
+
+  const origin = getBrowserAutomationOrigin(page.url);
+  if (
+    isBrowserAutomationAutoAllowed(sessionRecord, page.url)
+    || browserAutomationSessionOrigins.get(sessionRecord.id)?.has(origin)
+  ) {
+    return { behavior: 'allow', updatedInput: input };
+  }
+
+  const actionLabel = describeBrowserAutomationAction(input?.action);
+  const questionText = `允许 Agent 在 ${origin} ${actionLabel}吗？`;
+  const displayUrl = redactBrowserAutomationUrl(page.url);
+  const decision = await requestAskUserQuestion(sessionRecord, {
+    questions: [{
+      question: questionText,
+      header: '浏览器权限',
+      options: [
+        {
+          label: '允许一次',
+          description: '仅允许本次浏览器操作。',
+          preview: `操作：${actionLabel}\n页面：${page.title || '(无标题)'}\n网址：${displayUrl}`,
+        },
+        {
+          label: '本次会话允许此网站',
+          description: `本次会话内允许 Agent 继续操作 ${origin}。`,
+        },
+      ],
+      multiSelect: false,
+    }],
+    metadata: {
+      source: sessionRecord.projectId ? 'project:tool-permission' : 'session:tool-permission',
+      toolName,
+      title: '浏览器权限',
+      toolInput: { ...input, current_url: displayUrl },
+    },
+  }, request);
+  if (decision.behavior !== 'allow') return decision;
+
+  const answer = decision.updatedInput?.answers?.[questionText];
+  if (answer === '本次会话允许此网站') {
+    rememberBrowserAutomationOrigin(sessionRecord.id, origin);
+  } else if (answer === '允许一次') {
+    addPendingBrowserAutomationGrant(sessionRecord.id, {
+      origin,
+      tabId: page.tabId,
+      fingerprint: getBrowserAutomationFingerprint(input?.action, input),
+    });
+  }
+  return answer === '允许一次' || answer === '本次会话允许此网站'
+    ? { behavior: 'allow', updatedInput: input }
+    : { behavior: 'deny', message: '用户拒绝了本次浏览器操作' };
 }
 
 async function requestToolPermission(sessionRecord, toolName, input, request = {}) {
@@ -6250,6 +6452,10 @@ async function requestToolPermission(sessionRecord, toolName, input, request = {
     toolName,
   })) {
     return { behavior: 'allow' };
+  }
+
+  if (isBrowserAutomationAction(input?.action)) {
+    return requestBrowserAutomationPermission(sessionRecord, toolName, input, request);
   }
 
   const suggestions = Array.isArray(request?.suggestions) ? request.suggestions : [];
@@ -7368,7 +7574,7 @@ function createSessionRecord({
     projectTaskPrompt: '',
     projectTaskError: '',
     projectTaskCompletedAt: null,
-    autoCollapseToolCalls: null,
+    toolDisplayMode: null,
     rewindMessageId: null,
     rewindCreatedAt: null,
   };
@@ -8194,7 +8400,11 @@ const mossAppEventHandler = createMossAppEventHandler(
       launchAppWindow(getPublishedApp(name), { mode: 'published' })
     },
     openBrowser: (payload) => {
-      emitToRenderer('browser:open', payload)
+      const state = browserViewManager?.openTab(payload);
+      emitToRenderer('browser:open', {
+        ...payload,
+        alreadyOpened: Boolean(state),
+      });
     },
   },
   {
@@ -8289,6 +8499,93 @@ async function handleMossHostEvent(event, sessionRecord) {
     sessionId: sessionRecord?.id || '',
   });
   if (libraryResult) return libraryResult;
+  if (isBrowserAutomationAction(event?.type)) {
+    if (!browserViewManager) return { ok: false, error: 'Moss browser is not ready.' };
+    if (!sessionRecord?.id) return { ok: false, error: 'Browser automation requires a desktop session.' };
+    if (sessionRecord.agentMode === 'remote-direct') {
+      return { ok: false, error: 'Remote Direct sessions cannot control the local Moss browser.' };
+    }
+    const target = {
+      sessionId: sessionRecord.id,
+      tabId: event.input?.tab_id,
+    };
+    try {
+      authorizeBrowserAutomationEvent(event, sessionRecord);
+      switch (event.type) {
+        case 'browser_snapshot': {
+          const result = await browserViewManager.agentSnapshot({
+            ...target,
+            fullPage: event.input?.full_page === true,
+          });
+          const { imageBase64, imageMediaType, ...browser } = result;
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(browser),
+            imageBase64,
+            imageMediaType,
+          };
+        }
+        case 'browser_click':
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(await browserViewManager.agentClick({
+              ...target,
+              snapshotId: event.input?.snapshot_id,
+              ref: event.input?.ref,
+              clickCount: event.input?.click_count,
+            })),
+          };
+        case 'browser_type':
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(await browserViewManager.agentType({
+              ...target,
+              snapshotId: event.input?.snapshot_id,
+              ref: event.input?.ref,
+              text: event.input?.text,
+              clear: event.input?.clear !== false,
+              submit: event.input?.submit === true,
+            })),
+          };
+        case 'browser_press':
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(
+              await browserViewManager.agentPress({ ...target, key: event.input?.key }),
+            ),
+          };
+        case 'browser_scroll':
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(await browserViewManager.agentScroll({
+              ...target,
+              deltaX: event.input?.delta_x,
+              deltaY: event.input?.delta_y,
+            })),
+          };
+        case 'browser_wait':
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(await browserViewManager.agentWait({
+              ...target,
+              text: event.input?.text,
+              urlContains: event.input?.url_contains,
+              timeoutMs: event.input?.timeout_ms,
+            })),
+          };
+        case 'browser_reload':
+          browserViewManager.reload(target);
+          return {
+            ok: true,
+            browser: sanitizeBrowserAutomationResult(browserViewManager.getAgentPageInfo(target)),
+          };
+        default:
+          return { ok: false, error: `Unsupported browser action: ${event.type}` };
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   if (event?.type === 'agent_mail_search') {
     try {
       const connection = await resolveAgentMailEventConnection(
@@ -11611,12 +11908,12 @@ ipcMain.handle('agent:update-session', (_event, { sessionId, title }) => {
   };
 });
 
-ipcMain.handle('agent:set-session-auto-collapse-tool-calls', (_event, { sessionId, enabled } = {}) => {
-  if (typeof enabled !== 'boolean') {
-    throw new Error('Auto-collapse setting must be a boolean.');
+ipcMain.handle('agent:set-session-tool-display-mode', (_event, { sessionId, mode } = {}) => {
+  if (mode !== null && normalizeToolDisplayMode(mode) === null) {
+    throw new Error('Tool display mode must be expanded, collapsed, merged, or null.');
   }
   const sessionRecord = getSessionRecord(sessionId);
-  sessionRecord.autoCollapseToolCalls = enabled;
+  sessionRecord.toolDisplayMode = mode;
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
   return getSessionSummary(sessionRecord);
@@ -11696,6 +11993,8 @@ async function deleteSessionRecordById(sessionId) {
     if (shutdownTimer) clearTimeout(shutdownTimer);
   }
   browserViewManager?.disposeSession(sessionId);
+  browserAutomationSessionOrigins.delete(sessionId);
+  pendingBrowserAutomationGrants.delete(sessionId);
   if (sessionRecord.projectId) {
     await unlinkSessionFromProject(sessionRecord.projectId, sessionRecord.id);
     emitToRenderer('project:changed', { projectId: sessionRecord.projectId, reason: 'session-deleted' });

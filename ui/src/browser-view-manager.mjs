@@ -14,6 +14,239 @@ const BROWSER_WEB_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
+const BROWSER_AGENT_MAX_ELEMENTS = 120;
+const BROWSER_AGENT_MAX_TEXT_CHARS = 16_000;
+const BROWSER_AGENT_MAX_CONSOLE_MESSAGES = 100;
+const BROWSER_AGENT_MAX_SCREENSHOT_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
+const BROWSER_AGENT_MAX_FULL_PAGE_EDGE = 16_384;
+const BROWSER_AGENT_MAX_FULL_PAGE_PIXELS = 32_000_000;
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function truncateBrowserAgentText(value, maximum) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > maximum ? `${text.slice(0, maximum)}...` : text;
+}
+
+function getBrowserOriginKey(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || ''));
+    if (url.protocol === 'file:') {
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    }
+    return url.origin === 'null' ? `${url.protocol}//` : url.origin;
+  } catch {
+    return String(rawUrl || '').trim();
+  }
+}
+
+function collectBrowserAgentPage(maxElements, maxTextChars) {
+  const body = document.body;
+  const viewportWidth = Math.max(0, window.innerWidth || document.documentElement?.clientWidth || 0);
+  const viewportHeight = Math.max(0, window.innerHeight || document.documentElement?.clientHeight || 0);
+  const selector = [
+    'a[href]',
+    'button',
+    'input:not([type="hidden"])',
+    'textarea',
+    'select',
+    'summary',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="tab"]',
+    '[role="menuitem"]',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  const elements = [];
+  const seen = new Set();
+  const elementPath = (element) => {
+    const parts = [];
+    let current = element;
+    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 16) {
+      let index = 1;
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === current.tagName) index += 1;
+        sibling = sibling.previousElementSibling;
+      }
+      parts.unshift(`${current.tagName.toLowerCase()}:nth-of-type(${index})`);
+      current = current.parentElement;
+    }
+    return parts.join('>');
+  };
+
+  for (const element of document.querySelectorAll(selector)) {
+    if (elements.length >= maxElements || seen.has(element)) break;
+    seen.add(element);
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    if (
+      rect.width < 1
+      || rect.height < 1
+      || rect.bottom <= 0
+      || rect.right <= 0
+      || rect.top >= viewportHeight
+      || rect.left >= viewportWidth
+      || style.display === 'none'
+      || style.visibility === 'hidden'
+      || style.pointerEvents === 'none'
+      || Number(style.opacity || 1) === 0
+    ) continue;
+
+    const tag = element.tagName.toLowerCase();
+    const type = String(element.getAttribute('type') || '').toLowerCase();
+    const value = type === 'password' ? '' : String(element.value || '').trim();
+    const label = element.labels?.[0]?.innerText || '';
+    const editableInputTypes = new Set(['', 'text', 'email', 'search', 'tel', 'url', 'number', 'date', 'datetime-local', 'month', 'time', 'week']);
+    const editable = !element.disabled
+      && !element.readOnly
+      && (
+        tag === 'textarea'
+        || (tag === 'input' && editableInputTypes.has(type))
+        || element.isContentEditable === true
+      );
+    const name = element.getAttribute('aria-label')
+      || element.getAttribute('alt')
+      || element.getAttribute('title')
+      || label
+      || element.innerText
+      || element.getAttribute('name')
+      || element.getAttribute('placeholder')
+      || value
+      || '';
+    const left = Math.max(0, rect.left);
+    const top = Math.max(0, rect.top);
+    const right = Math.min(viewportWidth, rect.right);
+    const bottom = Math.min(viewportHeight, rect.bottom);
+    elements.push({
+      tag,
+      role: element.getAttribute('role') || '',
+      type,
+      name: String(name).replace(/\s+/g, ' ').trim().slice(0, 240),
+      editable,
+      disabled: Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'),
+      checked: typeof element.checked === 'boolean' ? element.checked : undefined,
+      _path: elementPath(element),
+      rect: {
+        x: Math.round(left),
+        y: Math.round(top),
+        width: Math.round(Math.max(0, right - left)),
+        height: Math.round(Math.max(0, bottom - top)),
+      },
+    });
+  }
+
+  return {
+    url: location.href,
+    title: document.title || '',
+    viewport: {
+      width: viewportWidth,
+      height: viewportHeight,
+      scrollX: Math.round(window.scrollX || 0),
+      scrollY: Math.round(window.scrollY || 0),
+      documentWidth: Math.max(document.documentElement?.scrollWidth || 0, body?.scrollWidth || 0),
+      documentHeight: Math.max(document.documentElement?.scrollHeight || 0, body?.scrollHeight || 0),
+    },
+    text: String(body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, maxTextChars),
+    elements,
+  };
+}
+
+function inspectBrowserAgentPoint(x, y) {
+  const selector = [
+    'a[href]',
+    'button',
+    'input:not([type="hidden"])',
+    'textarea',
+    'select',
+    'summary',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="tab"]',
+    '[role="menuitem"]',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  const hit = document.elementFromPoint(x, y);
+  const element = hit?.closest?.(selector) || null;
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  const viewportWidth = Math.max(0, window.innerWidth || document.documentElement?.clientWidth || 0);
+  const viewportHeight = Math.max(0, window.innerHeight || document.documentElement?.clientHeight || 0);
+  const left = Math.max(0, rect.left);
+  const top = Math.max(0, rect.top);
+  const right = Math.min(viewportWidth, rect.right);
+  const bottom = Math.min(viewportHeight, rect.bottom);
+  const tag = element.tagName.toLowerCase();
+  const type = String(element.getAttribute('type') || '').toLowerCase();
+  const value = type === 'password' ? '' : String(element.value || '').trim();
+  const label = element.labels?.[0]?.innerText || '';
+  const editableInputTypes = new Set(['', 'text', 'email', 'search', 'tel', 'url', 'number', 'date', 'datetime-local', 'month', 'time', 'week']);
+  const editable = !element.disabled
+    && !element.readOnly
+    && (
+      tag === 'textarea'
+      || (tag === 'input' && editableInputTypes.has(type))
+      || element.isContentEditable === true
+    );
+  const name = element.getAttribute('aria-label')
+    || element.getAttribute('alt')
+    || element.getAttribute('title')
+    || label
+    || element.innerText
+    || element.getAttribute('name')
+    || element.getAttribute('placeholder')
+    || value
+    || '';
+  const parts = [];
+  let current = element;
+  while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 16) {
+    let index = 1;
+    let sibling = current.previousElementSibling;
+    while (sibling) {
+      if (sibling.tagName === current.tagName) index += 1;
+      sibling = sibling.previousElementSibling;
+    }
+    parts.unshift(`${current.tagName.toLowerCase()}:nth-of-type(${index})`);
+    current = current.parentElement;
+  }
+  return {
+    tag,
+    role: element.getAttribute('role') || '',
+    type,
+    name: String(name).replace(/\s+/g, ' ').trim().slice(0, 240),
+    editable,
+    disabled: Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'),
+    _path: parts.join('>'),
+    rect: {
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.round(Math.max(0, right - left)),
+      height: Math.round(Math.max(0, bottom - top)),
+    },
+  };
+}
+
+function readBrowserAgentWaitState(expectedText, expectedUrl) {
+  const url = location.href;
+  const text = String(document.body?.innerText || '');
+  return {
+    url,
+    title: document.title || '',
+    textMatched: !expectedText || text.includes(expectedText),
+    urlMatched: !expectedUrl || url.includes(expectedUrl),
+  };
+}
+
 function toSessionId(value) {
   return typeof value === 'string' && value.trim()
     ? value.trim()
@@ -149,6 +382,12 @@ export function createBrowserViewManager({
   if (typeof getWindow !== 'function') throw new TypeError('getWindow is required');
 
   const sessions = new Map();
+
+  function invalidateAutomationSnapshot(tab, { clearConsole = false } = {}) {
+    tab.navigationGeneration += 1;
+    tab.automationSnapshot = null;
+    if (clearConsole) tab.consoleMessages = [];
+  }
 
   function serializeTab(tab) {
     const navigation = getNavigationState(tab.view?.webContents);
@@ -345,6 +584,7 @@ export function createBrowserViewManager({
     webContents.on?.('will-attach-webview', (event) => event.preventDefault?.());
 
     webContents.on?.('did-start-loading', () => {
+      invalidateAutomationSnapshot(tab, { clearConsole: true });
       tab.isLoading = true;
       tab.error = null;
       tab.externalFallbackUrl = null;
@@ -355,9 +595,18 @@ export function createBrowserViewManager({
       tab.isLoading = false;
       updateTabFromNavigation(session, tab);
     });
-    webContents.on?.('did-navigate', (_event, url) => updateTabFromNavigation(session, tab, url));
-    webContents.on?.('did-navigate-in-page', (_event, url) => updateTabFromNavigation(session, tab, url));
-    webContents.on?.('did-redirect-navigation', (_event, url) => updateTabFromNavigation(session, tab, url));
+    webContents.on?.('did-navigate', (_event, url) => {
+      invalidateAutomationSnapshot(tab, { clearConsole: true });
+      updateTabFromNavigation(session, tab, url);
+    });
+    webContents.on?.('did-navigate-in-page', (_event, url) => {
+      invalidateAutomationSnapshot(tab, { clearConsole: true });
+      updateTabFromNavigation(session, tab, url);
+    });
+    webContents.on?.('did-redirect-navigation', (_event, url) => {
+      invalidateAutomationSnapshot(tab, { clearConsole: true });
+      updateTabFromNavigation(session, tab, url);
+    });
     webContents.on?.('page-title-updated', (_event, title) => {
       if (!tab.titleOverride && title) tab.title = title;
       emitState(session);
@@ -372,6 +621,7 @@ export function createBrowserViewManager({
       emitState(session);
     });
     webContents.on?.('render-process-gone', (_event, details) => {
+      invalidateAutomationSnapshot(tab, { clearConsole: true });
       tab.isLoading = false;
       tab.error = details?.reason ? `页面进程已退出：${details.reason}` : '页面进程已退出';
       syncViews();
@@ -379,6 +629,20 @@ export function createBrowserViewManager({
     });
     webContents.on?.('devtools-opened', () => emitState(session));
     webContents.on?.('devtools-closed', () => emitState(session));
+    webContents.on?.('console-message', (_event, details = {}) => {
+      const entry = {
+        level: String(details.level || 'info'),
+        message: truncateBrowserAgentText(details.message, 1_000),
+        line: Number(details.lineNumber || 0),
+        source: truncateBrowserAgentText(details.sourceId, 300),
+        timestamp: Date.now(),
+      };
+      if (!entry.message) return;
+      tab.consoleMessages.push(entry);
+      if (tab.consoleMessages.length > BROWSER_AGENT_MAX_CONSOLE_MESSAGES) {
+        tab.consoleMessages.splice(0, tab.consoleMessages.length - BROWSER_AGENT_MAX_CONSOLE_MESSAGES);
+      }
+    });
     webContents.on?.('destroyed', () => {
       if (tab.closing) return;
       removeTabRecord(session, tab);
@@ -412,6 +676,9 @@ export function createBrowserViewManager({
       attachedWindow: null,
       closing: false,
       externalFallbackUrl: null,
+      navigationGeneration: 0,
+      automationSnapshot: null,
+      consoleMessages: [],
     };
     configureTabWebContents(session, tab);
 
@@ -457,6 +724,7 @@ export function createBrowserViewManager({
 
   function navigateTab(session, tab, rawUrl) {
     const url = normalizeBrowserUrl(rawUrl);
+    invalidateAutomationSnapshot(tab, { clearConsole: true });
     tab.url = url;
     tab.title = safeTitleFromUrl(url);
     tab.titleOverride = null;
@@ -480,7 +748,349 @@ export function createBrowserViewManager({
     });
   }
 
+  function getAutomationTarget({ sessionId, tabId } = {}) {
+    const session = getSession(sessionId);
+    const tab = getTab(session, tabId);
+    const webContents = tab.view?.webContents;
+    if (!webContents || webContents.isDestroyed?.()) {
+      throw new Error('Browser tab is no longer available.');
+    }
+    if (tab.error) throw new Error(`Browser page is unavailable: ${tab.error}`);
+    if (tab.connectorAuth || tab.mcpAuth) {
+      throw new Error('Authorization pages cannot be controlled by browser automation. Complete authorization manually.');
+    }
+    return { session, tab, webContents };
+  }
+
+  function getAutomationPageInfo(tab) {
+    const liveUrl = tab.view?.webContents?.getURL?.();
+    return {
+      tabId: tab.id,
+      url: liveUrl || tab.url || BROWSER_DEFAULT_URL,
+      title: tab.titleOverride || tab.title || safeTitleFromUrl(tab.url),
+      isLoading: Boolean(tab.isLoading),
+    };
+  }
+
+  async function captureDebuggerScreenshot(webContents, { fullPage }) {
+    const browserDebugger = webContents.debugger;
+    if (!browserDebugger?.sendCommand) {
+      throw new Error('Browser screenshot is unavailable because the page has no capture surface.');
+    }
+    let attachedHere = false;
+    try {
+      if (!browserDebugger.isAttached?.()) {
+        browserDebugger.attach('1.3');
+        attachedHere = true;
+      }
+      await browserDebugger.sendCommand('Page.enable');
+      const metrics = await browserDebugger.sendCommand('Page.getLayoutMetrics');
+      const size = fullPage
+        ? (metrics?.cssContentSize || metrics?.contentSize)
+        : (metrics?.cssVisualViewport || metrics?.visualViewport || metrics?.cssLayoutViewport || metrics?.layoutViewport);
+      const width = Math.ceil(Number(size?.clientWidth || size?.width || 0));
+      const height = Math.ceil(Number(size?.clientHeight || size?.height || 0));
+      if (
+        width < 1
+        || height < 1
+        || (fullPage && (
+          width > BROWSER_AGENT_MAX_FULL_PAGE_EDGE
+          || height > BROWSER_AGENT_MAX_FULL_PAGE_EDGE
+          || width * height > BROWSER_AGENT_MAX_FULL_PAGE_PIXELS
+        ))
+      ) {
+        throw new Error(`${fullPage ? 'Full-page' : 'Viewport'} screenshot exceeds the safety limit (${width}x${height}).`);
+      }
+      const options = {
+        format: 'jpeg',
+        quality: 82,
+        fromSurface: true,
+        captureBeyondViewport: fullPage,
+        ...(fullPage ? { clip: { x: 0, y: 0, width, height, scale: 1 } } : {}),
+      };
+      const screenshot = await browserDebugger.sendCommand('Page.captureScreenshot', options);
+      const byteLength = Buffer.byteLength(String(screenshot?.data || ''), 'base64');
+      if (!screenshot?.data || byteLength > BROWSER_AGENT_MAX_SCREENSHOT_BYTES) {
+        throw new Error(`${fullPage ? 'Full-page' : 'Viewport'} screenshot is too large.`);
+      }
+      return {
+        imageBase64: screenshot.data,
+        imageMediaType: 'image/jpeg',
+        imageWidth: width,
+        imageHeight: height,
+        fullPage,
+      };
+    } finally {
+      if (attachedHere) {
+        try { browserDebugger.detach(); } catch {}
+      }
+    }
+  }
+
+  async function captureViewportScreenshot(webContents) {
+    try {
+      const image = await webContents.capturePage();
+      const size = image.getSize?.() || {};
+      let mediaType = 'image/png';
+      let buffer = image.toPNG();
+      if (buffer.length === 0) throw new Error('Browser capture returned an empty image.');
+      if (buffer.length > BROWSER_AGENT_MAX_SCREENSHOT_BYTES && typeof image.toJPEG === 'function') {
+        mediaType = 'image/jpeg';
+        buffer = image.toJPEG(78);
+      }
+      if (buffer.length > BROWSER_AGENT_MAX_SCREENSHOT_BYTES) {
+        throw new Error('Browser screenshot is too large. Resize the browser panel or capture the viewport instead.');
+      }
+      return {
+        imageBase64: buffer.toString('base64'),
+        imageMediaType: mediaType,
+        imageWidth: Number(size.width) || null,
+        imageHeight: Number(size.height) || null,
+        fullPage: false,
+      };
+    } catch {
+      return captureDebuggerScreenshot(webContents, { fullPage: false });
+    }
+  }
+
+  async function captureFullPageScreenshot(webContents) {
+    return captureDebuggerScreenshot(webContents, { fullPage: true });
+  }
+
+  function resolveAutomationElement(tab, snapshotId, ref) {
+    const snapshot = tab.automationSnapshot;
+    if (!snapshot || snapshot.id !== snapshotId) {
+      throw new Error(`Browser snapshot is missing or stale (expected ${snapshot?.id || 'none'}, received ${String(snapshotId || 'none')}). Take a new browser_snapshot first.`);
+    }
+    if (snapshot.navigationGeneration !== tab.navigationGeneration) {
+      tab.automationSnapshot = null;
+      throw new Error('The page changed after the snapshot. Take a new browser_snapshot first.');
+    }
+    const element = snapshot.elements.get(String(ref || ''));
+    if (!element) throw new Error(`Element reference not found: ${String(ref || '')}`);
+    if (element.disabled) throw new Error(`Element ${ref} is disabled.`);
+    return element;
+  }
+
+  async function verifyAutomationElement(webContents, element) {
+    const x = Math.round(element.rect.x + element.rect.width / 2);
+    const y = Math.round(element.rect.y + element.rect.height / 2);
+    const actual = await webContents.executeJavaScript(
+      `(${inspectBrowserAgentPoint.toString()})(${x}, ${y})`,
+      true,
+    );
+    const geometryMatches = actual?.rect
+      && Math.abs(Number(actual.rect.x) - element.rect.x) <= 2
+      && Math.abs(Number(actual.rect.y) - element.rect.y) <= 2
+      && Math.abs(Number(actual.rect.width) - element.rect.width) <= 2
+      && Math.abs(Number(actual.rect.height) - element.rect.height) <= 2;
+    if (
+      !actual
+      || actual._path !== element._path
+      || actual.tag !== element.tag
+      || actual.role !== element.role
+      || actual.type !== element.type
+      || actual.name !== element.name
+      || actual.editable !== element.editable
+      || !geometryMatches
+    ) {
+      throw new Error('The referenced element moved or changed after the snapshot. Take a new browser_snapshot first.');
+    }
+    if (actual.disabled) throw new Error('The referenced element is now disabled.');
+    return element;
+  }
+
+  function sendElementClick(webContents, element, clickCount = 1) {
+    const x = Math.round(element.rect.x + element.rect.width / 2);
+    const y = Math.round(element.rect.y + element.rect.height / 2);
+    webContents.sendInputEvent({ type: 'mouseMove', x, y });
+    for (let currentClick = 1; currentClick <= clickCount; currentClick += 1) {
+      webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: currentClick });
+      webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: currentClick });
+    }
+    return { x, y };
+  }
+
   return {
+    getAgentPageInfo({ sessionId, tabId } = {}) {
+      const { tab } = getAutomationTarget({ sessionId, tabId });
+      return getAutomationPageInfo(tab);
+    },
+
+    async agentSnapshot({ sessionId, tabId, fullPage = false } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const originAtStart = getBrowserOriginKey(webContents.getURL?.() || tab.url);
+      const page = await webContents.executeJavaScript(
+        `(${collectBrowserAgentPage.toString()})(${BROWSER_AGENT_MAX_ELEMENTS}, ${BROWSER_AGENT_MAX_TEXT_CHARS})`,
+        true,
+      );
+      if (getBrowserOriginKey(page?.url) !== originAtStart) {
+        throw new Error('The browser navigated to a different site during the snapshot. Permission is required for the new site.');
+      }
+      const snapshotId = createId();
+      const elements = new Map();
+      const serializedElements = (Array.isArray(page?.elements) ? page.elements : [])
+        .slice(0, BROWSER_AGENT_MAX_ELEMENTS)
+        .map((element, index) => {
+          const ref = `e${index + 1}`;
+          const serialized = {
+            ref,
+            tag: truncateBrowserAgentText(element?.tag, 32),
+            role: truncateBrowserAgentText(element?.role, 64),
+            type: truncateBrowserAgentText(element?.type, 64),
+            name: truncateBrowserAgentText(element?.name, 240),
+            editable: Boolean(element?.editable),
+            disabled: Boolean(element?.disabled),
+            ...(typeof element?.checked === 'boolean' ? { checked: element.checked } : {}),
+            rect: {
+              x: Math.max(0, Math.round(Number(element?.rect?.x) || 0)),
+              y: Math.max(0, Math.round(Number(element?.rect?.y) || 0)),
+              width: Math.max(0, Math.round(Number(element?.rect?.width) || 0)),
+              height: Math.max(0, Math.round(Number(element?.rect?.height) || 0)),
+            },
+          };
+          elements.set(ref, {
+            ...serialized,
+            _path: truncateBrowserAgentText(element?._path, 2_000),
+          });
+          return serialized;
+        });
+      tab.automationSnapshot = {
+        id: snapshotId,
+        navigationGeneration: tab.navigationGeneration,
+        elements,
+      };
+      let screenshot;
+      try {
+        screenshot = fullPage
+          ? await captureFullPageScreenshot(webContents)
+          : await captureViewportScreenshot(webContents);
+      } catch (error) {
+        tab.automationSnapshot = null;
+        throw error;
+      }
+      if (getBrowserOriginKey(webContents.getURL?.() || tab.url) !== originAtStart) {
+        tab.automationSnapshot = null;
+        throw new Error('The browser navigated to a different site during the snapshot. Permission is required for the new site.');
+      }
+      return {
+        ...getAutomationPageInfo(tab),
+        snapshotId,
+        viewport: page?.viewport || null,
+        text: truncateBrowserAgentText(page?.text, BROWSER_AGENT_MAX_TEXT_CHARS),
+        elements: serializedElements,
+        consoleMessages: tab.consoleMessages.slice(-20),
+        ...screenshot,
+      };
+    },
+
+    async agentClick({ sessionId, tabId, snapshotId, ref, clickCount = 1 } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const element = resolveAutomationElement(tab, snapshotId, ref);
+      await verifyAutomationElement(webContents, element);
+      const point = sendElementClick(webContents, element, clickCount === 2 ? 2 : 1);
+      await delay(80);
+      return { ...getAutomationPageInfo(tab), ref, point };
+    },
+
+    async agentType({ sessionId, tabId, snapshotId, ref, text, clear = true, submit = false } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const element = resolveAutomationElement(tab, snapshotId, ref);
+      if (element.type === 'password') {
+        throw new Error('Browser automation cannot type into password fields. Enter the password manually.');
+      }
+      if (!element.editable) {
+        throw new Error(`Element ${ref} is not an editable text field.`);
+      }
+      await verifyAutomationElement(webContents, element);
+      const point = sendElementClick(webContents, element, 1);
+      await delay(30);
+      if (clear) {
+        const modifiers = process.platform === 'darwin' ? ['meta'] : ['control'];
+        webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers });
+        webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers });
+      }
+      await Promise.resolve(webContents.insertText(String(text ?? '')));
+      if (submit) {
+        webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+        webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+      }
+      await delay(80);
+      return {
+        ...getAutomationPageInfo(tab),
+        ref,
+        point,
+        charactersEntered: String(text ?? '').length,
+        submitted: Boolean(submit),
+      };
+    },
+
+    async agentPress({ sessionId, tabId, key } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const keyCodes = {
+        Enter: 'Enter',
+        Tab: 'Tab',
+        Escape: 'Escape',
+        ArrowUp: 'Up',
+        ArrowDown: 'Down',
+        ArrowLeft: 'Left',
+        ArrowRight: 'Right',
+        Backspace: 'Backspace',
+        Delete: 'Delete',
+        Space: 'Space',
+      };
+      const keyCode = keyCodes[key];
+      if (!keyCode) throw new Error(`Unsupported browser key: ${String(key || '')}`);
+      webContents.sendInputEvent({ type: 'keyDown', keyCode });
+      webContents.sendInputEvent({ type: 'keyUp', keyCode });
+      await delay(60);
+      return { ...getAutomationPageInfo(tab), key };
+    },
+
+    async agentScroll({ sessionId, tabId, deltaX = 0, deltaY = 600 } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const x = clampInteger(deltaX, -4_000, 4_000);
+      const y = clampInteger(deltaY, -4_000, 4_000);
+      const position = await webContents.executeJavaScript(
+        `(() => { window.scrollBy(${x}, ${y}); return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) }; })()`,
+        true,
+      );
+      tab.automationSnapshot = null;
+      await delay(80);
+      return { ...getAutomationPageInfo(tab), position };
+    },
+
+    async agentWait({ sessionId, tabId, text, urlContains, timeoutMs = 3_000 } = {}) {
+      const { tab, webContents } = getAutomationTarget({ sessionId, tabId });
+      const originAtStart = getBrowserOriginKey(webContents.getURL?.() || tab.url);
+      const expectedText = truncateBrowserAgentText(text, 1_000);
+      const expectedUrl = truncateBrowserAgentText(urlContains, 2_000);
+      const timeout = clampInteger(timeoutMs, 100, 15_000);
+      if (!expectedText && !expectedUrl) {
+        await delay(timeout);
+        if (getBrowserOriginKey(webContents.getURL?.() || tab.url) !== originAtStart) {
+          throw new Error('The browser navigated to a different site while waiting. Permission is required for the new site.');
+        }
+        return { ...getAutomationPageInfo(tab), matched: true };
+      }
+      const deadline = Date.now() + timeout;
+      let state = null;
+      do {
+        state = await webContents.executeJavaScript(
+          `(${readBrowserAgentWaitState.toString()})(${JSON.stringify(expectedText)}, ${JSON.stringify(expectedUrl)})`,
+          true,
+        );
+        if (getBrowserOriginKey(state?.url) !== originAtStart) {
+          throw new Error('The browser navigated to a different site while waiting. Permission is required for the new site.');
+        }
+        if (state?.textMatched && state?.urlMatched) {
+          return { ...getAutomationPageInfo(tab), matched: true, state };
+        }
+        await delay(Math.min(150, Math.max(0, deadline - Date.now())));
+      } while (Date.now() < deadline);
+      return { ...getAutomationPageInfo(tab), matched: false, state };
+    },
+
     getState(sessionId) {
       return serializeSession(getSession(sessionId));
     },

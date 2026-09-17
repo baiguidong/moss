@@ -8,8 +8,9 @@ import { LibraryView } from '@/components/library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import {
-  resolveAutoCollapseToolCalls,
+  resolveToolDisplayMode,
   ToolDisplaySettingsProvider,
+  type ToolDisplayMode,
 } from '@/components/chat/tool-display-settings';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { OpenIMView } from '@/components/openim-view';
@@ -443,7 +444,7 @@ export default function App() {
   const appearanceRef = React.useRef<DesktopSettings['appearance']>({
     themeMode,
     cssThemeId,
-    autoCollapseToolCalls: false,
+    toolDisplayMode: 'expanded',
     chatFontSize: 14,
     chatLineHeight: 1.55,
     chatMessageSpacing: 10,
@@ -1350,10 +1351,10 @@ export default function App() {
     return messages;
   }, [activeDetail?.history, activeDetail?.busy]);
 
-  const globalAutoCollapseToolCalls = desktopSettings?.appearance.autoCollapseToolCalls ?? false;
-  const activeAutoCollapseToolCalls = resolveAutoCollapseToolCalls(
-    activeDetail?.autoCollapseToolCalls,
-    globalAutoCollapseToolCalls,
+  const globalToolDisplayMode = desktopSettings?.appearance.toolDisplayMode ?? 'expanded';
+  const activeToolDisplayMode = resolveToolDisplayMode(
+    activeDetail?.toolDisplayMode,
+    globalToolDisplayMode,
   );
 
   const forkDisabledReason = React.useMemo(() => {
@@ -1378,12 +1379,27 @@ export default function App() {
     [baseSidebarSessions, questionRequests],
   );
 
+  const activeSessionQuestionRequest = React.useMemo(() => (
+    questionRequests.find((request) => (
+      !request.projectId && request.sessionId === activeSessionId
+    )) || null
+  ), [activeSessionId, questionRequests]);
+
+  const activeToolPermissionRequest = React.useMemo(() => {
+    if (activeSessionQuestionRequest?.input?.metadata?.source !== 'session:tool-permission') return null;
+    return activeSessionQuestionRequest;
+  }, [activeSessionQuestionRequest]);
+
   const activeQuestionRequest = React.useMemo(() => {
-    const modalRequests = questionRequests.filter((request) => !request.projectId);
-    return modalRequests.find((request) => request.sessionId === activeSessionId)
-      || modalRequests[0]
-      || null;
-  }, [activeSessionId, questionRequests]);
+    if (activeSessionQuestionRequest) {
+      return activeSessionQuestionRequest.input?.metadata?.source === 'session:tool-permission'
+        ? null
+        : activeSessionQuestionRequest;
+    }
+    return questionRequests.find((request) => (
+      !request.projectId && request.input?.metadata?.source !== 'session:tool-permission'
+    )) || null;
+  }, [activeSessionQuestionRequest, questionRequests]);
 
   const workspaceTree = React.useMemo(() => {
     if (!activeDetail?.workspace) return [];
@@ -1421,6 +1437,7 @@ export default function App() {
       serverName: string;
       displayName?: string;
     } | null;
+    alreadyOpened?: boolean;
   }) => {
     if (!payload?.url) return;
     const payloadSessionId = typeof payload.sessionId === 'string' && payload.sessionId
@@ -1433,10 +1450,12 @@ export default function App() {
       targetSessionId = payloadSessionId;
     }
 
-    void openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null)
-      .catch((error: unknown) => {
-        console.warn('[browser] failed to open tab:', error instanceof Error ? error.message : error);
-      });
+    if (!payload.alreadyOpened) {
+      void openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null)
+        .catch((error: unknown) => {
+          console.warn('[browser] failed to open tab:', error instanceof Error ? error.message : error);
+        });
+    }
     if (targetSessionId) {
       setActiveView('chat');
       setLayout((prev) => ({
@@ -1535,19 +1554,15 @@ export default function App() {
     }
   }, [openSession, persistSessionAgentModes, sessionAgentModes, showPermissionNotice]);
 
-  const handleToggleSessionAutoCollapseToolCalls = React.useCallback(async () => {
+  const handleSessionToolDisplayModeChange = React.useCallback(async (mode: ToolDisplayMode | null) => {
     const sessionId = activeSessionIdRef.current;
     const detail = activeDetailRef.current;
     if (!sessionId || !detail || toolDisplaySettingRequestRef.current) return;
 
-    const enabled = !resolveAutoCollapseToolCalls(
-      detail.autoCollapseToolCalls,
-      desktopSettings?.appearance.autoCollapseToolCalls ?? false,
-    );
     toolDisplaySettingRequestRef.current = sessionId;
     setToolDisplaySettingSessionId(sessionId);
     try {
-      const summary = await window.agentDesktop.setSessionAutoCollapseToolCalls({ sessionId, enabled });
+      const summary = await window.agentDesktop.setSessionToolDisplayMode({ sessionId, mode });
       setSummaries((prev) => upsertSummary(prev, summary));
       if (activeSessionIdRef.current === sessionId) {
         setActiveDetail((current) => {
@@ -1569,7 +1584,7 @@ export default function App() {
       }
       setToolDisplaySettingSessionId((current) => current === sessionId ? null : current);
     }
-  }, [desktopSettings?.appearance.autoCollapseToolCalls, showPermissionNotice]);
+  }, [showPermissionNotice]);
 
   const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
     if (activeDetailRef.current?.projectId) {
@@ -2356,8 +2371,8 @@ export default function App() {
       setThemeMode={handleThemeModeChange}
       cssThemeId={cssThemeId}
       setCssThemeId={handleCssThemeChange}
-      onAutoCollapseToolCallsChange={(enabled) => {
-        saveAppearance({ autoCollapseToolCalls: enabled });
+      onToolDisplayModeChange={(mode) => {
+        saveAppearance({ toolDisplayMode: mode });
       }}
       onAppearancePreview={previewAppearance}
       onAppearanceCommit={saveAppearance}
@@ -2371,7 +2386,7 @@ export default function App() {
 
   return (
     <ToolDisplaySettingsProvider
-      autoCollapseToolCalls={desktopSettings?.appearance.autoCollapseToolCalls ?? false}
+      toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
     >
     <div
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
@@ -2513,8 +2528,10 @@ export default function App() {
                 onForkSession={handleForkSession}
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
-                autoCollapseToolCalls={activeAutoCollapseToolCalls}
-                onToggleAutoCollapseToolCalls={handleToggleSessionAutoCollapseToolCalls}
+                toolDisplayMode={activeToolDisplayMode}
+                sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
+                globalToolDisplayMode={globalToolDisplayMode}
+                onToolDisplayModeChange={handleSessionToolDisplayModeChange}
                 toolDisplaySettingBusy={toolDisplaySettingSessionId === activeSessionId}
                 onSend={handleSend}
                 onStop={handleStop}
@@ -2540,6 +2557,9 @@ export default function App() {
                 contextUsage={contextUsage}
                 turnTokens={turnTokens}
                 agentTeams={agentTeamsBySession[activeSessionId] ?? null}
+                toolPermissionRequest={activeToolPermissionRequest}
+                onSubmitToolPermission={handleSubmitQuestion}
+                onRejectToolPermission={handleRejectQuestion}
               />
             ) : (
               <ChatArea

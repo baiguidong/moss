@@ -81,7 +81,7 @@ export function CoordinatorWorkersSummary({
   onSelect: (workerId: string) => void;
 }) {
   const sorted = React.useMemo(() => sortWorkers(workers), [workers]);
-  if (sorted.length === 0) return <div className="min-w-0 flex-1" />;
+  if (sorted.length === 0) return null;
 
   const visible = sorted.slice(0, 8);
   const compactHiddenCount = Math.max(0, sorted.length - 4);
@@ -89,7 +89,7 @@ export function CoordinatorWorkersSummary({
   const summary = statusSummary(sorted);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+    <div className="flex min-w-0 shrink-0 items-center justify-center gap-2">
       <div
         className="flex min-w-0 items-center gap-1"
         role="group"

@@ -62,6 +62,48 @@ describe("agent transcript tool rendering", () => {
     ]);
   });
 
+  it("keeps Date timestamps and uses the previous event time when a timestamp is missing", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([
+      {
+        type: "user",
+        uuid: "user-turn-time",
+        timestamp: new Date("2026-09-11T02:18:45.000Z"),
+        message: { role: "user", content: "upload files" },
+      },
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "Preparing uploads" }],
+        },
+      },
+      {
+        type: "assistant",
+        timestamp: "2026-09-11T02:18:46.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "upload-1", name: "Bash", input: { command: "curl" } }],
+        },
+      },
+      {
+        type: "user",
+        timestamp: "2026-09-11T02:18:49.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "upload-1", content: "done" }],
+        },
+      },
+    ] as any);
+
+    const user = messages.find((message) => message.type === "user_text");
+    const thinking = messages.find((message) => message.type === "thinking");
+    const toolCall = messages.find((message) => message.type === "tool_use");
+    expect(user?.timestamp.toISOString()).toBe("2026-09-11T02:18:45.000Z");
+    expect(thinking?.timestamp.toISOString()).toBe("2026-09-11T02:18:45.000Z");
+    expect(toolCall?.timestamp.toISOString()).toBe("2026-09-11T02:18:46.000Z");
+    expect(toolCall?.type === "tool_use" ? toolCall.duration : undefined).toBe(3_000);
+  });
+
   it("replays structured Library references with their stable display names", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "user",
@@ -163,9 +205,9 @@ describe("agent transcript tool rendering", () => {
   });
 
   it("lets the display switch control only the Explored parent", () => {
-    expect(shouldExpandExploredGroup(true, false)).toBe(false);
-    expect(shouldExpandExploredGroup(false, false)).toBe(true);
-    expect(shouldExpandExploredGroup(true, true)).toBe(true);
+    expect(shouldExpandExploredGroup('collapsed', false)).toBe(false);
+    expect(shouldExpandExploredGroup('expanded', false)).toBe(true);
+    expect(shouldExpandExploredGroup('merged', true)).toBe(true);
   });
 
   it("keeps sibling tool calls and attaches their results by tool_use_id", () => {
@@ -314,5 +356,52 @@ describe("agent transcript tool rendering", () => {
     ]);
     expect(model.renderItems[0]?.kind === "tool_group" && model.renderItems[0].toolCalls[0]?.toolUseId).toBe("bash-before");
     expect(model.renderItems[2]?.kind === "tool_group" && model.renderItems[2].toolCalls[0]?.toolUseId).toBe("bash-after");
+  });
+
+  it("keeps thinking and ordinary tools in one ordered activity run", () => {
+    const model = buildRenderModel([
+      { id: "thinking-1", timestamp: new Date(), type: "thinking", role: "assistant", content: "Inspecting" },
+      {
+        id: "read-message",
+        timestamp: new Date(),
+        type: "tool_use",
+        role: "assistant",
+        toolUseId: "read-1",
+        toolName: "Read",
+        displayName: "Read",
+        input: { file_path: "/tmp/a" },
+        status: "running",
+      },
+      { id: "thinking-2", timestamp: new Date(), type: "thinking", role: "assistant", content: "Checking" },
+    ]);
+    const group = model.renderItems[0];
+
+    expect(model.renderItems).toHaveLength(1);
+    expect(group?.kind === "tool_group" && group.steps.map((step) => step.kind)).toEqual([
+      "thinking",
+      "tool",
+      "thinking",
+    ]);
+  });
+
+  it("keeps dedicated Agent tools outside ordinary merged activity runs", () => {
+    const model = buildRenderModel([
+      { id: "thinking-1", timestamp: new Date(), type: "thinking", role: "assistant", content: "Planning" },
+      {
+        id: "agent-message",
+        timestamp: new Date(),
+        type: "tool_use",
+        role: "assistant",
+        toolUseId: "agent-1",
+        toolName: "Agent",
+        displayName: "Agent",
+        input: { prompt: "Inspect" },
+        status: "running",
+      },
+    ]);
+
+    expect(model.renderItems).toHaveLength(2);
+    expect(model.renderItems[0]?.kind === "tool_group" && model.renderItems[0].mergeable).toBe(true);
+    expect(model.renderItems[1]?.kind === "tool_group" && model.renderItems[1].mergeable).toBe(false);
   });
 });

@@ -134,7 +134,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   previewTurnRewind: (payload) => ipcRenderer.invoke('agent:preview-turn-rewind', payload),
   rewindTurn: (payload) => ipcRenderer.invoke('agent:rewind-turn', payload),
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
-  setSessionAutoCollapseToolCalls: (payload) => ipcRenderer.invoke('agent:set-session-auto-collapse-tool-calls', payload),
+  setSessionToolDisplayMode: (payload) => ipcRenderer.invoke('agent:set-session-tool-display-mode', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
   agentTeams: {

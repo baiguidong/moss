@@ -176,13 +176,16 @@ type RenderBuilderState = {
   activeTurnId?: string;
 };
 
-function safeDate(input: unknown): Date {
-  if (typeof input === 'number') return new Date(input);
+function safeDate(input: unknown, fallback = new Date(0)): Date {
+  if (input instanceof Date && Number.isFinite(input.getTime())) {
+    return new Date(input.getTime());
+  }
+  if (typeof input === 'number' && Number.isFinite(input)) return new Date(input);
   if (typeof input === 'string') {
     const timestamp = Date.parse(input);
     if (!Number.isNaN(timestamp)) return new Date(timestamp);
   }
-  return new Date();
+  return new Date(Number.isFinite(fallback.getTime()) ? fallback.getTime() : 0);
 }
 
 function formatJson(value: unknown): string {
@@ -694,7 +697,7 @@ function ensureToolUseMessage(
     || nextRenderId(state, 'tool-use-generated');
   const existing = state.toolUsesById.get(toolUseId);
   if (existing && (turn.items.includes(existing) || isAskUserQuestionToolName(existing.toolName))) {
-    existing.timestamp = timestamp;
+    if (timestamp.getTime() < existing.timestamp.getTime()) existing.timestamp = timestamp;
     if (typeof block?.tool_name === 'string' && block.tool_name.trim()) {
       existing.toolName = block.tool_name.trim();
     }
@@ -866,10 +869,15 @@ function addToolResultMessage(
     || formatJson(rawContent ?? block?.content ?? '');
 
   if (toolUseId) {
+    const measuredDuration = toolUse
+      ? timestamp.getTime() - toolUse.timestamp.getTime()
+      : Number.NaN;
     updateToolUseStatus(state, toolUseId, {
       status: block?.is_error ? 'error' : 'success',
       statusText: block?.is_error ? '执行失败' : '执行完成',
-      timestamp,
+      ...(Number.isFinite(measuredDuration) && measuredDuration >= 0
+        ? { duration: toolUse?.duration ?? measuredDuration }
+        : {}),
     });
   }
 
@@ -1096,11 +1104,13 @@ export function buildTranscriptRenderMessages(
     toolUsesByIndex: new Map<number, ToolUseRenderMessage>(),
     activeTurnId: undefined,
   };
+  let previousTimestamp = new Date(0);
 
   for (let index = 0; index < history.length; index += 1) {
     const event = history[index];
     if (isHiddenUserMetaEvent(event)) continue;
-    const timestamp = safeDate(event?.timestamp);
+    const timestamp = safeDate(event?.timestamp, previousTimestamp);
+    previousTimestamp = timestamp;
     const userText = event?.type === 'user' ? extractUserText(event) : '';
 
     const userAttachments = mergeAttachments(
@@ -1560,6 +1570,7 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
   let currentAssistant: MutableChatMessage | null = null;
   let turnIndex = -1;
   let assistantIndex = -1;
+  let previousTimestamp = new Date(0);
 
   const getCurrentAssistant = (timestamp: Date) => {
     if (currentAssistant && !currentAssistant._finalized) {
@@ -1591,7 +1602,8 @@ export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {
   for (let index = 0; index < history.length; index += 1) {
     const event = history[index];
     if (isHiddenUserMetaEvent(event)) continue;
-    const timestamp = safeDate(event?.timestamp);
+    const timestamp = safeDate(event?.timestamp, previousTimestamp);
+    previousTimestamp = timestamp;
 
     const userText = event?.type === 'user' ? extractUserText(event) : '';
 

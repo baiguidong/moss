@@ -74,7 +74,7 @@ export type SessionSummary = {
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
-  autoCollapseToolCalls?: boolean | null;
+  toolDisplayMode?: 'expanded' | 'collapsed' | 'merged' | null;
   isSubAgent?: boolean;
   parentSessionId?: string | null;
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
@@ -1007,7 +1007,7 @@ export type DesktopSettings = {
   appearance: {
     themeMode: 'dark' | 'light' | 'system';
     cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme';
-    autoCollapseToolCalls: boolean;
+    toolDisplayMode: 'expanded' | 'collapsed' | 'merged';
     chatFontSize: number;
     chatLineHeight: number;
     chatMessageSpacing: number;
@@ -1683,7 +1683,10 @@ declare global {
         auditRecorded: boolean;
       }>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
-      setSessionAutoCollapseToolCalls: (payload: { sessionId: string; enabled: boolean }) => Promise<SessionSummary>;
+      setSessionToolDisplayMode: (payload: {
+        sessionId: string;
+        mode: 'expanded' | 'collapsed' | 'merged' | null;
+      }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
       agentTeams: {
@@ -1820,6 +1823,7 @@ declare global {
         onOpen: (callback: (payload: {
           url: string;
           sessionId?: string | null;
+          alreadyOpened?: boolean;
           connectorAuth?: {
             connectorId: string;
             serverName: string;

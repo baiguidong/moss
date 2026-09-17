@@ -15,7 +15,7 @@ describe('desktop appearance settings', () => {
     const appearance = {
       themeMode: 'system',
       cssThemeId: 'dot-theme',
-      autoCollapseToolCalls: true,
+      toolDisplayMode: 'merged',
       chatFontSize: 16,
       chatLineHeight: 1.7,
       chatMessageSpacing: 14,
@@ -32,7 +32,7 @@ describe('desktop appearance settings', () => {
     )).toEqual({
       themeMode: 'dark',
       cssThemeId: 'gradient-theme',
-      autoCollapseToolCalls: false,
+      toolDisplayMode: 'expanded',
       chatFontSize: 14,
       chatLineHeight: 1.55,
       chatMessageSpacing: 10,
@@ -41,6 +41,11 @@ describe('desktop appearance settings', () => {
     expect(hasPersistedAppearance({
       appearance: { themeMode: 'dark', cssThemeId: 'custom-theme' },
     })).toBe(true);
+  });
+
+  it('maps the previous auto-collapse boolean to the new display modes', () => {
+    expect(normalizeAppearance({ autoCollapseToolCalls: true }).toolDisplayMode).toBe('collapsed');
+    expect(normalizeAppearance({ autoCollapseToolCalls: false }).toolDisplayMode).toBe('expanded');
   });
 
   it('bounds chat typography and spacing controls', () => {

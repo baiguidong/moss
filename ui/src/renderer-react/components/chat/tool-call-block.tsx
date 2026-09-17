@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
+import {
+  ChevronDown,
+  Wrench,
+} from "lucide-react";
 import SyntaxHighlighter from "react-syntax-highlighter";
 import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { cn } from "@/lib/utils";
@@ -149,6 +152,35 @@ function buildSubject(toolCall: ToolUseRenderMessage, kind: ToolKind) {
   return summary === toolCall.displayName ? "" : summary;
 }
 
+function RowToolIcon({ active }: {
+  active: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)]",
+        active ? "text-primary" : "text-muted-foreground",
+      )}
+      title="工具调用"
+      role="img"
+      aria-label="工具调用"
+    >
+      <Wrench className="h-3.5 w-3.5" strokeWidth={1.8} />
+    </span>
+  );
+}
+
+export function formatToolDuration(duration?: number) {
+  if (typeof duration !== "number" || duration < 0) return "";
+  if (duration < 1000) return `${Math.round(duration)}ms`;
+  const totalSeconds = Math.round(duration / 1000);
+  if (totalSeconds < 10) return `${(duration / 1000).toFixed(1)}s`;
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m${totalSeconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
+}
+
 type OutputLine = {
   text: string;
   isError: boolean;
@@ -290,6 +322,7 @@ export function ToolCallBlock({
   focused = false,
   expandForFocus = false,
   defaultCollapsed = false,
+  chrome = "card",
 }: {
   toolCall: ToolUseRenderMessage;
   result?: ToolResultRenderMessage;
@@ -297,8 +330,10 @@ export function ToolCallBlock({
   focused?: boolean;
   expandForFocus?: boolean;
   defaultCollapsed?: boolean;
+  chrome?: "card" | "row";
 }) {
-  const { autoCollapseToolCalls } = useToolDisplaySettings();
+  const { toolDisplayMode } = useToolDisplaySettings();
+  const isRow = chrome === "row";
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
   const shell = extractShellResult(result?.rawContent);
@@ -356,7 +391,7 @@ export function ToolCallBlock({
     hasResult,
   });
   const shouldAutoCollapse = shouldAutoCollapseToolCall({
-    enabled: autoCollapseToolCalls,
+    mode: toolDisplayMode,
     status: toolCall.status,
     failed,
     hasResult,
@@ -366,7 +401,7 @@ export function ToolCallBlock({
     (defaultCollapsed || shouldAutoCollapse) && !focusRequested,
   );
   const [outputExpanded, setOutputExpanded] = React.useState(focusRequested);
-  const autoCollapseWasEnabledRef = React.useRef(autoCollapseToolCalls);
+  const autoCollapseWasEnabledRef = React.useRef(toolDisplayMode === "collapsed");
   const focusWasRequestedRef = React.useRef(focusRequested);
 
   React.useEffect(() => {
@@ -375,20 +410,20 @@ export function ToolCallBlock({
       setOutputExpanded(true);
     } else if (defaultCollapsed) {
       if (focusWasRequestedRef.current) setCollapsed(true);
-    } else if (autoCollapseToolCalls) {
+    } else if (toolDisplayMode === "collapsed") {
       setCollapsed(shouldAutoCollapse);
     } else if (autoCollapseWasEnabledRef.current) {
       setCollapsed(false);
     }
-    autoCollapseWasEnabledRef.current = autoCollapseToolCalls;
+    autoCollapseWasEnabledRef.current = toolDisplayMode === "collapsed";
     focusWasRequestedRef.current = focusRequested;
   }, [
-    autoCollapseToolCalls,
     defaultCollapsed,
     failed,
     focusRequested,
     hasResult,
     shouldAutoCollapse,
+    toolDisplayMode,
     toolCall.status,
   ]);
 
@@ -405,36 +440,71 @@ export function ToolCallBlock({
     .filter(Boolean)
     .join("\n");
   const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
+  const rowResultSummary = executionState === "running"
+    ? "执行中"
+    : executionState === "failed"
+      ? "失败"
+      : diffStats
+        ? "已完成"
+        : lineCount > 1
+          ? `${lineCount} 行输出`
+          : resultText
+            ? (resultText.replace(/\s+/g, " ").trim().slice(0, 36) || "已完成")
+            : "已完成";
+  const durationSummary = executionState === "completed" || executionState === "failed"
+    ? formatToolDuration(toolCall.duration)
+    : "";
 
   return (
     <div
       data-tool-use-id={toolCall.toolUseId}
+      data-tool-call-chrome={chrome}
       className={cn(
-        TOOL_CALL_FRAME_CLASS_NAME,
+        isRow
+          ? "group/tool-call min-w-0 rounded-md transition-colors"
+          : TOOL_CALL_FRAME_CLASS_NAME,
         focused && "scroll-mt-16 bg-primary/5 ring-2 ring-primary/70",
       )}
     >
       <div
         className={cn(
-          TOOL_CALL_HEADER_CLASS_NAME,
-          hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
+          isRow
+            ? "-mx-2 flex min-h-7 w-[calc(100%+1rem)] min-w-0 items-center gap-3 rounded-md px-2 py-1 transition-colors hover:bg-muted/45"
+            : TOOL_CALL_HEADER_CLASS_NAME,
+          !isRow && hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}
       >
-        <StatusDot executionState={executionState} />
+        {isRow ? (
+          <RowToolIcon active={executionState === "running"} />
+        ) : (
+          <StatusDot executionState={executionState} />
+        )}
         <button
           type="button"
           disabled={!hasResponse}
           aria-expanded={hasResponse ? !collapsed : undefined}
           onClick={() => setCollapsed((value) => !value)}
           className={cn(
-            "min-w-0 flex-1 text-left text-[13px] leading-[1.55] disabled:pointer-events-none",
+            "min-w-0 flex-1 text-left leading-[1.55] disabled:pointer-events-none",
+            isRow ? "text-[12.5px]" : "text-[13px]",
             hasResponse ? "cursor-pointer" : "cursor-default",
           )}
         >
           <span className="block truncate whitespace-nowrap">
-            <span className="font-semibold text-[color:var(--color-repl-fg)]">{buildHeadline(toolCall, kind)}</span>
+            <span className={cn(
+              "font-semibold",
+              isRow
+                ? executionState === "running" ? "text-primary" : "text-muted-foreground"
+                : "text-[color:var(--color-repl-fg)]",
+            )}>
+              {isRow ? toolCall.displayName || toolCall.toolName : buildHeadline(toolCall, kind)}
+            </span>
             {subject ? (
-              <span className={cn("ml-1 text-[color:var(--color-repl-code-fg)]", kind === "bash" && "font-mono")}>
+              <span className={cn(
+                "ml-1",
+                isRow ? "text-muted-foreground" : "text-[color:var(--color-repl-code-fg)]",
+                kind === "bash" && "font-mono",
+              )}>
                 {kind === "bash" ? <InlineSyntax code={subject} language="bash" /> : subject}
               </span>
             ) : null}
@@ -447,6 +517,22 @@ export function ToolCallBlock({
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5">
+          {isRow ? (
+            <span className={cn(
+              "max-w-[38%] truncate text-[11.5px]",
+              executionState === "failed" ? "font-medium text-destructive" : "text-muted-foreground",
+            )}>
+              {rowResultSummary}
+            </span>
+          ) : null}
+          {isRow && durationSummary ? (
+            <span className={cn(
+              "font-mono text-[11px] tabular-nums",
+              executionState === "failed" ? "text-destructive" : "text-muted-foreground",
+            )}>
+              {durationSummary}
+            </span>
+          ) : null}
           <CopyButton
             text={copyText}
             label="复制工具记录"
@@ -462,14 +548,23 @@ export function ToolCallBlock({
               aria-label={collapsed ? "展开工具记录" : "折叠到一行"}
               aria-expanded={!collapsed}
             >
-              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", collapsed && "-rotate-90")} />
+              <ChevronDown className={cn(
+                "transition-transform",
+                isRow ? "h-3 w-3" : "h-3.5 w-3.5",
+                collapsed && "-rotate-90",
+              )} />
             </button>
           ) : null}
         </div>
       </div>
 
       {hasResponse && !collapsed ? (
-        <div className="min-w-0 bg-[var(--color-repl-bg)] px-2.5 py-1.5">
+        <div className={cn(
+          "min-w-0",
+          isRow
+            ? "mb-2 ml-2 mt-1 border-l border-border/70 py-1 pl-3"
+            : "bg-[var(--color-repl-bg)] px-2.5 py-1.5",
+        )}>
           <div className="ml-3.5 min-w-0">
             <TranscriptOutput
               segments={segments}

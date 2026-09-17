@@ -62,7 +62,7 @@ const workers: SessionSummary[] = [
   },
 ];
 
-test("coordinator header uses status dots without visible session titles", () => {
+test("coordinator header uses compact status dots without worker titles", () => {
   const markup = renderToStaticMarkup(
     <CoordinatorWorkersSummary workers={workers} onOpen={() => {}} onSelect={() => {}} />,
   );
@@ -98,8 +98,8 @@ test("coordinator worker view groups status rows and truncates long titles", () 
   expect(markup).toContain("block truncate text-sm font-medium");
 });
 
-test("chat header keeps the session title accessible without rendering it visibly", () => {
-  const title = "这是一个不应该占据顶部空间的超长会话标题";
+test("chat header renders a truncated session title alongside worker status", () => {
+  const title = "这是一个需要在顶部保留但不能挤压操作区的超长会话标题";
   const markup = renderToStaticMarkup(
     <SessionTabBar
       title={title}
@@ -109,8 +109,10 @@ test("chat header keeps the session title accessible without rendering it visibl
       rightPanelName="检查器"
       onToggleLeft={() => {}}
       onToggleRight={() => {}}
-      autoCollapseToolCalls={false}
-      onToggleAutoCollapseToolCalls={() => {}}
+      toolDisplayMode="expanded"
+      sessionToolDisplayMode={null}
+      globalToolDisplayMode="expanded"
+      onToolDisplayModeChange={() => {}}
       toolDisplaySettingBusy={false}
       outline={[]}
       onJumpToOutlineItem={() => {}}
@@ -122,7 +124,8 @@ test("chat header keeps the session title accessible without rendering it visibl
   );
 
   expect(markup).toContain(`aria-label="会话操作：${title}"`);
-  expect(markup).not.toContain(`>${title}<`);
+  expect(markup).toContain(`>${title}</span>`);
+  expect(markup).toContain("max-w-[40%] truncate text-sm font-medium");
   expect(markup).toContain('aria-label="查看会话大纲"');
   expect(markup).toContain("3 个子 Agent");
 });
@@ -133,7 +136,6 @@ test("chat area uses the coordinator list instead of footer worker cards", () =>
     "utf8",
   );
 
-  expect(source).not.toContain('{title || "New Session"}');
   expect(source).not.toContain("打开子任务：");
   expect(source).toContain("<CoordinatorWorkersSummary");
   expect(source).toContain("<CoordinatorWorkersView");

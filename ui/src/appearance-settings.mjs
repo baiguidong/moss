@@ -1,7 +1,7 @@
 export const DEFAULT_APPEARANCE = Object.freeze({
   themeMode: 'light',
   cssThemeId: 'grid-theme',
-  autoCollapseToolCalls: false,
+  toolDisplayMode: 'expanded',
   chatFontSize: 14,
   chatLineHeight: 1.55,
   chatMessageSpacing: 10,
@@ -9,6 +9,7 @@ export const DEFAULT_APPEARANCE = Object.freeze({
 
 const THEME_MODES = new Set(['light', 'dark', 'system']);
 const CSS_THEME_IDS = new Set(['default', 'grid-theme', 'dot-theme', 'gradient-theme']);
+const TOOL_DISPLAY_MODES = new Set(['expanded', 'collapsed', 'merged']);
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -40,11 +41,15 @@ export function normalizeAppearance(input, existing = DEFAULT_APPEARANCE) {
       : CSS_THEME_IDS.has(fallback.cssThemeId)
         ? fallback.cssThemeId
         : DEFAULT_APPEARANCE.cssThemeId,
-    autoCollapseToolCalls: typeof source.autoCollapseToolCalls === 'boolean'
-      ? source.autoCollapseToolCalls
-      : typeof fallback.autoCollapseToolCalls === 'boolean'
-        ? fallback.autoCollapseToolCalls
-        : DEFAULT_APPEARANCE.autoCollapseToolCalls,
+    toolDisplayMode: TOOL_DISPLAY_MODES.has(source.toolDisplayMode)
+      ? source.toolDisplayMode
+      : typeof source.autoCollapseToolCalls === 'boolean'
+        ? (source.autoCollapseToolCalls ? 'collapsed' : 'expanded')
+        : TOOL_DISPLAY_MODES.has(fallback.toolDisplayMode)
+          ? fallback.toolDisplayMode
+          : typeof fallback.autoCollapseToolCalls === 'boolean'
+            ? (fallback.autoCollapseToolCalls ? 'collapsed' : 'expanded')
+            : DEFAULT_APPEARANCE.toolDisplayMode,
     chatFontSize: boundedNumber(
       source.chatFontSize,
       fallback.chatFontSize,

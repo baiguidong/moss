@@ -50,6 +50,7 @@ test('Agent Teams strip and workbench expose archived DAG playback', () => {
   expect(strip).toContain('Agent Teams · agent-team-demo');
   expect(strip).toContain('回看');
   expect(workbench).toContain('Agent Teams · 共享任务图');
+  expect(workbench).not.toContain('Ship Agent Teams');
   expect(workbench).not.toContain('按依赖分层 · 左至右');
   expect(workbench).toContain('团队任务');
   expect(workbench).not.toContain('未领取');
@@ -58,4 +59,6 @@ test('Agent Teams strip and workbench expose archived DAG playback', () => {
   expect(workbench).toContain('aria-label="放大任务图"');
   expect(workbench).toContain('marker-end="url(#agent-team-arrow)"');
   expect(workbench).toContain('aria-label="团队历史时间轴"');
+  expect(workbench).toContain('aria-label="从头播放团队历史"');
+  expect(workbench).toContain('lg:w-1/2');
 });

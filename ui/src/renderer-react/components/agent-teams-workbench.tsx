@@ -11,6 +11,8 @@ import {
   LoaderCircle,
   MessageSquareText,
   Network,
+  Pause,
+  Play,
   RotateCcw,
   Users,
   ZoomIn,
@@ -270,12 +272,27 @@ export function AgentTeamsWorkbench({
   const [selectedId, setSelectedId] = React.useState(() => latestRun(state)?.incarnationId ?? "");
   const run = state.teams.find((team) => team.incarnationId === selectedId) ?? latestRun(state);
   const [frame, setFrame] = React.useState(() => Math.max(0, (run?.snapshots.length ?? 1) - 1));
+  const [playing, setPlaying] = React.useState(false);
   const [now, setNow] = React.useState(Date.now());
 
   React.useEffect(() => {
     if (!run) return;
+    setPlaying(false);
     setFrame(Math.max(0, run.snapshots.length - 1));
   }, [run?.incarnationId, run?.snapshots.length, run?.status]);
+
+  React.useEffect(() => {
+    if (!playing || !run || run.status === "live" || run.snapshots.length < 2) return;
+    const lastFrame = run.snapshots.length - 1;
+    if (frame >= lastFrame) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setFrame((current) => Math.min(current + 1, lastFrame));
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [frame, playing, run?.incarnationId, run?.snapshots.length, run?.status]);
 
   React.useEffect(() => {
     if (run?.status !== "live") return;
@@ -304,7 +321,6 @@ export function AgentTeamsWorkbench({
                 {run.status === "live" ? "实时" : "历史"}
               </span>
             </div>
-            <p className="truncate text-[11px] text-muted-foreground">{snapshot.team.description || run.teamName}</p>
           </div>
           {state.teams.length > 1 ? (
             <select
@@ -334,6 +350,43 @@ export function AgentTeamsWorkbench({
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div className="flex min-h-[360px] min-w-0 flex-1 flex-col border-b border-border/70 lg:border-b-0 lg:border-r">
           <TaskDag snapshot={snapshot} />
+          {run.status !== "live" && run.snapshots.length > 1 ? (
+            <div className="flex h-11 shrink-0 items-center border-t border-border/70 px-3">
+              <div className="flex w-full items-center gap-2 lg:w-1/2 lg:max-w-[560px]">
+                <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (playing) {
+                      setPlaying(false);
+                      return;
+                    }
+                    setFrame(0);
+                    setPlaying(true);
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label={playing ? "暂停团队历史播放" : "从头播放团队历史"}
+                  title={playing ? "暂停" : "从头播放"}
+                >
+                  {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={run.snapshots.length - 1}
+                  value={frame}
+                  onChange={(event) => {
+                    setPlaying(false);
+                    setFrame(Number(event.target.value));
+                  }}
+                  className="min-w-0 flex-1 accent-primary"
+                  aria-label="团队历史时间轴"
+                />
+                <span className="w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{frame + 1}/{run.snapshots.length}</span>
+                <span className="hidden w-16 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground xl:block">{new Date(snapshot.capturedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+            </div>
+          ) : null}
         </div>
         <aside className="flex max-h-64 w-full shrink-0 flex-col lg:max-h-none lg:w-64">
           <div className="border-b border-border/60 px-4 py-3">
@@ -364,22 +417,6 @@ export function AgentTeamsWorkbench({
         </aside>
       </div>
 
-      {run.status !== "live" && run.snapshots.length > 1 ? (
-        <div className="flex h-12 shrink-0 items-center gap-3 border-t border-border/70 px-4">
-          <History className="h-4 w-4 text-muted-foreground" />
-          <span className="text-[11px] text-muted-foreground">回看历史</span>
-          <input
-            type="range"
-            min={0}
-            max={run.snapshots.length - 1}
-            value={frame}
-            onChange={(event) => setFrame(Number(event.target.value))}
-            className="min-w-0 flex-1 accent-primary"
-            aria-label="团队历史时间轴"
-          />
-          <span className="w-20 text-right text-[10px] tabular-nums text-muted-foreground">{new Date(snapshot.capturedAt).toLocaleTimeString()}</span>
-        </div>
-      ) : null}
     </div>
   );
 }

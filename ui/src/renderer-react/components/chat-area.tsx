@@ -26,10 +26,23 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
-import { ToolDisplaySettingsProvider } from "@/components/chat/tool-display-settings";
+import {
+  ToolDisplaySettingsProvider,
+  type ToolDisplayMode,
+} from "@/components/chat/tool-display-settings";
+import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
 import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 import {
   CoordinatorWorkersSummary,
@@ -39,7 +52,14 @@ import { FilePreview } from "@/components/file-preview";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
-import type { AgentTeamsSessionState, BackgroundTaskInfo, InstalledConnector, SessionSummary } from "../types";
+import type {
+  AgentTeamsSessionState,
+  AskUserQuestionAnnotations,
+  AskUserQuestionRequest,
+  BackgroundTaskInfo,
+  InstalledConnector,
+  SessionSummary,
+} from "../types";
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
@@ -66,6 +86,11 @@ import {
 } from "@/lib/composer-mentions";
 
 type ComposerIntent = "chat" | "boss";
+const TOOL_DISPLAY_MODE_LABELS: Record<ToolDisplayMode, string> = {
+  expanded: "展开",
+  collapsed: "折叠",
+  merged: "合并",
+};
 type PendingPlanApproval = {
   kind: "plan";
   originalPrompt: string;
@@ -120,8 +145,10 @@ export function SessionTabBar({
   rightPanelName,
   onToggleLeft,
   onToggleRight,
-  autoCollapseToolCalls,
-  onToggleAutoCollapseToolCalls,
+  toolDisplayMode,
+  sessionToolDisplayMode,
+  globalToolDisplayMode,
+  onToolDisplayModeChange,
   toolDisplaySettingBusy,
   outline,
   onJumpToOutlineItem,
@@ -140,8 +167,10 @@ export function SessionTabBar({
   rightPanelName: string;
   onToggleLeft: () => void;
   onToggleRight: () => void;
-  autoCollapseToolCalls: boolean;
-  onToggleAutoCollapseToolCalls?: () => void;
+  toolDisplayMode: ToolDisplayMode;
+  sessionToolDisplayMode: ToolDisplayMode | null;
+  globalToolDisplayMode: ToolDisplayMode;
+  onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy: boolean;
   outline: OutlineEntry[];
   onJumpToOutlineItem: (messageId: string) => void;
@@ -201,11 +230,22 @@ export function SessionTabBar({
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
-        <CoordinatorWorkersSummary
-          workers={childSessions}
-          onOpen={onOpenWorkers}
-          onSelect={onSelectWorker}
-        />
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+          <span
+            className="max-w-[40%] truncate text-sm font-medium text-foreground"
+            title={title || "New Session"}
+          >
+            {title || "New Session"}
+          </span>
+          {childSessions.length > 0 ? (
+            <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+          ) : null}
+          <CoordinatorWorkersSummary
+            workers={childSessions}
+            onOpen={onOpenWorkers}
+            onSelect={onSelectWorker}
+          />
+        </div>
 
         <div className="flex shrink-0 items-center gap-1">
           <div ref={outlineRef} className="relative inline-flex">
@@ -306,24 +346,49 @@ export function SessionTabBar({
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn("h-8 w-8 rounded-full", autoCollapseToolCalls && "text-primary")}
-                  onClick={onToggleAutoCollapseToolCalls}
-                  disabled={!onToggleAutoCollapseToolCalls || toolDisplaySettingBusy}
-                  aria-label={autoCollapseToolCalls
-                    ? "关闭当前会话的工具调用自动折叠"
-                    : "开启当前会话的工具调用自动折叠"}
-                >
-                  <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-8 w-8 rounded-full",
+                        toolDisplayMode !== "expanded" && "text-primary",
+                      )}
+                      disabled={!onToolDisplayModeChange || toolDisplaySettingBusy}
+                      aria-label={`工具展示：${TOOL_DISPLAY_MODE_LABELS[toolDisplayMode]}`}
+                    >
+                      <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel className="text-xs text-muted-foreground">当前会话工具展示</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuRadioGroup
+                      value={sessionToolDisplayMode ?? "global"}
+                      onValueChange={(value) => {
+                        onToolDisplayModeChange?.(
+                          value === "global" ? null : value as ToolDisplayMode,
+                        );
+                      }}
+                    >
+                      <DropdownMenuRadioItem value="global">
+                        跟随全局
+                        <span className="ml-auto text-[10px] text-muted-foreground">
+                          {TOOL_DISPLAY_MODE_LABELS[globalToolDisplayMode]}
+                        </span>
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="expanded">展开</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="collapsed">折叠</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="merged">合并</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {autoCollapseToolCalls
-                ? "当前会话：关闭完成后自动折叠"
-                : "当前会话：完成后自动折叠工具调用"}
+              工具展示：{TOOL_DISPLAY_MODE_LABELS[toolDisplayMode]}
+              {sessionToolDisplayMode ? "（当前会话）" : "（跟随全局）"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -2082,10 +2147,15 @@ export function ChatArea({
   onForkSession,
   forkingSession = false,
   forkDisabledReason,
-  autoCollapseToolCalls = false,
-  onToggleAutoCollapseToolCalls,
+  toolDisplayMode = "expanded",
+  sessionToolDisplayMode = null,
+  globalToolDisplayMode = "expanded",
+  onToolDisplayModeChange,
   toolDisplaySettingBusy = false,
   agentTeams,
+  toolPermissionRequest,
+  onSubmitToolPermission,
+  onRejectToolPermission,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -2142,10 +2212,19 @@ export function ChatArea({
   onForkSession?: () => void;
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
-  autoCollapseToolCalls?: boolean;
-  onToggleAutoCollapseToolCalls?: () => void;
+  toolDisplayMode?: ToolDisplayMode;
+  sessionToolDisplayMode?: ToolDisplayMode | null;
+  globalToolDisplayMode?: ToolDisplayMode;
+  onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy?: boolean;
   agentTeams?: AgentTeamsSessionState | null;
+  toolPermissionRequest?: AskUserQuestionRequest | null;
+  onSubmitToolPermission?: (
+    request: AskUserQuestionRequest,
+    answers: Record<string, string>,
+    annotations?: AskUserQuestionAnnotations,
+  ) => Promise<void>;
+  onRejectToolPermission?: (request: AskUserQuestionRequest) => Promise<void>;
 }) {
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
@@ -2184,6 +2263,14 @@ export function ChatArea({
     ));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
   }, [focusedToolRequestId, focusedToolUseId, hasActiveSession]);
+
+  React.useEffect(() => {
+    if (!toolPermissionRequest) return;
+    const timer = window.setTimeout(() => {
+      virtualListRef.current?.scrollToBottom("smooth");
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [toolPermissionRequest?.requestId]);
 
   const outline = React.useMemo(() => deriveOutline(messages), [messages]);
   const handleJumpToOutlineItem = React.useCallback((messageId: string) => {
@@ -2280,8 +2367,10 @@ export function ChatArea({
         rightPanelName={rightPanelName}
         onToggleLeft={onToggleLeftSidebar}
         onToggleRight={onToggleRightSidebar}
-        autoCollapseToolCalls={autoCollapseToolCalls}
-        onToggleAutoCollapseToolCalls={onToggleAutoCollapseToolCalls}
+        toolDisplayMode={toolDisplayMode}
+        sessionToolDisplayMode={sessionToolDisplayMode}
+        globalToolDisplayMode={globalToolDisplayMode}
+        onToolDisplayModeChange={onToolDisplayModeChange}
         toolDisplaySettingBusy={toolDisplaySettingBusy}
         outline={outline}
         onJumpToOutlineItem={handleJumpToOutlineItem}
@@ -2322,7 +2411,7 @@ export function ChatArea({
           onOpenWorker={(workerId) => onOpenChildSession?.(workerId)}
         />
       ) : (
-        <ToolDisplaySettingsProvider autoCollapseToolCalls={autoCollapseToolCalls}>
+        <ToolDisplaySettingsProvider toolDisplayMode={toolDisplayMode}>
           <MessageListPane
             key={sessionId || "default"}
             ref={virtualListRef}
@@ -2330,12 +2419,18 @@ export function ChatArea({
             messages={messages}
             sessionId={sessionId}
             workspace={sessionWorkspace}
-            loading={loading}
+            loading={loading && !toolPermissionRequest}
             loadingStartTime={loadingStartTime}
             loadingTokens={turnTokens}
             focusedToolUseId={focusedToolUseId}
             contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
-            footer={pendingPlanApproval ? (
+            footer={toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
+              <ToolPermissionCard
+                request={toolPermissionRequest}
+                onSubmit={onSubmitToolPermission}
+                onReject={onRejectToolPermission}
+              />
+            ) : pendingPlanApproval ? (
               <PlanApprovalCard
                 pendingPlanApproval={pendingPlanApproval}
                 busy={planDecisionBusy || loading}
