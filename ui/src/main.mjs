@@ -3389,6 +3389,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     environment: {
       ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
+      ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
+        ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' }
+        : {}),
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: desktopSettings.agentTeamsEnabled === true ? '1' : '0',
       MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
         ...desktopSettings.advanced,
@@ -11423,15 +11426,44 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     }
 
     const revertedHistory = sessionRecord.history.slice(nextHistory.length);
-    const restoredFiles = await runtime.rewindFiles(targetId);
-    const restoredFileSet = new Set(restoredFiles);
-    const unrestoredFiles = (preview.filesChanged || []).filter((filePath) => (
-      !restoredFileSet.has(filePath)
-    ));
-    if (unrestoredFiles.length > 0) {
-      throw new Error(`部分文件恢复失败，已保留对话上下文：${unrestoredFiles.join('、')}`);
+    if (!localAuditService) {
+      throw new Error('本地审计服务尚未就绪，不能执行整轮撤销。');
     }
-    const removedRuntimeMessages = await runtime.rewindConversation(targetId);
+    const auditEvent = localAuditService.recordEvent({
+      sessionId: sessionRecord.id,
+      eventType: 'turn_reverted',
+      userMessageId: targetId,
+      details: {
+        status: 'started',
+        expectedFiles: preview.filesChanged || [],
+        checkpointInsertions: preview.insertions || 0,
+        checkpointDeletions: preview.deletions || 0,
+      },
+      sourceSession: {
+        id: sessionRecord.id,
+        workspace: sessionRecord.workspace,
+        history: revertedHistory,
+      },
+    });
+
+    let restoredFiles;
+    let removedRuntimeMessages;
+    try {
+      restoredFiles = await runtime.rewindFiles(targetId);
+      removedRuntimeMessages = await runtime.rewindConversation(targetId);
+    } catch (error) {
+      try {
+        localAuditService.updateEvent({
+          id: auditEvent.id,
+          details: {
+            status: 'failed',
+            expectedFiles: preview.filesChanged || [],
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      } catch {}
+      throw error;
+    }
     const removedHistoryEvents = sessionRecord.history.length - nextHistory.length;
 
     sessionRecord.rewindMessageId = targetId;
@@ -11441,28 +11473,19 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     sessionRecord.preview = deriveSessionPreview(nextHistory);
     schedulePersistSession(sessionRecord, true);
 
-    let auditRecorded = false;
+    let auditRecorded = true;
     try {
-      if (localAuditService) {
-        localAuditService.recordEvent({
-          sessionId: sessionRecord.id,
-          eventType: 'turn_reverted',
-          userMessageId: targetId,
-          details: {
-            restoredFiles,
-            removedHistoryEvents,
-            removedRuntimeMessages,
-            checkpointInsertions: preview.insertions || 0,
-            checkpointDeletions: preview.deletions || 0,
-          },
-          sourceSession: {
-            id: sessionRecord.id,
-            workspace: sessionRecord.workspace,
-            history: revertedHistory,
-          },
-        });
-        auditRecorded = true;
-      }
+      localAuditService.updateEvent({
+        id: auditEvent.id,
+        details: {
+          status: 'completed',
+          restoredFiles,
+          removedHistoryEvents,
+          removedRuntimeMessages,
+          checkpointInsertions: preview.insertions || 0,
+          checkpointDeletions: preview.deletions || 0,
+        },
+      });
     } catch (error) {
       mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
         sessionId: sessionRecord.id,

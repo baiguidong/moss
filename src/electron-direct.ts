@@ -683,10 +683,7 @@ export class ClaudeSession {
       workspaceDirectories: Array.isArray(opts.workspaceDirectories)
         ? opts.workspaceDirectories.filter(Boolean)
         : [],
-      environment: {
-        CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
-        ...(opts.environment ?? {}),
-      },
+      environment: { ...(opts.environment ?? {}) },
       taskScope,
     }
   }
@@ -1422,6 +1419,12 @@ export class ClaudeSession {
 
   async previewFileRewind(userMessageId: string) {
     return this.#runFileHistoryControl(async state => {
+      if (!this.#engine?.canRewindToUserMessage(userMessageId)) {
+        return {
+          canRewind: false as const,
+          error: '没有找到这一轮对应的对话 checkpoint。',
+        }
+      }
       if (!fileHistoryCanRestore(state, userMessageId as UUID)) {
         return {
           canRewind: false as const,

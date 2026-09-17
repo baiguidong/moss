@@ -1406,6 +1406,34 @@ export type AuditRunRecord = {
   error: string | null;
 };
 
+export type AuditEventRecord = {
+  id: string;
+  sessionId: string;
+  eventType: string;
+  userMessageId: string | null;
+  details: Record<string, unknown>;
+  messageCount: number;
+  toolCallCount: number;
+  createdAt: number;
+};
+
+export type AuditEventDetail = AuditEventRecord & {
+  history: AgentEvent[];
+  tools: Array<{
+    id: string;
+    eventId: string;
+    sessionId: string;
+    toolUseId: string;
+    parentToolUseId: string | null;
+    toolName: string;
+    input: unknown;
+    result: string;
+    status: 'success' | 'error' | 'unknown';
+    isError: boolean;
+    orderIndex: number;
+  }>;
+};
+
 export type AuditDashboardPayload = {
   summary: {
     sessionCount: number;
@@ -1417,12 +1445,14 @@ export type AuditDashboardPayload = {
     latestCompletedAt: number;
     rulesStale: boolean;
     running: boolean;
+    eventCount: number;
   };
   sessions: AuditSessionRecord[];
   tools: AuditToolCallRecord[];
   findings: AuditFindingRecord[];
   rules: AuditRuleRecord[];
   runs: AuditRunRecord[];
+  events: AuditEventRecord[];
 };
 
 declare global {
@@ -1808,6 +1838,7 @@ declare global {
       };
       audit: {
         getDashboard: () => Promise<AuditDashboardPayload>;
+        getEvent: (payload: { id: string }) => Promise<AuditEventDetail>;
         getPendingAlerts: () => Promise<AuditAlert[]>;
         run: (payload?: { sessionIds?: string[] }) => Promise<{
           ok: boolean;

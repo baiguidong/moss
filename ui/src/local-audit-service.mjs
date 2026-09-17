@@ -56,6 +56,36 @@ function safeJson(value, maxLength = MAX_INPUT_JSON_LENGTH) {
   }
 }
 
+function redactArchiveValue(value, key = '', depth = 0, seen = new WeakSet()) {
+  if (depth > 24) return '[TRUNCATED]';
+  if (/token|secret|password|authorization|cookie|api[_-]?key/i.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') return redactText(value, Number.MAX_SAFE_INTEGER);
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactArchiveValue(entry, '', depth + 1, seen));
+  }
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[CIRCULAR]';
+    seen.add(value);
+    const result = Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactArchiveValue(entryValue, entryKey, depth + 1, seen),
+      ]),
+    );
+    seen.delete(value);
+    return result;
+  }
+  return value;
+}
+
+function archiveJson(value) {
+  try {
+    return JSON.stringify(redactArchiveValue(value));
+  } catch {
+    return '[]';
+  }
+}
+
 function mapRule(row) {
   return {
     id: row.id,
@@ -146,6 +176,19 @@ function mapRun(row) {
     toolCallCount: row.tool_call_count,
     findingCount: row.finding_count,
     error: row.error,
+  };
+}
+
+function mapAuditEvent(row) {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    eventType: row.event_type,
+    userMessageId: row.user_message_id,
+    details: parseJson(row.details_json, {}),
+    messageCount: Number(row.message_count) || 0,
+    toolCallCount: Number(row.tool_call_count) || 0,
+    createdAt: row.created_at,
   };
 }
 
@@ -258,6 +301,8 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
       event_type TEXT NOT NULL,
       user_message_id TEXT,
       details_json TEXT NOT NULL DEFAULT '{}',
+      history_json TEXT NOT NULL DEFAULT '[]',
+      message_count INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_session
@@ -298,6 +343,8 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     CREATE INDEX IF NOT EXISTS idx_audit_findings_fingerprint ON audit_findings(fingerprint, created_at DESC);
   `);
   try { db.exec('ALTER TABLE audit_findings ADD COLUMN reported_at INTEGER'); } catch {}
+  try { db.exec(`ALTER TABLE audit_events ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
+  try { db.exec(`ALTER TABLE audit_events ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0`); } catch {}
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_audit_findings_pending_report
     ON audit_findings(reported_at, status, severity);
@@ -416,6 +463,22 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     const runs = db.prepare(`
       SELECT * FROM audit_runs ORDER BY started_at DESC LIMIT 100
     `).all().map(mapRun);
+    const events = db.prepare(`
+      SELECT
+        e.id,
+        e.session_id,
+        e.event_type,
+        e.user_message_id,
+        e.details_json,
+        e.message_count,
+        e.created_at,
+        COUNT(t.id) AS tool_call_count
+      FROM audit_events e
+      LEFT JOIN audit_event_tool_calls t ON t.event_id = e.id
+      GROUP BY e.id
+      ORDER BY e.created_at DESC
+      LIMIT 1000
+    `).all().map(mapAuditEvent);
     const rules = listRules();
     const latestCompletedRun = runs.find((run) => run.status === 'completed');
     const latestFullRun = runs.find((run) => run.status === 'completed' && run.scope?.kind === 'all-local');
@@ -438,12 +501,49 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
         latestCompletedAt,
         rulesStale,
         running: runs.some((run) => run.status === 'running'),
+        eventCount: events.length,
       },
       sessions,
       tools,
       findings,
       rules,
       runs,
+      events,
+    };
+  }
+
+  function getEvent(payload = {}) {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) throw new Error('Audit event id is required.');
+    const row = db.prepare(`
+      SELECT e.*, COUNT(t.id) AS tool_call_count
+      FROM audit_events e
+      LEFT JOIN audit_event_tool_calls t ON t.event_id = e.id
+      WHERE e.id = ?
+      GROUP BY e.id
+    `).get(id);
+    if (!row) throw new Error(`Unknown audit event: ${id}`);
+    const tools = db.prepare(`
+      SELECT * FROM audit_event_tool_calls
+      WHERE event_id = ?
+      ORDER BY order_index
+    `).all(id).map((tool) => ({
+      id: tool.id,
+      eventId: tool.event_id,
+      sessionId: tool.session_id,
+      toolUseId: tool.tool_use_id,
+      parentToolUseId: tool.parent_tool_use_id,
+      toolName: tool.tool_name,
+      input: parseJson(tool.input_json, {}),
+      result: tool.result_text,
+      status: tool.status,
+      isError: Boolean(tool.is_error),
+      orderIndex: tool.order_index,
+    }));
+    return {
+      ...mapAuditEvent(row),
+      history: parseJson(row.history_json, []),
+      tools,
     };
   }
 
@@ -563,18 +663,24 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     const eventTools = payload.sourceSession
       ? normalizeLocalAuditSession(payload.sourceSession).tools
       : [];
+    const history = Array.isArray(payload.sourceSession?.history)
+      ? payload.sourceSession.history
+      : [];
     db.exec('BEGIN');
     try {
       db.prepare(`
         INSERT INTO audit_events (
-          id, session_id, event_type, user_message_id, details_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          id, session_id, event_type, user_message_id, details_json,
+          history_json, message_count, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         event.id,
         event.sessionId,
         event.eventType,
         event.userMessageId,
         safeJson(event.details),
+        archiveJson(history),
+        history.length,
         event.createdAt,
       );
       const insertTool = db.prepare(`
@@ -605,6 +711,17 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     }
     onChanged({ reason: 'event-recorded', eventType, sessionId });
     return { ...event, toolCallCount: eventTools.length };
+  }
+
+  function updateEvent(payload = {}) {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) throw new Error('Audit event id is required.');
+    const result = db.prepare(`
+      UPDATE audit_events SET details_json = ? WHERE id = ?
+    `).run(safeJson(payload.details || {}), id);
+    if (!result.changes) throw new Error(`Unknown audit event: ${id}`);
+    onChanged({ reason: 'event-updated', eventId: id });
+    return { ok: true };
   }
 
   function updateFindings(payload = {}) {
@@ -863,6 +980,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
   return {
     dbPath,
     getDashboard,
+    getEvent,
     listRules,
     updateRule,
     updateFinding,
@@ -870,6 +988,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     listPendingAlerts,
     markFindingsReported,
     recordEvent,
+    updateEvent,
     runAudit,
     runIncrementalAudit,
     isRunning: () => scheduledRunCount > 0,
@@ -879,6 +998,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
 
 export function registerLocalAuditIpcHandlers({ ipcMain, service }) {
   ipcMain.handle('audit:get-dashboard', () => service.getDashboard());
+  ipcMain.handle('audit:get-event', (_event, payload = {}) => service.getEvent(payload));
   ipcMain.handle('audit:run', (_event, payload = {}) => service.runAudit(payload));
   ipcMain.handle('audit:update-rule', (_event, payload = {}) => service.updateRule(payload));
   ipcMain.handle('audit:update-finding', (_event, payload = {}) => service.updateFinding(payload));

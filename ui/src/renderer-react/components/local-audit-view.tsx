@@ -15,6 +15,7 @@ import {
   LocateFixed,
   LoaderCircle,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -29,6 +30,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
   AuditDashboardPayload,
+  AuditEventDetail,
+  AuditEventRecord,
   AuditFindingRecord,
   AuditFindingStatus,
   AuditRunRecord,
@@ -38,7 +41,7 @@ import type {
   AuditToolCallRecord,
 } from "../types";
 
-type AuditTab = "sessions" | "findings" | "tools" | "rules" | "runs";
+type AuditTab = "sessions" | "findings" | "tools" | "events" | "rules" | "runs";
 type SortDirection = "asc" | "desc";
 type AuditSortSpec = { key: string; direction: SortDirection };
 
@@ -46,6 +49,7 @@ const DEFAULT_SORTS: Record<AuditTab, AuditSortSpec> = {
   sessions: { key: "updatedAt", direction: "desc" },
   findings: { key: "severity", direction: "desc" },
   tools: { key: "startedAt", direction: "desc" },
+  events: { key: "createdAt", direction: "desc" },
   rules: { key: "name", direction: "asc" },
   runs: { key: "startedAt", direction: "desc" },
 };
@@ -54,6 +58,7 @@ const TABS: Array<{ id: AuditTab; label: string; icon: React.ComponentType<{ cla
   { id: "sessions", label: "会话", icon: CircleDot },
   { id: "findings", label: "发现", icon: AlertTriangle },
   { id: "tools", label: "工具调用", icon: Wrench },
+  { id: "events", label: "操作事件", icon: RotateCcw },
   { id: "rules", label: "规则", icon: SlidersHorizontal },
   { id: "runs", label: "审计记录", icon: History },
 ];
@@ -538,6 +543,88 @@ function RunsTable({
   );
 }
 
+function AuditEventsTable({
+  events,
+  onOpen,
+  sort,
+  onSort,
+}: {
+  events: AuditEventRecord[];
+  onOpen: (event: AuditEventRecord) => void;
+  sort: AuditSortSpec;
+  onSort: (key: string, defaultDirection?: SortDirection) => void;
+}) {
+  return (
+    <div className="min-w-[820px]">
+      <div className="grid grid-cols-[150px_minmax(220px,1fr)_110px_100px_minmax(180px,0.8fr)_90px] border-b border-border/70 bg-muted/25 px-4 py-2 text-[11px] font-medium text-muted-foreground">
+        <SortHeader label="时间" sortKey="createdAt" sort={sort} onSort={onSort} defaultDirection="desc" />
+        <SortHeader label="事件" sortKey="eventType" sort={sort} onSort={onSort} />
+        <SortHeader label="消息" sortKey="messageCount" sort={sort} onSort={onSort} defaultDirection="desc" />
+        <SortHeader label="工具" sortKey="toolCallCount" sort={sort} onSort={onSort} defaultDirection="desc" />
+        <span>轮次 ID</span>
+        <span />
+      </div>
+      {events.map((event) => (
+        <div key={event.id} className="grid grid-cols-[150px_minmax(220px,1fr)_110px_100px_minmax(180px,0.8fr)_90px] items-center border-b border-border/55 px-4 py-2.5 text-xs hover:bg-muted/20">
+          <span className="text-muted-foreground">{formatTime(event.createdAt)}</span>
+          <span className="inline-flex min-w-0 items-center gap-2 font-medium text-foreground">
+            <RotateCcw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{event.eventType === "turn_reverted" ? "整轮撤销" : event.eventType}</span>
+          </span>
+          <span className="tabular-nums text-muted-foreground">{event.messageCount}</span>
+          <span className="tabular-nums text-muted-foreground">{event.toolCallCount}</span>
+          <span className="truncate font-mono text-[11px] text-muted-foreground" title={event.userMessageId || ""}>{event.userMessageId || "-"}</span>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={() => onOpen(event)}>查看</Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AuditEventViewer({
+  event,
+  detail,
+  loading,
+  onClose,
+}: {
+  event: AuditEventRecord;
+  detail: AuditEventDetail | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" onMouseDown={(mouseEvent) => { if (mouseEvent.currentTarget === mouseEvent.target) onClose(); }}>
+      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+        <div className="flex items-center border-b border-border px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">{event.eventType === "turn_reverted" ? "整轮撤销审计记录" : event.eventType}</div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">{formatTime(event.createdAt)} · {event.sessionId}</div>
+          </div>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} title="关闭"><X className="h-4 w-4" /></Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {loading ? (
+            <div className="flex min-h-52 items-center justify-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在读取完整记录</div>
+          ) : detail ? (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">撤销结果</div>
+                <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded border border-border/60 bg-muted/20 p-3 font-mono text-[11px] leading-5 text-foreground/85">{prettyJson(detail.details)}</pre>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">已移除的完整对话 · {detail.history.length} 条</div>
+                <pre className="max-h-[52vh] overflow-auto whitespace-pre-wrap break-all rounded border border-border/60 bg-muted/20 p-3 font-mono text-[11px] leading-5 text-foreground/85">{prettyJson(detail.history)}</pre>
+              </div>
+            </div>
+          ) : (
+            <div className="py-16 text-center text-xs text-destructive">无法读取这条审计记录</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function LocalAuditView({
   onOpenSession,
   onLocateTool,
@@ -558,6 +645,9 @@ export function LocalAuditView({
   const [progress, setProgress] = React.useState<{ completed: number; total: number } | null>(null);
   const [error, setError] = React.useState("");
   const [editingRule, setEditingRule] = React.useState<AuditRuleRecord | null>(null);
+  const [selectedEvent, setSelectedEvent] = React.useState<AuditEventRecord | null>(null);
+  const [eventDetail, setEventDetail] = React.useState<AuditEventDetail | null>(null);
+  const [eventLoading, setEventLoading] = React.useState(false);
   const [selectedFindingIds, setSelectedFindingIds] = React.useState<Set<string>>(() => new Set());
   const [batchFindingStatus, setBatchFindingStatus] = React.useState<AuditFindingStatus>("acknowledged");
   const [batchUpdating, setBatchUpdating] = React.useState(false);
@@ -613,7 +703,7 @@ export function LocalAuditView({
           setProgress(null);
         }
         void refresh();
-      } else if (event.reason === "rule-updated" || event.reason === "finding-updated" || event.reason === "findings-updated" || event.reason === "sources-reconciled") {
+      } else if (event.reason === "rule-updated" || event.reason === "finding-updated" || event.reason === "findings-updated" || event.reason === "sources-reconciled" || event.reason === "event-recorded" || event.reason === "event-updated") {
         void refresh();
       }
     });
@@ -706,6 +796,19 @@ export function LocalAuditView({
     }));
   }, []);
 
+  const openEvent = React.useCallback(async (event: AuditEventRecord) => {
+    setSelectedEvent(event);
+    setEventDetail(null);
+    setEventLoading(true);
+    try {
+      setEventDetail(await window.agentDesktop.audit.getEvent({ id: event.id }));
+    } catch (caught) {
+      reportError("读取撤销审计记录失败", caught);
+    } finally {
+      setEventLoading(false);
+    }
+  }, [reportError]);
+
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matches = React.useCallback((...values: unknown[]) => !normalizedQuery || values.some((value) => searchable(value).toLocaleLowerCase().includes(normalizedQuery)), [normalizedQuery]);
   const sessions = sortRows(
@@ -722,6 +825,11 @@ export function LocalAuditView({
     (dashboard?.tools || []).filter((tool) => matches(tool.toolName, tool.sessionTitle, tool.input, tool.result, tool.status)),
     sorts.tools,
     (tool, key) => ({ status: tool.status, toolName: tool.toolName, session: tool.sessionTitle, duration: tool.completedAt && tool.startedAt ? tool.completedAt - tool.startedAt : null, startedAt: tool.startedAt }[key]),
+  );
+  const auditEvents = sortRows(
+    (dashboard?.events || []).filter((event) => matches(event.eventType, event.sessionId, event.userMessageId, event.details)),
+    sorts.events,
+    (event, key) => ({ createdAt: event.createdAt, eventType: event.eventType, messageCount: event.messageCount, toolCallCount: event.toolCallCount }[key]),
   );
   const rules = sortRows(
     (dashboard?.rules || []).filter((rule) => matches(rule.name, rule.description, rule.id)),
@@ -832,6 +940,7 @@ export function LocalAuditView({
           {activeTab === "sessions" && (sessions.length ? <SessionTable sessions={sessions} onOpenSession={onOpenSession} onAuditSession={(session) => void runSessionAudit(session)} auditingSessionIds={auditingSessionIds} auditDisabled={auditBusy} sort={sorts.sessions} onSort={(key, direction) => changeSort("sessions", key, direction)} /> : <EmptyState tab={activeTab} onRun={() => void runFullAudit()} />)}
           {activeTab === "findings" && (findings.length ? <FindingsTable findings={findings} selectedIds={selectedFindingIds} onToggleSelected={(id, selected) => setSelectedFindingIds((current) => { const next = new Set(current); if (selected) next.add(id); else next.delete(id); return next; })} onToggleAll={(selected) => setSelectedFindingIds((current) => { const next = new Set(current); findings.forEach((finding) => { if (selected) next.add(finding.id); else next.delete(finding.id); }); return next; })} onOpenSession={onOpenSession} onLocateTool={onLocateTool} onStatusChange={(finding, status) => void updateFinding(finding, status)} sort={sorts.findings} onSort={(key, direction) => changeSort("findings", key, direction)} /> : <EmptyState tab={activeTab} onRun={() => void runFullAudit()} />)}
           {activeTab === "tools" && (tools.length ? <ToolsTable tools={tools} onLocateTool={onLocateTool} sort={sorts.tools} onSort={(key, direction) => changeSort("tools", key, direction)} /> : <EmptyState tab={activeTab} onRun={() => void runFullAudit()} />)}
+          {activeTab === "events" && (auditEvents.length ? <AuditEventsTable events={auditEvents} onOpen={(event) => void openEvent(event)} sort={sorts.events} onSort={(key, direction) => changeSort("events", key, direction)} /> : <EmptyState tab={activeTab} onRun={() => void runFullAudit()} />)}
           {activeTab === "rules" && <RulesTable rules={rules} onUpdate={(rule, patch) => void updateRule(rule, patch)} onEdit={setEditingRule} sort={sorts.rules} onSort={(key, direction) => changeSort("rules", key, direction)} />}
           {activeTab === "runs" && (
             runs.length ? <RunsTable runs={runs} sort={sorts.runs} onSort={(key, direction) => changeSort("runs", key, direction)} /> : <EmptyState tab={activeTab} onRun={() => void runFullAudit()} />
@@ -840,6 +949,7 @@ export function LocalAuditView({
       </ScrollArea>
 
       {editingRule && <RuleEditor rule={editingRule} onClose={() => setEditingRule(null)} onSave={(config) => updateRule(editingRule, { config }, true)} />}
+      {selectedEvent && <AuditEventViewer event={selectedEvent} detail={eventDetail} loading={eventLoading} onClose={() => { setSelectedEvent(null); setEventDetail(null); }} />}
     </div>
   );
 }

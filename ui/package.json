@@ -234,6 +234,7 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.1",
+    "diff": "^8.0.4",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3",
     "framer-motion": "^12.38.0",

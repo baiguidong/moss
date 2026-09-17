@@ -1,3 +1,5 @@
+import { applyPatch, structuredPatch } from 'diff';
+
 const POSSIBLY_UNTRACKED_TOOLS = new Set(['Bash', 'NotebookEdit']);
 
 function isObject(value) {
@@ -32,11 +34,25 @@ export function backfillVisibleUserMessageIds(history, sourceHistory) {
     .filter((event) => typeof event.uuid === 'string' && event.uuid.trim());
   if (sourceUsers.length === 0) return target;
 
-  const claimedSourceIds = new Set();
+  const claimedSourceIds = new Set(
+    target
+      .filter(isTopLevelUserMessage)
+      .map((event) => (typeof event.uuid === 'string' ? event.uuid.trim() : ''))
+      .filter(Boolean),
+  );
   let sourceCursor = 0;
   let changed = false;
   const result = target.map((event) => {
-    if (!isTopLevelUserMessage(event) || (typeof event.uuid === 'string' && event.uuid.trim())) {
+    if (!isTopLevelUserMessage(event)) {
+      return event;
+    }
+
+    const existingId = typeof event.uuid === 'string' ? event.uuid.trim() : '';
+    if (existingId) {
+      const existingSourceIndex = sourceUsers.findIndex((source, index) => (
+        index >= sourceCursor && source.uuid === existingId
+      ));
+      if (existingSourceIndex >= 0) sourceCursor = existingSourceIndex + 1;
       return event;
     }
 
@@ -101,6 +117,52 @@ function syntheticCreateHunk(content) {
   }];
 }
 
+function resultFileContents(rawResult, filePath, hunks) {
+  const before = rawResult.originalFile === null
+    ? ''
+    : typeof rawResult.originalFile === 'string'
+      ? rawResult.originalFile
+      : null;
+  if (before === null) return null;
+
+  if (
+    (rawResult.type === 'create' || rawResult.type === 'update')
+    && typeof rawResult.content === 'string'
+  ) {
+    return { before, after: rawResult.content };
+  }
+  if (hunks.length === 0) return null;
+  try {
+    const after = applyPatch(before, {
+      oldFileName: filePath,
+      newFileName: filePath,
+      oldHeader: '',
+      newHeader: '',
+      hunks,
+    });
+    return typeof after === 'string' ? { before, after } : null;
+  } catch {
+    return null;
+  }
+}
+
+function netHunks(filePath, before, after) {
+  try {
+    const patch = structuredPatch(
+      filePath,
+      filePath,
+      before,
+      after,
+      '',
+      '',
+      { context: 3, timeout: 1_000 },
+    );
+    return normalizeHunks(patch?.hunks);
+  } catch {
+    return [];
+  }
+}
+
 function appendFileChange(files, rawResult) {
   if (!isObject(rawResult) || typeof rawResult.filePath !== 'string') return false;
   const filePath = rawResult.filePath.trim();
@@ -110,7 +172,9 @@ function appendFileChange(files, rawResult) {
   if (hunks.length === 0 && isNewFile && typeof rawResult.content === 'string') {
     hunks = syntheticCreateHunk(rawResult.content);
   }
-  if (hunks.length === 0) return false;
+  if (hunks.length === 0 && !(isNewFile && typeof rawResult.content === 'string')) {
+    return false;
+  }
 
   const existing = files.get(filePath) || {
     filePath,
@@ -118,12 +182,43 @@ function appendFileChange(files, rawResult) {
     structuredPatch: [],
     additions: 0,
     deletions: 0,
+    initialContent: undefined,
+    finalContent: undefined,
+    netContentComplete: undefined,
   };
-  const stats = countHunkLines(hunks);
   existing.isNewFile ||= isNewFile;
-  existing.structuredPatch.push(...hunks);
-  existing.additions += stats.additions;
-  existing.deletions += stats.deletions;
+  const contents = resultFileContents(rawResult, filePath, hunks);
+  if (contents && existing.netContentComplete !== false) {
+    existing.netContentComplete = true;
+    existing.initialContent ??= contents.before;
+    existing.finalContent = contents.after;
+    const finalHunks = netHunks(
+      filePath,
+      existing.initialContent,
+      existing.finalContent,
+    );
+    if (existing.initialContent === existing.finalContent || finalHunks.length > 0) {
+      existing.structuredPatch = finalHunks;
+      const stats = countHunkLines(finalHunks);
+      existing.additions = stats.additions;
+      existing.deletions = stats.deletions;
+    } else {
+      const stats = countHunkLines(hunks);
+      existing.structuredPatch.push(...hunks);
+      existing.additions += stats.additions;
+      existing.deletions += stats.deletions;
+    }
+  } else {
+    existing.netContentComplete = false;
+    const stats = countHunkLines(hunks);
+    existing.structuredPatch.push(...hunks);
+    existing.additions += stats.additions;
+    existing.deletions += stats.deletions;
+  }
+  if (existing.structuredPatch.length === 0 && !existing.isNewFile) {
+    files.delete(filePath);
+    return true;
+  }
   files.set(filePath, existing);
   return true;
 }
@@ -166,7 +261,15 @@ export function collectTurnChanges(history) {
       current = null;
       return;
     }
-    const files = [...current.files.values()];
+    const files = [...current.files.values()].map((file) => {
+      const {
+        initialContent: _initialContent,
+        finalContent: _finalContent,
+        netContentComplete: _netContentComplete,
+        ...summary
+      } = file;
+      return summary;
+    });
     turns.push({
       userMessageId: current.userMessageId,
       files,

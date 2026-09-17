@@ -84,12 +84,19 @@ test('local audit service persists redacted current results and preserves findin
     true,
   );
 
-  service.recordEvent({
+  const revertedHistory = [
+    ...sessions[0].history,
+    ...Array.from({ length: 205 }, (_, index) => ({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: `archived message ${index}` }] },
+    })),
+  ];
+  const recordedEvent = service.recordEvent({
     sessionId: 'local-1',
     eventType: 'turn_reverted',
     userMessageId: 'user-turn-1',
     details: { restoredFiles: ['/work/project/a.ts'], apiKey: 'secret-value' },
-    sourceSession: sessions[0],
+    sourceSession: { ...sessions[0], history: revertedHistory },
   });
   const auditDb = new DatabaseSync(path.join(directory, 'audit.db'));
   const rewindEvent = auditDb.prepare(`
@@ -100,6 +107,14 @@ test('local audit service persists redacted current results and preserves findin
   assert.equal(rewindEvent.event_type, 'turn_reverted');
   assert.equal(rewindEvent.user_message_id, 'user-turn-1');
   assert.equal(JSON.parse(rewindEvent.details_json).apiKey, '[REDACTED]');
+  const eventDetail = service.getEvent({ id: recordedEvent.id });
+  assert.equal(eventDetail.history.length, revertedHistory.length);
+  assert.equal(eventDetail.history.at(-1).message.content[0].text, 'archived message 204');
+  assert.doesNotMatch(JSON.stringify(eventDetail.history), /abc\.def/);
+  assert.equal(eventDetail.tools.length, 1);
+  assert.equal(service.getDashboard().events[0].messageCount, revertedHistory.length);
+  service.updateEvent({ id: recordedEvent.id, details: { status: 'completed' } });
+  assert.equal(service.getEvent({ id: recordedEvent.id }).details.status, 'completed');
   const preservedTool = auditDb.prepare(`
     SELECT tool_name, input_json, result_text
     FROM audit_event_tool_calls

@@ -5,11 +5,14 @@ import {
   chmod,
   copyFile,
   link,
+  mkdtemp,
   mkdir,
   readFile,
+  rm,
   stat,
   unlink,
 } from 'fs/promises'
+import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative } from 'path'
 import {
   getIsNonInteractiveSession,
@@ -369,7 +372,7 @@ export async function fileHistoryRewind(
     captured = state
     return state
   })
-  if (!captured) return
+  if (!captured) return []
 
   const targetSnapshot = captured.snapshots.findLast(
     snapshot => snapshot.messageId === messageId,
@@ -383,10 +386,12 @@ export async function fileHistoryRewind(
     throw new Error('The selected snapshot was not found')
   }
 
+  let rollbackSnapshot: Awaited<ReturnType<typeof captureRollbackSnapshot>> | undefined
   try {
     logForDebugging(
       `FileHistory: [Rewind] Rewinding to snapshot for ${messageId}`,
     )
+    rollbackSnapshot = await captureRollbackSnapshot(captured)
     const filesChanged = await applySnapshot(captured, targetSnapshot)
 
     logForDebugging(`FileHistory: [Rewind] Finished rewinding to ${messageId}`)
@@ -396,12 +401,92 @@ export async function fileHistoryRewind(
     })
     return filesChanged
   } catch (error) {
+    let rollbackError: unknown
+    if (rollbackSnapshot) {
+      try {
+        await restoreRollbackSnapshot(rollbackSnapshot)
+      } catch (restoreError) {
+        rollbackError = restoreError
+        logError(restoreError)
+      }
+    }
     logError(error)
     logEvent('tengu_file_history_rewind_failed', {
       trackedFilesCount: captured.trackedFiles.size,
       snapshotFound: true,
     })
+    if (rollbackError) {
+      throw new Error(
+        `File rewind failed and the original files could not be fully restored: ${String(rollbackError)}`,
+      )
+    }
     throw error
+  } finally {
+    if (rollbackSnapshot) {
+      await rm(rollbackSnapshot.directory, { recursive: true, force: true }).catch(
+        logError,
+      )
+    }
+  }
+}
+
+type RollbackFile = {
+  filePath: string
+  backupPath: string | null
+  mode: number | null
+}
+
+type RollbackSnapshot = {
+  directory: string
+  files: RollbackFile[]
+}
+
+async function captureRollbackSnapshot(
+  state: FileHistoryState,
+): Promise<RollbackSnapshot> {
+  const directory = await mkdtemp(join(tmpdir(), 'moss-file-rewind-'))
+  const files: RollbackFile[] = []
+  try {
+    let index = 0
+    for (const trackingPath of state.trackedFiles) {
+      const filePath = maybeExpandFilePath(trackingPath)
+      const backupPath = join(directory, String(index++))
+      try {
+        const sourceStats = await stat(filePath)
+        await copyFile(filePath, backupPath)
+        await chmod(backupPath, sourceStats.mode)
+        files.push({ filePath, backupPath, mode: sourceStats.mode })
+      } catch (error) {
+        if (!isENOENT(error)) throw error
+        files.push({ filePath, backupPath: null, mode: null })
+      }
+    }
+    return { directory, files }
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(logError)
+    throw error
+  }
+}
+
+async function restoreRollbackSnapshot(snapshot: RollbackSnapshot): Promise<void> {
+  const failures: unknown[] = []
+  for (const file of snapshot.files) {
+    try {
+      if (file.backupPath === null) {
+        await unlink(file.filePath).catch((error: unknown) => {
+          if (!isENOENT(error)) throw error
+        })
+        continue
+      }
+      await mkdir(dirname(file.filePath), { recursive: true })
+      await copyFile(file.backupPath, file.filePath)
+      if (file.mode !== null) await chmod(file.filePath, file.mode)
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Unable to restore the pre-rewind files')
   }
 }
 
@@ -594,6 +679,7 @@ async function applySnapshot(
       logEvent('tengu_file_history_rewind_restore_file_failed', {
         dryRun: false,
       })
+      throw error
     }
   }
   return filesChanged
@@ -827,7 +913,7 @@ async function restoreBackup(
       logError(
         new Error(`FileHistory: [Rewind] Backup file not found: ${backupPath}`),
       )
-      return
+      throw new Error(`File history backup not found: ${backupPath}`)
     }
     throw e
   }

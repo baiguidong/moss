@@ -1196,6 +1196,15 @@ export class QueryEngine {
     return this.mutableMessages
   }
 
+  canRewindToUserMessage(messageId: string): boolean {
+    return this.mutableMessages.some(
+      message =>
+        message.type === 'user' &&
+        message.uuid === messageId &&
+        !message.toolUseResult,
+    )
+  }
+
   /**
    * Move the active conversation head to the point immediately before a
    * top-level user message. The transcript remains append-only; the next

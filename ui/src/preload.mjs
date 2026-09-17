@@ -272,6 +272,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   audit: {
     getDashboard: () => ipcRenderer.invoke('audit:get-dashboard'),
+    getEvent: (payload) => ipcRenderer.invoke('audit:get-event', payload),
     getPendingAlerts: () => ipcRenderer.invoke('audit:get-pending-alerts'),
     run: (payload) => ipcRenderer.invoke('audit:run', payload),
     updateRule: (payload) => ipcRenderer.invoke('audit:update-rule', payload),
