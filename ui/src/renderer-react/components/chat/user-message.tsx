@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { User } from "lucide-react";
 import { FilePreview } from "@/components/file-preview";
 import { MessageActionBar } from "@/components/chat/message-action-bar";

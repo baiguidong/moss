@@ -1196,6 +1196,26 @@ export class QueryEngine {
     return this.mutableMessages
   }
 
+  /**
+   * Move the active conversation head to the point immediately before a
+   * top-level user message. The transcript remains append-only; the next
+   * submitted message records a new branch from the retained prefix.
+   */
+  rewindToUserMessage(messageId: string): number {
+    const messageIndex = this.mutableMessages.findLastIndex(
+      message =>
+        message.type === 'user' &&
+        message.uuid === messageId &&
+        !message.toolUseResult,
+    )
+    if (messageIndex < 0) {
+      throw new Error('The selected user message was not found')
+    }
+    const removedCount = this.mutableMessages.length - messageIndex
+    this.mutableMessages.splice(messageIndex)
+    return removedCount
+  }
+
   getReadFileState(): FileStateCache {
     return this.readFileState
   }

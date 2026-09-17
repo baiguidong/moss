@@ -89,6 +89,46 @@ export type SessionDetail = SessionSummary & {
 
 export type AgentEvent = Record<string, any>;
 
+export type TurnChangeHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+};
+
+export type TurnFileChange = {
+  filePath: string;
+  isNewFile: boolean;
+  structuredPatch: TurnChangeHunk[];
+  additions: number;
+  deletions: number;
+};
+
+export type TurnChangeSummary = {
+  userMessageId: string;
+  files: TurnFileChange[];
+  stats: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
+  hasUnverifiedChanges: boolean;
+};
+
+export type TurnChangesPayload = {
+  turns: TurnChangeSummary[];
+  rewind: { supported: boolean; reason: string | null };
+};
+
+export type TurnRewindPreview = {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+};
+
 export type UsageDailySummary = {
   day: string;
   inputTokens: number;
@@ -1603,6 +1643,15 @@ declare global {
       createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
+      previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;
+      rewindTurn: (payload: { sessionId: string; userMessageId: string }) => Promise<{
+        ok: boolean;
+        userMessageId: string;
+        restoredFiles: string[];
+        removedHistoryEvents: number;
+        auditRecorded: boolean;
+      }>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       setSessionAutoCollapseToolCalls: (payload: { sessionId: string; enabled: boolean }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;

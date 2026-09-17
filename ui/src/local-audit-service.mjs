@@ -252,6 +252,31 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     );
     CREATE INDEX IF NOT EXISTS idx_audit_tool_calls_session ON audit_tool_calls(session_id, order_index);
     CREATE INDEX IF NOT EXISTS idx_audit_tool_calls_name ON audit_tool_calls(tool_name);
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      user_message_id TEXT,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_events_session
+    ON audit_events(session_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS audit_event_tool_calls (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      tool_use_id TEXT NOT NULL,
+      parent_tool_use_id TEXT,
+      tool_name TEXT NOT NULL,
+      input_json TEXT NOT NULL DEFAULT '{}',
+      result_text TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      is_error INTEGER NOT NULL DEFAULT 0,
+      order_index INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_event_tools_event
+    ON audit_event_tool_calls(event_id, order_index);
     CREATE TABLE IF NOT EXISTS audit_findings (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -521,6 +546,67 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     return { ok: true };
   }
 
+  function recordEvent(payload = {}) {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    const eventType = typeof payload.eventType === 'string' ? payload.eventType.trim() : '';
+    if (!sessionId || !eventType) throw new Error('Audit event requires a session and event type.');
+    const event = {
+      id: randomUUID(),
+      sessionId,
+      eventType,
+      userMessageId: typeof payload.userMessageId === 'string'
+        ? payload.userMessageId.trim() || null
+        : null,
+      details: redactValue(payload.details || {}),
+      createdAt: Date.now(),
+    };
+    const eventTools = payload.sourceSession
+      ? normalizeLocalAuditSession(payload.sourceSession).tools
+      : [];
+    db.exec('BEGIN');
+    try {
+      db.prepare(`
+        INSERT INTO audit_events (
+          id, session_id, event_type, user_message_id, details_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        event.id,
+        event.sessionId,
+        event.eventType,
+        event.userMessageId,
+        safeJson(event.details),
+        event.createdAt,
+      );
+      const insertTool = db.prepare(`
+        INSERT INTO audit_event_tool_calls (
+          id, event_id, session_id, tool_use_id, parent_tool_use_id, tool_name,
+          input_json, result_text, status, is_error, order_index
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const tool of eventTools) {
+        insertTool.run(
+          randomUUID(),
+          event.id,
+          event.sessionId,
+          tool.toolUseId,
+          tool.parentToolUseId,
+          tool.toolName,
+          safeJson(tool.input),
+          redactText(tool.result),
+          tool.status,
+          tool.isError ? 1 : 0,
+          tool.orderIndex,
+        );
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    onChanged({ reason: 'event-recorded', eventType, sessionId });
+    return { ...event, toolCallCount: eventTools.length };
+  }
+
   function updateFindings(payload = {}) {
     const ids = Array.isArray(payload.ids)
       ? [...new Set(payload.ids.map((entry) => String(entry).trim()).filter(Boolean))].slice(0, 5000)
@@ -783,6 +869,7 @@ export function createLocalAuditService({ dbPath, getLocalSessions, onChanged = 
     updateFindings,
     listPendingAlerts,
     markFindingsReported,
+    recordEvent,
     runAudit,
     runIncrementalAudit,
     isRunning: () => scheduledRunCount > 0,

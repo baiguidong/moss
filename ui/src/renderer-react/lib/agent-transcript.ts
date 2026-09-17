@@ -43,6 +43,7 @@ type TranscriptRenderMessageBase = {
   id: string;
   timestamp: Date;
   meta?: string[];
+  turnId?: string;
 };
 
 export type UserTextRenderMessage = TranscriptRenderMessageBase & {
@@ -160,6 +161,7 @@ type AssistantTurnState = {
   startedAt: Date;
   items: TranscriptRenderMessage[];
   meta: string[];
+  turnId?: string;
   hasHiddenAskUserQuestionResult?: boolean;
 };
 
@@ -171,6 +173,7 @@ type RenderBuilderState = {
   // 按 content_block 的 index 追踪当前流中的 tool_use, 使 input_json_delta 能精确路由到
   // 对应块(而非最后一个块), 避免并行 tool_use 时输入串位或被丢弃。
   toolUsesByIndex: Map<number, ToolUseRenderMessage>;
+  activeTurnId?: string;
 };
 
 function safeDate(input: unknown): Date {
@@ -498,11 +501,12 @@ function nextRenderId(state: RenderBuilderState, prefix: string): string {
   return `${prefix}-${state.nextId}`;
 }
 
-function createAssistantTurn(timestamp: Date): AssistantTurnState {
+function createAssistantTurn(timestamp: Date, turnId?: string): AssistantTurnState {
   return {
     startedAt: timestamp,
     items: [],
     meta: [],
+    turnId,
     hasHiddenAskUserQuestionResult: false,
   };
 }
@@ -512,7 +516,7 @@ function ensureAssistantTurn(
   timestamp: Date,
 ): AssistantTurnState {
   if (!state.currentAssistantTurn) {
-    state.currentAssistantTurn = createAssistantTurn(timestamp);
+    state.currentAssistantTurn = createAssistantTurn(timestamp, state.activeTurnId);
   } else if (timestamp.getTime() > state.currentAssistantTurn.startedAt.getTime()) {
     state.currentAssistantTurn.startedAt = timestamp;
   }
@@ -523,6 +527,7 @@ function pushTurnItem(
   turn: AssistantTurnState,
   item: TranscriptRenderMessage,
 ) {
+  item.turnId ??= turn.turnId;
   turn.items.push(item);
 }
 
@@ -806,6 +811,7 @@ function addUserRenderMessage(
   timestamp: Date,
   content: string,
   attachments?: TranscriptAttachment[],
+  turnId?: string,
 ) {
   state.items.push({
     id: nextRenderId(state, 'user'),
@@ -814,6 +820,7 @@ function addUserRenderMessage(
     content: String(content || ''),
     timestamp,
     attachments,
+    turnId,
   });
 }
 
@@ -1087,6 +1094,7 @@ export function buildTranscriptRenderMessages(
     nextId: 0,
     toolUsesById: new Map<string, ToolUseRenderMessage>(),
     toolUsesByIndex: new Map<number, ToolUseRenderMessage>(),
+    activeTurnId: undefined,
   };
 
   for (let index = 0; index < history.length; index += 1) {
@@ -1119,7 +1127,11 @@ export function buildTranscriptRenderMessages(
         continue;
       }
       finalizeAssistantTurn(state, { complete: true });
-      addUserRenderMessage(state, timestamp, userText, userAttachments);
+      const turnId = typeof event.uuid === 'string' && event.uuid.trim()
+        ? event.uuid.trim()
+        : undefined;
+      state.activeTurnId = turnId;
+      addUserRenderMessage(state, timestamp, userText, userAttachments, turnId);
       continue;
     }
 

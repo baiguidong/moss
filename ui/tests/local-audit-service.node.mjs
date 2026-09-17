@@ -83,6 +83,32 @@ test('local audit service persists redacted current results and preserves findin
     events.some((event) => event.reason === 'run-started' && event.scope?.kind === 'incremental'),
     true,
   );
+
+  service.recordEvent({
+    sessionId: 'local-1',
+    eventType: 'turn_reverted',
+    userMessageId: 'user-turn-1',
+    details: { restoredFiles: ['/work/project/a.ts'], apiKey: 'secret-value' },
+    sourceSession: sessions[0],
+  });
+  const auditDb = new DatabaseSync(path.join(directory, 'audit.db'));
+  const rewindEvent = auditDb.prepare(`
+    SELECT session_id, event_type, user_message_id, details_json
+    FROM audit_events
+  `).get();
+  assert.equal(rewindEvent.session_id, 'local-1');
+  assert.equal(rewindEvent.event_type, 'turn_reverted');
+  assert.equal(rewindEvent.user_message_id, 'user-turn-1');
+  assert.equal(JSON.parse(rewindEvent.details_json).apiKey, '[REDACTED]');
+  const preservedTool = auditDb.prepare(`
+    SELECT tool_name, input_json, result_text
+    FROM audit_event_tool_calls
+    WHERE session_id = 'local-1'
+  `).get();
+  assert.equal(preservedTool.tool_name, 'Bash');
+  assert.equal(JSON.parse(preservedTool.input_json).api_key, '[REDACTED]');
+  assert.doesNotMatch(preservedTool.result_text, /abc\.def/);
+  auditDb.close();
 });
 
 test('incremental audit skips busy and unchanged sessions', async (t) => {

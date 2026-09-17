@@ -27,6 +27,7 @@ import { getErrnoCode, isENOENT } from './errors.js'
 import { pathExists } from './file.js'
 import { logError } from './log.js'
 import { recordFileHistorySnapshot } from './sessionStorage.js'
+import { getSessionEnvironmentContext } from './sessionIdContext.js'
 
 type BackupFileName = string | null // The null value means the file does not exist in this version
 
@@ -71,9 +72,16 @@ export function fileHistoryEnabled(): boolean {
 }
 
 function fileHistoryEnabledSdk(): boolean {
+  const sessionEnvironment = getSessionEnvironmentContext()
   return (
-    isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING) &&
-    !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING)
+    isEnvTruthy(
+      sessionEnvironment?.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING ??
+        process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING,
+    ) &&
+    !isEnvTruthy(
+      sessionEnvironment?.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING ??
+        process.env.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING,
+    )
   )
 }
 
@@ -349,9 +357,9 @@ export async function fileHistoryRewind(
     updater: (prev: FileHistoryState) => FileHistoryState,
   ) => void,
   messageId: UUID,
-): Promise<void> {
+): Promise<string[]> {
   if (!fileHistoryEnabled()) {
-    return
+    return []
   }
 
   // Rewind is a pure filesystem side-effect and does not mutate
@@ -386,6 +394,7 @@ export async function fileHistoryRewind(
       trackedFilesCount: captured.trackedFiles.size,
       filesChangedCount: filesChanged.length,
     })
+    return filesChanged
   } catch (error) {
     logError(error)
     logEvent('tengu_file_history_rewind_failed', {

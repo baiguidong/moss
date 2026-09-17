@@ -90,6 +90,10 @@ import {
   registerLocalAuditIpcHandlers,
 } from './local-audit-service.mjs';
 import {
+  collectTurnChanges,
+  truncateHistoryBeforeUserMessage,
+} from './shared/turn-changes.mjs';
+import {
   createLibraryService,
   resolveLibraryParserPath,
 } from './library/library-service.mjs';
@@ -860,6 +864,16 @@ const persistSessionStmt = (() => {
   } catch {
     // Column may already exist or table doesn't exist yet
   }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN rewind_message_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN rewind_created_at INTEGER`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
   sessionDb.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -890,7 +904,9 @@ const persistSessionStmt = (() => {
       project_task_prompt TEXT,
       project_task_error TEXT,
       project_task_completed_at INTEGER,
-      auto_collapse_tool_calls INTEGER
+      auto_collapse_tool_calls INTEGER,
+      rewind_message_id TEXT,
+      rewind_created_at INTEGER
     )
   `);
   sessionDb.exec(`
@@ -900,9 +916,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, rewind_message_id, rewind_created_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -932,7 +948,9 @@ const persistSessionStmt = (() => {
       project_task_prompt = excluded.project_task_prompt,
       project_task_error = excluded.project_task_error,
       project_task_completed_at = excluded.project_task_completed_at,
-      auto_collapse_tool_calls = excluded.auto_collapse_tool_calls
+      auto_collapse_tool_calls = excluded.auto_collapse_tool_calls,
+      rewind_message_id = excluded.rewind_message_id,
+      rewind_created_at = excluded.rewind_created_at
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -966,7 +984,9 @@ const loadSessionsStmt = sessionDb.prepare(`
     project_task_prompt,
     project_task_error,
     project_task_completed_at,
-    auto_collapse_tool_calls
+    auto_collapse_tool_calls,
+    rewind_message_id,
+    rewind_created_at
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -1000,7 +1020,9 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     project_task_prompt,
     project_task_error,
     project_task_completed_at,
-    auto_collapse_tool_calls
+    auto_collapse_tool_calls,
+    rewind_message_id,
+    rewind_created_at
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -3890,6 +3912,8 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     typeof sessionRecord.autoCollapseToolCalls === 'boolean'
       ? (sessionRecord.autoCollapseToolCalls ? 1 : 0)
       : null,
+    sessionRecord.rewindMessageId || null,
+    Number.isFinite(sessionRecord.rewindCreatedAt) ? sessionRecord.rewindCreatedAt : null,
   ];
 }
 
@@ -4100,6 +4124,8 @@ function hydratePersistedSessions() {
       autoCollapseToolCalls: row.auto_collapse_tool_calls == null
         ? null
         : Boolean(row.auto_collapse_tool_calls),
+      rewindMessageId: row.rewind_message_id || null,
+      rewindCreatedAt: Number.isFinite(row.rewind_created_at) ? row.rewind_created_at : null,
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -4162,6 +4188,8 @@ function hydratePersistedSessions() {
       autoCollapseToolCalls: row.auto_collapse_tool_calls == null
         ? null
         : Boolean(row.auto_collapse_tool_calls),
+      rewindMessageId: null,
+      rewindCreatedAt: null,
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -4616,7 +4644,7 @@ function derivePendingPlanApproval(history) {
 
 function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   const nextHistory = Array.isArray(history) ? history : [];
-  if (!shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
+  if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
     sessionRecord.historyLoadedFromSource = true;
     mossLog('warn', 'session', 'Ignored non-append-only session history refresh', {
       sessionId: sessionRecord.id,
@@ -4650,6 +4678,23 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
     }
   }
   return true;
+}
+
+function applyPendingConversationRewind(sessionRecord, history) {
+  const userMessageId = typeof sessionRecord?.rewindMessageId === 'string'
+    ? sessionRecord.rewindMessageId.trim()
+    : '';
+  if (!userMessageId) return { history, pending: false };
+
+  const truncated = truncateHistoryBeforeUserMessage(history, userMessageId);
+  if (truncated) return { history: truncated, pending: true };
+
+  // The active transcript branch no longer contains the removed message,
+  // which means a post-rewind turn has already been persisted.
+  sessionRecord.rewindMessageId = null;
+  sessionRecord.rewindCreatedAt = null;
+  schedulePersistSession(sessionRecord, true);
+  return { history, pending: false };
 }
 
 async function loadSessionHistoryFromSource(sessionRecord) {
@@ -4721,7 +4766,10 @@ async function loadSessionHistoryFromSource(sessionRecord) {
 
   const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
   if (Array.isArray(displayHistory)) {
-    syncSessionRecordHistory(sessionRecord, displayHistory);
+    const filtered = applyPendingConversationRewind(sessionRecord, displayHistory);
+    syncSessionRecordHistory(sessionRecord, filtered.history, {
+      allowReplacement: filtered.pending,
+    });
     schedulePersistSession(sessionRecord);
     emitSessionMeta(sessionRecord);
     return sessionRecord.history;
@@ -4736,10 +4784,12 @@ async function loadSessionHistoryFromSource(sessionRecord) {
     throw new Error(`无法从 Claude transcript 恢复会话：${sessionRecord.underlyingSessionId}`);
   }
 
-  syncSessionRecordHistory(sessionRecord, snapshot.messages, {
+  const filteredSnapshot = applyPendingConversationRewind(sessionRecord, snapshot.messages);
+  syncSessionRecordHistory(sessionRecord, filteredSnapshot.history, {
     sessionId: snapshot.metadata.sourceSessionId || snapshot.metadata.sessionId,
     customTitle: snapshot.metadata.customTitle,
     mode: snapshot.metadata.mode,
+    allowReplacement: filteredSnapshot.pending,
   });
   schedulePersistSession(sessionRecord);
   emitSessionMeta(sessionRecord);
@@ -4757,9 +4807,11 @@ async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
     if (Array.isArray(displayHistory)) {
-      const score = historyCompletenessScore(displayHistory);
+      const filtered = applyPendingConversationRewind(sessionRecord, displayHistory);
+      const candidateHistory = filtered.history;
+      const score = historyCompletenessScore(candidateHistory);
       if (score > bestScore) {
-        bestHistory = displayHistory;
+        bestHistory = candidateHistory;
         bestScore = score;
       }
       if (score >= currentScore) {
@@ -7293,6 +7345,8 @@ function createSessionRecord({
     projectTaskError: '',
     projectTaskCompletedAt: null,
     autoCollapseToolCalls: null,
+    rewindMessageId: null,
+    rewindCreatedAt: null,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -8670,6 +8724,9 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
     }
 
     sessionRecord.runtime = resumed.session;
+    if (sessionRecord.rewindMessageId) {
+      await sessionRecord.runtime.rewindConversation(sessionRecord.rewindMessageId);
+    }
     attachBackgroundTaskWatcher(sessionRecord);
     attachSessionTaskWatcher(sessionRecord);
     sessionRecord.resumeReadOnlyReason = null;
@@ -11271,6 +11328,145 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
     tasks: snapshotSessionTasks(sessionRecord),
   };
 });
+
+function getTurnRewindSupport(sessionRecord) {
+  if (sessionRecord.agentMode === 'remote-direct') {
+    return { supported: false, reason: '远端会话暂不支持整轮撤销。' };
+  }
+  if (sessionRecord.isSubAgent) {
+    return { supported: false, reason: '子会话记录不能单独撤销。' };
+  }
+  if (sessionRecord.projectId) {
+    return { supported: false, reason: '项目协调会话暂不支持整轮撤销。' };
+  }
+  if (sessionRecord.sessionKind !== 'chat') {
+    return { supported: false, reason: '此类系统会话暂不支持整轮撤销。' };
+  }
+  return { supported: true, reason: null };
+}
+
+function assertSessionCanRewind(sessionRecord) {
+  const support = getTurnRewindSupport(sessionRecord);
+  if (!support.supported) throw new Error(support.reason);
+  if (sessionRecord.busy) throw new Error('会话正在执行，请等待当前回复结束后再撤销。');
+  if (hasActiveAgentTeam(sessionRecord)) throw new Error('Agent Team 仍在运行，不能撤销当前会话。');
+}
+
+async function ensureRuntimeForTurnRewind(sessionRecord) {
+  if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
+    await resumeSessionRecord(sessionRecord);
+  }
+  if (!sessionRecord.runtime) {
+    throw new Error('当前会话没有可恢复的运行时 checkpoint。');
+  }
+  return sessionRecord.runtime;
+}
+
+ipcMain.handle('agent:get-turn-changes', async (_event, { sessionId } = {}) => {
+  await interruptedSessionRecoveryPromise;
+  const sessionRecord = getSessionRecord(sessionId);
+  const history = await loadSessionHistoryFromSource(sessionRecord);
+  return {
+    turns: collectTurnChanges(history),
+    rewind: getTurnRewindSupport(sessionRecord),
+  };
+});
+
+ipcMain.handle('agent:preview-turn-rewind', async (_event, { sessionId, userMessageId } = {}) => {
+  await interruptedSessionRecoveryPromise;
+  const sessionRecord = getSessionRecord(sessionId);
+  await loadSessionHistoryFromSource(sessionRecord);
+  assertSessionCanRewind(sessionRecord);
+  const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+  if (!targetId || !truncateHistoryBeforeUserMessage(sessionRecord.history, targetId)) {
+    throw new Error('找不到要撤销的会话轮次。');
+  }
+  const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
+  return runtime.previewFileRewind(targetId);
+});
+
+ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } = {}) => (
+  runInKeyedQueue(sessionSendQueues, String(sessionId || ''), async () => {
+    await interruptedSessionRecoveryPromise;
+    const sessionRecord = getSessionRecord(sessionId);
+    await loadSessionHistoryFromSource(sessionRecord);
+    assertSessionCanRewind(sessionRecord);
+    const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+    const nextHistory = truncateHistoryBeforeUserMessage(sessionRecord.history, targetId);
+    if (!targetId || !nextHistory) throw new Error('找不到要撤销的会话轮次。');
+
+    const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
+    const preview = await runtime.previewFileRewind(targetId);
+    if (!preview.canRewind) {
+      throw new Error(preview.error || '这一轮没有可用的文件 checkpoint。');
+    }
+
+    const revertedHistory = sessionRecord.history.slice(nextHistory.length);
+    const restoredFiles = await runtime.rewindFiles(targetId);
+    const restoredFileSet = new Set(restoredFiles);
+    const unrestoredFiles = (preview.filesChanged || []).filter((filePath) => (
+      !restoredFileSet.has(filePath)
+    ));
+    if (unrestoredFiles.length > 0) {
+      throw new Error(`部分文件恢复失败，已保留对话上下文：${unrestoredFiles.join('、')}`);
+    }
+    const removedRuntimeMessages = await runtime.rewindConversation(targetId);
+    const removedHistoryEvents = sessionRecord.history.length - nextHistory.length;
+
+    sessionRecord.rewindMessageId = targetId;
+    sessionRecord.rewindCreatedAt = Date.now();
+    syncSessionRecordHistory(sessionRecord, nextHistory, { allowReplacement: true });
+    sessionRecord.updatedAt = Date.now();
+    sessionRecord.preview = deriveSessionPreview(nextHistory);
+    schedulePersistSession(sessionRecord, true);
+
+    let auditRecorded = false;
+    try {
+      if (localAuditService) {
+        localAuditService.recordEvent({
+          sessionId: sessionRecord.id,
+          eventType: 'turn_reverted',
+          userMessageId: targetId,
+          details: {
+            restoredFiles,
+            removedHistoryEvents,
+            removedRuntimeMessages,
+            checkpointInsertions: preview.insertions || 0,
+            checkpointDeletions: preview.deletions || 0,
+          },
+          sourceSession: {
+            id: sessionRecord.id,
+            workspace: sessionRecord.workspace,
+            history: revertedHistory,
+          },
+        });
+        auditRecorded = true;
+      }
+    } catch (error) {
+      mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
+        sessionId: sessionRecord.id,
+        userMessageId: targetId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    emitSessionMeta(sessionRecord);
+    emitSessionHistory(sessionRecord);
+    emitToRenderer('workspace:changed', {
+      sessionId: sessionRecord.id,
+      workspace: sessionRecord.workspace,
+      reason: 'turn-reverted',
+      paths: restoredFiles,
+    });
+    return {
+      ok: true,
+      userMessageId: targetId,
+      restoredFiles,
+      removedHistoryEvents,
+      auditRecorded,
+    };
+  })
+));
 
 ipcMain.handle('agent:set-worker-summaries', (_event, { sessionId, workerSummariesJson }) => {
   const sessionRecord = getSessionRecord(sessionId);

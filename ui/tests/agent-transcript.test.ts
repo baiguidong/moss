@@ -37,6 +37,31 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("carries the source user UUID through every item in the assistant turn", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([
+      {
+        type: "user",
+        uuid: "user-turn-1",
+        timestamp: "2026-08-13T00:00:00.000Z",
+        message: { role: "user", content: "change the file" },
+      },
+      assistantTool("edit-1", "Edit", { file_path: "/repo/a.ts" }),
+      toolResult("edit-1", "done", { filePath: "/repo/a.ts" }),
+      {
+        type: "assistant",
+        timestamp: "2026-08-13T00:00:03.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "完成" }] },
+      },
+    ]);
+
+    expect(messages.map((message) => message.turnId)).toEqual([
+      "user-turn-1",
+      "user-turn-1",
+      "user-turn-1",
+      "user-turn-1",
+    ]);
+  });
+
   it("replays structured Library references with their stable display names", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "user",

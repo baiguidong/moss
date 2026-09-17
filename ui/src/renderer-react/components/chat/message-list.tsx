@@ -9,6 +9,7 @@ import { ThinkingBlock } from "@/components/chat/thinking-block";
 import { ToolCallGroup } from "@/components/chat/tool-call-group";
 import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
+import { TurnChangeCard } from "@/components/chat/turn-change-card";
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
 import { extractShellResult } from "@/components/chat/tool-utils";
 import type {
@@ -16,6 +17,7 @@ import type {
   ToolUseRenderMessage,
   TranscriptRenderMessage,
 } from "@/lib/agent-transcript";
+import type { TurnChangeSummary, TurnChangesPayload } from "../../types";
 
 type RenderItem =
   | {
@@ -27,6 +29,15 @@ type RenderItem =
       kind: "message";
       message: Exclude<TranscriptRenderMessage, ToolUseRenderMessage>;
     };
+
+function getRenderItemTurnId(item: RenderItem): string | undefined {
+  if (item.kind === "message") return item.message.turnId;
+  return item.toolCalls.find((toolCall) => toolCall.turnId)?.turnId;
+}
+
+function getRenderItemId(item: RenderItem): string {
+  return item.kind === "message" ? item.message.id : item.id;
+}
 
 function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   let node = el?.parentElement ?? null;
@@ -481,6 +492,7 @@ export const VirtualMessageList = React.forwardRef<
     onAtBottomChange?: (atBottom: boolean) => void;
     focusedToolUseId?: string;
     contentClassName?: string;
+    sessionId?: string;
   }
 >(function VirtualMessageList(
   {
@@ -494,6 +506,7 @@ export const VirtualMessageList = React.forwardRef<
     onAtBottomChange,
     focusedToolUseId,
     contentClassName,
+    sessionId,
   },
   ref,
 ) {
@@ -506,6 +519,39 @@ export const VirtualMessageList = React.forwardRef<
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
   renderItemsRef.current = renderItems;
   const [contextMenu, setContextMenu] = React.useState<MessageContextMenuState | null>(null);
+  const [turnChanges, setTurnChanges] = React.useState<Map<string, TurnChangeSummary>>(new Map());
+  const [rewindSupport, setRewindSupport] = React.useState<TurnChangesPayload["rewind"]>({
+    supported: false,
+    reason: "当前会话不支持撤销。",
+  });
+
+  React.useEffect(() => {
+    if (!sessionId) {
+      setTurnChanges(new Map());
+      return;
+    }
+    if (loading) return;
+    let cancelled = false;
+    void window.agentDesktop.getTurnChanges({ sessionId }).then((payload) => {
+      if (cancelled) return;
+      setTurnChanges(new Map(payload.turns.map((turn) => [turn.userMessageId, turn])));
+      setRewindSupport(payload.rewind);
+    }).catch(() => {
+      if (!cancelled) setTurnChanges(new Map());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, messages, sessionId]);
+
+  const lastRenderItemByTurn = React.useMemo(() => {
+    const result = new Map<string, string>();
+    for (const item of renderItems) {
+      const turnId = getRenderItemTurnId(item);
+      if (turnId) result.set(turnId, getRenderItemId(item));
+    }
+    return result;
+  }, [renderItems]);
 
   const scrollToBottom = React.useCallback((behavior: "auto" | "smooth" = "smooth") => {
     virtuosoRef.current?.scrollToIndex({
@@ -585,7 +631,16 @@ export const VirtualMessageList = React.forwardRef<
         initialTopMostItemIndex={Math.max(0, renderItems.length - 1)}
         increaseViewportBy={{ top: 400, bottom: 400 }}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
-        itemContent={(_index, item) => (
+        itemContent={(_index, item) => {
+          const turnId = getRenderItemTurnId(item);
+          const turnChange = turnId ? turnChanges.get(turnId) : undefined;
+          const showTurnChange = Boolean(
+            sessionId
+            && turnId
+            && turnChange
+            && lastRenderItemByTurn.get(turnId) === getRenderItemId(item),
+          );
+          return (
           <div
             data-chat-message-list
             className={cn(
@@ -601,8 +656,17 @@ export const VirtualMessageList = React.forwardRef<
             }}
           >
             {renderTranscriptItem(item, resultMap, childToolCallsByParent, focusedToolUseId)}
+            {showTurnChange && turnChange ? (
+              <TurnChangeCard
+                sessionId={sessionId}
+                change={turnChange}
+                rewindSupported={rewindSupport.supported}
+                rewindDisabledReason={rewindSupport.reason}
+              />
+            ) : null}
           </div>
-        )}
+          );
+        }}
       />
     </WorkspacePathProvider>
   );
@@ -624,6 +688,7 @@ export const MessageListPane = React.forwardRef<
     focusedToolUseId?: string;
     className?: string;
     contentClassName?: string;
+    sessionId?: string;
   }
 >(function MessageListPane({ className, ...listProps }, ref) {
   const innerRef = React.useRef<VirtualMessageListHandle>(null);

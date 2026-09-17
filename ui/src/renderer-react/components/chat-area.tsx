@@ -2272,6 +2272,7 @@ export function ChatArea({
             ref={virtualListRef}
             className="flex-1"
             messages={messages}
+            sessionId={sessionId}
             workspace={sessionWorkspace}
             loading={loading}
             loadingStartTime={loadingStartTime}

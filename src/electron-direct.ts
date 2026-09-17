@@ -4,7 +4,7 @@
  * 直接在当前 Node.js 进程中运行 QueryEngine，无 IPC/序列化开销。
  */
 
-import { randomUUID } from 'crypto'
+import { randomUUID, type UUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
@@ -47,6 +47,12 @@ import {
   getWorktreeSessionForSessionId,
 } from './utils/worktree.js'
 import type { Message } from './types/message.js'
+import {
+  fileHistoryCanRestore,
+  fileHistoryGetDiffStats,
+  fileHistoryRewind,
+  type FileHistoryState,
+} from './utils/fileHistory.js'
 
 import {
   bootstrapHeadless,
@@ -677,7 +683,10 @@ export class ClaudeSession {
       workspaceDirectories: Array.isArray(opts.workspaceDirectories)
         ? opts.workspaceDirectories.filter(Boolean)
         : [],
-      environment: { ...(opts.environment ?? {}) },
+      environment: {
+        CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
+        ...(opts.environment ?? {}),
+      },
       taskScope,
     }
   }
@@ -1338,6 +1347,112 @@ export class ClaudeSession {
       this.#abortController = null
       this.#flush()
     }
+  }
+
+  async #initializeForControl(): Promise<QueryEngine> {
+    if (this.#disposed) throw new Error('Session has been disposed')
+    initLocalAgentRuntimeOnce()
+    if (this.#projectRoot === undefined) {
+      this.#projectRoot = findGitRoot(this.#opts.cwd) || this.#opts.cwd
+    }
+
+    const effectiveCwd =
+      getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+      this.#opts.cwd
+    const sessionId = asSessionId(this.sessionId)
+    const runInSessionContext = <T>(fn: () => T): T =>
+      runWithSessionIdContext(
+        sessionId,
+        this.#opts.projectDir,
+        () => runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
+        this.#opts.taskScope,
+        this.#opts.environment,
+      )
+
+    return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+      runWithCwdOverride(
+        effectiveCwd,
+        async () => {
+          await runInSessionContext(() => this.#activateSessionStorage())
+          return runInSessionContext(() => this.#getEngine())
+        },
+        {
+          projectRoot: this.#projectRoot,
+          additionalDirectories: this.#opts.addDirs,
+        },
+      ),
+    )
+  }
+
+  async #runFileHistoryControl<T>(operation: (
+    state: FileHistoryState,
+    update: (updater: (prev: FileHistoryState) => FileHistoryState) => void,
+  ) => Promise<T>): Promise<T> {
+    await this.#initializeForControl()
+    const controlStore = this.#store
+    if (!controlStore) throw new Error('Session store was not initialized')
+    const effectiveCwd =
+      getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+      this.#opts.cwd
+    return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+      runWithCwdOverride(
+        effectiveCwd,
+        () => runWithSessionIdContext(
+          asSessionId(this.sessionId),
+          this.#opts.projectDir,
+          () => runWithCoordinatorMode(this.#opts.coordinatorMode, () =>
+            operation(
+              controlStore.getState().fileHistory,
+              updater => controlStore.setState(previous => ({
+                ...previous,
+                fileHistory: updater(previous.fileHistory),
+              })),
+            ),
+          ),
+          this.#opts.taskScope,
+          this.#opts.environment,
+        ),
+        {
+          projectRoot: this.#projectRoot,
+          additionalDirectories: this.#opts.addDirs,
+        },
+      ),
+    )
+  }
+
+  async previewFileRewind(userMessageId: string) {
+    return this.#runFileHistoryControl(async state => {
+      if (!fileHistoryCanRestore(state, userMessageId as UUID)) {
+        return {
+          canRewind: false as const,
+          error: '没有找到这一轮对应的文件 checkpoint。',
+        }
+      }
+      const stats = await fileHistoryGetDiffStats(
+        state,
+        userMessageId as UUID,
+      )
+      return {
+        canRewind: true as const,
+        filesChanged: stats?.filesChanged ?? [],
+        insertions: stats?.insertions ?? 0,
+        deletions: stats?.deletions ?? 0,
+      }
+    })
+  }
+
+  async rewindFiles(userMessageId: string) {
+    return this.#runFileHistoryControl(async (state, update) => {
+      if (!fileHistoryCanRestore(state, userMessageId as UUID)) {
+        throw new Error('No file checkpoint found for this message')
+      }
+      return fileHistoryRewind(update, userMessageId as UUID)
+    })
+  }
+
+  async rewindConversation(userMessageId: string) {
+    const engine = await this.#initializeForControl()
+    return engine.rewindToUserMessage(userMessageId)
   }
 
   #flush() {
