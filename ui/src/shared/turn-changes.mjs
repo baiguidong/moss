@@ -7,9 +7,60 @@ function isObject(value) {
 function isTopLevelUserMessage(event) {
   if (!isObject(event) || event.type !== 'user') return false;
   if (event.isMeta === true || event.isSynthetic === true) return false;
+  if (event.origin?.kind && event.origin.kind !== 'human') return false;
   if (event.toolUseResult || event.tool_use_result) return false;
   const blocks = Array.isArray(event.message?.content) ? event.message.content : [];
   return !blocks.some((block) => block?.type === 'tool_result');
+}
+
+function userMessageText(event) {
+  if (typeof event?.prompt === 'string') return event.prompt.trim();
+  const content = event?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+}
+
+export function backfillVisibleUserMessageIds(history, sourceHistory) {
+  const target = Array.isArray(history) ? history : [];
+  const sourceUsers = (Array.isArray(sourceHistory) ? sourceHistory : [])
+    .filter(isTopLevelUserMessage)
+    .filter((event) => typeof event.uuid === 'string' && event.uuid.trim());
+  if (sourceUsers.length === 0) return target;
+
+  const claimedSourceIds = new Set();
+  let sourceCursor = 0;
+  let changed = false;
+  const result = target.map((event) => {
+    if (!isTopLevelUserMessage(event) || (typeof event.uuid === 'string' && event.uuid.trim())) {
+      return event;
+    }
+
+    const targetText = userMessageText(event);
+    let sourceIndex = sourceUsers.findIndex((source, index) => (
+      index >= sourceCursor
+      && !claimedSourceIds.has(source.uuid)
+      && targetText
+      && userMessageText(source) === targetText
+    ));
+    if (sourceIndex < 0) {
+      sourceIndex = sourceUsers.findIndex((source, index) => (
+        index >= sourceCursor && !claimedSourceIds.has(source.uuid)
+      ));
+    }
+    const source = sourceUsers[sourceIndex];
+    if (!source) return event;
+    claimedSourceIds.add(source.uuid);
+    sourceCursor = sourceIndex + 1;
+    changed = true;
+    return { ...event, uuid: source.uuid };
+  });
+
+  return changed ? result : target;
 }
 
 function normalizeHunks(value) {
@@ -161,4 +212,3 @@ export function truncateHistoryBeforeUserMessage(history, userMessageId) {
   if (index < 0) return null;
   return source.slice(0, index);
 }
-

@@ -90,6 +90,7 @@ import {
   registerLocalAuditIpcHandlers,
 } from './local-audit-service.mjs';
 import {
+  backfillVisibleUserMessageIds,
   collectTurnChanges,
   truncateHistoryBeforeUserMessage,
 } from './shared/turn-changes.mjs';
@@ -4645,6 +4646,11 @@ function derivePendingPlanApproval(history) {
 function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   const nextHistory = Array.isArray(history) ? history : [];
   if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
+    const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, nextHistory);
+    if (enrichedHistory !== sessionRecord.history) {
+      sessionRecord.history = enrichedHistory;
+      sessionRecord.messageCount = countSessionMessages(enrichedHistory);
+    }
     sessionRecord.historyLoadedFromSource = true;
     mossLog('warn', 'session', 'Ignored non-append-only session history refresh', {
       sessionId: sessionRecord.id,
@@ -4807,6 +4813,11 @@ async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
     if (Array.isArray(displayHistory)) {
+      const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, displayHistory);
+      if (enrichedHistory !== sessionRecord.history) {
+        sessionRecord.history = enrichedHistory;
+        sessionRecord.messageCount = countSessionMessages(enrichedHistory);
+      }
       const filtered = applyPendingConversationRewind(sessionRecord, displayHistory);
       const candidateHistory = filtered.history;
       const score = historyCompletenessScore(candidateHistory);
@@ -4928,8 +4939,10 @@ async function runSessionPromptNow({
   const cronIdsBeforeTurn = await readMossCronTaskIds();
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
+  let activeVisibleUserEvent = null;
   if (trimmedUserPrompt || attachments.length > 0 || resources.length > 0) {
     const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments, resources);
+    activeVisibleUserEvent = userEvent;
     appendVisibleUserEvent(sessionRecord, sender, userEvent);
     if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
@@ -4984,6 +4997,13 @@ async function runSessionPromptNow({
             replayUserText === expectedVisibleUserPrompt
           )
         ) {
+          if (
+            activeVisibleUserEvent &&
+            typeof message.uuid === 'string' &&
+            message.uuid.trim()
+          ) {
+            activeVisibleUserEvent.uuid = message.uuid.trim();
+          }
           skippedInitialReplayUser = true;
           continue;
         }
@@ -5093,11 +5113,12 @@ async function runSessionPromptNow({
         throw new Error('Prompt is too long. Automatic /compact did not reduce this session enough to continue.');
       }
       if (compactRun.sawCompactBoundary) {
-        appendVisibleUserEvent(
-          sessionRecord,
-          sender,
-          buildVisibleUserEvent(trimmedUserPrompt, attachments, resources),
+        activeVisibleUserEvent = buildVisibleUserEvent(
+          trimmedUserPrompt,
+          attachments,
+          resources,
         );
+        appendVisibleUserEvent(sessionRecord, sender, activeVisibleUserEvent);
       }
       return runRuntimePromptOnce(runtimePrompt, {
         expectedVisiblePrompt: visibleUserPrompt,

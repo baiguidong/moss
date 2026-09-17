@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  backfillVisibleUserMessageIds,
   collectTurnChanges,
   truncateHistoryBeforeUserMessage,
 } from '../src/shared/turn-changes.mjs';
@@ -91,5 +92,23 @@ describe('turn changes', () => {
     expect(collectTurnChanges(history)[0]?.hasUnverifiedChanges).toBe(true);
     expect(truncateHistoryBeforeUserMessage(history, 'remove')).toEqual(history.slice(0, 2));
     expect(truncateHistoryBeforeUserMessage(history, 'missing')).toBeNull();
+  });
+
+  test('backfills desktop-visible user events with transcript UUIDs', () => {
+    const visibleHistory = [
+      { type: 'user', prompt: 'first', timestamp: 1 },
+      { type: 'assistant', uuid: 'answer-1', message: { content: [] } },
+      { type: 'user', prompt: 'second', timestamp: 2 },
+    ];
+    const transcriptHistory = [
+      { type: 'user', uuid: 'user-1', message: { content: 'first' } },
+      { type: 'assistant', uuid: 'answer-1', message: { content: [] } },
+      { type: 'user', uuid: 'user-2', message: { content: 'second' } },
+    ];
+
+    const enriched = backfillVisibleUserMessageIds(visibleHistory, transcriptHistory);
+    expect(enriched[0]?.uuid).toBe('user-1');
+    expect(enriched[2]?.uuid).toBe('user-2');
+    expect(visibleHistory[0]?.uuid).toBeUndefined();
   });
 });
