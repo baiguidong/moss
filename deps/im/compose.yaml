@@ -172,11 +172,11 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     healthcheck:
-      test: [CMD-SHELL, "mage check"]
+      test: [CMD-SHELL, "nc -z -w 5 127.0.0.1 10001 && nc -z -w 5 127.0.0.1 10002"]
       interval: 10s
-      timeout: 60s
-      retries: 20
-      start_period: 60s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
     depends_on:
       mongo: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -207,11 +207,11 @@ services:
       - ${OPENIM_ADMIN_BIND_IP}:${CHAT_API_PORT}:10008
       - ${OPENIM_ADMIN_BIND_IP}:${ADMIN_API_PORT}:10009
     healthcheck:
-      test: [CMD-SHELL, "mage check"]
+      test: [CMD-SHELL, "nc -z -w 5 127.0.0.1 10008 && nc -z -w 5 127.0.0.1 10009"]
       interval: 10s
-      timeout: 60s
-      retries: 20
-      start_period: 60s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
     depends_on:
       mongo: { condition: service_healthy }
       redis: { condition: service_healthy }

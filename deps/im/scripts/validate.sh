@@ -12,6 +12,11 @@ if grep -nE 'download\.docker\.com|docker-ce|containerd\.io|systemctl enable --n
   exit 1
 fi
 
+if grep -nE 'mage[[:space:]]+check' "$ROOT/compose.yaml"; then
+  echo "ERROR: Compose health checks must not compile Magefiles at runtime" >&2
+  exit 1
+fi
+
 for obsolete in update.sh logs.sh status.sh; do
   [[ ! -e "$ROOT/$obsolete" ]] || {
     echo "ERROR: obsolete operation is still present: $obsolete" >&2

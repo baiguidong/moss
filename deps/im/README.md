@@ -77,7 +77,7 @@ sudo env \
 安装器只有在以下检查全部通过后才报告成功：
 
 - MongoDB、Redis、etcd、Kafka 和对象存储健康。
-- `openim-server` 与 `openim-chat` 的官方 `mage check` 通过。
+- `openim-server` 与 `openim-chat` 的本地服务端口均已监听；健康检查不执行运行时编译，也不依赖公网。
 - 使用配置的管理密钥成功获取 OpenIM 管理员 token。
 - OpenIM 容器能访问 Moss `/healthz`，且 Moss 接受带当前密钥的 webhook 请求。
 
