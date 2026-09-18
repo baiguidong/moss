@@ -517,8 +517,6 @@ export type MossAppEventResult =
       resource?: unknown
       libraryWrite?: unknown
       browser?: unknown
-      imageBase64?: string
-      imageMediaType?: 'image/png' | 'image/jpeg'
     }
   | { ok: false; error: string }
 
@@ -715,7 +713,7 @@ export type Tool<
    * When true, this tool is deferred (sent with defer_loading: true) and requires
    * ToolSearch to be used before it can be called.
    */
-  readonly shouldDefer?: boolean
+  readonly shouldDefer?: boolean | (() => boolean)
   /**
    * When true, this tool is never deferred — its full schema appears in the
    * initial prompt even when ToolSearch is enabled. For MCP tools, set via

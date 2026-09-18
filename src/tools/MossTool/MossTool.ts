@@ -1,20 +1,20 @@
 import { z } from 'zod/v4'
-import { buildTool, getGlobalAppEventBridge, type ToolDef } from '../../Tool.js'
-import type { MossAppEvent, MossAppEventResult, ToolUseContext } from '../../Tool.js'
+import {
+  buildTool,
+  getGlobalAppEventBridge,
+  type MossAppEvent,
+  type MossAppEventResult,
+  type ToolInputJSONSchema,
+  type ToolDef,
+  type ToolUseContext,
+} from '../../Tool.js'
 import { getTaskScopeContext } from '../../utils/sessionIdContext.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
-
-const MOSS_TOOL_NAME = 'moss'
-const browserAutomationActions = new Set([
-  'browser_snapshot',
-  'browser_click',
-  'browser_type',
-  'browser_press',
-  'browser_scroll',
-  'browser_wait',
-  'browser_reload',
-])
+import {
+  shouldDeferMossTool,
+  type MossToolName,
+} from './toolLoading.js'
 
 const imageAspectRatioSchema = z.enum([
   '1:1',
@@ -32,47 +32,9 @@ const subjectReferenceSchema = z.strictObject({
   image_file: z.string().url(),
 })
 
-const mossActionSchema = z.strictObject({
-  action: z.enum(['app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions', 'browser_open', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload', 'connector_cli_setup', 'connector_mcp_authenticate', 'image_generate', 'image_edit']),
-  kind: z.literal('app').optional().describe('App artifact kind.'),
-  name: z.string().optional().describe('App slug/name. Required for app_build, app_publish, app_launch, app_update, app_extract_to_workspace, and app_get_versions.'),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  icon: z.string().optional(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-  resizable: z.boolean().optional(),
-  prd: z.string().optional(),
-  versionId: z.string().optional(),
-  buildDir: z.string().optional().describe('Path to an App build directory, usually apps/{name}/build. Used by app_preview, app_publish, and app_update.'),
-  version: z.string().optional(),
-  reason: z.string().optional(),
-  prompt: z.string().optional().describe('Prompt for image generation. Required for image_generate.'),
-  url: z.string().optional().describe('URL to open in the Moss right-side browser. For browser_open, provide either url or query.'),
-  query: z.string().optional().describe('Search query to open in the Moss right-side browser. For browser_open, provide either url or query.'),
-  engine: z.enum(['baidu', 'google', 'bing']).optional().describe('Search engine used when browser_open receives query. Defaults to baidu for Chinese search requests.'),
+const tabIdField = {
   tab_id: z.string().optional().describe('Browser tab id. Omit to use the active tab in the current Moss session.'),
-  full_page: z.boolean().optional().describe('Capture the full page instead of the visible viewport for browser_snapshot.'),
-  snapshot_id: z.string().optional().describe('Snapshot id returned by browser_snapshot. Required for element actions.'),
-  ref: z.string().optional().describe('Element reference such as e1 returned by browser_snapshot. Required for element actions.'),
-  click_count: z.union([z.literal(1), z.literal(2)]).optional().describe('Click count for browser_click.'),
-  text: z.string().optional().describe('Text to enter or wait for, depending on the browser action.'),
-  clear: z.boolean().optional().describe('Clear the focused field before browser_type. Defaults to true.'),
-  submit: z.boolean().optional().describe('Press Enter after browser_type.'),
-  key: z.enum(['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Space']).optional().describe('Key for browser_press.'),
-  delta_x: z.number().int().min(-4000).max(4000).optional().describe('Horizontal scroll delta for browser_scroll.'),
-  delta_y: z.number().int().min(-4000).max(4000).optional().describe('Vertical scroll delta for browser_scroll. Defaults to 600.'),
-  url_contains: z.string().optional().describe('URL substring to wait for in browser_wait.'),
-  timeout_ms: z.number().int().min(100).max(15000).optional().describe('Wait timeout in milliseconds.'),
-  connector_id: z.string().optional().describe('Connector id for connector_cli_setup.'),
-  server_name: z.string().optional().describe('MCP server name for connector_mcp_authenticate.'),
-  aspect_ratio: imageAspectRatioSchema.optional().describe('Aspect ratio for generated images. Optional for image_generate; defaults in the main process if omitted.'),
-  subject_reference: z.array(subjectReferenceSchema).optional().describe('Reference images for image generation. Optional for image_generate.'),
-  source_path: z.string().optional().describe('Relative source image path inside the current session workspace. Required for image_edit.'),
-  out_path: z.string().optional().describe('Relative output path inside the current session workspace for image output. Required for image_generate and image_edit.'),
-})
-
-type MossActionInput = z.infer<typeof mossActionSchema>
+}
 
 const mossOutputSchema = z.object({
   ok: z.boolean(),
@@ -101,438 +63,497 @@ const mossOutputSchema = z.object({
   error: z.string().optional(),
 })
 
-type MossOutput = z.infer<typeof mossOutputSchema> & {
-  imageBase64?: string
-  imageMediaType?: 'image/png' | 'image/jpeg'
+export type MossOutput = z.infer<typeof mossOutputSchema>
+
+type MossInputSchema = z.ZodType<Record<string, unknown>>
+
+type MossToolConfig<InputSchema extends MossInputSchema> = {
+  name: MossToolName
+  description: string
+  prompt?: string
+  searchHint: string
+  inputSchema: InputSchema
+  inputJSONSchema?: ToolInputJSONSchema
+  event: (input: z.infer<InputSchema>) => MossAppEvent
+  readOnly?: boolean
+  browserPermission?: boolean
+  userFacingName?: string
 }
 
-export const MossTool = buildTool({
-  name: MOSS_TOOL_NAME,
-  searchHint: 'Moss desktop app management, browser automation, and connector CLI setup',
-  maxResultSizeChars: 100_000,
-  async description() {
-    return `Moss tool for managing desktop apps. Supports:
-- app_build: Build an App from apps/{name}/app.moss.json in the current session workspace. Returns buildDir.
-- app_preview: Preview an App build directory
-- app_publish: Publish an App build directory to the app list with version. Requires name, buildDir, and description.
-- app_launch: Open an installed app
-- app_update: Publish a new App version from buildDir.
-- app_extract_to_workspace: Extract an installed App into the current session workspace.
-- app_get_versions: Get version history of an app
-- browser_open: Open a URL or search query in the Moss right-side browser panel for the current desktop session and bring that panel into view. Use this when the user asks to open a browser, open a webpage, or search/query something in a browser, for example "打开浏览器，百度查询 今日新闻".
-- browser_snapshot: Inspect the active Moss browser tab and return a screenshot, visible page text, console messages, and stable element refs.
-- browser_click/browser_type: Interact with an element ref from the latest snapshot. The snapshot becomes stale after navigation or scrolling.
-- browser_press/browser_scroll/browser_wait/browser_reload: Drive and synchronize the active Moss browser tab during UI testing. These actions never accept JavaScript or CSS selectors.
-- connector_cli_setup: Install or upgrade an installed connector's local CLI from its cli.json, open OAuth URLs in the system browser when possible with Moss browser fallback, wait for auth, and verify status. Use this for connector setup instead of running connector CLI auth commands manually.
-- connector_mcp_authenticate: Authenticate an installed marketplace connector MCP server and open any authorization URL in the system browser when possible with Moss browser fallback. Use this when connector MCP tools are unavailable, empty, or report that authorization is required; do not ask the user to run /mcp.
-- image_generate: Generate one or more images via the main-process image handler and write them into the current session workspace
-- image_edit: Edit a workspace image via the main-process image handler and write the result into the current session workspace`
-  },
-  async prompt() {
-    return `Use moss tool to manage desktop apps and automate the Moss browser.
+async function callMossHost(
+  event: MossAppEvent,
+  context: ToolUseContext,
+): Promise<{ data: MossOutput }> {
+  if (event.type === 'connector_cli_setup' || event.type === 'connector_mcp_authenticate') {
+    const scopeError = getProjectConnectorScopeError(getTaskScopeContext(), {
+      connectorId: event.input.connector_id,
+      serverName: event.type === 'connector_mcp_authenticate'
+        ? event.input.server_name
+        : undefined,
+    })
+    if (scopeError) return { data: { ok: false, error: scopeError } }
+  }
 
-Parameter requirements:
-- app_build requires \`name\`; it builds from apps/{name}/app.moss.json in the current workspace and does not accept html
-- app_preview requires \`buildDir\`
-- app_publish requires \`name\`, \`buildDir\`, and \`description\`
-- app_launch requires \`name\`
-- app_update requires \`name\` and \`buildDir\`; \`reason\` is recommended
-- app_extract_to_workspace requires \`name\`
-- app_get_versions requires \`name\`
-- browser_open requires either \`url\` or \`query\`; use \`query\` plus \`engine: "baidu"\` when the user says 百度查询/百度搜索 or asks in Chinese without naming another engine
-- When browser_open returns \`ok: true\`, treat the URL/query as delivered to the Moss desktop browser panel. Do not call browser_open again for the same URL just because the user says they cannot see it; instead explain that the browser panel should be visible on the right and give the exact URL/path to check.
-- For browser automation, call browser_snapshot first. Use its \`snapshotId\` and an element \`ref\` for browser_click/browser_type. Take a new snapshot after navigation or browser_scroll.
-- Prefer viewport screenshots while iterating. Use \`full_page: true\` only when the complete layout matters; full-page capture has dimension and byte limits.
-- Use browser_wait after an action when content updates asynchronously, then take another browser_snapshot to verify the result. Do not use Bash, AppleScript, DevTools JavaScript, or page-provided scripts for browser interaction when these actions are available.
-- connector_cli_setup requires \`connector_id\`. Use it when asked to set up a marketplace connector CLI. Do not use Bash/Shell to run that connector's init/auth/status commands yourself; this action reads cli.json, opens the auth URL in the system browser when possible, waits for completion, and returns a redacted status summary.
-- connector_mcp_authenticate requires either \`connector_id\` or \`server_name\`. Use it when an installed marketplace connector's MCP tools are missing, empty, or need authorization. It opens auth in the system browser when possible. Never tell the user to type \`/mcp\` in Moss desktop for connector-marketplace auth.
-- When connector_mcp_authenticate returns status \`authenticated\`, authorization is complete. Do not call it again. Tell the user the connector is ready and ask them to continue the original request in their next message, when the refreshed MCP tools will be available.
-- In Docker or remote sessions, do not start a container-local HTTP server and open \`http://localhost:PORT\` unless that port is known to be published to the desktop host. Prefer opening the existing file URL or a host-reachable URL.
-- image_generate requires \`prompt\` and \`out_path\`; \`out_path\` must be a relative path inside the current session workspace, for example \`images/hero.png\`; optionally accepts \`aspect_ratio\` and \`subject_reference\`
-- image_edit requires \`prompt\`, \`source_path\`, and \`out_path\`; both paths must be relative paths inside the current session workspace
-- image_generate and image_edit return image-specific fields including \`fileKind: "image"\`, \`previewUrl\`, and \`previewMarkdown\`
-- After image generation or editing succeeds, if you reference the image in markdown, prefer \`previewMarkdown\` or use \`moss-media://local/<encoded-absolute-path>\` directly`
-  },
-  get inputSchema() {
-    return mossActionSchema
-  },
-  get outputSchema() {
-    return mossOutputSchema
-  },
-  userFacingName(input) {
-    return typeof input?.action === 'string' && input.action.startsWith('browser_')
-      ? '浏览器'
-      : 'Moss'
-  },
-  isConcurrencySafe() {
-    return false
-  },
-  isReadOnly(input: MossActionInput) {
-    return input.action === 'app_launch'
-      || input.action === 'app_get_versions'
-      || input.action === 'app_preview'
-      || input.action === 'browser_open'
-      || input.action === 'browser_snapshot'
-      || input.action === 'browser_wait'
-  },
-  async checkPermissions(input: MossActionInput) {
-    if (browserAutomationActions.has(input.action)) {
-      return {
-        behavior: 'ask' as const,
-        message: 'Browser automation requires access to the current Moss browser page.',
-      }
+  const emitAppEvent = context.emitAppEvent ?? getGlobalAppEventBridge()
+  if (!emitAppEvent) {
+    const querySource = context.options.querySource ?? 'unknown'
+    const agentId = context.agentId ?? 'main'
+    return {
+      data: {
+        ok: false,
+        error: `Moss host tools are not available in this context. Missing emitAppEvent bridge. querySource=${querySource} agentId=${agentId}`,
+      },
     }
-    return { behavior: 'allow' as const, updatedInput: input }
-  },
-  async call(input: MossActionInput, context: ToolUseContext): Promise<{ data: MossOutput }> {
-    if (input.action === 'connector_cli_setup' || input.action === 'connector_mcp_authenticate') {
-      const scopeError = getProjectConnectorScopeError(getTaskScopeContext(), {
-        connectorId: input.connector_id,
-        serverName: input.server_name,
-      })
-      if (scopeError) return { data: { ok: false, error: scopeError } }
-    }
-    const emitAppEvent = context.emitAppEvent ?? getGlobalAppEventBridge()
+  }
 
-    // Check if emitAppEvent is available
-    if (!emitAppEvent) {
-      const querySource = context.options.querySource ?? 'unknown'
-      const agentId = context.agentId ?? 'main'
-      return {
-        data: {
-          ok: false,
-          error: `MossTool is not available in this context. Missing emitAppEvent bridge. querySource=${querySource} agentId=${agentId}`,
-        },
+  const result: MossAppEventResult = await emitAppEvent(event)
+  if (!result.ok) return { data: { ok: false, error: result.error } }
+
+  return {
+    data: {
+      ok: true,
+      app: result.app,
+      apps: result.apps,
+      versions: result.versions,
+      filePath: result.filePath,
+      buildDir: (result as { buildDir?: string }).buildDir,
+      filePaths: result.filePaths,
+      fileKind: result.fileKind,
+      previewUrl: result.previewUrl,
+      previewMarkdown: result.previewMarkdown,
+      mediaType: result.mediaType,
+      metadataPath: result.metadataPath,
+      htmlPath: result.htmlPath,
+      connector: result.connector,
+      connected: result.connected,
+      setupStatus: result.setupStatus,
+      version: result.version,
+      authorizationUrlOpened: result.authorizationUrlOpened,
+      authorizationHost: result.authorizationHost,
+      auth: result.auth,
+      steps: result.steps,
+      browser: result.browser,
+      message: result.message,
+    },
+  }
+}
+
+function createMossTool<InputSchema extends MossInputSchema>(
+  config: MossToolConfig<InputSchema>,
+) {
+  return buildTool({
+    name: config.name,
+    searchHint: config.searchHint,
+    maxResultSizeChars: 100_000,
+    shouldDefer: () => shouldDeferMossTool(config.name),
+    async description() {
+      return config.description
+    },
+    async prompt() {
+      return config.prompt ?? config.description
+    },
+    get inputSchema(): InputSchema {
+      return config.inputSchema
+    },
+    ...(config.inputJSONSchema ? { inputJSONSchema: config.inputJSONSchema } : {}),
+    get outputSchema() {
+      return mossOutputSchema
+    },
+    userFacingName() {
+      return config.userFacingName ?? config.name
+    },
+    isConcurrencySafe() {
+      return false
+    },
+    isReadOnly() {
+      return config.readOnly === true
+    },
+    async checkPermissions(input: z.infer<InputSchema>) {
+      if (config.browserPermission) {
+        return {
+          behavior: 'ask' as const,
+          message: 'Browser automation requires access to the current Moss browser page.',
+        }
       }
-    }
-
-    // Build the event based on action
-    let event: MossAppEvent
-
-    switch (input.action) {
-      case 'app_build':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_build' } }
-        }
-        event = {
-          type: 'app_build',
-          input: {
-            kind: 'app',
-            name: input.name,
-          },
-        }
-        break
-
-      case 'app_preview':
-        if (!input.buildDir) {
-          return { data: { ok: false, error: 'buildDir is required for app_preview' } }
-        }
-        event = {
-          type: 'app_preview',
-          input: { kind: 'app', buildDir: input.buildDir },
-        }
-        break
-
-      case 'app_publish':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_publish. Pass the target app slug/name in the name field.' } }
-        }
-        if (!input.buildDir) {
-          return { data: { ok: false, error: 'buildDir is required for app_publish' } }
-        }
-        if (!input.description) {
-          return { data: { ok: false, error: 'description is required for app_publish. Pass the published app description in the description field.' } }
-        }
-        event = {
-          type: 'app_publish',
-          input: {
-            kind: 'app',
-            name: input.name,
-            buildDir: input.buildDir,
-            description: input.description,
-            reason: input.reason,
-          },
-        }
-        break
-
-      case 'app_launch':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_launch' } }
-        }
-        event = {
-          type: 'app_launch',
-          input: { name: input.name },
-        }
-        break
-
-      case 'app_update':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_update' } }
-        }
-        if (!input.buildDir) {
-          return { data: { ok: false, error: 'buildDir is required for app_update' } }
-        }
-        event = {
-          type: 'app_update',
-          input: {
-            kind: 'app',
-            name: input.name,
-            description: input.description,
-            buildDir: input.buildDir,
-            reason: input.reason,
-          },
-        }
-        break
-
-      case 'app_extract_to_workspace':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_extract_to_workspace' } }
-        }
-        event = {
-          type: 'app_extract_to_workspace',
-          input: {
-            kind: input.kind,
-            name: input.name,
-            versionId: input.versionId,
-          },
-        }
-        break
-
-      case 'app_get_versions':
-        if (!input.name) {
-          return { data: { ok: false, error: 'name is required for app_get_versions' } }
-        }
-        event = {
-          type: 'app_get_versions',
-          input: { name: input.name },
-        }
-        break
-
-      case 'browser_open':
-        if (!input.url && !input.query) {
-          return { data: { ok: false, error: 'url or query is required for browser_open' } }
-        }
-        event = {
-          type: 'browser_open',
-          input: {
-            url: input.url,
-            query: input.query,
-            engine: input.engine,
-          },
-        }
-        break
-
-      case 'browser_snapshot':
-        event = {
-          type: 'browser_snapshot',
-          input: { tab_id: input.tab_id, full_page: input.full_page },
-        }
-        break
-
-      case 'browser_click':
-        if (!input.snapshot_id || !input.ref) {
-          return { data: { ok: false, error: 'snapshot_id and ref are required for browser_click' } }
-        }
-        event = {
-          type: 'browser_click',
-          input: {
-            tab_id: input.tab_id,
-            snapshot_id: input.snapshot_id,
-            ref: input.ref,
-            click_count: input.click_count,
-          },
-        }
-        break
-
-      case 'browser_type':
-        if (!input.snapshot_id || !input.ref) {
-          return { data: { ok: false, error: 'snapshot_id and ref are required for browser_type' } }
-        }
-        if (typeof input.text !== 'string') {
-          return { data: { ok: false, error: 'text is required for browser_type' } }
-        }
-        event = {
-          type: 'browser_type',
-          input: {
-            tab_id: input.tab_id,
-            snapshot_id: input.snapshot_id,
-            ref: input.ref,
-            text: input.text,
-            clear: input.clear,
-            submit: input.submit,
-          },
-        }
-        break
-
-      case 'browser_press':
-        if (!input.key) {
-          return { data: { ok: false, error: 'key is required for browser_press' } }
-        }
-        event = {
-          type: 'browser_press',
-          input: { tab_id: input.tab_id, key: input.key },
-        }
-        break
-
-      case 'browser_scroll':
-        event = {
-          type: 'browser_scroll',
-          input: { tab_id: input.tab_id, delta_x: input.delta_x, delta_y: input.delta_y },
-        }
-        break
-
-      case 'browser_wait':
-        event = {
-          type: 'browser_wait',
-          input: {
-            tab_id: input.tab_id,
-            text: input.text,
-            url_contains: input.url_contains,
-            timeout_ms: input.timeout_ms,
-          },
-        }
-        break
-
-      case 'browser_reload':
-        event = { type: 'browser_reload', input: { tab_id: input.tab_id } }
-        break
-
-      case 'connector_cli_setup':
-        if (!input.connector_id) {
-          return { data: { ok: false, error: 'connector_id is required for connector_cli_setup' } }
-        }
-        event = {
-          type: 'connector_cli_setup',
-          input: { connector_id: input.connector_id },
-        }
-        break
-
-      case 'connector_mcp_authenticate':
-        if (!input.connector_id && !input.server_name) {
-          return { data: { ok: false, error: 'connector_id or server_name is required for connector_mcp_authenticate' } }
-        }
-        event = {
-          type: 'connector_mcp_authenticate',
-          input: {
-            connector_id: input.connector_id,
-            server_name: input.server_name,
-          },
-        }
-        break
-
-      case 'image_generate':
-        if (!input.prompt) {
-          return { data: { ok: false, error: 'prompt is required for image_generate' } }
-        }
-        if (!input.out_path) {
-          return { data: { ok: false, error: 'out_path is required for image_generate' } }
-        }
-        event = {
-          type: 'image_generate',
-          input: {
-            prompt: input.prompt,
-            aspect_ratio: input.aspect_ratio,
-            subject_reference: input.subject_reference,
-            out_path: input.out_path,
-          },
-        }
-        break
-
-      case 'image_edit':
-        if (!input.prompt) {
-          return { data: { ok: false, error: 'prompt is required for image_edit' } }
-        }
-        if (!input.source_path) {
-          return { data: { ok: false, error: 'source_path is required for image_edit' } }
-        }
-        if (!input.out_path) {
-          return { data: { ok: false, error: 'out_path is required for image_edit' } }
-        }
-        event = {
-          type: 'image_edit',
-          input: {
-            prompt: input.prompt,
-            source_path: input.source_path,
-            aspect_ratio: input.aspect_ratio,
-            out_path: input.out_path,
-          },
-        }
-        break
-
-      default:
-        return { data: { ok: false, error: `Unknown action: ${input.action}` } }
-    }
-
-    // Emit event and wait for result (blocking)
-    const result: MossAppEventResult = await emitAppEvent(event)
-
-    if (result.ok) {
-      const data: MossOutput = {
-        ok: true,
-        app: result.app,
-        apps: result.apps,
-        versions: result.versions,
-        filePath: result.filePath,
-        buildDir: (result as { buildDir?: string }).buildDir,
-        filePaths: result.filePaths,
-        fileKind: result.fileKind,
-        previewUrl: result.previewUrl,
-        previewMarkdown: result.previewMarkdown,
-        mediaType: result.mediaType,
-        metadataPath: result.metadataPath,
-        htmlPath: result.htmlPath,
-        connector: result.connector,
-        connected: result.connected,
-        setupStatus: result.setupStatus,
-        version: result.version,
-        authorizationUrlOpened: result.authorizationUrlOpened,
-        authorizationHost: result.authorizationHost,
-        auth: result.auth,
-        steps: result.steps,
-        browser: result.browser,
-        message: result.message,
-      }
-      if (result.imageBase64 && result.imageMediaType) {
-        Object.defineProperties(data, {
-          imageBase64: { value: result.imageBase64, enumerable: false },
-          imageMediaType: { value: result.imageMediaType, enumerable: false },
-        })
-      }
-      return {
-        data,
-      }
-    } else {
-      return {
-        data: {
-          ok: false,
-          error: result.error,
-        },
-      }
-    }
-  },
-  mapToolResultToToolResultBlockParam(content: MossOutput, toolUseID: string) {
-    if (content.imageBase64 && content.imageMediaType) {
-      const { imageBase64, imageMediaType, ...summary } = content
+      return { behavior: 'allow' as const, updatedInput: input }
+    },
+    async call(input: z.infer<InputSchema>, context: ToolUseContext) {
+      return callMossHost(config.event(input), context)
+    },
+    mapToolResultToToolResultBlockParam(content: MossOutput, toolUseID: string) {
       return {
         tool_use_id: toolUseID,
         type: 'tool_result' as const,
-        content: [
-          { type: 'text' as const, text: jsonStringify(summary) },
-          {
-            type: 'image' as const,
-            source: {
-              type: 'base64' as const,
-              data: imageBase64,
-              media_type: imageMediaType,
-            },
-          },
-        ],
+        content: jsonStringify(content),
       }
-    }
-    return {
-      tool_use_id: toolUseID,
-      type: 'tool_result' as const,
-      content: jsonStringify(content),
-    }
+    },
+  } satisfies ToolDef<InputSchema, MossOutput>)
+}
+
+const appBuildSchema = z.strictObject({
+  name: z.string().min(1).describe('App slug/name. The manifest must exist at apps/{name}/app.moss.json.'),
+})
+
+export const AppBuildTool = createMossTool({
+  name: 'app_build',
+  description: 'Build a Moss App from apps/{name}/app.moss.json in the current session workspace and return its build directory.',
+  searchHint: 'build compile desktop app',
+  inputSchema: appBuildSchema,
+  event: input => ({ type: 'app_build', input: { kind: 'app', name: input.name } }),
+  userFacingName: 'App 构建',
+})
+
+const appPreviewSchema = z.strictObject({
+  buildDir: z.string().min(1).describe('Path to the App build directory, usually apps/{name}/build.'),
+})
+
+export const AppPreviewTool = createMossTool({
+  name: 'app_preview',
+  description: 'Preview a built Moss App in the desktop application.',
+  searchHint: 'preview built desktop app',
+  inputSchema: appPreviewSchema,
+  event: input => ({ type: 'app_preview', input: { kind: 'app', buildDir: input.buildDir } }),
+  readOnly: true,
+  userFacingName: 'App 预览',
+})
+
+const appPublishSchema = z.strictObject({
+  name: z.string().min(1).describe('App slug/name.'),
+  buildDir: z.string().min(1).describe('Path to the App build directory.'),
+  description: z.string().min(1).describe('Published App description.'),
+  reason: z.string().optional().describe('Optional release reason.'),
+})
+
+export const AppPublishTool = createMossTool({
+  name: 'app_publish',
+  description: 'Publish a built Moss App to the local App list as a versioned package.',
+  searchHint: 'publish release desktop app',
+  inputSchema: appPublishSchema,
+  event: input => ({ type: 'app_publish', input: { kind: 'app', ...input } }),
+  userFacingName: 'App 发布',
+})
+
+const appLaunchSchema = z.strictObject({
+  name: z.string().min(1).describe('Installed App slug/name.'),
+})
+
+export const AppLaunchTool = createMossTool({
+  name: 'app_launch',
+  description: 'Open an installed Moss App.',
+  searchHint: 'open launch installed app',
+  inputSchema: appLaunchSchema,
+  event: input => ({ type: 'app_launch', input }),
+  readOnly: true,
+  userFacingName: 'App 打开',
+})
+
+const appUpdateSchema = z.strictObject({
+  name: z.string().min(1).describe('Installed App slug/name.'),
+  buildDir: z.string().min(1).describe('Path to the new App build directory.'),
+  description: z.string().optional().describe('Updated App description.'),
+  reason: z.string().optional().describe('Reason for this update.'),
+})
+
+export const AppUpdateTool = createMossTool({
+  name: 'app_update',
+  description: 'Publish a new version of an installed Moss App from a build directory.',
+  searchHint: 'update release installed app',
+  inputSchema: appUpdateSchema,
+  event: input => ({ type: 'app_update', input: { kind: 'app', ...input } }),
+  userFacingName: 'App 更新',
+})
+
+const appExtractSchema = z.strictObject({
+  name: z.string().min(1).describe('Installed App slug/name.'),
+  versionId: z.string().optional().describe('Specific App version to extract. Defaults to the active version.'),
+})
+
+export const AppExtractToWorkspaceTool = createMossTool({
+  name: 'app_extract_to_workspace',
+  description: 'Extract an installed Moss App version into the current session workspace.',
+  searchHint: 'extract app source workspace',
+  inputSchema: appExtractSchema,
+  event: input => ({ type: 'app_extract_to_workspace', input: { kind: 'app', ...input } }),
+  userFacingName: 'App 提取',
+})
+
+const appGetVersionsSchema = z.strictObject({
+  name: z.string().min(1).describe('Installed App slug/name.'),
+})
+
+export const AppGetVersionsTool = createMossTool({
+  name: 'app_get_versions',
+  description: 'List the version history of an installed Moss App.',
+  searchHint: 'list app version history',
+  inputSchema: appGetVersionsSchema,
+  event: input => ({ type: 'app_get_versions', input }),
+  readOnly: true,
+  userFacingName: 'App 版本',
+})
+
+const browserOpenSchema = z.strictObject({
+  url: z.string().min(1).optional().describe('URL to open in the Moss right-side browser.'),
+  query: z.string().min(1).optional().describe('Search query to open in the Moss right-side browser.'),
+  engine: z.enum(['baidu', 'google', 'bing']).optional().describe('Search engine for query. Defaults to baidu for Chinese searches.'),
+}).refine(input => Boolean(input.url || input.query), {
+  message: 'Provide either url or query.',
+})
+
+export const BrowserOpenTool = createMossTool({
+  name: 'browser_open',
+  description: 'Open a URL or search query in the Moss right-side browser panel and bring it into view.',
+  prompt: 'Open a URL or search query in the Moss right-side browser. Provide either url or query. Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine. When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the browser panel is on the right and provide the exact URL.',
+  searchHint: 'open website search browser',
+  inputSchema: browserOpenSchema,
+  inputJSONSchema: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        minLength: 1,
+        description: 'URL to open in the Moss right-side browser.',
+      },
+      query: {
+        type: 'string',
+        minLength: 1,
+        description: 'Search query to open in the Moss right-side browser.',
+      },
+      engine: {
+        type: 'string',
+        enum: ['baidu', 'google', 'bing'],
+        description: 'Search engine for query. Defaults to baidu for Chinese searches.',
+      },
+    },
+    anyOf: [
+      { required: ['url'] },
+      { required: ['query'] },
+    ],
+    additionalProperties: false,
   },
-} satisfies ToolDef<typeof mossActionSchema, MossOutput>)
+  event: input => ({ type: 'browser_open', input }),
+  readOnly: true,
+  userFacingName: '浏览器',
+})
+
+const browserSnapshotSchema = z.strictObject({
+  ...tabIdField,
+  full_page: z.boolean().optional().describe('Capture the full page instead of the visible viewport.'),
+})
+
+export const BrowserSnapshotTool = createMossTool({
+  name: 'browser_snapshot',
+  description: 'Inspect the active Moss browser tab, capture its actual rendered pixels, save the screenshot, and return page text and stable element refs.',
+  prompt: 'Use this tool whenever the user asks to screenshot, capture, or show the current browser, page, or HTML. Never use image_generate to recreate or approximate a screenshot. The actual capture is saved in the workspace and attached to the conversation without inlining image bytes into model context. If visual analysis is needed, read the returned filePath; image reads are resized/compressed to the model image budget. Prefer viewport screenshots; use full_page only when the complete layout matters. Take a new snapshot after navigation or scrolling.',
+  searchHint: 'inspect screenshot browser page',
+  inputSchema: browserSnapshotSchema,
+  event: input => ({ type: 'browser_snapshot', input }),
+  readOnly: true,
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserClickSchema = z.strictObject({
+  ...tabIdField,
+  snapshot_id: z.string().min(1).describe('Snapshot id returned by browser_snapshot.'),
+  ref: z.string().min(1).describe('Element reference such as e1 returned by browser_snapshot.'),
+  click_count: z.union([z.literal(1), z.literal(2)]).optional().describe('Click count. Defaults to 1.'),
+})
+
+export const BrowserClickTool = createMossTool({
+  name: 'browser_click',
+  description: 'Click an element from the latest Moss browser snapshot using its stable reference.',
+  prompt: 'Call browser_snapshot first, then pass its snapshot id and element ref. Take a new snapshot after navigation. Do not use JavaScript or CSS selectors.',
+  searchHint: 'click browser element',
+  inputSchema: browserClickSchema,
+  event: input => ({ type: 'browser_click', input }),
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserTypeSchema = z.strictObject({
+  ...tabIdField,
+  snapshot_id: z.string().min(1).describe('Snapshot id returned by browser_snapshot.'),
+  ref: z.string().min(1).describe('Input element reference returned by browser_snapshot.'),
+  text: z.string().describe('Text to enter.'),
+  clear: z.boolean().optional().describe('Clear the field first. Defaults to true.'),
+  submit: z.boolean().optional().describe('Press Enter after typing.'),
+})
+
+export const BrowserTypeTool = createMossTool({
+  name: 'browser_type',
+  description: 'Enter text into an element from the latest Moss browser snapshot.',
+  prompt: 'Call browser_snapshot first, then pass its snapshot id and element ref. Use submit to press Enter after typing. Do not use JavaScript or CSS selectors.',
+  searchHint: 'type fill browser input',
+  inputSchema: browserTypeSchema,
+  event: input => ({ type: 'browser_type', input }),
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserPressSchema = z.strictObject({
+  ...tabIdField,
+  key: z.enum(['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Space']).describe('Keyboard key to press.'),
+})
+
+export const BrowserPressTool = createMossTool({
+  name: 'browser_press',
+  description: 'Press a supported keyboard key in the active Moss browser tab.',
+  searchHint: 'keyboard key browser page',
+  inputSchema: browserPressSchema,
+  event: input => ({ type: 'browser_press', input }),
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserScrollSchema = z.strictObject({
+  ...tabIdField,
+  delta_x: z.number().int().min(-4000).max(4000).optional().describe('Horizontal scroll delta.'),
+  delta_y: z.number().int().min(-4000).max(4000).optional().describe('Vertical scroll delta. Defaults to 600.'),
+})
+
+export const BrowserScrollTool = createMossTool({
+  name: 'browser_scroll',
+  description: 'Scroll the active Moss browser tab by bounded pixel deltas.',
+  prompt: 'Scroll the active browser tab, then call browser_snapshot again because previous element references are stale.',
+  searchHint: 'scroll browser page viewport',
+  inputSchema: browserScrollSchema,
+  event: input => ({ type: 'browser_scroll', input }),
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserWaitSchema = z.strictObject({
+  ...tabIdField,
+  text: z.string().optional().describe('Text to wait for.'),
+  url_contains: z.string().optional().describe('URL substring to wait for.'),
+  timeout_ms: z.number().int().min(100).max(15_000).optional().describe('Maximum wait in milliseconds.'),
+})
+
+export const BrowserWaitTool = createMossTool({
+  name: 'browser_wait',
+  description: 'Wait for text, a URL change, or page settling in the active Moss browser tab.',
+  searchHint: 'wait browser text navigation',
+  inputSchema: browserWaitSchema,
+  event: input => ({ type: 'browser_wait', input }),
+  readOnly: true,
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const browserReloadSchema = z.strictObject({ ...tabIdField })
+
+export const BrowserReloadTool = createMossTool({
+  name: 'browser_reload',
+  description: 'Reload the active Moss browser tab.',
+  searchHint: 'refresh reload browser page',
+  inputSchema: browserReloadSchema,
+  event: input => ({ type: 'browser_reload', input }),
+  browserPermission: true,
+  userFacingName: '浏览器',
+})
+
+const connectorCliSetupSchema = z.strictObject({
+  connector_id: z.string().min(1).describe('Installed marketplace connector id.'),
+})
+
+export const ConnectorCliSetupTool = createMossTool({
+  name: 'connector_cli_setup',
+  description: 'Install or upgrade an installed connector CLI, complete its authorization flow, and verify its status.',
+  prompt: 'Use this instead of running connector CLI init, auth, or status commands manually. It reads cli.json, opens OAuth when needed, waits for completion, and returns a redacted status summary.',
+  searchHint: 'setup authenticate connector CLI',
+  inputSchema: connectorCliSetupSchema,
+  event: input => ({ type: 'connector_cli_setup', input }),
+  userFacingName: '连接器',
+})
+
+const connectorMcpAuthenticateSchema = z.strictObject({
+  connector_id: z.string().min(1).optional().describe('Installed marketplace connector id.'),
+  server_name: z.string().min(1).optional().describe('MCP server name.'),
+}).refine(input => Boolean(input.connector_id || input.server_name), {
+  message: 'Provide either connector_id or server_name.',
+})
+
+export const ConnectorMcpAuthenticateTool = createMossTool({
+  name: 'connector_mcp_authenticate',
+  description: 'Authenticate an installed marketplace connector MCP server.',
+  prompt: 'Use this when connector MCP tools are missing, empty, or report that authorization is required. Never ask the user to type /mcp. When status is authenticated, tell the user the connector is ready and continue the original request on their next message after tools refresh.',
+  searchHint: 'authorize connector MCP server',
+  inputSchema: connectorMcpAuthenticateSchema,
+  inputJSONSchema: {
+    type: 'object',
+    properties: {
+      connector_id: {
+        type: 'string',
+        minLength: 1,
+        description: 'Installed marketplace connector id.',
+      },
+      server_name: {
+        type: 'string',
+        minLength: 1,
+        description: 'MCP server name.',
+      },
+    },
+    anyOf: [
+      { required: ['connector_id'] },
+      { required: ['server_name'] },
+    ],
+    additionalProperties: false,
+  },
+  event: input => ({ type: 'connector_mcp_authenticate', input }),
+  userFacingName: '连接器',
+})
+
+const imageGenerateSchema = z.strictObject({
+  prompt: z.string().min(1).describe('Description of the image to synthesize.'),
+  out_path: z.string().min(1).describe('Relative output path inside the current session workspace.'),
+  aspect_ratio: imageAspectRatioSchema.optional().describe('Requested output aspect ratio.'),
+  subject_reference: z.array(subjectReferenceSchema).optional().describe('Optional character reference images.'),
+})
+
+export const ImageGenerateTool = createMossTool({
+  name: 'image_generate',
+  description: 'Synthesize a new image from a prompt and save it in the current session workspace.',
+  prompt: 'Use only for synthesizing a new image. Never use this tool to recreate or approximate a browser or application screenshot; use browser_snapshot for screenshots. out_path must be relative to the current session workspace. On success, prefer previewMarkdown when referencing the result.',
+  searchHint: 'generate create synthetic image',
+  inputSchema: imageGenerateSchema,
+  event: input => ({ type: 'image_generate', input }),
+  userFacingName: '图片生成',
+})
+
+const imageEditSchema = z.strictObject({
+  prompt: z.string().min(1).describe('Requested image edit.'),
+  source_path: z.string().min(1).describe('Relative source image path inside the current session workspace.'),
+  out_path: z.string().min(1).describe('Relative output path inside the current session workspace.'),
+  aspect_ratio: imageAspectRatioSchema.optional().describe('Optional output aspect ratio.'),
+})
+
+export const ImageEditTool = createMossTool({
+  name: 'image_edit',
+  description: 'Edit a workspace image and save the result to a new workspace path.',
+  searchHint: 'edit transform workspace image',
+  inputSchema: imageEditSchema,
+  event: input => ({ type: 'image_edit', input }),
+  userFacingName: '图片编辑',
+})
+
+export const MossTools = [
+  BrowserOpenTool,
+  BrowserSnapshotTool,
+  BrowserClickTool,
+  BrowserTypeTool,
+  BrowserPressTool,
+  BrowserScrollTool,
+  BrowserWaitTool,
+  BrowserReloadTool,
+  AppBuildTool,
+  AppPreviewTool,
+  AppPublishTool,
+  AppLaunchTool,
+  AppUpdateTool,
+  AppExtractToWorkspaceTool,
+  AppGetVersionsTool,
+  ConnectorCliSetupTool,
+  ConnectorMcpAuthenticateTool,
+  ImageGenerateTool,
+  ImageEditTool,
+] as const

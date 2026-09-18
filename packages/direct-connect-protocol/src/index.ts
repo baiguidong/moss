@@ -42,6 +42,7 @@ export type AdvancedSettings = {
   moss_context_compaction_strategy: 'proactive' | 'reactive'
   moss_session_debug_logging: boolean
   moss_response_language?: string
+  moss_tool_loading?: Record<string, 'always' | 'deferred'>
 }
 
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
@@ -83,6 +84,7 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_request_attribution_enabled: true,
   moss_context_compaction_strategy: 'proactive',
   moss_session_debug_logging: false,
+  moss_tool_loading: {},
 })
 
 export type SessionRuntimeInfo = {
@@ -144,6 +146,10 @@ export const advancedSettingsSchema = lazySchema(() =>
     moss_context_compaction_strategy: z.enum(['proactive', 'reactive']).optional(),
     moss_session_debug_logging: z.boolean().optional(),
     moss_response_language: z.string().trim().min(1).max(80).optional(),
+    moss_tool_loading: z.record(
+      z.string(),
+      z.enum(['always', 'deferred']),
+    ).optional(),
   }),
 )
 

@@ -85,6 +85,7 @@ try {
       moss_request_attribution_enabled: false,
       moss_context_compaction_strategy: 'reactive',
       moss_session_debug_logging: false,
+      moss_tool_loading: {},
     })
     assert.deepEqual(session.autoMemory, {
       enabled: true,

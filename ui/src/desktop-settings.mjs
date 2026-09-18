@@ -9,6 +9,10 @@ import {
 import { normalizeMcpStore } from './desktop-mcp-settings.mjs';
 import { normalizeAgentMailSessionMode } from './agent-mail-context.mjs';
 import { normalizeWebSearchSettings } from './web-search-capability.mjs';
+import {
+  DEFAULT_MOSS_TOOL_LOADING,
+  normalizeMossToolLoading,
+} from './tool-loading-settings.mjs';
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 
@@ -36,6 +40,9 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     url: 'https://api.minimaxi.com/v1/image_generation',
     apiKey: '',
     model: '',
+  },
+  toolLoading: {
+    ...DEFAULT_MOSS_TOOL_LOADING,
   },
   sessionMemory: {
     enabled: true,
@@ -355,6 +362,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
   result.webSearch = normalizeWebSearchSettings(
     source.webSearch,
     result.webSearch || DEFAULT_DESKTOP_SETTINGS.webSearch,
+  );
+
+  result.toolLoading = normalizeMossToolLoading(
+    source.toolLoading,
+    result.toolLoading || DEFAULT_DESKTOP_SETTINGS.toolLoading,
   );
 
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');

@@ -9,7 +9,7 @@ import { GlobTool } from './tools/GlobTool/GlobTool.js'
 import { NotebookEditTool } from './tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
-import { MossTool } from './tools/MossTool/MossTool.js'
+import { MossTools } from './tools/MossTool/MossTool.js'
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 const SleepTool =
   feature('PROACTIVE')
@@ -149,7 +149,7 @@ export function getAllBaseTools(): Tools {
     TaskStopTool,
     AskUserQuestionTool,
     SkillTool,
-    MossTool,
+    ...MossTools,
     EnterPlanModeTool,
     ...(WebBrowserTool ? [WebBrowserTool] : []),
     TaskCreateTool,

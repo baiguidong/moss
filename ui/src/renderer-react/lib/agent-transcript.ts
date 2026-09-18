@@ -899,6 +899,21 @@ function addToolResultMessage(
     isError: Boolean(block?.is_error),
     attachments,
   });
+  const toolInput = toolUse?.input;
+  if (
+    attachments?.length
+    && (
+      toolName === 'browser_snapshot'
+      || (
+        toolInput
+        && typeof toolInput === 'object'
+        && !Array.isArray(toolInput)
+        && (toolInput as Record<string, unknown>).action === 'browser_snapshot'
+      )
+    )
+  ) {
+    appendAssistantAttachments(state, turn, timestamp, attachments);
+  }
 }
 
 function extractRawUserText(event: AgentEvent): string {

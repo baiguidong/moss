@@ -961,6 +961,7 @@ export type DesktopSettings = {
     apiKey: string;
     model: string;
   };
+  toolLoading: Record<string, 'always' | 'deferred'>;
   sessionMemory?: {
     enabled?: boolean;
     compactEnabled?: boolean;

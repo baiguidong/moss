@@ -64,7 +64,9 @@ export function isDeferredTool(tool: Tool): boolean {
     if (m.isForkSubagentEnabled()) return false
   }
 
-  return tool.shouldDefer === true
+  return typeof tool.shouldDefer === 'function'
+    ? tool.shouldDefer()
+    : tool.shouldDefer === true
 }
 
 /**

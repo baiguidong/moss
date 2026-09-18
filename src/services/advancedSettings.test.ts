@@ -64,6 +64,7 @@ describe('advanced settings', () => {
         moss_request_attribution_enabled: true,
         moss_context_compaction_strategy: 'proactive',
         moss_session_debug_logging: false,
+        moss_tool_loading: {},
       })
     } finally {
       await rm(configDir, { recursive: true, force: true })
@@ -118,6 +119,7 @@ describe('advanced settings', () => {
         moss_request_attribution_enabled: false,
         moss_context_compaction_strategy: 'reactive',
         moss_session_debug_logging: false,
+        moss_tool_loading: {},
       })
       const interviewEnabled = runWithSessionIdContext(
         asSessionId('advanced-plan-mode'),

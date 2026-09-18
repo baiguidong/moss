@@ -4,7 +4,7 @@
 
 ## 总原则
 
-1. 创建和迭代都只通过普通对话 + 当前提示词 + `moss` 工具完成，不依赖任何专门的“创建模式”或“迭代模式”。
+1. 创建和迭代都只通过普通对话 + 当前提示词 + `app_*` 工具完成，不依赖任何专门的“创建模式”或“迭代模式”。
 2. 所有实现都围绕当前 session workspace 的 `apps/{app_name}/` 目录进行。
 3. 当前只有 App 一种可安装扩展；`app.moss.json` 使用 schema version 2，可选声明 UI 和一个 Backend。
 4. 创建和迭代必须复用同一条工作流：准备源文件，构建，预览，确认后发布。
@@ -32,8 +32,7 @@ App Builder 是 App 生成和生命周期的唯一编排者。无论是从零创
 此时第一步必须是：
 
 ```js
-moss({
-  action: "app_extract_to_workspace",
+app_extract_to_workspace({
   name: appName
 })
 ```
@@ -55,8 +54,7 @@ moss({
 如果用户明确要求查看历史版本、比较版本、或者回滚版本，才可以调用：
 
 ```js
-moss({
-  action: "app_get_versions",
+app_get_versions({
   name: appName
 })
 ```
@@ -427,9 +425,7 @@ if (!rootEl) {
 调用：
 
 ```js
-moss({
-  action: "app_build",
-  kind: "app",
+app_build({
   name: "app-name"
 })
 ```
@@ -439,9 +435,7 @@ moss({
 拿到 `buildDir` 后调用：
 
 ```js
-moss({
-  action: "app_preview",
-  kind: "app",
+app_preview({
   buildDir: "/path/to/apps/app-name/build"
 })
 ```
@@ -458,9 +452,7 @@ moss({
 #### 新建 App
 
 ```js
-moss({
-  action: "app_publish",
-  kind: "app",
+app_publish({
   name: "app-name",
   buildDir: "/path/to/apps/app-name/build",
   description: "App 的正式描述"
@@ -470,9 +462,7 @@ moss({
 #### 更新已有 App
 
 ```js
-moss({
-  action: "app_update",
-  kind: "app",
+app_update({
   name: appName,
   buildDir: "/path/to/apps/app-name/build",
   reason: "本次修改摘要"
@@ -490,10 +480,10 @@ moss({
 
 ### 发布后回复规则
 
-当你刚刚调用完 `moss(app_publish)` 或 `moss(app_update)`：
+当你刚刚调用完 `app_publish` 或 `app_update`：
 
 1. 必须先看 tool 返回结果，再组织回复。
-1.1 这里的 tool 返回结果，指的必须是“刚刚那次发布动作”的返回结果，也就是本轮最后一次 `moss(app_publish)` 或 `moss(app_update)` 的结果。
+1.1 这里的 tool 返回结果，指的必须是“刚刚那次发布动作”的返回结果，也就是本轮最后一次 `app_publish` 或 `app_update` 的结果。
 2. 如果返回结果里有 `publishedVersion`，就使用它回复用户。
 3. 对 `app_update`：
    - 只使用 `publishedVersion`

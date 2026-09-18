@@ -18,6 +18,34 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('uses recommended tool loading defaults and accepts per-tool choices', () => {
+    const defaults = normalizeDesktopSettings({}).toolLoading;
+    expect(defaults).toMatchObject({
+      browser_open: 'always',
+      browser_snapshot: 'always',
+      browser_click: 'always',
+      browser_type: 'always',
+      browser_scroll: 'deferred',
+      app_build: 'deferred',
+      app_launch: 'deferred',
+      connector_cli_setup: 'deferred',
+      image_generate: 'deferred',
+    });
+
+    const customized = normalizeDesktopSettings({
+      toolLoading: {
+        browser_open: 'deferred',
+        app_build: 'always',
+        image_generate: 'invalid',
+        unknown_tool: 'always',
+      },
+    }).toolLoading;
+    expect(customized.browser_open).toBe('deferred');
+    expect(customized.app_build).toBe('always');
+    expect(customized.image_generate).toBe('deferred');
+    expect(customized).not.toHaveProperty('unknown_tool');
+  });
+
   it('defaults replies and newly generated memories to Chinese', () => {
     expect(normalizeDesktopSettings({}).language).toBe('chinese');
     expect(normalizeDesktopSettings({ language: ' english ' }).language).toBe('english');
@@ -310,6 +338,34 @@ describe('desktop settings', () => {
     expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
     expect(persisted.remoteDirect.userName).toBe('Moss User');
     expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
+  });
+
+  it('persists tool loading choices and fills missing tools from defaults', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-tool-loading-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    store.save({
+      ...store.value,
+      toolLoading: {
+        browser_open: 'deferred',
+        app_build: 'always',
+      },
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(persisted.toolLoading.browser_open).toBe('deferred');
+    expect(persisted.toolLoading.app_build).toBe('always');
+    expect(persisted.toolLoading.image_generate).toBe('deferred');
+
+    const reloaded = createDesktopSettingsStore({ settingsPath });
+    expect(reloaded.value.toolLoading).toMatchObject({
+      browser_open: 'deferred',
+      app_build: 'always',
+      browser_snapshot: 'always',
+      image_generate: 'deferred',
+    });
   });
 
   it('persists the WebSearch mode without writing provider credentials', () => {

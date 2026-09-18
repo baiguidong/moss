@@ -121,6 +121,7 @@ import {
   createBrowserViewManager,
   registerBrowserViewIpcHandlers,
 } from './browser-view-manager.mjs';
+import { persistBrowserSnapshotArtifact } from './browser-snapshot-artifact.mjs';
 import {
   describeBrowserAutomationAction,
   getBrowserAutomationOrigin,
@@ -3291,7 +3292,7 @@ function buildBoundAppSystemPrompt(appName) {
     'Current bound app context:',
     `- appName: ${serializedAppName}`,
     '- This session is attached to an existing app.',
-    `- If you need editable source, first use moss(action: "app_extract_to_workspace", name: ${serializedAppName}).`,
+    `- If you need editable source, first call app_extract_to_workspace with name: ${serializedAppName}.`,
   ].join('\n');
 }
 
@@ -3307,7 +3308,7 @@ function buildConnectorSystemPrompt(sessionRecord) {
     lines.push(`Connector MCP servers: ${serverNames.join(', ')}`);
   }
   lines.push(
-    'When a marketplace connector MCP server is missing tools, returns no tools, reports auth is required, or otherwise needs authorization, call moss with action "connector_mcp_authenticate" and the connector_id or server_name.',
+    'When a marketplace connector MCP server is missing tools, returns no tools, reports auth is required, or otherwise needs authorization, call connector_mcp_authenticate with the connector_id or server_name.',
     'When connector_mcp_authenticate returns status "authenticated", authorization is complete. Do not authenticate again; tell the user to continue the original request in their next message so the refreshed MCP tools can load.',
     'Do not ask the user to type /mcp for marketplace connector authorization in Moss desktop.',
     'Do not reveal access tokens, OAuth codes, full authorization URLs, passwords, or other credentials in the conversation.',
@@ -3415,6 +3416,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
         ...desktopSettings.advanced,
         moss_response_language: desktopSettings.language,
+        moss_tool_loading: desktopSettings.toolLoading,
       }),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
       MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
@@ -3538,6 +3540,7 @@ function createRemoteDirectRuntime({
           advancedSettings: {
             ...desktopSettings.advanced,
             moss_response_language: desktopSettings.language,
+            moss_tool_loading: desktopSettings.toolLoading,
           },
           autoMemory: desktopSettings.autoMemory,
           sessionMemory: desktopSettings.sessionMemory,
@@ -8518,11 +8521,20 @@ async function handleMossHostEvent(event, sessionRecord) {
             fullPage: event.input?.full_page === true,
           });
           const { imageBase64, imageMediaType, ...browser } = result;
+          const workspace = getSessionWorkspaceRoot(sessionRecord);
+          if (!workspace) {
+            throw new Error('Browser snapshots require a session workspace.');
+          }
+          const artifact = await persistBrowserSnapshotArtifact({
+            workspace,
+            imageBase64,
+            imageMediaType,
+          });
+          allowMediaRoot(workspace);
           return {
             ok: true,
             browser: sanitizeBrowserAutomationResult(browser),
-            imageBase64,
-            imageMediaType,
+            ...artifact,
           };
         }
         case 'browser_click':
@@ -12411,7 +12423,7 @@ ipcMain.handle('app:delete', async (_event, { name, deleteData = false, deleteCr
 ipcMain.handle('app:save', async (_event, { sessionId, launch = true }) => {
   return {
     ok: false,
-    error: 'Direct app:save is no longer supported. Use moss(app_build/app_publish) with apps/{name}/app.moss.json.',
+    error: 'Direct app:save is no longer supported. Use app_build and app_publish with apps/{name}/app.moss.json.',
   };
 });
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {
-  Bot,
+  Blocks,
   Check,
   LogIn,
   MessageSquare,
@@ -27,11 +27,16 @@ import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { PRESET_THEMES } from '@/theme/presets';
+import {
+  DEFAULT_MOSS_TOOL_LOADING,
+  MOSS_TOOL_GROUPS,
+  type MossToolLoadingMode,
+} from '../../tool-loading-settings.mjs';
 import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'tools' | 'integrations' | 'personalization' | 'advanced';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'tools' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -213,9 +218,23 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
+    id: 'tools',
+    title: '工具',
+    icon: Wrench,
+    iconGradientClassName: 'from-cyan-400 to-blue-600',
+    keywords: ['工具', 'tool', '常驻', '按需', '加载'],
+    sections: [
+      {
+        id: 'tools',
+        title: '工具',
+        keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需'],
+      },
+    ],
+  },
+  {
     id: 'integrations',
     title: '扩展与集成',
-    icon: Wrench,
+    icon: Blocks,
     iconGradientClassName: 'from-lime-400 to-emerald-600',
     keywords: ['扩展', '集成', 'integration'],
     sections: [
@@ -355,6 +374,65 @@ function SettingsGroup({ children, className }: SettingsGroupProps) {
   return (
     <Surface className={cn('divide-y divide-sidebar-border', className)}>
       {children}
+    </Surface>
+  );
+}
+
+export function ToolLoadingSettingsTable({
+  value,
+  onChange,
+}: {
+  value: Record<string, MossToolLoadingMode>;
+  onChange: (name: string, mode: MossToolLoadingMode) => void;
+}) {
+  return (
+    <Surface>
+      <div className="overflow-x-auto">
+        <div className="min-w-[640px]">
+          <div className="grid grid-cols-[minmax(190px,0.9fr)_minmax(260px,1.4fr)_72px_72px] items-center gap-4 border-b border-sidebar-border bg-sidebar-accent/45 px-4 py-3 text-xs font-medium text-muted-foreground">
+            <div>工具</div>
+            <div>简短说明</div>
+            <div className="text-center">常驻</div>
+            <div className="text-center">按需</div>
+          </div>
+          {MOSS_TOOL_GROUPS.map((group) => (
+            <div key={group.id} className="border-b border-sidebar-border last:border-b-0">
+              <div className="bg-sidebar/55 px-4 py-2 text-xs font-semibold text-foreground">
+                {group.label}
+              </div>
+              {group.tools.map((tool) => {
+                const selectedMode = value[tool.name] ?? tool.defaultMode;
+                return (
+                  <div
+                    key={tool.name}
+                    className="grid grid-cols-[minmax(190px,0.9fr)_minmax(260px,1.4fr)_72px_72px] items-center gap-4 border-t border-sidebar-border px-4 py-3"
+                  >
+                    <code className="truncate text-[12px] font-medium text-foreground">
+                      {tool.name}
+                    </code>
+                    <div className="text-xs leading-5 text-muted-foreground">
+                      {tool.description}
+                    </div>
+                    {(['always', 'deferred'] as const).map((mode) => (
+                      <label key={mode} className="flex cursor-pointer items-center justify-center">
+                        <input
+                          type="radio"
+                          name={`tool-loading-${tool.name}`}
+                          value={mode}
+                          checked={selectedMode === mode}
+                          onChange={() => onChange(tool.name, mode)}
+                          aria-label={`${tool.name} ${mode === 'always' ? '常驻' : '按需'}`}
+                          className="h-4 w-4 accent-primary"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
     </Surface>
   );
 }
@@ -1169,6 +1247,7 @@ export function SettingsView({
     'basic-info': null,
     model: null,
     'web-search': null,
+    tools: null,
     library: null,
     mcp: null,
     feishu: null,
@@ -1222,6 +1301,10 @@ export function SettingsView({
   const advancedDraft = {
     ...DEFAULT_ADVANCED_SETTINGS,
     ...(settingsDraft?.advanced || {}),
+  };
+  const toolLoadingDraft = {
+    ...DEFAULT_MOSS_TOOL_LOADING,
+    ...(settingsDraft?.toolLoading || {}),
   };
 
   React.useEffect(() => {
@@ -1307,6 +1390,13 @@ export function SettingsView({
   const updateSetting = <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => {
     setSettingsDraft((current) => (current ? { ...current, [key]: value } : current));
     void autoSaveSettings(key, value);
+  };
+
+  const updateToolLoading = (name: string, mode: MossToolLoadingMode) => {
+    updateSetting('toolLoading', {
+      ...toolLoadingDraft,
+      [name]: mode,
+    });
   };
 
   const updateWebSearchMode = (mode: NonNullable<DesktopSettings['webSearch']>['mode']) => {
@@ -2457,6 +2547,24 @@ export function SettingsView({
                         </div>
                       </SettingsRow>
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'tools') ? (
+                  <SettingsSection
+                    id="tools"
+                    title="工具"
+                    sectionRef={(element) => {
+                      sectionRefs.current.tools = element;
+                    }}
+                  >
+                    <div className="mb-3 px-1 text-xs leading-6 text-muted-foreground">
+                      常驻工具会在每次请求中直接提供完整参数；模型支持 ToolSearch 时，按需工具只公布名称并在首次使用时加载。
+                    </div>
+                    <ToolLoadingSettingsTable
+                      value={toolLoadingDraft}
+                      onChange={updateToolLoading}
+                    />
                   </SettingsSection>
                 ) : null}
 

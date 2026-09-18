@@ -174,6 +174,36 @@ describe("agent transcript tool rendering", () => {
     })]);
   });
 
+  it("promotes a real browser snapshot artifact into the assistant conversation", () => {
+    const screenshotPath = "/tmp/workspace/screenshots/browser-snapshot.png";
+    const messages = buildMainChatRenderMessagesFromHistory([
+      {
+        type: "user",
+        uuid: "user-screenshot",
+        timestamp: "2026-09-18T00:00:00.000Z",
+        message: { role: "user", content: "截图发我" },
+      },
+      assistantTool("snapshot-1", "browser_snapshot", { full_page: false }),
+      toolResult("snapshot-1", "captured", {
+        ok: true,
+        fileKind: "image",
+        filePath: screenshotPath,
+        filePaths: [screenshotPath],
+        browser: { snapshotId: "browser-state-1" },
+      }),
+      {
+        type: "assistant",
+        timestamp: "2026-09-18T00:00:03.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "已截图。" }] },
+      },
+    ]);
+
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: "assistant_text",
+      attachments: [{ kind: "image", path: screenshotPath }],
+    }));
+  });
+
   it("separates built-in exploration tools without grouping business search tools", () => {
     const model = buildRenderModel(buildMainChatRenderMessagesFromHistory([
       assistantTool("read-1", "Read", { file_path: "/repo/src/one.ts" }),
