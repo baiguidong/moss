@@ -13,14 +13,20 @@ import {
   DEFAULT_MOSS_TOOL_LOADING,
   normalizeMossToolLoading,
 } from './tool-loading-settings.mjs';
+import {
+  normalizePermissionMode,
+  permissionModeFromLegacyBypass,
+} from './permission-modes.mjs';
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
+const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
 
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentMode: 'local',
   localEnabled: true,
   remoteEnabled: false,
   agentTeamsEnabled: false,
+  permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
   maxTurns: 100,
@@ -335,11 +341,20 @@ export function normalizeDesktopSettings(input, existing = {}) {
     boundedInt(existingTextThinking.budgetTokens, 1024, 128_000) ??
     DEFAULT_DESKTOP_SETTINGS.thinkingBudgetTokens;
 
-  if (source.bypassPermissions !== undefined) {
-    result.bypassPermissions = Boolean(source.bypassPermissions);
-  } else if (result.bypassPermissions === undefined) {
-    result.bypassPermissions = DEFAULT_DESKTOP_SETTINGS.bypassPermissions;
-  }
+  const explicitPermissionMode = Object.prototype.hasOwnProperty.call(source, 'permissionMode')
+    ? normalizePermissionMode(source.permissionMode)
+    : null;
+  const legacyPermissionMode = Object.prototype.hasOwnProperty.call(source, 'bypassPermissions')
+    ? permissionModeFromLegacyBypass(source.bypassPermissions)
+    : null;
+  result.permissionMode = explicitPermissionMode
+    || legacyPermissionMode
+    || normalizePermissionMode(
+      result.permissionMode,
+      permissionModeFromLegacyBypass(result.bypassPermissions),
+    );
+  // Keep the legacy field in sync for older desktop builds and settings files.
+  result.bypassPermissions = result.permissionMode === 'bypassPermissions';
 
   result.url =
     normalizeMossBaseUrl(

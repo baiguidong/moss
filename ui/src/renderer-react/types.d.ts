@@ -45,10 +45,13 @@ export type AgentMailRuntimeStatus = {
   pendingManual: number;
 };
 
+export type PermissionMode = 'plan' | 'acceptEdits' | 'default' | 'dontAsk' | 'bypassPermissions';
+
 export type SessionSummary = {
   id: string;
   title: string;
   agentMode?: 'local' | 'remote-direct';
+  permissionMode: PermissionMode;
   composerIntent?: 'chat' | 'boss';
   workspace: string;
   createdAt: number;
@@ -85,6 +88,18 @@ export type SessionDetail = SessionSummary & {
   history: AgentEvent[];
   workerSummariesJson: string | null;
   tasks?: SessionTask[];
+};
+
+export type SessionSearchResult = {
+  sessionId: string;
+  sessionTitle: string;
+  agentMode: 'local' | 'remote-direct';
+  messageId: string | null;
+  role: 'user' | 'assistant' | null;
+  snippet: string;
+  timestamp: number;
+  sessionUpdatedAt: number;
+  rank: number;
 };
 
 export type AgentEvent = Record<string, any>;
@@ -930,6 +945,7 @@ export type DesktopSettings = {
   localEnabled: boolean;
   remoteEnabled: boolean;
   agentTeamsEnabled: boolean;
+  permissionMode: PermissionMode;
   bypassPermissions: boolean;
   model: string;
   maxTurns: number;
@@ -1670,8 +1686,9 @@ declare global {
         onChanged: (callback: (payload: { reason: string; [key: string]: unknown }) => void) => () => void;
       };
       listSessions: () => Promise<SessionSummary[]>;
+      searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[] }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
@@ -1687,6 +1704,10 @@ declare global {
       setSessionToolDisplayMode: (payload: {
         sessionId: string;
         mode: 'expanded' | 'collapsed' | 'merged' | null;
+      }) => Promise<SessionSummary>;
+      setSessionPermissionMode: (payload: {
+        sessionId: string;
+        mode: PermissionMode;
       }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;

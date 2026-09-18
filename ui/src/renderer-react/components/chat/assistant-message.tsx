@@ -100,8 +100,7 @@ export function AssistantMessage({
             copyText={message.content}
             copyLabel="复制回复"
             align="start"
-            className={documentLayout ? "left-auto right-1 top-1 w-auto" : "w-auto"}
-            floating
+            className="min-h-7 px-1"
           />
         )}
       </div>

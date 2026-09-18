@@ -8,6 +8,7 @@ import type {
   StdoutMessage,
 } from '../entrypoints/sdk/controlTypes.js'
 import type { MossAppEvent, MossAppEventResult } from '../Tool.js'
+import type { ExternalPermissionMode } from '../types/permissions.js'
 import { CircularBuffer } from '../utils/CircularBuffer.js'
 import { logForDebugging } from '../utils/debug.js'
 import { errorMessage } from '../utils/errors.js'
@@ -39,6 +40,12 @@ type WebSocketState =
 type BufferedMessage = {
   line: string
   uuid: string
+}
+
+type PendingControlRequest = {
+  resolve: () => void
+  reject: (error: Error) => void
+  timeout: NodeJS.Timeout
 }
 
 export type RemoteMessageContent =
@@ -106,6 +113,7 @@ export class DirectConnectSessionManager {
   private readonly replayBuffer = new CircularBuffer<BufferedMessage>(
     DEFAULT_MAX_REPLAY_MESSAGES,
   )
+  private readonly pendingControlRequests = new Map<string, PendingControlRequest>()
 
   constructor(
     private config: DirectConnectConfig,
@@ -295,6 +303,28 @@ export class DirectConnectSessionManager {
         continue
       }
 
+      if (parsed.type === 'control_response') {
+        const response = parsed.response as {
+          subtype?: string
+          request_id?: string
+          error?: string
+        }
+        const requestId = response.request_id
+        const pending = requestId
+          ? this.pendingControlRequests.get(requestId)
+          : undefined
+        if (requestId && pending) {
+          clearTimeout(pending.timeout)
+          this.pendingControlRequests.delete(requestId)
+          if (response.subtype === 'success') {
+            pending.resolve()
+          } else {
+            pending.reject(new Error(response.error || 'Remote control request failed.'))
+          }
+        }
+        continue
+      }
+
       if (
         parsed.type !== 'control_response' &&
         parsed.type !== 'keep_alive' &&
@@ -312,6 +342,7 @@ export class DirectConnectSessionManager {
     const previousState = this.state
 
     this.stopPingInterval()
+    this.rejectPendingControlRequests('Remote session disconnected.')
     this.disposeSocket()
 
     if (this.manuallyDisconnected || this.state === 'closed') {
@@ -577,6 +608,35 @@ export class DirectConnectSessionManager {
     this.sendLine(line)
   }
 
+  setPermissionMode(mode: ExternalPermissionMode): Promise<void> {
+    if (!this.ws || this.state !== 'connected') {
+      return Promise.reject(new Error('Remote session is not connected.'))
+    }
+
+    const requestId = randomUUID()
+    const line = jsonStringify({
+      type: 'control_request',
+      request_id: requestId,
+      request: {
+        subtype: 'set_permission_mode',
+        mode,
+      },
+    })
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('Timed out while changing remote permission mode.'))
+      }, 10_000)
+      this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
+      if (!this.sendLine(line)) {
+        clearTimeout(timeout)
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('Failed to change remote permission mode.'))
+      }
+    })
+  }
+
   private sendErrorResponse(requestId: string, error: string): void {
     if (!this.ws || this.state !== 'connected') {
       return
@@ -593,6 +653,14 @@ export class DirectConnectSessionManager {
     this.sendLine(line)
   }
 
+  private rejectPendingControlRequests(message: string): void {
+    for (const pending of this.pendingControlRequests.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error(message))
+    }
+    this.pendingControlRequests.clear()
+  }
+
   disconnect(): void {
     this.manuallyDisconnected = true
     this.state = 'closed'
@@ -603,6 +671,7 @@ export class DirectConnectSessionManager {
     }
 
     this.stopPingInterval()
+    this.rejectPendingControlRequests('Remote session disconnected.')
     this.disposeSocket()
   }
 

@@ -1,4 +1,5 @@
 import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
+import { getSearchMessageId } from '../../session-search-index.mjs';
 
 const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
 
@@ -44,6 +45,7 @@ type TranscriptRenderMessageBase = {
   timestamp: Date;
   meta?: string[];
   turnId?: string;
+  sourceMessageIds?: string[];
 };
 
 export type UserTextRenderMessage = TranscriptRenderMessageBase & {
@@ -534,6 +536,17 @@ function pushTurnItem(
   turn.items.push(item);
 }
 
+function appendSourceMessageId(
+  item: TranscriptRenderMessage,
+  sourceMessageId?: string,
+) {
+  if (!sourceMessageId) return;
+  item.sourceMessageIds = Array.from(new Set([
+    ...(item.sourceMessageIds || []),
+    sourceMessageId,
+  ]));
+}
+
 function resetAssistantTurn(
   state: RenderBuilderState,
   timestamp: Date,
@@ -589,7 +602,7 @@ function appendAssistantTextItem(
   turn: AssistantTurnState,
   timestamp: Date,
   text: string,
-  options?: { streaming?: boolean; preserveWhitespace?: boolean },
+  options?: { streaming?: boolean; preserveWhitespace?: boolean; sourceMessageId?: string },
 ) {
   const rawText = String(text || '');
   const normalized = options?.preserveWhitespace ? rawText : rawText.trim();
@@ -602,6 +615,7 @@ function appendAssistantTextItem(
     item.content = item.content ? `${item.content}\n\n${normalized}` : normalized;
   }
   if (options?.streaming) item.streaming = true;
+  appendSourceMessageId(item, options?.sourceMessageId);
 }
 
 function appendCompletedAssistantTextItem(
@@ -609,6 +623,7 @@ function appendCompletedAssistantTextItem(
   turn: AssistantTurnState,
   timestamp: Date,
   text: string,
+  sourceMessageId?: string,
 ) {
   const normalized = String(text || '').trim();
   if (!normalized) return;
@@ -622,15 +637,22 @@ function appendCompletedAssistantTextItem(
     streamed.content = normalized;
     streamed.streaming = false;
     if (timestamp.getTime() > streamed.timestamp.getTime()) streamed.timestamp = timestamp;
+    appendSourceMessageId(streamed, sourceMessageId);
     return;
   }
   const duplicate = turn.items.some(
     (item) => item.type === 'assistant_text' && item.content.trim() === normalized,
   );
   if (duplicate) {
+    const existing = turn.items.find(
+      (item): item is AssistantTextRenderMessage => (
+        item.type === 'assistant_text' && item.content.trim() === normalized
+      ),
+    );
+    if (existing) appendSourceMessageId(existing, sourceMessageId);
     return;
   }
-  appendAssistantTextItem(state, turn, timestamp, normalized);
+  appendAssistantTextItem(state, turn, timestamp, normalized, { sourceMessageId });
 }
 
 function ensureThinkingItem(
@@ -815,6 +837,7 @@ function addUserRenderMessage(
   content: string,
   attachments?: TranscriptAttachment[],
   turnId?: string,
+  sourceMessageId?: string,
 ) {
   state.items.push({
     id: nextRenderId(state, 'user'),
@@ -824,6 +847,7 @@ function addUserRenderMessage(
     timestamp,
     attachments,
     turnId,
+    sourceMessageIds: sourceMessageId ? [sourceMessageId] : undefined,
   });
 }
 
@@ -1127,6 +1151,7 @@ export function buildTranscriptRenderMessages(
     const timestamp = safeDate(event?.timestamp, previousTimestamp);
     previousTimestamp = timestamp;
     const userText = event?.type === 'user' ? extractUserText(event) : '';
+    const sourceMessageId = getSearchMessageId(event);
 
     const userAttachments = mergeAttachments(
       attachmentsFromPaths(
@@ -1156,7 +1181,7 @@ export function buildTranscriptRenderMessages(
         ? event.uuid.trim()
         : undefined;
       state.activeTurnId = turnId;
-      addUserRenderMessage(state, timestamp, userText, userAttachments, turnId);
+      addUserRenderMessage(state, timestamp, userText, userAttachments, turnId, sourceMessageId);
       continue;
     }
 
@@ -1372,7 +1397,7 @@ export function buildTranscriptRenderMessages(
           if (!block || typeof block !== 'object') continue;
           if (block.type === 'text' && typeof block.text === 'string') {
             if (isIgnoredTextOutput(block.text)) continue;
-            appendCompletedAssistantTextItem(state, turn, timestamp, block.text);
+            appendCompletedAssistantTextItem(state, turn, timestamp, block.text, sourceMessageId);
           } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
             if (streamingThinking.length === 0) {
               appendThinkingItem(
@@ -1401,7 +1426,7 @@ export function buildTranscriptRenderMessages(
       } else {
         const normalizedText = normalizeTextFromContentBlocks(event?.message?.content);
         if (normalizedText && !isIgnoredTextOutput(normalizedText)) {
-          appendAssistantTextItem(state, turn, timestamp, normalizedText);
+          appendAssistantTextItem(state, turn, timestamp, normalizedText, { sourceMessageId });
         }
       }
 

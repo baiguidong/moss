@@ -13,6 +13,7 @@ import {
   ImageGenerateTool,
   MossTools,
 } from './MossTool.js'
+import { MOSS_TOOL_GROUPS } from './toolLoading.js'
 
 function contextWith(handler: (event: MossAppEvent) => Promise<any>): ToolUseContext {
   return { emitAppEvent: handler } as unknown as ToolUseContext
@@ -41,6 +42,9 @@ describe('split Moss host tools', () => {
       'image_generate',
       'image_edit',
     ])
+    expect(Object.values(MOSS_TOOL_GROUPS).flat()).toEqual(
+      MossTools.map(tool => tool.name),
+    )
   })
 
   test('uses action-specific schemas with required fields', () => {

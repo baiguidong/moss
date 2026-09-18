@@ -7,6 +7,7 @@ import { OverviewView } from '@/components/overview-view';
 import { LibraryView } from '@/components/library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
+import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
   ToolDisplaySettingsProvider,
@@ -57,8 +58,10 @@ import type {
   InstalledConnector,
   InstalledAssistant,
   LibraryResource,
+  PermissionMode,
   Project,
   SessionDetail,
+  SessionSearchResult,
   SessionSummary,
   StoredApp,
   WorkspacePreviewData,
@@ -452,6 +455,12 @@ export default function App() {
   const committedAppearanceRef = React.useRef(appearanceRef.current);
   const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
+  const [globalSearchOpen, setGlobalSearchOpen] = React.useState(false);
+  const [messageFocusTarget, setMessageFocusTarget] = React.useState<{
+    sessionId: string;
+    messageId: string;
+    requestId: number;
+  } | null>(null);
   const [layout, setLayout] = React.useState<LayoutState>(() => loadPanelLayout());
   const effectiveLeftCollapsed = layout.leftCollapsed || compactViewport;
 
@@ -491,6 +500,9 @@ export default function App() {
   const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
+  const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
+  const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
+  const permissionModeSettingRequestRef = React.useRef<string | null>(null);
   const [agentTeamsBySession, setAgentTeamsBySession] = React.useState<Record<string, AgentTeamsSessionState>>({});
   const [input, setInput] = React.useState('');
   const [pendingNewSessionContext, setPendingNewSessionContext] = React.useState<PendingNewSessionContext | null>(null);
@@ -559,6 +571,12 @@ export default function App() {
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
   const openSessionRequestIdRef = React.useRef(0);
+
+  React.useEffect(() => {
+    if (!activeSessionId) {
+      setNewSessionPermissionMode(desktopSettings?.permissionMode ?? 'default');
+    }
+  }, [activeSessionId, desktopSettings?.permissionMode]);
   // Guards against creating a second session (and a second workspace dir) when
   // submitPrompt re-enters before the first createAndOpenSession has set
   // activeSessionId — e.g. a fast double-send, or a retry after an errored
@@ -796,17 +814,43 @@ export default function App() {
     return true;
   }, [clearSessionWorkspaceState]);
 
+  const handleOpenSearchResult = React.useCallback(async (result: SessionSearchResult) => {
+    setGlobalSearchOpen(false);
+    setMessageFocusTarget(null);
+    const opened = await openSession(result.sessionId);
+    if (opened && result.messageId) {
+      setMessageFocusTarget({
+        sessionId: result.sessionId,
+        messageId: result.messageId,
+        requestId: Date.now(),
+      });
+    }
+  }, [openSession]);
+
+  React.useEffect(() => {
+    const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
+        event.preventDefault();
+        setGlobalSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalSearchShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut);
+  }, []);
+
   const createAndOpenSession = React.useCallback(async (
     title?: string,
     workspace?: string,
     assistantName?: string,
     connectorIds?: string[],
+    permissionMode?: PermissionMode,
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[] } = {};
+    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode } = {};
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
     if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
+    if (permissionMode) payload.permissionMode = permissionMode;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
     activeSessionIdRef.current = created.summary.id;
@@ -1521,6 +1565,7 @@ export default function App() {
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
     setAuditFocusTarget(null);
+    setMessageFocusTarget(null);
     const opened = await openSession(sessionId);
     if (!opened) return;
     setActiveView('chat');
@@ -1583,6 +1628,38 @@ export default function App() {
         toolDisplaySettingRequestRef.current = null;
       }
       setToolDisplaySettingSessionId((current) => current === sessionId ? null : current);
+    }
+  }, [showPermissionNotice]);
+
+  const handleSessionPermissionModeChange = React.useCallback(async (mode: PermissionMode) => {
+    const sessionId = activeSessionIdRef.current;
+    const detail = activeDetailRef.current;
+    if (!sessionId || !detail || permissionModeSettingRequestRef.current) return;
+
+    permissionModeSettingRequestRef.current = sessionId;
+    setPermissionModeSettingSessionId(sessionId);
+    try {
+      const summary = await window.agentDesktop.setSessionPermissionMode({ sessionId, mode });
+      setSummaries((prev) => upsertSummary(prev, summary));
+      if (activeSessionIdRef.current === sessionId) {
+        setActiveDetail((current) => {
+          if (!current || current.id !== sessionId) return current;
+          const next = { ...current, ...summary };
+          activeDetailRef.current = next;
+          return next;
+        });
+      }
+    } catch (error) {
+      showPermissionNotice(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        6000,
+      );
+    } finally {
+      if (permissionModeSettingRequestRef.current === sessionId) {
+        permissionModeSettingRequestRef.current = null;
+      }
+      setPermissionModeSettingSessionId((current) => current === sessionId ? null : current);
     }
   }, [showPermissionNotice]);
 
@@ -1823,6 +1900,7 @@ export default function App() {
           workspace,
           selectedAssistant?.name,
           draftConnectorIds,
+          newSessionPermissionMode,
         ).finally(() => {
           creatingSessionRef.current = null;
         });
@@ -1855,7 +1933,7 @@ export default function App() {
     }
 
     await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionPermissionMode, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2463,6 +2541,7 @@ export default function App() {
             onTogglePin={handleTogglePin}
             onToggleCollapse={() => toggleSidebar('left')}
             onSearchChange={setSessionSearchQuery}
+            onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
           />
         </div>
 
@@ -2513,11 +2592,16 @@ export default function App() {
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
                 focusedToolRequestId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.requestId : undefined}
+                focusedMessageId={messageFocusTarget?.sessionId === activeSessionId ? messageFocusTarget.messageId : undefined}
+                focusedMessageRequestId={messageFocusTarget?.sessionId === activeSessionId ? messageFocusTarget.requestId : undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
                 planDecisionBusy={planDecisionBusy}
                 leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
+                permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
+                onPermissionModeChange={handleSessionPermissionModeChange}
+                permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
                 childSessions={activeChildSessions}
                 onChange={setInput}
                 onComposerIntentChange={handleComposerIntentChange}
@@ -2576,6 +2660,8 @@ export default function App() {
                 leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
+                permissionMode={newSessionPermissionMode}
+                onPermissionModeChange={setNewSessionPermissionMode}
                 childSessions={[]}
                 onChange={setInput}
                 onComposerIntentChange={handleComposerIntentChange}
@@ -2722,6 +2808,11 @@ export default function App() {
           }}
           onSubmit={handleSubmitQuestion}
           onReject={handleRejectQuestion}
+        />
+        <GlobalSessionSearch
+          open={globalSearchOpen}
+          onClose={() => setGlobalSearchOpen(false)}
+          onSelect={handleOpenSearchResult}
         />
         <UpdateModal />
       </div>

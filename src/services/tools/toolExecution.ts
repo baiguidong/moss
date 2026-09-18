@@ -569,8 +569,8 @@ export function buildSchemaNotSentHint(
 ): string | null {
   // Optimistic gating — reconstructing claude.ts's full useToolSearch
   // computation is fragile. These two gates prevent pointing at a ToolSearch
-  // that isn't callable; occasional misfires (Haiku, tst-auto below threshold)
-  // cost one extra round-trip on an already-failing path.
+  // that isn't callable; an occasional tst-auto below-threshold mismatch costs
+  // one extra round-trip on an already-failing path.
   if (!isToolSearchEnabledOptimistic()) return null
   if (!isToolSearchToolAvailable(tools)) return null
   if (!isDeferredTool(tool)) return null

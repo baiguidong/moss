@@ -2,6 +2,36 @@ import { getAdvancedSetting } from '../../services/advancedSettings.js'
 
 export type MossToolLoadingMode = 'always' | 'deferred'
 
+export const MOSS_TOOL_GROUPS = {
+  browser: [
+    'browser_open',
+    'browser_snapshot',
+    'browser_click',
+    'browser_type',
+    'browser_press',
+    'browser_scroll',
+    'browser_wait',
+    'browser_reload',
+  ],
+  app: [
+    'app_build',
+    'app_preview',
+    'app_publish',
+    'app_launch',
+    'app_update',
+    'app_extract_to_workspace',
+    'app_get_versions',
+  ],
+  connector: [
+    'connector_cli_setup',
+    'connector_mcp_authenticate',
+  ],
+  image: [
+    'image_generate',
+    'image_edit',
+  ],
+} as const
+
 export const DEFAULT_MOSS_TOOL_LOADING = {
   browser_open: 'always',
   browser_snapshot: 'always',
@@ -25,6 +55,18 @@ export const DEFAULT_MOSS_TOOL_LOADING = {
 } as const satisfies Record<string, MossToolLoadingMode>
 
 export type MossToolName = keyof typeof DEFAULT_MOSS_TOOL_LOADING
+
+const MOSS_TOOL_GROUP_BY_NAME = new Map<MossToolName, readonly MossToolName[]>(
+  Object.values(MOSS_TOOL_GROUPS).flatMap(group => (
+    group.map(name => [name, group] as const)
+  )),
+)
+
+export function getMossToolGroupMembers(
+  name: string,
+): readonly MossToolName[] | undefined {
+  return MOSS_TOOL_GROUP_BY_NAME.get(name as MossToolName)
+}
 
 export function getMossToolLoadingMode(name: MossToolName): MossToolLoadingMode {
   const configured = getAdvancedSetting('moss_tool_loading')?.[name]

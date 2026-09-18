@@ -1,10 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { User } from "lucide-react";
 import { FilePreview } from "@/components/file-preview";
-import { MessageActionBar } from "@/components/chat/message-action-bar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { UserTextRenderMessage } from "@/lib/agent-transcript";
 
 export function UserMessage({ message }: { message: UserTextRenderMessage }) {
@@ -16,11 +13,11 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
       className="group flex flex-row-reverse justify-start gap-2"
       style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
     >
-      <Avatar className="h-6 w-6 shrink-0">
-        <AvatarFallback className="bg-muted text-muted-foreground">
-          <User className="h-3.5 w-3.5" />
-        </AvatarFallback>
-      </Avatar>
+      <img
+        src="./build/icon.png"
+        alt="用户"
+        className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+      />
 
       <div
         data-message-shell="user"
@@ -50,15 +47,6 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
           >
             {message.content}
           </div>
-        )}
-
-        {hasText && (
-          <MessageActionBar
-            copyText={message.content}
-            copyLabel="复制消息"
-            align="end"
-            floating
-          />
         )}
       </div>
     </div>

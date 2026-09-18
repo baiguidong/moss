@@ -1,9 +1,9 @@
 /**
  * Tool Search utilities for dynamically discovering deferred tools.
  *
- * When enabled, deferred tools (MCP and shouldDefer tools) are sent with
- * defer_loading: true and discovered via ToolSearchTool rather than being
- * loaded upfront.
+ * When enabled, deferred tools (MCP and shouldDefer tools) are omitted from
+ * the initial request. ToolSearch activates matching tools, whose standard
+ * schemas are added to the next request.
  */
 
 import memoize from 'lodash-es/memoize.js'
@@ -24,6 +24,7 @@ import {
   isDeferredTool,
   TOOL_SEARCH_TOOL_NAME,
 } from '../tools/ToolSearchTool/prompt.js'
+import { TOOL_SEARCH_RESULT_TYPE } from '../tools/ToolSearchTool/constants.js'
 import type { Message } from '../types/message.js'
 import {
   countToolDefinitionTokens,
@@ -34,10 +35,6 @@ import { getMergedBetas } from './betas.js'
 import { getContextWindowForModel } from './context.js'
 import { logForDebugging } from './debug.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
-import {
-  getAPIProvider,
-  isFirstPartyModelBaseUrl,
-} from './model/providers.js'
 import { jsonStringify } from './slowOperations.js'
 import { zodToJsonSchema } from './zodToJsonSchema.js'
 
@@ -170,21 +167,10 @@ export type ToolSearchMode = 'tst' | 'tst-auto' | 'standard'
  *   (unset)               tst (default: always defer MCP and shouldDefer tools)
  */
 export function getToolSearchMode(): ToolSearchMode {
-  // CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS is a kill switch for beta API
-  // features. Tool search emits defer_loading on tool definitions and
-  // tool_reference content blocks — both require the API to accept a beta
-  // header. When the kill switch is set, force 'standard' so no beta shapes
-  // reach the wire, even if ENABLE_TOOL_SEARCH is also set. This is the
-  // explicit escape hatch for proxy gateways that the heuristic in
-  // isToolSearchEnabledOptimistic doesn't cover.
-  if (isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS)) {
-    return 'standard'
-  }
-
   const value = process.env.ENABLE_TOOL_SEARCH
+  const autoPercent = value ? parseAutoPercentage(value) : null
 
   // Handle auto:N syntax - check edge cases first
-  const autoPercent = value ? parseAutoPercentage(value) : null
   if (autoPercent === 0) return 'tst' // auto:0 = always enabled
   if (autoPercent === 100) return 'standard'
   if (isAutoToolSearchMode(value)) {
@@ -197,72 +183,17 @@ export function getToolSearchMode(): ToolSearchMode {
 }
 
 /**
- * Default patterns for models that do NOT support tool_reference.
- * New models are assumed to support tool_reference unless explicitly listed here.
- */
-const DEFAULT_UNSUPPORTED_MODEL_PATTERNS = ['haiku']
-
-/**
- * Get the list of model patterns that do NOT support tool_reference.
- * Can be configured via feature flag for live updates without code changes.
- */
-function getUnsupportedToolReferencePatterns(): string[] {
-  try {
-    // Try to get from feature flag for live configuration
-    const patterns = getFeatureValue_CACHED_MAY_BE_STALE<string[] | null>(
-      'tengu_tool_search_unsupported_models',
-      null,
-    )
-    if (patterns && Array.isArray(patterns) && patterns.length > 0) {
-      return patterns
-    }
-  } catch {
-    // feature flag not ready, use defaults
-  }
-  return DEFAULT_UNSUPPORTED_MODEL_PATTERNS
-}
-
-/**
- * Check if a model supports tool_reference blocks (required for tool search).
- *
- * This uses a negative test: models are assumed to support tool_reference
- * UNLESS they match a pattern in the unsupported list. This ensures new
- * models work by default without code changes.
- *
- * Currently, Haiku models do NOT support tool_reference. This can be
- * updated via feature flag 'tengu_tool_search_unsupported_models'.
- *
- * @param model The model name to check
- * @returns true if the model supports tool_reference, false otherwise
- */
-export function modelSupportsToolReference(model: string): boolean {
-  const normalizedModel = model.toLowerCase()
-  const unsupportedPatterns = getUnsupportedToolReferencePatterns()
-
-  // Check if model matches any unsupported pattern
-  for (const pattern of unsupportedPatterns) {
-    if (normalizedModel.includes(pattern.toLowerCase())) {
-      return false
-    }
-  }
-
-  // New models are assumed to support tool_reference
-  return true
-}
-
-/**
  * Check if tool search *might* be enabled (optimistic check).
  *
  * Returns true if tool search could potentially be enabled, without checking
- * dynamic factors like model support or threshold. Use this for:
+ * dynamic factors like the automatic threshold. Use this for:
  * - Including ToolSearchTool in base tools (so it's available if needed)
- * - Preserving tool_reference fields in messages (can be stripped later)
+ * - Announcing deferred tool names to the model
  * - Checking if ToolSearchTool should report itself as enabled
  *
  * Returns false only when tool search is definitively disabled (standard mode).
  *
- * For the definitive check that includes model support and threshold,
- * use isToolSearchEnabled().
+ * For the definitive threshold check, use isToolSearchEnabled().
  */
 let loggedOptimistic = false
 
@@ -273,35 +204,6 @@ export function isToolSearchEnabledOptimistic(): boolean {
       loggedOptimistic = true
       logForDebugging(
         `[ToolSearch:optimistic] mode=${mode}, ENABLE_TOOL_SEARCH=${process.env.ENABLE_TOOL_SEARCH}, result=false`,
-      )
-    }
-    return false
-  }
-
-  // tool_reference is a beta content type that third-party API gateways
-  // (MOSS_MODEL_BASE_URL proxies) typically don't support. When the provider
-  // is 'firstParty' but the base URL points elsewhere, the proxy will reject
-  // tool_reference blocks with a 400. Vertex/Bedrock/Foundry are unaffected —
-  // they have their own endpoints and beta headers.
-  // HOWEVER: some proxies DO support tool_reference (LiteLLM passthrough,
-  // Cloudflare AI Gateway, corp gateways that forward beta headers). The
-  // blanket disable breaks defer_loading for those users — all MCP tools
-  // loaded into main context instead of on-demand (gh-31936 / CC-457,
-  // likely the real cause of CC-330 "v2.1.70 defer_loading regression").
-  // This gate only applies when ENABLE_TOOL_SEARCH is unset/empty (default
-  // behavior). Setting any non-empty value — 'true', 'auto', 'auto:N' —
-  // means the user is explicitly configuring tool search and asserts their
-  // setup supports it. The falsy check (rather than === undefined) aligns
-  // with getToolSearchMode(), which also treats "" as unset.
-  if (
-    !process.env.ENABLE_TOOL_SEARCH &&
-    getAPIProvider() === 'firstParty' &&
-    !isFirstPartyModelBaseUrl()
-  ) {
-    if (!loggedOptimistic) {
-      loggedOptimistic = true
-      logForDebugging(
-        `[ToolSearch:optimistic] disabled: MOSS_MODEL_BASE_URL=${process.env.MOSS_MODEL_BASE_URL} is not a first-party model host. Set ENABLE_TOOL_SEARCH=true (or auto / auto:N) if your proxy forwards tool_reference blocks.`,
       )
     }
     return false
@@ -362,17 +264,16 @@ async function calculateDeferredToolDescriptionChars(
 }
 
 /**
- * Check if tool search (MCP tool deferral with tool_reference) is enabled for a specific request.
+ * Check if generic client-side tool search is enabled for a specific request.
  *
  * This is the definitive check that includes:
  * - MCP mode (Tst, TstAuto, McpCli, Standard)
- * - Model compatibility (haiku doesn't support tool_reference)
  * - ToolSearchTool availability (must be in tools list)
  * - Threshold check for TstAuto mode
  *
  * Use this when making actual API calls where all context is available.
  *
- * @param model The model to check for tool_reference support
+ * @param model The model whose context window determines the auto threshold
  * @param tools Array of available tools (including MCP tools)
  * @param getToolPermissionContext Function to get tool permission context
  * @param agents Array of agent definitions
@@ -409,16 +310,6 @@ export async function isToolSearchEnabled(
       userType: ('external') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       ...extraProps,
     })
-  }
-
-  // Check if model supports tool_reference
-  if (!modelSupportsToolReference(model)) {
-    logForDebugging(
-      `Tool search disabled for model '${model}': model does not support tool_reference blocks. ` +
-        `This feature is only available on Claude Sonnet 4+, Opus 4+, and newer models.`,
-    )
-    logModeDecision(false, 'standard', 'model_unsupported')
-    return false
   }
 
   // Check if ToolSearchTool is available (respects disallowedTools)
@@ -468,77 +359,53 @@ export async function isToolSearchEnabled(
   }
 }
 
-/**
- * Check if an object is a tool_reference block.
- * tool_reference is a beta feature not in the SDK types, so we need runtime checks.
- */
-export function isToolReferenceBlock(obj: unknown): boolean {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'type' in obj &&
-    (obj as { type: unknown }).type === 'tool_reference'
-  )
+function parseToolSearchResult(content: unknown): string[] {
+  const textBlocks = typeof content === 'string'
+    ? [content]
+    : Array.isArray(content)
+      ? content.flatMap(item => (
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          item.type === 'text' &&
+          'text' in item &&
+          typeof item.text === 'string'
+            ? [item.text]
+            : []
+        ))
+      : []
+
+  for (const text of textBlocks) {
+    const firstLine = text.split('\n', 1)[0]?.trim()
+    if (!firstLine) continue
+    try {
+      const parsed = JSON.parse(firstLine) as {
+        type?: unknown
+        matches?: unknown
+      }
+      if (
+        parsed.type === TOOL_SEARCH_RESULT_TYPE &&
+        Array.isArray(parsed.matches)
+      ) {
+        return parsed.matches.filter(
+          (name): name is string => typeof name === 'string' && name.length > 0,
+        )
+      }
+    } catch {
+      // Ignore ordinary text content and malformed tool results.
+    }
+  }
+  return []
 }
 
 /**
- * Type guard for tool_reference block with tool_name.
- */
-function isToolReferenceWithName(
-  obj: unknown,
-): obj is { type: 'tool_reference'; tool_name: string } {
-  return (
-    isToolReferenceBlock(obj) &&
-    'tool_name' in (obj as object) &&
-    typeof (obj as { tool_name: unknown }).tool_name === 'string'
-  )
-}
-
-/**
- * Type representing a tool_result block with array content.
- * Used for extracting tool_reference blocks from ToolSearchTool results.
- */
-type ToolResultBlock = {
-  type: 'tool_result'
-  content: unknown[]
-}
-
-/**
- * Type guard for tool_result blocks with array content.
- */
-function isToolResultBlockWithContent(obj: unknown): obj is ToolResultBlock {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'type' in obj &&
-    (obj as { type: unknown }).type === 'tool_result' &&
-    'content' in obj &&
-    Array.isArray((obj as { content: unknown }).content)
-  )
-}
-
-/**
- * Extract tool names from tool_reference blocks in message history.
- *
- * When dynamic tool loading is enabled, MCP tools are not predeclared in the
- * tools array. Instead, they are discovered via ToolSearchTool which returns
- * tool_reference blocks. This function scans the message history to find all
- * tool names that have been referenced, so we can include only those tools
- * in subsequent API requests.
- *
- * This approach:
- * - Eliminates the need to predeclare all MCP tools upfront
- * - Removes limits on total quantity of MCP tools
- *
- * Compaction replaces tool_reference-bearing messages with a summary, so it
- * snapshots the discovered set onto compactMetadata.preCompactDiscoveredTools
- * on the boundary marker; this scan reads it back.
- *
- * @param messages Array of messages that may contain tool_result blocks with tool_reference content
- * @returns Set of tool names that have been discovered via tool_reference blocks
+ * Reconstruct the tools activated by ToolSearch from ordinary tool_use and
+ * tool_result blocks. No provider-specific content types are required.
+ * Compaction carries the accumulated set on the boundary marker.
  */
 export function extractDiscoveredToolNames(messages: Message[]): Set<string> {
   const discoveredTools = new Set<string>()
+  const toolSearchUseIds = new Set<string>()
   let carriedFromBoundary = 0
 
   for (const msg of messages) {
@@ -554,22 +421,33 @@ export function extractDiscoveredToolNames(messages: Message[]): Set<string> {
       continue
     }
 
-    // Only user messages contain tool_result blocks (responses to tool_use)
+    if (msg.type === 'assistant') {
+      for (const block of msg.message.content) {
+        if (
+          block.type === 'tool_use' &&
+          block.name === TOOL_SEARCH_TOOL_NAME
+        ) {
+          toolSearchUseIds.add(block.id)
+        }
+      }
+    }
+  }
+
+  for (const msg of messages) {
     if (msg.type !== 'user') continue
 
     const content = msg.message?.content
     if (!Array.isArray(content)) continue
 
     for (const block of content) {
-      // tool_reference blocks only appear inside tool_result content, specifically
-      // in results from ToolSearchTool. The API expands these references into full
-      // tool definitions in the model's context.
-      if (isToolResultBlockWithContent(block)) {
-        for (const item of block.content) {
-          if (isToolReferenceWithName(item)) {
-            discoveredTools.add(item.tool_name)
-          }
-        }
+      if (
+        block.type !== 'tool_result' ||
+        !toolSearchUseIds.has(block.tool_use_id)
+      ) {
+        continue
+      }
+      for (const name of parseToolSearchResult(block.content)) {
+        discoveredTools.add(name)
       }
     }
   }

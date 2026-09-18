@@ -129,6 +129,7 @@ interface AppSidebarProps {
   onTogglePin: (sessionId: string) => void;
   onToggleCollapse: () => void;
   onSearchChange: (query: string) => void;
+  onOpenGlobalSearch?: () => void;
 }
 
 function getAppShortcutLabel(app: StoredApp) {
@@ -357,6 +358,7 @@ export function AppSidebar({
   onTogglePin,
   onToggleCollapse,
   onSearchChange,
+  onOpenGlobalSearch,
 }: AppSidebarProps) {
   const showModePicker = remoteEnabled;
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
@@ -471,6 +473,17 @@ export function AppSidebar({
             <PenSquare className="h-4 w-4" />
             {!collapsed && "新会话"}
           </Button>
+          {collapsed && onOpenGlobalSearch ? (
+            <Button
+              variant="ghost"
+              className="h-8 w-8 justify-center rounded-lg px-0"
+              onClick={onOpenGlobalSearch}
+              title="搜索所有消息 (⌘/Ctrl+K)"
+              aria-label="搜索所有消息"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          ) : null}
           <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
@@ -591,6 +604,10 @@ export function AppSidebar({
                 size="icon-sm"
                 className="h-8 w-8 shrink-0 rounded-lg"
                 onClick={() => {
+                  if (onOpenGlobalSearch) {
+                    onOpenGlobalSearch();
+                    return;
+                  }
                   if (isSearchOpen) {
                     onSearchChange("");
                     setIsSearchOpen(false);
@@ -598,8 +615,8 @@ export function AppSidebar({
                     setIsSearchOpen(true);
                   }
                 }}
-                title={isSearchOpen ? "关闭搜索" : "搜索会话"}
-                aria-label={isSearchOpen ? "关闭搜索" : "搜索会话"}
+                title={onOpenGlobalSearch ? "搜索所有消息 (⌘/Ctrl+K)" : isSearchOpen ? "关闭搜索" : "搜索会话"}
+                aria-label={onOpenGlobalSearch ? "搜索所有消息" : isSearchOpen ? "关闭搜索" : "搜索会话"}
               >
                 {isSearchOpen ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
               </Button>

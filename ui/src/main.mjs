@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createUsageLedger } from './usage-ledger.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
+import { createSessionSearchIndex } from './session-search-index.mjs';
 import {
   decodeWorkspaceTextBuffer,
   getWorkspaceFilePreviewInfo,
@@ -192,6 +193,10 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   normalizeDesktopSettings,
 } from './desktop-settings.mjs';
+import {
+  isPermissionMode,
+  normalizePermissionMode,
+} from './permission-modes.mjs';
 import {
   createWebSearchCapabilityStore,
   getWebSearchCapabilityFingerprint,
@@ -749,6 +754,7 @@ const sessionDb = new DatabaseSync(SESSION_DB_PATH);
 try { sessionDb.exec('PRAGMA journal_mode=WAL'); } catch {}
 try { sessionDb.exec('PRAGMA synchronous=NORMAL'); } catch {}
 try { sessionDb.exec('PRAGMA busy_timeout=5000'); } catch {}
+const sessionSearchIndex = createSessionSearchIndex(sessionDb);
 const usageLedger = createUsageLedger(sessionDb);
 const memoryCatalog = createMemoryCatalog({
   mossHome: MOSS_HOME,
@@ -783,6 +789,11 @@ const persistSessionStmt = (() => {
   }
   try {
     sessionDb.exec(`ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'local'`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN permission_mode TEXT`);
   } catch {
     // Column may already exist or table doesn't exist yet
   }
@@ -901,6 +912,7 @@ const persistSessionStmt = (() => {
       message_count INTEGER NOT NULL,
       preview TEXT NOT NULL,
       agent_mode TEXT NOT NULL DEFAULT 'local',
+      permission_mode TEXT,
       is_coordinator_mode INTEGER NOT NULL DEFAULT 0,
       remote_workspace TEXT,
       underlying_session_id TEXT,
@@ -934,9 +946,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -946,6 +958,7 @@ const persistSessionStmt = (() => {
       message_count = excluded.message_count,
       preview = excluded.preview,
       agent_mode = excluded.agent_mode,
+      permission_mode = excluded.permission_mode,
       is_coordinator_mode = excluded.is_coordinator_mode,
       remote_workspace = excluded.remote_workspace,
       underlying_session_id = excluded.underlying_session_id,
@@ -983,6 +996,7 @@ const loadSessionsStmt = sessionDb.prepare(`
     message_count,
     preview,
     agent_mode,
+    permission_mode,
     is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
@@ -1021,12 +1035,14 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     message_count,
     preview,
     agent_mode,
+    permission_mode,
     is_coordinator_mode,
     remote_workspace,
     underlying_session_id,
     history_json,
     is_sub_agent,
     worker_summaries_json,
+    assistant_name,
     project_id,
     origin_channel,
     connector_ids_json,
@@ -3396,7 +3412,10 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     appendSystemPrompt: appendSystemPrompt || undefined,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(),
-    permissionMode: desktopSettings.bypassPermissions ? 'allow-all' : 'default',
+    permissionMode: normalizePermissionMode(
+      sessionRecord?.permissionMode,
+      desktopSettings.permissionMode,
+    ),
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     webSearch: getRuntimeWebSearchSettings(),
@@ -3535,7 +3554,13 @@ function createRemoteDirectRuntime({
         created = await mod.createDirectConnectSession({
           serverUrl,
           authToken,
-          dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+          permissionMode: normalizePermissionMode(
+            sessionRecord.permissionMode,
+            desktopSettings.permissionMode,
+          ),
+          dangerouslySkipPermissions:
+            normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
+              === 'bypassPermissions',
           assistantName: sessionRecord.assistantName,
           advancedSettings: {
             ...desktopSettings.advanced,
@@ -3721,6 +3746,9 @@ function createRemoteDirectRuntime({
 
       try {
         const manager = await ensureManager();
+        await manager.setPermissionMode?.(
+          normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
+        );
         const sent = manager.sendMessage(prompt);
         if (!sent) {
           throw new Error('Failed to send prompt to remote session.');
@@ -3742,6 +3770,11 @@ function createRemoteDirectRuntime({
     },
     abort() {
       activeManager?.sendInterrupt?.();
+    },
+    async setPermissionMode(mode) {
+      if (activeManager?.isConnected?.()) {
+        await activeManager.setPermissionMode(mode);
+      }
     },
     dispose() {
       disposed = true;
@@ -3923,6 +3956,7 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     sessionRecord.messageCount,
     sessionRecord.preview || '',
     sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
     sessionRecord.isCoordinatorMode ? 1 : 0,
     sessionRecord.remoteWorkspace || null,
     sessionRecord.underlyingSessionId,
@@ -3991,6 +4025,7 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     workspace: sessionRecord.workspace,
     remoteWorkspace: sessionRecord.remoteWorkspace || null,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    permissionMode: normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
     isCoordinatorMode: Boolean(sessionRecord.isCoordinatorMode),
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
@@ -4045,9 +4080,21 @@ function persistSessionManifest(sessionRecord, isSubAgent = false) {
   }
 }
 
+function syncSessionSearchIndexBestEffort(sessionRecord) {
+  try {
+    sessionSearchIndex.syncSession(sessionRecord);
+  } catch (error) {
+    mossLog('warn', 'session-search', 'Failed to update session search index', {
+      sessionId: sessionRecord?.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function persistSessionRecord(sessionRecord, isSubAgent = false) {
   if (sessionRecord?.deleted) return;
   persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
+  if (!sessionRecord.busy) syncSessionSearchIndexBestEffort(sessionRecord);
   persistSessionManifest(sessionRecord, isSubAgent);
 }
 
@@ -4074,6 +4121,14 @@ function schedulePersistSession(sessionRecord, immediate = false) {
 
 function deletePersistedSession(sessionId) {
   deleteSessionStmt.run(sessionId);
+  try {
+    sessionSearchIndex.deleteSession(sessionId);
+  } catch (error) {
+    mossLog('warn', 'session-search', 'Failed to delete session search index entry', {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function inferPersistedSessionAgentMode(row) {
@@ -4116,6 +4171,7 @@ function hydratePersistedSessions() {
           : null)
         : null,
       agentMode,
+      permissionMode: normalizePermissionMode(row.permission_mode, desktopSettings.permissionMode),
       sessionDir: getLocalSessionDir(row.id),
       isCoordinatorMode: Boolean(row.is_coordinator_mode || row.project_id),
       createdAt: row.created_at,
@@ -4168,6 +4224,7 @@ function hydratePersistedSessions() {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
     }
     sessions.set(sessionRecord.id, sessionRecord);
+    syncSessionSearchIndexBestEffort(sessionRecord);
   }
 
   // Load sub-agent sessions
@@ -4187,6 +4244,7 @@ function hydratePersistedSessions() {
           : null)
         : null,
       agentMode,
+      permissionMode: normalizePermissionMode(row.permission_mode, desktopSettings.permissionMode),
       sessionDir: getLocalSessionDir(row.id),
       isCoordinatorMode: false,
       createdAt: row.created_at,
@@ -4233,6 +4291,7 @@ function hydratePersistedSessions() {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
     }
     subAgentSessions.set(sessionRecord.id, sessionRecord);
+    syncSessionSearchIndexBestEffort(sessionRecord);
   }
 }
 
@@ -4440,6 +4499,7 @@ function getSessionSummary(sessionRecord) {
     id: sessionRecord.id,
     title: sessionRecord.title,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
+    permissionMode: normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
     composerIntent: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
     workspace,
     createdAt: sessionRecord.createdAt,
@@ -4575,6 +4635,7 @@ function buildVisibleUserEvent(prompt, attachments = [], resources = []) {
   const trimmedUserPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   const userEvent = {
     type: 'user',
+    uuid: randomUUID(),
     prompt: trimmedUserPrompt,
     timestamp: Date.now(),
   };
@@ -6338,7 +6399,11 @@ function authorizeBrowserAutomationEvent(event, sessionRecord) {
     tabId: event.input?.tab_id,
   });
   const origin = getBrowserAutomationOrigin(page.url);
-  if (desktopSettings.bypassPermissions || isBrowserAutomationAutoAllowed(sessionRecord, page.url)) return page;
+  if (
+    normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
+      === 'bypassPermissions'
+    || isBrowserAutomationAutoAllowed(sessionRecord, page.url)
+  ) return page;
   if (browserAutomationSessionOrigins.get(sessionRecord.id)?.has(origin)) return page;
   const fingerprint = getBrowserAutomationFingerprint(event.type, event.input);
   if (consumePendingBrowserAutomationGrant(sessionRecord.id, {
@@ -6451,7 +6516,9 @@ async function requestToolPermission(sessionRecord, toolName, input, request = {
   // Defense in depth: embedded bypass normally resolves before this callback,
   // but any permission request that reaches the desktop must not block either.
   if (shouldAutoApproveToolPermission({
-    bypassPermissions: desktopSettings.bypassPermissions,
+    bypassPermissions:
+      normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
+        === 'bypassPermissions',
     toolName,
   })) {
     return { behavior: 'allow' };
@@ -7511,6 +7578,7 @@ function createSessionRecord({
   parentSessionId,
   sessionRole = 'chat',
   subagentStatus,
+  permissionMode,
 } = {}) {
   const now = Date.now();
   const id = randomUUID();
@@ -7537,6 +7605,7 @@ function createSessionRecord({
     workspace: normalizedWorkspace,
     remoteWorkspace: null,
     agentMode,
+    permissionMode: normalizePermissionMode(permissionMode, desktopSettings.permissionMode),
     sessionDir,
     isCoordinatorMode: Boolean(normalizedProjectId),
     createdAt: now,
@@ -8101,6 +8170,7 @@ async function syncSubAgentSessionsForParent(parentSession) {
       workspace,
       remoteWorkspace: null,
       agentMode: 'local',
+      permissionMode: normalizePermissionMode(parentSession.permissionMode, desktopSettings.permissionMode),
       sessionDir: getLocalSessionDir(id),
       isCoordinatorMode: false,
       createdAt: existing?.createdAt || stat.birthtimeMs || stat.ctimeMs || Date.now(),
@@ -11452,6 +11522,25 @@ ipcMain.handle('agent:list-sessions', async () => {
   return listVisibleSessionSummaries();
 });
 
+ipcMain.handle('agent:search-sessions', async (_event, { query, limit } = {}) => {
+  await interruptedSessionRecoveryPromise;
+  await synchronizeRemoteSessionsBestEffort();
+  const visibleSummaries = listVisibleSessionSummaries();
+  const summariesById = new Map(visibleSummaries.map((summary) => [summary.id, summary]));
+  return sessionSearchIndex.search(query, {
+    sessionIds: visibleSummaries.map((summary) => summary.id),
+    limit,
+  }).map((result) => {
+    const summary = summariesById.get(result.sessionId);
+    return {
+      ...result,
+      sessionTitle: summary?.title || '未命名会话',
+      agentMode: summary?.agentMode || 'local',
+      sessionUpdatedAt: summary?.updatedAt || result.timestamp,
+    };
+  });
+});
+
 ipcMain.handle('agent-teams:list', async (_event, { sessionId } = {}) => {
   const sessionRecord = getSessionRecord(sessionId);
   await agentTeamsService?.checkNow();
@@ -11481,6 +11570,7 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
     title: payload.title,
     assistantName: requestedAssistantName || null,
     connectorIds,
+    permissionMode: payload.permissionMode,
   });
   await prepareAssistantContextForSessionStart(sessionRecord);
   return {
@@ -11558,7 +11648,9 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
         authToken,
         sessionId: sourceSession.underlyingSessionId,
         title,
-        dangerouslySkipPermissions: Boolean(desktopSettings.bypassPermissions),
+        dangerouslySkipPermissions:
+          normalizePermissionMode(sourceSession.permissionMode, desktopSettings.permissionMode)
+            === 'bypassPermissions',
       });
       const remoteSession = result?.session;
       if (!remoteSession?.sessionId) {
@@ -11571,6 +11663,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
         connectorIds: sourceSession.connectorIds,
         agentMode: 'remote-direct',
         sourceSessionId: sourceSession.id,
+        permissionMode: sourceSession.permissionMode,
       });
       closeWorkspaceWatcher(forked);
       forked.underlyingSessionId = remoteSession.sessionId;
@@ -11601,6 +11694,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       connectorIds: sourceSession.connectorIds,
       agentMode: 'local',
       sourceSessionId: sourceSession.id,
+      permissionMode: sourceSession.permissionMode,
     });
 
     try {
@@ -11926,6 +12020,26 @@ ipcMain.handle('agent:set-session-tool-display-mode', (_event, { sessionId, mode
   }
   const sessionRecord = getSessionRecord(sessionId);
   sessionRecord.toolDisplayMode = mode;
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  return getSessionSummary(sessionRecord);
+});
+
+ipcMain.handle('agent:set-session-permission-mode', async (_event, { sessionId, mode } = {}) => {
+  if (!isPermissionMode(mode)) {
+    throw new Error('Permission mode is invalid.');
+  }
+  const sessionRecord = getSessionRecord(sessionId);
+  if (sessionRecord.isSubAgent || sessionRecord.resumeReadOnlyReason) {
+    throw new Error('只读会话不能修改权限模式。');
+  }
+  if (sessionRecord.busy || hasActiveAgentTeam(sessionRecord)) {
+    throw new Error('会话正在执行任务，请等待完成后再切换权限模式。');
+  }
+
+  await sessionRecord.runtime?.setPermissionMode?.(mode);
+  sessionRecord.permissionMode = mode;
+  sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
   return getSessionSummary(sessionRecord);

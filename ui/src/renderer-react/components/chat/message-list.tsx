@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
 import { AssistantMessage } from "@/components/chat/assistant-message";
@@ -631,7 +631,7 @@ export const VirtualMessageList = React.forwardRef<
   );
   const resolvedContentClassName = cn(
     contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
-    conversationNavigationItems.length >= 4 && "md:pl-12",
+    conversationNavigationItems.length >= 4 && "md:px-12",
   );
 
   React.useEffect(() => () => {
@@ -651,14 +651,26 @@ export const VirtualMessageList = React.forwardRef<
   }, []);
 
   const scrollToMessage = React.useCallback((messageId: string) => {
+    let resolvedMessageId: string | null = null;
+    const matches = (message: TranscriptRenderMessage) => {
+      const matched = message.id === messageId || message.sourceMessageIds?.includes(messageId);
+      if (matched) resolvedMessageId = message.id;
+      return matched;
+    };
     const index = renderItemsRef.current.findIndex((item) =>
       item.kind === "message"
-        ? item.message.id === messageId
+        ? matches(item.message)
         : item.steps.some((step) => (
-          step.kind === "thinking" ? step.message.id === messageId : step.toolCall.id === messageId
+          step.kind === "thinking" ? matches(step.message) : matches(step.toolCall)
         )));
     if (index >= 0) {
+      setHighlightedMessageId(resolvedMessageId);
       virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "smooth" });
+      if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = window.setTimeout(() => {
+        setHighlightedMessageId((current) => current === resolvedMessageId ? null : current);
+        highlightTimerRef.current = null;
+      }, 1800);
     }
   }, []);
 
@@ -853,27 +865,30 @@ export const MessageListPane = React.forwardRef<
         {...listProps}
       />
       {longConversation && (!atTop || !atBottom) ? (
-        <div className="absolute bottom-4 right-5 z-30 flex flex-col items-end gap-2">
+        <div
+          className="absolute bottom-4 z-30 flex flex-col items-center gap-2"
+          style={{ right: "max(0.75rem, calc((100% - 1200px) / 2))" }}
+        >
           {!atTop ? (
             <button
               type="button"
-              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/92 px-3 text-[11px] font-medium text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-card/92 text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
               title="回到顶部"
+              aria-label="回到顶部"
               onClick={() => innerRef.current?.scrollToTop("auto")}
             >
-              <ArrowUp className="h-3.5 w-3.5" />
-              回到顶部
+              <ArrowUpToLine className="h-4 w-4" />
             </button>
           ) : null}
           {!atBottom ? (
             <button
               type="button"
-              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/92 px-3 text-[11px] font-medium text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
-              title="回到最新"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-card/92 text-muted-foreground shadow-lg backdrop-blur transition-all hover:-translate-y-px hover:text-foreground"
+              title="回到底部"
+              aria-label="回到底部"
               onClick={() => innerRef.current?.scrollToBottom("auto")}
             >
-              <ArrowDown className="h-3.5 w-3.5" />
-              回到最新
+              <ArrowDownToLine className="h-4 w-4" />
             </button>
           ) : null}
         </div>

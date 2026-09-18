@@ -5,6 +5,10 @@ import {
   MOSS_TOOL_GROUPS,
   normalizeMossToolLoading,
 } from '../src/tool-loading-settings.mjs';
+import {
+  DEFAULT_MOSS_TOOL_LOADING as RUNTIME_DEFAULT_MOSS_TOOL_LOADING,
+  MOSS_TOOL_GROUPS as RUNTIME_MOSS_TOOL_GROUPS,
+} from '../../src/tools/MossTool/toolLoading.js';
 
 describe('Moss tool loading settings', () => {
   it('defines every split host tool exactly once', () => {
@@ -12,6 +16,17 @@ describe('Moss tool loading settings', () => {
     expect(names).toHaveLength(19);
     expect(new Set(names).size).toBe(names.length);
     expect(Object.keys(DEFAULT_MOSS_TOOL_LOADING)).toEqual(names);
+  });
+
+  it('keeps renderer groups and runtime activation groups in sync', () => {
+    expect(MOSS_TOOL_GROUPS.map((group) => ({
+      id: group.id,
+      tools: group.tools.map((tool) => tool.name),
+    }))).toEqual(Object.entries(RUNTIME_MOSS_TOOL_GROUPS).map(([id, tools]) => ({
+      id,
+      tools: [...tools],
+    })));
+    expect(DEFAULT_MOSS_TOOL_LOADING).toEqual(RUNTIME_DEFAULT_MOSS_TOOL_LOADING);
   });
 
   it('keeps the four core browser tools resident and defaults everything else to deferred', () => {

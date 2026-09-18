@@ -329,7 +329,9 @@ async function countBuiltInToolTokens(
   }
 
   // Check if tool search is enabled
-  const { isToolSearchEnabled } = await import('./toolSearch.js')
+  const { extractDiscoveredToolNames, isToolSearchEnabled } = await import(
+    './toolSearch.js'
+  )
   const { isDeferredTool } = await import('../tools/ToolSearchTool/prompt.js')
   const isDeferred = await isToolSearchEnabled(
     model ?? '',
@@ -358,26 +360,11 @@ async function countBuiltInToolTokens(
   let totalDeferredTokens = 0
 
   if (deferredBuiltinTools.length > 0 && isDeferred) {
-    // Find which deferred tools have been used in messages
-    const loadedToolNames = new Set<string>()
-    if (messages) {
-      const deferredToolNameSet = new Set(deferredBuiltinTools.map(t => t.name))
-      for (const msg of messages) {
-        if (msg.type === 'assistant') {
-          for (const block of msg.message.content) {
-            if (
-              'type' in block &&
-              block.type === 'tool_use' &&
-              'name' in block &&
-              typeof block.name === 'string' &&
-              deferredToolNameSet.has(block.name)
-            ) {
-              loadedToolNames.add(block.name)
-            }
-          }
-        }
-      }
-    }
+    // Match the API request builder exactly: schemas become loaded as soon as
+    // ToolSearch activates them, including tools activated as part of a group.
+    const loadedToolNames = messages
+      ? extractDiscoveredToolNames(messages)
+      : new Set<string>()
 
     // Count each deferred tool
     const tokensByTool = await Promise.all(
@@ -573,7 +560,9 @@ export async function countMcpToolTokens(
 
   // Check if tool search is enabled - if so, MCP tools are deferred
   // isToolSearchEnabled handles threshold calculation internally for TstAuto mode
-  const { isToolSearchEnabled } = await import('./toolSearch.js')
+  const { extractDiscoveredToolNames, isToolSearchEnabled } = await import(
+    './toolSearch.js'
+  )
   const { isDeferredTool } = await import('../tools/ToolSearchTool/prompt.js')
 
   const isDeferred = await isToolSearchEnabled(
@@ -584,24 +573,19 @@ export async function countMcpToolTokens(
     'analyzeMcp',
   )
 
-  // Find MCP tools that have been used in messages (loaded via ToolSearchTool)
+  // Match the API request builder: a deferred MCP schema is loaded after its
+  // ToolSearch result, before the tool itself is called.
   const loadedMcpToolNames = new Set<string>()
-  if (isDeferred && messages) {
-    const mcpToolNameSet = new Set(mcpTools.map(t => t.name))
-    for (const msg of messages) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (
-            'type' in block &&
-            block.type === 'tool_use' &&
-            'name' in block &&
-            typeof block.name === 'string' &&
-            mcpToolNameSet.has(block.name)
-          ) {
-            loadedMcpToolNames.add(block.name)
-          }
-        }
-      }
+  const activatedToolNames = messages
+    ? extractDiscoveredToolNames(messages)
+    : new Set<string>()
+  for (const tool of mcpTools) {
+    if (
+      !isDeferred ||
+      !isDeferredTool(tool) ||
+      activatedToolNames.has(tool.name)
+    ) {
+      loadedMcpToolNames.add(tool.name)
     }
   }
 
@@ -611,7 +595,7 @@ export async function countMcpToolTokens(
       name: tool.name,
       serverName: tool.name.split('__')[1] || 'unknown',
       tokens: mcpToolTokensByTool[i]!,
-      isLoaded: loadedMcpToolNames.has(tool.name) || !isDeferredTool(tool),
+      isLoaded: loadedMcpToolNames.has(tool.name),
     })
   }
 

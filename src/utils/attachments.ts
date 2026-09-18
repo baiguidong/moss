@@ -142,7 +142,6 @@ import {
   isDeferredToolsDeltaEnabled,
   isToolSearchEnabledOptimistic,
   isToolSearchToolAvailable,
-  modelSupportsToolReference,
   type DeferredToolsDeltaScanContext,
 } from './toolSearch.js'
 import {
@@ -1161,7 +1160,7 @@ export function getDateChangeAttachments(
 // Exported for compact.ts — the gate must be identical at both call sites.
 export function getDeferredToolsDeltaAttachment(
   tools: Tools,
-  model: string,
+  _model: string,
   messages: Message[] | undefined,
   scanContext?: DeferredToolsDeltaScanContext,
 ): Attachment[] {
@@ -1174,7 +1173,6 @@ export function getDeferredToolsDeltaAttachment(
   // is filtered out, but that's a narrow case and the tools announced
   // are directly callable anyway.
   if (!isToolSearchEnabledOptimistic()) return []
-  if (!modelSupportsToolReference(model)) return []
   if (!isToolSearchToolAvailable(tools)) return []
   const delta = getDeferredToolsDelta(tools, messages ?? [], scanContext)
   if (!delta) return []

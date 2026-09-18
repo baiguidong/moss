@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     },
   },
   listSessions: () => ipcRenderer.invoke('agent:list-sessions'),
+  searchSessions: (payload) => ipcRenderer.invoke('agent:search-sessions', payload),
   syncRemoteSessions: () => ipcRenderer.invoke('agent:sync-remote-sessions'),
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
   forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
@@ -135,6 +136,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   rewindTurn: (payload) => ipcRenderer.invoke('agent:rewind-turn', payload),
   updateSession: (payload) => ipcRenderer.invoke('agent:update-session', payload),
   setSessionToolDisplayMode: (payload) => ipcRenderer.invoke('agent:set-session-tool-display-mode', payload),
+  setSessionPermissionMode: (payload) => ipcRenderer.invoke('agent:set-session-permission-mode', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
   agentTeams: {

@@ -37,6 +37,28 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("keeps source message ids so search results can jump to exact bubbles", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([
+      {
+        type: "user",
+        uuid: "source-user-1",
+        timestamp: "2026-09-18T00:00:00.000Z",
+        message: { role: "user", content: "定位这个问题" },
+      },
+      {
+        type: "assistant",
+        uuid: "source-assistant-1",
+        timestamp: "2026-09-18T00:00:01.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "定位这个回答" }] },
+      },
+    ]);
+
+    expect(messages.find((message) => message.type === "user_text")?.sourceMessageIds)
+      .toEqual(["source-user-1"]);
+    expect(messages.find((message) => message.type === "assistant_text")?.sourceMessageIds)
+      .toEqual(["source-assistant-1"]);
+  });
+
   it("carries the source user UUID through every item in the assistant turn", () => {
     const messages = buildMainChatRenderMessagesFromHistory([
       {

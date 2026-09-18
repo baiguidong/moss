@@ -35,8 +35,15 @@ import {
   persistPermissionUpdates,
 } from './utils/permissions/PermissionUpdate.js'
 import type { PermissionUpdate } from './utils/permissions/PermissionUpdateSchema.js'
-import { initializeToolPermissionContext } from './utils/permissions/permissionSetup.js'
+import {
+  initializeToolPermissionContext,
+  transitionPermissionMode,
+} from './utils/permissions/permissionSetup.js'
 import { shouldBypassDesktopToolPermission } from './utils/permissions/desktopPermissionMode.js'
+import {
+  EXTERNAL_PERMISSION_MODES,
+  type ExternalPermissionMode,
+} from './types/permissions.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
 import { dequeue } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
@@ -278,7 +285,8 @@ export function getAuthDebugSnapshot() {
   }
 }
 
-export type PermissionMode = 'allow-all' | 'default'
+/** `allow-all` is retained as a compatibility alias for older desktop callers. */
+export type PermissionMode = ExternalPermissionMode | 'allow-all'
 
 export type DesktopPermissionDecision =
   | boolean
@@ -322,7 +330,7 @@ export interface ClaudeSessionOptions {
   customSystemPrompt?: string
   /** 系统提示词补充内容（追加到主系统提示词之后） */
   appendSystemPrompt?: string
-  /** 权限模式：'allow-all' 映射 CLI bypassPermissions，'default' 遵循 CLI settings */
+  /** 权限模式：与 Claude Code 的五档权限语义保持一致。 */
   permissionMode?: PermissionMode
   /** CLI 权限引擎最终返回 ask 时调用的桌面确认回调 */
   onPermissionRequest?: (
@@ -566,7 +574,6 @@ export async function probeWebSearchCapability(options: {
   ))
 }
 
-
 async function resolveResumeSourceJsonlFile(
   sessionId: string | undefined,
   options: {
@@ -789,12 +796,16 @@ export class ClaudeSession {
 
     // Use the same settings/rule loader as the CLI so user, project, and local
     // permission rules behave identically in embedded desktop sessions.
+    const normalizedPermissionMode = permissionMode === 'allow-all'
+      ? 'bypassPermissions'
+      : permissionMode
     const permissionInit = await initializeToolPermissionContext({
       allowedToolsCli: [],
       disallowedToolsCli: [],
-      permissionMode:
-        permissionMode === 'allow-all' ? 'bypassPermissions' : 'default',
-      allowDangerouslySkipPermissions: permissionMode === 'allow-all',
+      permissionMode: normalizedPermissionMode,
+      // The desktop selector may switch into bypass mode later. Managed
+      // settings can still make that mode unavailable in the returned context.
+      allowDangerouslySkipPermissions: true,
       addDirs: this.#opts.addDirs,
       workspaceDirectories: this.#opts.workspaceDirectories,
     })
@@ -1548,6 +1559,33 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
+  }
+
+  /** 切换当前会话的权限模式；尚未启动的会话会在首次 send 时应用。 */
+  setPermissionMode(mode: PermissionMode): void {
+    const normalizedMode = mode === 'allow-all' ? 'bypassPermissions' : mode
+    if (!(EXTERNAL_PERMISSION_MODES as readonly string[]).includes(normalizedMode)) {
+      throw new Error(`Unsupported permission mode: ${String(mode)}`)
+    }
+
+    if (!this.#store) {
+      this.#opts.permissionMode = normalizedMode
+      return
+    }
+
+    const current = this.#store.getState().toolPermissionContext
+    if (normalizedMode === 'bypassPermissions' && !current.isBypassPermissionsModeAvailable) {
+      throw new Error('Bypass permissions mode is disabled by managed settings.')
+    }
+    this.#opts.permissionMode = normalizedMode
+    const transitioned = transitionPermissionMode(current.mode, normalizedMode, current)
+    this.#store.setState(previous => ({
+      ...previous,
+      toolPermissionContext: {
+        ...transitioned,
+        mode: normalizedMode,
+      },
+    }))
   }
 
   getTaskListId() {

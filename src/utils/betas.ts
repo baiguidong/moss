@@ -13,8 +13,6 @@ import {
   PROMPT_CACHING_SCOPE_BETA_HEADER,
   REDACT_THINKING_BETA_HEADER,
   STRUCTURED_OUTPUTS_BETA_HEADER,
-  TOOL_SEARCH_BETA_HEADER_1P,
-  TOOL_SEARCH_BETA_HEADER_3P,
   WEB_SEARCH_BETA_HEADER,
 } from '../constants/betas.js'
 import { has1mContext } from './context.js'
@@ -140,19 +138,6 @@ export function modelSupportsStructuredOutputs(model: string): boolean {
     canonical.includes('claude-opus-4-6') ||
     canonical.includes('claude-haiku-4-5')
   )
-}
-
-/**
- * Get the correct tool search beta header for the current API provider.
- * - Claude API / Foundry: advanced-tool-use-2025-11-20
- * - Vertex AI / Bedrock: tool-search-tool-2025-10-19
- */
-export function getToolSearchBetaHeader(): string {
-  const provider = getAPIProvider()
-  if (provider === 'vertex' || provider === 'bedrock') {
-    return TOOL_SEARCH_BETA_HEADER_3P
-  }
-  return TOOL_SEARCH_BETA_HEADER_1P
 }
 
 /**

@@ -252,7 +252,7 @@ export async function processPreMappedToolResultBlock(
  * True when a tool_result's content is empty or effectively empty. Covers:
  * undefined/null/'', whitespace-only strings, empty arrays, and arrays whose
  * only blocks are text blocks with empty/whitespace text. Non-text blocks
- * (images, tool_reference) are treated as non-empty.
+ * (for example images) are treated as non-empty.
  */
 export function isToolResultContentEmpty(
   content: ToolResultBlockParam['content'],

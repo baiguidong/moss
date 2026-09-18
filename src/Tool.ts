@@ -710,8 +710,8 @@ export type Tool<
   isMcp?: boolean
   isLsp?: boolean
   /**
-   * When true, this tool is deferred (sent with defer_loading: true) and requires
-   * ToolSearch to be used before it can be called.
+   * When true, this tool is omitted from the initial request and requires
+   * ToolSearch activation before its ordinary schema is sent.
    */
   readonly shouldDefer?: boolean | (() => boolean)
   /**

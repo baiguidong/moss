@@ -16,6 +16,8 @@ import { logForDebugging } from '../../utils/debug.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { escapeRegExp } from '../../utils/stringUtils.js'
 import { isToolSearchEnabledOptimistic } from '../../utils/toolSearch.js'
+import { getMossToolGroupMembers } from '../MossTool/toolLoading.js'
+import { TOOL_SEARCH_RESULT_TYPE } from './constants.js'
 import { getPrompt, isDeferredTool, TOOL_SEARCH_TOOL_NAME } from './prompt.js'
 
 export const inputSchema = lazySchema(() =>
@@ -123,6 +125,25 @@ function buildSearchResult(
         : {}),
     },
   }
+}
+
+export function expandMatchesWithConfiguredGroups(
+  matches: string[],
+  tools: Tools,
+): string[] {
+  const availableNames = new Set(tools.map(tool => tool.name))
+  const expanded: string[] = []
+  const seen = new Set<string>()
+
+  for (const match of matches) {
+    const candidates = getMossToolGroupMembers(match) ?? [match]
+    for (const name of candidates) {
+      if (!availableNames.has(name) || seen.has(name)) continue
+      seen.add(name)
+      expanded.push(name)
+    }
+  }
+  return expanded
 }
 
 /**
@@ -401,8 +422,9 @@ export const ToolSearchTool = buildTool({
       } else {
         logForDebugging(`ToolSearchTool: selected ${found.join(', ')}`)
       }
-      logSearchOutcome(found, 'select')
-      return buildSearchResult(found, query, deferredTools.length)
+      const activated = expandMatchesWithConfiguredGroups(found, tools)
+      logSearchOutcome(activated, 'select')
+      return buildSearchResult(activated, query, deferredTools.length)
     }
 
     // Keyword search
@@ -417,8 +439,9 @@ export const ToolSearchTool = buildTool({
       `ToolSearchTool: keyword search for "${query}", found ${matches.length} matches`,
     )
 
-    logSearchOutcome(matches, 'keyword')
+    const activated = expandMatchesWithConfiguredGroups(matches, tools)
 
+    logSearchOutcome(activated, 'keyword')
     // Include pending server info when search finds no matches
     if (matches.length === 0) {
       const pendingServers = getPendingServerNames()
@@ -430,42 +453,33 @@ export const ToolSearchTool = buildTool({
       )
     }
 
-    return buildSearchResult(matches, query, deferredTools.length)
+    return buildSearchResult(activated, query, deferredTools.length)
   },
   renderToolUseMessage() {
     return null
   },
   userFacingName: () => '',
-  /**
-   * Returns a tool_result with tool_reference blocks.
-   * This format works on 1P/Foundry. Bedrock/Vertex may not support
-   * client-side tool_reference expansion yet.
-   */
   mapToolResultToToolResultBlockParam(
     content: Output,
     toolUseID: string,
   ): ToolResultBlockParam {
-    if (content.matches.length === 0) {
-      let text = 'No matching deferred tools found'
-      if (
-        content.pending_mcp_servers &&
-        content.pending_mcp_servers.length > 0
-      ) {
-        text += `. Some MCP servers are still connecting: ${content.pending_mcp_servers.join(', ')}. Their tools will become available shortly — try searching again.`
-      }
-      return {
-        type: 'tool_result',
-        tool_use_id: toolUseID,
-        content: text,
-      }
-    }
+    const message = content.matches.length > 0
+      ? `Activated tools: ${content.matches.join(', ')}. Their schemas will be available in the next model turn.`
+      : content.pending_mcp_servers && content.pending_mcp_servers.length > 0
+        ? `No matching deferred tools found. Some MCP servers are still connecting: ${content.pending_mcp_servers.join(', ')}. Try searching again shortly.`
+        : 'No matching deferred tools found.'
     return {
       type: 'tool_result',
       tool_use_id: toolUseID,
-      content: content.matches.map(name => ({
-        type: 'tool_reference' as const,
-        tool_name: name,
-      })),
-    } as unknown as ToolResultBlockParam
+      content: `${JSON.stringify({
+        type: TOOL_SEARCH_RESULT_TYPE,
+        matches: content.matches,
+        query: content.query,
+        total_deferred_tools: content.total_deferred_tools,
+        ...(content.pending_mcp_servers
+          ? { pending_mcp_servers: content.pending_mcp_servers }
+          : {}),
+      })}\n${message}`,
+    }
   },
 } satisfies ToolDef<InputSchema, Output>)

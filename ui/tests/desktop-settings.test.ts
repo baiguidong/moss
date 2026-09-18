@@ -18,6 +18,24 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('normalizes five permission modes and migrates the legacy bypass switch', () => {
+    expect(normalizeDesktopSettings({}).permissionMode).toBe('default');
+    expect(normalizeDesktopSettings({ permissionMode: 'acceptEdits' }).permissionMode)
+      .toBe('acceptEdits');
+    expect(normalizeDesktopSettings({ permissionMode: 'dontAsk' }).permissionMode)
+      .toBe('dontAsk');
+    expect(normalizeDesktopSettings({ permissionMode: 'invalid' }).permissionMode)
+      .toBe('default');
+    expect(normalizeDesktopSettings({ bypassPermissions: true })).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      bypassPermissions: true,
+    });
+    expect(normalizeDesktopSettings(
+      { model: 'next-model' },
+      { permissionMode: 'plan', bypassPermissions: false },
+    ).permissionMode).toBe('plan');
+  });
+
   it('uses recommended tool loading defaults and accepts per-tool choices', () => {
     const defaults = normalizeDesktopSettings({}).toolLoading;
     expect(defaults).toMatchObject({

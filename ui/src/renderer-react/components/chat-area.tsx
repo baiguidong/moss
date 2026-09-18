@@ -49,6 +49,7 @@ import {
   CoordinatorWorkersView,
 } from "@/components/coordinator-workers-view";
 import { FilePreview } from "@/components/file-preview";
+import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
@@ -58,6 +59,7 @@ import type {
   AskUserQuestionRequest,
   BackgroundTaskInfo,
   InstalledConnector,
+  PermissionMode,
   SessionSummary,
 } from "../types";
 import {
@@ -118,7 +120,7 @@ const intentOptions: IntentOption[] = [
 ];
 
 const MAIN_CHAT_CONTENT_CLASS_NAME =
-  "max-w-[1120px] pl-4 pr-6 sm:pl-6 sm:pr-10 lg:pr-12";
+  "max-w-[1120px] px-4 sm:px-6 lg:px-12";
 
 function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
   const parts: string[] = [];
@@ -481,6 +483,9 @@ function ComposerPanel({
   onWorkspaceChange,
   onChange,
   onComposerIntentChange,
+  permissionMode,
+  onPermissionModeChange,
+  permissionModeChanging = false,
   onSend,
   onStop,
   installedAssistants,
@@ -510,6 +515,9 @@ function ComposerPanel({
   onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
+  permissionModeChanging?: boolean;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
@@ -1322,6 +1330,12 @@ function ComposerPanel({
                 onOpenConnectorHub={onOpenConnectorHub}
               />
 
+              <PermissionModeSelector
+                value={permissionMode}
+                onChange={onPermissionModeChange}
+                disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
+              />
+
             </div>
 
             <div className="flex items-center justify-end gap-2">
@@ -1411,6 +1425,11 @@ function ComposerPanel({
                 onToggleConnector={onToggleConnector}
                 onOpenConnectorHub={onOpenConnectorHub}
               />
+
+              <PermissionModeSelector
+                value={permissionMode}
+                onChange={onPermissionModeChange}
+              />
             </div>
 
             <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2">
@@ -1487,6 +1506,9 @@ function HomeLanding({
   onWorkspaceChange,
   onChange,
   onComposerIntentChange,
+  permissionMode,
+  onPermissionModeChange,
+  permissionModeChanging,
   onSend,
   installedAssistants,
   selectedAssistant,
@@ -1513,6 +1535,9 @@ function HomeLanding({
   onWorkspaceChange: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
+  permissionModeChanging?: boolean;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[]) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
@@ -1581,6 +1606,9 @@ function HomeLanding({
         onWorkspaceChange={onWorkspaceChange}
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
+        permissionModeChanging={permissionModeChanging}
         onSend={onSend}
         installedAssistants={installedAssistants}
         selectedAssistant={selectedAssistant ?? null}
@@ -2106,6 +2134,8 @@ export function ChatArea({
   homeWorkspace,
   focusedToolUseId,
   focusedToolRequestId,
+  focusedMessageId,
+  focusedMessageRequestId,
   pendingPlanApproval,
   planDecisionBusy,
   leftCollapsed,
@@ -2116,6 +2146,9 @@ export function ChatArea({
   childSessions = [],
   onChange,
   onComposerIntentChange,
+  permissionMode,
+  onPermissionModeChange,
+  permissionModeChanging = false,
   onToggleLeftSidebar,
   onToggleRightSidebar,
   onApprovePlan,
@@ -2171,6 +2204,8 @@ export function ChatArea({
   homeWorkspace?: string;
   focusedToolUseId?: string;
   focusedToolRequestId?: number;
+  focusedMessageId?: string;
+  focusedMessageRequestId?: number;
   pendingPlanApproval: PendingPlanApproval | null;
   planDecisionBusy: boolean;
   leftCollapsed: boolean;
@@ -2181,6 +2216,9 @@ export function ChatArea({
   childSessions?: SessionSummary[];
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
+  permissionModeChanging?: boolean;
   onToggleLeftSidebar: () => void;
   onToggleRightSidebar: () => void;
   onApprovePlan: () => void;
@@ -2265,6 +2303,14 @@ export function ChatArea({
   }, [focusedToolRequestId, focusedToolUseId, hasActiveSession]);
 
   React.useEffect(() => {
+    if (!focusedMessageId || !hasActiveSession) return;
+    const timers = [40, 160, 420].map((delay) => window.setTimeout(() => {
+      virtualListRef.current?.scrollToMessage(focusedMessageId);
+    }, delay));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [focusedMessageId, focusedMessageRequestId, hasActiveSession]);
+
+  React.useEffect(() => {
     if (!toolPermissionRequest) return;
     const timer = window.setTimeout(() => {
       virtualListRef.current?.scrollToBottom("smooth");
@@ -2337,6 +2383,9 @@ export function ChatArea({
           }}
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
+          permissionMode={permissionMode}
+          onPermissionModeChange={onPermissionModeChange}
+          permissionModeChanging={permissionModeChanging}
           onSend={handleHomeLandingSend}
           installedAssistants={installedAssistants}
           selectedAssistant={selectedAssistant ?? null}
@@ -2493,6 +2542,9 @@ export function ChatArea({
             contextUsage={contextUsage}
             onChange={onChange}
             onComposerIntentChange={onComposerIntentChange}
+            permissionMode={permissionMode}
+            onPermissionModeChange={onPermissionModeChange}
+            permissionModeChanging={permissionModeChanging}
             onSend={(files, skills) => onSend(files, undefined, skills)}
             onStop={onStop}
             installedAssistants={installedAssistants}

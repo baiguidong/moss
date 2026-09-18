@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { useAdapterConfig } from '@/lib/adapter-config';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { PRESET_THEMES } from '@/theme/presets';
+import { PermissionModeSelector } from '@/components/permission-mode-selector';
 import {
   DEFAULT_MOSS_TOOL_LOADING,
   MOSS_TOOL_GROUPS,
@@ -388,50 +389,70 @@ export function ToolLoadingSettingsTable({
   return (
     <Surface>
       <div className="overflow-x-auto">
-        <div className="min-w-[640px]">
-          <div className="grid grid-cols-[minmax(190px,0.9fr)_minmax(260px,1.4fr)_72px_72px] items-center gap-4 border-b border-sidebar-border bg-sidebar-accent/45 px-4 py-3 text-xs font-medium text-muted-foreground">
-            <div>工具</div>
-            <div>简短说明</div>
-            <div className="text-center">常驻</div>
-            <div className="text-center">按需</div>
-          </div>
+        <table className="w-full min-w-[720px] table-fixed text-left">
+          <colgroup>
+            <col className="w-24" />
+            <col className="w-[210px]" />
+            <col />
+            <col className="w-[72px]" />
+            <col className="w-[72px]" />
+          </colgroup>
+          <thead>
+            <tr className="border-b border-sidebar-border bg-sidebar-accent/45 text-xs font-medium text-muted-foreground">
+              <th className="px-4 py-3 font-medium">分组</th>
+              <th className="px-4 py-3 font-medium">工具</th>
+              <th className="px-4 py-3 font-medium">简短说明</th>
+              <th className="px-2 py-3 text-center font-medium">常驻</th>
+              <th className="px-2 py-3 text-center font-medium">按需</th>
+            </tr>
+          </thead>
           {MOSS_TOOL_GROUPS.map((group) => (
-            <div key={group.id} className="border-b border-sidebar-border last:border-b-0">
-              <div className="bg-sidebar/55 px-4 py-2 text-xs font-semibold text-foreground">
-                {group.label}
-              </div>
-              {group.tools.map((tool) => {
+            <tbody key={group.id} className="border-b border-sidebar-border last:border-b-0">
+              {group.tools.map((tool, toolIndex) => {
                 const selectedMode = value[tool.name] ?? tool.defaultMode;
                 return (
-                  <div
+                  <tr
                     key={tool.name}
-                    className="grid grid-cols-[minmax(190px,0.9fr)_minmax(260px,1.4fr)_72px_72px] items-center gap-4 border-t border-sidebar-border px-4 py-3"
+                    className="border-t border-sidebar-border first:border-t-0"
                   >
-                    <code className="truncate text-[12px] font-medium text-foreground">
-                      {tool.name}
-                    </code>
-                    <div className="text-xs leading-5 text-muted-foreground">
+                    {toolIndex === 0 ? (
+                      <th
+                        scope="rowgroup"
+                        rowSpan={group.tools.length}
+                        className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 align-middle text-xs font-semibold text-foreground"
+                      >
+                        {group.label}
+                      </th>
+                    ) : null}
+                    <td className="px-4 py-3 align-middle">
+                      <code className="block truncate text-[12px] font-medium text-foreground">
+                        {tool.name}
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 align-middle text-xs leading-5 text-muted-foreground">
                       {tool.description}
-                    </div>
+                    </td>
                     {(['always', 'deferred'] as const).map((mode) => (
-                      <label key={mode} className="flex cursor-pointer items-center justify-center">
-                        <input
-                          type="radio"
-                          name={`tool-loading-${tool.name}`}
-                          value={mode}
-                          checked={selectedMode === mode}
-                          onChange={() => onChange(tool.name, mode)}
-                          aria-label={`${tool.name} ${mode === 'always' ? '常驻' : '按需'}`}
-                          className="h-4 w-4 accent-primary"
-                        />
-                      </label>
+                      <td key={mode} className="px-2 py-3 text-center align-middle">
+                        <label className="inline-flex cursor-pointer items-center justify-center">
+                          <input
+                            type="radio"
+                            name={`tool-loading-${tool.name}`}
+                            value={mode}
+                            checked={selectedMode === mode}
+                            onChange={() => onChange(tool.name, mode)}
+                            aria-label={`${tool.name} ${mode === 'always' ? '常驻' : '按需'}`}
+                            className="h-4 w-4 accent-primary"
+                          />
+                        </label>
+                      </td>
                     ))}
-                  </div>
+                  </tr>
                 );
               })}
-            </div>
+            </tbody>
           ))}
-        </div>
+        </table>
       </div>
     </Surface>
   );
@@ -1939,14 +1960,15 @@ export function SettingsView({
                   >
                     <SettingsGroup>
                       <SettingsRow
-                        title="跳过常规权限确认"
-                        controlClassName="sm:w-[56px]"
+                        title="新会话默认权限"
+                        description="新建会话会继承此模式，之后可在发送框中单独调整。"
+                        controlClassName="sm:w-[220px]"
                       >
                         <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(settingsDraft.bypassPermissions)}
-                            onCheckedChange={(checked) => updateSetting('bypassPermissions', checked)}
-                            label="跳过常规权限确认"
+                          <PermissionModeSelector
+                            value={settingsDraft.permissionMode ?? 'default'}
+                            onChange={(mode) => updateSetting('permissionMode', mode)}
+                            compact={false}
                           />
                         </div>
                       </SettingsRow>
@@ -2551,21 +2573,21 @@ export function SettingsView({
                 ) : null}
 
                 {visibleSections.some((section) => section.id === 'tools') ? (
-                  <SettingsSection
+                  <section
                     id="tools"
-                    title="工具"
-                    sectionRef={(element) => {
+                    ref={(element) => {
                       sectionRefs.current.tools = element;
                     }}
+                    className="scroll-mt-6"
                   >
-                    <div className="mb-3 px-1 text-xs leading-6 text-muted-foreground">
-                      常驻工具会在每次请求中直接提供完整参数；模型支持 ToolSearch 时，按需工具只公布名称并在首次使用时加载。
+                    <div className="mb-3 px-1 text-sm leading-6 text-muted-foreground">
+                      常驻工具会在每次请求中提供完整参数；按需工具只公布名称，首次命中时会按分组一起加载。
                     </div>
                     <ToolLoadingSettingsTable
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
                     />
-                  </SettingsSection>
+                  </section>
                 ) : null}
 
                 {visibleSections.some((section) => section.id === 'library') ? (
