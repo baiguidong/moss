@@ -710,11 +710,6 @@ export type Tool<
   isMcp?: boolean
   isLsp?: boolean
   /**
-   * When true, this tool is omitted from the initial request and requires
-   * ToolSearch activation before its ordinary schema is sent.
-   */
-  readonly shouldDefer?: boolean | (() => boolean)
-  /**
    * When true, this tool is never deferred — its full schema appears in the
    * initial prompt even when ToolSearch is enabled. For MCP tools, set via
    * `_meta['anthropic/alwaysLoad']`. Use for tools the model must see on

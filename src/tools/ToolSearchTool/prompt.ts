@@ -1,7 +1,9 @@
-import { feature } from 'bun:bundle'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/featureFlags.js'
 import type { Tool } from '../../Tool.js'
-import { AGENT_TOOL_NAME } from '../AgentTool/constants.js'
+import {
+  isMossToolName,
+  shouldDeferMossTool,
+} from '../MossTool/toolLoading.js'
 
 export { TOOL_SEARCH_TOOL_NAME } from './constants.js'
 
@@ -38,7 +40,7 @@ The result lists the activated tool names. Tools in the same configured settings
  * Check if a tool should be deferred (requires ToolSearch to load).
  * A tool is deferred if:
  * - It's an MCP tool (always deferred - workflow-specific)
- * - It has shouldDefer: true
+ * - It's a host tool explicitly set to on-demand in Settings > Tools
  *
  * A tool is NEVER deferred if it has alwaysLoad: true (MCP tools set this via
  * _meta['anthropic/alwaysLoad']). This check runs first, before any other rule.
@@ -51,22 +53,7 @@ export function isDeferredTool(tool: Tool): boolean {
   // MCP tools are always deferred (workflow-specific)
   if (tool.isMcp === true) return true
 
-  // Never defer ToolSearch itself — the model needs it to load everything else
-  if (tool.name === TOOL_SEARCH_TOOL_NAME) return false
-
-  // Fork-first experiment: Agent must be available turn 1, not behind ToolSearch.
-  // Lazy require: static import of forkSubagent → coordinatorMode creates a cycle
-  // through constants/tools.ts at module init.
-  if (feature('FORK_SUBAGENT') && tool.name === AGENT_TOOL_NAME) {
-    type ForkMod = typeof import('../AgentTool/forkSubagent.js')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = require('../AgentTool/forkSubagent.js') as ForkMod
-    if (m.isForkSubagentEnabled()) return false
-  }
-
-  return typeof tool.shouldDefer === 'function'
-    ? tool.shouldDefer()
-    : tool.shouldDefer === true
+  return isMossToolName(tool.name) && shouldDeferMossTool(tool.name)
 }
 
 /**

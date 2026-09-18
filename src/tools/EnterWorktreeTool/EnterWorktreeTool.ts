@@ -72,7 +72,6 @@ export const EnterWorktreeTool: Tool<InputSchema, Output> = buildTool({
   userFacingName() {
     return 'Creating worktree'
   },
-  shouldDefer: true,
   renderToolUseMessage,
   renderToolResultMessage,
   async call(input) {

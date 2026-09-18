@@ -82,7 +82,6 @@ export const ConfigTool = buildTool({
   userFacingName() {
     return 'Config'
   },
-  shouldDefer: true,
   isConcurrencySafe() {
     return true
   },

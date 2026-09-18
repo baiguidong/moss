@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { getEmptyToolPermissionContext } from '../Tool.js'
+import { BashTool } from '../tools/BashTool/BashTool.js'
+import { EnterPlanModeTool } from '../tools/EnterPlanModeTool/EnterPlanModeTool.js'
+import { EnterWorktreeTool } from '../tools/EnterWorktreeTool/EnterWorktreeTool.js'
 import { MossTools } from '../tools/MossTool/MossTool.js'
+import { NotebookEditTool } from '../tools/NotebookEditTool/NotebookEditTool.js'
+import { TaskCreateTool } from '../tools/TaskCreateTool/TaskCreateTool.js'
 import {
   expandMatchesWithConfiguredGroups,
   ToolSearchTool,
 } from '../tools/ToolSearchTool/ToolSearchTool.js'
+import { isDeferredTool } from '../tools/ToolSearchTool/prompt.js'
+import { WebFetchTool } from '../tools/WebFetchTool/WebFetchTool.js'
 import {
   extractDiscoveredToolNames,
   getToolSearchMode,
@@ -47,6 +54,25 @@ describe('generic ToolSearch', () => {
       async () => getEmptyToolPermissionContext(),
       [],
     )).toBe(true)
+  })
+
+  test('keeps built-in task, plan, network, notebook, shell, and worktree tools resident', () => {
+    expect(isDeferredTool(TaskCreateTool)).toBe(false)
+    expect(isDeferredTool(EnterPlanModeTool)).toBe(false)
+    expect(isDeferredTool(WebFetchTool)).toBe(false)
+    expect(isDeferredTool(NotebookEditTool)).toBe(false)
+    expect(isDeferredTool(BashTool)).toBe(false)
+    expect(isDeferredTool(EnterWorktreeTool)).toBe(false)
+  })
+
+  test('continues to defer MCP tools unless they opt out', () => {
+    expect(isDeferredTool({ name: 'mcp__demo__read', isMcp: true } as never))
+      .toBe(true)
+    expect(isDeferredTool({
+      name: 'mcp__demo__read',
+      isMcp: true,
+      alwaysLoad: true,
+    } as never)).toBe(false)
   })
 
   test('restores activated tools from an ordinary ToolSearch result', () => {

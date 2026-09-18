@@ -11,10 +11,7 @@ import {
 import { getTaskScopeContext } from '../../utils/sessionIdContext.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
-import {
-  shouldDeferMossTool,
-  type MossToolName,
-} from './toolLoading.js'
+import type { MossToolName } from './toolLoading.js'
 
 const imageAspectRatioSchema = z.enum([
   '1:1',
@@ -145,7 +142,6 @@ function createMossTool<InputSchema extends MossInputSchema>(
     name: config.name,
     searchHint: config.searchHint,
     maxResultSizeChars: 100_000,
-    shouldDefer: () => shouldDeferMossTool(config.name),
     async description() {
       return config.description
     },

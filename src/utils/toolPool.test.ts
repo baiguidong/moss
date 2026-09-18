@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Tool, Tools } from '../Tool.js'
+import { isDeferredTool } from '../tools/ToolSearchTool/prompt.js'
 import {
   applyChatToolFilter,
   applyCoordinatorToolFilter,
@@ -58,5 +59,16 @@ describe('desktop chat tool pool', () => {
       'Read',
       'Bash',
     ])
+    expect(
+      filtered
+        .filter(tool => [
+          'Agent',
+          'Task',
+          'SendMessage',
+          'TeamCreate',
+          'TeamDelete',
+        ].includes(tool.name))
+        .every(tool => !isDeferredTool(tool)),
+    ).toBe(true)
   })
 })

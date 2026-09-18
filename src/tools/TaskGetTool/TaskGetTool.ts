@@ -53,7 +53,6 @@ export const TaskGetTool = buildTool({
   userFacingName() {
     return 'TaskGet'
   },
-  shouldDefer: true,
   isEnabled() {
     return true
   },

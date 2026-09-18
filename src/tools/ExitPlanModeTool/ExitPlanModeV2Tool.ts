@@ -123,7 +123,6 @@ export const ExitPlanModeV2Tool: Tool<InputSchema, Output> = buildTool({
   userFacingName() {
     return ''
   },
-  shouldDefer: true,
   isEnabled() {
     return true
   },

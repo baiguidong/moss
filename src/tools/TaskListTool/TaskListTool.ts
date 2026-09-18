@@ -48,7 +48,6 @@ export const TaskListTool = buildTool({
   userFacingName() {
     return 'TaskList'
   },
-  shouldDefer: true,
   isEnabled() {
     return true
   },

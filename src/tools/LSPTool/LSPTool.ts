@@ -133,7 +133,6 @@ export const LSPTool = buildTool({
     return DESCRIPTION
   },
   userFacingName,
-  shouldDefer: true,
   isEnabled() {
     return isLspConnected()
   },

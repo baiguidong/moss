@@ -48,7 +48,6 @@ export const EnterPlanModeTool: Tool<InputSchema, Output> = buildTool({
   userFacingName() {
     return ''
   },
-  shouldDefer: true,
   isEnabled() {
     return true
   },

@@ -56,6 +56,10 @@ export const DEFAULT_MOSS_TOOL_LOADING = {
 
 export type MossToolName = keyof typeof DEFAULT_MOSS_TOOL_LOADING
 
+export function isMossToolName(name: string): name is MossToolName {
+  return Object.hasOwn(DEFAULT_MOSS_TOOL_LOADING, name)
+}
+
 const MOSS_TOOL_GROUP_BY_NAME = new Map<MossToolName, readonly MossToolName[]>(
   Object.values(MOSS_TOOL_GROUPS).flatMap(group => (
     group.map(name => [name, group] as const)

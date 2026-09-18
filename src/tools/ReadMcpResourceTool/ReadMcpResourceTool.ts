@@ -53,7 +53,6 @@ export const ReadMcpResourceTool = buildTool({
   isReadOnly() {
     return true
   },
-  shouldDefer: true,
   name: READ_MCP_RESOURCE_TOOL_NAME,
   searchHint: 'read a specific MCP resource by URI',
   maxResultSizeChars: 100_000,

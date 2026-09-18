@@ -1,9 +1,9 @@
 /**
  * Tool Search utilities for dynamically discovering deferred tools.
  *
- * When enabled, deferred tools (MCP and shouldDefer tools) are omitted from
- * the initial request. ToolSearch activates matching tools, whose standard
- * schemas are added to the next request.
+ * When enabled, deferred tools (MCP plus host tools configured as on-demand)
+ * are omitted from the initial request. ToolSearch activates matching tools,
+ * whose standard schemas are added to the next request.
  */
 
 import memoize from 'lodash-es/memoize.js'
@@ -149,8 +149,8 @@ const getDeferredToolTokenCount = memoize(
 )
 
 /**
- * Tool search mode. Determines how deferrable tools (MCP + shouldDefer) are
- * surfaced:
+ * Tool search mode. Determines how deferrable tools (MCP + host tools marked
+ * on-demand in settings) are surfaced:
  *   - 'tst': Tool Search Tool — deferred tools discovered via ToolSearchTool (always enabled)
  *   - 'tst-auto': auto — tools deferred only when they exceed threshold
  *   - 'standard': tool search disabled — all tools exposed inline
@@ -164,7 +164,7 @@ export type ToolSearchMode = 'tst' | 'tst-auto' | 'standard'
  *   auto / auto:1-99      tst-auto
  *   true / auto:0         tst
  *   false / auto:100      standard
- *   (unset)               tst (default: always defer MCP and shouldDefer tools)
+ *   (unset)               tst (default: defer MCP and configured host tools)
  */
 export function getToolSearchMode(): ToolSearchMode {
   const value = process.env.ENABLE_TOOL_SEARCH
@@ -179,7 +179,7 @@ export function getToolSearchMode(): ToolSearchMode {
 
   if (isEnvTruthy(value)) return 'tst'
   if (isEnvDefinedFalsy(process.env.ENABLE_TOOL_SEARCH)) return 'standard'
-  return 'tst' // default: always defer MCP and shouldDefer tools
+  return 'tst' // default: defer MCP and configured host tools
 }
 
 /**

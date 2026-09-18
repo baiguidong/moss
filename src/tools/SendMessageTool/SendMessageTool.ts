@@ -525,7 +525,6 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
     get inputSchema(): InputSchema {
       return inputSchema()
     },
-    shouldDefer: true,
 
     isEnabled() {
       if (isAgentSwarmsEnabled()) return true

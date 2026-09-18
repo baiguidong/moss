@@ -44,7 +44,6 @@ export const ListMcpResourcesTool = buildTool({
   isReadOnly() {
     return true
   },
-  shouldDefer: true,
   name: LIST_MCP_RESOURCES_TOOL_NAME,
   searchHint: 'list resources from connected MCP servers',
   maxResultSizeChars: 100_000,

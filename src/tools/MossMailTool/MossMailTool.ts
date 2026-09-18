@@ -78,7 +78,6 @@ export const MossMailTool = buildTool({
   userFacingName() {
     return 'Moss Mail'
   },
-  shouldDefer: true,
   isConcurrencySafe(input: Input) {
     return input.action === 'search_recipients' || input.action === 'list_outbox'
   },
