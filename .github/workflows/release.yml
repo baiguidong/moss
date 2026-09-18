@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -251,13 +252,14 @@ jobs:
           bash -n deploy/package-server.sh
           bash -n deploy/install-server.sh
           bash deploy/install-server.test.sh
+          bash deps/server/scripts/validate.sh
           node --check scripts/docker-build-runtime.mjs
           help_output="$(deploy/install-server.sh --help)"
           grep -Fq -- '--offline' <<< "$help_output"
           grep -Fq -- '--upgrade' <<< "$help_output"
           grep -Fq -- '--service-name NAME' <<< "$help_output"
 
-      - name: Build server and Docker runtime assets
+      - name: Build Server and runtime images
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
@@ -268,7 +270,18 @@ jobs:
           OUTPUT_DIR=dist/server-release
           RUNTIME_TAG_VERSION="${VERSION//+/_}"
           RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-amd64"
+          SERVER_IMAGE="moss-server:$RUNTIME_TAG_VERSION-amd64"
           deploy/package-server.sh "$VERSION" amd64 "$OUTPUT_DIR"
+          rm -rf dist/server-image
+          mkdir -p dist/server-image
+          tar -xzf "$OUTPUT_DIR/moss-server-$VERSION-linux-amd64.tar.gz" \
+            -C dist/server-image
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg "MOSS_VERSION=$VERSION" \
+            --tag "$SERVER_IMAGE" \
+            --load \
+            -f docker/server/Dockerfile .
           bun scripts/docker-build-runtime.mjs \
             --tag "$RUNTIME_IMAGE" \
             --platform linux/amd64 \
@@ -281,68 +294,36 @@ jobs:
           docker run --rm "$RUNTIME_IMAGE" rg --version
           docker run --rm --user 10001:10001 -e HOME=/tmp/moss-home \
             "$RUNTIME_IMAGE" node --version
-          docker save "$RUNTIME_IMAGE" | gzip -1 \
-            > "$OUTPUT_DIR/moss-runtime-$VERSION-linux-amd64.tar.gz"
-          (
-            cd "$OUTPUT_DIR"
-            sha256sum \
-              "moss-server-$VERSION-linux-amd64.tar.gz" \
-              "moss-runtime-$VERSION-linux-amd64.tar.gz" \
-              > SHA256SUMS-server
-          )
-          sed \
-            -e "s|@@MOSS_RELEASE_TAG@@|$RELEASE_TAG|g" \
-            -e "s|@@MOSS_REPOSITORY@@|$GITHUB_REPOSITORY|g" \
-            deploy/install-server.sh > "$OUTPUT_DIR/install-server.sh"
-          chmod +x "$OUTPUT_DIR/install-server.sh"
+          docker run --rm --entrypoint /opt/moss/node/bin/node \
+            "$SERVER_IMAGE" --no-warnings -e \
+            "require('node:sqlite'); require('sharp')"
 
-      - name: Validate server release assets
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          OUTPUT_DIR=dist/server-release
-          SERVER_ARCHIVE="moss-server-$VERSION-linux-amd64.tar.gz"
-          RUNTIME_ARCHIVE="moss-runtime-$VERSION-linux-amd64.tar.gz"
-          (cd "$OUTPUT_DIR" && sha256sum -c SHA256SUMS-server)
-          tar -tzf "$OUTPUT_DIR/$SERVER_ARCHIVE" > dist/server-contents.txt
-          grep -Fxq 'moss-server/node/bin/node' dist/server-contents.txt
-          grep -Fxq 'moss-server/VERSION' dist/server-contents.txt
-          grep -Fxq 'moss-server/NODE_VERSION' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/bin/moss-server.mjs' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/bin/moss-session-runner.mjs' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/adapters/feishu.mjs' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/admin/dist/index.html' dist/server-contents.txt
-          grep -Fxq 'moss-server/app/resources/assistants/app-builder/assistant.md' dist/server-contents.txt
-          ! grep -Fq 'cli-node.js' dist/server-contents.txt
-          ! tar -tvzf "$OUTPUT_DIR/$SERVER_ARCHIVE" | grep -Eq '^[lh]'
-          ! grep -Eq '(^|/)\.\.(/|$)' dist/server-contents.txt
-          gzip -t "$OUTPUT_DIR/$RUNTIME_ARCHIVE"
-          ! grep -Fq '@@MOSS_RELEASE_TAG@@' "$OUTPUT_DIR/install-server.sh"
-          ! grep -Fq '@@MOSS_REPOSITORY@@' "$OUTPUT_DIR/install-server.sh"
-          grep -Fq "RELEASE_TAG=\"\${MOSS_RELEASE_TAG:-$RELEASE_TAG}\"" \
-            "$OUTPUT_DIR/install-server.sh"
-          grep -Fq "REPOSITORY=\"\${MOSS_REPOSITORY:-$GITHUB_REPOSITORY}\"" \
-            "$OUTPUT_DIR/install-server.sh"
-
-      - name: Upload server release assets
+      - name: Publish Server Docker images
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          OUTPUT_DIR=dist/server-release
-          gh release upload "$RELEASE_TAG" \
-            "$OUTPUT_DIR/moss-server-$VERSION-linux-amd64.tar.gz" \
-            "$OUTPUT_DIR/moss-runtime-$VERSION-linux-amd64.tar.gz" \
-            "$OUTPUT_DIR/SHA256SUMS-server" \
-            "$OUTPUT_DIR/install-server.sh" \
-            --clobber \
-            --repo "$GITHUB_REPOSITORY"
+          TAG_VERSION="${VERSION//+/_}"
+          IMAGE_OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          LOCAL_SERVER_IMAGE="moss-server:$TAG_VERSION-amd64"
+          LOCAL_RUNTIME_IMAGE="moss-runtime:$TAG_VERSION-amd64"
+          SERVER_IMAGE="ghcr.io/$IMAGE_OWNER/moss-server"
+          RUNTIME_IMAGE="ghcr.io/$IMAGE_OWNER/moss-runtime"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$LOCAL_SERVER_IMAGE" "$SERVER_IMAGE:$TAG_VERSION"
+          docker tag "$LOCAL_RUNTIME_IMAGE" "$RUNTIME_IMAGE:$TAG_VERSION"
+          docker push "$SERVER_IMAGE:$TAG_VERSION"
+          docker push "$RUNTIME_IMAGE:$TAG_VERSION"
+          if [[ "$IS_PRERELEASE" != true ]]; then
+            docker tag "$LOCAL_SERVER_IMAGE" "$SERVER_IMAGE:latest"
+            docker tag "$LOCAL_RUNTIME_IMAGE" "$RUNTIME_IMAGE:latest"
+            docker push "$SERVER_IMAGE:latest"
+            docker push "$RUNTIME_IMAGE:latest"
+          fi
 
   publish-release:
     runs-on: ubuntu-latest
@@ -357,7 +338,7 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq 13 ]]
+          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq 9 ]]
           grep -Fxq "Moss-$VERSION-arm64.dmg" <<<"$assets"
           grep -Fxq "Moss-$VERSION-arm64.dmg.blockmap" <<<"$assets"
           grep -Fxq "Moss-$VERSION-arm64-mac.zip" <<<"$assets"
@@ -367,10 +348,6 @@ jobs:
           grep -Fxq "Moss-Portable-$VERSION-x64.exe" <<<"$assets"
           grep -Fxq 'latest-mac.yml' <<<"$assets"
           grep -Fxq 'latest.yml' <<<"$assets"
-          grep -Fxq 'install-server.sh' <<<"$assets"
-          grep -Fxq 'SHA256SUMS-server' <<<"$assets"
-          grep -Fxq "moss-server-$VERSION-linux-amd64.tar.gz" <<<"$assets"
-          grep -Fxq "moss-runtime-$VERSION-linux-amd64.tar.gz" <<<"$assets"
 
       - name: Publish GitHub Release
         env:

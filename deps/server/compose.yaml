@@ -1,0 +1,47 @@
+name: ${COMPOSE_PROJECT_NAME}
+
+networks:
+  moss-server:
+    driver: bridge
+
+services:
+  server:
+    image: ${MOSS_SERVER_IMAGE}
+    container_name: moss-server
+    environment:
+      HOME: /root
+      MOSS_SERVER_HOME: ${MOSS_SERVER_HOME}
+      MOSS_SERVER_ASSET_ROOT: ${MOSS_SERVER_HOME}/container-app
+      MOSS_HOME: ${MOSS_SERVER_HOME}
+      MOSS_CONFIG_DIR: ${MOSS_SERVER_HOME}
+      MOSS_SERVER_CONFIG: ${MOSS_SERVER_HOME}/server.json
+      MOSS_NODE_PATH: /opt/moss/node/bin/node
+      MOSS_HIDE_BOOTSTRAP_SECRETS: "1"
+      NODE_ENV: production
+      TZ: ${TZ}
+    volumes:
+      - ${MOSS_SERVER_HOME}:${MOSS_SERVER_HOME}
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "43127"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:43127/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks: [moss-server]
+
+  nginx:
+    image: ${NGINX_IMAGE}
+    container_name: moss-server-nginx
+    depends_on:
+      server: { condition: service_healthy }
+    ports:
+      - ${MOSS_HTTPS_PORT}:443
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    networks: [moss-server]

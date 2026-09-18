@@ -25,4 +25,7 @@ export function getMossConfigHomeDir(): string {
 }
 
 export const MOSS_SERVER_HOME = getMossServerHomeDir()
+export const MOSS_SERVER_ASSET_ROOT = process.env.MOSS_SERVER_ASSET_ROOT?.trim()
+  ? normalizePath(process.env.MOSS_SERVER_ASSET_ROOT)
+  : MOSS_SERVER_HOME
 export const MOSS_HOME = MOSS_SERVER_HOME

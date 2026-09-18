@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'path'
-import { MOSS_SERVER_HOME } from '../lib/env.js'
+import { MOSS_SERVER_ASSET_ROOT } from '../lib/env.js'
 import { getSystemSettings } from '../systemSettings.js'
 import type {
   BackendHandle,
@@ -124,13 +124,13 @@ function resolveDockerUser(): string | null {
 }
 
 function resolveSessionRunnerPath(): string {
-  return join(MOSS_SERVER_HOME, 'bin', 'moss-session-runner.mjs')
+  return join(MOSS_SERVER_ASSET_ROOT, 'bin', 'moss-session-runner.mjs')
 }
 
 function ensureSessionRunnerExists(runnerPath: string): void {
   if (!existsSync(runnerPath)) {
     throw new Error(
-      `Missing ${runnerPath}. Build or install moss-session-runner.mjs to ${join(MOSS_SERVER_HOME, 'bin')}.`,
+      `Missing ${runnerPath}. Build or install moss-session-runner.mjs to ${join(MOSS_SERVER_ASSET_ROOT, 'bin')}.`,
     )
   }
 }

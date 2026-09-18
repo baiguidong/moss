@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
 import { spawn } from 'child_process'
 import { join } from 'path'
-import { MOSS_SERVER_HOME } from './lib/env.js'
+import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
 import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
 import {
   normalizeAdvancedSettings,
@@ -48,7 +48,7 @@ function wait(ms: number): Promise<void> {
 
 function resolveRunnerEntryPath(): string {
   const candidates = [
-    join(MOSS_SERVER_HOME, 'bin', 'moss-session-runner.mjs'),
+    join(MOSS_SERVER_ASSET_ROOT, 'bin', 'moss-session-runner.mjs'),
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
@@ -56,7 +56,7 @@ function resolveRunnerEntryPath(): string {
     }
   }
   throw new Error(
-    `Missing moss-session-runner.mjs. Build or install it to ${join(MOSS_SERVER_HOME, 'bin')}.`,
+    `Missing moss-session-runner.mjs. Build or install it to ${join(MOSS_SERVER_ASSET_ROOT, 'bin')}.`,
   )
 }
 

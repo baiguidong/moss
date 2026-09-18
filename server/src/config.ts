@@ -96,6 +96,7 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     host: raw.server.host,
     port: raw.server.port,
     advertisedHost: raw.server.advertisedHost,
+    publicUrl: raw.server.publicUrl?.replace(/\/+$/, ''),
     authMode: 'local',
     tokenTtlSec: raw.auth.tokenTtlSec,
     bootstrapAdmin: {

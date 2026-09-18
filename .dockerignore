@@ -3,3 +3,9 @@
 !docker/runtime/
 !docker/runtime/Dockerfile
 !docker/runtime/entrypoint.sh
+!docker/server/
+!docker/server/Dockerfile
+!docker/server/entrypoint.sh
+!dist/
+!dist/server-image/
+!dist/server-image/**

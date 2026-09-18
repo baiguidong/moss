@@ -17,7 +17,7 @@ import {
   type AutoMemorySettings,
   type SessionMemorySettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
-import { MOSS_SERVER_HOME } from './lib/env.js'
+import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
@@ -578,6 +578,15 @@ function parseSessionMemorySettings(
 }
 
 function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
+  if (config.publicUrl) {
+    const publicUrl = new URL(config.publicUrl)
+    publicUrl.protocol = publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+    publicUrl.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`
+    publicUrl.search = ''
+    publicUrl.hash = ''
+    return publicUrl.toString()
+  }
+
   const address = server.address()
   const actualPort =
     typeof address === 'object' && address ? address.port : config.port
@@ -608,7 +617,7 @@ function canAccessSession(
 
 function resolveAdminDistDir(): string | null {
   const candidates = [
-    resolve(MOSS_SERVER_HOME, 'admin', 'dist'),
+    resolve(MOSS_SERVER_ASSET_ROOT, 'admin', 'dist'),
   ]
 
   for (const candidate of candidates) {

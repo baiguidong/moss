@@ -17,6 +17,7 @@ export const serverFileConfigSchema = lazySchema(() =>
       host: z.string().default('0.0.0.0'),
       port: z.number().int().min(0).default(43127),
       advertisedHost: z.string().min(1).optional(),
+      publicUrl: z.string().url().optional(),
     }).default({
       host: '0.0.0.0',
       port: 43127,
@@ -123,6 +124,7 @@ export type ServerConfig = {
   host: string
   port: number
   advertisedHost?: string
+  publicUrl?: string
   authMode: 'local'
   tokenTtlSec: number
   bootstrapAdmin: {

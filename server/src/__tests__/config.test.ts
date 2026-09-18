@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
 import { join } from 'path'
-import { getDefaultServerConfig, getDefaultServerConfigPath } from '../config.js'
+import { getDefaultServerConfig, getDefaultServerConfigPath, readServerConfig } from '../config.js'
 
 const originalMossServerHome = process.env.MOSS_SERVER_HOME
 
@@ -27,5 +29,20 @@ describe('server config defaults', () => {
     expect(config.storage.runDir).toBe(join(serverHome, 'var', 'run'))
     expect(config.storage.logDir).toBe(join(serverHome, 'var', 'log'))
     expect(config.auth).not.toHaveProperty('oauth')
+  })
+
+  test('accepts an HTTPS public URL', async () => {
+    const serverHome = await mkdtemp(join(tmpdir(), 'moss-server-config-'))
+    process.env.MOSS_SERVER_HOME = serverHome
+    try {
+      const configPath = join(serverHome, 'server.json')
+      await writeFile(configPath, JSON.stringify({
+        server: { publicUrl: 'https://moss.internal' },
+      }))
+      const { config } = await readServerConfig(configPath)
+      expect(config.publicUrl).toBe('https://moss.internal')
+    } finally {
+      await rm(serverHome, { recursive: true, force: true })
+    }
   })
 })

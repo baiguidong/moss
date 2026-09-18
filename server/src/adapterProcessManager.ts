@@ -6,7 +6,7 @@ import path from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import type net from 'net'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
-import { MOSS_SERVER_HOME } from './lib/env.js'
+import { MOSS_SERVER_ASSET_ROOT, MOSS_SERVER_HOME } from './lib/env.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import type { RuntimeService } from './runtimeService.js'
 import type { SessionRecord, SessionSummary } from './types.js'
@@ -1392,7 +1392,7 @@ export class AdapterProcessManager {
   private findEntryFile(): string | null {
     if (this.options.entryFile) return existsSync(this.options.entryFile) ? this.options.entryFile : null
     const candidates = [
-      path.join(MOSS_SERVER_HOME, 'adapters', 'feishu.mjs'),
+      path.join(MOSS_SERVER_ASSET_ROOT, 'adapters', 'feishu.mjs'),
       path.resolve(process.cwd(), 'ui', 'dist', 'adapters', 'feishu.mjs'),
       path.resolve(process.cwd(), 'adapters', 'feishu', 'index.ts'),
     ]

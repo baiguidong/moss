@@ -5,25 +5,31 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 ## 文档
 
 - [Moss Server API](server/API.md)
-- [Moss Server 一键部署](deploy/README.md)
+- [Moss Server Docker Compose 部署](deps/server/README.md)
+- [Moss Server 旧版宿主机部署](deploy/README.md)
 - [飞书 Adapter 配置与完整权限清单](adapters/README.md)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
 `src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
 
-## Server 一键部署
+## Server Docker Compose 部署
 
-目标机需要 Linux x86_64、systemd、Docker 20.10+、root/sudo 权限，以及
-`curl`、`tar` 和 SHA-256 校验工具。Server 主程序和 session Docker Runtime
-与桌面端使用同一个 `v*` GitHub Release：
+目标机需要 Linux x86_64、Docker Engine、Docker Compose v2、`curl`、`jq`
+和 `openssl`。Server、Nginx HTTPS 代理和 session runtime 均通过 Docker
+运行。部署配置固定保存在仓库的 `deps/server` 中：
 
 ```bash
-curl -fsSL https://github.com/baiguidong/moss/releases/latest/download/install-server.sh | sudo bash
+cd deps/server
+sudo env \
+  MOSS_PUBLIC_HOST=10.0.1.181 \
+  MOSS_REGISTRY_USERNAME='<github-user>' \
+  MOSS_REGISTRY_TOKEN='<read-packages-token>' \
+  ./start.sh
 ```
 
-默认安装到执行用户的 `~/.moss/server`，注册 `moss-server.service`，监听
-`43127`，并使用随版本发布的 Docker Runtime。安装、独立多实例、离线部署、升级、
-回滚和卸载参数见[部署文档](deploy/README.md)。
+默认持久化目录仍为 `/root/.moss/server`，HTTPS 端口为 `443`。首次运行生成
+匹配内网 IP 的自签证书；客户端需要信任 `deps/server/tls/server.crt`。详细配置见
+[部署文档](deps/server/README.md)。
 
 ## 飞书 Adapter
 

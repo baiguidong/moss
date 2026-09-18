@@ -15,11 +15,14 @@
 - users / api keys 管理 API
 - `/admin` 静态 SPA
 
-默认启动入口：
+仓库开发环境的默认启动入口：
 
 - `bun run server:start`（仓库根目录执行）
 
 `server:start` 会先执行 prepare，再从 `MOSS_SERVER_HOME` 启动 server。
+
+Linux 远端部署使用仓库中的 `deps/server` Docker Compose 配置，由 Nginx 提供
+HTTPS；参见 [`deps/server/README.md`](../deps/server/README.md)。
 
 默认 server root：
 
@@ -87,7 +90,8 @@ runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
   "server": {
     "host": "0.0.0.0",
     "port": 43127,
-    "advertisedHost": "10.0.1.179"
+    "advertisedHost": "10.0.1.179",
+    "publicUrl": "https://moss.example.com"
   }
 }
 ```
@@ -96,6 +100,7 @@ runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
 
 - `host`: 监听地址，`0.0.0.0` 表示监听所有接口
 - `advertisedHost`: 对外广播的地址，用于 WebSocket URL
+- `publicUrl`: HTTPS 反向代理后的公开地址；设置后会优先生成对应的 `wss://` 会话地址
 - 如果不设置 `advertisedHost`，当 `host` 为 `0.0.0.0` 或 `::` 时，WebSocket URL 会使用 `127.0.0.1`，导致远程客户端无法连接
 
 首次初始化 admin 可直接从配置文件读取：
