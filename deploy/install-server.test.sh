@@ -17,6 +17,11 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "expected output to contain: $needle"
 }
 
+assert_not_contains() {
+  local haystack="$1" needle="$2"
+  [[ "$haystack" != *"$needle"* ]] || fail "expected output not to contain: $needle"
+}
+
 stamp_installer() {
   local tag="$1" output="$2"
   sed \
@@ -118,6 +123,16 @@ output="$(MOSS_INSTALL_DIR="$occupied" \
   run_installer_with_mocks "$valid_installer" \
   MOSS_INSTALL_USER="$(id -un)" MOSS_INSTALL_LOCK_DIR="$TMP_ROOT" || true)"
 assert_contains "$output" 'install directory is not empty and is not managed'
+
+settings_only="$TMP_ROOT/settings-only"
+mkdir -p "$settings_only"
+printf '{"openIM":{"configured":true}}\n' > "$settings_only/settings.json"
+output="$(MOSS_INSTALL_DIR="$settings_only" \
+  MOSS_SERVICE_NAME=moss-server-review \
+  run_installer_with_mocks "$valid_installer" \
+  MOSS_INSTALL_USER="$(id -un)" MOSS_INSTALL_LOCK_DIR="$TMP_ROOT" || true)"
+assert_not_contains "$output" 'install directory is not empty and is not managed'
+assert_contains "$output" 'missing offline asset'
 
 managed="$TMP_ROOT/managed"
 mkdir -p "$managed"

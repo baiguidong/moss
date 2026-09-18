@@ -152,9 +152,12 @@ fi
 
 MARKER_PATH="$INSTALL_DIR/.moss-server-install"
 CONFIG_PATH="$INSTALL_DIR/server.json"
+SETTINGS_PATH="$INSTALL_DIR/settings.json"
 [ -d "$INSTALL_DIR" ] && INSTALL_DIR_PREEXISTED=1 || INSTALL_DIR_PREEXISTED=0
+[ -f "$SETTINGS_PATH" ] && PREEXISTING_SETTINGS=1 || PREEXISTING_SETTINGS=0
 [ ! -L "$MARKER_PATH" ] || die "install marker must not be a symbolic link"
 [ ! -L "$CONFIG_PATH" ] || die "server config must not be a symbolic link"
+[ ! -L "$SETTINGS_PATH" ] || die "server settings must not be a symbolic link"
 EXISTING_INSTALL=0
 if [ -f "$MARKER_PATH" ] || [ -f "$CONFIG_PATH" ]; then
   EXISTING_INSTALL=1
@@ -181,7 +184,8 @@ if [ "$EXISTING_INSTALL" = 1 ] && [ ! -f "$MARKER_PATH" ]; then
   die "existing server config is not managed by this installer: $CONFIG_PATH"
 fi
 if [ "$EXISTING_INSTALL" = 0 ] && [ "$INSTALL_DIR_PREEXISTED" = 1 ] \
-  && find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  && find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name settings.json \
+    -print -quit | grep -q .; then
   die "install directory is not empty and is not managed by this installer: $INSTALL_DIR"
 fi
 for relative_path in releases var var/lib var/run var/log skills assistants; do
@@ -327,7 +331,12 @@ cleanup_work_dir() {
     && [ "$INSTALL_DIR_PREPARED" = 1 ] \
     && [ "${TRANSACTION_ACTIVE:-0}" = 0 ]; then
     if [ -d "$INSTALL_DIR" ]; then
-      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || true
+      if [ "$PREEXISTING_SETTINGS" = 1 ]; then
+        find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name settings.json \
+          -exec rm -rf -- {} + || true
+      else
+        find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || true
+      fi
     fi
     [ "$INSTALL_DIR_PREEXISTED" = 1 ] || rmdir "$INSTALL_DIR" 2>/dev/null || true
     if [ "$USING_DEFAULT_INSTALL_DIR" = 1 ] \
@@ -508,7 +517,6 @@ RELEASE_DIR="$INSTALL_DIR/releases/$RELEASE_TAG"
 NEW_RELEASE_DIR="$INSTALL_DIR/releases/.$RELEASE_TAG.new.$$"
 REPLACED_RELEASE_DIR="$INSTALL_DIR/releases/.$RELEASE_TAG.replaced.$$"
 PREVIOUS_TARGET="$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)"
-SETTINGS_PATH="$INSTALL_DIR/settings.json"
 SETTINGS_EXISTED=0
 SETTINGS_BACKUP="$WORK_DIR/settings.json.backup"
 CONFIG_EXISTED=0
@@ -649,8 +657,13 @@ restore_previous_release() {
       [ "$restored" = 1 ] || restore_status=1
     fi
   elif [ "$EXISTING_INSTALL" = 0 ]; then
-    find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + \
-      || restore_status=1
+    if [ "$PREEXISTING_SETTINGS" = 1 ]; then
+      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name settings.json \
+        -exec rm -rf -- {} + || restore_status=1
+    else
+      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + \
+        || restore_status=1
+    fi
     if [ "$INSTALL_DIR_PREEXISTED" = 0 ]; then
       rmdir "$INSTALL_DIR" 2>/dev/null || true
     fi

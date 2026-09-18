@@ -19,6 +19,11 @@ The default installation uses the invoking user's `~/.moss/server`, the
 `moss-server.service` systemd unit, and port `43127`. The installer prompts for
 the public address and initial administrator credentials.
 
+A pre-existing installation directory is accepted when it is empty or contains
+only `settings.json`; the existing settings are merged with the runtime settings
+required by the installer. Other unmarked contents are rejected to avoid
+overwriting files owned by another installation.
+
 For unattended installation:
 
 ```bash

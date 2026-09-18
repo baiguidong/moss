@@ -1214,16 +1214,12 @@ export class AuthCenterDb {
     const resolvedAdmin = resolveBootstrapAdminConfig(config)
     const existingNameUser = this.listUsersByName(resolvedAdmin.username)[0]
     if (existingNameUser) {
-      throw new Error(
-        `Cannot create bootstrap admin: username already exists (${resolvedAdmin.username})`,
-      )
+      return { created: false }
     }
 
     const existingEmailUser = this.getUserByEmail(resolvedAdmin.email)
     if (existingEmailUser) {
-      throw new Error(
-        `Cannot create bootstrap admin: email already exists (${resolvedAdmin.email})`,
-      )
+      return { created: false }
     }
 
     const org = this.listOrganizations()[0]
