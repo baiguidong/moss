@@ -7,6 +7,16 @@ const db = new DatabaseSync(':memory:')
 const authDb = new AuthCenterDb(db)
 
 try {
+  const freshDb = new DatabaseSync(':memory:')
+  const freshAuthDb = new AuthCenterDb(freshDb)
+  try {
+    const created = freshAuthDb.bootstrap({ username: 'admin' })
+    assert.equal(created.bootstrapAdminUsername, 'admin')
+    assert.equal(created.bootstrapAdminPassword, 'password')
+  } finally {
+    freshDb.close()
+  }
+
   const timestamp = Date.now()
   authDb.createOrganization('org-1', 'Existing Organization', timestamp)
   authDb.createUser({

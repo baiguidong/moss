@@ -73,10 +73,10 @@ runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
 
 - 监听 `0.0.0.0:43127`
 - 本地认证模式 (`auth.mode: local`)
-- 默认管理员用户名 `admin`（密码需手动设置）
+- 默认管理员用户名和密码 `admin` / `password`（首次登录后应立即修改）
 - 数据存储在 `~/.moss/server/moss-server.db`
 
-启动后会提示编辑配置文件设置 `bootstrapAdmin.password`。
+也可以在首次启动前通过 `bootstrapAdmin.password` 覆盖默认密码。
 
 ### 远程访问配置
 

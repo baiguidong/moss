@@ -471,18 +471,13 @@ prompt_value() {
   printf -v "$variable" '%s' "${answer:-$default_value}"
 }
 
-GENERATED_PASSWORD=0
 if [ "$EXISTING_INSTALL" = 0 ]; then
   DEFAULT_HOST="$(hostname -I 2>/dev/null | awk '{ print $1 }')"
   DEFAULT_HOST="${DEFAULT_HOST:-127.0.0.1}"
   prompt_value PORT 'Service port' '43127'
   prompt_value ADVERTISED_HOST 'Public server address' "$DEFAULT_HOST"
   prompt_value ADMIN_USERNAME 'Administrator username' 'admin'
-  prompt_value ADMIN_PASSWORD 'Administrator password (blank generates one): ' '' 1
-  if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="$($NODE_BINARY -e "console.log(require('crypto').randomBytes(18).toString('base64url'))")"
-    GENERATED_PASSWORD=1
-  fi
+  prompt_value ADMIN_PASSWORD 'Administrator password (default: password): ' 'password' 1
 else
   PORT="$($NODE_BINARY -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).server.port" "$CONFIG_PATH")"
   ADVERTISED_HOST="$($NODE_BINARY -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).server.advertisedHost || ''" "$CONFIG_PATH")"
@@ -895,7 +890,7 @@ log "Installed Moss Server $RELEASE_TAG"
 log "Docker runtime: $RUNTIME_IMAGE"
 log "Admin: http://${ADVERTISED_HOST:-127.0.0.1}:$PORT/admin/"
 log "Status: systemctl status $SERVICE_NAME"
-if [ "$GENERATED_PASSWORD" = 1 ]; then
+if [ "$EXISTING_INSTALL" = 0 ] && [ "$ADMIN_PASSWORD" = password ]; then
   log "Administrator username: $ADMIN_USERNAME"
   log "Administrator password: $ADMIN_PASSWORD"
 fi

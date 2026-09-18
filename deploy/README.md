@@ -17,7 +17,9 @@ curl -fsSL https://github.com/baiguidong/moss/releases/latest/download/install-s
 
 The default installation uses the invoking user's `~/.moss/server`, the
 `moss-server.service` systemd unit, and port `43127`. The installer prompts for
-the public address and initial administrator credentials.
+the public address and initial administrator credentials. Leaving the initial
+credentials unset uses `admin` / `password`; change this password immediately
+after the first login.
 
 A pre-existing installation directory is accepted when it is empty or contains
 only `settings.json`; the existing settings are merged with the runtime settings

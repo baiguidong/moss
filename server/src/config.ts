@@ -178,7 +178,7 @@ export async function readServerConfig(
 
     process.stderr.write(`\nCreated default config at: ${resolvedConfigPath}\n`)
     process.stderr.write(`Please edit the config file to customize settings.\n`)
-    process.stderr.write(`Note: bootstrapAdmin.password should be set before first login.\n\n`)
+    process.stderr.write(`Default admin credentials: admin/password. Change the password after first login.\n\n`)
 
     return {
       configPath: resolvedConfigPath,

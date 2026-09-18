@@ -1368,7 +1368,7 @@ function resolveBootstrapAdminConfig(
     password:
       typeof config.password === 'string' && config.password.length > 0
         ? config.password
-        : createTemporaryPassword(),
+        : 'password',
   }
 }
 
