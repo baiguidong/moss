@@ -3,7 +3,7 @@
 ## 状态
 
 - 计划日期：2026-09-20。
-- 当前阶段：Phase 1 已完成，下一阶段为 Phase 2 飞书 Desktop App 迁移。
+- 当前阶段：Phase 1 已完成；Phase 2 飞书 Desktop App 代码迁移已完成，待使用真实飞书凭据做发布前联调。
 - 本计划中的 App 是安装在 Moss 内、由 Moss App Runtime 托管的可选插件，不是脱离 Moss 的独立桌面应用。
 - 迁移期间保留现有功能入口和数据格式；每个模块只有在迁移、回退和卸载验收通过后才删除旧实现。
 - 当前项目尚未发布，因此 Manifest 和 Host API 可以在实现阶段直接演进，不为未发布格式保留兼容层。
@@ -256,6 +256,15 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 - Moss 关闭飞书页面后 Backend 保持运行，Moss 退出后正确停止。
 - 重复外部事件不会创建重复 Turn；取消、超时和重连不会泄漏 handler。
 - 未安装飞书 App 时 Moss 核心功能无飞书代码依赖。
+
+实现记录（2026-09-20）：
+
+- 可迁移源码集中在 `apps/feishu/`，Manifest ID 固定为 `moss.feishu`，便于后续整目录拆分到独立仓库。
+- 飞书 SDK、长连接、卡片、消息转换、配置 schema、设置页和测试均归 App；Desktop 与旧 Server 回退包从同一入口构建。
+- Desktop 已注册真实 `moss.channel/v1` handlers，并继续持有身份授权、Session/Turn、通知、决策和幂等账本。
+- 旧配置先拆分为普通 config 与加密 secrets，等待 App Backend 建立飞书长连接并完成 Host 握手后才写入迁移标记。
+- `MOSS_FEISHU_LEGACY_ADAPTER=1` 可停用 Desktop App 实例并启用旧进程；移除开关后恢复迁移前的 App 启用状态。
+- 自动验证覆盖 Channel 映射、权限、取消、事件 ACK/去重、持久进程生命周期、配置迁移幂等和新旧构建入口；真实账号的消息、卡片和重连仍属于发布前人工验收。
 
 ### Phase 3：轻量 UI App
 

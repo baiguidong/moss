@@ -1,6 +1,6 @@
 /**
  * Feishu media service — wraps im.messageResource / im.image / im.file
- * so adapters/feishu/index.ts stays focused on flow control.
+ * so the Feishu App entry stays focused on flow control.
  *
  * References:
  *  - Feishu OpenAPI:   POST /open-apis/im/v1/images

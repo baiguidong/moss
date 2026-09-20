@@ -214,16 +214,36 @@ describe('desktop package contract', () => {
     expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
-  test('installs adapter dependencies in every clean CI build that compiles adapters', () => {
+  test('installs Feishu App dependencies in every clean CI build that compiles its backend', () => {
     const ciSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     const serverCiJob = ciSource.split('  build-server-images:')[1] || '';
     const serverReleaseJob = releaseSource.split('  build-server-linux-amd64:')[1]
       ?.split('\n  publish-release:')[0] || '';
-    expect(ciSource.match(/bun install --frozen-lockfile --cwd adapters/g)?.length).toBe(4);
+    expect(ciSource.match(/bun install --frozen-lockfile --cwd apps\/feishu/g)?.length).toBe(4);
     expect(serverCiJob).toContain('needs: quality');
-    expect(serverCiJob).toContain('bun install --frozen-lockfile --cwd adapters');
-    expect(serverReleaseJob).toContain('bun install --frozen-lockfile --cwd adapters');
+    expect(serverCiJob).toContain('bun install --frozen-lockfile --cwd apps/feishu');
+    expect(serverReleaseJob).toContain('bun install --frozen-lockfile --cwd apps/feishu');
+  });
+
+  test('owns Feishu source under the relocatable App directory', () => {
+    const manifest = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'app.moss.json'), 'utf8'));
+    const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'package.json'), 'utf8'));
+    const desktopBuild = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'), 'utf8');
+    const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
+    expect(manifest).toMatchObject({
+      id: 'moss.feishu',
+      backend: {
+        lifecycle: 'persistent',
+        protocols: ['moss.channel/v1'],
+      },
+    });
+    expect(packageJson.scripts?.build).toBe('node scripts/build.mjs');
+    expect(existsSync(path.join(repoRoot, 'apps', 'feishu', 'scripts', 'build.mjs'))).toBe(true);
+    expect(desktopBuild).toContain("'apps', 'feishu'");
+    expect(desktopBuild).toContain("spawnSync('bun', ['run', 'build']");
+    expect(serverBuild).toContain('apps/feishu/src/backend/feishu/index.ts');
+    expect(existsSync(path.join(repoRoot, 'adapters', 'feishu', 'index.ts'))).toBe(false);
   });
 });
 

@@ -68,7 +68,15 @@ export interface ChannelHostRequestMap {
   'conversation.select': ChannelIdempotentIdentity & { sessionId: string }
   'session.abort': ChannelIdempotentIdentity
   'message.receive': Required<ChannelExternalIdentity> & { text?: string; attachments?: ChannelAttachment[] }
-  'delivery.ack': { deliveryId: string; ok: boolean; externalMessageId?: string; externalCardId?: string; error?: string }
+  'delivery.ack': {
+    deliveryId: string
+    kind?: 'turn' | 'notification'
+    ok: boolean
+    externalConversationId?: string
+    externalMessageId?: string
+    externalCardId?: string
+    error?: string
+  }
   'decision.respond': Required<ChannelExternalIdentity> & { decisionId: string; actionToken: string; allowed: boolean }
 }
 

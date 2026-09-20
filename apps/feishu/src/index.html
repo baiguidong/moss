@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>飞书设置</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: linear-gradient(145deg, #101725, #0d1117 55%); }
+    main { width: min(680px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+    header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+    .logo { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: #3370ff; font-size: 24px; }
+    h1 { margin: 0; font-size: 22px; } h2 { margin: 0 0 14px; font-size: 16px; }
+    p { margin: 4px 0 0; color: #8b949e; font-size: 13px; line-height: 1.55; }
+    section { padding: 20px; margin-top: 14px; border: 1px solid #30363d; border-radius: 14px; background: rgba(22, 27, 34, .9); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    label { display: grid; gap: 7px; color: #c9d1d9; font-size: 13px; }
+    label.full { grid-column: 1 / -1; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; color: inherit; outline: none; }
+    input:focus { border-color: #3370ff; box-shadow: 0 0 0 3px rgba(51,112,255,.15); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 8px; padding: 9px 14px; color: white; background: #3370ff; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #30363d; } button:disabled { opacity: .55; cursor: wait; }
+    .status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: #8b949e; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6e7681; }
+    .dot.running { background: #3fb950; } .dot.error { background: #f85149; }
+    .code { font: 700 25px ui-monospace, monospace; letter-spacing: 5px; color: #79c0ff; }
+    .message { min-height: 20px; margin-top: 12px; color: #8b949e; font-size: 13px; }
+    .message.error { color: #ff7b72; } .message.ok { color: #56d364; }
+    .users { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    .users li { padding: 9px 11px; border-radius: 8px; background: #0d1117; font-size: 13px; }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div class="logo">💬</div><div><h1>飞书</h1><p>后台连接由 Moss App Runtime 托管，关闭此页面不会中断消息。</p></div></header>
+    <section>
+      <div class="row"><h2>连接配置</h2><span class="status"><i id="dot" class="dot"></i><span id="status">读取中</span></span></div>
+      <div class="grid">
+        <label>App ID<input id="appId" autocomplete="off" placeholder="cli_xxxxxxxx"></label>
+        <label>App Secret<input id="appSecret" type="password" autocomplete="new-password" placeholder="留空则保持不变"></label>
+        <label>Encrypt Key<input id="encryptKey" type="password" autocomplete="new-password" placeholder="可选；留空则保持不变"></label>
+        <label>Verification Token<input id="verificationToken" type="password" autocomplete="new-password" placeholder="可选；留空则保持不变"></label>
+        <label class="full"><span><input id="streamingCard" type="checkbox" style="width:auto;margin-right:8px">启用流式消息卡片</span></label>
+      </div>
+      <div class="actions"><button id="save">保存配置</button><button id="toggle" class="secondary">启用实例</button><button id="refresh" class="secondary">刷新状态</button></div>
+      <div id="message" class="message"></div>
+    </section>
+    <section>
+      <div class="row"><div><h2>账号配对</h2><p>配对码一小时内有效，只能成功使用一次。</p></div><button id="pair" class="secondary">生成配对码</button></div>
+      <p id="pairCode" class="code">------</p>
+      <ul id="users" class="users"></ul>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id)
+    const DEFAULT_ID = 'moss.feishu--default'
+    let instance = null
+
+    function code() {
+      const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+      const maxValid = Math.floor(256 / alphabet.length) * alphabet.length
+      let value = ''
+      while (value.length < 6) {
+        const byte = crypto.getRandomValues(new Uint8Array(1))[0]
+        if (byte < maxValid) value += alphabet[byte % alphabet.length]
+      }
+      return value
+    }
+
+    function setMessage(value, kind = '') {
+      $('message').textContent = value
+      $('message').className = `message ${kind}`
+    }
+
+    function render() {
+      const config = instance?.config || {}
+      $('appId').value = config.appId || ''
+      $('streamingCard').checked = Boolean(config.streamingCard)
+      const pairing = config.pairing || {}
+      $('pairCode').textContent = pairing.code && Number(pairing.expiresAt) > Date.now() ? pairing.code : '------'
+      const users = Array.isArray(config.pairedUsers) ? config.pairedUsers : []
+      $('users').innerHTML = users.length
+        ? users.map((user) => `<li>${escapeHtml(user.displayName || 'Feishu User')} · ${escapeHtml(user.userId || '')}</li>`).join('')
+        : '<li>尚未配对飞书账号</li>'
+      $('toggle').textContent = instance?.enabled ? '停用实例' : '启用实例'
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char])
+    }
+
+    async function refresh() {
+      try {
+        const instances = await window.mossApp.instances.list()
+        instance = instances.find((entry) => entry.id === DEFAULT_ID) || instances[0] || null
+        if (!instance) throw new Error('默认飞书实例不存在')
+        const statuses = await window.mossApp.instances.getStatus(instance.id)
+        const runtime = statuses[0]?.runtime
+        const state = !instance.enabled ? 'disabled' : runtime?.state || 'stopped'
+        $('status').textContent = ({ running: '后台运行中', starting: '正在启动', disabled: '实例已停用', error: '启动失败', 'crash-loop': '反复崩溃' })[state] || '已停止'
+        $('dot').className = `dot ${state === 'running' ? 'running' : state === 'error' || state === 'crash-loop' ? 'error' : ''}`
+        render()
+      } catch (error) {
+        setMessage(error.message || String(error), 'error')
+      }
+    }
+
+    $('save').addEventListener('click', async () => {
+      if (!instance) return
+      $('save').disabled = true
+      try {
+        const config = {
+          ...(instance.config || {}),
+          appId: $('appId').value.trim(),
+          streamingCard: $('streamingCard').checked,
+        }
+        const secrets = Object.fromEntries([
+          ['appSecret', $('appSecret').value],
+          ['encryptKey', $('encryptKey').value],
+          ['verificationToken', $('verificationToken').value],
+        ].filter(([, value]) => value))
+        await window.mossApp.instances.update(instance.id, {
+          config,
+          ...(Object.keys(secrets).length ? { secrets } : {}),
+        })
+        $('appSecret').value = ''
+        $('encryptKey').value = ''
+        $('verificationToken').value = ''
+        setMessage('配置已保存，后台实例已安全重启。', 'ok')
+        await refresh()
+      } catch (error) { setMessage(error.message || String(error), 'error') }
+      finally { $('save').disabled = false }
+    })
+
+    $('toggle').addEventListener('click', async () => {
+      if (!instance) return
+      $('toggle').disabled = true
+      try {
+        await window.mossApp.instances.setEnabled(instance.id, !instance.enabled)
+        setMessage(instance.enabled ? '实例已停用。' : '实例已启用。', 'ok')
+        await refresh()
+      } catch (error) { setMessage(error.message || String(error), 'error') }
+      finally { $('toggle').disabled = false }
+    })
+
+    $('pair').addEventListener('click', async () => {
+      if (!instance) return
+      const now = Date.now()
+      const pairing = { code: code(), createdAt: now, expiresAt: now + 60 * 60 * 1000 }
+      try {
+        await window.mossApp.instances.update(instance.id, {
+          config: { ...(instance.config || {}), pairing },
+        })
+        setMessage('请在飞书机器人中发送此配对码。', 'ok')
+        await refresh()
+      } catch (error) { setMessage(error.message || String(error), 'error') }
+    })
+
+    $('refresh').addEventListener('click', refresh)
+    window.mossApp.events.on('runtime', refresh)
+    void refresh()
+  </script>
+</body>
+</html>

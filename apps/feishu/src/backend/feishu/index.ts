@@ -13,9 +13,14 @@ import * as fs from 'node:fs/promises'
 import { WsBridge, type ServerMessage, type AttachmentRef } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
 import { ProcessBridge } from '../common/process-bridge.js'
+import { AppChannelBridge } from '../common/app-channel-bridge.js'
 import { StreamingCard } from './streaming-card.js'
 import { enqueue } from '../common/chat-queue.js'
-import { loadConfig } from '../common/config.js'
+import {
+  loadConfig,
+  loadConfigFromAppContext,
+  type AdapterConfig,
+} from '../common/config.js'
 import {
   formatImHelp,
   formatImStatus,
@@ -23,7 +28,7 @@ import {
 } from '../common/format.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient, type RecentProject } from '../common/http-client.js'
-import { isAllowedUser } from '../common/pairing.js'
+import { isAllowedUser as isLegacyAllowedUser } from '../common/pairing.js'
 import { optimizeMarkdownForFeishu } from './markdown-style.js'
 import { extractInboundPayload } from './extract-payload.js'
 import { FeishuMediaService } from './media.js'
@@ -46,31 +51,21 @@ import {
 
 // ---------- init ----------
 
-const config = loadConfig()
-if (!config.feishu.appId || !config.feishu.appSecret) {
-  console.error('[Feishu] Missing FEISHU_APP_ID / FEISHU_APP_SECRET. Set env or ~/.moss/settings.json adapters config')
-  process.exit(1)
-}
-
-const larkClient = new Lark.Client({
-  appId: config.feishu.appId,
-  appSecret: config.feishu.appSecret,
-  appType: Lark.AppType.SelfBuild,
-  domain: Lark.Domain.Feishu,
-})
-
-const bridge = new WsBridge(config.serverUrl, 'feishu')
-const desktopBridge = new ProcessBridge()
+const runsAsMossApp = process.env.MOSS_APP_ID === 'moss.feishu'
+let config!: AdapterConfig
+let larkClient!: InstanceType<typeof Lark.Client>
+let bridge!: WsBridge
+let httpClient!: AdapterHttpClient
+let media!: FeishuMediaService
+let sessionStore!: SessionStore
+let attachmentStore!: AttachmentStore
+const desktopBridge = runsAsMossApp
+  ? new AppChannelBridge({ onShutdown: () => shutdown(false, false) })
+  : new ProcessBridge()
 const dedup = new MessageDedup()
-const sessionStore = new SessionStore()
-const httpClient = new AdapterHttpClient(config.serverUrl)
+const appAuthorizedUsers = new Set<string>()
 
 // Attachment plumbing — shared by inbound (download) and outbound (upload) paths.
-const attachmentStore = new AttachmentStore()
-const media = new FeishuMediaService(larkClient, attachmentStore)
-attachmentStore.gc().catch((err) => {
-  console.warn('[Feishu] AttachmentStore.gc failed:', err instanceof Error ? err.message : err)
-})
 
 // One streaming card lifecycle per chatId (CardKit main + patch fallback).
 const streamingCards = new Map<string, StreamingCard>()
@@ -110,6 +105,44 @@ type DesktopSessionOption = {
   busy: boolean
   projectName?: string | null
   originChannel?: 'desktop' | 'feishu' | 'cron'
+}
+
+function initializeTransport(context?: unknown): void {
+  config = runsAsMossApp
+    ? loadConfigFromAppContext((context || {}) as Parameters<typeof loadConfigFromAppContext>[0])
+    : loadConfig()
+  if (!config.feishu.appId || !config.feishu.appSecret) {
+    throw new Error('Missing Feishu App ID or App Secret. Configure the moss.feishu App instance first.')
+  }
+
+  appAuthorizedUsers.clear()
+  for (const userId of config.feishu.allowedUsers) appAuthorizedUsers.add(String(userId))
+  for (const user of config.feishu.pairedUsers) appAuthorizedUsers.add(String(user.userId))
+
+  larkClient = new Lark.Client({
+    appId: config.feishu.appId,
+    appSecret: config.feishu.appSecret,
+    appType: Lark.AppType.SelfBuild,
+    domain: Lark.Domain.Feishu,
+  })
+  if (!runsAsMossApp) {
+    bridge = new WsBridge(config.serverUrl, 'feishu')
+    httpClient = new AdapterHttpClient(config.serverUrl)
+    sessionStore = new SessionStore()
+  }
+  attachmentStore = new AttachmentStore(runsAsMossApp && context && typeof context === 'object'
+    ? { root: path.join(String((context as { dataDir?: string }).dataDir || process.cwd()), 'attachments') }
+    : undefined)
+  media = new FeishuMediaService(larkClient, attachmentStore)
+  attachmentStore.gc().catch((error) => {
+    console.warn('[Feishu] AttachmentStore.gc failed:', error instanceof Error ? error.message : error)
+  })
+}
+
+function isAllowedUser(userId: string): boolean {
+  return runsAsMossApp
+    ? appAuthorizedUsers.has(String(userId))
+    : isLegacyAllowedUser(userId)
 }
 
 // ---------- helpers ----------
@@ -1149,7 +1182,10 @@ async function handleDesktopChatInput({
   }
 
   if (text === '/stop' || text === '停止') {
-    const result = await desktopBridge.request('session.abort', desktopIdentity(chatId, openId)) as {
+    const result = await desktopBridge.request(
+      'session.abort',
+      desktopIdentity(chatId, openId, eventId),
+    ) as {
       cancelled?: number
     }
     clearTransientChatState(chatId)
@@ -1322,16 +1358,28 @@ async function handleMessage(data: any): Promise<void> {
           ? await desktopBridge.request('pairing.attempt', {
             chatId,
             openId: senderOpenId,
+            eventId: messageId,
             code: pairText,
             displayName: 'Feishu User',
           }).catch((error) => {
             console.error('[Feishu] Unable to pair with Moss Desktop:', error)
             return { paired: false }
-          }) as { paired?: boolean }
-          : { paired: false }
+          }) as { paired?: boolean; alreadyPaired?: boolean }
+          : { paired: false, alreadyPaired: false }
         if (result.paired) {
-          await sendText(chatId, '配对成功，可以从会话中心选择工作内容。')
-          await showSessionCenter({ chatId, openId: senderOpenId })
+          appAuthorizedUsers.add(senderOpenId)
+          if (!result.alreadyPaired) {
+            await sendText(chatId, '配对成功，可以从会话中心选择工作内容。')
+            await showSessionCenter({ chatId, openId: senderOpenId })
+          } else {
+            await handleDesktopChatInput({
+              chatId,
+              openId: senderOpenId,
+              eventId: messageId,
+              text: pairText,
+              hasAttachments: false,
+            })
+          }
         } else {
           await sendText(chatId, '🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
         }
@@ -1379,151 +1427,6 @@ async function handleMessage(data: any): Promise<void> {
       console.error('[Feishu] Moss Desktop request failed:', error)
       await abortStreamingCard(chatId, new Error('Moss 客户端处理失败，请在桌面端查看详情后重试。'))
       await sendText(chatId, 'Moss 客户端处理失败，请在桌面端查看详情后重试。')
-    }
-    return
-
-    // ----- Commands (only when there are no attachments — `command + image`
-    //       isn't a meaningful combo, so attachments always take precedence) -----
-
-    if (!hasAttachments && (msgText === '/new' || msgText === '新会话' || msgText.startsWith('/new '))) {
-      const arg = msgText.startsWith('/new ') ? msgText.slice(5).trim() : ''
-      await startNewSession(chatId, arg || undefined)
-      return
-    }
-    if (!hasAttachments && (msgText === '/help' || msgText === '帮助')) {
-      await sendText(chatId, formatImHelp())
-      return
-    }
-    if (!hasAttachments && (msgText === '/status' || msgText === '状态')) {
-      await sendText(chatId, await buildStatusText(chatId))
-      return
-    }
-    if (!hasAttachments && (msgText === '/clear' || msgText === '清空')) {
-      const stored = await ensureExistingSession(chatId)
-      if (!stored) {
-        await sendText(chatId, formatImStatus(null))
-        return
-      }
-      clearTransientChatState(chatId)
-      const sent = bridge.sendUserMessage(chatId, '/clear')
-      if (!sent) {
-        await sendText(chatId, '⚠️ 无法发送 /clear，请先发送 /new 重新连接会话。')
-        return
-      }
-      await sendText(chatId, '🧹 已清空当前会话上下文。')
-      return
-    }
-    if (!hasAttachments && (msgText === '/stop' || msgText === '停止')) {
-      const stored = await ensureExistingSession(chatId)
-      if (!stored) {
-        await sendText(chatId, formatImStatus(null))
-        return
-      }
-      bridge.sendStopGeneration(chatId)
-      await sendText(chatId, '⏹ 已发送停止信号。')
-      return
-    }
-    if (!hasAttachments && (msgText === '/projects' || msgText === '项目列表')) {
-      await showProjectPicker(chatId)
-      return
-    }
-
-    // User is replying to a project picker prompt
-    if (!hasAttachments && pendingProjectSelection.has(chatId)) {
-      await startNewSession(chatId, msgText.trim())
-      return
-    }
-
-    // ----- Normal message flow (with optional inbound attachments) -----
-
-    const ready = await ensureSession(chatId)
-    if (!ready) return
-
-    // Download attachments (if any). Each download is independent —
-    // a single failure must not poison the rest, so we use allSettled.
-    let attachments: AttachmentRef[] | undefined
-    if (hasAttachments) {
-      try {
-        const stored = sessionStore.get(chatId)
-        const sessionId = stored?.sessionId ?? chatId
-        const settled = await Promise.allSettled(
-          pendingDownloads.map((p) =>
-            media.downloadResource({
-              messageId: safeMessageId,
-              fileKey: p.fileKey,
-              kind: p.kind,
-              fileName: p.fileName,
-              sessionId,
-            }),
-          ),
-        )
-        const accepted: AttachmentRef[] = []
-        let downloadFailures = 0
-        for (const result of settled) {
-          if (result.status === 'rejected') {
-            downloadFailures += 1
-            console.error('[Feishu] downloadResource failed:', result.reason)
-            continue
-          }
-          const local = result.value
-          const check = checkAttachmentLimit(local.kind, local.size, local.mimeType)
-          if (!check.ok) {
-            await sendText(chatId, check.hint)
-            continue
-          }
-          if (local.kind === 'image') {
-            accepted.push({
-              type: 'image',
-              name: local.name,
-              data: local.buffer.toString('base64'),
-              mimeType: local.mimeType,
-            })
-          } else {
-            accepted.push({
-              type: 'file',
-              name: local.name,
-              path: local.path,
-              mimeType: local.mimeType,
-            })
-          }
-        }
-        if (downloadFailures > 0) {
-          await sendText(
-            chatId,
-            downloadFailures === pendingDownloads.length
-              ? '📎 附件下载失败,请稍后重试'
-              : `📎 ${downloadFailures} 个附件下载失败,已跳过`,
-          )
-        }
-        if (accepted.length > 0) attachments = accepted
-      } catch (err) {
-        console.error('[Feishu] Unexpected attachment pipeline error:', err)
-        await sendText(chatId, '📎 附件处理异常,请稍后重试')
-        return
-      }
-    }
-
-    const effectiveText =
-      msgText || (attachments && attachments.length > 0 ? '(用户发送了附件)' : '')
-
-    // If all attachments were rejected (limit / download fail) AND user had
-    // no text, silently abort — the rejection hints have already been sent
-    // via sendText, and Claude shouldn't be invoked with empty content.
-    if (!effectiveText && !(attachments && attachments.length > 0)) return
-
-    // Pre-create the streaming card immediately so the user sees a
-    // "☁️ 正在思考中..." indicator while the backend is still thinking
-    // (before the first content_delta arrives). We intentionally do NOT
-    // create a card for /clear-style commands (which go through the
-    // earlier branches), so they won't leave an empty card behind.
-    const card = getOrCreateStreamingCard(chatId)
-    void card.ensureCreated().catch((err) => {
-      console.error('[Feishu] pre-create streaming card failed:', err)
-    })
-
-    const sent = bridge.sendUserMessage(chatId, effectiveText, attachments)
-    if (!sent) {
-      await sendText(chatId, '⚠️ 消息发送失败，连接可能已断开。请发送 /new 重新开始。')
     }
   })
 }
@@ -1602,7 +1505,7 @@ async function handleCardAction(data: any): Promise<any> {
     const sessionId = value.sessionId
     if (!sessionId) return
     const result = await desktopBridge.request('conversation.select', {
-      ...desktopIdentity(chatId, operatorOpenId),
+      ...desktopIdentity(chatId, operatorOpenId, event.event_id),
       sessionId,
     }) as { session?: DesktopSessionOption }
     if (result.session) await sendCard(chatId, buildSessionSelectedCard(result.session))
@@ -1616,7 +1519,7 @@ async function handleCardAction(data: any): Promise<any> {
     if (!decisionId || !actionToken) return
     try {
       await desktopBridge.request('decision.respond', {
-        ...desktopIdentity(chatId, operatorOpenId),
+        ...desktopIdentity(chatId, operatorOpenId, event.event_id),
         decisionId,
         actionToken,
         allowed,
@@ -1641,6 +1544,7 @@ async function handleCardAction(data: any): Promise<any> {
 async function handleBotMenu(data: any): Promise<void> {
   const eventKey = typeof data?.event_key === 'string' ? data.event_key.trim() : ''
   const openId = data?.operator?.operator_id?.open_id || data?.operator?.open_id
+  const eventId = typeof data?.event_id === 'string' ? data.event_id : undefined
   if (!eventKey || typeof openId !== 'string' || !openId) return
 
   if (!isAllowedUser(openId)) {
@@ -1669,7 +1573,7 @@ async function handleBotMenu(data: any): Promise<void> {
       return
     }
     if (action === FEISHU_MENU_KEYS.newSession) {
-      const result = await desktopBridge.request('conversation.new', { openId, title: '' }) as {
+      const result = await desktopBridge.request('conversation.new', { openId, eventId, title: '' }) as {
         session?: DesktopSessionOption
       }
       if (result.session) {
@@ -1678,7 +1582,7 @@ async function handleBotMenu(data: any): Promise<void> {
       return
     }
     if (action === FEISHU_MENU_KEYS.stop) {
-      const result = await desktopBridge.request('session.abort', { openId }) as { cancelled?: number }
+      const result = await desktopBridge.request('session.abort', { openId, eventId }) as { cancelled?: number }
       await sendTextTo(openId, 'open_id', result.cancelled
         ? `已停止当前执行，并取消 ${result.cancelled} 条排队消息。`
         : '已发送停止信号。')
@@ -1722,14 +1626,31 @@ async function resolveBotOpenId(retries = 3): Promise<void> {
 
 // ---------- start ----------
 
+async function reportConnection(connected: boolean, error?: unknown, required = false): Promise<void> {
+  if (!desktopBridge.available) {
+    if (required) throw new Error('Moss host bridge disconnected during Feishu startup.')
+    return
+  }
+  try {
+    await desktopBridge.request('adapter.connection', {
+      connected,
+      ...(error ? { error: error instanceof Error ? error.message : String(error) } : {}),
+    })
+  } catch (reportError) {
+    console.error('[Feishu] Unable to report connection state:', reportError)
+    if (required) throw reportError
+  }
+}
+
 async function start(): Promise<void> {
   console.log('[Feishu] Starting bot...')
-  console.log('[Feishu] Moss bridge: process IPC')
-  console.log(`[Feishu] App ID: ${config.feishu.appId}`)
+  console.log(`[Feishu] Moss bridge: ${runsAsMossApp ? 'moss.channel/v1' : 'legacy process IPC'}`)
 
   if (!desktopBridge.available) throw new Error('Feishu Adapter must be started by a Moss host process.')
-  await desktopBridge.hello({ adapter: 'feishu', appId: config.feishu.appId })
-  console.log('[Feishu] Moss Desktop IPC bridge ready')
+  const context = await desktopBridge.hello({ adapter: 'feishu' })
+  initializeTransport(context)
+  console.log(`[Feishu] App ID: ${config.feishu.appId}`)
+  console.log('[Feishu] Moss host bridge ready')
 
   await resolveBotOpenId()
 
@@ -1767,26 +1688,31 @@ async function start(): Promise<void> {
     appSecret: config.feishu.appSecret,
     domain: Lark.Domain.Feishu,
     loggerLevel: Lark.LoggerLevel.info,
+    onReady: () => { void reportConnection(true) },
+    onError: (error) => { void reportConnection(false, error) },
+    onReconnecting: () => { void reportConnection(false, 'Feishu WebSocket reconnecting') },
+    onReconnected: () => { void reportConnection(true) },
   })
 
   await wsClient.start({ eventDispatcher: dispatcher })
-  if (desktopBridge.available) {
-    await desktopBridge.request('adapter.connection', { connected: true })
-  }
+  await reportConnection(true, undefined, true)
+  if (desktopBridge instanceof AppChannelBridge) desktopBridge.ready()
   console.log('[Feishu] Bot is running! (WebSocket connected)')
 }
 
 start().catch((err) => {
   console.error('[Feishu] Failed to start:', err)
+  if (desktopBridge instanceof AppChannelBridge) desktopBridge.fail(err)
   process.exit(1)
 })
 
-function shutdown(): void {
+function shutdown(exitProcess = true, destroyHostBridge = true): void {
   console.log('[Feishu] Shutting down...')
-  desktopBridge.destroy()
-  bridge.destroy()
+  wsClient?.close({ force: true })
+  if (destroyHostBridge) desktopBridge.destroy()
+  bridge?.destroy()
   dedup.destroy()
-  process.exit(0)
+  if (exitProcess) process.exit(0)
 }
 
 process.on('SIGINT', shutdown)

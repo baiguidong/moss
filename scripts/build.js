@@ -146,9 +146,9 @@ build('bin/moss-server.mjs', [
 ])
 sanitizePaths('bin/moss-server.mjs')
 
-// bin/adapters/feishu.mjs（由 server 托管、由 Desktop 控制启停）
+// bin/adapters/feishu.mjs（由 apps/feishu 源码构建，供旧 Server 托管回退）
 build('bin/adapters/feishu.mjs', [
-  'build', 'adapters/feishu/index.ts',
+  'build', 'apps/feishu/src/backend/feishu/index.ts',
   '--outfile=bin/adapters/feishu.mjs',
   '--target=node',
   '--format=esm',

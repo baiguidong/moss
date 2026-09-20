@@ -54,6 +54,7 @@ Channel App 必须使用 persistent Backend，显式声明协议及实际需要�
 | `decision.respond` | `channel:decisions` | 响应一次性审批或确认请求 |
 
 外部身份字段统一使用 `externalUserId`、`externalConversationId` 和 `externalEventId`。`message.receive` 和会产生副作用的方法必须携带稳定的 `externalEventId`，由 Host 做持久化幂等。
+`delivery.ack` 可用 `kind: "turn" | "notification"` 区分回合与通知；回合确认还必须携带 `externalConversationId`，防止跨会话确认。
 
 ```js
 const accepted = await backend.channel.request('message.receive', {

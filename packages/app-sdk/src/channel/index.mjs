@@ -142,6 +142,12 @@ export function validateChannelHostInput(method, value) {
       if (typeof input.ok !== 'boolean') {
         throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'delivery.ack requires ok')
       }
+      if (input.kind !== undefined && !['turn', 'notification'].includes(input.kind)) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'delivery.ack kind must be turn or notification')
+      }
+      if (input.kind === 'turn') {
+        requireStringField(input, 'externalConversationId', normalizedMethod)
+      }
       break
     case 'decision.respond':
       requireStringField(input, 'externalUserId', normalizedMethod)

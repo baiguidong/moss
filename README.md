@@ -7,7 +7,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 - [Moss Server API](server/API.md)
 - [Moss Server Docker Compose 部署](deps/server/README.md)
 - [Moss Server 旧版宿主机部署](deploy/README.md)
-- [飞书 Adapter 配置与完整权限清单](adapters/README.md)
+- [飞书 App 配置与完整权限清单](apps/feishu/README.md)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
 `src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
@@ -83,7 +83,7 @@ Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Se
 - [ ] 手机端“允许一次 / 拒绝”只处理对应会话的对应请求，并同步更新桌面端和飞书卡片。
 - [ ] 重启 Moss 后 Adapter 自动重连，配对关系、当前会话绑定和待推送重试仍然有效。
 
-详细配置步骤、权限用途、降级行为和飞书官方文档链接见[飞书 Adapter README](adapters/README.md)。
+详细配置步骤、权限用途、降级行为和飞书官方文档链接见[飞书 App README](apps/feishu/README.md)。
 
 ## 快速启动
 
@@ -95,7 +95,7 @@ Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Se
 # 在仓库根目录执行，生成 electron-direct.mjs 和相关依赖
 bun install
 bun install --cwd admin
-bun install --cwd adapters
+bun install --cwd apps/feishu
 bun run build:node
 ```
 
