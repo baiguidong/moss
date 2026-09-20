@@ -11,6 +11,7 @@ fi
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/scripts/common.sh"
+prepare_integration_network
 if ! compose up -d --remove-orphans; then
   show_failure_logs
   die "failed to start OpenIM"

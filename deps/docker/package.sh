@@ -9,6 +9,7 @@ readonly COMPOSE_VERSION="5.5.1"
 readonly COMPOSE_BINARY="docker-compose-linux-x86_64"
 readonly COMPOSE_SHA256="db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576"
 readonly INSTALL_SCRIPT="install.sh"
+readonly README_FILE="README.md"
 readonly PACKAGE_DIR_NAME="docker-offline"
 readonly OUTPUT_DIR_NAME="dist"
 readonly OUTPUT_ARCHIVE="docker.tar.gz"
@@ -52,7 +53,7 @@ if [[ "$#" -ne 0 ]]; then
     die "This packager does not accept arguments. Run: ./package.sh"
 fi
 
-for file_name in "${DOCKER_ARCHIVE}" "${COMPOSE_BINARY}" "${INSTALL_SCRIPT}"; do
+for file_name in "${DOCKER_ARCHIVE}" "${COMPOSE_BINARY}" "${INSTALL_SCRIPT}" "${README_FILE}"; do
     [[ -f "${SCRIPT_DIR}/${file_name}" ]] || die "Required file not found: ${file_name}"
 done
 [[ -x "${SCRIPT_DIR}/${INSTALL_SCRIPT}" ]] || die "${INSTALL_SCRIPT} is not executable."
@@ -70,6 +71,7 @@ install -d -m 0755 "${PACKAGE_DIR}"
 install -m 0644 "${SCRIPT_DIR}/${DOCKER_ARCHIVE}" "${PACKAGE_DIR}/${DOCKER_ARCHIVE}"
 install -m 0755 "${SCRIPT_DIR}/${COMPOSE_BINARY}" "${PACKAGE_DIR}/${COMPOSE_BINARY}"
 install -m 0755 "${SCRIPT_DIR}/${INSTALL_SCRIPT}" "${PACKAGE_DIR}/${INSTALL_SCRIPT}"
+install -m 0644 "${SCRIPT_DIR}/${README_FILE}" "${PACKAGE_DIR}/${README_FILE}"
 (
     cd "${STAGING_ROOT}"
     COPYFILE_DISABLE=1 tar \
@@ -88,7 +90,8 @@ expected_entries="$(printf '%s\n' \
     "${PACKAGE_DIR_NAME}/" \
     "${PACKAGE_DIR_NAME}/${DOCKER_ARCHIVE}" \
     "${PACKAGE_DIR_NAME}/${COMPOSE_BINARY}" \
-    "${PACKAGE_DIR_NAME}/${INSTALL_SCRIPT}" | LC_ALL=C sort)"
+    "${PACKAGE_DIR_NAME}/${INSTALL_SCRIPT}" \
+    "${PACKAGE_DIR_NAME}/${README_FILE}" | LC_ALL=C sort)"
 actual_entries="$(tar -tzf "${TMP_ARCHIVE}" | LC_ALL=C sort)"
 [[ "${actual_entries}" == "${expected_entries}" ]] || \
     die "Unexpected files were added to ${OUTPUT_ARCHIVE}."

@@ -13,6 +13,39 @@ env_value() {
   sed -n -E "s/^${1}=//p" "$ENV_FILE" | tail -n 1
 }
 
+prepare_integration_network() {
+  local network
+  network="$(env_value MOSS_INTEGRATION_NETWORK)"
+  network="${network:-moss-integrations}"
+  if ! docker network inspect "$network" >/dev/null 2>&1; then
+    log "Creating shared Moss integration network"
+    docker network create --driver bridge "$network" >/dev/null
+  fi
+  if docker container inspect moss-server >/dev/null 2>&1 \
+    && ! docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' moss-server \
+      | grep -Fxq "$network"; then
+    log "Connecting Moss Server to the shared integration network"
+    docker network connect --alias moss-server "$network" moss-server
+  fi
+}
+
+restart_moss_server_if_running() {
+  local status ready=0
+  [[ "$(docker inspect -f '{{.State.Running}}' moss-server 2>/dev/null || true)" == "true" ]] \
+    || return 0
+  log "Restarting Moss Server to load OpenIM settings"
+  docker restart moss-server >/dev/null
+  for _ in $(seq 1 60); do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' moss-server 2>/dev/null || true)"
+    case "$status" in
+      healthy|running) ready=1; break ;;
+      exited|dead) die "Moss Server stopped after loading OpenIM settings" ;;
+    esac
+    sleep 2
+  done
+  [[ "$ready" == "1" ]] || die "Moss Server did not become healthy after loading OpenIM settings"
+}
+
 compose() {
   docker compose --project-directory "$IM_ROOT" --env-file "$ENV_FILE" \
     -f "$COMPOSE_FILE" "$@"

@@ -8,6 +8,21 @@ bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/install.sh"
 grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/start.sh"
 grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/stop.sh"
+grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
+grep -Fq 'moss_callback_url=http://moss-server:43127' "$ROOT/configure.sh"
+grep -Fq 'moss_callback_url" == "http://host.docker.internal:43127"' "$ROOT/configure.sh"
+grep -Fq 'name: ${MOSS_INTEGRATION_NETWORK:-moss-integrations}' "$ROOT/compose.yaml"
+
+openim_server_block="$(sed -n '/^  openim-server:/,/^  openim-chat:/p' "$ROOT/compose.yaml")"
+grep -Fq 'networks: [openim, moss-integration]' <<<"$openim_server_block" || {
+  echo "ERROR: openim-server must join the shared Moss integration network" >&2
+  exit 1
+}
+mongo_block="$(sed -n '/^  mongo:/,/^  redis:/p' "$ROOT/compose.yaml")"
+if grep -Fq 'moss-integration' <<<"$mongo_block"; then
+  echo "ERROR: MongoDB must not join the shared Moss integration network" >&2
+  exit 1
+fi
 
 if grep -nE 'download\.docker\.com|docker-ce|containerd\.io|systemctl enable --now docker|docker info' \
   "$ROOT/install.sh"; then

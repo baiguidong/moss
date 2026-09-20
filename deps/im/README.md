@@ -31,7 +31,7 @@ scp dist/moss-openim-*.tar.gz* root@服务器地址:/tmp/
 
 ## 安装
 
-目标机上的 Moss Server 默认地址是 `http://127.0.0.1:43127`。安装器会自动探测 OpenIM 对外 IP、生成密钥、写入 `/data/moss-openim/.env`，并把 OpenIM 配置合并到 Moss Server 的 `settings.json`。
+目标机上的 Moss Server 管理地址默认是 `http://127.0.0.1:43127`。同机使用容器化 Moss Server 时，安装器会创建共享的 `moss-integrations` Docker 网络，并让 `openim-server` 通过 `http://moss-server:43127` 回调 Moss。安装器还会自动探测 OpenIM 对外 IP、生成密钥、写入 `/data/moss-openim/.env`，并把 OpenIM 配置合并到 Moss Server 的 `settings.json`。
 
 ```bash
 cd /tmp
@@ -71,6 +71,8 @@ sudo env \
 ```
 
 所有安装参数都会写入 `/data/moss-openim/.env`。再次执行 `install.sh` 会保留未显式覆盖的端口、地址和密钥。
+
+`MOSS_SERVER_URL` 是宿主机执行安装检查和在线配置时使用的地址；`MOSS_CALLBACK_URL` 是 OpenIM 容器发送 webhook 时使用的地址。默认同机部署无需设置后者。Moss Server 位于其他机器时，两者可以都设为远端可访问地址。
 
 ## 安装判定
 

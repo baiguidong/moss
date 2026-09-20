@@ -3,6 +3,9 @@ name: openim
 networks:
   openim:
     driver: bridge
+  moss-integration:
+    name: ${MOSS_INTEGRATION_NETWORK:-moss-integrations}
+    external: true
 
 services:
   mongo:
@@ -184,7 +187,7 @@ services:
       kafka: { condition: service_healthy }
       minio: { condition: service_healthy }
     restart: unless-stopped
-    networks: [openim]
+    networks: [openim, moss-integration]
 
   openim-chat:
     image: ${OPENIM_CHAT_IMAGE}

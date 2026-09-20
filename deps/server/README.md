@@ -124,9 +124,10 @@ and the read-only session runner from `container-app`. Existing sessions keep
 their originally recorded runtime image.
 
 Docker image layers and Docker-managed named volumes are stored under the Docker
-daemon's data root (normally `/var/lib/docker`), not under
-`/data/moss-server`. Moving those objects to `/data` is a separate Docker daemon
-migration; changing the application install directory does not move them.
+daemon's data root, not under `/data/moss-server`. The bundled
+`deps/docker/install.sh` uses `/data/docker` by default; Docker installed by
+other means commonly uses `/var/lib/docker`. Changing the Moss application
+directory alone does not move Docker-managed data.
 
 ## Operations
 

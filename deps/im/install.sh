@@ -73,6 +73,7 @@ log "Writing OpenIM and Moss configuration"
 
 # shellcheck disable=SC1091
 source "$INSTALL_DIR/scripts/common.sh"
+prepare_integration_network
 
 log "Validating Compose configuration"
 compose config --quiet
@@ -84,6 +85,9 @@ if [[ "$(env_value WRITE_MOSS_SETTINGS)" == "1" ]] && command -v systemctl >/dev
     log "Restarting Moss Server to load OpenIM settings"
     systemctl restart "$moss_service"
   fi
+fi
+if [[ "$(env_value WRITE_MOSS_SETTINGS)" == "1" ]]; then
+  restart_moss_server_if_running
 fi
 
 if [[ -n "${MOSS_ADMIN_TOKEN:-}" ]]; then
