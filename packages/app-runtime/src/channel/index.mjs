@@ -70,6 +70,7 @@ export class AppChannelHost {
     }
     const permission = getChannelHostMethodPermission(method)
     requireChannelPermission(request.permissions, permission)
+    if (request.signal?.aborted) throw cancellationError(request.signal)
 
     const key = channelKey(request)
     const activeForInstance = this.activeByInstance.get(key) || 0
@@ -86,8 +87,6 @@ export class AppChannelHost {
         `Channel Host method is unavailable: ${method}`,
       )
     }
-    if (request.signal?.aborted) throw cancellationError(request.signal)
-
     this.activeByInstance.set(key, activeForInstance + 1)
     this.activeTotal += 1
     let released = false

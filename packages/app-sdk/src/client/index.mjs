@@ -151,8 +151,7 @@ export class AppBackendClient {
             requestId,
             ...this.identity(),
           }))
-        } catch {
-        } finally {
+        } catch {} finally {
           finish(new AppServiceError(APP_ERROR_CODES.channelTimeout, `Channel Host request timed out after ${timeoutMs}ms`))
         }
       }, timeoutMs)
@@ -164,8 +163,7 @@ export class AppBackendClient {
             requestId,
             ...this.identity(),
           }))
-        } catch {
-        } finally {
+        } catch {} finally {
           finish(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Channel Host request canceled'))
         }
       }
@@ -237,6 +235,7 @@ export class AppBackendClient {
 
   async handleChannelEvent(message) {
     const payload = message.payload || {}
+    if (this.channelClosed) return
     const eventId = String(payload.eventId || message.id || '')
     const fingerprint = channelFingerprint(payload.protocol, payload.name, payload.data)
     const cached = this.channelEventReplies.get(eventId)
@@ -258,13 +257,6 @@ export class AppBackendClient {
       } else if (existing.canceled) {
         existing.retryMessage = message
       }
-      return
-    }
-    if (this.channelClosed) {
-      this.sendChannelEventResponse(message, false, undefined, new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        'Channel Host is closed',
-      ), { cache: false, fingerprint })
       return
     }
     let name
@@ -453,6 +445,10 @@ export class AppBackendClient {
     if (message.type === 'channel.event.cancel') {
       if (!this.hasCurrentIdentity(payload)) {
         this.log('warn', 'Rejected stale Channel event cancellation')
+        return
+      }
+      try { validateChannelProtocol(payload.protocol) } catch (error) {
+        this.log('error', error.message)
         return
       }
       const eventId = String(payload.eventId || '')

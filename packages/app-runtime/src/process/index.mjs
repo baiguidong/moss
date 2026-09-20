@@ -440,19 +440,24 @@ export class AppProcessSupervisor {
     }, this.channelRequestTimeoutMs)
     active.timer.unref?.()
     hosted.channelRequests.set(requestId, active)
-    Promise.resolve().then(() => this.onChannelRequest({
-      key,
-      appId: hosted.definition.appId,
-      version: hosted.definition.version,
-      instanceId: hosted.definition.instanceId,
-      generation: hosted.definition.generation,
-      target: hosted.definition.target,
-      requestId,
-      protocol,
-      method,
-      input,
-      signal: controller.signal,
-    })).then(
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) {
+        throw controller.signal.reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Channel Host request canceled')
+      }
+      return this.onChannelRequest({
+        key,
+        appId: hosted.definition.appId,
+        version: hosted.definition.version,
+        instanceId: hosted.definition.instanceId,
+        generation: hosted.definition.generation,
+        target: hosted.definition.target,
+        requestId,
+        protocol,
+        method,
+        input,
+        signal: controller.signal,
+      })
+    }).then(
       (result) => finish(true, result),
       (error) => finish(false, undefined, error),
     )
