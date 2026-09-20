@@ -39,6 +39,9 @@ type ComposerResourceSelectionAreaProps = {
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
   onOpenConnectorHub?: () => void;
+  triggerVisible?: boolean;
+  openTab?: ComposerResourceTab | null;
+  onOpenTabChange?: (tab: ComposerResourceTab | null) => void;
 };
 
 const RESOURCE_TAB_META: Record<ComposerResourceTab, {
@@ -48,9 +51,9 @@ const RESOURCE_TAB_META: Record<ComposerResourceTab, {
   icon: React.ReactNode;
 }> = {
   assistants: {
-    label: '助手',
+    label: '专家',
     managerLabel: '管理专家',
-    searchPlaceholder: '搜索助手',
+    searchPlaceholder: '搜索专家',
     icon: <Bot className="h-4 w-4" />,
   },
   skills: {
@@ -136,6 +139,9 @@ export function ComposerResourceSelectionArea({
   selectedConnectorIds = [],
   onToggleConnector,
   onOpenConnectorHub,
+  triggerVisible = true,
+  openTab = null,
+  onOpenTabChange,
 }: ComposerResourceSelectionAreaProps) {
   const tabs = React.useMemo(() => getComposerResourceTabs({
     includeAssistants: Boolean(onSelectAssistant),
@@ -145,6 +151,8 @@ export function ComposerResourceSelectionArea({
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
+  const displayedTab = openTab ?? activeTab;
+  const pickerOpen = openTab !== null || open;
 
   React.useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab(tabs[0] ?? 'skills');
@@ -188,56 +196,59 @@ export function ComposerResourceSelectionArea({
     + (tabs.includes('connectors')
       ? installedConnectors.filter((connector) => selectedConnectors.has(connector.id)).length
       : 0);
-  const activeItems = activeTab === 'assistants'
+  const activeItems = displayedTab === 'assistants'
     ? filteredAssistants
-    : activeTab === 'skills'
+    : displayedTab === 'skills'
       ? filteredSkills
       : filteredConnectors;
-  const activeTotal = activeTab === 'assistants'
+  const activeTotal = displayedTab === 'assistants'
     ? installedAssistants.length
-    : activeTab === 'skills'
+    : displayedTab === 'skills'
       ? installedSkills.length
       : installedConnectors.length;
-  const meta = RESOURCE_TAB_META[activeTab];
+  const meta = RESOURCE_TAB_META[displayedTab];
   const closePicker = () => {
     setOpen(false);
     setQuery('');
+    onOpenTabChange?.(null);
   };
-  const openManager = activeTab === 'assistants'
+  const openManager = displayedTab === 'assistants'
     ? onOpenExpertHub
-    : activeTab === 'skills'
+    : displayedTab === 'skills'
       ? onOpenSkillHub
       : onOpenConnectorHub;
-  const emptyLabel = activeTab === 'assistants'
-    ? '没有匹配的已安装助手'
-    : activeTab === 'skills'
+  const emptyLabel = displayedTab === 'assistants'
+    ? '没有匹配的已安装专家'
+    : displayedTab === 'skills'
       ? skillsLoading ? '正在加载已安装技能...' : '没有匹配的已安装技能'
       : '没有匹配的已认证连接器';
 
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 shrink-0 rounded-full border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-        onClick={() => setOpen(true)}
-        title={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
-        aria-label={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
-      >
-        <ListFilter className="h-3.5 w-3.5" />
-        <span>选择资源</span>
-        {selectedCount > 0 ? (
-          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-medium text-primary">
-            {selectedCount}
-          </span>
-        ) : null}
-      </Button>
+      {triggerVisible ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0 rounded-full border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          onClick={() => setOpen(true)}
+          title={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
+          aria-label={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
+        >
+          <ListFilter className="h-3.5 w-3.5" />
+          <span>选择资源</span>
+          {selectedCount > 0 ? (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-medium text-primary">
+              {selectedCount}
+            </span>
+          ) : null}
+        </Button>
+      ) : null}
 
       <SelectionPickerDialog
-        open={open}
-        title="选择资源"
-        description={`选择会话所需资源，已选 ${selectedCount} 项`}
+        open={pickerOpen}
+        title={openTab ? `选择${meta.label}` : "选择资源"}
+        description={openTab ? `选择会话所需${meta.label}` : `选择会话所需资源，已选 ${selectedCount} 项`}
         searchPlaceholder={meta.searchPlaceholder}
         query={query}
         onQueryChange={setQuery}
@@ -251,11 +262,11 @@ export function ComposerResourceSelectionArea({
         managerPlacement="left"
         confirmLabel="确定"
         onConfirm={closePicker}
-        contentHeader={(
+        contentHeader={openTab ? undefined : (
           <div className="flex items-center gap-1" role="tablist" aria-label="资源类型">
             {tabs.map((tab) => {
               const tabMeta = RESOURCE_TAB_META[tab];
-              const selected = activeTab === tab;
+              const selected = displayedTab === tab;
               return (
                 <button
                   key={tab}
@@ -282,7 +293,7 @@ export function ComposerResourceSelectionArea({
         )}
       >
         <div className="space-y-1">
-          {activeTab === 'assistants' ? filteredAssistants.map((assistant) => (
+          {displayedTab === 'assistants' ? filteredAssistants.map((assistant) => (
             <ResourceRow
               key={`assistant:${assistant.name}`}
               selected={selectedAssistant?.name === assistant.name}
@@ -295,7 +306,7 @@ export function ComposerResourceSelectionArea({
                 else onSelectAssistant?.(assistant);
               }}
             />
-          )) : activeTab === 'skills' ? filteredSkills.map((skill) => (
+          )) : displayedTab === 'skills' ? filteredSkills.map((skill) => (
             <ResourceRow
               key={`skill:${skill.name}`}
               selected={selectedSkillNames.has(skill.name)}

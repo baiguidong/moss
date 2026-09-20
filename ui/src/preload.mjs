@@ -154,6 +154,9 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionPermissionMode: (payload) => ipcRenderer.invoke('agent:set-session-permission-mode', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
+  listWorkspaces: (payload) => ipcRenderer.invoke('agent:list-workspaces', payload),
+  createWorkspace: (payload) => ipcRenderer.invoke('agent:create-workspace', payload),
+  touchWorkspace: (payload) => ipcRenderer.invoke('agent:touch-workspace', payload),
   agentTeams: {
     list: (payload) => ipcRenderer.invoke('agent-teams:list', payload),
     refresh: (payload) => ipcRenderer.invoke('agent-teams:refresh', payload),

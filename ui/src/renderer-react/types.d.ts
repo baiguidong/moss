@@ -102,6 +102,13 @@ export type SessionSearchResult = {
   rank: number;
 };
 
+export type WorkspaceLocation = {
+  name: string;
+  path: string;
+  updatedAt: number;
+  managed: boolean;
+};
+
 export type AgentEvent = Record<string, any>;
 
 export type TurnChangeHunk = {
@@ -1881,7 +1888,7 @@ declare global {
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
@@ -1904,6 +1911,9 @@ declare global {
       }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
+      listWorkspaces: (payload?: { query?: string; limit?: number }) => Promise<WorkspaceLocation[]>;
+      createWorkspace: (payload: { name: string }) => Promise<WorkspaceLocation>;
+      touchWorkspace: (payload: { path: string }) => Promise<WorkspaceLocation>;
       agentTeams: {
         list: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
         refresh: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;

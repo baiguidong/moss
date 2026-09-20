@@ -20,6 +20,8 @@ describe('desktop data layout', () => {
       .toBe(path.join(home, 'projects', 'project-1', 'workspace'));
     expect(paths.libraryDbPath)
       .toBe(path.join(home, 'library', 'library.db'));
+    expect(paths.workspacesRoot)
+      .toBe(path.join(home, 'workspaces'));
     expect(paths.projectRunsDir('project-1'))
       .toBe(path.join(home, 'projects', 'project-1', 'runtime', 'runs'));
     expect(paths.sessionResourceManifestPath('session-1'))

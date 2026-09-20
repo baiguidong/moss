@@ -492,6 +492,7 @@ export default function App() {
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
   const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
+  const [newSessionAgentMode, setNewSessionAgentMode] = React.useState<'local' | 'remote-direct'>('local');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
   const assistantRefreshRequestIdRef = React.useRef(0);
@@ -798,6 +799,8 @@ export default function App() {
     setActiveSessionId(null);
     setActiveDetail(null);
     setPendingNewSessionContext(null);
+    setNewSessionAgentMode('local');
+    void refreshAssistants('local');
     clearSessionWorkspaceState();
     if (!options?.preserveIntent) {
       setComposerIntent('chat');
@@ -810,7 +813,7 @@ export default function App() {
       setSelectedAppName('');
     }
     return true;
-  }, [clearSessionWorkspaceState]);
+  }, [clearSessionWorkspaceState, refreshAssistants]);
 
   const openSession = React.useCallback(async (sessionId: string) => {
     const requestId = ++openSessionRequestIdRef.current;
@@ -864,8 +867,9 @@ export default function App() {
     assistantName?: string,
     connectorIds?: string[],
     permissionMode?: PermissionMode,
+    agentMode: 'local' | 'remote-direct' = 'local',
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode } = {};
+    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
@@ -880,12 +884,12 @@ export default function App() {
     setComposerIntent(restoreComposerIntent(created.detail));
     setActiveDetail(created.detail);
     clearSessionWorkspaceState();
-    // Record session agentMode based on current settings
-    const mode = created.summary.agentMode ?? desktopSettings?.agentMode ?? 'local';
+    // Record the mode selected for this new session.
+    const mode = created.summary.agentMode ?? agentMode;
     persistSessionAgentModes(new Map(sessionAgentModes).set(created.summary.id, mode));
     await openSession(created.summary.id);
     return created.summary.id;
-  }, [clearSessionWorkspaceState, openSession, desktopSettings?.agentMode, sessionAgentModes, persistSessionAgentModes]);
+  }, [clearSessionWorkspaceState, openSession, sessionAgentModes, persistSessionAgentModes]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
@@ -1162,7 +1166,7 @@ export default function App() {
           refreshApps(),
           refreshSummaries(),
           refreshProjects(),
-          refreshAssistants(nextSettings.agentMode ?? 'local'),
+          refreshAssistants('local'),
         ]);
         void refreshConnectors().catch(() => {});
         if (cancelled) return;
@@ -1927,6 +1931,7 @@ export default function App() {
           selectedAssistant?.name,
           draftConnectorIds,
           newSessionPermissionMode,
+          preparedSession ? 'local' : newSessionAgentMode,
         ).finally(() => {
           creatingSessionRef.current = null;
         });
@@ -1959,7 +1964,7 @@ export default function App() {
     }
 
     await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionPermissionMode, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2482,10 +2487,9 @@ export default function App() {
   }, [applyAppearanceOptimistically]);
 
   const handleNewSessionModeChange = React.useCallback(async (mode: 'local' | 'remote-direct') => {
-    const refreshPromise = refreshAssistants(mode);
-    await autoSaveSettings('agentMode', mode);
-    await refreshPromise;
-  }, [autoSaveSettings, refreshAssistants]);
+    setNewSessionAgentMode(mode);
+    await refreshAssistants(mode);
+  }, [refreshAssistants]);
 
   const renderSettingsView = () => (
     <SettingsView
@@ -2579,17 +2583,14 @@ export default function App() {
             libraryEnabled={libraryEnabled}
             workflowsEnabled={workflowsEnabled}
             agentMailEnabled={agentMailEnabled}
-            newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
             onChangeView={setActiveView}
             onChangeTheme={handleThemeModeChange}
             onSelectSession={handleSelectSession}
             onLaunchApp={handleOpenEmbeddedApp}
             onNewSession={handleNewSession}
-            onNewSessionModeChange={handleNewSessionModeChange}
             onDeleteSession={handleDeleteSession}
             onRenameSession={handleRenameSession}
             onTogglePin={handleTogglePin}
-            onToggleCollapse={() => toggleSidebar('left')}
             onSearchChange={setSessionSearchQuery}
             onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
           />
@@ -2681,8 +2682,6 @@ export default function App() {
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
-                newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
-                onNewSessionModeChange={handleNewSessionModeChange}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
                 backgroundTasks={backgroundTasks[activeSessionId] ?? []}
@@ -2737,7 +2736,7 @@ export default function App() {
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={pendingNewSessionContext ? false : (desktopSettings?.remoteEnabled ?? false)}
-                newSessionMode={pendingNewSessionContext ? 'local' : desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
+                newSessionMode={pendingNewSessionContext ? 'local' : newSessionAgentMode}
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )

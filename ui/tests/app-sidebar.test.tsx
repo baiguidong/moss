@@ -11,6 +11,7 @@ function renderSidebar({
   agentMailEnabled = false,
   sessions = [],
   activeView = 'chat',
+  collapsed = false,
 }: {
   libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
@@ -18,6 +19,7 @@ function renderSidebar({
   agentMailEnabled?: boolean;
   sessions?: any[];
   activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
+  collapsed?: boolean;
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
@@ -28,7 +30,7 @@ function renderSidebar({
       appsCount={0}
       projectsCount={0}
       themeMode="system"
-      collapsed={false}
+      collapsed={collapsed}
       searchQuery=""
       libraryEnabled={libraryEnabled}
       workflowsEnabled={workflowsEnabled}
@@ -42,7 +44,6 @@ function renderSidebar({
       onDeleteSession={() => {}}
       onRenameSession={() => {}}
       onTogglePin={() => {}}
-      onToggleCollapse={() => {}}
       onSearchChange={() => {}}
     />,
   );
@@ -142,6 +143,52 @@ describe('app sidebar child sessions', () => {
     const html = renderSidebar({ sessions });
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('展开“主会话”的 1 个子会话');
+    expect(html).not.toContain('lucide-bot');
     expect(html).not.toContain('子会话标题');
+  });
+});
+
+describe('app sidebar session controls', () => {
+  const localSession = {
+    id: 'local-session',
+    title: '本地会话标题',
+    preview: 'preview',
+    time: '刚刚',
+    workspaceLabel: 'Moss',
+    busy: false,
+    agentMode: 'local',
+  };
+  const remoteSession = {
+    ...localSession,
+    id: 'remote-session',
+    title: '云端会话标题',
+    agentMode: 'remote-direct',
+  };
+
+  test('shows local and cloud history together with distinct icons', () => {
+    const html = renderSidebar({
+      remoteEnabled: true,
+      sessions: [localSession, remoteSession],
+    });
+    expect(html).toContain('本地会话标题');
+    expect(html).toContain('云端会话标题');
+    expect(html).toContain('aria-label="本地会话"');
+    expect(html).toContain('aria-label="云端会话"');
+    expect(html).not.toContain('aria-label="会话模式"');
+  });
+
+  test('puts the existing session menu behind a right-side ellipsis', () => {
+    const html = renderSidebar({ sessions: [localSession] });
+    expect(html).toContain('aria-label="打开“本地会话标题”的会话设置"');
+    expect(html).toContain('lucide-ellipsis');
+  });
+
+  test('keeps search in the top row and removes the duplicate sidebar collapse button', () => {
+    const expandedHtml = renderSidebar({ sessions: [localSession] });
+    const collapsedHtml = renderSidebar({ sessions: [localSession], collapsed: true });
+    expect(expandedHtml.indexOf('title="搜索会话"')).toBeLessThan(expandedHtml.indexOf('title="新会话"'));
+    expect(collapsedHtml).toContain('title="搜索会话"');
+    expect(expandedHtml).not.toContain('title="收起侧栏"');
+    expect(collapsedHtml).not.toContain('title="展开侧栏"');
   });
 });

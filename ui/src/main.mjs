@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createUsageLedger } from './usage-ledger.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
 import { createSessionSearchIndex } from './session-search-index.mjs';
+import { createWorkspaceCatalog } from './workspace-catalog.mjs';
 import {
   decodeWorkspaceTextBuffer,
   getWorkspaceFilePreviewInfo,
@@ -332,6 +333,7 @@ const MOSS_HOME = path.join(os.homedir(), '.moss');
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
+const workspaceCatalog = createWorkspaceCatalog(DESKTOP_DATA_PATHS.workspacesRoot);
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
 const MOSS_LIBRARY_DIR = DESKTOP_DATA_PATHS.libraryRoot;
 const LIBRARY_DB_PATH = DESKTOP_DATA_PATHS.libraryDbPath;
@@ -11795,6 +11797,7 @@ ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
     assistantName: requestedAssistantName || null,
     connectorIds,
     permissionMode: payload.permissionMode,
+    agentMode: payload.agentMode,
   });
   await prepareAssistantContextForSessionStart(sessionRecord);
   return {
@@ -12371,6 +12374,18 @@ ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => (
   deleteSessionRecordById(sessionId)
 ));
 
+ipcMain.handle('agent:list-workspaces', (_event, payload = {}) => (
+  workspaceCatalog.list(payload)
+));
+
+ipcMain.handle('agent:create-workspace', (_event, { name } = {}) => (
+  workspaceCatalog.create(name)
+));
+
+ipcMain.handle('agent:touch-workspace', (_event, { path: workspacePath } = {}) => (
+  workspaceCatalog.touch(workspacePath)
+));
+
 ipcMain.handle('agent:pick-directory', async () => {
   const response = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
@@ -12378,7 +12393,9 @@ ipcMain.handle('agent:pick-directory', async () => {
   if (response.canceled || response.filePaths.length === 0) {
     return null;
   }
-  return response.filePaths[0];
+  const selectedPath = response.filePaths[0];
+  await workspaceCatalog.touch(selectedPath);
+  return selectedPath;
 });
 
 ipcMain.handle('agent:pick-files', async () => {

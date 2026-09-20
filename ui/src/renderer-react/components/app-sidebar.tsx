@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   BookOpen,
+  Cloud,
   LayoutGrid,
   Monitor,
   MessageSquareText,
@@ -10,8 +11,6 @@ import {
   MoreHorizontal,
   MoonStar,
   PenSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pin,
   Search,
   Settings,
@@ -123,17 +122,14 @@ interface AppSidebarProps {
   libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
   agentMailEnabled?: boolean;
-  newSessionMode?: 'local' | 'remote-direct';
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
   onLaunchApp: (name: string) => void;
   onNewSession: () => void;
-  onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onTogglePin: (sessionId: string) => void;
-  onToggleCollapse: () => void;
   onSearchChange: (query: string) => void;
   onOpenGlobalSearch?: () => void;
 }
@@ -166,6 +162,7 @@ function SessionItem({
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(session.title);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const SessionModeIcon = session.agentMode === 'remote-direct' ? Cloud : Monitor;
 
   React.useEffect(() => {
     if (isEditing) {
@@ -210,38 +207,10 @@ function SessionItem({
       )}
     >
       <div className="flex h-full min-w-0 items-center gap-1 overflow-hidden">
-        {!session.isSubAgent ? <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="h-6 w-6 shrink-0 rounded-lg text-sidebar-foreground/60 hover:text-sidebar-foreground"
-              onClick={(event) => event.stopPropagation()}
-              title="会话设置"
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            className="w-40"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <DropdownMenuItem onClick={onTogglePin}>
-              <Pin className="mr-2 h-4 w-4" />
-              {session.isPinned ? "取消置顶" : "置顶会话"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleRename}>
-              <PenSquare className="mr-2 h-4 w-4" />
-              重命名
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive" onClick={onDelete}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              删除
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu> : null}
+        <SessionModeIcon
+          className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/55"
+          aria-label={session.agentMode === 'remote-direct' ? '云端会话' : '本地会话'}
+        />
         {session.isPinned && <Pin className="h-3 w-3 shrink-0 text-primary" />}
         {isEditing ? (
           <input
@@ -262,7 +231,7 @@ function SessionItem({
         {childSessions.length > 0 ? (
           <button
             type="button"
-            className="flex h-5 shrink-0 items-center gap-1 rounded-md bg-sidebar-accent px-1.5 text-[10px] tabular-nums text-sidebar-foreground/65"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
             title={childrenExpanded ? "折叠子会话" : "展开子会话"}
             aria-label={`${childrenExpanded ? "折叠" : "展开"}“${session.title}”的 ${childSessions.length} 个子会话`}
             aria-expanded={childrenExpanded}
@@ -273,10 +242,41 @@ function SessionItem({
             onKeyDown={(event) => event.stopPropagation()}
           >
             {childrenExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Bot className="h-3 w-3" />
-            {childSessions.length}
           </button>
         ) : null}
+        {!session.isSubAgent ? <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6 shrink-0 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground"
+              onClick={(event) => event.stopPropagation()}
+              title="会话设置"
+              aria-label={`打开“${session.title}”的会话设置`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-40"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DropdownMenuItem onClick={onTogglePin}>
+              <Pin className="mr-2 h-4 w-4" />
+              {session.isPinned ? "取消置顶" : "置顶会话"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleRename}>
+              <PenSquare className="mr-2 h-4 w-4" />
+              重命名
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive" onClick={onDelete}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              删除
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu> : null}
       </div>
     </div>
   );
@@ -353,21 +353,17 @@ export function AppSidebar({
   libraryEnabled = false,
   workflowsEnabled = false,
   agentMailEnabled = false,
-  newSessionMode = 'local',
   onChangeView,
   onChangeTheme,
   onSelectSession,
   onLaunchApp,
   onNewSession,
-  onNewSessionModeChange,
   onDeleteSession,
   onRenameSession,
   onTogglePin,
-  onToggleCollapse,
   onSearchChange,
   onOpenGlobalSearch,
 }: AppSidebarProps) {
-  const showModePicker = remoteEnabled;
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedSessionGroups, setCollapsedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
@@ -384,22 +380,12 @@ export function AppSidebar({
   }, [isSearchOpen]);
 
   const filteredSessions = filterSidebarSessionsByQuery(sessions, searchQuery);
-  // 根据当前选择的模式过滤会话
-  const localSessions = filteredSessions.filter((s) => !s.agentMode || s.agentMode === 'local');
-  const remoteSessions = filteredSessions.filter((s) => s.agentMode === 'remote-direct');
-
-  // 当有切换器时，根据选择的模式显示对应会话
-  // 无切换器时（只有本地），显示所有会话
-  const displaySessions = showModePicker
-    ? (newSessionMode === 'remote-direct' ? remoteSessions : localSessions)
-    : filteredSessions;
-
-  const sessionGroups = groupSidebarSessions(displaySessions).filter((group) => (
+  const sessionGroups = groupSidebarSessions(filteredSessions).filter((group) => (
     group.id !== 'project' && (
       group.id !== 'agent-mail' || (remoteEnabled && agentMailEnabled)
     )
   ));
-  const projectTrees = groupProjectSessionTrees(displaySessions);
+  const projectTrees = groupProjectSessionTrees(filteredSessions);
   const moreViews = getSidebarMoreViews({ libraryEnabled, workflowsEnabled, remoteEnabled, agentMailEnabled });
   const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
@@ -445,10 +431,23 @@ export function AppSidebar({
     }));
   };
 
+  const handleSearchClick = () => {
+    if (onOpenGlobalSearch) {
+      onOpenGlobalSearch();
+      return;
+    }
+    if (isSearchOpen) {
+      onSearchChange("");
+      setIsSearchOpen(false);
+      return;
+    }
+    setIsSearchOpen(true);
+  };
+
   return (
     <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
-        <div className={cn("flex items-center", collapsed ? "justify-start" : "justify-between gap-3")}>
+        <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
           {!collapsed && (
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -463,12 +462,31 @@ export function AppSidebar({
             variant="ghost"
             size="icon-sm"
             className="h-8 w-8 rounded-xl"
-            onClick={onToggleCollapse}
-            title={collapsed ? "展开侧栏" : "收起侧栏"}
+            onClick={handleSearchClick}
+            title={onOpenGlobalSearch ? "搜索所有消息 (⌘/Ctrl+K)" : isSearchOpen ? "关闭搜索" : "搜索会话"}
+            aria-label={onOpenGlobalSearch ? "搜索所有消息" : isSearchOpen ? "关闭搜索" : "搜索会话"}
           >
-            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            {isSearchOpen && !onOpenGlobalSearch ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </Button>
         </div>
+
+        {!collapsed && isSearchOpen && !onOpenGlobalSearch ? (
+          <div className="relative mt-2">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder="搜索会话..."
+              value={searchQuery}
+              onChange={(event) => onSearchChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                onSearchChange("");
+                setIsSearchOpen(false);
+              }}
+              className="h-7 rounded-lg border-transparent bg-sidebar-accent/45 pl-7 pr-2 text-[11px] placeholder:text-muted-foreground/55 focus-visible:border-sidebar-border"
+            />
+          </div>
+        ) : null}
 
         <div className="mt-3 grid grid-cols-1 gap-0.5">
           <Button
@@ -480,17 +498,6 @@ export function AppSidebar({
             <PenSquare className="h-4 w-4" />
             {!collapsed && "新会话"}
           </Button>
-          {collapsed && onOpenGlobalSearch ? (
-            <Button
-              variant="ghost"
-              className="h-8 w-8 justify-center rounded-lg px-0"
-              onClick={onOpenGlobalSearch}
-              title="搜索所有消息 (⌘/Ctrl+K)"
-              aria-label="搜索所有消息"
-            >
-              <Search className="h-4 w-4" />
-            </Button>
-          ) : null}
           <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
@@ -564,89 +571,15 @@ export function AppSidebar({
                 )}
                 title={session.title}
               >
-                {session.title.charAt(0).toUpperCase()}
+                {session.agentMode === 'remote-direct'
+                  ? <Cloud className="h-4 w-4" aria-label="云端会话" />
+                  : <Monitor className="h-4 w-4" aria-label="本地会话" />}
               </button>
             ))}
           </div>
         </ScrollArea>
       ) : (
         <>
-          <div className="px-3 pb-1.5 pt-0.5">
-            <div className="flex min-w-0 items-center gap-1.5">
-              {showModePicker && (
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 text-[13px]" role="tablist" aria-label="会话模式">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={newSessionMode !== 'remote-direct'}
-                    onClick={() => onNewSessionModeChange?.('local')}
-                    className={cn(
-                      "h-7 transition-colors",
-                      newSessionMode !== 'remote-direct'
-                        ? "font-medium text-sidebar-foreground"
-                        : "font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground/70",
-                    )}
-                  >
-                    本地
-                  </button>
-                  <span className="text-sidebar-foreground/25" aria-hidden="true">/</span>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={newSessionMode === 'remote-direct'}
-                    onClick={() => onNewSessionModeChange?.('remote-direct')}
-                    className={cn(
-                      "h-7 transition-colors",
-                      newSessionMode === 'remote-direct'
-                        ? "font-medium text-sidebar-foreground"
-                        : "font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground/70",
-                    )}
-                  >
-                    云端
-                  </button>
-                </div>
-              )}
-              <Button
-                variant={isSearchOpen ? "secondary" : "ghost"}
-                size="icon-sm"
-                className="h-8 w-8 shrink-0 rounded-lg"
-                onClick={() => {
-                  if (onOpenGlobalSearch) {
-                    onOpenGlobalSearch();
-                    return;
-                  }
-                  if (isSearchOpen) {
-                    onSearchChange("");
-                    setIsSearchOpen(false);
-                  } else {
-                    setIsSearchOpen(true);
-                  }
-                }}
-                title={onOpenGlobalSearch ? "搜索所有消息 (⌘/Ctrl+K)" : isSearchOpen ? "关闭搜索" : "搜索会话"}
-                aria-label={onOpenGlobalSearch ? "搜索所有消息" : isSearchOpen ? "关闭搜索" : "搜索会话"}
-              >
-                {isSearchOpen ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
-              </Button>
-            </div>
-            {isSearchOpen && (
-              <div className="relative mt-1.5">
-                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  placeholder="搜索会话..."
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Escape') return;
-                    onSearchChange("");
-                    setIsSearchOpen(false);
-                  }}
-                  className="h-7 rounded-lg border-transparent bg-sidebar-accent/45 pl-7 pr-2 text-[11px] placeholder:text-muted-foreground/55 focus-visible:border-sidebar-border"
-                />
-              </div>
-            )}
-          </div>
-
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2 max-w-full overflow-hidden">
               {sessionGroups.length > 0 || projectTrees.length > 0 ? (
@@ -788,7 +721,7 @@ export function AppSidebar({
                 </>
               ) : (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
-                  {showModePicker && newSessionMode === 'remote-direct' ? '暂无云端会话' : '还没有历史会话'}
+                  还没有历史会话
                 </div>
               )}
             </div>

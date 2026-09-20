@@ -3,19 +3,27 @@
 import * as React from "react";
 import {
   Activity,
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
   Clock,
+  Cloud,
   Copy,
   FileText,
+  Feather,
   FolderOpen,
   GitFork,
+  Laptop,
+  Link2,
   ListTree,
   LoaderCircle,
+  MessageSquareText,
+  Paperclip,
   Plus,
   Send,
   Square,
+  Hammer,
   Terminal,
   Wrench,
   X,
@@ -29,10 +37,14 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -86,6 +98,7 @@ import {
   type InstalledSkillOption,
 } from "@/components/skill-selection-area";
 import { ComposerResourceSelectionArea } from "@/components/composer-resource-selection-area";
+import { WorkspaceSelector } from "@/components/workspace-selector";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 import {
   getComposerMentionTabs,
@@ -93,6 +106,7 @@ import {
   getNextComposerMentionTab,
   getPreviousComposerMentionTab,
   type ComposerMentionTab,
+  type ComposerResourceTab,
 } from "@/lib/composer-mentions";
 
 type ComposerIntent = "chat" | "boss";
@@ -484,6 +498,9 @@ function ComposerPanel({
   readOnlyReason,
   composerIntent,
   hasActiveSession,
+  remoteEnabled = false,
+  newSessionMode = 'local',
+  onNewSessionModeChange,
   sessionId,
   attachments: externalAttachments,
   onAttachmentsChange,
@@ -516,6 +533,9 @@ function ComposerPanel({
   readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
+  remoteEnabled?: boolean;
+  newSessionMode?: 'local' | 'remote-direct';
+  onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   sessionId?: string;
   attachments?: Array<{ name: string; path: string }>;
   onAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
@@ -580,6 +600,8 @@ function ComposerPanel({
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
   const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
   const [skillsLoading, setSkillsLoading] = React.useState(false);
+  const [addMenuOpen, setAddMenuOpen] = React.useState(false);
+  const [resourcePickerTab, setResourcePickerTab] = React.useState<ComposerResourceTab | null>(null);
   const skillsLoadedRef = React.useRef(false);
   const workspaceRootRef = React.useRef<string | null>(null);
   const mentionTabs = React.useMemo(() => getComposerMentionTabs({
@@ -868,13 +890,6 @@ function ComposerPanel({
     }
   };
 
-  const handleSelectDirectory = async () => {
-    const dir = await window.agentDesktop.pickDirectory();
-    if (dir) {
-      onWorkspaceChange?.(dir);
-    }
-  };
-
   const handlePaste = async (e: React.ClipboardEvent) => {
     const clipboardItems = e.clipboardData?.items;
     if (!clipboardItems) return;
@@ -996,6 +1011,70 @@ function ComposerPanel({
       ))}
     </div>
   ) : null;
+
+  const openResourcePicker = (tab: ComposerResourceTab) => {
+    setAddMenuOpen(false);
+    setResourcePickerTab(tab);
+  };
+
+  const newSessionAddMenu = (
+    <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/60 text-foreground transition-colors hover:bg-muted"
+          title="添加内容"
+          aria-label="添加内容"
+        >
+          {addMenuOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="w-48 p-2"
+        style={{ overflow: 'visible' }}
+      >
+        <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => { void handleSelectFile(); }}>
+          <Paperclip className="h-4 w-4" />
+          <span className="flex-1">添加文件</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="gap-3 py-2.5">
+            <Feather className="h-4 w-4" />
+            <span>模式</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-40 p-2">
+            {[chatIntentOption, ...intentOptions].map((option) => (
+              <DropdownMenuItem
+                key={option.id}
+                className="gap-2 py-2.5"
+                onSelect={() => onComposerIntentChange(option.id)}
+              >
+                {option.id === 'boss' ? <GitFork className="h-4 w-4" /> : <MessageSquareText className="h-4 w-4" />}
+                <span className="flex-1">{option.title}</span>
+                {composerIntent === option.id ? <Check className="h-4 w-4" /> : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('assistants')}>
+          <Bot className="h-4 w-4" />
+          <span className="flex-1">专家</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('skills')}>
+          <Hammer className="h-4 w-4" />
+          <span className="flex-1">技能</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('connectors')}>
+          <Link2 className="h-4 w-4" />
+          <span className="flex-1">连接器</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
     <div
@@ -1376,46 +1455,63 @@ function ComposerPanel({
         <div className="px-4 py-3 sm:px-5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                type="button"
-                onClick={handleSelectFile}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                title="选择文件"
-              >
-                <Plus className="h-3 w-3" />
-                <FileText className="h-3.5 w-3.5" />
-                <span>文件</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleSelectDirectory}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                title="选择目录"
-              >
-                <Plus className="h-3 w-3" />
-                <FolderOpen className="h-3.5 w-3.5" />
-                <span>目录</span>
-              </button>
+              {newSessionAddMenu}
 
-              <span className="ml-2 shrink-0 text-xs text-muted-foreground">模式：</span>
-              {[chatIntentOption, ...intentOptions].map((option) => {
-                const isSelected = composerIntent === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => onComposerIntentChange(option.id)}
-                    className={cn(
-                      "inline-flex shrink-0 items-center rounded-full border px-2.5 py-1.5 text-xs transition-colors",
-                      isSelected
-                        ? "border-green-500/50 bg-green-500/15 text-green-600"
-                        : "border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                    )}
-                  >
-                    {option.title}
-                  </button>
-                );
-              })}
+              {remoteEnabled ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors",
+                        newSessionMode === 'remote-direct'
+                          ? "border-green-500/30 bg-green-500/10 text-green-600 hover:bg-green-500/15 dark:text-green-400"
+                          : "border-blue-500/30 bg-blue-500/10 text-blue-600 hover:bg-blue-500/15 dark:text-blue-400",
+                      )}
+                      title="选择工作电脑"
+                      aria-label={`工作电脑：${newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}`}
+                    >
+                      {newSessionMode === 'remote-direct'
+                        ? <Cloud className="h-3.5 w-3.5" />
+                        : <Laptop className="h-3.5 w-3.5" />}
+                      <span>{newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}</span>
+                      <ChevronRight className="h-3 w-3 opacity-60" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={8} className="w-56">
+                    <DropdownMenuItem
+                      className="gap-2 py-2.5"
+                      onSelect={() => onNewSessionModeChange?.('local')}
+                    >
+                      <Laptop className="h-4 w-4" />
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span>工作任务</span>
+                        <span className="h-2 w-2 rounded-full bg-blue-500" aria-hidden="true" />
+                        <span>本地电脑</span>
+                      </span>
+                      {newSessionMode !== 'remote-direct' ? <Check className="h-4 w-4" /> : null}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="gap-2 py-2.5"
+                      onSelect={() => onNewSessionModeChange?.('remote-direct')}
+                    >
+                      <Cloud className="h-4 w-4" />
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span>工作任务</span>
+                        <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden="true" />
+                        <span>云电脑</span>
+                      </span>
+                      {newSessionMode === 'remote-direct' ? <Check className="h-4 w-4" /> : null}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+
+              <WorkspaceSelector
+                value={workspace}
+                onChange={(nextWorkspace) => onWorkspaceChange?.(nextWorkspace)}
+                disabled={loading}
+              />
 
               <ComposerResourceSelectionArea
                 assistants={installedAssistants}
@@ -1432,6 +1528,9 @@ function ComposerPanel({
                 selectedConnectorIds={selectedConnectorIds}
                 onToggleConnector={onToggleConnector}
                 onOpenConnectorHub={onOpenConnectorHub}
+                triggerVisible={false}
+                openTab={resourcePickerTab}
+                onOpenTabChange={setResourcePickerTab}
               />
 
               <PermissionModeSelector
@@ -1459,7 +1558,7 @@ function ComposerPanel({
           </div>
 
           {selectedResourceIcons ? <div className="mt-3">{selectedResourceIcons}</div> : null}
-          {(attachments.length > 0 || workspace) && (
+          {attachments.length > 0 && (
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
                 {attachments.map((file, index) => (
@@ -1479,19 +1578,6 @@ function ComposerPanel({
                   </span>
                 ))}
 
-                {workspace && (
-                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/10 px-2.5 py-1 text-xs text-green-600">
-                    <FolderOpen className="h-3 w-3 shrink-0" />
-                    <span className="max-w-[220px] truncate">{workspace.split('/').pop() || workspace}</span>
-                    <button
-                      type="button"
-                      onClick={() => onWorkspaceChange?.(undefined)}
-                      className="text-green-600/60 hover:text-green-600"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                )}
               </div>
             </div>
           )}
@@ -1572,41 +1658,15 @@ function HomeLanding({
         </p>
       </div>
 
-      {remoteEnabled && (
-        <div className="mx-auto mb-4 w-full max-w-[720px] flex flex-wrap justify-center gap-4">
-          <button
-            type="button"
-            onClick={() => onNewSessionModeChange?.('local')}
-            className={cn(
-              "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
-              newSessionMode !== 'remote-direct'
-                ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-                : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-            )}
-          >
-            本地
-          </button>
-          <button
-            type="button"
-            onClick={() => onNewSessionModeChange?.('remote-direct')}
-            className={cn(
-              "rounded-full border px-6 py-3 text-sm font-medium shadow-[0_8px_30px_-8px_rgba(0,0,0,0.4)] backdrop-blur transition-all",
-              newSessionMode === 'remote-direct'
-                ? "border-green-500/50 bg-green-500/15 text-green-600 hover:bg-green-500/20 hover:-translate-y-0.5 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-                : "border-border/70 bg-card/60 text-foreground hover:-translate-y-0.5 hover:bg-card/80 hover:shadow-[0_14px_40px_-12px_rgba(0,0,0,0.5)]"
-            )}
-          >
-            云端
-          </button>
-        </div>
-      )}
-
       <ComposerPanel
         value={value}
         selectedAppName={selectedAppName}
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
+        remoteEnabled={remoteEnabled}
+        newSessionMode={newSessionMode}
+        onNewSessionModeChange={onNewSessionModeChange}
         sessionId={sessionId}
         attachments={attachments}
         onAttachmentsChange={onAttachmentsChange}
