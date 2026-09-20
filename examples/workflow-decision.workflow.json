@@ -1,0 +1,104 @@
+{
+  "version": 3,
+  "kind": "state-machine",
+  "meta": {
+    "name": "workflow-decision-demo",
+    "title": "Workflow 默认开关裁决",
+    "description": "并行分析正反观点，由裁判作出结构化决策"
+  },
+  "defaults": { "concurrency": 2 },
+  "limits": {
+    "maxAgentCalls": 3,
+    "maxNodeExecutions": 12,
+    "maxConcurrency": 2,
+    "maxDurationMs": 180000
+  },
+  "graph": {
+    "entry": "input",
+    "nodes": [
+      {
+        "id": "input",
+        "type": "start",
+        "title": "输入",
+        "outputSchema": {
+          "type": "object",
+          "properties": { "question": { "type": "string" } }
+        }
+      },
+      {
+        "id": "split",
+        "type": "parallel",
+        "title": "并行分析",
+        "branches": [
+          { "port": "support", "label": "支持观点" },
+          { "port": "oppose", "label": "反对观点" }
+        ]
+      },
+      {
+        "id": "support",
+        "type": "agent",
+        "title": "分析支持理由",
+        "prompt": "只做观点分析，不搜索网络、不读取仓库、不修改文件。分析默认开启 Workflow 的收益。",
+        "outputSchema": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": { "reason": { "type": "string" } }
+        }
+      },
+      {
+        "id": "oppose",
+        "type": "agent",
+        "title": "分析反对理由",
+        "prompt": "只做观点分析，不搜索网络、不读取仓库、不修改文件。分析默认开启 Workflow 的风险。",
+        "outputSchema": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": { "reason": { "type": "string" } }
+        }
+      },
+      {
+        "id": "join",
+        "type": "join",
+        "title": "汇合观点",
+        "parallelId": "split"
+      },
+      {
+        "id": "judge",
+        "type": "agent",
+        "title": "综合裁决",
+        "prompt": "综合正反观点作出裁决，不再调用其他 Agent。",
+        "input": [
+          { "target": ["support"], "source": { "kind": "node-output", "nodeId": "support" } },
+          { "target": ["oppose"], "source": { "kind": "node-output", "nodeId": "oppose" } }
+        ],
+        "outputSchema": {
+          "type": "object",
+          "required": ["decision", "confidence", "reason"],
+          "properties": {
+            "decision": { "type": "string", "enum": ["enable", "disable"] },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+            "reason": { "type": "string" }
+          }
+        }
+      },
+      {
+        "id": "output",
+        "type": "end",
+        "title": "输出裁决",
+        "inputSchema": { "type": "object" },
+        "input": [
+          { "target": [], "source": { "kind": "node-output", "nodeId": "judge" } }
+        ]
+      }
+    ],
+    "edges": [
+      { "source": "input", "target": "split" },
+      { "source": "split", "sourcePort": "support", "target": "support" },
+      { "source": "split", "sourcePort": "oppose", "target": "oppose" },
+      { "source": "support", "target": "join" },
+      { "source": "oppose", "target": "join" },
+      { "source": "join", "target": "judge" },
+      { "source": "judge", "target": "output" }
+    ]
+  }
+}

@@ -34,6 +34,16 @@ describe('session search index', () => {
     ]);
   });
 
+  it('uses the transcript order when a visible message has no timestamp', () => {
+    expect(extractSearchableSessionMessages([
+      { type: 'user', uuid: 'u1', prompt: '没有时间戳' },
+      { type: 'assistant', uuid: 'a1', message: { content: '仍然可以建立索引' } },
+    ])).toEqual([
+      { messageId: 'u1', role: 'user', body: '没有时间戳', timestamp: 0 },
+      { messageId: 'a1', role: 'assistant', body: '仍然可以建立索引', timestamp: 1 },
+    ]);
+  });
+
   it('searches Chinese message text and restricts results to visible sessions', () => {
     const result = runNodeScenario(`
       index.syncSession({

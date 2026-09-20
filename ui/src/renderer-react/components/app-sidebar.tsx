@@ -26,6 +26,7 @@ import {
   ChartNoAxesCombined,
   Plug,
   ShieldCheck,
+  GitFork,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -71,7 +72,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "overview" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "workflows" | "overview" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "library" | "mail" | "openim" | "cron" | "audit">;
 
@@ -492,6 +493,15 @@ export function AppSidebar({
           >
             <FolderKanban className="h-4 w-4" />
             {!collapsed && "项目"}
+          </Button>
+          <Button
+            variant={activeView === "workflows" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
+            onClick={() => onChangeView("workflows")}
+            title="Workflows"
+          >
+            <GitFork className="h-4 w-4" />
+            {!collapsed && "Workflows"}
           </Button>
           <Button
             variant={activeView === "connectors" || activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}

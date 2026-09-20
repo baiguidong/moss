@@ -8,7 +8,11 @@ import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { findToolByName, type Tools, type ToolUseContext } from '../../Tool.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import type { AssistantMessage, Message } from '../../types/message.js'
-import { createChildAbortController } from '../../utils/abortController.js'
+import {
+  createChildAbortController,
+  TOOL_EXECUTION_COMPLETED,
+  TOOL_EXECUTION_DISCARDED,
+} from '../../utils/abortController.js'
 import { runToolUse } from './toolExecution.js'
 
 type MessageUpdate = {
@@ -17,9 +21,6 @@ type MessageUpdate = {
 }
 
 type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'
-
-const EXECUTOR_COMPLETED = Symbol('streaming_tool_executor_completed')
-const EXECUTOR_DISCARDED = Symbol('streaming_tool_executor_discarded')
 
 type TrackedTool = {
   id: string
@@ -72,10 +73,10 @@ export class StreamingToolExecutor {
    */
   discard(): void {
     this.discarded = true
-    this.dispose(EXECUTOR_DISCARDED)
+    this.dispose(TOOL_EXECUTION_DISCARDED)
   }
 
-  private dispose(reason: typeof EXECUTOR_COMPLETED | typeof EXECUTOR_DISCARDED): void {
+  private dispose(reason: typeof TOOL_EXECUTION_COMPLETED | typeof TOOL_EXECUTION_DISCARDED): void {
     if (this.disposed) return
     this.disposed = true
     this.siblingAbortController.abort(reason)
@@ -317,8 +318,8 @@ export class StreamingToolExecutor {
         () => {
           if (
             toolAbortController.signal.reason !== 'sibling_error' &&
-            toolAbortController.signal.reason !== EXECUTOR_COMPLETED &&
-            toolAbortController.signal.reason !== EXECUTOR_DISCARDED &&
+            toolAbortController.signal.reason !== TOOL_EXECUTION_COMPLETED &&
+            toolAbortController.signal.reason !== TOOL_EXECUTION_DISCARDED &&
             !this.toolUseContext.abortController.signal.aborted &&
             !this.discarded
           ) {
@@ -500,7 +501,7 @@ export class StreamingToolExecutor {
         yield result
       }
     } finally {
-      this.dispose(EXECUTOR_COMPLETED)
+      this.dispose(TOOL_EXECUTION_COMPLETED)
     }
   }
 

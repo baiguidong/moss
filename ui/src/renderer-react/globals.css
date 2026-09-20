@@ -391,3 +391,11 @@
     content: '…';
   }
 }
+@keyframes workflow-edge-flow {
+  to { stroke-dashoffset: -28; }
+}
+
+.workflow-live-diagram path[style*="stroke-dasharray:8 6"],
+.workflow-live-diagram path[style*="stroke-dasharray: 8 6"] {
+  animation: workflow-edge-flow 0.8s linear infinite;
+}

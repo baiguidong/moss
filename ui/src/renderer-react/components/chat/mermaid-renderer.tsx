@@ -245,7 +245,26 @@ async function downloadSvgAsPng(svg: string, filename = "mermaid-diagram.png") {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function MermaidRenderer({ code, blockId }: { code: string; blockId?: string }) {
+type MermaidRendererProps = {
+  code: string;
+  blockId?: string;
+  onNodeClick?: (nodeId: string) => void;
+  animated?: boolean;
+  wheelZoom?: boolean;
+  fill?: boolean;
+};
+
+function getMermaidNodeId(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const node = target.closest("g.node");
+  if (!node) return null;
+  const dataId = node.getAttribute("data-id");
+  if (dataId) return dataId;
+  const match = /^flowchart-(.+)-\d+$/.exec(node.id);
+  return match?.[1] ?? null;
+}
+
+export function MermaidRenderer({ code, blockId, onNodeClick, animated = false, wheelZoom = false, fill = false }: MermaidRendererProps) {
   const stateKey = blockId || code;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const previewPanelRef = React.useRef<HTMLDivElement>(null);
@@ -261,6 +280,8 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
   const [previewMode, setPreviewMode] = React.useState<"diagram" | "code">(activePreviewMode);
   const previewOpenRef = React.useRef(previewOpen);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
+  const panRef = React.useRef<{ pointerId: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const autoFitKeyRef = React.useRef<string | null>(null);
 
   const openPreview = React.useCallback(() => {
     setActivePreviewCode(stateKey);
@@ -339,6 +360,13 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
   const inlineZoomIn = React.useCallback(() => updateInlineZoom((v) => v + ZOOM_STEP), [updateInlineZoom]);
   const inlineZoomOut = React.useCallback(() => updateInlineZoom((v) => v - ZOOM_STEP), [updateInlineZoom]);
   const resetInlineZoom = React.useCallback(() => setInlineState(stateKey, { zoom: 1 }), [stateKey]);
+  const fitInline = React.useCallback(() => {
+    if (!svgMetrics || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const widthScale = Math.max(1, rect.width - 32) / svgMetrics.width;
+    const heightScale = Math.max(1, rect.height - 32) / svgMetrics.height;
+    setInlineState(stateKey, { zoom: clampZoom(Math.min(widthScale, heightScale, 1)) });
+  }, [stateKey, svgMetrics]);
   const updatePreviewZoom = React.useCallback((next: number | ((value: number) => number)) => {
     const value = typeof next === "function" ? next(activePreviewZoom) : next;
     setActivePreviewZoom(clampZoom(value));
@@ -368,6 +396,53 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
       console.error("Failed to download Mermaid diagram:", err);
     });
   }, [svg]);
+  const handleInlineClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (panRef.current?.moved) {
+      panRef.current = null;
+      return;
+    }
+    const nodeId = getMermaidNodeId(event.target);
+    if (nodeId && onNodeClick) {
+      event.stopPropagation();
+      onNodeClick(nodeId);
+      return;
+    }
+    openPreview();
+  }, [onNodeClick, openPreview]);
+  const startInlinePan = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!wheelZoom || inlineMode !== "diagram" || event.button !== 0 || !containerRef.current) return;
+    panRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      left: containerRef.current.scrollLeft,
+      top: containerRef.current.scrollTop,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [inlineMode, wheelZoom]);
+  const moveInlinePan = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    const container = containerRef.current;
+    if (!pan || pan.pointerId !== event.pointerId || !container) return;
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) pan.moved = true;
+    container.scrollLeft = pan.left - dx;
+    container.scrollTop = pan.top - dy;
+  }, []);
+  const endInlinePan = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (panRef.current?.pointerId !== event.pointerId) return;
+    if (!panRef.current.moved) panRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+  const handlePreviewClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const nodeId = getMermaidNodeId(event.target);
+    if (!nodeId || !onNodeClick) return;
+    event.stopPropagation();
+    closePreview();
+    onNodeClick(nodeId);
+  }, [closePreview, onNodeClick]);
 
   React.useEffect(() => {
     if (!previewOpen && activePreviewCode === stateKey) setActivePreviewCode(null);
@@ -389,6 +464,13 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
       document.removeEventListener("fullscreenchange", onFullscreenChange);
     };
   }, [closePreview, previewOpen]);
+
+  React.useLayoutEffect(() => {
+    if (!fill || !svgMetrics || autoFitKeyRef.current === stateKey) return;
+    autoFitKeyRef.current = stateKey;
+    const frame = window.requestAnimationFrame(fitInline);
+    return () => window.cancelAnimationFrame(frame);
+  }, [fill, fitInline, stateKey, svgMetrics]);
 
   React.useLayoutEffect(() => {
     if (!previewOpen || !previewCanvasRef.current) return;
@@ -429,7 +511,7 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
 
   return (
     <>
-      <div className="my-4 overflow-hidden rounded-[18px] border border-border/60 bg-[var(--color-surface-container-low)]">
+      <div className={`${fill ? "flex h-full min-h-0 flex-col" : "my-4"} overflow-hidden rounded-[18px] border border-border/60 bg-[var(--color-surface-container-low)]`}>
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-[var(--color-surface-container)] px-3 py-2">
           <div className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-secondary)]">
             Mermaid
@@ -474,6 +556,18 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
             >
               <ZoomIn className="h-3.5 w-3.5" />
             </button>
+            {fill ? (
+              <button
+                type="button"
+                onClick={fitInline}
+                disabled={inlineMode !== "diagram"}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                aria-label="适应画布"
+                title="适应画布"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={downloadPng}
@@ -496,14 +590,24 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
         </div>
         <div
           ref={containerRef}
-          className="flex cursor-pointer items-center justify-center overflow-auto bg-white p-4 dark:bg-white"
-          onClick={openPreview}
+          className={`flex overflow-auto bg-white p-4 dark:bg-white [&_g.node]:cursor-pointer${fill ? " min-h-0 flex-1" : " items-center justify-center"}${wheelZoom ? " cursor-grab active:cursor-grabbing" : " cursor-pointer"}${animated ? " workflow-live-diagram" : ""}`}
+          onClick={handleInlineClick}
+          onPointerDown={startInlinePan}
+          onPointerMove={moveInlinePan}
+          onPointerUp={endInlinePan}
+          onPointerCancel={endInlinePan}
+          onWheel={wheelZoom ? (event) => {
+            if (inlineMode !== "diagram") return;
+            event.preventDefault();
+            updateInlineZoom((value) => value + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+          } : undefined}
         >
           {inlineMode === "diagram" ? (
             <div
-              className="[&_svg]:block [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-none"
+              className={`${fill ? "m-auto" : "min-w-full"} [&_svg]:block [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-none`}
               style={{
-                width: "100%",
+                width: fill && svgMetrics ? `${svgMetrics.width}px` : "100%",
+                ...(fill && svgMetrics ? { height: `${svgMetrics.height}px` } : {}),
                 zoom: inlineZoom,
               } as React.CSSProperties}
               dangerouslySetInnerHTML={{
@@ -623,8 +727,9 @@ export function MermaidRenderer({ code, blockId }: { code: string; blockId?: str
                 </div>
                 <div
                   ref={previewCanvasRef}
-                  className="overflow-auto bg-white p-6 fullscreen:flex-1"
+                  className={`overflow-auto bg-white p-6 fullscreen:flex-1 [&_g.node]:cursor-pointer${animated ? " workflow-live-diagram" : ""}`}
                   style={isFullscreen ? undefined : { maxHeight: "calc(85vh - 80px)" }}
+                  onClick={handlePreviewClick}
                   onScroll={(event) => {
                     if (!previewOpenRef.current || activePreviewCode !== stateKey) return;
                     const element = event.currentTarget;

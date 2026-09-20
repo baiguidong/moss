@@ -9,9 +9,10 @@ import { enableConfigs } from './utils/config.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
+import { stopTask as stopBackgroundTask } from './tasks/stopTask.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool } from './tools.js'
-import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
+import { TASK_TYPE_TAG, TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
 import {
@@ -1141,23 +1142,38 @@ export class ClaudeSession {
           agentId?: unknown
           mode: string
           sessionId?: SessionId
+          value?: unknown
         },
       ) =>
         cmd.agentId === undefined &&
         (cmd.mode === 'task-notification' || cmd.mode === 'orphaned-permission') &&
         (cmd.sessionId === undefined || cmd.sessionId === sessionId)
 
+      const isCurrentSessionWorkflowNotification = (
+        cmd: {
+          agentId?: unknown
+          mode: string
+          sessionId?: SessionId
+          value?: unknown
+        },
+      ) =>
+        isCurrentSessionMainThreadCommand(cmd) &&
+        typeof cmd.value === 'string' &&
+        cmd.value.includes(`<${TASK_TYPE_TAG}>local_workflow</${TASK_TYPE_TAG}>`)
+
       const dequeueMainThreadTaskNotification = () =>
         this.#opts.coordinatorMode
           ? dequeue(isCurrentSessionMainThreadCommand)
-          : undefined
+          : dequeue(isCurrentSessionWorkflowNotification)
 
       const hasRunningBackgroundTasks = () => {
-        if (!this.#opts.coordinatorMode) return false
         const state = this.#store?.getState()
         if (!state) return false
         return getRunningTasks(state).some(
-          task => isBackgroundTask(task) && task.type !== 'in_process_teammate',
+          task =>
+            isBackgroundTask(task) &&
+            task.type !== 'in_process_teammate' &&
+            (this.#opts.coordinatorMode || task.type === 'local_workflow'),
         )
       }
 
@@ -1561,6 +1577,37 @@ export class ClaudeSession {
     return this.#store?.getState() ?? null
   }
 
+  /** Stop one background task through the same task registry used by TaskStop. */
+  async stopTask(taskId: string): Promise<void> {
+    if (!this.#store) throw new Error('Session runtime is not ready')
+    const effectiveCwd =
+      getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+      this.#opts.cwd
+    await runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+      runWithCwdOverride(
+        effectiveCwd,
+        () =>
+          runWithSessionIdContext(
+            asSessionId(this.sessionId),
+            this.#opts.projectDir,
+            () =>
+              runWithCoordinatorMode(this.#opts.coordinatorMode, () =>
+                stopBackgroundTask(taskId, {
+                  getAppState: () => this.#store!.getState(),
+                  setAppState: update => this.#store!.setState(update),
+                }),
+              ),
+            this.#opts.taskScope,
+            this.#opts.environment,
+          ),
+        {
+          projectRoot: this.#projectRoot,
+          additionalDirectories: this.#opts.addDirs,
+        },
+      ),
+    )
+  }
+
   /** 切换当前会话的权限模式；尚未启动的会话会在首次 send 时应用。 */
   setPermissionMode(mode: PermissionMode): void {
     const normalizedMode = mode === 'allow-all' ? 'bypassPermissions' : mode
@@ -1697,3 +1744,14 @@ export async function resumeClaudeSession(
     },
   }
 }
+
+export {
+  archiveWorkflow,
+  deleteWorkflow,
+  duplicateWorkflow,
+  getWorkflowCatalogDetail,
+  listWorkflowCatalog,
+  publishWorkflow,
+  restoreWorkflow,
+  unpublishWorkflow,
+} from './utils/workflows/catalog.js'

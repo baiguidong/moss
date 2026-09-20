@@ -59,14 +59,14 @@ export function getSearchMessageId(event) {
 
 export function extractSearchableSessionMessages(history) {
   const byMessage = new Map();
-  for (const event of (Array.isArray(history) ? history : [])) {
+  for (const [eventIndex, event] of (Array.isArray(history) ? history : []).entries()) {
     if (event?.type !== 'user' && event?.type !== 'assistant') continue;
     const body = eventText(event);
     if (!body) continue;
     const role = event.type;
     const timestamp = Number.isFinite(event.timestamp)
       ? Number(event.timestamp)
-      : Number.isFinite(Date.parse(event.timestamp)) ? Date.parse(event.timestamp) : index;
+      : Number.isFinite(Date.parse(event.timestamp)) ? Date.parse(event.timestamp) : eventIndex;
     const messageId = getSearchMessageId(event);
     const current = byMessage.get(`${role}:${messageId}`);
     if (!current || body.length >= current.body.length) {

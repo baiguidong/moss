@@ -56,6 +56,7 @@ import { createUserMessage } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
 import type { ModelAlias } from '../../utils/model/aliases.js'
 import {
+  type AgentMetadata,
   clearAgentTranscriptSubdir,
   recordSidechainTranscript,
   setAgentTranscriptSubdir,
@@ -247,12 +248,19 @@ export async function* runAgent({
   projectResources,
   agentName,
   teamName,
+  workflow,
   description,
   transcriptSubdir,
   onQueryProgress,
+  persistedMessageCount = 0,
+  stopAfterStructuredOutput = false,
 }: {
   agentDefinition: AgentDefinition
   promptMessages: Message[]
+  /** Leading prompt messages already persisted for a continued Agent. */
+  persistedMessageCount?: number
+  /** Finish immediately after a validated StructuredOutput attachment. */
+  stopAfterStructuredOutput?: boolean
   toolUseContext: ToolUseContext
   canUseTool: CanUseToolFn
   isAsync: boolean
@@ -312,6 +320,8 @@ export async function* runAgent({
   agentName?: string
   /** Team owning this sidechain. Team members are not coordinator children. */
   teamName?: string
+  /** Workflow provenance used to reconstruct completed runs from sidecars. */
+  workflow?: AgentMetadata['workflow']
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -699,13 +709,26 @@ export async function* runAgent({
   // Record initial messages before the query loop starts, plus the agentType
   // so resume can route correctly when subagent_type is omitted. Metadata is
   // awaited so later lifecycle patches cannot overtake its initial write.
-  void recordSidechainTranscript(initialMessages, agentId).catch(_err =>
+  const persistedPrefix = Math.max(
+    0,
+    Math.min(initialMessages.length, persistedMessageCount),
+  )
+  const initialMessagesToRecord = initialMessages.slice(persistedPrefix)
+  const priorLeafUuid = persistedPrefix > 0
+    ? initialMessages[persistedPrefix - 1]?.uuid ?? null
+    : null
+  await recordSidechainTranscript(
+    initialMessagesToRecord,
+    agentId,
+    priorLeafUuid,
+  ).catch(_err =>
     logForDebugging(`Failed to record sidechain transcript: ${_err}`),
   )
   await writeAgentMetadata(agentId, {
     agentType: agentDefinition.agentType,
     ...(agentName && { agentName }),
     ...(teamName && { teamName }),
+    ...(workflow && { workflow }),
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
     ...(workspacePath && { workspacePath }),
@@ -716,6 +739,7 @@ export async function* runAgent({
 
   // Track the last recorded message UUID for parent chain continuity
   let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
+  let structuredOutputSeen = false
 
   try {
     let terminalFailure: ReturnType<typeof getAgentExecutionFailure> = null
@@ -759,6 +783,9 @@ export async function* runAgent({
           )
           break
         }
+        if (stopAfterStructuredOutput && message.attachment.type === 'structured_output') {
+          structuredOutputSeen = true
+        }
         yield message
         continue
       }
@@ -779,6 +806,14 @@ export async function* runAgent({
           lastRecordedUuid = message.uuid
         }
         yield message
+        if (
+          structuredOutputSeen &&
+          message.type === 'user' &&
+          Array.isArray(message.message.content) &&
+          message.message.content.some(block => block.type === 'tool_result')
+        ) {
+          break
+        }
       }
     }
 

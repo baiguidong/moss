@@ -333,6 +333,10 @@ export type MossAppEvent =
   | { type: 'library_search'; input: MossLibrarySearchInput }
   | { type: 'library_read'; input: MossLibraryReadInput }
   | { type: 'library_write'; input: MossLibraryWriteInput }
+  | {
+      type: 'workflow_catalog_changed'
+      input: { action: string; workflowId?: string }
+    }
 
 export type MossAppBuildInput = {
   kind?: 'app'
@@ -716,6 +720,13 @@ export type Tool<
    * turn 1 without a ToolSearch round-trip.
    */
   readonly alwaysLoad?: boolean
+  /**
+   * When true, omit this built-in tool from the initial request and expose it
+   * through ToolSearch instead. Unlike the user-configurable Moss tool list,
+   * this is a tool-owned default for specialized, high-context capabilities.
+   * `alwaysLoad` still takes precedence.
+   */
+  readonly deferLoading?: boolean
   /**
    * For MCP tools: the server and tool names as received from the MCP server (unnormalized).
    * Present on all MCP tools regardless of whether `name` is prefixed (mcp__server__tool)

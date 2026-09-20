@@ -92,8 +92,11 @@ type ListItem = {
 const WorkflowDetailDialog = feature('WORKFLOW_SCRIPTS') ? (require('./WorkflowDetailDialog.js') as typeof import('./WorkflowDetailDialog.js')).WorkflowDetailDialog : null;
 const workflowTaskModule = feature('WORKFLOW_SCRIPTS') ? require('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') as typeof import('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') : null;
 const killWorkflowTask = workflowTaskModule?.killWorkflowTask ?? null;
+const pauseWorkflowTask = workflowTaskModule?.pauseWorkflowTask ?? null;
+const buildResumePrompt = workflowTaskModule?.buildResumePrompt ?? null;
 const skipWorkflowAgent = workflowTaskModule?.skipWorkflowAgent ?? null;
 const retryWorkflowAgent = workflowTaskModule?.retryWorkflowAgent ?? null;
+const saveWorkflowDefinition = feature('WORKFLOW_SCRIPTS') ? (require('src/utils/workflows/save.js') as typeof import('src/utils/workflows/save.js')).saveWorkflowDefinition : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 // Helper to get filtered background tasks (excludes foregrounded local_agent)
@@ -138,6 +141,7 @@ export function BackgroundTasksDialog({
     };
   });
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const [workflowSaveScope, setWorkflowSaveScope] = useState<'user' | 'project' | null>(null);
 
   // Register as modal overlay so parent Chat keybindings (up/down for history)
   // are deactivated while this dialog is open
@@ -344,7 +348,21 @@ export function BackgroundTasksDialog({
         } : undefined} key={`teammate-${task_0.id}`} />;
       case 'local_workflow':
         if (!WorkflowDetailDialog) return null;
-        return <WorkflowDetailDialog workflow={task_0} onDone={onDone} onKill={task_0.status === 'running' && killWorkflowTask ? () => killWorkflowTask(task_0.id, setAppState) : undefined} onSkipAgent={task_0.status === 'running' && skipWorkflowAgent ? agentId => skipWorkflowAgent(task_0.id, agentId, setAppState) : undefined} onRetryAgent={task_0.status === 'running' && retryWorkflowAgent ? agentId_0 => retryWorkflowAgent(task_0.id, agentId_0, setAppState) : undefined} onBack={goBackToList} key={`workflow-${task_0.id}`} />;
+        return <WorkflowDetailDialog workflow={task_0} onDone={onDone} onKill={task_0.status === 'running' && killWorkflowTask ? () => killWorkflowTask(task_0.id, setAppState) : undefined} onPause={task_0.status === 'running' && pauseWorkflowTask && buildResumePrompt ? () => {
+          if (pauseWorkflowTask(task_0.id, setAppState)) {
+            onDone(buildResumePrompt(task_0 as unknown as LocalWorkflowTaskState), {
+              display: 'system'
+            });
+          }
+        } : undefined} onSkipAgent={task_0.status === 'running' && skipWorkflowAgent ? agentId => skipWorkflowAgent(task_0.id, agentId, setAppState) : undefined} onRetryAgent={task_0.status === 'running' && retryWorkflowAgent ? agentId_0 => retryWorkflowAgent(task_0.id, agentId_0, setAppState) : undefined} saveScope={workflowSaveScope} onToggleSaveScope={() => setWorkflowSaveScope(previous => previous === 'project' ? 'user' : 'project')} onSave={saveWorkflowDefinition ? () => {
+          const scope = workflowSaveScope ?? 'project';
+          void saveWorkflowDefinition({
+            definition: task_0.definition,
+            scope
+          }).then(result => onDone('error' in result ? `Could not save workflow: ${result.error}` : `Saved /${result.name} to ${result.filePath}`, {
+            display: 'system'
+          }));
+        } : undefined} onBack={goBackToList} key={`workflow-${task_0.id}`} />;
       case 'dream':
         return <DreamDetailDialog task={task_0} onDone={() => onDone('Background tasks dialog dismissed', {
           display: 'system'
@@ -354,6 +372,7 @@ export function BackgroundTasksDialog({
   const runningBashCount = count(bashTasks, _ => _.status === 'running');
   const runningAgentCount = count(agentTasks, __1 => __1.status === 'running');
   const runningTeammateCount = count(teammateTasks, __2 => __2.status === 'running');
+  const runningWorkflowCount = count(workflowTasks, __3 => __3.status === 'running');
   const subtitle = intersperse([...(runningTeammateCount > 0 ? [<Text key="teammates">
               {runningTeammateCount}{' '}
               {runningTeammateCount !== 1 ? 'agents' : 'agent'}
@@ -363,6 +382,9 @@ export function BackgroundTasksDialog({
             </Text>] : []), ...(runningAgentCount > 0 ? [<Text key="agents">
               {runningAgentCount}{' '}
               {runningAgentCount !== 1 ? 'active agents' : 'active agent'}
+            </Text>] : []), ...(runningWorkflowCount > 0 ? [<Text key="workflows">
+              {runningWorkflowCount}{' '}
+              {runningWorkflowCount !== 1 ? 'active workflows' : 'active workflow'}
             </Text>] : [])], index => <Text key={`separator-${index}`}> · </Text>);
   const actions = [<KeyboardShortcutHint key="upDown" shortcut="↑/↓" action="select" />, <KeyboardShortcutHint key="enter" shortcut="Enter" action="view" />, ...(currentSelection?.type === 'in_process_teammate' && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="foreground" shortcut="f" action="foreground" />] : []), ...((currentSelection?.type === 'local_bash' || currentSelection?.type === 'local_agent' || currentSelection?.type === 'in_process_teammate' || currentSelection?.type === 'local_workflow' || currentSelection?.type === 'dream') && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="kill" shortcut="x" action="stop" />] : []), ...(agentTasks.some(t => t.status === 'running') ? [<KeyboardShortcutHint key="kill-all" shortcut={killAgentsShortcut} action="stop all agents" />] : []), <KeyboardShortcutHint key="esc" shortcut="←/Esc" action="close" />];
   const handleCancel = () => onDone('Background tasks dialog dismissed', {

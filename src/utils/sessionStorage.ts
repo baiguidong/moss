@@ -312,6 +312,14 @@ export type AgentMetadata = {
   agentName?: string
   /** Agent Team ownership. Team sidechains are rendered in the team workbench. */
   teamName?: string
+  /** Dynamic workflow ownership and stable position in its execution. */
+  workflow?: {
+    runId: string
+    name: string
+    phaseIndex: number
+    phaseTitle?: string
+    agentIndex: number
+  }
   /** Worktree path if the agent was spawned with isolation: "worktree" */
   worktreePath?: string
   /** Original task description from the AgentTool input. Persisted so a

@@ -45,6 +45,12 @@ import {
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
 import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 import {
+  WorkflowDraftWorkbench,
+  WorkflowGraphPanel,
+  WorkflowSessionStrip,
+  WorkflowWorkbench,
+} from "@/components/workflow-graph-panel";
+import {
   CoordinatorWorkersSummary,
   CoordinatorWorkersView,
 } from "@/components/coordinator-workers-view";
@@ -52,6 +58,7 @@ import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
+import { conversationWorkflowDrafts, workflowEditPrompt } from "@/lib/workflow-library";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
 import type {
   AgentTeamsSessionState,
@@ -61,6 +68,7 @@ import type {
   InstalledConnector,
   PermissionMode,
   SessionSummary,
+  WorkflowCatalogDetail,
 } from "../types";
 import {
   AssistantAvatar,
@@ -1874,6 +1882,7 @@ function formatTaskElapsed(ms: number) {
 const TASK_STATUS_LABELS: Record<string, string> = {
   pending: "等待中",
   running: "运行中",
+  paused: "已暂停",
   completed: "已完成",
   failed: "失败",
   killed: "已停止",
@@ -2002,7 +2011,7 @@ function BackgroundTaskRow({
   const isRunning = task.status === "running";
 
   React.useEffect(() => {
-    if (!expanded || !sessionId) return;
+    if (!expanded || !sessionId || task.kind === "workflow") return;
     let cancelled = false;
     const fetchOutput = async () => {
       try {
@@ -2021,7 +2030,7 @@ function BackgroundTaskRow({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [expanded, isRunning, sessionId, task.id]);
+  }, [expanded, isRunning, sessionId, task.id, task.kind]);
 
   React.useEffect(() => {
     const el = outputRef.current;
@@ -2039,16 +2048,18 @@ function BackgroundTaskRow({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
           onClick={() => setExpanded((prev) => !prev)}
-          title={task.command}
+          title={task.kind === "workflow" ? task.definitionPath ?? task.description : task.command}
         >
           {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-          {task.kind === "monitor" ? (
+          {task.kind === "workflow" ? (
+            <GitFork className="h-3 w-3 shrink-0 text-violet-500" />
+          ) : task.kind === "monitor" ? (
             <Activity className="h-3 w-3 shrink-0 text-amber-500" />
           ) : (
             <Terminal className="h-3 w-3 shrink-0 text-sky-500" />
           )}
           <span className="min-w-0 flex-1 truncate">
-            {task.description || task.command || task.id}
+          {task.workflowName || task.description || task.command || task.id}
           </span>
         </button>
         {isRunning && (
@@ -2061,6 +2072,11 @@ function BackgroundTaskRow({
           {TASK_STATUS_LABELS[task.status] ?? task.status}
           {task.status === "failed" && task.exitCode != null ? ` (${task.exitCode})` : ""}
         </span>
+        {task.kind === "workflow" && (
+          <span className="shrink-0 tabular-nums text-muted-foreground/80">
+            {task.agentCount ?? 0} agents · {formatTokenCount(task.totalTokens ?? 0)} tok
+          </span>
+        )}
         {elapsed && <span className="shrink-0 tabular-nums">{elapsed}</span>}
         {isRunning && sessionId && (
           <button
@@ -2077,15 +2093,21 @@ function BackgroundTaskRow({
       </div>
       {expanded && (
         <div className="border-t border-border/50 px-3 py-2">
-          {truncated && (
-            <div className="pb-1 text-[10px] text-muted-foreground/70">（仅显示最近输出）</div>
+          {task.kind === "workflow" ? (
+            <WorkflowGraphPanel task={task} />
+          ) : (
+            <>
+              {truncated && (
+                <div className="pb-1 text-[10px] text-muted-foreground/70">（仅显示最近输出）</div>
+              )}
+              <pre
+                ref={outputRef}
+                className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground"
+              >
+                {output || "（暂无输出）"}
+              </pre>
+            </>
           )}
-          <pre
-            ref={outputRef}
-            className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground"
-          >
-            {output || "（暂无输出）"}
-          </pre>
         </div>
       )}
     </div>
@@ -2186,6 +2208,7 @@ export function ChatArea({
   onToolDisplayModeChange,
   toolDisplaySettingBusy = false,
   agentTeams,
+  onWorkflowPublished,
   toolPermissionRequest,
   onSubmitToolPermission,
   onRejectToolPermission,
@@ -2256,6 +2279,7 @@ export function ChatArea({
   onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy?: boolean;
   agentTeams?: AgentTeamsSessionState | null;
+  onWorkflowPublished?: (workflow: WorkflowCatalogDetail) => void;
   toolPermissionRequest?: AskUserQuestionRequest | null;
   onSubmitToolPermission?: (
     request: AskUserQuestionRequest,
@@ -2268,14 +2292,78 @@ export function ChatArea({
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
   const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
+  const [workflowOpen, setWorkflowOpen] = React.useState(false);
+  const [selectedWorkflowTaskId, setSelectedWorkflowTaskId] = React.useState<string | null>(null);
+  const [workflowDraftOpen, setWorkflowDraftOpen] = React.useState(false);
+  const [selectedWorkflowDraftId, setSelectedWorkflowDraftId] = React.useState<string | null>(null);
+  const [workflowDrafts, setWorkflowDrafts] = React.useState<WorkflowCatalogDetail[]>([]);
+  const workflowDraftRequest = React.useRef(0);
   const [coordinatorWorkersOpen, setCoordinatorWorkersOpen] = React.useState(false);
   const [selectedCoordinatorWorkerId, setSelectedCoordinatorWorkerId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setAgentTeamsOpen(false);
+    setWorkflowOpen(false);
+    setSelectedWorkflowTaskId(null);
+    setWorkflowDraftOpen(false);
+    setSelectedWorkflowDraftId(null);
+    setWorkflowDrafts([]);
     setCoordinatorWorkersOpen(false);
     setSelectedCoordinatorWorkerId(null);
   }, [sessionId]);
+
+  const refreshWorkflowDrafts = React.useCallback(async () => {
+    const request = ++workflowDraftRequest.current;
+    if (!sessionId) {
+      setWorkflowDrafts([]);
+      return;
+    }
+    try {
+      const entries = conversationWorkflowDrafts(
+        await window.agentDesktop.workflows.list({ cwd: sessionWorkspace, status: "draft" }),
+        sessionId,
+      );
+      const results = await Promise.allSettled(entries.map((entry) => (
+        window.agentDesktop.workflows.get({ workflowId: entry.id, cwd: sessionWorkspace })
+      )));
+      if (request !== workflowDraftRequest.current) return;
+      setWorkflowDrafts(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+    } catch {
+      if (request === workflowDraftRequest.current) setWorkflowDrafts([]);
+    }
+  }, [sessionId, sessionWorkspace]);
+
+  React.useEffect(() => {
+    void refreshWorkflowDrafts();
+    return window.agentDesktop.workflows.onChanged((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.workflowId &&
+        (event.action === "create" || event.action === "edit" || event.action === "duplicate")
+      ) {
+        const request = ++workflowDraftRequest.current;
+        void window.agentDesktop.workflows.get({ workflowId: event.workflowId, cwd: sessionWorkspace })
+          .then((workflow) => {
+            if (request !== workflowDraftRequest.current) return;
+            if (workflow.record.status !== "draft") return;
+            setWorkflowDrafts((current) => [
+              workflow,
+              ...current.filter((entry) => entry.record.id !== workflow.record.id),
+            ].sort((left, right) => right.record.updatedAt - left.record.updatedAt));
+          })
+          .catch(() => { void refreshWorkflowDrafts(); });
+        return;
+      }
+      void refreshWorkflowDrafts();
+    });
+  }, [refreshWorkflowDrafts, sessionId, sessionWorkspace]);
+
+  // Catalog events can arrive while a brand-new desktop session is still
+  // acquiring its runtime/workspace metadata. Re-read once the turn settles
+  // so the draft appears immediately without requiring a session switch.
+  React.useEffect(() => {
+    if (!loading) void refreshWorkflowDrafts();
+  }, [loading, refreshWorkflowDrafts]);
 
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
@@ -2339,7 +2427,16 @@ export function ChatArea({
   const showAgentTeamsWorkbench = Boolean(
     agentTeamsOpen && agentTeams && agentTeams.teams.length > 0,
   );
+  const workflowTasks = (backgroundTasks ?? []).filter((task) => task.kind === "workflow");
+  const showWorkflowWorkbench = workflowOpen && workflowTasks.length > 0;
+  const showWorkflowDraftWorkbench = workflowDraftOpen && workflowDrafts.length > 0;
   const showCoordinatorWorkers = coordinatorWorkersOpen && childSessions.length > 0;
+
+  React.useEffect(() => {
+    if (workflowDrafts.length > 0) return;
+    setWorkflowDraftOpen(false);
+    setSelectedWorkflowDraftId(null);
+  }, [workflowDrafts.length]);
 
   React.useEffect(() => {
     if (childSessions.length > 0) return;
@@ -2430,25 +2527,81 @@ export function ChatArea({
         childSessions={childSessions}
         onOpenWorkers={() => {
           setAgentTeamsOpen(false);
+          setWorkflowOpen(false);
+          setWorkflowDraftOpen(false);
           setSelectedCoordinatorWorkerId(null);
           setCoordinatorWorkersOpen(true);
         }}
         onSelectWorker={(workerId) => {
           setAgentTeamsOpen(false);
+          setWorkflowOpen(false);
+          setWorkflowDraftOpen(false);
           setSelectedCoordinatorWorkerId(workerId);
           setCoordinatorWorkersOpen(true);
         }}
       />
 
-      {!agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
+      {!agentTeamsOpen && !workflowOpen && !workflowDraftOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
         <AgentTeamsStrip state={agentTeams} onOpen={() => {
+          setWorkflowOpen(false);
+          setWorkflowDraftOpen(false);
           setCoordinatorWorkersOpen(false);
           setAgentTeamsOpen(true);
         }} />
       ) : null}
 
+      {!agentTeamsOpen && !workflowOpen && !workflowDraftOpen && !coordinatorWorkersOpen && (workflowDrafts.length > 0 || workflowTasks.length > 0) ? (
+        <WorkflowSessionStrip
+          drafts={workflowDrafts}
+          tasks={workflowTasks}
+          onOpenDraft={(workflowId) => {
+            setAgentTeamsOpen(false);
+            setWorkflowOpen(false);
+            setCoordinatorWorkersOpen(false);
+            setSelectedWorkflowDraftId(workflowId);
+            setWorkflowDraftOpen(true);
+          }}
+          onOpenTask={(taskId) => {
+            setAgentTeamsOpen(false);
+            setWorkflowDraftOpen(false);
+            setCoordinatorWorkersOpen(false);
+            setSelectedWorkflowTaskId(taskId);
+            setWorkflowOpen(true);
+          }}
+        />
+      ) : null}
+
       {showAgentTeamsWorkbench && agentTeams ? (
         <AgentTeamsWorkbench state={agentTeams} onClose={() => setAgentTeamsOpen(false)} />
+      ) : showWorkflowDraftWorkbench ? (
+        <WorkflowDraftWorkbench
+          drafts={workflowDrafts}
+          initialWorkflowId={selectedWorkflowDraftId}
+          onClose={() => setWorkflowDraftOpen(false)}
+          onContinueEdit={(workflow) => {
+            onChange(workflowEditPrompt(workflow));
+            setWorkflowDraftOpen(false);
+          }}
+          onPublish={async (workflow) => {
+            const published = await window.agentDesktop.workflows.publish({
+              workflowId: workflow.record.id,
+              cwd: sessionWorkspace,
+            });
+            setWorkflowDrafts((current) => current.filter((entry) => entry.record.id !== workflow.record.id));
+            setWorkflowDraftOpen(false);
+            onWorkflowPublished?.(published);
+          }}
+        />
+      ) : showWorkflowWorkbench ? (
+        <WorkflowWorkbench
+          tasks={workflowTasks}
+          initialTaskId={selectedWorkflowTaskId}
+          onClose={() => setWorkflowOpen(false)}
+          onStop={(taskId) => {
+            if (!sessionId) return;
+            void window.agentDesktop.killTask({ sessionId, taskId });
+          }}
+        />
       ) : showCoordinatorWorkers ? (
         <CoordinatorWorkersView
           workers={childSessions}
@@ -2492,14 +2645,14 @@ export function ChatArea({
       )}
 
 
-      {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
+      {!showAgentTeamsWorkbench && !showWorkflowDraftWorkbench && !showWorkflowWorkbench && !showCoordinatorWorkers ? (
         <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
           <div className={cn(
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
           )}>
-          {backgroundTasks && backgroundTasks.length > 0 && (
-            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks} />
+          {backgroundTasks && backgroundTasks.some((task) => task.kind !== "workflow") && (
+            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.kind !== "workflow")} />
           )}
           {loading && composerActivity && loadingStartTime != null && (
             <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />

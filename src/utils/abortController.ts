@@ -6,6 +6,16 @@ import { setMaxListeners } from 'events'
 const DEFAULT_MAX_LISTENERS = 50
 
 /**
+ * A per-tool AbortController is closed after its result has been collected.
+ * This is lifecycle cleanup, not a user cancellation. Detached background
+ * work may observe the tool signal, so the reason must remain distinguishable.
+ */
+export const TOOL_EXECUTION_COMPLETED = Symbol('tool_execution_completed')
+
+/** A streamed tool attempt was discarded and must not leave work behind. */
+export const TOOL_EXECUTION_DISCARDED = Symbol('tool_execution_discarded')
+
+/**
  * Creates an AbortController with proper event listener limits set.
  * This prevents MaxListenersExceededWarning when multiple listeners
  * are attached to the abort signal.

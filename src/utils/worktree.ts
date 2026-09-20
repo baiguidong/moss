@@ -953,6 +953,14 @@ export async function cleanupWorktree(): Promise<void> {
   }
 }
 
+/** Explain why workflow worktree isolation cannot be provided, if applicable. */
+export function agentWorktreeUnavailableReason(): string | null {
+  if (hasWorktreeCreateHook()) return null
+  return findCanonicalGitRoot(getCwd())
+    ? null
+    : 'not in a git repository and no WorktreeCreate hooks are configured'
+}
+
 /**
  * Create a lightweight worktree for a subagent.
  * Reuses getOrCreateWorktree/performPostCreationSetup but does NOT touch

@@ -41,6 +41,7 @@ The result lists the activated tool names. Tools in the same configured settings
  * A tool is deferred if:
  * - It's an MCP tool (always deferred - workflow-specific)
  * - It's a host tool explicitly set to on-demand in Settings > Tools
+ * - The built-in tool declares deferLoading=true
  *
  * A tool is NEVER deferred if it has alwaysLoad: true (MCP tools set this via
  * _meta['anthropic/alwaysLoad']). This check runs first, before any other rule.
@@ -52,6 +53,8 @@ export function isDeferredTool(tool: Tool): boolean {
 
   // MCP tools are always deferred (workflow-specific)
   if (tool.isMcp === true) return true
+
+  if (tool.deferLoading === true) return true
 
   return isMossToolName(tool.name) && shouldDeferMossTool(tool.name)
 }

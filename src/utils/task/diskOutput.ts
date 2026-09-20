@@ -269,6 +269,30 @@ export function appendTaskOutput(taskId: string, content: string): void {
   getOrCreateOutput(taskId).append(content)
 }
 
+/** Replace a task's output with a single durable snapshot. */
+export function writeTaskOutput(taskId: string, content: string): Promise<void> {
+  return track(
+    (async () => {
+      await ensureOutputDir()
+      const handle = await open(
+        getTaskOutputPath(taskId),
+        process.platform === 'win32'
+          ? 'w'
+          : fsConstants.O_WRONLY |
+              fsConstants.O_CREAT |
+              fsConstants.O_TRUNC |
+              O_NOFOLLOW,
+        0o600,
+      )
+      try {
+        await handle.writeFile(content, 'utf8')
+      } finally {
+        await handle.close()
+      }
+    })(),
+  )
+}
+
 /**
  * Wait for all pending writes for a task to complete.
  * Useful before reading output to ensure all data is flushed.

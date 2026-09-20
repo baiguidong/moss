@@ -7196,26 +7196,182 @@ async function previewAppBuild(buildDir) {
 }
 
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
+const WORKFLOW_TASK_EMIT_DELAY_MS = 50;
 const SESSION_TASK_EMIT_DELAY_MS = 150;
 const TASK_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+
+function loadPersistedWorkflowTasks(sessionRecord) {
+  const sessionIds = [
+    sessionRecord.id,
+    sessionRecord.runtime?.sessionId,
+    sessionRecord.underlyingSessionId,
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+  const historyKey = sessionIds.join(':');
+  if (
+    sessionRecord.workflowTaskHistoryKey === historyKey &&
+    Array.isArray(sessionRecord.workflowTaskHistory)
+  ) {
+    return sessionRecord.workflowTaskHistory;
+  }
+  const tasks = [];
+  const projectsRoot = path.join(MOSS_HOME, 'projects');
+  const workflowDirs = new Set();
+  if (sessionRecord.id) {
+    const engineDir = getLocalSessionEngineDir(sessionRecord.id);
+    for (const sessionId of sessionIds) {
+      workflowDirs.add(path.join(engineDir, sessionId, 'workflows'));
+    }
+    // Older runs used the transient engine session id. Scan only this desktop
+    // session's private engine directory so those runs remain visible after a
+    // runtime replacement or app restart.
+    try {
+      for (const entry of fs.readdirSync(engineDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) workflowDirs.add(path.join(engineDir, entry.name, 'workflows'));
+      }
+    } catch {}
+  }
+  let projects = [];
+  try {
+    projects = fs.readdirSync(projectsRoot, { withFileTypes: true });
+  } catch {}
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    for (const sessionId of sessionIds) {
+      workflowDirs.add(path.join(projectsRoot, project.name, sessionId, 'workflows'));
+    }
+  }
+  for (const workflowsDir of workflowDirs) {
+    let files = [];
+    try {
+      files = fs.readdirSync(workflowsDir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith('.run.json')) continue;
+      try {
+        const runPath = path.join(workflowsDir, file);
+        if (fs.statSync(runPath).size > 8 * 1024 * 1024) continue;
+        const raw = JSON.parse(fs.readFileSync(runPath, 'utf8'));
+        if (
+          raw?.version !== 3 ||
+          !raw?.taskId ||
+          !raw?.workflowRunId ||
+          raw?.definition?.version !== 3 ||
+          raw?.definition?.kind !== 'state-machine' ||
+          raw?.graph?.version !== 3
+        ) continue;
+        const durableProgress = Array.isArray(raw.workflowProgress)
+          ? raw.workflowProgress
+          : [];
+        const savedLogs = Array.isArray(raw.logs)
+          ? raw.logs
+            .filter((message) => typeof message === 'string')
+            .map((message) => ({ type: 'workflow_log', message }))
+          : [];
+        tasks.push({
+          id: raw.taskId,
+          description: raw.summary || raw.description || '',
+          command: '',
+          kind: 'workflow',
+          status: raw.status || 'completed',
+          isBackgrounded: true,
+          startTime: raw.startTime ?? null,
+          endTime: raw.endTime ?? null,
+          exitCode: null,
+          workflowName: raw.workflowName || null,
+          workflowId: raw.workflowId || null,
+          workflowRevision: Number(raw.workflowRevision) || null,
+          runMode: raw.runMode === 'test' ? 'test' : 'run',
+          workflowRunId: raw.workflowRunId,
+          definition: raw.definition || null,
+          definitionPath: raw.definitionPath || null,
+          args: raw.args,
+          graph: raw.graph || null,
+          mermaid: raw.mermaid || '',
+          graphError: raw.graphError || null,
+          nodeEvents: Array.isArray(raw.workflowNodeEvents) ? raw.workflowNodeEvents : [],
+          progress: [...durableProgress, ...savedLogs],
+          agentCount: Number(raw.agentCount) || 0,
+          totalTokens: Number(raw.totalTokens) || 0,
+          totalToolCalls: Number(raw.totalToolCalls) || 0,
+          result: raw.result,
+          error: raw.error || null,
+        });
+      } catch {}
+    }
+  }
+  sessionRecord.workflowTaskHistoryKey = historyKey;
+  sessionRecord.workflowTaskHistory = tasks;
+  return tasks;
+}
 
 function snapshotBackgroundTasks(sessionRecord) {
   try {
     const state = sessionRecord.runtime?.getAppState?.();
-    if (!state?.tasks) return [];
-    return Object.values(state.tasks)
-      .filter((t) => t && t.type === 'local_bash')
-      .map((t) => ({
-        id: t.id,
-        description: t.description || '',
-        command: typeof t.command === 'string' ? t.command : '',
-        kind: t.kind === 'monitor' ? 'monitor' : 'shell',
-        status: t.status,
-        isBackgrounded: t.isBackgrounded !== false,
-        startTime: t.startTime ?? null,
-        endTime: t.endTime ?? null,
-        exitCode: t.result?.code ?? null,
-      }));
+    const liveTasks = state?.tasks ? Object.values(state.tasks)
+      .filter((t) => t && (t.type === 'local_bash' || t.type === 'local_workflow'))
+      .map((t) => {
+        if (t.type === 'local_workflow') {
+          return {
+            id: t.id,
+            description: t.summary || t.description || '',
+            command: '',
+            kind: 'workflow',
+            status: t.status,
+            isBackgrounded: true,
+            startTime: t.startTime ?? null,
+            endTime: t.endTime ?? null,
+            exitCode: null,
+            workflowName: t.workflowName || null,
+            workflowId: t.workflowId || null,
+            workflowRevision: Number(t.workflowRevision) || null,
+            runMode: t.runMode === 'test' ? 'test' : 'run',
+            workflowRunId: t.workflowRunId || null,
+            definition: t.definition || null,
+            definitionPath: t.definitionPath || null,
+            args: t.args,
+            graph: t.graph || null,
+            mermaid: t.mermaid || '',
+            graphError: t.graphError || null,
+            nodeEvents: Array.isArray(t.workflowNodeEvents) ? t.workflowNodeEvents : [],
+            progress: Array.isArray(t.workflowProgress) ? t.workflowProgress : [],
+            agentCount: Number(t.agentCount) || 0,
+            totalTokens: Number(t.totalTokens) || 0,
+            totalToolCalls: Number(t.totalToolCalls) || 0,
+            result: t.result,
+            error: t.error || null,
+          };
+        }
+        return {
+          id: t.id,
+          description: t.description || '',
+          command: typeof t.command === 'string' ? t.command : '',
+          kind: t.kind === 'monitor' ? 'monitor' : 'shell',
+          status: t.status,
+          isBackgrounded: t.isBackgrounded !== false,
+          startTime: t.startTime ?? null,
+          endTime: t.endTime ?? null,
+          exitCode: t.result?.code ?? null,
+        };
+      }) : [];
+    const taskKey = (task) => task.kind === 'workflow' && task.workflowRunId
+      ? `workflow:${task.workflowRunId}`
+      : `task:${task.id}`;
+    const merged = new Map(
+      loadPersistedWorkflowTasks(sessionRecord).map((task) => [taskKey(task), task]),
+    );
+    // A resumed workflow keeps its run id but gets a new task id. Keying by
+    // run id lets the live retry replace the prior snapshot instead of showing
+    // both. It also refreshes the in-memory history before a runtime restart.
+    for (const task of liveTasks) merged.set(taskKey(task), task);
+    const snapshot = [...merged.values()].sort(
+      (left, right) => (left.startTime ?? 0) - (right.startTime ?? 0),
+    );
+    sessionRecord.workflowTaskHistory = snapshot.filter((task) => (
+      task.kind === 'workflow' && task.status !== 'running' && task.status !== 'pending'
+    ));
+    return snapshot;
   } catch {
     return [];
   }
@@ -7229,6 +7385,7 @@ function attachBackgroundTaskWatcher(sessionRecord) {
 
   let lastJson = '';
   let timer = null;
+  let runningWorkflowTaskIds = new Set();
   const emitSnapshot = () => {
     timer = null;
     if (sessionRecord.runtime !== runtime) return;
@@ -7240,8 +7397,27 @@ function attachBackgroundTaskWatcher(sessionRecord) {
   };
   const unsubscribe = runtime.subscribe(() => {
     scheduleSubAgentSessionSync(sessionRecord);
+    const nextRunningWorkflowTaskIds = new Set(
+      Object.values(runtime.getAppState?.()?.tasks || {})
+        .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')
+        .map((task) => task.id),
+    );
+    const workflowLifecycleChanged =
+      nextRunningWorkflowTaskIds.size !== runningWorkflowTaskIds.size ||
+      [...nextRunningWorkflowTaskIds].some((taskId) => !runningWorkflowTaskIds.has(taskId));
+    runningWorkflowTaskIds = nextRunningWorkflowTaskIds;
+    if (workflowLifecycleChanged) {
+      if (timer) clearTimeout(timer);
+      emitSnapshot();
+      return;
+    }
     if (!timer) {
-      timer = setTimeout(emitSnapshot, BACKGROUND_TASK_EMIT_DELAY_MS);
+      timer = setTimeout(
+        emitSnapshot,
+        runningWorkflowTaskIds.size > 0
+          ? WORKFLOW_TASK_EMIT_DELAY_MS
+          : BACKGROUND_TASK_EMIT_DELAY_MS,
+      );
     }
   });
   sessionRecord.backgroundTaskWatcherRuntime = runtime;
@@ -7495,10 +7671,21 @@ ipcMain.handle('agent:kill-task', async (_event, { sessionId, taskId }) => {
   const sessionRecord = getSessionRecord(sessionId);
   const state = sessionRecord.runtime?.getAppState?.();
   const task = state?.tasks?.[taskId];
-  if (!task || task.type !== 'local_bash' || task.status !== 'running') {
+  if (!task || task.status !== 'running') {
     return { ok: false, error: 'Task is not running.' };
   }
   try {
+    if (typeof sessionRecord.runtime?.stopTask === 'function') {
+      await sessionRecord.runtime.stopTask(taskId);
+      return { ok: true };
+    }
+    if (task.type === 'local_workflow') {
+      task.abortController?.abort(new Error('Workflow stopped by user'));
+      return { ok: true };
+    }
+    if (task.type !== 'local_bash') {
+      return { ok: false, error: 'Task cannot be stopped here.' };
+    }
     task.shellCommand?.kill();
     task.shellCommand?.cleanup?.();
     return { ok: true };
@@ -8564,6 +8751,14 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  if (event?.type === 'workflow_catalog_changed') {
+    emitToRenderer('workflow:changed', {
+      ...(event.input || {}),
+      sessionId: sessionRecord?.id || null,
+      runtimeSessionId: sessionRecord?.underlyingSessionId || null,
+    });
+    return { ok: true };
+  }
   const libraryResult = await handleLibraryAgentToolEvent({
     event,
     libraryService,
@@ -11368,6 +11563,33 @@ ipcMain.handle('agent:get-adapter-status', async () => (
 ipcMain.handle('usage:get-overview', () => usageLedger.getOverview());
 ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
+ipcMain.handle('workflow:list', async (_event, payload = {}) => {
+  const runtime = await getClaudeRuntimeModule();
+  return runtime.listWorkflowCatalog({
+    cwd: payload.cwd,
+    status: payload.status,
+    publishedOnly: payload.publishedOnly ?? !payload.status,
+  });
+});
+ipcMain.handle('workflow:get', async (_event, payload = {}) => {
+  const runtime = await getClaudeRuntimeModule();
+  return runtime.getWorkflowCatalogDetail(payload);
+});
+async function mutateWorkflowCatalog(method, payload = {}) {
+  const runtime = await getClaudeRuntimeModule();
+  if (typeof runtime[method] !== 'function') {
+    throw new Error(`electron-direct.mjs does not export ${method}.`);
+  }
+  const result = await runtime[method](payload);
+  emitToRenderer('workflow:changed', { action: method, workflowId: payload.workflowId });
+  return result;
+}
+ipcMain.handle('workflow:publish', (_event, payload = {}) => mutateWorkflowCatalog('publishWorkflow', payload));
+ipcMain.handle('workflow:unpublish', (_event, payload = {}) => mutateWorkflowCatalog('unpublishWorkflow', payload));
+ipcMain.handle('workflow:duplicate', (_event, payload = {}) => mutateWorkflowCatalog('duplicateWorkflow', payload));
+ipcMain.handle('workflow:archive', (_event, payload = {}) => mutateWorkflowCatalog('archiveWorkflow', payload));
+ipcMain.handle('workflow:restore', (_event, payload = {}) => mutateWorkflowCatalog('restoreWorkflow', payload));
+ipcMain.handle('workflow:delete', (_event, payload = {}) => mutateWorkflowCatalog('deleteWorkflow', payload));
 
 ipcMain.handle('notification:list', () => appNotificationBroker.list());
 ipcMain.handle('notification:create', (_event, { notification, options } = {}) => (
@@ -12224,10 +12446,17 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 
 ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
+  const runtime = sessionRecord.runtime;
+  const runningWorkflowIds = Object.values(runtime?.getAppState?.()?.tasks || {})
+    .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')
+    .map((task) => task.id);
   if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
     projectTaskCancellationRequests.add(sessionRecord.id);
   }
-  sessionRecord.runtime?.abort();
+  runtime?.abort();
+  if (typeof runtime?.stopTask === 'function') {
+    await Promise.all(runningWorkflowIds.map((taskId) => runtime.stopTask(taskId).catch(() => {})));
+  }
   if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
     await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
       status: 'stopped',

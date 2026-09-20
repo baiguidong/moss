@@ -77,12 +77,12 @@ const WebBrowserTool = feature('WEB_BROWSER_TOOL')
 const coordinatorModeModule = feature('COORDINATOR_MODE')
   ? (require('./coordinator/coordinatorMode.js') as typeof import('./coordinator/coordinatorMode.js'))
   : null
-const WorkflowTool = feature('WORKFLOW_SCRIPTS')
-  ? (() => {
-      require('./tools/WorkflowTool/bundled/index.js').initBundledWorkflows()
-      return require('./tools/WorkflowTool/WorkflowTool.js').WorkflowTool
-    })()
-  : null
+const WorkflowTools = feature('WORKFLOW_SCRIPTS')
+  ? [
+      require('./tools/WorkflowTool/WorkflowTool.js').WorkflowRunTool,
+      ...require('./tools/WorkflowTool/WorkflowCatalogTools.js').WorkflowCatalogTools,
+    ] as Tools
+  : []
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import type { ToolPermissionContext } from './Tool.js'
 import { getDenyRuleForTool } from './utils/permissions/permissions.js'
@@ -163,7 +163,7 @@ export function getAllBaseTools(): Tools {
       ? [getTeamCreateTool(), getTeamDeleteTool()]
       : []),
     ...(VerifyPlanExecutionTool ? [VerifyPlanExecutionTool] : []),
-    ...(WorkflowTool ? [WorkflowTool] : []),
+    ...WorkflowTools,
     ...(SleepTool ? [SleepTool] : []),
     ...cronTools,
     ...(getPowerShellTool() ? [getPowerShellTool()] : []),

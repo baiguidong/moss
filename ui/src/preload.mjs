@@ -31,6 +31,21 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),
     readEntry: (payload) => ipcRenderer.invoke('memory:read-entry', payload),
   },
+  workflows: {
+    list: (payload) => ipcRenderer.invoke('workflow:list', payload),
+    get: (payload) => ipcRenderer.invoke('workflow:get', payload),
+    publish: (payload) => ipcRenderer.invoke('workflow:publish', payload),
+    unpublish: (payload) => ipcRenderer.invoke('workflow:unpublish', payload),
+    duplicate: (payload) => ipcRenderer.invoke('workflow:duplicate', payload),
+    archive: (payload) => ipcRenderer.invoke('workflow:archive', payload),
+    restore: (payload) => ipcRenderer.invoke('workflow:restore', payload),
+    delete: (payload) => ipcRenderer.invoke('workflow:delete', payload),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('workflow:changed', handler);
+      return () => ipcRenderer.off('workflow:changed', handler);
+    },
+  },
   openIM: {
     getConfig: () => ipcRenderer.invoke('openim:get-config'),
     createSession: () => ipcRenderer.invoke('openim:create-session'),

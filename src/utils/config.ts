@@ -273,6 +273,8 @@ export type GlobalConfig = {
   // Terminal progress bar configuration (OSC 9;4)
   terminalProgressBarEnabled: boolean
 
+  workflowSizeGuideline?: 'unrestricted' | 'small' | 'medium' | 'large'
+
   // Terminal tab status indicator (OSC 21337). When on, emits a colored
   // dot + status text to the tab sidebar and drops the spinner prefix
   // from the title (the dot makes it redundant).
@@ -440,6 +442,7 @@ export const GLOBAL_CONFIG_KEYS = [
   'autoInstallIdeExtension',
   'fileCheckpointingEnabled',
   'terminalProgressBarEnabled',
+  'workflowSizeGuideline',
   'showStatusInTerminalTab',
   'respectGitignore',
   'lspRecommendationDisabled',

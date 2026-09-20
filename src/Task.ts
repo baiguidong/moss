@@ -13,6 +13,7 @@ export type TaskType =
 export type TaskStatus =
   | 'pending'
   | 'running'
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'killed'

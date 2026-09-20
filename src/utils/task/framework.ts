@@ -183,6 +183,9 @@ export async function generateTaskAttachments(state: AppState): Promise<{
         case 'running':
           // Fall through to running logic below
           break
+        case 'paused':
+          // A paused workflow keeps its journal and remains available to resume.
+          continue
       }
     }
 
@@ -302,6 +305,8 @@ function getStatusText(status: TaskStatus): string {
       return 'was stopped'
     case 'running':
       return 'is running'
+    case 'paused':
+      return 'is paused'
     case 'pending':
       return 'is pending'
   }

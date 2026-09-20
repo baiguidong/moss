@@ -317,6 +317,18 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           "Include built-in commit and PR workflow instructions in Claude's system prompt (default: true)",
         ),
+      disableWorkflows: z
+        .boolean()
+        .optional()
+        .describe('Disable structured workflows and saved workflow commands.'),
+      enableWorkflows: z
+        .boolean()
+        .optional()
+        .describe('Enable structured workflows unless disabled by policy.'),
+      workflowSizeGuideline: z
+        .enum(['unrestricted', 'small', 'medium', 'large'])
+        .optional()
+        .describe('Preferred maximum scale when Moss generates workflow definitions.'),
       permissions: PermissionsSchema()
         .optional()
         .describe('Tool usage permissions configuration'),

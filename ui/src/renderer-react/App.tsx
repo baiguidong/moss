@@ -5,6 +5,7 @@ import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { OverviewView } from '@/components/overview-view';
 import { LibraryView } from '@/components/library-view';
+import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { GlobalSessionSearch } from '@/components/global-session-search';
@@ -40,6 +41,7 @@ import {
   type NewAppNotification,
 } from '@/lib/app-notifications';
 import { isAuthorizedConnector, selectConnectorForNewChat } from '@/lib/connector-selection';
+import { workflowEditPrompt, workflowUsePrompt } from '@/lib/workflow-library';
 import {
   attachAuthorizedConnectorToSession,
   runMcpConnectorAuthorization,
@@ -64,6 +66,7 @@ import type {
   SessionSearchResult,
   SessionSummary,
   StoredApp,
+  WorkflowCatalogDetail,
   WorkspacePreviewData,
 } from './types';
 
@@ -720,6 +723,22 @@ export default function App() {
     const draft = composerDraftsRef.current[nextKey];
     setInput(draft?.text ?? '');
     setComposerAttachments(draft?.files ?? []);
+  }, [activeSessionId]);
+
+  React.useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    void window.agentDesktop.listBackgroundTasks({ sessionId: activeSessionId })
+      .then(({ tasks }) => {
+        if (!cancelled) {
+          setBackgroundTasks((previous) => ({
+            ...previous,
+            [activeSessionId]: tasks ?? [],
+          }));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [activeSessionId]);
 
   // Latest context usage derived from the newest main-thread assistant
@@ -1943,6 +1962,29 @@ export default function App() {
     await submitPrompt(composerIntent, files, workspace, skills);
   }, [composerIntent, submitPrompt]);
 
+  const handleCreateWorkflowInChat = React.useCallback(() => {
+    setActiveView('chat');
+    setComposerIntent('boss');
+    setInput('请使用 WorkflowCreate 创建一个新的结构化 Workflow 草稿，但不要执行。我的需求是：');
+  }, []);
+
+  const handleEditWorkflowInChat = React.useCallback(async (workflow: WorkflowCatalogDetail) => {
+    const originSessionId = workflow.record.origin?.sessionId;
+    const sourceSessionId = summaries.find((session) => (
+      session.id === originSessionId || session.sessionId === originSessionId
+    ))?.id;
+    if (sourceSessionId) await openSession(sourceSessionId);
+    setActiveView('chat');
+    setComposerIntent('boss');
+    setInput(workflowEditPrompt(workflow));
+  }, [openSession, summaries]);
+
+  const handleUseWorkflowInChat = React.useCallback((workflow: WorkflowCatalogDetail) => {
+    setActiveView('chat');
+    setComposerIntent('boss');
+    setInput(workflowUsePrompt(workflow));
+  }, []);
+
   const handleUseLibraryResource = React.useCallback((resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => {
     setComposerAttachments((current) => current.some((item) => item.path === resource.uri)
       ? current
@@ -2641,6 +2683,9 @@ export default function App() {
                 contextUsage={contextUsage}
                 turnTokens={turnTokens}
                 agentTeams={agentTeamsBySession[activeSessionId] ?? null}
+                onWorkflowPublished={(workflow) => {
+                  showPermissionNotice(`“${workflow.record.title}”已发布到 Workflows`, 'info', 3500);
+                }}
                 toolPermissionRequest={activeToolPermissionRequest}
                 onSubmitToolPermission={handleSubmitQuestion}
                 onRejectToolPermission={handleRejectQuestion}
@@ -2699,6 +2744,18 @@ export default function App() {
               onUseResource={handleUseLibraryResource}
               onUseScope={handleUseLibraryScope}
               onPrepareDirectoryImport={handlePrepareLibraryDirectoryImport}
+            />
+          ) : activeView === 'workflows' ? (
+            <WorkflowLibraryView
+              onCreateInChat={handleCreateWorkflowInChat}
+              onEditInChat={handleEditWorkflowInChat}
+              onUseInChat={handleUseWorkflowInChat}
+              onOpenSession={(originSessionId) => {
+                const sourceSessionId = summaries.find((session) => (
+                  session.id === originSessionId || session.sessionId === originSessionId
+                ))?.id;
+                if (sourceSessionId) void handleSelectSession(sourceSessionId);
+              }}
             />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
@@ -2782,6 +2839,7 @@ export default function App() {
                 onToggleFolder={handleToggleFolder}
                 onSelectFile={handleSelectFile}
                 sessionId={activeSessionId}
+                sessionTasks={activeDetail?.tasks || []}
                 projectName={activeDetail?.projectName || null}
                 browserOpenSignal={browserOpenSignal}
                 onBrowserOpen={() => {

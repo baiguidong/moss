@@ -1663,7 +1663,7 @@ export const SDKTaskStartedMessageSchema = lazySchema(() =>
       .string()
       .optional()
       .describe(
-        "meta.name from the workflow script (e.g. 'spec'). Only set when task_type is 'local_workflow'.",
+        "meta.name from the workflow definition (e.g. 'spec'). Only set when task_type is 'local_workflow'.",
       ),
     prompt: z.string().optional(),
     uuid: UUIDPlaceholder(),
