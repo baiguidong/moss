@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${OPENIM_INSTALL_DIR:-/opt/moss-openim}"
+INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"
 if [[ ! -f "$SCRIPT_DIR/.env" && "$SCRIPT_DIR" != "$INSTALL_DIR" && -x "$INSTALL_DIR/start.sh" ]]; then
   exec "$INSTALL_DIR/start.sh"
 fi

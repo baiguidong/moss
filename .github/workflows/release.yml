@@ -325,6 +325,21 @@ jobs:
             docker push "$RUNTIME_IMAGE:latest"
           fi
 
+      - name: Package and upload Server Compose deployment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          OUTPUT_DIR=dist/server-compose
+          deps/server/package.sh "$VERSION" "$OUTPUT_DIR"
+          gh release upload "$RELEASE_TAG" \
+            "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" \
+            "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz.sha256" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
   publish-release:
     runs-on: ubuntu-latest
     needs: [prepare, build-macos-arm64, build-windows-x64, build-server-linux-amd64]
@@ -338,7 +353,7 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq 9 ]]
+          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq 11 ]]
           grep -Fxq "Moss-$VERSION-arm64.dmg" <<<"$assets"
           grep -Fxq "Moss-$VERSION-arm64.dmg.blockmap" <<<"$assets"
           grep -Fxq "Moss-$VERSION-arm64-mac.zip" <<<"$assets"
@@ -348,6 +363,8 @@ jobs:
           grep -Fxq "Moss-Portable-$VERSION-x64.exe" <<<"$assets"
           grep -Fxq 'latest-mac.yml' <<<"$assets"
           grep -Fxq 'latest.yml' <<<"$assets"
+          grep -Fxq "moss-server-compose-$VERSION.tar.gz" <<<"$assets"
+          grep -Fxq "moss-server-compose-$VERSION.tar.gz.sha256" <<<"$assets"
 
       - name: Publish GitHub Release
         env:

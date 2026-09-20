@@ -80,7 +80,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     model: '',
   },
   serverRuntime: {
-    dockerImage: 'moss-runtime:0.1.8',
+    dockerImage: 'moss-runtime:latest',
   },
   openIM: {
     configured: false,

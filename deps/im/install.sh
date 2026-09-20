@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 STAGE_DIR="${1:-$SCRIPT_DIR}"
-INSTALL_DIR="${OPENIM_INSTALL_DIR:-/opt/moss-openim}"
+INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"
 PULL_IMAGES="${PULL_IMAGES:-1}"
 
 log() { printf '\n==> %s\n' "$*"; }

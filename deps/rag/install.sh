@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 STAGE_DIR="${1:-$SCRIPT_DIR}"
-INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/opt/moss-ragflow}"
+INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/data/moss-ragflow}"
 ENV_FILE="$INSTALL_DIR/.env"
 ENV_TEMPLATE="$STAGE_DIR/.env.example"
 [[ -f "$ENV_TEMPLATE" ]] || { echo "ERROR: .env.example is missing from $STAGE_DIR" >&2; exit 1; }
@@ -120,7 +120,20 @@ apply_setting MOSS_RAG_MCP_PORT 9386
 apply_setting EXTENDED_MCP_SCOPES read,write,agent
 apply_setting EXTENDED_MCP_MAX_BASE64_MB 8
 apply_setting EXTENDED_MCP_MAX_UPLOAD_MB 200
-apply_setting MOSS_RAG_MCP_MOSS_SERVER_URL http://host.docker.internal:43127
+apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
+apply_setting MOSS_RAG_MCP_MOSS_SERVER_URL http://moss-server:43127
+apply_setting MOSS_RAGFLOW_BASE_URL http://moss-ragflow:9380
+apply_setting MOSS_RAGFLOW_ADMIN_URL http://moss-ragflow:9381
+apply_setting MOSS_RAGFLOW_USER_DOMAIN ragflow.com
+apply_setting MOSS_RAGFLOW_PASSWORD_LENGTH 6
+apply_setting MOSS_RAGFLOW_REQUEST_TIMEOUT_MS 15000
+apply_setting MOSS_SERVER_HOME /data/moss-server
+apply_setting MOSS_SERVER_CONFIG ''
+apply_setting WRITE_MOSS_CONFIG 1
+if [[ -z "${MOSS_RAG_MCP_MOSS_SERVER_URL-}" \
+  && "$(env_value MOSS_RAG_MCP_MOSS_SERVER_URL)" == "http://host.docker.internal:43127" ]]; then
+  set_env MOSS_RAG_MCP_MOSS_SERVER_URL http://moss-server:43127
+fi
 apply_setting RAGFLOW_ADMIN_BIND_IP 127.0.0.1
 apply_setting ADMIN_SVR_HTTP_PORT 9381
 apply_setting RAGFLOW_ADMIN_EMAIL admin@ragflow.io
@@ -134,10 +147,13 @@ device="$(env_value RAGFLOW_DEVICE)"
 [[ "$device" == "cpu" || "$device" == "gpu" ]] || die "RAGFLOW_DEVICE must be cpu or gpu"
 scopes="$(env_value EXTENDED_MCP_SCOPES)"
 [[ "$scopes" =~ ^(read|write|agent|admin)(,(read|write|agent|admin))*$ ]] || die "invalid EXTENDED_MCP_SCOPES: $scopes"
-for key in WITH_LOCAL_MODELS ENABLE_NATIVE_MCP ENABLE_EXTENDED_MCP ENABLE_MOSS_RAG_MCP; do
+for key in WITH_LOCAL_MODELS ENABLE_NATIVE_MCP ENABLE_EXTENDED_MCP ENABLE_MOSS_RAG_MCP WRITE_MOSS_CONFIG; do
   value="$(env_value "$key")"
   [[ "$value" == "0" || "$value" == "1" ]] || die "$key must be 0 or 1"
 done
+integration_network="$(env_value MOSS_INTEGRATION_NETWORK)"
+[[ "$integration_network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || die "invalid MOSS_INTEGRATION_NETWORK: $integration_network"
 
 bind_ip="${RAGFLOW_MCP_BIND_IP-}"
 [[ -n "$bind_ip" ]] || bind_ip="$(env_value RAGFLOW_MCP_BIND_IP)"
@@ -209,6 +225,27 @@ compose config --quiet
 if [[ "$CHECK_ONLY" == "1" ]]; then
   echo "Configuration is valid: $INSTALL_DIR"
   exit 0
+fi
+
+if [[ "$(env_value WRITE_MOSS_CONFIG)" == "1" ]]; then
+  moss_server_config="$(env_value MOSS_SERVER_CONFIG)"
+  [[ -n "$moss_server_config" ]] \
+    || moss_server_config="$(env_value MOSS_SERVER_HOME)/server.json"
+  [[ -f "$moss_server_config" ]] \
+    || die "Moss Server config not found: $moss_server_config (start Moss Server first or set WRITE_MOSS_CONFIG=0)"
+  jq -e 'type == "object"' "$moss_server_config" >/dev/null \
+    || die "existing Moss Server config is not a JSON object: $moss_server_config"
+fi
+
+if ! docker network inspect "$integration_network" >/dev/null 2>&1; then
+  log "Creating shared Moss integration network"
+  docker network create --driver bridge "$integration_network" >/dev/null
+fi
+if docker container inspect moss-server >/dev/null 2>&1 \
+  && ! docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' moss-server \
+    | grep -Fxq "$integration_network"; then
+  log "Connecting Moss Server to the shared integration network"
+  docker network connect --alias moss-server "$integration_network" moss-server
 fi
 
 install -m 0755 "$STAGE_DIR/ragflowctl" /usr/local/sbin/ragflowctl
@@ -319,5 +356,23 @@ printf '\nRAGFlow is ready.\nWeb:          http://%s:%s\n' "$bind_ip" "$(env_val
 if [[ "$(env_value ENABLE_MOSS_RAG_MCP)" == "1" ]]; then
   printf 'Moss RAG MCP: http://%s:%s/mcp (current Moss login)\n' "$bind_ip" "$(env_value MOSS_RAG_MCP_PORT)"
   printf 'Moss Server:  %s (configured in %s)\n' "$(env_value MOSS_RAG_MCP_MOSS_SERVER_URL)" "$ENV_FILE"
+fi
+if [[ "$(env_value WRITE_MOSS_CONFIG)" == "1" ]]; then
+  log "Updating Moss Server RAGFlow configuration"
+  "$INSTALL_DIR/scripts/configure-moss.sh" "$ENV_FILE"
+  if [[ "$(docker inspect -f '{{.State.Running}}' moss-server 2>/dev/null || true)" == "true" ]]; then
+    log "Restarting Moss Server to load the RAGFlow configuration"
+    docker restart moss-server >/dev/null
+    moss_ready=0
+    for _ in $(seq 1 60); do
+      moss_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' moss-server 2>/dev/null || true)"
+      case "$moss_status" in
+        healthy|running) moss_ready=1; break ;;
+        exited|dead) die "Moss Server stopped after loading the RAGFlow configuration" ;;
+      esac
+      sleep 2
+    done
+    [[ "$moss_ready" == "1" ]] || die "Moss Server did not become healthy after loading the RAGFlow configuration"
+  fi
 fi
 echo 'Operations:   ragflowctl status'

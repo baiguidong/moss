@@ -7,11 +7,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 function usage() {
   return `Usage:
-  bun scripts/docker-build-runtime.mjs --tag moss-runtime:0.1.8 --platform linux/arm64 --load
-  bun scripts/docker-build-runtime.mjs --tag registry.example.com/moss-runtime:0.1.8 --platform linux/arm64,linux/amd64 --push
+  bun scripts/docker-build-runtime.mjs --tag moss-runtime:latest --platform linux/arm64 --load
+  bun scripts/docker-build-runtime.mjs --tag registry.example.com/moss-runtime:latest --platform linux/arm64,linux/amd64 --push
 
 Options:
-  --tag <image>          Image tag. Default: moss-runtime:0.1.8
+  --tag <image>          Image tag. Default: moss-runtime:latest
   --platform <list>      Build platform list. Default: linux/arm64
   --load                 Load a single-platform image into the local Docker daemon.
   --push                 Push the built image or multi-platform manifest.
@@ -26,7 +26,7 @@ Options:
 
 function parseArgs(argv) {
   const options = {
-    tag: 'moss-runtime:0.1.8',
+    tag: 'moss-runtime:latest',
     platform: 'linux/arm64',
     load: false,
     push: false,

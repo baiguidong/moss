@@ -54,7 +54,11 @@ cd /tmp && sha256sum -c moss-ragflow-*.tar.gz.sha256 && tar -xzf moss-ragflow-*.
 sudo env WITH_LOCAL_MODELS=0 ./install.sh
 ```
 
-默认安装目录为 `/opt/moss-ragflow`，配置和密码保存在 `/opt/moss-ragflow/.env`。
+默认安装目录为 `/data/moss-ragflow`，配置和密码保存在 `/data/moss-ragflow/.env`。安装成功后会把 `ragflow` 配置合并到 `/data/moss-server/server.json`，保留 Server 的其他配置，并在 Moss Server 正在运行时重启容器使其生效。
+
+Moss Server 和 RAGFlow 会加入共享 Docker 网络 `moss-integrations`。写入 Server 的 RAGFlow 地址默认是容器可直接访问的 `http://moss-ragflow:9380` 和 `http://moss-ragflow:9381`，不依赖宿主机 IP 和端口绑定。
+
+应先启动一次 Moss Server，使 `server.json` 已生成。若 Moss Server 使用其他数据目录，可设置 `MOSS_SERVER_HOME` 或 `MOSS_SERVER_CONFIG`。不需要修改本机 Moss Server 配置时，设置 `WRITE_MOSS_CONFIG=0`。
 
 ## 验证安装
 
@@ -69,7 +73,7 @@ sudo ragflowctl doctor
 查看管理员账号和初始密码：
 
 ```bash
-sudo grep -E '^(RAGFLOW_ADMIN_EMAIL|ADMIN_DEFAULT_PASSWORD)=' /opt/moss-ragflow/.env
+sudo grep -E '^(RAGFLOW_ADMIN_EMAIL|ADMIN_DEFAULT_PASSWORD)=' /data/moss-ragflow/.env
 ```
 
 浏览器访问：
@@ -92,13 +96,16 @@ Moss 中添加“RAGFlow 企业知识库”连接器时：
 - 使用 Moss 登录态：填写 `服务器地址:9386`。
 - 使用 RAGFlow API Key：填写 `服务器地址:9385` 和 API Key。
 
-Moss Server 与 RAGFlow 不在同一台机器时，安装命令增加 Moss Server 地址：
+Moss Server 与 RAGFlow 不在同一台机器时，不能使用本机 Docker DNS，也不能直接修改远端配置文件。安装命令应关闭本地配置写入，并指定 RAG MCP 可访问的 Moss Server 地址：
 
 ```bash
-sudo env MOSS_RAG_MCP_MOSS_SERVER_URL=http://Moss服务器地址:43127 ./install.sh
+sudo env \
+  WRITE_MOSS_CONFIG=0 \
+  MOSS_RAG_MCP_MOSS_SERVER_URL=https://Moss服务器地址 \
+  ./install.sh
 ```
 
-Moss Server 还需要使用 `/opt/moss-ragflow/.env` 中的 `ADMIN_DEFAULT_PASSWORD` 和 `MOSS_RAGFLOW_GATEWAY_TOKEN`。身份和权限设计见 [MOSS_RAG_MCP_DESIGN.md](MOSS_RAG_MCP_DESIGN.md)。
+远端 Moss Server 需要另行配置 RAGFlow 的可访问地址，以及 `/data/moss-ragflow/.env` 中的 `ADMIN_DEFAULT_PASSWORD` 和 `MOSS_RAGFLOW_GATEWAY_TOKEN`。身份和权限设计见 [MOSS_RAG_MCP_DESIGN.md](MOSS_RAG_MCP_DESIGN.md)。
 
 ## 启停
 
@@ -116,4 +123,4 @@ sudo ./stop.sh
 - 默认使用 HTTP，只适合可信内网；跨公网使用时应配置 TLS 反向代理。
 - `80/9382/9385/9386` 是默认对外端口，`9381` 默认只监听本机。
 - 安装包不包含 Docker 镜像，不支持离线安装。
-- 修改 `.env` 后重新执行 `/opt/moss-ragflow/install.sh` 使配置生效。
+- 修改 `.env` 后重新执行 `/data/moss-ragflow/install.sh` 使配置生效。

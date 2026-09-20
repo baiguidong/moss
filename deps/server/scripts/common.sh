@@ -11,6 +11,15 @@ env_value() {
   sed -n -E "s/^${1}=//p" "$ENV_FILE" | tail -n 1
 }
 
+ensure_integration_network() {
+  local network
+  network="$(env_value MOSS_INTEGRATION_NETWORK)"
+  if ! docker network inspect "$network" >/dev/null 2>&1; then
+    log "Creating shared Moss integration network"
+    docker network create --driver bridge "$network" >/dev/null
+  fi
+}
+
 compose() {
   docker compose --project-directory "$SERVER_ROOT" --env-file "$ENV_FILE" \
     -f "$COMPOSE_FILE" "$@"

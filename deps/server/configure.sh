@@ -56,14 +56,21 @@ fi
 apply_setting COMPOSE_PROJECT_NAME moss-server
 apply_setting MOSS_REGISTRY ghcr.io
 apply_setting MOSS_REGISTRY_USERNAME ''
-apply_setting MOSS_SERVER_IMAGE ghcr.io/baiguidong/moss-server:latest
-apply_setting MOSS_RUNTIME_IMAGE ghcr.io/baiguidong/moss-runtime:latest
+apply_setting MOSS_SERVER_IMAGE ''
+apply_setting MOSS_RUNTIME_IMAGE ''
 apply_setting NGINX_IMAGE docker.m.daocloud.io/library/nginx:alpine
-apply_setting MOSS_SERVER_HOME /root/.moss/server
+apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
+apply_setting MOSS_SERVER_HOME /data/moss-server
 apply_setting MOSS_HTTPS_PORT 443
 apply_setting MOSS_ADMIN_USERNAME admin
 apply_setting MOSS_ADMIN_PASSWORD password
 apply_setting TZ Asia/Shanghai
+
+for image_key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE; do
+  image_value="$(read_value "$image_key")"
+  [[ -n "$image_value" && "$image_value" != *[[:space:]]* ]] \
+    || die "$image_key must be a non-empty image reference without whitespace"
+done
 
 public_host="$(read_value MOSS_PUBLIC_HOST)"
 if [[ -z "$public_host" || "$public_host" == auto ]]; then
@@ -76,6 +83,9 @@ set_env MOSS_PUBLIC_HOST "$public_host"
 
 server_home="$(read_value MOSS_SERVER_HOME)"
 [[ "$server_home" == /* ]] || die 'MOSS_SERVER_HOME must be an absolute path'
+integration_network="$(read_value MOSS_INTEGRATION_NETWORK)"
+[[ "$integration_network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || die 'MOSS_INTEGRATION_NETWORK contains invalid characters'
 https_port="$(read_value MOSS_HTTPS_PORT)"
 [[ "$https_port" =~ ^[0-9]+$ ]] && ((https_port >= 1 && https_port <= 65535)) \
   || die 'MOSS_HTTPS_PORT must be between 1 and 65535'

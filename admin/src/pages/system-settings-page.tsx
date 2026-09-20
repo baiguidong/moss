@@ -742,7 +742,7 @@ export default function SystemSettingsPage() {
           title="会话运行时"
           description="所有服务端会话都在 Docker 容器中运行。"
         >
-          <SettingField label="Docker Image" description="服务端创建会话时使用的运行时镜像。">
+          <SettingField label="Docker Image" description="服务端创建会话时使用的运行时镜像；Compose 部署会在启动时用 .env 中的 MOSS_RUNTIME_IMAGE 同步此值。">
             <Input
               value={draft.serverRuntime.dockerImage}
               onChange={(event) =>

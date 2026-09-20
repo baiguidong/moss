@@ -5,6 +5,9 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
+grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/install.sh"
+grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/start.sh"
+grep -Fq 'INSTALL_DIR="${OPENIM_INSTALL_DIR:-/data/moss-openim}"' "$ROOT/stop.sh"
 
 if grep -nE 'download\.docker\.com|docker-ce|containerd\.io|systemctl enable --now docker|docker info' \
   "$ROOT/install.sh"; then

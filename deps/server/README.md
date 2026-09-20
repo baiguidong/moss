@@ -2,6 +2,8 @@
 
 This deployment runs Moss Server and its HTTPS Nginx proxy in containers. Moss
 Server uses the host Docker socket to launch isolated session-runtime containers.
+The deployment also creates the external `moss-integrations` network so managed
+dependencies can use stable container DNS names instead of host IP addresses.
 
 ## Requirements
 
@@ -10,14 +12,39 @@ Server uses the host Docker socket to launch isolated session-runtime containers
 - `curl`, `jq`, and `openssl`
 - Port 443 available (or set `MOSS_HTTPS_PORT`)
 
-## Start
+## Package and install
 
-Clone or update the private repository on the target host, then run the checked-in
-deployment directly (there is no downloaded one-click installer):
+Build a deployment package from the repository:
 
 ```bash
 cd deps/server
-sudo MOSS_PUBLIC_HOST=10.0.1.181 ./start.sh
+./package.sh
+```
+
+Upload and install it on the target host:
+
+```bash
+scp dist/moss-server-compose-*.tar.gz* root@server:/tmp/
+ssh root@server
+cd /tmp
+sha256sum -c moss-server-compose-*.tar.gz.sha256
+tar -xzf moss-server-compose-*.tar.gz
+cd moss-server
+MOSS_PUBLIC_HOST=10.0.1.181 ./install.sh
+```
+
+The installer copies the deployment into `/data/moss-server`, preserves an
+existing `.env`, configuration, TLS keys, and runtime data, then starts the
+stack. Running `install.sh` from a newer package updates the deployment files
+without deleting persistent files. When migrating a checkout that already has
+`.env` or `tls/`, the installer carries them into the target if no target copy
+exists.
+
+From a repository checkout, use the same installer directly:
+
+```bash
+cd deps/server
+sudo MOSS_PUBLIC_HOST=10.0.1.181 ./install.sh
 ```
 
 For images in a private registry, pass a read-only package token on every pull
@@ -29,7 +56,7 @@ sudo env \
   MOSS_PUBLIC_HOST=10.0.1.181 \
   MOSS_REGISTRY_USERNAME='<github-user>' \
   MOSS_REGISTRY_TOKEN='<read-packages-token>' \
-  ./start.sh
+  ./install.sh
 ```
 
 After the first login, change the default password immediately. Subsequent
@@ -43,21 +70,69 @@ start:
 sudo systemctl disable --now moss-server.service
 ```
 
-The first run creates `.env`, `/root/.moss/server/server.json`, and a self-signed
+The first run creates `.env`, `/data/moss-server/server.json`, and a self-signed
 certificate under `tls/`. The initial login is `admin` / `password`; change it
 after signing in.
 
-Existing `/root/.moss/server/settings.json` values are preserved and merged with
+Existing `/data/moss-server/settings.json` values are preserved and merged with
 the published session-runtime image setting.
 
-Clients must trust `deps/server/tls/server.crt` before connecting to the HTTPS
+## Image versions and upgrades
+
+For an installed Compose deployment, `/data/moss-server/.env` is the only manually maintained
+source for Moss image versions:
+
+```text
+MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:latest
+MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:latest
+```
+
+Both images are published with the same release tag. Use one of these commands
+to update both entries in `.env`, pull them, and apply the upgrade:
+
+```bash
+sudo /data/moss-server/upgrade.sh latest
+sudo /data/moss-server/upgrade.sh 1.2.3
+```
+
+Running `upgrade.sh` without an argument keeps the configured references and
+pulls them again, which is useful when both already use `latest`.
+
+The start script pulls both images, recreates the Server container when its image
+changes, and copies `MOSS_RUNTIME_IMAGE` into
+`/data/moss-server/settings.json` for newly created session containers. Do not
+edit `serverRuntime.dockerImage` by hand; it is derived from `.env` on every
+start. Existing running session containers retain the image with which they were
+created.
+
+Clients must trust `/data/moss-server/tls/server.crt` before connecting to the HTTPS
 endpoint. To use another port or image, edit `.env` or pass an environment value
 to `configure.sh` before starting.
+
+## Storage and Agent runtime
+
+`/data/moss-server` is bind-mounted into the Server container at the same
+absolute path. It contains `server.json`, `settings.json`, the SQLite database,
+logs, session workspaces, user profiles, transcripts, and the image-owned
+`container-app` payload. The Docker socket is mounted separately at
+`/var/run/docker.sock`.
+
+The runtime image is not mounted as a volume. For each new Agent session, Server
+reads `serverRuntime.dockerImage`, invokes `docker run` through the host socket,
+and bind-mounts only that session's workspace, profile, transcript, manifest,
+and the read-only session runner from `container-app`. Existing sessions keep
+their originally recorded runtime image.
+
+Docker image layers and Docker-managed named volumes are stored under the Docker
+daemon's data root (normally `/var/lib/docker`), not under
+`/data/moss-server`. Moving those objects to `/data` is a separate Docker daemon
+migration; changing the application install directory does not move them.
 
 ## Operations
 
 ```bash
-sudo ./start.sh
-sudo ./stop.sh
-docker compose --env-file .env -f compose.yaml logs -f
+sudo /data/moss-server/start.sh
+sudo /data/moss-server/stop.sh
+sudo /data/moss-server/upgrade.sh
+cd /data/moss-server && docker compose --env-file .env -f compose.yaml logs -f
 ```

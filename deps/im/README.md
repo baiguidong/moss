@@ -6,7 +6,7 @@
 
 - 目标机已安装并启动 Docker Engine 和 Docker Compose v2。
 - 安装脚本不会安装或检查 Docker，目标机需要联网拉取镜像。
-- 使用 root 或 `sudo` 安装；默认目录为 `/opt/moss-openim`。
+- 使用 root 或 `sudo` 安装；默认目录为 `/data/moss-openim`。
 - 默认使用 HTTP/WS，适合可信内网；公网部署应通过反向代理提供 HTTPS/WSS，并在安装时传入外部 URL。
 
 ## 打包
@@ -31,7 +31,7 @@ scp dist/moss-openim-*.tar.gz* root@服务器地址:/tmp/
 
 ## 安装
 
-目标机上的 Moss Server 默认地址是 `http://127.0.0.1:43127`。安装器会自动探测 OpenIM 对外 IP、生成密钥、写入 `/opt/moss-openim/.env`，并把 OpenIM 配置合并到 Moss Server 的 `settings.json`。
+目标机上的 Moss Server 默认地址是 `http://127.0.0.1:43127`。安装器会自动探测 OpenIM 对外 IP、生成密钥、写入 `/data/moss-openim/.env`，并把 OpenIM 配置合并到 Moss Server 的 `settings.json`。
 
 ```bash
 cd /tmp
@@ -41,10 +41,10 @@ cd moss-openim
 sudo ./install.sh
 ```
 
-使用 `sudo` 安装时，Moss 设置默认写到原执行用户的 `~/.moss/server/settings.json`。非默认 Moss 安装目录可以显式指定：
+Moss 设置默认写到 `/data/moss-server/settings.json`。非默认 Moss 数据目录可以显式指定：
 
 ```bash
-sudo env MOSS_SERVER_HOME=/opt/moss-server ./install.sh
+sudo env MOSS_SERVER_HOME=/data/moss-server ./install.sh
 ```
 
 Moss 位于其他机器时，不能直接写远端文件。可使用具有 `admin:settings` 权限的 Moss token 在线写入配置：
@@ -70,7 +70,7 @@ sudo env \
   ./install.sh
 ```
 
-所有安装参数都会写入 `/opt/moss-openim/.env`。再次执行 `install.sh` 会保留未显式覆盖的端口、地址和密钥。
+所有安装参数都会写入 `/data/moss-openim/.env`。再次执行 `install.sh` 会保留未显式覆盖的端口、地址和密钥。
 
 ## 安装判定
 
@@ -86,8 +86,8 @@ sudo env \
 ## 启动和停止
 
 ```bash
-sudo /opt/moss-openim/start.sh
-sudo /opt/moss-openim/stop.sh
+sudo /data/moss-openim/start.sh
+sudo /data/moss-openim/stop.sh
 ```
 
-停止只删除容器和 Compose 网络，不删除 `/opt/moss-openim/data`。OpenIM API、WebSocket 和文件端口默认监听所有网卡；Chat API、Admin API、MinIO 控制台及官方前端默认只监听 `127.0.0.1`，可通过 `.env` 中的 `OPENIM_BIND_IP` 和 `OPENIM_ADMIN_BIND_IP` 调整。
+停止只删除容器和 Compose 网络，不删除 `/data/moss-openim/data`。OpenIM API、WebSocket 和文件端口默认监听所有网卡；Chat API、Admin API、MinIO 控制台及官方前端默认只监听 `127.0.0.1`，可通过 `.env` 中的 `OPENIM_BIND_IP` 和 `OPENIM_ADMIN_BIND_IP` 调整。

@@ -16,7 +16,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 目标机需要 Linux x86_64、Docker Engine、Docker Compose v2、`curl`、`jq`
 和 `openssl`。Server、Nginx HTTPS 代理和 session runtime 均通过 Docker
-运行。部署配置固定保存在仓库的 `deps/server` 中：
+运行。部署脚本、配置和持久化数据统一安装到 `/data/moss-server`：
 
 ```bash
 cd deps/server
@@ -24,12 +24,15 @@ sudo env \
   MOSS_PUBLIC_HOST=10.0.1.181 \
   MOSS_REGISTRY_USERNAME='<github-user>' \
   MOSS_REGISTRY_TOKEN='<read-packages-token>' \
-  ./start.sh
+  ./install.sh
 ```
 
-默认持久化目录仍为 `/root/.moss/server`，HTTPS 端口为 `443`。首次运行生成
-匹配内网 IP 的自签证书；客户端需要信任 `deps/server/tls/server.crt`。详细配置见
+默认持久化目录为 `/data/moss-server`，HTTPS 端口为 `443`。首次运行生成
+匹配内网 IP 的自签证书；客户端需要信任 `/data/moss-server/tls/server.crt`。详细配置见
 [部署文档](deps/server/README.md)。
+
+更新镜像时执行 `sudo /data/moss-server/upgrade.sh latest`；指定版本可将
+`latest` 换成发布标签（例如 `1.2.3`）。
 
 ## 飞书 Adapter
 
@@ -147,10 +150,10 @@ bun run dist:mac
 
 ### 3. Docker Runtime 镜像
 
-服务端使用 Docker session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 server 挂载并执行：
+服务端使用 Docker session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 Server 镜像复制到持久化目录，再只读挂载到会话容器中执行：
 
 ```bash
-node $MOSS_SERVER_HOME/bin/moss-session-runner.mjs --stdio <manifest>
+node $MOSS_SERVER_HOME/container-app/bin/moss-session-runner.mjs --stdio <manifest>
 ```
 
 先准备 server runtime 产物：
@@ -162,14 +165,14 @@ bun run server:prepare
 本地 Apple Silicon / Linux arm64 测试构建：
 
 ```bash
-bun run docker:build-runtime -- --tag moss-runtime:0.1.8 --platform linux/arm64 --load
+bun run docker:build-runtime -- --tag moss-runtime:latest --platform linux/arm64 --load
 ```
 
 多平台发布镜像：
 
 ```bash
 bun run docker:build-runtime -- \
-  --tag your-registry/moss-runtime:0.1.8 \
+  --tag your-registry/moss-runtime:latest \
   --platform linux/arm64,linux/amd64 \
   --push
 ```
@@ -178,24 +181,23 @@ bun run docker:build-runtime -- \
 
 ```bash
 bun run docker:build-runtime -- \
-  --tag moss-runtime:0.1.8 \
+  --tag moss-runtime:latest \
   --platform linux/arm64 \
   --base-image ubuntu:24.04 \
   --load
 ```
 
-配置 `~/.moss/server/settings.json`。新建 session 时，server 会读取这里的
-`serverRuntime.dockerImage` 作为 Docker 运行时镜像：
+Compose 部署只需修改 `/data/moss-server/.env` 中的 `MOSS_RUNTIME_IMAGE`；每次启动会把它同步到 `/data/moss-server/settings.json` 的派生字段 `serverRuntime.dockerImage`。新建 session 时，Server 读取该字段作为 Docker 运行时镜像：
 
 ```json
 {
   "serverRuntime": {
-    "dockerImage": "moss-runtime:0.1.8"
+    "dockerImage": "moss-runtime:latest"
   }
 }
 ```
 
-`~/.moss/server/server.json` 只保留 server 启动、存储、session 数量上限、
+`$MOSS_SERVER_HOME/server.json` 只保留 server 启动、存储、session 数量上限、
 Docker network/label/stop timeout 等基础配置。
 
 服务端只支持 Docker 会话运行时。所有服务端 session 都使用
@@ -207,10 +209,10 @@ Docker network/label/stop timeout 等基础配置。
 基础验证：
 
 ```bash
-docker run --rm moss-runtime:0.1.8 node --version
-docker run --rm moss-runtime:0.1.8 rg --version
-docker run --rm moss-runtime:0.1.8 node -e "const sharp=require('sharp'); console.log(sharp.versions.sharp, sharp.versions.vips)"
-docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:0.1.8 whoami
+docker run --rm moss-runtime:latest node --version
+docker run --rm moss-runtime:latest rg --version
+docker run --rm moss-runtime:latest node -e "const sharp=require('sharp'); console.log(sharp.versions.sharp, sharp.versions.vips)"
+docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:latest whoami
 ```
 
 ## 核心功能
@@ -223,7 +225,7 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:0.1.8 whoami
 
 ## 配置文件
 
-桌面端配置存储在 `~/.moss/settings.json`，服务端配置存储在 `~/.moss/server/settings.json`。模型配置统一写在 `models.text` 和 `models.image` 下；运行时需要传给模型进程时，再由程序注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN`。
+桌面端配置存储在 `~/.moss/settings.json`，服务端配置存储在 `$MOSS_SERVER_HOME/settings.json`（Compose 默认是 `/data/moss-server/settings.json`）。模型配置统一写在 `models.text` 和 `models.image` 下；运行时需要传给模型进程时，再由程序注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN`。
 
 ### 配置示例
 

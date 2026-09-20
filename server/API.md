@@ -700,7 +700,7 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
   "runtime": {
     "backend": "docker",
-    "dockerImage": "moss-runtime:0.1.8",
+    "dockerImage": "moss-runtime:latest",
     "containerName": "optional",
     "profileDir": "/abs/path/profiles/users/user-id",
     "transcriptDir": "/abs/path/session/transcripts",
@@ -773,7 +773,7 @@ profile/Memory 目录，但不会挂载该用户的其他 session 目录。显�
   "work_dir": "/abs/path/project",
   "runtime": {
     "backend": "docker",
-    "dockerImage": "moss-runtime:0.1.8",
+    "dockerImage": "moss-runtime:latest",
     "profileDir": "/abs/path/profiles/users/user-id",
     "transcriptDir": "/abs/path/session/transcripts",
     "workspaceDir": "/abs/path/workspace"

@@ -3,6 +3,9 @@ name: ${COMPOSE_PROJECT_NAME}
 networks:
   moss-server:
     driver: bridge
+  moss-integration:
+    name: ${MOSS_INTEGRATION_NETWORK}
+    external: true
 
 services:
   server:
@@ -31,7 +34,10 @@ services:
       retries: 12
       start_period: 5s
     restart: unless-stopped
-    networks: [moss-server]
+    networks:
+      moss-server:
+      moss-integration:
+        aliases: [moss-server]
 
   nginx:
     image: ${NGINX_IMAGE}

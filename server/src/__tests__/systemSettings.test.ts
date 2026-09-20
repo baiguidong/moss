@@ -84,7 +84,7 @@ describe('system settings model layout', () => {
     })
     expect(mod.getSystemSettings()).not.toHaveProperty('skillStore')
     expect(mod.getSystemSettings().serverRuntime).toEqual({
-      dockerImage: 'moss-runtime:0.1.8',
+      dockerImage: 'moss-runtime:latest',
     })
 
     const updated = mod.updateSystemSettings({
@@ -153,7 +153,7 @@ describe('system settings model layout', () => {
     expect(persisted.image).toBeUndefined()
     expect(persisted.skillStore).toBeUndefined()
     expect(persisted.serverRuntime).toEqual({
-      dockerImage: 'moss-runtime:0.1.8',
+      dockerImage: 'moss-runtime:latest',
     })
     expect(persisted.env).toEqual({
       KEEP_ME: 'yes',

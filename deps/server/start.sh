@@ -27,6 +27,7 @@ fi
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/scripts/common.sh"
+ensure_integration_network
 
 if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
   registry_token="${MOSS_REGISTRY_TOKEN:-}"

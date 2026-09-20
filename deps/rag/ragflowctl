@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/opt/moss-ragflow}"
+INSTALL_DIR="${RAGFLOW_INSTALL_DIR:-/data/moss-ragflow}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 GPU_COMPOSE_FILE="$INSTALL_DIR/docker-compose.gpu.yml"
@@ -33,6 +33,18 @@ compose_all_args=("${compose_args[@]}" --profile extended-mcp --profile moss-rag
 [[ "$(env_value WITH_LOCAL_MODELS)" == "1" ]] && compose_args+=(--profile local-models)
 compose() { "${compose_args[@]}" "$@"; }
 compose_all() { "${compose_all_args[@]}" "$@"; }
+prepare_integration_network() {
+  local network
+  network="$(env_value MOSS_INTEGRATION_NETWORK)"
+  if ! docker network inspect "$network" >/dev/null 2>&1; then
+    docker network create --driver bridge "$network" >/dev/null
+  fi
+  if docker container inspect moss-server >/dev/null 2>&1 \
+    && ! docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' moss-server \
+      | grep -Fxq "$network"; then
+    docker network connect --alias moss-server "$network" moss-server
+  fi
+}
 remove_disabled_services() {
   local disabled=()
   [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] || disabled+=(ragflow-mcp-extended)
@@ -108,6 +120,7 @@ case "${1:-}" in
     compose logs -f --tail=200 "${2:-ragflow}"
     ;;
   start)
+    prepare_integration_network
     compose up -d
     remove_disabled_services
     ;;
@@ -115,10 +128,12 @@ case "${1:-}" in
     compose_all stop
     ;;
   restart)
+    prepare_integration_network
     compose up -d --force-recreate
     remove_disabled_services
     ;;
   mcp-rebuild)
+    prepare_integration_network
     compose build ragflow-mcp-extended
     services=()
     [[ "$(env_value ENABLE_EXTENDED_MCP)" == "1" ]] && services+=(ragflow-mcp-extended)
@@ -128,6 +143,7 @@ case "${1:-}" in
     fi
     ;;
   mcp-scopes)
+    prepare_integration_network
     scopes="${2:?comma-separated scopes are required}"
     IFS=',' read -r -a requested <<< "$scopes"
     normalized=()
@@ -146,6 +162,7 @@ case "${1:-}" in
     echo "Extended MCP scopes: $value (read is always enabled)"
     ;;
   mcp-bind)
+    prepare_integration_network
     bind_ip="${2:?IPv4 bind address is required}"
     [[ "$bind_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid IPv4 address" >&2; exit 2; }
     set_env RAGFLOW_MCP_BIND_IP "$bind_ip"
@@ -157,11 +174,13 @@ case "${1:-}" in
     compose up -d --force-recreate "${services[@]}"
     ;;
   lock-registration)
+    prepare_integration_network
     set_env REGISTER_ENABLED 0
     set_env ENABLE_REGISTER 0
     compose up -d --no-deps --force-recreate ragflow
     ;;
   unlock-registration)
+    prepare_integration_network
     set_env REGISTER_ENABLED 1
     set_env ENABLE_REGISTER 1
     compose up -d --no-deps --force-recreate ragflow
@@ -195,6 +214,7 @@ case "${1:-}" in
     echo "Backup created: $destination"
     ;;
   restore)
+    prepare_integration_network
     source_backup="${2:-}"
     [[ -d "$source_backup" ]] || { echo "backup directory not found: $source_backup" >&2; exit 2; }
     shopt -s nullglob

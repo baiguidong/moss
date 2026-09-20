@@ -155,12 +155,7 @@ write_moss_settings="$(read_value WRITE_MOSS_SETTINGS)"
   || die "WRITE_MOSS_SETTINGS must be 0 or 1"
 moss_settings_file="$(read_value MOSS_SETTINGS_FILE)"
 if [[ -z "$moss_settings_file" ]]; then
-  moss_server_home="${MOSS_SERVER_HOME:-${MOSS_INSTALL_DIR:-}}"
-  if [[ -z "$moss_server_home" && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-    moss_user_home="$(getent passwd "$SUDO_USER" 2>/dev/null | awk -F: 'NR == 1 {print $6}')"
-    [[ -n "$moss_user_home" ]] && moss_server_home="${moss_user_home%/}/.moss/server"
-  fi
-  moss_server_home="${moss_server_home:-${HOME:-/root}/.moss/server}"
+  moss_server_home="${MOSS_SERVER_HOME:-${MOSS_INSTALL_DIR:-/data/moss-server}}"
   moss_settings_file="${moss_server_home%/}/settings.json"
 fi
 [[ "$moss_settings_file" == /* ]] || die "MOSS_SETTINGS_FILE must be an absolute path"
