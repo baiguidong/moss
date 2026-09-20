@@ -54,14 +54,34 @@ describe('split Moss host tools', () => {
     expect(AppBuildTool.inputSchema.safeParse({ name: 'demo', action: 'app_build' }).success).toBe(false)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero', out_path: 'hero.png' }).success).toBe(true)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero' }).success).toBe(false)
-    expect(BrowserOpenTool.inputJSONSchema?.anyOf).toEqual([
-      { required: ['url'] },
-      { required: ['query'] },
-    ])
-    expect(ConnectorMcpAuthenticateTool.inputJSONSchema?.anyOf).toEqual([
-      { required: ['connector_id'] },
-      { required: ['server_name'] },
-    ])
+    expect(BrowserOpenTool.inputSchema.safeParse({}).success).toBe(false)
+    expect(
+      BrowserOpenTool.inputSchema.safeParse({ url: 'https://example.com' }).success,
+    ).toBe(true)
+    expect(ConnectorMcpAuthenticateTool.inputSchema.safeParse({}).success).toBe(false)
+    expect(
+      ConnectorMcpAuthenticateTool.inputSchema.safeParse({ connector_id: 'example' }).success,
+    ).toBe(true)
+  })
+
+  test('uses provider-compatible top-level JSON schemas', () => {
+    const unsupportedTopLevelKeywords = [
+      'oneOf',
+      'anyOf',
+      'allOf',
+      'enum',
+      'const',
+      'not',
+    ]
+
+    for (const tool of MossTools) {
+      const schema = tool.inputJSONSchema
+      if (!schema) continue
+      expect(schema.type).toBe('object')
+      for (const keyword of unsupportedTopLevelKeywords) {
+        expect(schema).not.toHaveProperty(keyword)
+      }
+    }
   })
 
   test('forwards a browser snapshot and never inlines image bytes', async () => {

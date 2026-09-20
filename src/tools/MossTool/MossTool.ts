@@ -389,6 +389,8 @@ export const BrowserOpenTool = createMossTool({
   prompt: 'Open a URL or search query in the Moss right-side browser. Provide either url or query. Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine. When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the browser panel is on the right and provide the exact URL.',
   searchHint: 'open website search browser',
   inputSchema: browserOpenSchema,
+  // Some OpenAI-compatible providers reject combinators at the schema root.
+  // The Zod refinement above still enforces that url or query is present.
   inputJSONSchema: {
     type: 'object',
     properties: {
@@ -408,10 +410,6 @@ export const BrowserOpenTool = createMossTool({
         description: 'Search engine for query. Defaults to baidu for Chinese searches.',
       },
     },
-    anyOf: [
-      { required: ['url'] },
-      { required: ['query'] },
-    ],
     additionalProperties: false,
   },
   event: input => ({ type: 'browser_open', input }),
@@ -565,6 +563,8 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
   prompt: 'Use this when connector MCP tools are missing, empty, or report that authorization is required. Never ask the user to type /mcp. When status is authenticated, tell the user the connector is ready and continue the original request on their next message after tools refresh.',
   searchHint: 'authorize connector MCP server',
   inputSchema: connectorMcpAuthenticateSchema,
+  // Keep the provider-facing root schema free of combinators. The Zod
+  // refinement above enforces that one of these identifiers is present.
   inputJSONSchema: {
     type: 'object',
     properties: {
@@ -579,10 +579,6 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
         description: 'MCP server name.',
       },
     },
-    anyOf: [
-      { required: ['connector_id'] },
-      { required: ['server_name'] },
-    ],
     additionalProperties: false,
   },
   event: input => ({ type: 'connector_mcp_authenticate', input }),
