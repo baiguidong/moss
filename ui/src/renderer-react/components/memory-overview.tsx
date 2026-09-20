@@ -56,21 +56,24 @@ function selectionKey(selection: MemorySelection | null): string {
     : `project:${selection.projectId}:history:${selection.sessionId}`;
 }
 
-function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySelection | null {
+export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySelection | null {
   if (scope === "global") {
-    const first = catalog.global.files[0];
+    const first = catalog.global.files.find((entry) => entry.readable !== false);
     return first ? { scope: "global", path: first.path, source: first.source } : null;
   }
   if (scope === "project") {
     const withOverview = catalog.projects.find((project) => project.hasOverview);
     if (withOverview) return { scope: "project", projectId: withOverview.id, kind: "overview" };
-    const withHistory = catalog.projects.find((project) => project.history.length > 0);
-    const firstHistory = withHistory?.history[0];
+    const withHistory = catalog.projects.find((project) => (
+      project.history.some((entry) => entry.readable !== false)
+    ));
+    const firstHistory = withHistory?.history.find((entry) => entry.readable !== false);
     return withHistory && firstHistory
       ? { scope: "project", projectId: withHistory.id, kind: "history", sessionId: firstHistory.sessionId }
       : null;
   }
-  const first = catalog.sessions.find((session) => session.hasSummary) || catalog.sessions[0];
+  const first = catalog.sessions.find((session) => session.hasSummary && session.readable !== false)
+    || catalog.sessions.find((session) => !session.hasSummary && session.readable !== false);
   return first ? { scope: "session", sessionId: first.id } : null;
 }
 
@@ -78,17 +81,23 @@ function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | nu
   if (!selection || selection.scope !== scope) return false;
   if (selection.scope === "global") {
     return catalog.global.files.some((entry) => (
-      entry.path === selection.path && (entry.source || "local") === (selection.source || "local")
+      entry.readable !== false
+      && entry.path === selection.path
+      && (entry.source || "local") === (selection.source || "local")
     ));
   }
   if (selection.scope === "session") {
-    return catalog.sessions.some((entry) => entry.id === selection.sessionId);
+    return catalog.sessions.some((entry) => (
+      entry.id === selection.sessionId && entry.readable !== false
+    ));
   }
   const project = catalog.projects.find((entry) => entry.id === selection.projectId);
   if (!project) return false;
   return selection.kind === "overview"
     ? project.hasOverview
-    : project.history.some((entry) => entry.sessionId === selection.sessionId);
+    : project.history.some((entry) => (
+        entry.sessionId === selection.sessionId && entry.readable !== false
+      ));
 }
 
 function formatDateTime(value: number | null | undefined): string {
@@ -305,7 +314,7 @@ function ProjectList({
   );
 }
 
-function SessionList({
+export function SessionList({
   sessions,
   selected,
   onSelect,
@@ -324,7 +333,10 @@ function SessionList({
           icon={<MessageSquareText className="h-4 w-4" />}
           title={session.title}
           description={session.projectName || (session.agentMode === "remote-direct" ? "Moss Server" : "普通会话")}
-          meta={session.hasSummary ? formatDateTime(session.summaryUpdatedAt) : "未生成"}
+          meta={session.readable === false
+            ? "超过大小限制"
+            : session.hasSummary ? formatDateTime(session.summaryUpdatedAt) : "未生成"}
+          disabled={session.readable === false}
           onClick={() => onSelect({ scope: "session", sessionId: session.id })}
         />
       ))}
@@ -432,7 +444,10 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
 
   const selectedKey = selectionKey(selection);
   const selectedGlobal = selection?.scope === "global"
-    ? catalog?.global.files.find((entry) => entry.path === selection.path) || null
+    ? catalog?.global.files.find((entry) => (
+        entry.path === selection.path
+        && (entry.source || "local") === (selection.source || "local")
+      )) || null
     : null;
   const selectedProject = selection?.scope === "project"
     ? catalog?.projects.find((entry) => entry.id === selection.projectId) || null

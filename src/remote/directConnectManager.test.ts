@@ -57,10 +57,30 @@ describe('DirectConnectSessionManager permission mode', () => {
 
     internals.handleIncomingText(JSON.stringify({
       type: 'control_response',
-      response: { subtype: 'success', request_id: request.request_id, response: {} },
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: { interrupted: true },
+      },
     }))
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ interrupted: true })
     expect(manager.isConnected()).toBe(true)
+  })
+
+  it('preserves a false interrupt acknowledgement for a queued turn', async () => {
+    const { manager, internals, sent } = connectedManager()
+    const pending = manager.sendInterrupt()
+    const request = JSON.parse(sent[0]!)
+
+    internals.handleIncomingText(JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: { interrupted: false },
+      },
+    }))
+    await expect(pending).resolves.toEqual({ interrupted: false })
   })
 
   it('never replays sent prompts after reconnecting', () => {

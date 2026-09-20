@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { mkdirSync } from 'fs'
+import { chmodSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
@@ -177,6 +177,10 @@ export class DirectConnectStore {
   constructor(public readonly dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new DatabaseSync(dbPath)
+    // Session runtime options can contain model, WebSearch, and MCP credentials.
+    // Tighten both newly created and pre-existing database files before SQLite
+    // creates its journal sidecars from the database mode.
+    if (dbPath !== ':memory:') chmodSync(dbPath, 0o600)
     this.db.exec(`
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=FULL;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -8,6 +8,9 @@ import { DirectConnectStore } from '../db.js'
 const root = await mkdtemp(join(tmpdir(), 'moss-server-db-'))
 
 try {
+  const memoryStore = new DirectConnectStore(':memory:')
+  memoryStore.close()
+
   const dbPath = join(root, 'server.db')
   const store = new DirectConnectStore(dbPath)
   try {
@@ -124,6 +127,10 @@ try {
     })
   } finally {
     store.close()
+  }
+
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(dbPath)).mode & 0o777, 0o600)
   }
 
   const legacyDb = new DatabaseSync(dbPath)

@@ -87,6 +87,43 @@ describe('server profile resources', () => {
     })
   })
 
+  test('does not follow an oversized or escaping MEMORY index while listing', async () => {
+    if (process.platform === 'win32') return
+    const root = await mkdtemp(join(tmpdir(), 'moss-profile-memory-index-safety-'))
+    cleanup.push(root)
+    const profileDir = join(root, 'profile')
+    const memoryDir = join(profileDir, 'memory')
+    const outsideIndex = join(root, 'outside-index.md')
+    await mkdir(memoryDir, { recursive: true })
+    await writeFile(join(memoryDir, 'preference.md'), '# Preference')
+    await writeFile(outsideIndex, '- [Preference](preference.md)')
+    await symlink(outsideIndex, join(memoryDir, 'MEMORY.md'))
+
+    const escaped = await listProfileMemory(profileDir)
+    expect(escaped).toContainEqual(expect.objectContaining({
+      path: 'preference.md',
+      indexed: false,
+    }))
+
+    await rm(join(memoryDir, 'MEMORY.md'))
+    await writeFile(
+      join(memoryDir, 'MEMORY.md'),
+      Buffer.concat([
+        Buffer.from('- [Preference](preference.md)\n'),
+        Buffer.alloc(512 * 1024, 32),
+      ]),
+    )
+    const oversized = await listProfileMemory(profileDir)
+    expect(oversized).toContainEqual(expect.objectContaining({
+      path: 'MEMORY.md',
+      readable: false,
+    }))
+    expect(oversized).toContainEqual(expect.objectContaining({
+      path: 'preference.md',
+      indexed: false,
+    }))
+  })
+
   test('replaces only files managed by desktop skill synchronization', async () => {
     const root = await mkdtemp(join(tmpdir(), 'moss-profile-skills-'))
     cleanup.push(root)
@@ -126,6 +163,61 @@ describe('server profile resources', () => {
     )
     expect(await readFile(outsideManifest, 'utf8')).toBe('do not overwrite')
     expect(await readFile(join(profileDir, 'skills', 'demo', 'SKILL.md'), 'utf8')).toBe('# Third')
+  })
+
+  test('supports managed skill paths changing between directories and files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'moss-profile-skills-shape-'))
+    cleanup.push(root)
+    const profileDir = join(root, 'profile')
+    const first = new JSZip()
+    first.file('demo/tool/config.json', '{}')
+    await installSkillArchive(
+      profileDir,
+      await first.generateAsync({ type: 'nodebuffer', platform: 'UNIX' }),
+    )
+
+    const second = new JSZip()
+    second.file('demo/tool', 'executable')
+    await installSkillArchive(
+      profileDir,
+      await second.generateAsync({ type: 'nodebuffer', platform: 'UNIX' }),
+    )
+    expect(await readFile(join(profileDir, 'skills', 'demo', 'tool'), 'utf8'))
+      .toBe('executable')
+
+    const third = new JSZip()
+    third.file('demo/tool/config.json', '{"restored":true}')
+    await installSkillArchive(
+      profileDir,
+      await third.generateAsync({ type: 'nodebuffer', platform: 'UNIX' }),
+    )
+    expect(await readFile(join(profileDir, 'skills', 'demo', 'tool', 'config.json'), 'utf8'))
+      .toBe('{"restored":true}')
+  })
+
+  test('ignores unsafe paths in a corrupted managed-skill manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'moss-profile-skills-manifest-'))
+    cleanup.push(root)
+    const profileDir = join(root, 'profile')
+    const outside = join(root, 'outside.txt')
+    await mkdir(join(profileDir, 'skills'), { recursive: true })
+    await writeFile(outside, 'keep')
+    await writeFile(join(profileDir, '.desktop-skills-sync.json'), JSON.stringify({
+      revision: 'sha256:old',
+      files: ['../../outside.txt', 'demo/old.txt'],
+    }))
+    await mkdir(join(profileDir, 'skills', 'demo'), { recursive: true })
+    await writeFile(join(profileDir, 'skills', 'demo', 'old.txt'), 'old')
+
+    const archive = new JSZip()
+    archive.file('demo/SKILL.md', '# Safe')
+    await installSkillArchive(
+      profileDir,
+      await archive.generateAsync({ type: 'nodebuffer', platform: 'UNIX' }),
+    )
+
+    expect(await readFile(outside, 'utf8')).toBe('keep')
+    await expect(readFile(join(profileDir, 'skills', 'demo', 'old.txt'))).rejects.toThrow()
   })
 
   test('rejects a symlinked skills root without writing outside the profile', async () => {

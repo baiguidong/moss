@@ -3,12 +3,15 @@ import {
   chmod,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
   rename,
+  rmdir,
   rm,
   stat,
+  type FileHandle,
   writeFile,
 } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'path'
@@ -159,18 +162,51 @@ function parseMemoryIndexPaths(raw: string): Set<string> {
   return paths
 }
 
-async function readBoundedMarkdown(filePath: string) {
-  const metadata = await stat(filePath)
-  if (!metadata.isFile()) throw new Error('Memory entry is not a file.')
-  if (metadata.size > MAX_MEMORY_FILE_BYTES) {
-    throw new Error('Memory entry is too large to read.')
+async function readOpenFilePrefix(handle: FileHandle, maxBytes: number): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(maxBytes)
+  let bytesRead = 0
+  while (bytesRead < buffer.length) {
+    const result = await handle.read(
+      buffer,
+      bytesRead,
+      buffer.length - bytesRead,
+      bytesRead,
+    )
+    if (result.bytesRead === 0) break
+    bytesRead += result.bytesRead
   }
-  const content = await readFile(filePath, 'utf8')
-  return {
-    content,
-    bytes: metadata.size,
-    updatedAt: metadata.mtimeMs,
-    readable: true,
+  return buffer.subarray(0, bytesRead)
+}
+
+async function readFilePrefix(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await open(filePath, 'r')
+  try {
+    return await readOpenFilePrefix(handle, maxBytes)
+  } finally {
+    await handle.close()
+  }
+}
+
+async function readBoundedMarkdown(filePath: string) {
+  const handle = await open(filePath, 'r')
+  try {
+    const metadata = await handle.stat()
+    if (!metadata.isFile()) throw new Error('Memory entry is not a file.')
+    if (metadata.size > MAX_MEMORY_FILE_BYTES) {
+      throw new Error('Memory entry is too large to read.')
+    }
+    const buffer = await readOpenFilePrefix(handle, MAX_MEMORY_FILE_BYTES + 1)
+    if (buffer.length > MAX_MEMORY_FILE_BYTES) {
+      throw new Error('Memory entry is too large to read.')
+    }
+    return {
+      content: buffer.toString('utf8'),
+      bytes: buffer.length,
+      updatedAt: metadata.mtimeMs,
+      readable: true,
+    }
+  } finally {
+    await handle.close()
   }
 }
 
@@ -189,7 +225,9 @@ export async function listProfileMemory(profileDir: string) {
   if (!root) return []
   let indexedPaths = new Set<string>()
   try {
-    indexedPaths = parseMemoryIndexPaths(await readFile(join(root, 'MEMORY.md'), 'utf8'))
+    const indexPath = await resolveExistingFileWithin(root, 'MEMORY.md')
+    const index = await readBoundedMarkdown(indexPath)
+    indexedPaths = parseMemoryIndexPaths(index.content)
   } catch {}
 
   const files: Array<Record<string, unknown>> = []
@@ -212,10 +250,16 @@ export async function listProfileMemory(profileDir: string) {
         continue
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
-      const fileStat = await stat(fullPath)
+      let safeFilePath: string
+      try {
+        safeFilePath = await resolveExistingFileWithin(root, relativePath)
+      } catch {
+        continue
+      }
+      const fileStat = await stat(safeFilePath)
       let head = ''
       if (fileStat.size <= MAX_MEMORY_FILE_BYTES) {
-        head = (await readFile(fullPath)).subarray(0, 64 * 1024).toString('utf8')
+        head = (await readFilePrefix(safeFilePath, 64 * 1024)).toString('utf8')
       }
       const document = parseMemoryDocumentHead(head, relativePath)
       files.push({
@@ -302,14 +346,39 @@ async function readSkillSyncManifest(profileDir: string): Promise<{
     const parsed = JSON.parse(
       await readFile(manifestPath, 'utf8'),
     ) as { revision?: unknown; files?: unknown }
+    const files = new Set<string>()
+    if (Array.isArray(parsed.files)) {
+      for (const file of parsed.files) {
+        if (typeof file !== 'string') continue
+        try {
+          files.add(normalizeArchivePath(file))
+        } catch {}
+      }
+    }
     return {
       revision: typeof parsed.revision === 'string' ? parsed.revision : '',
-      files: Array.isArray(parsed.files)
-        ? parsed.files.filter((file): file is string => typeof file === 'string')
-        : [],
+      files: [...files],
     }
   } catch {
     return { revision: '', files: [] }
+  }
+}
+
+async function pruneEmptySkillParents(skillsRoot: string, filePath: string): Promise<void> {
+  let current = dirname(filePath)
+  while (current !== skillsRoot && isInside(skillsRoot, current)) {
+    try {
+      await rmdir(current)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'ENOENT') {
+        current = dirname(current)
+        continue
+      }
+      if (code === 'ENOTEMPTY' || code === 'EEXIST') return
+      throw error
+    }
+    current = dirname(current)
   }
 }
 
@@ -362,7 +431,13 @@ async function installSkillArchiveUnlocked(
         }
       }
       const content = await entry.async('nodebuffer')
-      if (!Number.isFinite(declaredSize)) expandedBytes += content.length
+      if (Number.isFinite(declaredSize) && declaredSize >= 0) {
+        // ZIP metadata is only a preflight hint. Account for the actual bytes
+        // too so a malformed archive cannot under-report its expanded size.
+        expandedBytes += content.length - declaredSize
+      } else {
+        expandedBytes += content.length
+      }
       if (content.length > MAX_PROFILE_EXPANDED_BYTES || expandedBytes > MAX_PROFILE_EXPANDED_BYTES) {
         throw new Error('Expanded skill archive is too large.')
       }
@@ -380,7 +455,10 @@ async function installSkillArchiveUnlocked(
     for (const relativePath of previous.files) {
       if (writtenSet.has(relativePath)) continue
       const stalePath = await resolveSafeSkillTarget(skillsRoot, relativePath, false)
-      if (stalePath) await rm(stalePath, { force: true })
+      if (stalePath) {
+        await rm(stalePath, { force: true })
+        await pruneEmptySkillParents(skillsRoot, stalePath)
+      }
     }
     for (const relativePath of written) {
       const sourcePath = resolve(stagedRoot, relativePath)

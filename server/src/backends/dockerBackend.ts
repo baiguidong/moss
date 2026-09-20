@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { chmod, mkdir, writeFile } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'path'
 import { MOSS_SERVER_ASSET_ROOT } from '../lib/env.js'
 import { getSystemSettings } from '../systemSettings.js'
@@ -184,8 +184,9 @@ export class DockerBackend implements SessionBackend {
     await writeFile(
       backendManifestPath,
       `${JSON.stringify(backendOptions, null, 2)}\n`,
-      'utf8',
+      { encoding: 'utf8', mode: 0o600 },
     )
+    await chmod(backendManifestPath, 0o600)
 
     const args = ['run', '--rm', '-i', '--name', containerName]
     const dockerUser = resolveDockerUser()

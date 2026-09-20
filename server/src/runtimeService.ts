@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
 import { spawn } from 'child_process'
 import { join } from 'path'
@@ -557,7 +557,12 @@ export class RuntimeService {
       },
     }
 
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    )
+    await chmod(manifestPath, 0o600)
 
     const runnerEntryPath = resolveRunnerEntryPath()
     const child = spawn(process.execPath, [runnerEntryPath, manifestPath], {

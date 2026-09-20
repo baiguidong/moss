@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { mkdir, readFile, writeFile } from 'fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getSystemSettings } from '../systemSettings.js'
 import type {
@@ -241,7 +241,12 @@ export async function writeManagedSessionSettings(
     delete next.env
   }
 
-  await writeFile(settingsPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  await writeFile(
+    settingsPath,
+    `${JSON.stringify(next, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
+  await chmod(settingsPath, 0o600)
 }
 
 function isContentBlock(

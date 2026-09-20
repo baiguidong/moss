@@ -3627,6 +3627,7 @@ function createRemoteDirectRuntime({
   let disposed = false;
   let activeManager = null;
   let managerConnectPromise = null;
+  let rejectManagerConnection = null;
   let currentTurn = null;
   let sessionPromise = null;
 
@@ -3647,7 +3648,15 @@ function createRemoteDirectRuntime({
       }
 
       const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      await syncRemoteSkillsForConnection({ serverUrl, authToken });
+      try {
+        await syncRemoteSkillsForConnection({ serverUrl, authToken });
+      } catch (error) {
+        // Skill synchronization is additive. A stale/older Server or one bad
+        // local skill must not make the entire remote chat unavailable.
+        mossLog('warn', 'remote-skills', 'Unable to synchronize desktop skills; continuing without the update', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       await prepareAssistantContextForSessionStart(sessionRecord);
       const localRuntimeConfig = await buildClaudeSessionConfig(
         sessionRecord.workspace,
@@ -3781,7 +3790,6 @@ function createRemoteDirectRuntime({
         throw new Error('Remote runtime is already processing a request.');
       }
 
-      const { mod, config } = await ensureSessionConfig();
       const queue = [];
       let pendingResolve = null;
       let pendingReject = null;
@@ -3825,13 +3833,27 @@ function createRemoteDirectRuntime({
           pendingReject = reject;
         });
 
-      currentTurn = {
+      let rejectBeforePrompt;
+      const beforePromptAbort = new Promise((_, reject) => {
+        rejectBeforePrompt = reject;
+      });
+      const turn = {
         finished: false,
+        promptSent: false,
+        abortRequested: false,
         flushMessage,
         fail,
+        abortBeforePrompt(error) {
+          if (turn.promptSent || turn.abortRequested) return;
+          turn.abortRequested = true;
+          rejectBeforePrompt(error);
+        },
       };
+      currentTurn = turn;
 
-      const ensureManager = async () => {
+      const beforePrompt = (promise) => Promise.race([promise, beforePromptAbort]);
+
+      const ensureManager = async (mod, config) => {
         if (activeManager?.isConnected?.()) {
           return activeManager;
         }
@@ -3851,9 +3873,11 @@ function createRemoteDirectRuntime({
         }
 
         managerConnectPromise = new Promise((resolve, reject) => {
+          rejectManagerConnection = reject;
           const manager = new mod.DirectConnectSessionManager(config, {
             onConnected: () => {
               managerConnectPromise = null;
+              rejectManagerConnection = null;
               resolve();
             },
             onMessage: (message) => {
@@ -3893,7 +3917,10 @@ function createRemoteDirectRuntime({
             onDisconnected: () => {
               const turn = currentTurn;
               activeManager = null;
+              const rejectConnection = rejectManagerConnection;
+              rejectManagerConnection = null;
               managerConnectPromise = null;
+              rejectConnection?.(new Error('Remote session disconnected before connecting.'));
               if (turn && !turn.finished) {
                 turn.fail(new Error('Remote session disconnected before completion.'));
               }
@@ -3902,6 +3929,7 @@ function createRemoteDirectRuntime({
               const turn = currentTurn;
               if (managerConnectPromise) {
                 managerConnectPromise = null;
+                rejectManagerConnection = null;
                 reject(error);
               }
               if (turn) {
@@ -3917,6 +3945,7 @@ function createRemoteDirectRuntime({
           } catch (error) {
             activeManager = null;
             managerConnectPromise = null;
+            rejectManagerConnection = null;
             reject(error);
           }
         });
@@ -3926,14 +3955,18 @@ function createRemoteDirectRuntime({
       };
 
       try {
-        const manager = await ensureManager();
-        await manager.setPermissionMode?.(
+        const { mod, config } = await beforePrompt(ensureSessionConfig());
+        if (turn.abortRequested) throw new Error('Request interrupted by user.');
+        const manager = await beforePrompt(ensureManager(mod, config));
+        await beforePrompt(manager.setPermissionMode?.(
           normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
-        );
+        ));
+        if (turn.abortRequested) throw new Error('Request interrupted by user.');
         const sent = manager.sendMessage(prompt);
         if (!sent) {
           throw new Error('Failed to send prompt to remote session.');
         }
+        turn.promptSent = true;
 
         while (true) {
           const message = await nextMessage();
@@ -3946,12 +3979,54 @@ function createRemoteDirectRuntime({
           throw pendingError;
         }
       } finally {
-        currentTurn = null;
+        if (currentTurn === turn) currentTurn = null;
       }
     },
     async abort() {
-      if (!activeManager?.sendInterrupt) return;
-      await activeManager.sendInterrupt();
+      const turn = currentTurn;
+      if (!turn) return;
+      const interrupted = new Error('Request interrupted by user.');
+      if (!turn.promptSent) {
+        turn.abortBeforePrompt(interrupted);
+        if (activeManager) {
+          try {
+            activeManager.disconnect?.();
+          } catch {}
+          activeManager = null;
+        }
+        const rejectConnection = rejectManagerConnection;
+        rejectManagerConnection = null;
+        managerConnectPromise = null;
+        rejectConnection?.(interrupted);
+        turn.fail(interrupted);
+        return;
+      }
+      if (!activeManager?.isConnected?.()) {
+        try {
+          activeManager?.disconnect?.();
+        } catch {}
+        activeManager = null;
+        turn.fail(interrupted);
+        return;
+      }
+      try {
+        const result = await activeManager.sendInterrupt();
+        if (result?.interrupted === false) {
+          // The prompt was still waiting in the Server-side turn queue. Close
+          // this attachment so that queued work is discarded before reconnect.
+          activeManager.disconnect();
+          activeManager = null;
+          turn.fail(interrupted);
+        }
+      } catch {
+        // Closing the socket makes the Server interrupt any active turn and
+        // prevents a late result from being attributed to the next prompt.
+        try {
+          activeManager?.disconnect?.();
+        } catch {}
+        activeManager = null;
+        turn.fail(interrupted);
+      }
     },
     async setPermissionMode(mode) {
       if (activeManager?.isConnected?.()) {
@@ -3960,11 +4035,17 @@ function createRemoteDirectRuntime({
     },
     dispose() {
       disposed = true;
+      const error = new Error('Remote runtime has been disposed.');
+      const rejectConnection = rejectManagerConnection;
+      rejectManagerConnection = null;
+      managerConnectPromise = null;
+      rejectConnection?.(error);
+      currentTurn?.abortBeforePrompt?.(error);
+      currentTurn?.fail?.(error);
       try {
         activeManager?.disconnect?.();
       } catch {}
       activeManager = null;
-      managerConnectPromise = null;
       currentTurn = null;
     },
   };

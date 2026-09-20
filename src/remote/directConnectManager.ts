@@ -36,7 +36,7 @@ type WebSocketState =
   | 'closed'
 
 type PendingControlRequest = {
-  resolve: () => void
+  resolve: (response?: Record<string, unknown>) => void
   reject: (error: Error) => void
   timeout: NodeJS.Timeout
 }
@@ -296,6 +296,7 @@ export class DirectConnectSessionManager {
           subtype?: string
           request_id?: string
           error?: string
+          response?: unknown
         }
         const requestId = response.request_id
         const pending = requestId
@@ -305,7 +306,11 @@ export class DirectConnectSessionManager {
           clearTimeout(pending.timeout)
           this.pendingControlRequests.delete(requestId)
           if (response.subtype === 'success') {
-            pending.resolve()
+            pending.resolve(
+              typeof response.response === 'object' && response.response !== null
+                ? response.response as Record<string, unknown>
+                : undefined,
+            )
           } else {
             pending.reject(new Error(response.error || 'Remote control request failed.'))
           }
@@ -562,7 +567,7 @@ export class DirectConnectSessionManager {
     this.sendLine(line)
   }
 
-  sendInterrupt(): Promise<void> {
+  sendInterrupt(): Promise<{ interrupted?: boolean }> {
     if (!this.ws || this.state !== 'connected') {
       return Promise.reject(new Error('Remote session is not connected.'))
     }
@@ -581,7 +586,15 @@ export class DirectConnectSessionManager {
         this.pendingControlRequests.delete(requestId)
         reject(new Error('Timed out while interrupting the remote turn.'))
       }, 10_000)
-      this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
+      this.pendingControlRequests.set(requestId, {
+        resolve: response => resolve(
+          typeof response?.interrupted === 'boolean'
+            ? { interrupted: response.interrupted }
+            : {},
+        ),
+        reject,
+        timeout,
+      })
       if (!this.sendLine(line)) {
         clearTimeout(timeout)
         this.pendingControlRequests.delete(requestId)
@@ -610,7 +623,11 @@ export class DirectConnectSessionManager {
         this.pendingControlRequests.delete(requestId)
         reject(new Error('Timed out while changing remote permission mode.'))
       }, 10_000)
-      this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
+      this.pendingControlRequests.set(requestId, {
+        resolve: () => resolve(),
+        reject,
+        timeout,
+      })
       if (!this.sendLine(line)) {
         clearTimeout(timeout)
         this.pendingControlRequests.delete(requestId)

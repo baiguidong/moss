@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -78,6 +78,9 @@ describe('direct embedded backend model settings', () => {
     expect(persisted.maxTurns).toBeUndefined()
     expect(persisted.thinkingMode).toBeUndefined()
     expect(persisted.thinkingBudgetTokens).toBeUndefined()
+    if (process.platform !== 'win32') {
+      expect((await stat(join(configDir, 'settings.json'))).mode & 0o777).toBe(0o600)
+    }
   })
 
   test('clears stale process env when model settings are empty', () => {

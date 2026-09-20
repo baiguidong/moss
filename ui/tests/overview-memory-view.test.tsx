@@ -3,7 +3,11 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { OverviewTabs } from '../src/renderer-react/components/overview-view';
-import { GlobalList } from '../src/renderer-react/components/memory-overview';
+import {
+  defaultSelection,
+  GlobalList,
+  SessionList,
+} from '../src/renderer-react/components/memory-overview';
 
 describe('overview memory navigation', () => {
   test('keeps usage and all three memory scopes in one top tab bar', () => {
@@ -74,5 +78,68 @@ describe('overview memory navigation', () => {
     );
     expect(searching).toContain('旧任务状态');
     expect(searching).toContain('未索引');
+  });
+
+  test('does not select or enable memory entries that exceed the display limit', () => {
+    const catalog = {
+      generatedAt: 1,
+      global: {
+        rootLabel: 'Moss Server / memory',
+        files: [{
+          id: 'remote:large.md',
+          path: 'large.md',
+          source: 'remote' as const,
+          title: 'Large memory',
+          description: '',
+          type: 'memory',
+          isIndex: false,
+          indexed: true,
+          bytes: 600_000,
+          updatedAt: 1,
+          readable: false,
+        }],
+      },
+      projects: [{
+        id: 'project-1',
+        name: 'Project',
+        updatedAt: 1,
+        version: 1,
+        memoryUpdatedAt: null,
+        finalizedSessionCount: 1,
+        hasOverview: false,
+        history: [{
+          id: 'project-session',
+          sessionId: 'project-session',
+          title: 'Large project memory',
+          conclusion: '',
+          bytes: 600_000,
+          updatedAt: 1,
+          readable: false,
+        }],
+      }],
+      sessions: [{
+        id: 'remote-session',
+        title: 'Large session memory',
+        projectId: null,
+        projectName: null,
+        agentMode: 'remote-direct' as const,
+        busy: false,
+        createdAt: 1,
+        updatedAt: 1,
+        hasSummary: true,
+        summaryUpdatedAt: 1,
+        bytes: 600_000,
+        readable: false,
+      }],
+    };
+
+    expect(defaultSelection(catalog, 'global')).toBeNull();
+    expect(defaultSelection(catalog, 'project')).toBeNull();
+    expect(defaultSelection(catalog, 'session')).toBeNull();
+    const html = renderToStaticMarkup(
+      <SessionList sessions={catalog.sessions} selected="" onSelect={() => {}} />,
+    );
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('超过大小限制');
   });
 });
