@@ -12,6 +12,14 @@ import type {
 import { buildSessionEnv } from './backendUtils.js'
 
 type JsonObject = Record<string, unknown>
+const DIRECT_PERMISSION_MODES = [
+  'acceptEdits',
+  'bypassPermissions',
+  'default',
+  'dontAsk',
+  'plan',
+] as const
+type DirectPermissionMode = (typeof DIRECT_PERMISSION_MODES)[number]
 type StdoutListener = (line: string) => void
 type ExitListener = (
   code: number | null,
@@ -44,7 +52,7 @@ type DirectSessionOptions = {
   url?: string
   apiKey?: string
   appendSystemPrompt?: string
-  permissionMode?: 'allow-all' | 'default'
+  permissionMode?: DirectPermissionMode | 'allow-all'
   onPermissionRequest?: (
     tool: string,
     input: unknown,
@@ -67,6 +75,7 @@ type DirectSession = {
   ): AsyncGenerator<unknown>
   abort(): void
   dispose(): void
+  setPermissionMode(mode: DirectPermissionMode | 'allow-all'): void
 }
 type DirectRuntimeModule = {
   ClaudeSession: new (options: DirectSessionOptions) => DirectSession
@@ -453,6 +462,9 @@ class DirectEmbeddedHandle implements BackendHandle {
     if (this.#handleControlResponse(parsed)) {
       return
     }
+    if (this.#handleControlRequest(parsed)) {
+      return
+    }
 
     const content = extractUserContent(parsed)
     if (content === null) {
@@ -529,6 +541,60 @@ class DirectEmbeddedHandle implements BackendHandle {
     }
 
     return true
+  }
+
+  #handleControlRequest(value: unknown): boolean {
+    if (!isJsonObject(value) || value.type !== 'control_request') {
+      return false
+    }
+    const request = value.request
+    if (!isJsonObject(request) || request.subtype !== 'set_permission_mode') {
+      return true
+    }
+
+    const requestId =
+      typeof value.request_id === 'string' ? value.request_id : ''
+    const mode = request.mode
+    if (
+      !requestId ||
+      typeof mode !== 'string' ||
+      !(DIRECT_PERMISSION_MODES as readonly string[]).includes(mode)
+    ) {
+      this.#emitControlResponseError(
+        requestId,
+        'Invalid set_permission_mode request.',
+      )
+      return true
+    }
+
+    try {
+      this.session.setPermissionMode(mode as DirectPermissionMode)
+      this.#emitStdout({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: requestId,
+          response: {},
+        },
+      })
+    } catch (error) {
+      this.#emitControlResponseError(
+        requestId,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    return true
+  }
+
+  #emitControlResponseError(requestId: string, error: string): void {
+    this.#emitStdout({
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: requestId,
+        error,
+      },
+    })
   }
 
   emitAppEvent(event: DirectAppEvent): Promise<DirectAppEventResult> {

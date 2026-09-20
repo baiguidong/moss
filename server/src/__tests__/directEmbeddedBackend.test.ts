@@ -141,6 +141,7 @@ describe('direct embedded backend model settings', () => {
 
       abort(): void {}
       dispose(): void {}
+      setPermissionMode(): void {}
     }
 
     registerDirectRuntimeModule({
@@ -301,6 +302,67 @@ describe('direct embedded backend model settings', () => {
       expect(result.appEventResult).toEqual({
         ok: true,
         previewUrl: eventUrl,
+      })
+    } finally {
+      handle.destroy()
+    }
+  })
+
+  test('applies remote permission mode control requests and acknowledges them', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-permission-mode-'))
+    const appliedModes: string[] = []
+
+    class FakeSession {
+      async *send(): AsyncGenerator<unknown> {}
+      abort(): void {}
+      dispose(): void {}
+      setPermissionMode(mode: string): void {
+        appliedModes.push(mode)
+      }
+    }
+
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async () => null,
+    })
+
+    const backend = new DirectEmbeddedBackend()
+    const handle = await backend.spawn({
+      sessionId: 'session-permission-mode',
+      cwd: join(tempRoot, 'workspace'),
+      runtime: {
+        backend: 'host',
+        profileDir: join(tempRoot, 'profile'),
+        transcriptDir: join(tempRoot, 'transcripts'),
+        workspaceDir: join(tempRoot, 'workspace'),
+      },
+      systemSettings: makeSettings({}),
+    })
+
+    try {
+      const responsePromise = waitForStdout(
+        handle,
+        message => message.type === 'control_response',
+      )
+      handle.writeStdin(
+        `${JSON.stringify({
+          type: 'control_request',
+          request_id: 'permission-request-1',
+          request: {
+            subtype: 'set_permission_mode',
+            mode: 'plan',
+          },
+        })}\n`,
+      )
+
+      expect(appliedModes).toEqual(['plan'])
+      expect(await responsePromise).toEqual({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: 'permission-request-1',
+          response: {},
+        },
       })
     } finally {
       handle.destroy()

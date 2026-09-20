@@ -26,6 +26,10 @@ import { RagflowIntegrationService } from './ragflow/service.js'
 import { OpenIMIntegrationService } from './openim/service.js'
 import { RuntimeService } from './runtimeService.js'
 import {
+  consumeClientControlResponse,
+  trackClientControlRequest,
+} from './sessionWebSocketBridge.js'
+import {
   getSystemSettings,
   toOpenIMServerConfig,
   updateSystemSettings,
@@ -1734,6 +1738,7 @@ export function startServer(
             let buffer = ''
             let userMessageQueue: Promise<void> = Promise.resolve()
             let activeTurn: { release: () => void; complete: () => void } | null = null
+            const pendingControlRequestIds = new Set<string>()
             const sendToRunner = (payload: Record<string, unknown>) => {
               if (!runnerSocket.destroyed) {
                 runnerSocket.write(`${jsonStringify(payload)}\n`)
@@ -1778,6 +1783,7 @@ export function startServer(
                   return
                 }
               } catch {}
+              trackClientControlRequest(parsed, pendingControlRequestIds)
               if (parsed?.type === 'user') {
                 queueUserMessage(text)
                 return
@@ -1818,14 +1824,19 @@ export function startServer(
 
                 if (parsed.type === 'stdout' && typeof parsed.line === 'string') {
                   const ownsTurn = activeTurn !== null
-                  if (ownsTurn && ws.readyState === ws.OPEN) {
+                  let message: Record<string, unknown> | null = null
+                  try {
+                    message = jsonParse(parsed.line) as Record<string, unknown>
+                  } catch {}
+                  const ownsControlResponse = consumeClientControlResponse(
+                    message,
+                    pendingControlRequestIds,
+                  )
+                  if ((ownsTurn || ownsControlResponse) && ws.readyState === ws.OPEN) {
                     ws.send(parsed.line)
                   }
-                  if (ownsTurn) {
-                    try {
-                      const message = jsonParse(parsed.line) as Record<string, unknown>
-                      if (message.type === 'result') finishActiveTurn()
-                    } catch {}
+                  if (ownsTurn && message?.type === 'result') {
+                    finishActiveTurn()
                   }
                 }
                 if (parsed.type === 'exit') {
