@@ -368,6 +368,120 @@ describe('direct embedded backend model settings', () => {
       handle.destroy()
     }
   })
+
+  test('interrupts the active turn in process without disposing the session', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-interrupt-'))
+    let abortCount = 0
+    let disposeCount = 0
+    let sendCount = 0
+    let markFirstTurnStarted: (() => void) | undefined
+    const firstTurnStarted = new Promise<void>(resolve => {
+      markFirstTurnStarted = resolve
+    })
+
+    class FakeSession {
+      async *send(
+        _content: unknown,
+        signal?: AbortSignal,
+      ): AsyncGenerator<unknown> {
+        sendCount += 1
+        if (sendCount === 1) {
+          markFirstTurnStarted?.()
+          await new Promise<void>(resolve => {
+            if (signal?.aborted) {
+              resolve()
+              return
+            }
+            signal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return
+        }
+        yield { type: 'result', subtype: 'success' }
+      }
+      abort(): void {
+        abortCount += 1
+      }
+      dispose(): void {
+        disposeCount += 1
+      }
+      setPermissionMode(): void {}
+    }
+
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async () => null,
+    })
+
+    const backend = new DirectEmbeddedBackend()
+    const handle = await backend.spawn({
+      sessionId: 'session-interrupt',
+      cwd: join(tempRoot, 'workspace'),
+      runtime: {
+        backend: 'host',
+        profileDir: join(tempRoot, 'profile'),
+        transcriptDir: join(tempRoot, 'transcripts'),
+        workspaceDir: join(tempRoot, 'workspace'),
+      },
+      systemSettings: makeSettings({}),
+    })
+
+    try {
+      const interruptedResultPromise = waitForStdout(
+        handle,
+        message => message.type === 'result',
+      )
+      const responsePromise = waitForStdout(
+        handle,
+        message => message.type === 'control_response',
+      )
+      handle.writeStdin([
+        JSON.stringify({
+          type: 'user',
+          uuid: 'message-to-interrupt',
+          message: { role: 'user', content: 'keep working' },
+        }),
+        JSON.stringify({
+          type: 'control_request',
+          request_id: 'interrupt-request-1',
+          request: { subtype: 'interrupt' },
+        }),
+        '',
+      ].join('\n'))
+      await firstTurnStarted
+
+      await expect(responsePromise).resolves.toMatchObject({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: 'interrupt-request-1',
+        },
+      })
+      expect(abortCount).toBe(1)
+      expect(disposeCount).toBe(0)
+      await expect(interruptedResultPromise).resolves.toMatchObject({
+        type: 'result',
+        subtype: 'error_during_execution',
+      })
+
+      const resultPromise = waitForStdout(
+        handle,
+        message => message.type === 'result',
+      )
+      handle.writeStdin(`${JSON.stringify({
+        type: 'user',
+        uuid: 'message-after-interrupt',
+        message: { role: 'user', content: 'continue' },
+      })}\n`)
+      await expect(resultPromise).resolves.toMatchObject({
+        type: 'result',
+        subtype: 'success',
+      })
+      expect(sendCount).toBe(2)
+      expect(disposeCount).toBe(0)
+    } finally {
+      handle.destroy()
+    }
+  })
 })
 
 function makeSettings(

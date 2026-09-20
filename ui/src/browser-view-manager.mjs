@@ -1105,6 +1105,41 @@ export function createBrowserViewManager({
       return serializeSession(session);
     },
 
+    async openTabAndWait({ sessionId, url, connectorAuth, mcpAuth } = {}) {
+      const session = getSession(sessionId);
+      const normalizedUrl = normalizeBrowserUrl(url);
+      const tab = createTabRecord(session, normalizedUrl, {
+        connectorAuth,
+        mcpAuth,
+        deferLoad: true,
+      });
+      session.tabs.push(tab);
+      session.activeTabId = tab.id;
+      syncViews();
+      emitState(session);
+
+      if (normalizedUrl !== BROWSER_DEFAULT_URL) {
+        try {
+          await tab.view.webContents.loadURL(normalizedUrl);
+          if (!tab.closing) {
+            tab.isLoading = false;
+            updateTabFromNavigation(session, tab);
+          }
+        } catch (error) {
+          if (!tab.closing) {
+            tab.isLoading = false;
+            tab.error = error instanceof Error ? error.message : String(error);
+            openFailedUrlExternally(session, tab, normalizedUrl);
+            syncViews();
+            emitState(session);
+          }
+          throw error;
+        }
+      }
+
+      return serializeSession(session);
+    },
+
     activateTab({ sessionId, tabId } = {}) {
       const session = getSession(sessionId);
       const tab = getTab(session, tabId);

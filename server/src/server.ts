@@ -1738,6 +1738,7 @@ export function startServer(
             let buffer = ''
             let userMessageQueue: Promise<void> = Promise.resolve()
             let activeTurn: { release: () => void; complete: () => void } | null = null
+            let websocketClosed = false
             const pendingControlRequestIds = new Set<string>()
             const sendToRunner = (payload: Record<string, unknown>) => {
               if (!runnerSocket.destroyed) {
@@ -1749,6 +1750,24 @@ export function startServer(
               activeTurn = null
               turn?.release()
               turn?.complete()
+              if (websocketClosed && !runnerSocket.destroyed) {
+                runnerSocket.end()
+              }
+            }
+            const detachClient = () => {
+              if (websocketClosed) return
+              websocketClosed = true
+              if (!activeTurn) {
+                runnerSocket.end()
+                return
+              }
+
+              // A disconnected client cannot receive host-tool requests or the
+              // rest of the turn. Abort that turn in place, but keep the
+              // persistent session runtime alive for a later attach. Keep the
+              // turn lock until its result arrives so a replacement client
+              // cannot mistake that stale result for its own turn.
+              sendToRunner({ type: 'interrupt' })
             }
             const queueUserMessage = (text: string) => {
               userMessageQueue = userMessageQueue.then(async () => {
@@ -1779,7 +1798,20 @@ export function startServer(
               try {
                 parsed = jsonParse(text) as Record<string, unknown>
                 if (parsed.type === 'control_request' && (parsed.request as Record<string, unknown>)?.subtype === 'interrupt') {
-                  if (activeTurn) sendToRunner({ type: 'interrupt' })
+                  sendToRunner({ type: 'interrupt' })
+                  const requestId = typeof parsed.request_id === 'string'
+                    ? parsed.request_id
+                    : ''
+                  if (requestId && ws.readyState === ws.OPEN) {
+                    ws.send(jsonStringify({
+                      type: 'control_response',
+                      response: {
+                        subtype: 'success',
+                        request_id: requestId,
+                        response: { interrupted: activeTurn !== null },
+                      },
+                    }))
+                  }
                   return
                 }
               } catch {}
@@ -1794,12 +1826,10 @@ export function startServer(
               })
             })
             ws.on('close', () => {
-              finishActiveTurn()
-              runnerSocket.destroy()
+              detachClient()
             })
             ws.on('error', () => {
-              finishActiveTurn()
-              runnerSocket.destroy()
+              detachClient()
             })
 
             runnerSocket.on('data', chunk => {

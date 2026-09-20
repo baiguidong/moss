@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { join } from 'path'
+import { mkdtemp, rm } from 'fs/promises'
+import { tmpdir } from 'os'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import {
   getAttemptDir,
   getDockerBackendManifestPath,
@@ -96,6 +99,37 @@ describe('runtime service session turn lock', () => {
     releaseSecond()
   })
 })
+
+test('reattaches live runtimes and recovers missing runtimes without prompt replay', async () => {
+  const outdir = await mkdtemp(join(tmpdir(), 'moss-runtime-recovery-test-'))
+  try {
+    const entrypoint = join(
+      dirname(fileURLToPath(import.meta.url)),
+      'runtimeRecovery.node.ts',
+    )
+    const build = await Bun.build({
+      entrypoints: [entrypoint],
+      outdir,
+      target: 'node',
+      format: 'esm',
+    })
+    expect(build.success).toBe(true)
+    const output = build.outputs[0]
+    if (!output) throw new Error('Node runtime recovery test did not build')
+    const process = Bun.spawn(['node', '--no-warnings', output.path], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [exitCode, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stderr).text(),
+    ])
+    expect(stderr).toBe('')
+    expect(exitCode).toBe(0)
+  } finally {
+    await rm(outdir, { recursive: true, force: true })
+  }
+}, 15_000)
 
 function makeConfig(rootDir: string): ServerConfig {
   return {

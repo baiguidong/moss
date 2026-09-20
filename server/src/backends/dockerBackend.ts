@@ -253,15 +253,13 @@ export class DockerBackend implements SessionBackend {
     return {
       ...handle,
       interrupt() {
-        const signal = spawn(
-          'docker',
-          ['kill', '--signal=SIGINT', containerName],
-          {
-            stdio: 'ignore',
-            windowsHide: true,
-          },
-        )
-        signal.unref()
+        // Interrupt the active model turn through the existing stdio channel.
+        // Signaling container PID 1 couples a turn-level cancel to the
+        // container lifecycle. Keep cancellation on the runner protocol.
+        handle.writeStdin(`${JSON.stringify({
+          type: 'control_request',
+          request: { subtype: 'interrupt' },
+        })}\n`)
       },
       destroy(force = false) {
         if (child.killed) {

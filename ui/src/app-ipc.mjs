@@ -535,7 +535,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
             : engine === 'bing'
               ? `https://www.bing.com/search?q=${encoded}`
               : `https://www.baidu.com/s?wd=${encoded}`)
-          windows.openBrowser?.({
+          await windows.openBrowser?.({
             url,
             sessionId: sessionRecord?.id || null,
           })

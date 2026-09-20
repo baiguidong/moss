@@ -75,6 +75,35 @@ type MossToolConfig<InputSchema extends MossInputSchema> = {
   readOnly?: boolean
   browserPermission?: boolean
   userFacingName?: string
+  repeatKey?: (input: z.infer<InputSchema>) => string
+  maxCallsPerTurn?: number
+}
+
+type RepeatedToolCall = {
+  count: number
+  result?: { data: MossOutput }
+  pending?: Promise<{ data: MossOutput }>
+}
+
+const repeatedToolCallsByTurn = new WeakMap<AbortController, Map<string, RepeatedToolCall>>()
+
+function normalizeBrowserOpenRepeatKey(
+  input: { url?: string; query?: string; engine?: 'baidu' | 'google' | 'bing' },
+): string {
+  if (input.url) {
+    const rawUrl = input.url.trim()
+    try {
+      const url = new URL(
+        /^[a-z][a-z\d+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`,
+      )
+      return `url:${url.href}`
+    } catch {
+      return `url:${rawUrl}`
+    }
+  }
+
+  const query = input.query?.trim().replace(/\s+/g, ' ') ?? ''
+  return `query:${input.engine ?? 'baidu'}:${query}`
 }
 
 async function callMossHost(
@@ -174,6 +203,65 @@ function createMossTool<InputSchema extends MossInputSchema>(
       return { behavior: 'allow' as const, updatedInput: input }
     },
     async call(input: z.infer<InputSchema>, context: ToolUseContext) {
+      const turnKey = context.abortController
+      const repeatKey = config.repeatKey?.(input)
+      const maxCalls = config.maxCallsPerTurn ?? 0
+      if (turnKey && repeatKey && maxCalls > 0) {
+        let calls = repeatedToolCallsByTurn.get(turnKey)
+        if (!calls) {
+          calls = new Map()
+          repeatedToolCallsByTurn.set(turnKey, calls)
+        }
+        let repeatedCall = calls.get(repeatKey)
+        if (!repeatedCall) {
+          repeatedCall = { count: 0 }
+          calls.set(repeatKey, repeatedCall)
+        }
+
+        repeatedCall.count += 1
+        if (repeatedCall.count >= maxCalls) {
+          const error = new Error(
+            `${config.name} was called repeatedly with the same input; stopped a repeated tool-call loop.`,
+          )
+          context.abortController.abort(error)
+          throw error
+        }
+
+        if (repeatedCall.pending) {
+          try {
+            await repeatedCall.pending
+          } catch {
+            // A sequential duplicate gets one real retry after a failed call.
+          }
+        }
+
+        if (repeatedCall.result?.data.ok) {
+          return {
+            data: {
+              ...repeatedCall.result.data,
+              message: `${config.name} already succeeded with the same input. Reused the previous result; do not call it again.`,
+            },
+          }
+        }
+
+        if (context.abortController.signal.aborted) {
+          throw context.abortController.signal.reason instanceof Error
+            ? context.abortController.signal.reason
+            : new Error('Request interrupted.')
+        }
+
+        const pending = callMossHost(config.event(input), context)
+        repeatedCall.pending = pending
+        try {
+          const result = await pending
+          repeatedCall.result = result
+          return result
+        } finally {
+          if (repeatedCall.pending === pending) {
+            repeatedCall.pending = undefined
+          }
+        }
+      }
       return callMossHost(config.event(input), context)
     },
     mapToolResultToToolResultBlockParam(content: MossOutput, toolUseID: string) {
@@ -327,6 +415,8 @@ export const BrowserOpenTool = createMossTool({
     additionalProperties: false,
   },
   event: input => ({ type: 'browser_open', input }),
+  repeatKey: normalizeBrowserOpenRepeatKey,
+  maxCallsPerTurn: 3,
   readOnly: true,
   userFacingName: '浏览器',
 })

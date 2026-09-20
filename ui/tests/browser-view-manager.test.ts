@@ -10,6 +10,7 @@ import {
 
 class FakeWebContents extends EventEmitter {
   url = BROWSER_DEFAULT_URL;
+  loadFinalUrl: string | null = null;
   title = '';
   loads: string[] = [];
   loadOptions: Array<Record<string, unknown> | undefined> = [];
@@ -22,6 +23,7 @@ class FakeWebContents extends EventEmitter {
   inputEvents: Array<Record<string, unknown>> = [];
   insertedTexts: string[] = [];
   capturePageError = false;
+  loadError: Error | null = null;
   inspectionOverride: Record<string, unknown> | null | undefined = undefined;
   debuggerAttached = false;
   debugger = {
@@ -65,9 +67,10 @@ class FakeWebContents extends EventEmitter {
   };
 
   loadURL(url: string, options?: Record<string, unknown>) {
-    this.url = url;
+    this.url = this.loadFinalUrl || url;
     this.loads.push(url);
     this.loadOptions.push(options);
+    if (this.loadError) return Promise.reject(this.loadError);
     return Promise.resolve();
   }
 
@@ -133,7 +136,7 @@ class FakeView {
   setBackgroundColor(color: string) { this.background = color; }
 }
 
-function createHarness() {
+function createHarness({ loadErrorAtView = -1, loadFinalUrlAtView = -1 } = {}) {
   const views: Array<{ view: FakeView; options: Record<string, any> }> = [];
   const events: Array<{ channel: string; payload: any }> = [];
   const externalUrls: string[] = [];
@@ -156,6 +159,12 @@ function createHarness() {
   const manager = createBrowserViewManager({
     createView: (options: Record<string, any>) => {
       const view = new FakeView(options.webContents);
+      if (views.length === loadErrorAtView) {
+        view.webContents.loadError = new Error('load failed');
+      }
+      if (views.length === loadFinalUrlAtView) {
+        view.webContents.loadFinalUrl = 'https://example.com/redirected';
+      }
       views.push({ view, options });
       return view;
     },
@@ -180,6 +189,33 @@ describe('browser URL and bounds normalization', () => {
 });
 
 describe('BrowserViewManager', () => {
+  it('waits for agent-opened pages and reports navigation failures', async () => {
+    const { manager, views } = createHarness();
+    await expect(manager.openTabAndWait({
+      sessionId: 'session-agent-open',
+      url: 'https://example.com/ready',
+    })).resolves.toMatchObject({
+      tabs: expect.any(Array),
+    });
+    expect(views[1]!.view.webContents.loads).toContain('https://example.com/ready');
+
+    const redirected = createHarness({ loadFinalUrlAtView: 1 });
+    const redirectedState = await redirected.manager.openTabAndWait({
+      sessionId: 'session-agent-open',
+      url: 'https://example.com/original',
+    });
+    expect(redirectedState.tabs.find((tab: { id: string }) => (
+      tab.id === redirectedState.activeTabId
+    ))?.url)
+      .toBe('https://example.com/redirected');
+
+    const failing = createHarness({ loadErrorAtView: 1 });
+    await expect(failing.manager.openTabAndWait({
+      sessionId: 'session-agent-open',
+      url: 'https://example.com/fail',
+    })).rejects.toThrow('load failed');
+  });
+
   it('owns tab navigation and attaches only the active WebContentsView', async () => {
     const { manager, views, children } = createHarness();
     const initial = manager.getState('session-1');

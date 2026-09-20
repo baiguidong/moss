@@ -1,4 +1,5 @@
 import net from 'net'
+import { randomUUID } from 'crypto'
 import { appendFile, mkdir, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { DockerBackend } from './backends/dockerBackend.js'
@@ -11,6 +12,11 @@ import type { BackendHandle } from './backendTypes.js'
 
 type SocketWithBuffer = net.Socket & {
   __buffer?: string
+}
+
+type QueuedTurn = {
+  socket: SocketWithBuffer
+  data: string
 }
 
 async function safeUnlink(path: string): Promise<void> {
@@ -26,6 +32,26 @@ async function writeStatus(path: string, payload: Record<string, unknown>): Prom
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isUserInput(data: string): boolean {
+  for (const line of data.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const message = jsonParse(line) as { type?: unknown }
+      if (message.type === 'user') return true
+    } catch {}
+  }
+  return false
+}
+
+function getBackendMessageType(line: string): string | null {
+  try {
+    const message = jsonParse(line) as { type?: unknown }
+    return typeof message.type === 'string' ? message.type : null
+  } catch {
+    return null
+  }
 }
 
 function extractTranscriptSessionCandidate(value: unknown): {
@@ -72,6 +98,8 @@ export class SessionRunnerDaemon {
   #finalized = false
   #recentStderr: string[] = []
   #backendStartPromise: Promise<void> | null = null
+  #activeTurn: { socket: SocketWithBuffer; interrupted: boolean } | null = null
+  #queuedTurns: QueuedTurn[] = []
 
   constructor(private readonly manifest: RunnerManifest) {
     this.#store = new DirectConnectStore(manifest.config.dbPath)
@@ -171,6 +199,7 @@ export class SessionRunnerDaemon {
   }
 
   #onClient(socket: SocketWithBuffer): void {
+    let messageQueue: Promise<void> = Promise.resolve()
     this.#clients.add(socket)
     this.#clearIdleTimer()
     this.#store.setSessionLifecycle(
@@ -193,22 +222,19 @@ export class SessionRunnerDaemon {
         if (idx < 0) break
         const line = socket.__buffer.slice(0, idx)
         socket.__buffer = socket.__buffer.slice(idx + 1)
-        void this.#handleClientLine(socket, line).catch(error => {
-          this.#send(socket, {
-            type: 'error',
-            message: error instanceof Error ? error.message : String(error),
+        messageQueue = messageQueue
+          .then(() => this.#handleClientLine(socket, line))
+          .catch(error => {
+            this.#send(socket, {
+              type: 'error',
+              message: error instanceof Error ? error.message : String(error),
+            })
           })
-        })
       }
     })
-    socket.on('close', () => {
-      this.#clients.delete(socket)
-      this.#armIdleTimer()
-    })
-    socket.on('error', () => {
-      this.#clients.delete(socket)
-      this.#armIdleTimer()
-    })
+    const detach = () => this.#detachClient(socket)
+    socket.on('close', detach)
+    socket.on('error', detach)
   }
 
   async #handleClientLine(socket: SocketWithBuffer, line: string): Promise<void> {
@@ -238,13 +264,84 @@ export class SessionRunnerDaemon {
     }
     if (parsed.type === 'stdin') {
       await this.#ensureBackendStarted()
-      this.#handle?.writeStdin(parsed.data)
+      if (isUserInput(parsed.data)) {
+        this.#queuedTurns.push({ socket, data: parsed.data })
+        this.#startNextTurn()
+      } else {
+        this.#handle?.writeStdin(parsed.data)
+      }
+      return
     }
     if (parsed.type === 'interrupt') {
-      if (this.#handle) {
+      const queuedForClient = this.#queuedTurns.filter(
+        turn => turn.socket === socket,
+      )
+      if (queuedForClient.length > 0) {
+        this.#queuedTurns = this.#queuedTurns.filter(
+          turn => turn.socket !== socket,
+        )
+        for (const _turn of queuedForClient) {
+          this.#sendInterruptedResult(socket)
+        }
+      }
+      if (
+        this.#activeTurn?.socket === socket &&
+        !this.#activeTurn.interrupted &&
+        this.#handle
+      ) {
+        this.#activeTurn.interrupted = true
         this.#handle.interrupt()
       }
+      return
     }
+  }
+
+  #detachClient(socket: SocketWithBuffer): void {
+    if (!this.#clients.delete(socket)) return
+    this.#queuedTurns = this.#queuedTurns.filter(turn => turn.socket !== socket)
+    if (this.#activeTurn?.socket === socket && !this.#activeTurn.interrupted) {
+      this.#activeTurn.interrupted = true
+      this.#handle?.interrupt()
+    }
+    this.#armIdleTimer()
+  }
+
+  #startNextTurn(): void {
+    if (this.#activeTurn || !this.#handle) return
+    while (this.#queuedTurns.length > 0) {
+      const next = this.#queuedTurns.shift()!
+      if (next.socket.destroyed) continue
+      this.#activeTurn = { socket: next.socket, interrupted: false }
+      this.#handle.writeStdin(next.data)
+      return
+    }
+  }
+
+  #sendInterruptedResult(socket: SocketWithBuffer): void {
+    this.#send(socket, {
+      type: 'stdout',
+      line: `${jsonStringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        duration_ms: 0,
+        duration_api_ms: 0,
+        num_turns: 0,
+        stop_reason: null,
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        errors: ['Request interrupted by user before execution.'],
+        uuid: randomUUID(),
+        session_id: this.manifest.session.transcriptSessionId,
+      })}\n`,
+    })
   }
 
   async #ensureBackendStarted(): Promise<void> {
@@ -307,7 +404,17 @@ export class SessionRunnerDaemon {
         this.#store.touchAttemptHeartbeat(this.manifest.attempt.attemptId)
         this.#store.touchSessionActivity(this.manifest.session.sessionId)
         void appendFile(this.manifest.attempt.stdoutLogPath, line, 'utf8').catch(() => {})
-        this.#broadcast({ type: 'stdout', line })
+        const messageType = getBackendMessageType(line)
+        const activeTurn = this.#activeTurn
+        if (activeTurn && messageType !== 'control_response') {
+          this.#send(activeTurn.socket, { type: 'stdout', line })
+        } else {
+          this.#broadcast({ type: 'stdout', line })
+        }
+        if (activeTurn && messageType === 'result') {
+          this.#activeTurn = null
+          this.#startNextTurn()
+        }
       })
 
       handle.onStderrLine(line => {
@@ -430,7 +537,9 @@ export class SessionRunnerDaemon {
   }
 
   #send(socket: SocketWithBuffer, message: RunnerServerMessage): void {
-    socket.write(`${jsonStringify(message)}\n`)
+    if (!socket.destroyed) {
+      socket.write(`${jsonStringify(message)}\n`)
+    }
   }
 
   #clearIdleTimer(): void {

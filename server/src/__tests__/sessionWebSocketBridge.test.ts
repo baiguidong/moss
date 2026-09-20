@@ -29,7 +29,7 @@ describe('session WebSocket control request routing', () => {
     expect(consumeClientControlResponse(response, firstClient)).toBe(false)
   })
 
-  test('does not track interrupt requests that have no response', () => {
+  test('does not track interrupt requests acknowledged by the WebSocket bridge', () => {
     const pending = new Set<string>()
     trackClientControlRequest({
       type: 'control_request',

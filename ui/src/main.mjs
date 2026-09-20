@@ -10,6 +10,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createUsageLedger } from './usage-ledger.mjs';
+import { materializeRemoteBrowserFile } from './remote-browser-file.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
 import { createSessionSearchIndex } from './session-search-index.mjs';
 import { createWorkspaceCatalog } from './workspace-catalog.mjs';
@@ -2211,7 +2212,7 @@ async function archiveProject(projectId) {
       activeWorkerCount: getProjectWorkerTasks(sessionRecord).filter(isActiveProjectWorker).length,
     });
     try {
-      sessionRecord.runtime?.abort();
+      await Promise.resolve(sessionRecord.runtime?.abort?.());
     } catch {}
     if (wasActive) {
       await updateProjectRootTaskLifecycle(next.id, sessionRecord.id, {
@@ -3693,6 +3694,12 @@ function createRemoteDirectRuntime({
           return activeManager;
         }
 
+        if (activeManager) {
+          throw new Error(
+            'Remote session is reconnecting. Wait for it to reconnect before sending a new message.',
+          );
+        }
+
         managerConnectPromise = new Promise((resolve, reject) => {
           const manager = new mod.DirectConnectSessionManager(config, {
             onConnected: () => {
@@ -3725,6 +3732,14 @@ function createRemoteDirectRuntime({
               }
             },
             onAppEvent,
+            onReconnecting: () => {
+              const turn = currentTurn;
+              if (turn && !turn.finished) {
+                turn.fail(new Error(
+                  'Remote connection was interrupted. The active turn was canceled; reconnect before sending it again.',
+                ));
+              }
+            },
             onDisconnected: () => {
               const turn = currentTurn;
               activeManager = null;
@@ -3784,8 +3799,9 @@ function createRemoteDirectRuntime({
         currentTurn = null;
       }
     },
-    abort() {
-      activeManager?.sendInterrupt?.();
+    async abort() {
+      if (!activeManager?.sendInterrupt) return;
+      await activeManager.sendInterrupt();
     },
     async setPermissionMode(mode) {
       if (activeManager?.isConnected?.()) {
@@ -7738,7 +7754,7 @@ function disposeSessionRuntime(sessionRecord) {
       sessionRecord.sessionTaskUnsubscribe?.();
     } catch {}
     try {
-      sessionRecord.runtime.abort();
+      void Promise.resolve(sessionRecord.runtime.abort()).catch(() => {});
     } catch {}
     sessionRecord.runtime = null;
   }
@@ -8554,7 +8570,7 @@ async function shutdownSessionAgentTeam(sessionRecord) {
   if (!hasActiveAgentTeam(sessionRecord)) return false;
   const operation = (async () => {
     try {
-      sessionRecord.runtime?.abort?.();
+      await Promise.resolve(sessionRecord.runtime?.abort?.());
       await sessionRecord.runtime?.shutdownAgentTeam?.();
       return true;
     } catch (error) {
@@ -8694,12 +8710,15 @@ const mossAppEventHandler = createMossAppEventHandler(
     launchApp: (name) => {
       launchAppWindow(getPublishedApp(name), { mode: 'published' })
     },
-    openBrowser: (payload) => {
-      const state = browserViewManager?.openTab(payload);
+    openBrowser: async (payload) => {
+      const opening = browserViewManager?.openTabAndWait
+        ? browserViewManager.openTabAndWait(payload)
+        : Promise.resolve(browserViewManager?.openTab(payload));
       emitToRenderer('browser:open', {
         ...payload,
-        alreadyOpened: Boolean(state),
+        alreadyOpened: Boolean(browserViewManager),
       });
+      return await opening;
     },
   },
   {
@@ -8969,6 +8988,45 @@ async function handleMossHostEvent(event, sessionRecord) {
       );
       const result = await listAgentMail(connection, 'outbox', { limit: event.input?.limit });
       return { ok: true, messages: Array.isArray(result?.messages) ? result.messages : [] };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  if (
+    event?.type === 'browser_open'
+    && sessionRecord?.agentMode === 'remote-direct'
+    && typeof event.input?.url === 'string'
+    && event.input.url.trim().toLowerCase().startsWith('file:')
+  ) {
+    try {
+      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      const materialized = await materializeRemoteBrowserFile({
+        rawUrl: event.input.url,
+        remoteWorkspace: sessionRecord.remoteWorkspace,
+        cacheDir: REMOTE_PREVIEW_CACHE_DIR,
+        sessionId: sessionRecord.underlyingSessionId,
+        download: (remotePath, destinationPath) => downloadRemoteDirectWorkspaceFile({
+          serverUrl,
+          authToken,
+          sessionId: sessionRecord.underlyingSessionId,
+          filePath: remotePath,
+          destinationPath,
+        }),
+      });
+      if (!materialized) {
+        return { ok: false, error: 'Remote browser file URL could not be resolved.' };
+      }
+      const result = await mossAppEventHandler({
+        ...event,
+        input: { ...event.input, url: materialized.localUrl },
+      }, sessionRecord);
+      return result?.ok
+        ? {
+            ...result,
+            previewUrl: event.input.url,
+            message: 'The remote workspace file was downloaded and opened in the local Moss browser.',
+          }
+        : result;
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -10102,7 +10160,7 @@ async function sendPromptFromFeishu(sessionId, prompt) {
 async function abortSessionFromFeishu(sessionId) {
   const sessionRecord = sessions.get(sessionId);
   if (!toFeishuSessionOption(sessionRecord)) throw new Error('The selected Moss session is not writable.');
-  sessionRecord.runtime?.abort();
+  await Promise.resolve(sessionRecord.runtime?.abort?.());
   await rejectPendingQuestionRequestsForSession(
     sessionRecord.id,
     'Question canceled because the session was aborted from Feishu.',
@@ -12342,7 +12400,7 @@ async function deleteSessionRecordById(sessionId) {
     projectTaskCancellationRequests.add(sessionRecord.id);
   }
   try {
-    sessionRecord.runtime?.abort();
+    await Promise.resolve(sessionRecord.runtime?.abort?.());
   } catch {}
   sessionRecord.deleted = true;
   const subAgentSyncTimer = subAgentSyncTimers.get(sessionRecord.id);
@@ -12514,7 +12572,7 @@ ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
   if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
     projectTaskCancellationRequests.add(sessionRecord.id);
   }
-  runtime?.abort();
+  await Promise.resolve(runtime?.abort?.());
   if (typeof runtime?.stopTask === 'function') {
     await Promise.all(runningWorkflowIds.map((taskId) => runtime.stopTask(taskId).catch(() => {})));
   }

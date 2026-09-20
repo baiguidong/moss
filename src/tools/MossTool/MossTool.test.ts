@@ -95,6 +95,85 @@ describe('split Moss host tools', () => {
     expect(block.content).not.toContain('cG5n')
   })
 
+  test('deduplicates repeated browser opens and aborts a same-turn loop', async () => {
+    const emitted: MossAppEvent[] = []
+    const abortController = new AbortController()
+    const context = {
+      options: {},
+      abortController,
+      emitAppEvent: async (event: MossAppEvent) => {
+        emitted.push(event)
+        return { ok: true, previewUrl: 'https://www.baidu.com' }
+      },
+    } as unknown as ToolUseContext
+    const input = { url: 'https://www.baidu.com' }
+
+    const first = await BrowserOpenTool.call(input, context)
+    const second = await BrowserOpenTool.call(input, context)
+
+    expect(first.data.ok).toBe(true)
+    expect(second.data.message).toContain('already succeeded')
+    expect(emitted).toHaveLength(1)
+    await expect(BrowserOpenTool.call(input, context)).rejects.toThrow(
+      'stopped a repeated tool-call loop',
+    )
+    expect(abortController.signal.aborted).toBe(true)
+    expect(emitted).toHaveLength(1)
+  })
+
+  test('allows one browser-open retry after a failure, then aborts the loop', async () => {
+    const emitted: MossAppEvent[] = []
+    const abortController = new AbortController()
+    const context = {
+      options: {},
+      abortController,
+      emitAppEvent: async (event: MossAppEvent) => {
+        emitted.push(event)
+        return { ok: false, error: 'page load failed' }
+      },
+    } as unknown as ToolUseContext
+
+    const first = await BrowserOpenTool.call({ url: 'https://example.com' }, context)
+    const second = await BrowserOpenTool.call({ url: 'https://example.com/' }, context)
+
+    expect(first.data).toMatchObject({ ok: false, error: 'page load failed' })
+    expect(second.data).toMatchObject({ ok: false, error: 'page load failed' })
+    expect(emitted).toHaveLength(2)
+    await expect(
+      BrowserOpenTool.call({ url: 'HTTPS://EXAMPLE.COM:443/' }, context),
+    ).rejects.toThrow('stopped a repeated tool-call loop')
+    expect(abortController.signal.aborted).toBe(true)
+    expect(emitted).toHaveLength(2)
+  })
+
+  test('coalesces concurrent identical browser opens', async () => {
+    const emitted: MossAppEvent[] = []
+    const abortController = new AbortController()
+    let finishOpen: ((result: { ok: true; previewUrl: string }) => void) | undefined
+    const openResult = new Promise<{ ok: true; previewUrl: string }>(resolve => {
+      finishOpen = resolve
+    })
+    const context = {
+      options: {},
+      abortController,
+      emitAppEvent: async (event: MossAppEvent) => {
+        emitted.push(event)
+        return openResult
+      },
+    } as unknown as ToolUseContext
+
+    const first = BrowserOpenTool.call({ url: 'https://www.baidu.com' }, context)
+    const second = BrowserOpenTool.call({ url: 'HTTPS://WWW.BAIDU.COM:443/' }, context)
+    expect(emitted).toHaveLength(1)
+    finishOpen?.({ ok: true, previewUrl: 'https://www.baidu.com/' })
+
+    await expect(first).resolves.toMatchObject({ data: { ok: true } })
+    await expect(second).resolves.toMatchObject({
+      data: { ok: true, message: expect.stringContaining('already succeeded') },
+    })
+    expect(emitted).toHaveLength(1)
+  })
+
   test('keeps screenshot and generated-image intents separate', async () => {
     expect(await BrowserSnapshotTool.prompt()).toContain('Never use image_generate')
     expect(await BrowserSnapshotTool.prompt()).toContain('without inlining image bytes')

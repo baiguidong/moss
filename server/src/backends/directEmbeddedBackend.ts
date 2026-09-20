@@ -72,6 +72,7 @@ type DirectSessionOptions = {
 type DirectSession = {
   send(
     text: string | Array<{ type: string; [key: string]: unknown }>,
+    signal?: AbortSignal,
   ): AsyncGenerator<unknown>
   abort(): void
   dispose(): void
@@ -368,6 +369,8 @@ class DirectEmbeddedHandle implements BackendHandle {
     }
   >()
   #seenUserUuids = new Set<string>()
+  #userMessageQueue: Promise<void> | null = null
+  #activeTurnAbortController: AbortController | null = null
 
   constructor(
     private readonly session: DirectSession,
@@ -398,7 +401,24 @@ class DirectEmbeddedHandle implements BackendHandle {
   }
 
   interrupt(): void {
+    this.#activeTurnAbortController?.abort(
+      new Error('Request interrupted by user.'),
+    )
     this.session.abort()
+    for (const pending of this.#pendingPermissions.values()) {
+      pending.resolve({
+        behavior: 'deny',
+        message: 'Request interrupted by user.',
+      })
+    }
+    this.#pendingPermissions.clear()
+    for (const pending of this.#pendingAppEvents.values()) {
+      pending.resolve({
+        ok: false,
+        error: 'Request interrupted by user.',
+      })
+    }
+    this.#pendingAppEvents.clear()
   }
 
   onStdoutLine(listener: StdoutListener): () => void {
@@ -485,14 +505,59 @@ class DirectEmbeddedHandle implements BackendHandle {
       }
     }
 
+    const queued = this.#userMessageQueue
+      ? this.#userMessageQueue.then(() => this.#runUserMessage(content))
+      : this.#runUserMessage(content)
+    const settled = queued
+      .catch(error => {
+        this.#emitStderr(errorMessage(error))
+      })
+    this.#userMessageQueue = settled
+    void settled.finally(() => {
+      if (this.#userMessageQueue === settled) {
+        this.#userMessageQueue = null
+      }
+    })
+  }
+
+  async #runUserMessage(
+    content: string | Array<{ type: string; [key: string]: unknown }>,
+  ): Promise<void> {
+    if (this.#disposed) {
+      return
+    }
     const startedAt = Date.now()
+    const abortController = new AbortController()
+    this.#activeTurnAbortController = abortController
+    let emittedResult = false
     try {
-      for await (const message of this.session.send(content)) {
+      for await (const message of this.session.send(
+        content,
+        abortController.signal,
+      )) {
+        if (isJsonObject(message) && message.type === 'result') {
+          emittedResult = true
+        }
         this.#emitStdout(message as unknown as JsonObject)
+      }
+      if (abortController.signal.aborted && !emittedResult) {
+        this.#emitStdout(
+          createErrorResult(
+            this.sessionId,
+            startedAt,
+            abortController.signal.reason ?? 'Request interrupted by user.',
+          ),
+        )
       }
     } catch (error) {
       this.#emitStderr(errorMessage(error))
-      this.#emitStdout(createErrorResult(this.sessionId, startedAt, error))
+      if (!emittedResult) {
+        this.#emitStdout(createErrorResult(this.sessionId, startedAt, error))
+      }
+    } finally {
+      if (this.#activeTurnAbortController === abortController) {
+        this.#activeTurnAbortController = null
+      }
     }
   }
 
@@ -548,12 +613,30 @@ class DirectEmbeddedHandle implements BackendHandle {
       return false
     }
     const request = value.request
-    if (!isJsonObject(request) || request.subtype !== 'set_permission_mode') {
+    if (!isJsonObject(request)) {
       return true
     }
 
     const requestId =
       typeof value.request_id === 'string' ? value.request_id : ''
+    if (request.subtype === 'interrupt') {
+      this.interrupt()
+      if (requestId) {
+        this.#emitStdout({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: requestId,
+            response: {},
+          },
+        })
+      }
+      return true
+    }
+    if (request.subtype !== 'set_permission_mode') {
+      return true
+    }
+
     const mode = request.mode
     if (
       !requestId ||

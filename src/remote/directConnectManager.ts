@@ -9,7 +9,6 @@ import type {
 } from '../entrypoints/sdk/controlTypes.js'
 import type { MossAppEvent, MossAppEventResult } from '../Tool.js'
 import type { ExternalPermissionMode } from '../types/permissions.js'
-import { CircularBuffer } from '../utils/CircularBuffer.js'
 import { logForDebugging } from '../utils/debug.js'
 import { errorMessage } from '../utils/errors.js'
 import { getWebSocketTLSOptions } from '../utils/mtls.js'
@@ -23,7 +22,6 @@ import {
   DirectConnectError,
 } from './createDirectConnectSession.js'
 
-const DEFAULT_MAX_REPLAY_MESSAGES = 20
 const DEFAULT_BASE_RECONNECT_DELAY_MS = 1_000
 const DEFAULT_MAX_RECONNECT_DELAY_MS = 8_000
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 8
@@ -36,11 +34,6 @@ type WebSocketState =
   | 'connected'
   | 'reconnecting'
   | 'closed'
-
-type BufferedMessage = {
-  line: string
-  uuid: string
-}
 
 type PendingControlRequest = {
   resolve: () => void
@@ -110,9 +103,6 @@ export class DirectConnectSessionManager {
   private manuallyDisconnected = false
   private hasEverConnected = false
   private isBunWs = false
-  private readonly replayBuffer = new CircularBuffer<BufferedMessage>(
-    DEFAULT_MAX_REPLAY_MESSAGES,
-  )
   private readonly pendingControlRequests = new Map<string, PendingControlRequest>()
 
   constructor(
@@ -237,8 +227,6 @@ export class DirectConnectSessionManager {
     this.lastPingTickAt = Date.now()
 
     this.startPingInterval()
-    this.replayBufferedMessages()
-
     if (wasReconnecting) {
       logForDebugging(
         `[DirectConnect] Reattached to session ${this.config.sessionId}`,
@@ -453,23 +441,6 @@ export class DirectConnectSessionManager {
     )
   }
 
-  private replayBufferedMessages(): void {
-    const buffered = this.replayBuffer.toArray()
-    if (buffered.length === 0) {
-      return
-    }
-
-    logForDebugging(
-      `[DirectConnect] Replaying ${buffered.length} buffered message(s) for session ${this.config.sessionId}`,
-    )
-
-    for (const { line } of buffered) {
-      if (!this.sendLine(line)) {
-        break
-      }
-    }
-  }
-
   private sendLine(line: string): boolean {
     if (!this.ws || this.state !== 'connected') {
       return false
@@ -504,13 +475,11 @@ export class DirectConnectSessionManager {
       uuid,
     })
 
-    this.replayBuffer.add({ line, uuid })
-
     if (this.state !== 'connected') {
       logForDebugging(
-        `[DirectConnect] Queued user message ${uuid} while socket state=${this.state}`,
+        `[DirectConnect] Rejected user message ${uuid} while socket state=${this.state}`,
       )
-      return this.state === 'connecting' || this.state === 'reconnecting'
+      return false
     }
 
     return this.sendLine(line)
@@ -593,19 +562,32 @@ export class DirectConnectSessionManager {
     this.sendLine(line)
   }
 
-  sendInterrupt(): void {
+  sendInterrupt(): Promise<void> {
     if (!this.ws || this.state !== 'connected') {
-      return
+      return Promise.reject(new Error('Remote session is not connected.'))
     }
 
+    const requestId = randomUUID()
     const line = jsonStringify({
       type: 'control_request',
-      request_id: randomUUID(),
+      request_id: requestId,
       request: {
         subtype: 'interrupt',
       },
     })
-    this.sendLine(line)
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('Timed out while interrupting the remote turn.'))
+      }, 10_000)
+      this.pendingControlRequests.set(requestId, { resolve, reject, timeout })
+      if (!this.sendLine(line)) {
+        clearTimeout(timeout)
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('Failed to interrupt the remote turn.'))
+      }
+    })
   }
 
   setPermissionMode(mode: ExternalPermissionMode): Promise<void> {

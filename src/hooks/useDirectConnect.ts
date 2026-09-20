@@ -193,6 +193,8 @@ export function useDirectConnect({
           `[useDirectConnect] Reconnecting (${attempt}/${maxAttempts})`,
         )
         isConnectedRef.current = false
+        setIsLoading(false)
+        setToolUseConfirmQueue([])
         setMessages(prev => [
           ...prev,
           {
@@ -249,8 +251,11 @@ export function useDirectConnect({
       }
 
       setIsLoading(true)
-
-      return manager.sendMessage(content, opts)
+      const sent = manager.sendMessage(content, opts)
+      if (!sent) {
+        setIsLoading(false)
+      }
+      return sent
     },
     [setIsLoading],
   )
@@ -258,7 +263,11 @@ export function useDirectConnect({
   // Cancel the current request
   const cancelRequest = useCallback(() => {
     // Send interrupt signal to the server
-    managerRef.current?.sendInterrupt()
+    void managerRef.current?.sendInterrupt().catch(error => {
+      logForDebugging(
+        `[useDirectConnect] Failed to interrupt remote turn: ${error.message}`,
+      )
+    })
 
     setIsLoading(false)
   }, [setIsLoading])
