@@ -1131,6 +1131,10 @@ export type StoredApp = {
   hasBackend?: boolean;
   enabled?: boolean;
   serverEnabled?: boolean;
+  grants?: string[];
+  serverGrants?: string[];
+  trust?: { status: 'unsigned' | 'untrusted' | 'trusted'; publisher?: { id: string; name: string } | null; keyId?: string } | null;
+  serverTrust?: { status: 'unsigned' | 'untrusted' | 'trusted'; publisher?: { id: string; name: string } | null; keyId?: string } | null;
   serverVersion?: string | null;
   remoteInstalled?: boolean;
   remoteOnly?: boolean;
@@ -1143,17 +1147,26 @@ export type StoredApp = {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
-    protocols?: Array<'moss.channel/v1'>;
+    protocols?: string[];
     actions: Array<{ name: string }>;
   } | null;
   serverBackend?: {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
-    protocols?: Array<'moss.channel/v1'>;
+    protocols?: string[];
     actions: Array<{ name: string }>;
   } | null;
   permissions?: string[];
+  serverPermissions?: string[];
+  contributes?: {
+    views?: Array<{ id: string; title: string; route: string; location: 'sidebar' | 'more' | 'hidden'; icon?: string; order?: number; permission?: string }>;
+    settings?: Array<Record<string, any>>;
+    commands?: Array<Record<string, any>>;
+    tools?: Array<Record<string, any>>;
+    resourceProviders?: Array<Record<string, any>>;
+    widgets?: Array<Record<string, any>>;
+  } | null;
   configuration?: {
     schema?: Record<string, any> | null;
     secrets?: Record<string, any> | null;
@@ -1984,7 +1997,10 @@ declare global {
       installAppOnServer: (payload: { appId: string; version: string }) => Promise<any>;
       uninstallAppOnServer: (payload: { appId: string; deleteData?: boolean; deleteCredentials?: boolean }) => Promise<any>;
       getAppRuntimeState: (payload: { appId: string; target?: 'desktop' | 'server' }) => Promise<any>;
+      listAppContributions: (payload?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean }) => Promise<Record<string, any[]>>;
+      invokeAppContribution: (payload: { kind: 'commands' | 'resourceProviders'; id: string; input?: unknown; instanceId?: string; requestId?: string; timeoutMs?: number }) => Promise<unknown>;
       setAppEnabled: (payload: { appId: string; enabled: boolean; target?: 'desktop' | 'server' }) => Promise<any>;
+      setAppGrants: (payload: { appId: string; grants: string[]; target?: 'desktop' | 'server' }) => Promise<any>;
       listAppInstances: (payload: { appId: string; target?: 'desktop' | 'server' }) => Promise<AppInstance[]>;
       createAppInstance: (payload: { appId: string; displayName: string; config?: Record<string, any>; secrets?: Record<string, string>; enabled?: boolean; target?: 'desktop' | 'server' }) => Promise<AppInstance>;
       updateAppInstance: (payload: { appId: string; instanceId: string; displayName?: string; config?: Record<string, any>; secrets?: Record<string, string>; target?: 'desktop' | 'server' }) => Promise<AppInstance>;

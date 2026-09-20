@@ -18,8 +18,10 @@ type EmbeddedAppSession = {
 
 export function EmbeddedAppView({
   appName,
+  route = '',
 }: {
   appName: string;
+  route?: string;
 }) {
   const webviewRef = React.useRef<any>(null);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
@@ -49,7 +51,7 @@ export function EmbeddedAppView({
       }
       setSession({
         embedId: result.embedId,
-        url: result.url,
+        url: route ? `${result.url.split('#', 1)[0]}${route}` : result.url,
         preload: result.preload,
         app: result.app,
       });
@@ -66,7 +68,7 @@ export function EmbeddedAppView({
         void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose });
       }
     };
-  }, [appName, reloadKey]);
+  }, [appName, reloadKey, route]);
 
   React.useEffect(() => {
     if (!session) return;

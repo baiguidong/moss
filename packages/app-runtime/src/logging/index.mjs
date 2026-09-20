@@ -11,6 +11,11 @@ function redactString(value, secretValues = []) {
   return result
 }
 
+function ownerLogSegment(owner) {
+  if (!owner || owner.key === 'host') return null
+  return Buffer.from(String(owner.key), 'utf8').toString('base64url')
+}
+
 export function redactAppValue(value, secretValues = []) {
   if (typeof value === 'string') return redactString(value, secretValues)
   if (Array.isArray(value)) return value.map((item) => redactAppValue(item, secretValues))
@@ -34,17 +39,20 @@ export class AppLogStore {
     this.queues = new Map()
   }
 
-  logPath(appId, instanceId) {
-    return path.join(this.logsDir, appId, `${encodeURIComponent(instanceId)}.jsonl`)
+  logPath(appId, instanceId, owner) {
+    const ownerSegment = ownerLogSegment(owner)
+    return ownerSegment
+      ? path.join(this.logsDir, 'owners', ownerSegment, appId, `${encodeURIComponent(instanceId)}.jsonl`)
+      : path.join(this.logsDir, appId, `${encodeURIComponent(instanceId)}.jsonl`)
   }
 
   append(entry) {
-    const key = `${entry.appId}:${entry.instanceId}`
+    const key = `${entry.owner?.key || 'host'}:${entry.appId}:${entry.instanceId}`
     const operation = (this.queues.get(key) || Promise.resolve()).then(async () => {
-      const filePath = this.logPath(entry.appId, entry.instanceId)
+      const filePath = this.logPath(entry.appId, entry.instanceId, entry.owner)
       await fsp.mkdir(path.dirname(filePath), { recursive: true })
       await this.rotateIfNeeded(filePath)
-      const secrets = entry.redacted ? [] : await this.secretProvider(entry.appId, entry.instanceId)
+      const secrets = entry.redacted ? [] : await this.secretProvider(entry.appId, entry.instanceId, entry.owner)
       const { redacted: _redacted, ...safeEntry } = entry
       const record = redactAppValue({ timestamp: Date.now(), level: 'info', ...safeEntry }, secrets)
       await fsp.appendFile(filePath, `${JSON.stringify(record)}\n`, { mode: 0o600 })
@@ -71,7 +79,7 @@ export class AppLogStore {
 
   async list(appId, instanceId, options = {}) {
     const limit = Math.max(1, Math.min(Number(options.limit) || 500, 5000))
-    const filePath = this.logPath(appId, instanceId)
+    const filePath = this.logPath(appId, instanceId, options.owner)
     const paths = []
     for (let index = this.maxFiles; index >= 1; index -= 1) paths.push(`${filePath}.${index}`)
     paths.push(filePath)
@@ -83,7 +91,11 @@ export class AppLogStore {
     })
   }
 
-  async removeApp(appId) {
-    await fsp.rm(path.join(this.logsDir, appId), { recursive: true, force: true })
+  async removeApp(appId, options = {}) {
+    const ownerSegment = ownerLogSegment(options.owner)
+    await fsp.rm(
+      ownerSegment ? path.join(this.logsDir, 'owners', ownerSegment, appId) : path.join(this.logsDir, appId),
+      { recursive: true, force: true },
+    )
   }
 }

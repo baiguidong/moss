@@ -1,124 +1,62 @@
 import {
   APP_ERROR_CODES,
-  AppServiceError,
+  CHANNEL_BACKEND_EVENT_PERMISSIONS,
+  CHANNEL_HOST_METHOD_PERMISSIONS,
   MOSS_CHANNEL_PROTOCOL,
-  getChannelHostMethodPermission,
-  requireChannelPermission,
-  validateChannelHostMethod,
+  validateChannelBackendEventData,
   validateChannelHostInput,
-  validateChannelProtocol,
 } from '../../../app-sdk/src/index.mjs'
+import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
 
-function channelKey(request) {
-  return `${request.appId}:${request.instanceId}`
-}
-
-function cancellationError(signal) {
-  return signal.reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Channel Host request canceled')
-}
-
-function cancellation(signal) {
-  if (!signal) return null
-  let rejectCancellation
-  const onAbort = () => rejectCancellation(cancellationError(signal))
-  const promise = new Promise((_, reject) => { rejectCancellation = reject })
-  signal.addEventListener('abort', onAbort, { once: true })
+export function createChannelProtocolDefinition(options = {}) {
   return {
-    promise,
-    dispose: () => signal.removeEventListener('abort', onAbort),
+    protocol: MOSS_CHANNEL_PROTOCOL,
+    methods: Object.fromEntries(Object.entries(CHANNEL_HOST_METHOD_PERMISSIONS).map(([name, permission]) => [name, {
+      permission,
+      validateInput: (input) => validateChannelHostInput(name, input),
+    }])),
+    events: Object.fromEntries(Object.entries(CHANNEL_BACKEND_EVENT_PERMISSIONS).map(([name, permission]) => [name, {
+      permission,
+      validateInput: (data) => validateChannelBackendEventData(name, data),
+    }])),
+    handleRequest: options.handleRequest,
+    errorCodes: {
+      unavailable: APP_ERROR_CODES.channelUnavailable,
+      protocol: APP_ERROR_CODES.channelProtocol,
+    },
   }
 }
 
 export class AppChannelHost {
   constructor(options = {}) {
-    this.handlers = new Map()
-    this.fallback = typeof options.handleRequest === 'function' ? options.handleRequest : null
-    this.activeByInstance = new Map()
-    this.activeTotal = 0
-    this.maxConcurrentPerInstance = Math.max(1, Number(options.maxConcurrentPerInstance) || 32)
-    this.maxConcurrentTotal = Math.max(1, Number(options.maxConcurrentTotal) || 512)
-    for (const [method, handler] of Object.entries(options.handlers || {})) {
-      this.register(method, handler)
-    }
+    this.registry = options.registry || new AppHostCapabilityRegistry({
+      maxConcurrentPerInstance: options.maxConcurrentPerInstance,
+      maxConcurrentTotal: options.maxConcurrentTotal,
+      authorize: options.authorize,
+    })
+    this.disposeProtocol = this.registry.registerProtocol(createChannelProtocolDefinition({
+      handleRequest: options.handleRequest,
+    }))
+    for (const [method, handler] of Object.entries(options.handlers || {})) this.register(method, handler)
   }
 
+  get activeByInstance() { return this.registry.activeByInstance }
+  get activeTotal() { return this.registry.activeTotal }
+
   register(method, handler) {
-    const normalized = validateChannelHostMethod(method)
-    if (typeof handler !== 'function') throw new TypeError('Channel Host handler must be a function')
-    if (this.handlers.has(normalized)) {
-      throw new TypeError(`Channel Host handler is already registered: ${normalized}`)
-    }
-    this.handlers.set(normalized, handler)
-    return () => {
-      if (this.handlers.get(normalized) === handler) this.handlers.delete(normalized)
-    }
+    return this.registry.registerHandler(MOSS_CHANNEL_PROTOCOL, method, handler)
   }
 
   listMethods() {
-    return [...this.handlers.keys()]
+    return this.registry.listMethods(MOSS_CHANNEL_PROTOCOL).filter((method) =>
+      this.registry.handlers.get(MOSS_CHANNEL_PROTOCOL)?.has(method))
   }
 
-  async dispatch(request) {
-    const protocol = validateChannelProtocol(request.protocol)
-    const method = validateChannelHostMethod(request.method)
-    const input = validateChannelHostInput(method, request.input)
-    if (!Array.isArray(request.protocols) || !request.protocols.includes(MOSS_CHANNEL_PROTOCOL)) {
-      throw new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        `App Backend does not declare protocol: ${MOSS_CHANNEL_PROTOCOL}`,
-      )
-    }
-    const permission = getChannelHostMethodPermission(method)
-    requireChannelPermission(request.permissions, permission)
-    if (request.signal?.aborted) throw cancellationError(request.signal)
+  dispatch(request) {
+    return this.registry.dispatch(request)
+  }
 
-    const key = channelKey(request)
-    const activeForInstance = this.activeByInstance.get(key) || 0
-    if (
-      activeForInstance >= this.maxConcurrentPerInstance
-      || this.activeTotal >= this.maxConcurrentTotal
-    ) {
-      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host concurrency limit reached')
-    }
-    const handler = this.handlers.get(method) || this.fallback
-    if (!handler) {
-      throw new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        `Channel Host method is unavailable: ${method}`,
-      )
-    }
-    this.activeByInstance.set(key, activeForInstance + 1)
-    this.activeTotal += 1
-    let released = false
-    const release = () => {
-      if (released) return
-      released = true
-      const next = (this.activeByInstance.get(key) || 1) - 1
-      if (next <= 0) this.activeByInstance.delete(key)
-      else this.activeByInstance.set(key, next)
-      this.activeTotal = Math.max(0, this.activeTotal - 1)
-    }
-    const context = Object.freeze({
-      appId: request.appId,
-      version: request.version,
-      instanceId: request.instanceId,
-      generation: request.generation,
-      target: request.target,
-      requestId: request.requestId,
-      protocol,
-      method,
-      permission,
-      signal: request.signal,
-    })
-    const operation = Promise.resolve().then(() => {
-      if (request.signal?.aborted) throw cancellationError(request.signal)
-      return handler(input, context)
-    }).finally(release)
-    const canceled = cancellation(request.signal)
-    try {
-      return await (canceled ? Promise.race([operation, canceled.promise]) : operation)
-    } finally {
-      canceled?.dispose()
-    }
+  prepareEvent(request) {
+    return this.registry.prepareEvent({ ...request, protocol: MOSS_CHANNEL_PROTOCOL })
   }
 }

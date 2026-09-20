@@ -25,6 +25,7 @@ describe('App manifest V2', () => {
     expect(() => validateAppManifest({ ...valid, ui: { entry: 'C:\\escape.html' } })).toThrow()
     expect(() => validateAppManifest({ ...valid, displayName: '   ' })).toThrow()
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.0.0' })).toThrow()
+    expect(() => validateAppManifest({ ...valid, permissions: ['Invalid Permission'] })).toThrow(/permissions/)
     expect(() => validateAppManifest({
       ...valid,
       ui: undefined,
@@ -50,7 +51,7 @@ describe('App manifest V2', () => {
     expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
   })
 
-  it('requires persistent Backends and explicit permissions for the Channel protocol', () => {
+  it('supports versioned Host protocols and applies Channel-specific requirements', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
       lifecycle: 'persistent', instanceMode: 'multiple', targets: ['desktop'],
@@ -80,12 +81,75 @@ describe('App manifest V2', () => {
       backend,
       permissions: ['channel:not-real'],
     })).toThrow(/channel permission/)
-    expect(() => validateAppManifest({
+    expect(validateAppManifest({
       ...valid,
       ui: undefined,
       backend: { ...backend, protocols: ['moss.unknown/v1'] },
-      permissions: ['channel:messages'],
-    })).toThrow()
+      permissions: ['unknown:read'],
+    }).backend?.protocols).toEqual(['moss.unknown/v1'])
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: { ...backend, protocols: ['Moss Unknown'] },
+      permissions: [],
+    })).toThrow(/protocols/)
+  })
+
+  it('normalizes contribution points and rejects dangling or ungranted references', () => {
+    const contributed = {
+      ...valid,
+      permissions: ['catalog:read'],
+      backend: {
+        entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+        lifecycle: 'on-demand', instanceMode: 'single', targets: ['desktop'],
+        actions: [{ name: 'catalog.search', inputSchema: 'schemas/search.json' }],
+      },
+      contributes: {
+        views: [{ id: 'catalog', title: 'Catalog', location: 'sidebar', route: '#/catalog' }],
+        settings: [{ id: 'catalog-settings', title: 'Catalog settings', viewId: 'catalog' }],
+        commands: [{ id: 'catalog-search-command', title: 'Search', action: 'catalog.search' }],
+        tools: [{
+          id: 'catalog-search-tool', title: 'Search', description: 'Search the catalog', action: 'catalog.search',
+          inputSchema: 'schemas/search.json', effect: 'read', permission: 'catalog:read',
+        }],
+        resourceProviders: [{ id: 'catalog-provider', schemes: ['catalog'], resolveAction: 'catalog.search' }],
+        widgets: [{ id: 'status', title: 'Status', viewId: 'catalog', placement: 'status' }],
+      },
+    }
+    const manifest = validateAppManifest(contributed)
+    expect(manifest.contributes?.views[0]).toMatchObject({ route: '#/catalog', location: 'sidebar', order: 0 })
+    expect(manifest.contributes?.tools[0]).toMatchObject({ id: 'catalog-search-tool', effect: 'read', permission: 'catalog:read' })
+    expect(() => validateAppManifest({
+      ...contributed,
+      contributes: { tools: [{ ...contributed.contributes.tools[0], action: 'missing' }] },
+    })).toThrow(/unknown Backend action/)
+    expect(() => validateAppManifest({
+      ...contributed,
+      contributes: { views: [{ id: 'catalog', title: 'Catalog', permission: 'catalog:write' }] },
+    })).toThrow(/undeclared permission/)
+    expect(() => validateAppManifest({
+      ...contributed,
+      contributes: { settings: [{ id: 'settings', title: 'Settings', viewId: 'missing' }] },
+    })).toThrow(/unknown view/)
+    expect(() => validateAppManifest({
+      ...contributed,
+      contributes: {
+        views: [{ id: 'same', title: 'Catalog' }],
+        commands: [{ id: 'same', title: 'Search', action: 'catalog.search' }],
+      },
+    })).toThrow(/Duplicate App contribution id/)
+    expect(() => validateAppManifest({
+      ...contributed,
+      backend: {
+        ...contributed.backend,
+        actions: [{ name: 'catalog.search' }],
+      },
+      contributes: {
+        commands: [{
+          id: 'search', title: 'Search', action: 'catalog.search', inputSchema: 'schemas/search.json',
+        }],
+      },
+    })).toThrow(/inputSchema must match/)
   })
 
   it('reports Backend initialization failures instead of leaving an unhandled rejection', async () => {

@@ -16,6 +16,10 @@ import { TASK_TYPE_TAG, TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
 import {
+  createAppContributionTools,
+  type AppToolContributionDescriptor,
+} from './tools/AppContributionTool/AppContributionTool.js'
+import {
   applyChatToolFilter,
   isChatModeToolAllowed,
   mergeAndFilterTools,
@@ -370,6 +374,8 @@ export interface ClaudeSessionOptions {
   agentMailEnabled?: boolean
   /** Expose Moss Library as first-party in-process tools. */
   libraryEnabled?: boolean
+  /** Tools contributed by enabled Desktop Apps. */
+  appTools?: AppToolContributionDescriptor[]
   /** Restrict Bash to commands accepted by the core read-only validator. */
   readOnlyBashOnly?: boolean
   /** 恢复后的 transcript session ID */
@@ -417,6 +423,7 @@ type ResolvedClaudeSessionOptions = {
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   agentMailEnabled: boolean
   libraryEnabled: boolean
+  appTools: AppToolContributionDescriptor[]
   readOnlyBashOnly: boolean
   sessionId?: string
   initialMessages?: Message[]
@@ -708,6 +715,7 @@ export class ClaudeSession {
       onAppEvent: opts.onAppEvent,
       agentMailEnabled: opts.agentMailEnabled === true,
       libraryEnabled: opts.libraryEnabled === true,
+      appTools: Array.isArray(opts.appTools) ? [...opts.appTools] : [],
       readOnlyBashOnly: opts.readOnlyBashOnly === true,
       sessionId: opts.sessionId,
       initialMessages: opts.initialMessages,
@@ -983,6 +991,7 @@ export class ClaudeSession {
 
     // 工具列表
     const toolsStart = Date.now()
+    const appTools = createAppContributionTools(this.#opts.appTools)
     const computeTools = () => {
       const state = store.getState()
       const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
@@ -992,6 +1001,7 @@ export class ClaudeSession {
       const dynamicTools = [
         ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
         ...(this.#opts.libraryEnabled ? LibraryTools : []),
+        ...appTools,
       ]
       return mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
     }

@@ -32,14 +32,22 @@ export function registerAppRuntimeIpc(options) {
       title: 'Install Moss App', properties: ['openFile'], filters: [{ name: 'Moss App archive', extensions: ['zip'] }],
     })
     if (selection.canceled || !selection.filePaths[0]) return { ok: false, canceled: true }
+    const previousGrants = new Map(runtime().installations.list().map((installation) => [
+      installation.appId,
+      installation.grants || [],
+    ]))
     const app = await installAppArchive(runtime(), selection.filePaths[0], {
       installPackage: installArchivePackage,
     })
     const appId = app.id || app.manifest?.id
+    const version = app.currentVersion || app.version || app.manifest?.version
+    if (!appId || !version) throw new Error('Installed App package did not return an identity and version')
+    await runtime().registerInstalled(appId, version, { grants: previousGrants.get(appId) || [] })
     return { ok: true, app: await changed('installed', appId, app) }
   })
   ipcMain.handle('app:install-server', async (_event, { appId, version }) => {
-    const result = await remote.installApp(appId, version)
+    const local = await runtime().getApp(appId)
+    const result = await remote.installApp(appId, version, local?.installation?.grants || [])
     return changed('server-installed', appId, result)
   })
   ipcMain.handle('app:uninstall-server', async (_event, { appId, ...removeOptions }) => {
@@ -49,8 +57,17 @@ export function registerAppRuntimeIpc(options) {
   ipcMain.handle('app:get-runtime-state', async (_event, { appId, target = 'desktop' }) => target === 'server'
     ? (await remote.listApps()).find((item) => item.installation?.appId === appId) || null
     : runtime().getApp(appId))
+  ipcMain.handle('app:list-contributions', (_event, options = {}) => runtime().listContributions(options))
+  ipcMain.handle('app:invoke-contribution', (_event, { kind, id, input, ...invokeOptions }) => {
+    if (!['commands', 'resourceProviders'].includes(kind)) {
+      throw new Error(`Desktop UI cannot invoke App contribution kind: ${kind}`)
+    }
+    return runtime().invokeContribution(kind, id, input, invokeOptions)
+  })
   ipcMain.handle('app:set-enabled', async (_event, { appId, enabled, target = 'desktop' }) => changed('enabled', appId,
     target === 'server' ? remote.updateApp(appId, { enabled }) : runtime().setAppEnabled(appId, enabled)))
+  ipcMain.handle('app:set-grants', async (_event, { appId, grants, target = 'desktop' }) => changed('grants', appId,
+    target === 'server' ? remote.updateApp(appId, { grants }) : runtime().setAppGrants(appId, grants)))
   ipcMain.handle('app:list-instances', async (_event, { appId, target = 'desktop' }) => target === 'server'
     ? ((await remote.listApps()).find((item) => item.installation?.appId === appId)?.instances || [])
     : runtime().listInstances(appId))
@@ -89,7 +106,7 @@ export function registerAppRuntimeIpc(options) {
         throw new Error('Desktop and Server must use the same App version before moving the instance')
       }
       if (!remoteApp) {
-        await remote.installApp(appId, app.installation.activeVersion)
+        await remote.installApp(appId, app.installation.activeVersion, app.installation.grants || [])
         remoteApp = (await remote.listApps()).find((item) => item.installation?.appId === appId)
       }
       const secretValues = await runtime().credentials.get(appId, instanceId)

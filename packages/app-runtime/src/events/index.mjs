@@ -15,9 +15,13 @@ export class AppEventBroker extends EventEmitter {
     return normalized
   }
 
-  subscribeApp(appId, listener) {
+  subscribeApp(appId, listener, options = {}) {
     const name = `app:${appId}`
-    this.on(name, listener)
-    return () => this.off(name, listener)
+    const ownerKey = options.owner?.key || null
+    const scopedListener = ownerKey
+      ? (event) => { if (event.owner?.key === ownerKey) listener(event) }
+      : listener
+    this.on(name, scopedListener)
+    return () => this.off(name, scopedListener)
   }
 }

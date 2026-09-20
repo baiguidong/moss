@@ -48,6 +48,131 @@ function normalizeUi(ui) {
   }
 }
 
+function normalizeContributionPermission(item, requestedPermissions, label) {
+  if (!item.permission) return {}
+  if (!requestedPermissions.has(item.permission)) {
+    throw new AppServiceError(
+      APP_ERROR_CODES.invalidManifest,
+      `${label} references undeclared permission: ${item.permission}`,
+    )
+  }
+  return { permission: item.permission }
+}
+
+function normalizeContributionList(items, kind, normalize, ids = new Set()) {
+  return (items || []).map((item) => {
+    if (ids.has(item.id)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate App contribution id: ${item.id}`)
+    }
+    ids.add(item.id)
+    return normalize(item)
+  })
+}
+
+function normalizeContributes(contributes, manifest) {
+  if (!contributes) return undefined
+  const contributionIds = new Set()
+  const requestedPermissions = new Set(manifest.permissions || [])
+  const actions = new Map(manifest.backend?.actions?.map((action) => [action.name, action]) || [])
+  const requireAction = (action, label) => {
+    if (!actions.has(action)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `${label} references unknown Backend action: ${action}`)
+    }
+    return actions.get(action)
+  }
+  const views = normalizeContributionList(contributes.views, 'view', (view) => ({
+    id: view.id,
+    title: view.title.trim(),
+    route: view.route || '#/',
+    location: view.location || 'hidden',
+    icon: String(view.icon || '').trim(),
+    order: Number(view.order) || 0,
+    ...normalizeContributionPermission(view, requestedPermissions, `view ${view.id}`),
+  }), contributionIds)
+  if (views.length && !manifest.ui) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'View contributions require an App UI')
+  }
+  const viewIds = new Set(views.map((view) => view.id))
+  const settings = normalizeContributionList(contributes.settings, 'settings', (setting) => {
+    if (!viewIds.has(setting.viewId)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `settings ${setting.id} references unknown view: ${setting.viewId}`)
+    }
+    return {
+      id: setting.id,
+      title: setting.title.trim(),
+      viewId: setting.viewId,
+      order: Number(setting.order) || 0,
+      ...normalizeContributionPermission(setting, requestedPermissions, `settings ${setting.id}`),
+    }
+  }, contributionIds)
+  const commands = normalizeContributionList(contributes.commands, 'command', (command) => {
+    const action = requireAction(command.action, `command ${command.id}`)
+    const inputSchema = command.inputSchema
+      ? ensureSafeRelativePath(command.inputSchema, `command ${command.id} inputSchema`)
+      : undefined
+    if (inputSchema && inputSchema !== action.inputSchema) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `command ${command.id} inputSchema must match its Backend action`)
+    }
+    return {
+      id: command.id,
+      title: command.title.trim(),
+      description: String(command.description || '').trim(),
+      action: command.action,
+      ...(inputSchema ? { inputSchema } : {}),
+      ...normalizeContributionPermission(command, requestedPermissions, `command ${command.id}`),
+    }
+  }, contributionIds)
+  const tools = normalizeContributionList(contributes.tools, 'tool', (tool) => {
+    const action = requireAction(tool.action, `tool ${tool.id}`)
+    const inputSchema = ensureSafeRelativePath(tool.inputSchema, `tool ${tool.id} inputSchema`)
+    const outputSchema = tool.outputSchema
+      ? ensureSafeRelativePath(tool.outputSchema, `tool ${tool.id} outputSchema`)
+      : undefined
+    if (action.inputSchema !== inputSchema || (outputSchema && action.outputSchema !== outputSchema)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `tool ${tool.id} schemas must match its Backend action`)
+    }
+    return {
+      id: tool.id,
+      title: tool.title.trim(),
+      description: tool.description.trim(),
+      action: tool.action,
+      inputSchema,
+      ...(outputSchema ? { outputSchema } : {}),
+      effect: tool.effect,
+      ...normalizeContributionPermission(tool, requestedPermissions, `tool ${tool.id}`),
+    }
+  }, contributionIds)
+  const schemes = new Set()
+  const resourceProviders = normalizeContributionList(contributes.resourceProviders, 'resource provider', (provider) => {
+    for (const scheme of provider.schemes) {
+      if (schemes.has(scheme)) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate resource scheme in App: ${scheme}`)
+      }
+      schemes.add(scheme)
+    }
+    return {
+      id: provider.id,
+      schemes: [...provider.schemes],
+      resolveAction: requireAction(provider.resolveAction, `resource provider ${provider.id}`).name,
+      ...normalizeContributionPermission(provider, requestedPermissions, `resource provider ${provider.id}`),
+    }
+  }, contributionIds)
+  const widgets = normalizeContributionList(contributes.widgets, 'widget', (widget) => {
+    if (!viewIds.has(widget.viewId)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `widget ${widget.id} references unknown view: ${widget.viewId}`)
+    }
+    return {
+      id: widget.id,
+      title: widget.title.trim(),
+      viewId: widget.viewId,
+      placement: widget.placement,
+      ...normalizeContributionPermission(widget, requestedPermissions, `widget ${widget.id}`),
+    }
+  }, contributionIds)
+  const normalized = { views, settings, commands, tools, resourceProviders, widgets }
+  return Object.values(normalized).some((items) => items.length) ? normalized : undefined
+}
+
 function normalizeBackend(backend) {
   if (!backend) return undefined
   const actionNames = new Set()
@@ -107,6 +232,9 @@ export function validateAppManifest(rawManifest, options = {}) {
   if (!candidate.displayName.trim()) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'displayName cannot contain only whitespace')
   }
+  if (candidate.publisher && !candidate.publisher.name.trim()) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'publisher.name cannot contain only whitespace')
+  }
   if (!semver.validRange(candidate.hostApi)) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Invalid hostApi range: ${candidate.hostApi}`)
   }
@@ -131,6 +259,7 @@ export function validateAppManifest(rawManifest, options = {}) {
       `App requires Host API ${candidate.hostApi}; this Host provides ${hostApiVersion}`,
     )
   }
+  const contributes = normalizeContributes(candidate.contributes, candidate)
   return {
     schemaVersion: 2,
     id: candidate.id,
@@ -139,8 +268,10 @@ export function validateAppManifest(rawManifest, options = {}) {
     description: String(candidate.description || '').trim(),
     icon: candidate.icon ? ensureSafeRelativePath(candidate.icon, 'icon') : '',
     hostApi: candidate.hostApi,
+    ...(candidate.publisher ? { publisher: { id: candidate.publisher.id, name: candidate.publisher.name.trim() } } : {}),
     ...(candidate.ui ? { ui: normalizeUi(candidate.ui) } : {}),
     ...(candidate.backend ? { backend: normalizeBackend(candidate.backend) } : {}),
+    ...(contributes ? { contributes } : {}),
     permissions: [...candidate.permissions],
   }
 }

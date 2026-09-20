@@ -19,6 +19,12 @@ import {
   validateChannelHostInput,
   validateChannelProtocol,
 } from '../channel/index.mjs'
+import {
+  requireHostProtocol,
+  validateHostData,
+  validateHostMember,
+  validateHostProtocol,
+} from '../host/index.mjs'
 
 const DEFAULT_CHANNEL_TIMEOUT_MS = 30_000
 const MAX_CHANNEL_TIMEOUT_MS = 300_000
@@ -36,6 +42,15 @@ function channelError(payload, fallbackMessage) {
     error.message || fallbackMessage,
     error.details,
   )
+}
+
+function hostError(payload, fallbackMessage, fallbackCode = APP_ERROR_CODES.hostUnavailable) {
+  const error = payload?.error || {}
+  return new AppServiceError(error.code || fallbackCode, error.message || fallbackMessage, error.details)
+}
+
+function hostHandlerKey(protocol, name) {
+  return `${protocol}\u0000${name}`
 }
 
 function stableJson(value) {
@@ -78,6 +93,10 @@ export class AppBackendClient {
       request: (method, input, requestOptions) => this.requestChannelHost(method, input, requestOptions),
       on: (name, handler) => this.onChannelEvent(name, handler),
     })
+    this.host = Object.freeze({
+      request: (protocol, method, input, requestOptions) => this.requestHost(protocol, method, input, requestOptions),
+      on: (protocol, name, handler) => this.onHostEvent(protocol, name, handler),
+    })
   }
 
   registerAction(name, handler) {
@@ -88,50 +107,102 @@ export class AppBackendClient {
 
   onChannelEvent(name, handler) {
     const normalized = validateChannelBackendEvent(name)
-    if (typeof handler !== 'function') throw new TypeError('Channel event handler must be a function')
-    if (this.channelHandlers.has(normalized)) {
-      throw new TypeError(`Channel event handler is already registered: ${normalized}`)
+    return this.registerHostEvent(MOSS_CHANNEL_PROTOCOL, normalized, handler, {
+      permission: getChannelBackendEventPermission(normalized),
+      validateData: (data) => validateChannelBackendEventData(normalized, data),
+      channel: true,
+    })
+  }
+
+  onHostEvent(protocol, name, handler) {
+    return this.registerHostEvent(
+      validateHostProtocol(protocol),
+      validateHostMember(name, 'Host event'),
+      handler,
+    )
+  }
+
+  registerHostEvent(protocol, name, handler, options = {}) {
+    if (typeof handler !== 'function') throw new TypeError('Host event handler must be a function')
+    const key = hostHandlerKey(protocol, name)
+    if (this.channelHandlers.has(key)) {
+      throw new TypeError(`Host event handler is already registered: ${protocol} ${name}`)
     }
-    this.channelHandlers.set(normalized, handler)
+    const entry = Object.freeze({ handler, ...options })
+    this.channelHandlers.set(key, entry)
     return () => {
-      if (this.channelHandlers.get(normalized) === handler) this.channelHandlers.delete(normalized)
+      if (this.channelHandlers.get(key) === entry) this.channelHandlers.delete(key)
     }
   }
 
   async requestChannelHost(method, input = {}, options = {}) {
+    const normalizedMethod = validateChannelHostMethod(method)
+    if (this.context && !this.channelClosed) {
+      requireChannelPermission(this.context.permissions, getChannelHostMethodPermission(normalizedMethod))
+      requireChannelPermission(this.context.grants ?? this.context.permissions, getChannelHostMethodPermission(normalizedMethod))
+    }
+    return this.requestHostInternal(
+      MOSS_CHANNEL_PROTOCOL,
+      normalizedMethod,
+      validateChannelHostInput(normalizedMethod, input),
+      {
+        ...options,
+        transport: 'channel',
+        unavailableCode: APP_ERROR_CODES.channelUnavailable,
+        timeoutCode: APP_ERROR_CODES.channelTimeout,
+        protocolCode: APP_ERROR_CODES.channelProtocol,
+        label: 'Channel Host',
+      },
+    )
+  }
+
+  async requestHost(protocol, method, input = {}, options = {}) {
+    return this.requestHostInternal(
+      validateHostProtocol(protocol),
+      validateHostMember(method, 'Host method'),
+      validateHostData(input, 'Host request input'),
+      options,
+    )
+  }
+
+  async requestHostInternal(protocol, method, input, options = {}) {
+    const label = options.label || 'Host protocol'
+    const unavailableCode = options.unavailableCode || APP_ERROR_CODES.hostUnavailable
+    const timeoutCode = options.timeoutCode || APP_ERROR_CODES.hostTimeout
+    const protocolCode = options.protocolCode || APP_ERROR_CODES.hostProtocol
+    const transport = options.transport === 'channel' ? 'channel' : 'host'
     if (!this.context || this.channelClosed) {
-      return Promise.reject(new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host is not initialized'))
+      return Promise.reject(new AppServiceError(unavailableCode, `${label} is not initialized`))
     }
     if (this.channelRequests.size >= this.maxPendingChannelRequests) {
-      return Promise.reject(new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host request limit reached'))
+      return Promise.reject(new AppServiceError(unavailableCode, `${label} request limit reached`))
     }
-    const normalizedMethod = validateChannelHostMethod(method)
-    if (!this.context.protocols?.includes(MOSS_CHANNEL_PROTOCOL)) {
-      throw new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        `App Backend was not initialized with protocol: ${MOSS_CHANNEL_PROTOCOL}`,
-      )
+    try {
+      requireHostProtocol(this.context.protocols, protocol)
+    } catch (error) {
+      if (error?.code === APP_ERROR_CODES.hostUnavailable) {
+        throw new AppServiceError(unavailableCode, `App Backend was not initialized with protocol: ${protocol}`)
+      }
+      throw error
     }
-    requireChannelPermission(this.context.permissions, getChannelHostMethodPermission(normalizedMethod))
-    const normalizedInput = validateChannelHostInput(normalizedMethod, input)
     const requestId = String(options.requestId || randomUUID())
     if (!requestId || requestId.length > 128 || this.channelRequests.has(requestId)) {
-      return Promise.reject(new AppServiceError(APP_ERROR_CODES.invalidInput, 'Channel Host request id is invalid or duplicated'))
+      return Promise.reject(new AppServiceError(APP_ERROR_CODES.invalidInput, `${label} request id is invalid or duplicated`))
     }
     const timeoutMs = boundedTimeout(options.timeoutMs, this.channelRequestTimeoutMs)
     let message
     try {
-      message = createEnvelope('channel.request', {
-        protocol: MOSS_CHANNEL_PROTOCOL,
-        method: normalizedMethod,
-        input: normalizedInput,
+      message = createEnvelope(`${transport}.request`, {
+        protocol,
+        method,
+        input,
         ...this.identity(),
       }, { id: requestId })
-      validateEnvelope(message, { allowedTypes: ['channel.request'] })
+      validateEnvelope(message, { allowedTypes: [`${transport}.request`] })
     } catch (error) {
       return Promise.reject(new AppServiceError(
         APP_ERROR_CODES.invalidInput,
-        `Channel Host request cannot be serialized: ${error.message}`,
+        `${label} request cannot be serialized: ${error.message}`,
       ))
     }
     return new Promise((resolve, reject) => {
@@ -146,20 +217,20 @@ export class AppBackendClient {
       }
       const timer = setTimeout(() => {
         try {
-          this.send(createEnvelope('channel.cancel', {
-            protocol: MOSS_CHANNEL_PROTOCOL,
+          this.send(createEnvelope(`${transport}.cancel`, {
+            protocol,
             requestId,
             ...this.identity(),
           }))
         } catch {} finally {
-          finish(new AppServiceError(APP_ERROR_CODES.channelTimeout, `Channel Host request timed out after ${timeoutMs}ms`))
+          finish(new AppServiceError(timeoutCode, `${label} request timed out after ${timeoutMs}ms`))
         }
       }, timeoutMs)
       timer.unref?.()
       const abortHandler = () => {
         try {
-          this.send(createEnvelope('channel.cancel', {
-            protocol: MOSS_CHANNEL_PROTOCOL,
+          this.send(createEnvelope(`${transport}.cancel`, {
+            protocol,
             requestId,
             ...this.identity(),
           }))
@@ -167,7 +238,19 @@ export class AppBackendClient {
           finish(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Channel Host request canceled'))
         }
       }
-      this.channelRequests.set(requestId, { resolve, reject, timer, signal: options.signal, abortHandler, finish })
+      this.channelRequests.set(requestId, {
+        resolve,
+        reject,
+        timer,
+        signal: options.signal,
+        abortHandler,
+        finish,
+        protocol,
+        transport,
+        unavailableCode,
+        protocolCode,
+        label,
+      })
       if (options.signal?.aborted) {
         abortHandler()
         return
@@ -176,7 +259,7 @@ export class AppBackendClient {
       try {
         this.send(message)
       } catch (error) {
-        finish(new AppServiceError(APP_ERROR_CODES.channelUnavailable, `Cannot call Channel Host: ${error.message}`))
+        finish(new AppServiceError(unavailableCode, `Cannot call ${label}: ${error.message}`))
       }
     })
   }
@@ -221,38 +304,59 @@ export class AppBackendClient {
   }
 
   handleChannelResponse(message) {
+    return this.handleHostResponse(message, 'channel')
+  }
+
+  handleHostResponse(message, transport = 'host') {
     const payload = message.payload || {}
-    try { validateChannelProtocol(payload.protocol) } catch (error) {
+    let protocol
+    try { protocol = validateHostProtocol(payload.protocol) } catch (error) {
       this.log('error', error.message)
       return
     }
     const requestId = String(payload.requestId || message.id || '')
     const pending = this.channelRequests.get(requestId)
     if (!pending) return
+    if (pending.protocol !== protocol || pending.transport !== transport) {
+      this.log('warn', `Rejected mismatched Host response: ${protocol}`)
+      return
+    }
     if (payload.ok === true) pending.finish(null, payload.result)
-    else pending.finish(channelError(payload, 'Channel Host request failed'))
+    else pending.finish(transport === 'channel'
+      ? channelError(payload, 'Channel Host request failed')
+      : hostError(payload, 'Host protocol request failed', pending.unavailableCode))
   }
 
   async handleChannelEvent(message) {
+    return this.handleHostEvent(message, 'channel')
+  }
+
+  async handleHostEvent(message, transport = 'host') {
     const payload = message.payload || {}
     if (this.channelClosed) return
+    let protocol
+    try { protocol = validateHostProtocol(payload.protocol) } catch (error) {
+      this.sendHostEventResponse(message, transport, false, undefined, error, { cache: false })
+      return
+    }
     const eventId = String(payload.eventId || message.id || '')
-    const fingerprint = channelFingerprint(payload.protocol, payload.name, payload.data)
-    const cached = this.channelEventReplies.get(eventId)
+    const eventKey = hostHandlerKey(protocol, eventId)
+    const fingerprint = channelFingerprint(transport, payload.protocol, payload.name, payload.data)
+    const cached = this.channelEventReplies.get(eventKey)
     if (cached) {
       if (cached.fingerprint === fingerprint) this.send(cached.response)
-      else this.sendChannelEventResponse(message, false, undefined, new AppServiceError(
-        APP_ERROR_CODES.channelProtocol,
-        `Channel event id was reused with a different payload: ${eventId}`,
+      else this.sendHostEventResponse(message, transport, false, undefined, new AppServiceError(
+        transport === 'channel' ? APP_ERROR_CODES.channelProtocol : APP_ERROR_CODES.hostProtocol,
+        `Host event id was reused with a different payload: ${eventId}`,
       ), { cache: false, fingerprint })
       return
     }
-    const existing = this.channelEvents.get(eventId)
+    const existing = this.channelEvents.get(eventKey)
     if (existing) {
       if (existing.fingerprint !== fingerprint) {
-        this.sendChannelEventResponse(message, false, undefined, new AppServiceError(
-          APP_ERROR_CODES.channelProtocol,
-          `Channel event id was reused with a different payload: ${eventId}`,
+        this.sendHostEventResponse(message, transport, false, undefined, new AppServiceError(
+          transport === 'channel' ? APP_ERROR_CODES.channelProtocol : APP_ERROR_CODES.hostProtocol,
+          `Host event id was reused with a different payload: ${eventId}`,
         ), { cache: false, fingerprint })
       } else if (existing.canceled) {
         existing.retryMessage = message
@@ -260,33 +364,45 @@ export class AppBackendClient {
       return
     }
     let name
+    let entry
     try {
-      validateChannelProtocol(payload.protocol)
-      name = validateChannelBackendEvent(payload.name)
-      if (!this.context?.protocols?.includes(MOSS_CHANNEL_PROTOCOL)) {
-        throw new AppServiceError(
-          APP_ERROR_CODES.channelUnavailable,
-          `App Backend was not initialized with protocol: ${MOSS_CHANNEL_PROTOCOL}`,
-        )
+      if (transport === 'channel') {
+        validateChannelProtocol(protocol)
+        name = validateChannelBackendEvent(payload.name)
+      } else {
+        name = validateHostMember(payload.name, `${protocol} event`)
       }
-      requireChannelPermission(this.context.permissions, getChannelBackendEventPermission(name))
-      validateChannelBackendEventData(name, payload.data)
+      try {
+        requireHostProtocol(this.context?.protocols, protocol)
+      } catch (error) {
+        if (transport === 'channel' && error?.code === APP_ERROR_CODES.hostUnavailable) {
+          throw new AppServiceError(
+            APP_ERROR_CODES.channelUnavailable,
+            `App Backend was not initialized with protocol: ${protocol}`,
+          )
+        }
+        throw error
+      }
+      entry = this.channelHandlers.get(hostHandlerKey(protocol, name))
+      if (entry?.permission) requireChannelPermission(this.context.permissions, entry.permission)
+      if (entry?.permission) requireChannelPermission(this.context.grants ?? this.context.permissions, entry.permission)
+      if (entry?.validateData) entry.validateData(payload.data)
+      else validateHostData(payload.data, `${protocol} ${name} data`)
     } catch (error) {
-      this.sendChannelEventResponse(message, false, undefined, error, { fingerprint })
+      this.sendHostEventResponse(message, transport, false, undefined, error, { fingerprint })
       return
     }
-    const handler = this.channelHandlers.get(name)
-    if (!handler) {
-      this.sendChannelEventResponse(message, false, undefined, new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        `No Channel event handler is registered for ${name}`,
+    if (!entry) {
+      this.sendHostEventResponse(message, transport, false, undefined, new AppServiceError(
+        transport === 'channel' ? APP_ERROR_CODES.channelUnavailable : APP_ERROR_CODES.hostUnavailable,
+        `No Host event handler is registered for ${protocol} ${name}`,
       ), { fingerprint })
       return
     }
     if (this.channelEvents.size >= this.maxActiveChannelEvents) {
-      this.sendChannelEventResponse(message, false, undefined, new AppServiceError(
-        APP_ERROR_CODES.channelUnavailable,
-        'Channel event concurrency limit reached',
+      this.sendHostEventResponse(message, transport, false, undefined, new AppServiceError(
+        transport === 'channel' ? APP_ERROR_CODES.channelUnavailable : APP_ERROR_CODES.hostUnavailable,
+        'Host event concurrency limit reached',
       ), { cache: false, fingerprint })
       return
     }
@@ -297,32 +413,34 @@ export class AppBackendClient {
       canceled: false,
       responded: false,
       retryMessage: null,
+      transport,
     }
-    this.channelEvents.set(eventId, active)
+    this.channelEvents.set(eventKey, active)
     try {
-      const result = await handler(payload.data, {
+      const result = await entry.handler(payload.data, {
         ...this.context,
+        host: this.host,
         channel: this.channel,
         signal: controller.signal,
         eventId,
         name,
-        protocol: MOSS_CHANNEL_PROTOCOL,
+        protocol,
       })
-      if (this.channelEvents.get(eventId) === active) {
-        this.sendChannelEventResponse(message, true, result, undefined, { fingerprint })
+      if (this.channelEvents.get(eventKey) === active) {
+        this.sendHostEventResponse(message, transport, true, result, undefined, { fingerprint })
         active.responded = true
       }
     } catch (error) {
-      if (this.channelEvents.get(eventId) === active && !active.canceled) {
-        this.sendChannelEventResponse(message, false, undefined, error, { fingerprint })
+      if (this.channelEvents.get(eventKey) === active && !active.canceled) {
+        this.sendHostEventResponse(message, transport, false, undefined, error, { fingerprint })
         active.responded = true
       }
     } finally {
-      if (this.channelEvents.get(eventId) === active) {
-        this.channelEvents.delete(eventId)
+      if (this.channelEvents.get(eventKey) === active) {
+        this.channelEvents.delete(eventKey)
         if (active.retryMessage && !active.responded && !this.channelClosed) {
           queueMicrotask(() => {
-            void this.handleChannelEvent(active.retryMessage).catch((error) => this.handleFatalError(error))
+            void this.handleHostEvent(active.retryMessage, active.transport).catch((error) => this.handleFatalError(error))
           })
         }
       }
@@ -330,32 +448,41 @@ export class AppBackendClient {
   }
 
   sendChannelEventResponse(message, ok, result, error, options = {}) {
+    return this.sendHostEventResponse(message, 'channel', ok, result, error, options)
+  }
+
+  sendHostEventResponse(message, transport, ok, result, error, options = {}) {
+    const protocol = String(message.payload?.protocol || '')
     const eventId = String(message.payload?.eventId || message.id || '')
+    const eventKey = hostHandlerKey(protocol, eventId)
     const fingerprint = options.fingerprint || channelFingerprint(
+      transport,
       message.payload?.protocol,
       message.payload?.name,
       message.payload?.data,
     )
-    let response = createEnvelope('channel.event.response', {
-      protocol: MOSS_CHANNEL_PROTOCOL,
+    const unavailableCode = transport === 'channel' ? APP_ERROR_CODES.channelUnavailable : APP_ERROR_CODES.hostUnavailable
+    const protocolCode = transport === 'channel' ? APP_ERROR_CODES.channelProtocol : APP_ERROR_CODES.hostProtocol
+    let response = createEnvelope(`${transport}.event.response`, {
+      protocol,
       eventId,
       ok,
-      ...(ok ? { result } : { error: serializeError(error, APP_ERROR_CODES.channelUnavailable) }),
+      ...(ok ? { result } : { error: serializeError(error, unavailableCode) }),
       ...this.identity(),
     }, { id: eventId })
     try {
-      validateEnvelope(response, { allowedTypes: ['channel.event.response'] })
+      validateEnvelope(response, { allowedTypes: [`${transport}.event.response`] })
     } catch (serializationError) {
-      response = createEnvelope('channel.event.response', {
-        protocol: MOSS_CHANNEL_PROTOCOL,
+      response = createEnvelope(`${transport}.event.response`, {
+        protocol,
         eventId,
         ok: false,
-        error: serializeError(serializationError, APP_ERROR_CODES.channelProtocol),
+        error: serializeError(serializationError, protocolCode),
         ...this.identity(),
       }, { id: eventId })
     }
     if (options.cache !== false) {
-      this.channelEventReplies.set(eventId, { fingerprint, response })
+      this.channelEventReplies.set(eventKey, { fingerprint, response })
       if (this.channelEventReplies.size > MAX_CHANNEL_REPLY_CACHE_ENTRIES) {
         this.channelEventReplies.delete(this.channelEventReplies.keys().next().value)
       }
@@ -371,7 +498,7 @@ export class AppBackendClient {
       void this.handleMessage(raw).catch((error) => this.handleFatalError(error))
     })
     this.onDisconnect(() => {
-      this.closeChannel(new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host disconnected'))
+      this.closeChannel(new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host disconnected'))
       setImmediate(() => process.exit(0))
     })
     this.send(createEnvelope('service.hello', {
@@ -417,7 +544,7 @@ export class AppBackendClient {
     const payload = message.payload || {}
     if (message.type === 'service.init') {
       if (this.context) throw new AppServiceError(APP_ERROR_CODES.handshakeFailed, 'App Backend was initialized more than once')
-      this.context = Object.freeze({ ...payload, channel: this.channel })
+      this.context = Object.freeze({ ...payload, host: this.host, channel: this.channel })
       this.channelClosed = false
       if (this.onInitialize) await this.onInitialize(this.context)
       this.send(createEnvelope('service.ready', { ...this.identity() }, { id: message.id }))
@@ -434,37 +561,42 @@ export class AppBackendClient {
       setImmediate(() => process.exit(0))
       return
     }
-    if (message.type === 'channel.response') {
+    if (message.type === 'channel.response' || message.type === 'host.response') {
       if (!this.hasCurrentIdentity(payload)) {
-        this.log('warn', 'Rejected stale Channel Host response')
+        this.log('warn', 'Rejected stale Host response')
         return
       }
-      this.handleChannelResponse(message)
+      this.handleHostResponse(message, message.type.startsWith('channel.') ? 'channel' : 'host')
       return
     }
-    if (message.type === 'channel.event.cancel') {
+    if (message.type === 'channel.event.cancel' || message.type === 'host.event.cancel') {
       if (!this.hasCurrentIdentity(payload)) {
-        this.log('warn', 'Rejected stale Channel event cancellation')
+        this.log('warn', 'Rejected stale Host event cancellation')
         return
       }
-      try { validateChannelProtocol(payload.protocol) } catch (error) {
+      let protocol
+      try {
+        protocol = message.type.startsWith('channel.')
+          ? validateChannelProtocol(payload.protocol)
+          : validateHostProtocol(payload.protocol)
+      } catch (error) {
         this.log('error', error.message)
         return
       }
       const eventId = String(payload.eventId || '')
-      const active = this.channelEvents.get(eventId)
+      const active = this.channelEvents.get(hostHandlerKey(protocol, eventId))
       if (active) {
         active.canceled = true
-        active.controller.abort(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Channel event canceled by Host'))
+        active.controller.abort(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled'))
       }
       return
     }
-    if (message.type === 'channel.event') {
+    if (message.type === 'channel.event' || message.type === 'host.event') {
       if (!this.hasCurrentIdentity(payload)) {
-        this.log('warn', 'Rejected stale Channel event')
+        this.log('warn', 'Rejected stale Host event')
         return
       }
-      await this.handleChannelEvent(message)
+      await this.handleHostEvent(message, message.type.startsWith('channel.') ? 'channel' : 'host')
       return
     }
     if (message.type === 'action.cancel') {
@@ -487,6 +619,7 @@ export class AppBackendClient {
     try {
       const result = await handler(payload.input, {
         ...this.context,
+        host: this.host,
         channel: this.channel,
         signal: controller.signal,
         requestId: message.id,

@@ -1,7 +1,7 @@
 export type AppTarget = 'desktop' | 'server'
 export type AppBackendLifecycle = 'on-demand' | 'persistent'
 export type AppInstanceMode = 'single' | 'multiple'
-export type AppBackendProtocol = 'moss.channel/v1'
+export type AppBackendProtocol = string
 
 export type ChannelPermission =
   | 'channel:connection'
@@ -117,6 +117,28 @@ export interface AppChannelApi {
   ): () => void
 }
 
+export interface AppHostApi {
+  request<Output = unknown>(
+    protocol: AppBackendProtocol,
+    method: string,
+    input?: Record<string, unknown>,
+    options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<Output>
+  on<Result = unknown>(
+    protocol: AppBackendProtocol,
+    name: string,
+    handler: (data: Record<string, unknown>, context: HostEventContext) => Result | Promise<Result>,
+  ): () => void
+}
+
+export interface HostEventContext extends AppBackendContext {
+  host: AppHostApi
+  signal: AbortSignal
+  eventId: string
+  name: string
+  protocol: AppBackendProtocol
+}
+
 export interface AppActionManifest {
   name: string
   inputSchema?: string
@@ -132,6 +154,7 @@ export interface AppManifestV2 {
   description: string
   icon: string
   hostApi: string
+  publisher?: { id: string; name: string }
   ui?: { entry: string; window: { width: number; height: number; resizable: boolean } }
   backend?: {
     entry: string
@@ -143,6 +166,14 @@ export interface AppManifestV2 {
     protocols?: AppBackendProtocol[]
     actions: AppActionManifest[]
     configuration?: { schema?: string; secrets?: string }
+  }
+  contributes?: {
+    views: Array<Record<string, any>>
+    settings: Array<Record<string, any>>
+    commands: Array<Record<string, any>>
+    tools: Array<Record<string, any>>
+    resourceProviders: Array<Record<string, any>>
+    widgets: Array<Record<string, any>>
   }
   permissions: string[]
 }
@@ -168,6 +199,8 @@ export interface AppBackendContext {
   target: { type: AppTarget; id: string }
   protocols: AppBackendProtocol[]
   permissions: string[]
+  grants: string[]
+  host: AppHostApi
   channel: AppChannelApi
 }
 
@@ -222,6 +255,9 @@ export class AppBackendClient {
   registerAction(name: string, handler: AppActionHandler): this
   requestChannelHost<Method extends ChannelHostMethod>(method: Method, input: ChannelHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<ChannelHostResultMap[Method]>
   onChannelEvent<Name extends ChannelBackendEvent, Result = unknown>(name: Name, handler: ChannelEventHandler<ChannelBackendEventMap[Name], Result>): () => void
+  requestHost<Output = unknown>(protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<Output>
+  onHostEvent<Result = unknown>(protocol: AppBackendProtocol, name: string, handler: (data: Record<string, unknown>, context: HostEventContext) => Result | Promise<Result>): () => void
+  readonly host: AppHostApi
   readonly channel: AppChannelApi
   emit(name: string, data?: unknown): void
   log(level: string, message: string, details?: unknown): void
@@ -259,6 +295,11 @@ export function validateChannelData(value: unknown, label?: string): Record<stri
 export function validateChannelHostInput(method: ChannelHostMethod, value: unknown): Record<string, unknown>
 export function validateChannelBackendEventData(name: ChannelBackendEvent, value: unknown): Record<string, unknown>
 export function requireChannelPermission(permissions: string[], requiredPermission: ChannelPermission): true
+export function validateHostProtocol(value: unknown): string
+export function validateHostMember(value: unknown, label?: string): string
+export function validateHostData(value: unknown, label?: string): Record<string, unknown>
+export function requireHostProtocol(protocols: string[], protocol: string): true
+export function requireHostPermission(permissions: string[], requiredPermission?: string | null, options?: { source?: 'declaration' | 'grant' }): true
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
 export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>

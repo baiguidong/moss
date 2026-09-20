@@ -48,10 +48,25 @@ afterEach(async () => {
 
 describe('App Runtime lifecycle', () => {
   it('does not create a process or Backend instance for UI-only Apps', async () => {
-    const runtime = await createRuntime('ui-only')
+    const runtime = await createRuntime('ui-only', {}, async (source) => {
+      const manifestPath = path.join(source, 'app.moss.json')
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+      manifest.contributes = {
+        views: [{ id: 'home', title: 'Home', route: '#/home', location: 'sidebar' }],
+      }
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    })
     const app = await runtime.getApp('fixture.ui-only')
     expect(app?.instances).toHaveLength(0)
     expect(runtime.supervisor.listStatuses()).toHaveLength(0)
+    expect((await runtime.listContributions({ kinds: ['views'] })).views).toHaveLength(0)
+    await runtime.setAppEnabled('fixture.ui-only', true)
+    expect((await runtime.listContributions({ kinds: ['views'] })).views).toMatchObject([
+      { id: 'fixture.ui-only/home', route: '#/home' },
+    ])
+    expect(runtime.supervisor.listStatuses()).toHaveLength(0)
+    await runtime.setAppEnabled('fixture.ui-only', false)
+    expect((await runtime.listContributions({ kinds: ['views'] })).views).toHaveLength(0)
     await runtime.shutdown()
   })
 
@@ -137,6 +152,34 @@ describe('App Runtime lifecycle', () => {
     expect(runtime.installations.get(appId)?.activeVersion).toBe('2.0.0')
     expect(runtime.supervisor.status(key).state).toBe('running')
     expect(runtime.supervisor.status(key).pid).not.toBe(previousPid)
+    await runtime.shutdown()
+  })
+
+  it('drops removed grants and does not auto-grant permissions added by an update', async () => {
+    const runtime = await createRuntime('on-demand-single', {}, async (source) => {
+      const manifestPath = path.join(source, 'app.moss.json')
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+      manifest.permissions = ['catalog:read', 'catalog:write']
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    })
+    const appId = 'fixture.on-demand-single'
+    expect(runtime.installations.get(appId)?.grants).toEqual(['catalog:read', 'catalog:write'])
+
+    await installVersion(runtime, '2.0.0', (manifest) => {
+      manifest.permissions = ['catalog:read', 'catalog:admin']
+    })
+    expect(runtime.installations.get(appId)?.grants).toEqual(['catalog:read', 'catalog:write'])
+    const events: any[] = []
+    runtime.events.on('event', (event) => events.push(event))
+    await runtime.activateVersion(appId, '2.0.0')
+
+    expect(runtime.installations.get(appId)?.grants).toEqual(['catalog:read'])
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'installation-changed',
+      appId,
+    }))
+    await runtime.activateVersion(appId, '2.0.0', { grants: [] })
+    expect(runtime.installations.get(appId)?.grants).toEqual([])
     await runtime.shutdown()
   })
 

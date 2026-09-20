@@ -110,6 +110,7 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
 interface AppSidebarProps {
   sessions: SidebarSession[];
   apps: StoredApp[];
+  appViews?: Array<{ id: string; appId: string; appName: string; title: string; route: string; location: 'sidebar' | 'more' | 'hidden'; icon?: string; order?: number }>;
   activeSessionId: string | null;
   activeView: MainView;
   appsCount: number;
@@ -125,7 +126,7 @@ interface AppSidebarProps {
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
   onSelectSession: (sessionId: string) => void;
-  onLaunchApp: (name: string) => void;
+  onLaunchApp: (name: string, route?: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
@@ -342,6 +343,7 @@ function ThemeButton({
 export function AppSidebar({
   sessions,
   apps,
+  appViews = [],
   activeSessionId,
   activeView,
   appsCount,
@@ -551,6 +553,17 @@ export function AppSidebar({
                   </DropdownMenuItem>
                 );
               })}
+              {appViews.filter((view) => view.location === 'more').map((view) => (
+                <DropdownMenuItem
+                  key={view.id}
+                  data-app-view={view.id}
+                  data-app-route={view.route}
+                  onSelect={() => onLaunchApp(view.appName, view.route)}
+                >
+                  <Monitor className="h-4 w-4" />
+                  {view.title}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -731,6 +744,23 @@ export function AppSidebar({
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
         <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
+          {appViews.filter((view) => view.location === 'sidebar').map((view) => (
+            <button
+              key={view.id}
+              type="button"
+              data-app-view={view.id}
+              data-app-route={view.route}
+              onClick={() => onLaunchApp(view.appName, view.route)}
+              className={cn(
+                "flex items-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
+                collapsed ? "h-8 w-8 justify-center" : "h-9 gap-2 px-2 text-left text-sm",
+              )}
+              title={view.title}
+            >
+              <Monitor className="h-4 w-4 shrink-0" />
+              {!collapsed && <span className="min-w-0 flex-1 truncate">{view.title}</span>}
+            </button>
+          ))}
           {apps.map((app) => (
             collapsed ? (
               <button

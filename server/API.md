@@ -877,6 +877,8 @@ GET 返回当前用户由 Desktop 同步的技能版本；PUT 接收 ZIP，请�
 
 App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用这些接口，不需要使用 Moss 命令行。Server 只从 `server.json` 的 `apps.sourceDir` 获取管理员预先放置的已知 App 版本，不接受任意代码上传。
 
+installation、instance、deployment、密钥、数据和日志都按 owner 隔离。默认是当前认证用户的 `user` scope；请求可用 `owner_scope=org|host` 查询参数，带 JSON body 的请求也可用 `ownerScope`。`org` 和 `host` 只允许管理员选择。
+
 权限：
 
 - `apps:read`：查看 App、实例和状态。
@@ -892,10 +894,10 @@ App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用�
 ### POST `/api/v1/apps/install`
 
 ```json
-{ "appId": "example.app", "version": "1.0.0", "activate": true }
+{ "appId": "example.app", "version": "1.0.0", "activate": true, "grants": ["example:read"] }
 ```
 
-Server 从可信包源获取并完整校验指定身份的包。更新版本只有在 `activate: true` 时切换；启动仍取决于 App 和实例开关。需要 `apps:manage`。
+Server 从可信包源获取并完整校验指定身份的包。新安装默认 grants 为空；传入的 grant 必须是 Manifest `permissions` 的子集。更新版本只有在 `activate: true` 时切换；启动仍取决于 App 和实例开关。需要 `apps:manage`。
 
 ### POST `/api/v1/apps/availability`
 

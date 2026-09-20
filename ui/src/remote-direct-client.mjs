@@ -342,8 +342,8 @@ export async function fetchRemoteAppAvailability(settings, packages) {
   return Array.isArray(result?.packages) ? result.packages : [];
 }
 
-export function installRemoteApp(settings, appId, version) {
-  return requestRemoteApps(settings, '/install', { method: 'POST', body: { appId, version, activate: true } });
+export function installRemoteApp(settings, appId, version, grants = []) {
+  return requestRemoteApps(settings, '/install', { method: 'POST', body: { appId, version, activate: true, grants } });
 }
 
 export function updateRemoteApp(settings, appId, patch) {
@@ -940,7 +940,7 @@ export function createRemoteDirectClient({ getSettings }) {
     stopRemoteFeishuAdapter: (settings) => stopRemoteFeishuAdapter(currentSettings(settings)),
     fetchRemoteApps: (settings) => fetchRemoteApps(currentSettings(settings)),
     fetchRemoteAppAvailability: (packages, settings) => fetchRemoteAppAvailability(currentSettings(settings), packages),
-    installRemoteApp: (appId, version, settings) => installRemoteApp(currentSettings(settings), appId, version),
+    installRemoteApp: (appId, version, grants = [], settings) => installRemoteApp(currentSettings(settings), appId, version, grants),
     updateRemoteApp: (appId, patch, settings) => updateRemoteApp(currentSettings(settings), appId, patch),
     uninstallRemoteApp: (appId, options, settings) => uninstallRemoteApp(currentSettings(settings), appId, options),
     createRemoteAppInstance: (appId, input, settings) => createRemoteAppInstance(currentSettings(settings), appId, input),

@@ -1,6 +1,6 @@
 # Moss Channel Host API
 
-`moss.channel/v1` 是常驻 Moss App 接入外部消息渠道的双向协议。Channel App 负责平台连接、消息格式和平台 API；Moss Host 负责身份授权、会话、Agent 执行、通知和决策。
+`moss.channel/v1` 是常驻 Moss App 接入外部消息渠道的双向协议。Channel App 负责平台连接、消息格式和平台 API；Moss Host 负责身份授权、会话、Agent 执行、通知和决策。它是通用 [Host Capability API](./app-host-capability-api.md) 的兼容适配层。
 
 ## Manifest
 

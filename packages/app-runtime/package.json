@@ -12,6 +12,9 @@
     "./actions": { "types": "./src/index.d.mts", "import": "./src/actions/index.mjs" },
     "./events": { "types": "./src/index.d.mts", "import": "./src/events/index.mjs" },
     "./channel": { "types": "./src/index.d.mts", "import": "./src/channel/index.mjs" },
+    "./capabilities": { "types": "./src/index.d.mts", "import": "./src/capabilities/index.mjs" },
+    "./contributions": { "types": "./src/index.d.mts", "import": "./src/contributions/index.mjs" },
+    "./catalog": { "types": "./src/index.d.mts", "import": "./src/catalog/index.mjs" },
     "./logging": { "types": "./src/index.d.mts", "import": "./src/logging/index.mjs" },
     "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" }
   },

@@ -377,6 +377,9 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const displayedBackend = desktopBackend || serverBackend || app.backend;
               const canDeployToServer = appCanDeployToServer(app);
               const instanceTargets = availableInstanceTargets(app);
+              const trust = app.remoteOnly ? app.serverTrust : app.trust;
+              const desktopPermissions = app.permissions || [];
+              const serverPermissions = app.serverPermissions || [];
               return (
                 <section key={appId} className={`flex min-w-0 flex-col rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
                   <div className="flex items-start gap-3">
@@ -384,6 +387,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
                     <div className="grid justify-items-end gap-2">
                       {desktopBackend && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`Desktop ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
+                      {!desktopBackend && !app.remoteOnly && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`App ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
                       {serverBackend && <Toggle checked={Boolean(app.serverEnabled)} disabled={busy === appId} label={`Server ${app.serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "server", enabled))} />}
                     </div>
                   </div>
@@ -395,6 +399,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     {displayedBackend && <span>{displayedBackend.instanceMode === "multiple" ? "多实例" : "单实例"}</span>}
                     {displayedBackend && <span>{displayedBackend.targets.map((target) => target === "desktop" ? "Desktop" : "Server").join(" / ")}</span>}
                     {displayedBackend?.protocols?.includes("moss.channel/v1") && <span>Channel</span>}
+                    <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>
                   </div>
@@ -426,6 +431,31 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                           ? (app.instances || []).map((instance) => <AppInstanceRow key={`${instance.target || "desktop"}:${instance.id}`} app={app} instance={instance} onChanged={onRefresh} />)
                           : <div className="py-3 text-xs text-muted-foreground">暂无实例</div>}
                       {addingInstance === appId && <NewInstanceForm app={app} onClose={() => setAddingInstance(null)} onChanged={onRefresh} />}
+                      {desktopPermissions.length || serverPermissions.length ? (
+                        <div className="mt-3 border-t border-border pt-3">
+                          <div className="mb-2 flex items-center gap-2 text-xs font-medium"><ShieldCheck className="h-3.5 w-3.5" />权限授权</div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {!app.remoteOnly && (
+                              <div className="grid gap-1.5">
+                                <div className="text-[11px] text-muted-foreground">Desktop</div>
+                                {desktopPermissions.map((permission) => {
+                                  const checked = (app.grants || []).includes(permission);
+                                  return <label key={`desktop:${permission}`} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={checked} disabled={busy === appId} onChange={() => void run(appId, () => window.agentDesktop.setAppGrants({ appId, target: "desktop", grants: checked ? (app.grants || []).filter((item) => item !== permission) : [...(app.grants || []), permission] }))} /><code>{permission}</code></label>;
+                                })}
+                              </div>
+                            )}
+                            {app.remoteInstalled && (
+                              <div className="grid gap-1.5">
+                                <div className="text-[11px] text-muted-foreground">Server</div>
+                                {serverPermissions.map((permission) => {
+                                  const checked = (app.serverGrants || []).includes(permission);
+                                  return <label key={`server:${permission}`} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={checked} disabled={busy === appId} onChange={() => void run(appId, () => window.agentDesktop.setAppGrants({ appId, target: "server", grants: checked ? (app.serverGrants || []).filter((item) => item !== permission) : [...(app.serverGrants || []), permission] }))} /><code>{permission}</code></label>;
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                       {displayedBackend?.actions?.length ? (
                         <div className="mt-3 border-t border-border pt-3">
                           <div className="mb-2 text-xs font-medium">Backend 能力</div>
@@ -439,7 +469,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                         void run(appId, () => window.agentDesktop.uninstallAppOnServer({ appId, deleteData, deleteCredentials }));
                       }}><Trash2 className="h-3.5 w-3.5" />卸载 Server App</Button></div>}
                       {app.remoteError && <div className="mt-3 text-xs text-destructive">Server 不可用：{app.remoteError}</div>}
-                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" />{(app.permissions || []).length ? app.permissions?.join(" · ") : "无额外权限"}</div>
+                      {!desktopPermissions.length && !serverPermissions.length && <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" />无额外权限</div>}
                     </div>
                   )}
                   {versionsOpen === appId && (

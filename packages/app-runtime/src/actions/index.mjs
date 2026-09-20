@@ -23,6 +23,9 @@ export class AppActionBroker {
   }
 
   async invoke(deployment, actionName, input, options = {}) {
+    if (options.signal?.aborted) {
+      throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+    }
     const requestId = options.requestId === undefined ? null : String(options.requestId)
     if (requestId !== null && (!requestId || requestId.length > 128)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Action request id is invalid')
@@ -48,6 +51,13 @@ export class AppActionBroker {
     let rejectCancellation = null
     const cancellation = new Promise((_, reject) => { rejectCancellation = reject })
     cancellation.catch(() => {})
+    const abortFromCaller = () => {
+      if (controller.signal.aborted) return
+      const error = new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+      controller.abort(error)
+      rejectCancellation(error)
+    }
+    options.signal?.addEventListener('abort', abortFromCaller, { once: true })
     if (requestKey) this.requests.set(requestKey, { controller, rejectCancellation })
     const validateRequest = async () => {
       const packageInfo = await this.packageResolver(deployment.appId)
@@ -69,6 +79,7 @@ export class AppActionBroker {
     try {
       await admission
     } catch (error) {
+      options.signal?.removeEventListener('abort', abortFromCaller)
       if (requestKey) this.requests.delete(requestKey)
       this.releaseQueueSlot(deployment.key)
       throw error
@@ -104,11 +115,12 @@ export class AppActionBroker {
     const tail = queued.catch(() => {})
     this.queues.set(deployment.key, tail)
     tail.finally(() => {
+      options.signal?.removeEventListener('abort', abortFromCaller)
       if (this.queues.get(deployment.key) === tail) this.queues.delete(deployment.key)
       if (requestKey) this.requests.delete(requestKey)
       this.releaseQueueSlot(deployment.key)
     })
-    return requestKey ? Promise.race([queued, cancellation]) : queued
+    return requestKey || options.signal ? Promise.race([queued, cancellation]) : queued
   }
 
   cancel(deploymentKey, requestId) {

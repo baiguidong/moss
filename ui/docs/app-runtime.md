@@ -8,12 +8,12 @@ Moss 只有一种可安装扩展：App。App 可以只有 UI、只有 Backend，
 
 1. 点击“安装 App”，选择 `.zip` App 包。
 2. Moss 在执行任何代码前检查 Manifest V2、路径、文件数量、大小和全部校验和。
-3. 有 Backend 的 App 需要分别打开 App 总开关和实例开关；安装本身不会启动代码。
+3. App 安装后默认停用且不授权；有 Backend 的 App 还需要分别打开 App 总开关和实例开关。
 4. 多实例 App 可在 UI 中创建多个实例，分别配置非敏感字段和密钥。
 5. UI 中可查看状态和日志、重启实例、切换版本、回滚及卸载。
 6. 卸载默认只删除包和运行记录；数据与密钥必须分别确认后才删除。
 
-Backend-only App 没有“打开”按钮，但所有配置和运行操作仍可在 App Center 完成。UI-only App 不显示 Backend 开关，也不会创建后台进程。
+Backend-only App 没有“打开”按钮，但所有配置和运行操作仍可在 App Center 完成。UI-only App 使用 App 开关控制导航等 contribution，但不会创建后台进程。
 
 ## App 包
 
@@ -23,6 +23,7 @@ Backend-only App 没有“打开”按钮，但所有配置和运行操作仍可
 example-app/
 ├── app.moss.json
 ├── checksums.json
+├── app-signature.json        # 可选 Ed25519 签名
 ├── assets/
 ├── schemas/
 └── dist/
@@ -30,7 +31,7 @@ example-app/
     └── backend/main.mjs
 ```
 
-`checksums.json` 必须覆盖包内除自身以外的每个文件。安装包不能包含软链接、绝对路径、路径穿越或运行期安装脚本。Backend 的全部运行依赖必须在构建时打包。
+`checksums.json` 必须覆盖包内除自身和 `app-signature.json` 以外的每个文件。安装包不能包含软链接、绝对路径、路径穿越或运行期安装脚本。Backend 的全部运行依赖必须在构建时打包。
 
 最小 Manifest V2：
 
@@ -85,7 +86,7 @@ example-app/
 
 App repo 的运行时代码只依赖 `@moss/app-sdk`，不能导入 `ui/`、`server/`、Session 或 Connector 内部源码。Backend 通过 `defineAppBackend()` 注册 Manifest 已声明的 Action；UI 通过受 App ID 约束的 `window.mossApp.actions` 调用。SDK 的协议、Manifest schema 和测试辅助 API 位于根仓库 `packages/app-sdk`。
 
-需要接入外部 IM 的常驻 App 使用 `moss.channel/v1`。该协议提供 Backend 到 Host 的受权限控制请求，以及 Host 到 Backend 的可确认事件；具体契约见 [Channel Host API](./channel-host-api.md)。
+需要接入外部 IM 的常驻 App 使用 `moss.channel/v1`。该协议提供 Backend 到 Host 的受权限控制请求，以及 Host 到 Backend 的可确认事件；具体契约见 [Channel Host API](./channel-host-api.md)。其他领域使用通用 [Host Capability API](./app-host-capability-api.md)。
 
 ## Desktop 数据与进程
 
@@ -120,7 +121,7 @@ Server 不接收客户端上传的任意可执行包。管理员在 `server.json
 
 客户端 App Center 通过认证 API 按 App ID 和版本要求 Server 获取包，然后完成安装、启停、实例管理、日志和 Desktop/Server 移动。移动先在目标创建停用实例，再停止来源并启动目标；目标失败时恢复来源。Server 使用持久化 deployment generation 和租约，多个节点不能同时拥有同一 deployment。
 
-所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；管理员的 `*` scope 包含这些权限。
+所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；管理员的 `*` scope 包含这些权限，也可将它们授予自定义角色。默认 owner scope 为当前用户；`org` 和 `host` scope 只允许管理员选择。
 
 ## 安全边界
 

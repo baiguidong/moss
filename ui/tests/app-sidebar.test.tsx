@@ -12,6 +12,7 @@ function renderSidebar({
   sessions = [],
   activeView = 'chat',
   collapsed = false,
+  appViews = [],
 }: {
   libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
@@ -20,11 +21,13 @@ function renderSidebar({
   sessions?: any[];
   activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
   collapsed?: boolean;
+  appViews?: any[];
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
       sessions={sessions}
       apps={[]}
+      appViews={appViews}
       activeSessionId={null}
       activeView={activeView}
       appsCount={0}
@@ -101,6 +104,15 @@ describe('app sidebar more menu', () => {
 });
 
 describe('app sidebar resource navigation', () => {
+  test('renders enabled App view contributions as navigation entries', () => {
+    const html = renderSidebar({
+      appViews: [{ id: 'moss.example/home', appId: 'moss.example', appName: 'moss.example', title: '示例 App', route: '#/home', location: 'sidebar' }],
+    });
+    expect(html).toContain('data-app-view="moss.example/home"');
+    expect(html).toContain('data-app-route="#/home"');
+    expect(html).toContain('示例 App');
+  });
+
   test('shows one combined resource entry instead of separate entries', () => {
     const html = renderSidebar();
     expect(html).toContain('title="技能·专家·连接器"');

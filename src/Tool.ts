@@ -336,6 +336,15 @@ export type MossAppEvent =
   | { type: 'library_read'; input: MossLibraryReadInput }
   | { type: 'library_write'; input: MossLibraryWriteInput }
   | {
+      type: 'app_tool_invoke'
+      input: {
+        contributionId: string
+        input: Record<string, unknown>
+        requestId: string
+      }
+      signal?: AbortSignal
+    }
+  | {
       type: 'workflow_catalog_changed'
       input: { action: string; workflowId?: string }
     }
@@ -523,6 +532,7 @@ export type MossAppEventResult =
       resource?: unknown
       libraryWrite?: unknown
       browser?: unknown
+      result?: unknown
     }
   | { ok: false; error: string }
 

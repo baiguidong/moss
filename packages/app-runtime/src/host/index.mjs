@@ -1,17 +1,27 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   APP_ERROR_CODES,
   AppServiceError,
   MOSS_CHANNEL_PROTOCOL,
   getChannelBackendEventPermission,
+  getChannelHostMethodPermission,
   loadJsonSchema,
   requireChannelPermission,
   validateChannelBackendEvent,
+  validateChannelHostInput,
+  validateChannelHostMethod,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
+import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
 import { AppChannelHost } from '../channel/index.mjs'
+import {
+  APP_CONTRIBUTION_KINDS,
+  collectManifestContributions,
+  findContribution,
+} from '../contributions/index.mjs'
 import { AppEventBroker } from '../events/index.mjs'
 import { AppLogStore } from '../logging/index.mjs'
 import { AppPackageStore, validateAppPackage } from '../packages/index.mjs'
@@ -21,8 +31,10 @@ import {
   InstallationStore,
   InstanceStore,
   JsonAppStateStore,
+  DEFAULT_APP_OWNER,
   defaultInstanceId,
   deploymentKey,
+  normalizeAppOwner,
   validateConfiguration,
 } from '../state/index.mjs'
 
@@ -41,6 +53,33 @@ function maskedSecrets(value) {
   return Object.fromEntries(Object.keys(value || {}).map((key) => [key, { configured: true, masked: '********' }]))
 }
 
+function normalizeInstallationGrants(manifest, value) {
+  if (!Array.isArray(value)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'App grants must be an array')
+  const requested = new Set(manifest.permissions || [])
+  const grants = [...new Set(value.map((entry) => String(entry || '').trim()))].sort()
+  const invalid = grants.find((permission) => !requested.has(permission))
+  if (invalid) {
+    throw new AppServiceError(APP_ERROR_CODES.permissionDenied, `App did not request permission: ${invalid}`)
+  }
+  return grants
+}
+
+function installationGrantsForPackage(current, manifest, requestedGrants) {
+  if (requestedGrants !== undefined) return normalizeInstallationGrants(manifest, requestedGrants)
+  if (current) {
+    const requested = new Set(manifest.permissions || [])
+    return normalizeInstallationGrants(
+      manifest,
+      (current.grants || []).filter((permission) => requested.has(permission)),
+    )
+  }
+  return normalizeInstallationGrants(manifest, manifest.permissions || [])
+}
+
+function ownerStorageSegment(owner) {
+  return Buffer.from(owner.key, 'utf8').toString('base64url')
+}
+
 export class AppRuntimeHost {
   constructor(options) {
     this.rootDir = path.resolve(options.rootDir)
@@ -51,31 +90,57 @@ export class AppRuntimeHost {
     this.hostId = options.hostId || `${this.target}-${randomUUID()}`
     this.deploymentTargetId = options.deploymentTargetId || this.hostId
     this.leaseTtlMs = options.leaseTtlMs || 30_000
-    this.credentials = options.credentialAdapter || new MemoryCredentialAdapter()
+    this.defaultOwner = normalizeAppOwner(options.defaultOwner || DEFAULT_APP_OWNER)
+    this.ownerContext = new AsyncLocalStorage()
+    this.credentialAdapter = options.credentialAdapter || new MemoryCredentialAdapter()
+    this.credentials = {
+      get: (appId, instanceId) => this.credentialAdapter.get(this.storageAppId(appId), instanceId),
+      set: (appId, instanceId, values) => this.credentialAdapter.set(this.storageAppId(appId), instanceId, values),
+      remove: (appId, instanceId) => this.credentialAdapter.remove(this.storageAppId(appId), instanceId),
+      removeApp: (appId) => this.credentialAdapter.removeApp(this.storageAppId(appId)),
+    }
     this.events = options.eventBroker || new AppEventBroker()
     this.state = options.stateStore || new JsonAppStateStore(path.join(this.rootDir, 'app-runtime-state.json'))
-    this.packages = new AppPackageStore({ appsDir: this.appsDir, hostApiVersion: options.hostApiVersion })
+    this.packages = new AppPackageStore({
+      appsDir: this.appsDir,
+      hostApiVersion: options.hostApiVersion,
+      trustedPublishers: options.trustedPublishers,
+      requireTrustedPublisher: options.requireTrustedPublisher,
+    })
     this.packageCache = new Map()
-    this.installations = new InstallationStore(this.state)
-    this.instances = new InstanceStore(this.state)
-    this.deployments = new DeploymentStore(this.state)
+    const ownerResolver = () => this.currentOwner()
+    this.installations = new InstallationStore(this.state, { ownerResolver })
+    this.instances = new InstanceStore(this.state, { ownerResolver })
+    this.deployments = new DeploymentStore(this.state, { ownerResolver })
     this.logs = new AppLogStore({
       logsDir: path.join(this.runtimeDir, 'logs'),
-      secretProvider: async (appId, instanceId) => Object.values(await this.credentials.get(appId, instanceId)),
+      secretProvider: async (appId, instanceId, owner) => this.withOwner(
+        owner || this.defaultOwner,
+        async () => Object.values(await this.credentials.get(appId, instanceId)),
+      ),
       ...(options.logOptions || {}),
     })
+    if (options.hostCapabilities !== undefined && options.hostCapabilities !== null
+      && (typeof options.hostCapabilities.dispatch !== 'function'
+        || typeof options.hostCapabilities.registerProtocol !== 'function')) {
+      throw new TypeError('hostCapabilities must implement dispatch(request) and registerProtocol(definition)')
+    }
     if (options.channelHost !== undefined && options.channelHost !== null
       && typeof options.channelHost.dispatch !== 'function') {
       throw new TypeError('channelHost must implement dispatch(request)')
     }
-    this.channelHost = options.channelHost ?? new AppChannelHost(options.channelOptions)
+    this.hostCapabilities = options.hostCapabilities ?? new AppHostCapabilityRegistry(options.hostCapabilityOptions)
+    this.channelHost = options.channelHost ?? new AppChannelHost({
+      ...(options.channelOptions || {}),
+      registry: this.hostCapabilities,
+    })
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
-      onStatus: (status) => this.events.publish({ type: 'status', ...status }),
-      onEvent: (event) => this.events.publish({ type: 'backend-event', ...event }),
+      onStatus: (status) => this.publishRuntimeEvent({ type: 'status', ...status }, status.owner),
+      onEvent: (event) => this.publishRuntimeEvent({ type: 'backend-event', ...event }, event.owner),
       onLog: (entry) => this.logs.append(entry).catch(() => {}),
       ...(options.processOptions || {}),
-      onChannelRequest: (request) => this.dispatchChannelRequest(request),
+      onHostRequest: (request) => this.dispatchHostRequest(request),
     })
     this.actions = new AppActionBroker({
       ...(options.actionOptions || {}),
@@ -92,44 +157,85 @@ export class AppRuntimeHost {
     if (this.initialized) return this
     await this.state.initialize()
     this.initialized = true
-    await this.restore()
+    const owners = this.installations.listOwners()
+    if (!owners.length) owners.push(this.defaultOwner)
+    for (const owner of owners) await this.withOwner(owner, () => this.restore())
     if (this.target === 'server') {
-      this.leaseTimer = setInterval(() => this.renewLeases().catch(() => {}), Math.max(1000, Math.floor(this.leaseTtlMs / 3)))
+      this.leaseTimer = setInterval(() => this.renewAllLeases().catch(() => {}), Math.max(1000, Math.floor(this.leaseTtlMs / 3)))
       this.leaseTimer.unref?.()
     }
     return this
   }
 
+  currentOwner() {
+    return this.ownerContext.getStore() || this.defaultOwner
+  }
+
+  withOwner(owner, operation) {
+    if (typeof operation !== 'function') throw new TypeError('withOwner requires an operation')
+    return this.ownerContext.run(normalizeAppOwner(owner), operation)
+  }
+
+  storageAppId(appId, owner = this.currentOwner()) {
+    return owner.key === DEFAULT_APP_OWNER.key
+      ? appId
+      : `owners/${ownerStorageSegment(owner)}/${appId}`
+  }
+
+  appDataPath(root, appId, ...parts) {
+    const owner = this.currentOwner()
+    return owner.key === DEFAULT_APP_OWNER.key
+      ? path.join(root, appId, ...parts)
+      : path.join(root, 'owners', ownerStorageSegment(owner), appId, ...parts)
+  }
+
+  publishRuntimeEvent(event, owner = this.currentOwner()) {
+    return this.events.publish({ ...event, owner: normalizeAppOwner(owner) })
+  }
+
   transitionApp(appId, operation) {
-    const previous = this.appTransitions.get(appId) || Promise.resolve()
+    const transitionKey = `${this.currentOwner().key}:${appId}`
+    const previous = this.appTransitions.get(transitionKey) || Promise.resolve()
     const transition = previous.then(operation, operation)
     const tail = transition.catch(() => {})
-    this.appTransitions.set(appId, tail)
+    this.appTransitions.set(transitionKey, tail)
     tail.finally(() => {
-      if (this.appTransitions.get(appId) === tail) this.appTransitions.delete(appId)
+      if (this.appTransitions.get(transitionKey) === tail) this.appTransitions.delete(transitionKey)
     })
     return transition
   }
 
-  async installFromDirectory(sourceDir) {
-    const source = await validateAppPackage(sourceDir, { hostApiVersion: this.packages.hostApiVersion })
+  async installFromDirectory(sourceDir, options = {}) {
+    const source = await validateAppPackage(sourceDir, {
+      hostApiVersion: this.packages.hostApiVersion,
+      trustedPublishers: options.trustedPublishers,
+      requireTrustedPublisher: options.requireTrustedPublisher,
+    })
     return this.transitionApp(source.manifest.id, async () => {
-      const installed = await this.packages.installFromDirectory(source.root)
-      return this.registerPackageInstallation(installed)
+      const installed = await this.packages.installFromDirectory(source.root, options)
+      return this.registerPackageInstallation(installed, options)
     })
   }
 
-  async registerPackageInstallation(installed) {
+  async registerPackageInstallation(installed, options = {}) {
     const current = this.installations.get(installed.manifest.id)
+    const activatesInstalledVersion = !current?.activeVersion
+      || current.activeVersion === installed.manifest.version
     await this.installations.upsert(installed.manifest.id, {
       activeVersion: current?.activeVersion || installed.manifest.version,
       enabled: current?.enabled || false,
+      grants: current
+        ? current.grants || []
+        : installationGrantsForPackage(current, installed.manifest, options.grants),
     })
-    if (!current?.activeVersion || current.activeVersion === installed.manifest.version) {
+    if (activatesInstalledVersion) {
       this.packageCache.set(`${installed.manifest.id}@${installed.manifest.version}`, Object.freeze(installed))
     }
     await this.ensureDefaultInstance(installed.manifest.id)
-    this.events.publish({ type: 'installation-changed', appId: installed.manifest.id })
+    if (current && activatesInstalledVersion && options.grants !== undefined) {
+      await this.setAppGrantsNow(installed.manifest.id, options.grants)
+    }
+    this.publishRuntimeEvent({ type: 'installation-changed', appId: installed.manifest.id })
     return this.getApp(installed.manifest.id)
   }
 
@@ -146,7 +252,7 @@ export class AppRuntimeHost {
         if (options.enabled !== undefined) {
           await this.installations.upsert(appId, { enabled: Boolean(options.enabled) })
         }
-        await this.activateVersionNow(appId, version)
+        await this.activateVersionNow(appId, version, { grants: options.grants })
       } catch (error) {
         if (options.enabled !== undefined) {
           await this.installations.upsert(appId, { enabled: current.enabled })
@@ -158,13 +264,24 @@ export class AppRuntimeHost {
     }
     const instanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
     const deploymentSnapshots = this.deployments.list(appId)
+    const nextGrants = installationGrantsForPackage(current, packageInfo.manifest, options.grants)
+    const grantsChanged = Boolean(current)
+      && JSON.stringify(current.grants || []) !== JSON.stringify(nextGrants)
     try {
+      if (grantsChanged) {
+        await Promise.allSettled(deploymentSnapshots.map((item) => this.supervisor.stop(item.key)))
+      }
       await this.installations.upsert(appId, {
         activeVersion: version,
+        grants: nextGrants,
         ...(options.enabled !== undefined ? { enabled: options.enabled } : {}),
       })
+      if (grantsChanged) {
+        for (const deployment of deploymentSnapshots) await this.deployments.bumpGeneration(deployment.key)
+      }
       await this.ensureDefaultInstance(appId)
       await this.reconcileApp(appId)
+      this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return packageInfo
     } catch (error) {
       const snapshotKeys = new Set(deploymentSnapshots.map((deployment) => deployment.key))
@@ -231,6 +348,7 @@ export class AppRuntimeHost {
     return {
       installation,
       manifest: packageInfo.manifest,
+      trust: packageInfo.trust,
       configuration: packageInfo.manifest.backend?.configuration ? {
         schema: packageInfo.manifest.backend.configuration.schema
           ? loadJsonSchema(packageInfo.root, packageInfo.manifest.backend.configuration.schema, 'App configuration')
@@ -254,6 +372,116 @@ export class AppRuntimeHost {
     return results
   }
 
+  async listContributions(options = {}) {
+    const requestedKinds = options.kinds === undefined
+      ? APP_CONTRIBUTION_KINDS
+      : options.kinds
+    if (!Array.isArray(requestedKinds) || requestedKinds.some((kind) => !APP_CONTRIBUTION_KINDS.includes(kind))) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Unknown App contribution kind')
+    }
+    const result = Object.fromEntries(requestedKinds.map((kind) => [kind, []]))
+    for (const installation of this.installations.list()) {
+      if (options.appId && installation.appId !== options.appId) continue
+      const packageInfo = await this.getActivePackage(installation.appId)
+      const backend = packageInfo.manifest.backend
+      const enabled = Boolean(
+        installation.enabled
+        && (!backend || backend.targets.includes(this.target)),
+      )
+      const contributions = collectManifestContributions(packageInfo.manifest, {
+        grants: installation.grants || [],
+        enabled,
+        includeUnavailable: options.includeUnavailable === true,
+      })
+      for (const kind of requestedKinds) {
+        for (const item of contributions[kind]) {
+          const contribution = { ...item }
+          if (options.loadSchemas && ['commands', 'tools'].includes(kind)) {
+            if (item.inputSchema) {
+              contribution.inputSchemaDocument = loadJsonSchema(
+                packageInfo.root,
+                item.inputSchema,
+                `${kind} ${item.localId} inputSchema`,
+              )
+            }
+            if (item.outputSchema) {
+              contribution.outputSchemaDocument = loadJsonSchema(
+                packageInfo.root,
+                item.outputSchema,
+                `${kind} ${item.localId} outputSchema`,
+              )
+            }
+          }
+          result[kind].push(Object.freeze(contribution))
+        }
+      }
+    }
+    for (const items of Object.values(result)) {
+      items.sort((left, right) => (left.order || 0) - (right.order || 0)
+        || left.appDisplayName.localeCompare(right.appDisplayName)
+        || left.id.localeCompare(right.id))
+    }
+    return result
+  }
+
+  async requireContribution(kind, id, options = {}) {
+    const separator = String(id || '').indexOf('/')
+    const appId = options.appId || (separator > 0 ? String(id).slice(0, separator) : '')
+    if (!appId) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Qualified App contribution id is required')
+    const contributions = await this.listContributions({ appId, kinds: [kind], loadSchemas: options.loadSchemas })
+    return findContribution(contributions, kind, id)
+  }
+
+  resolveContributionInstance(appId, requestedInstanceId) {
+    const packageInfo = this.packageCache.get(`${appId}@${this.installations.get(appId)?.activeVersion}`)
+    const backend = packageInfo?.manifest.backend
+    if (!backend) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App contribution requires a Backend')
+    if (requestedInstanceId) return this.requireInstance(appId, requestedInstanceId)
+    if (backend.instanceMode === 'single') return this.requireInstance(appId, defaultInstanceId(appId))
+    const enabled = this.instances.list(appId).filter((instance) => instance.enabled)
+    if (enabled.length !== 1) {
+      throw new AppServiceError(
+        APP_ERROR_CODES.invalidInput,
+        `App contribution requires an explicit instanceId; ${enabled.length} enabled instances are available`,
+      )
+    }
+    return enabled[0]
+  }
+
+  async invokeContribution(kind, id, input = {}, options = {}) {
+    if (!['commands', 'tools', 'resourceProviders'].includes(kind)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App contribution cannot be invoked: ${kind}`)
+    }
+    const contribution = await this.requireContribution(kind, id)
+    const instance = this.resolveContributionInstance(contribution.appId, options.instanceId)
+    const action = kind === 'resourceProviders' ? contribution.resolveAction : contribution.action
+    return this.invoke(contribution.appId, instance.id, action, input, options)
+  }
+
+  invokeToolContribution(id, input = {}, options = {}) {
+    return this.invokeContribution('tools', id, input, options)
+  }
+
+  invokeCommandContribution(id, input = {}, options = {}) {
+    return this.invokeContribution('commands', id, input, options)
+  }
+
+  async resolveResource(uri, options = {}) {
+    let parsed
+    try { parsed = new URL(String(uri)) } catch {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Resource URI is invalid')
+    }
+    const contributions = await this.listContributions({ kinds: ['resourceProviders'] })
+    const matches = contributions.resourceProviders.filter((provider) => provider.schemes.includes(parsed.protocol.slice(0, -1)))
+    if (matches.length !== 1) {
+      throw new AppServiceError(
+        APP_ERROR_CODES.actionNotFound,
+        matches.length ? `Multiple App resource providers claim URI: ${uri}` : `No App resource provider is available for URI: ${uri}`,
+      )
+    }
+    return this.invokeContribution('resourceProviders', matches[0].id, { uri: String(uri) }, options)
+  }
+
   async ensureDefaultInstance(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
@@ -269,7 +497,7 @@ export class AppRuntimeHost {
   async ensureDeployment(packageInfo, instance, target = this.target, targetId = this.deploymentTargetId) {
     const backend = packageInfo.manifest.backend
     if (!backend || !backend.targets.includes(target)) return null
-    const key = deploymentKey(instance.id, target, targetId)
+    const key = deploymentKey(instance.id, target, targetId, this.currentOwner())
     const current = this.deployments.get(key)
     return this.deployments.upsert({
       appId: packageInfo.manifest.id,
@@ -285,10 +513,41 @@ export class AppRuntimeHost {
     return this.transitionApp(appId, () => this.setAppEnabledNow(appId, enabled))
   }
 
+  async setAppGrants(appId, grants) {
+    return this.transitionApp(appId, () => this.setAppGrantsNow(appId, grants))
+  }
+
+  async setAppGrantsNow(appId, grants) {
+    const packageInfo = await this.getActivePackage(appId)
+    const installation = this.installations.get(appId)
+    const nextGrants = normalizeInstallationGrants(packageInfo.manifest, grants)
+    if (JSON.stringify(installation.grants || []) === JSON.stringify(nextGrants)) return this.getApp(appId)
+    const deployments = this.deployments.list(appId).filter((item) =>
+      item.targetType === this.target && item.targetId === this.deploymentTargetId)
+    await this.installations.upsert(appId, { grants: nextGrants })
+    try {
+      for (const deployment of deployments) {
+        await this.supervisor.stop(deployment.key)
+        await this.deployments.bumpGeneration(deployment.key)
+      }
+      await this.reconcileApp(appId)
+    } catch (error) {
+      await this.installations.upsert(appId, { grants: installation.grants || [] })
+      for (const deployment of this.deployments.list(appId).filter((item) =>
+        item.targetType === this.target && item.targetId === this.deploymentTargetId)) {
+        await this.supervisor.stop(deployment.key).catch(() => {})
+        await this.deployments.bumpGeneration(deployment.key).catch(() => {})
+      }
+      await this.reconcileApp(appId).catch(() => {})
+      throw error
+    }
+    this.publishRuntimeEvent({ type: 'installation-changed', appId })
+    return this.getApp(appId)
+  }
+
   async setAppEnabledNow(appId, enabled) {
     const packageInfo = await this.getActivePackage(appId)
-    if (!packageInfo.manifest.backend) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'UI-only Apps do not have a Backend switch')
-    if (enabled && !packageInfo.manifest.backend.targets.includes(this.target)) {
+    if (enabled && packageInfo.manifest.backend && !packageInfo.manifest.backend.targets.includes(this.target)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${this.target}`)
     }
     const previous = this.installations.get(appId)
@@ -300,7 +559,7 @@ export class AppRuntimeHost {
       await this.reconcileApp(appId).catch(() => {})
       throw error
     }
-    this.events.publish({ type: 'installation-changed', appId })
+    this.publishRuntimeEvent({ type: 'installation-changed', appId })
     return this.getApp(appId)
   }
 
@@ -347,7 +606,7 @@ export class AppRuntimeHost {
       await this.credentials.set(appId, instance.id, input.secrets || {})
       await this.ensureDeployment(packageInfo, stored)
       await this.reconcileInstance(instance.id)
-      this.events.publish({ type: 'instance-changed', appId, instanceId: instance.id })
+      this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId: instance.id })
       return this.instances.get(instance.id)
     } catch (error) {
       for (const deployment of this.deployments.list(appId).filter((item) => item.instanceId === instance.id)) {
@@ -355,8 +614,8 @@ export class AppRuntimeHost {
       }
       await this.credentials.remove(appId, instance.id).catch(() => {})
       await this.instances.remove(instance.id).catch(() => {})
-      await fsp.rm(path.join(this.dataDir, appId, 'instances', instance.id), { recursive: true, force: true }).catch(() => {})
-      await fsp.rm(path.join(this.runtimeDir, appId, instance.id), { recursive: true, force: true }).catch(() => {})
+      await fsp.rm(this.appDataPath(this.dataDir, appId, 'instances', instance.id), { recursive: true, force: true }).catch(() => {})
+      await fsp.rm(this.appDataPath(this.runtimeDir, appId, instance.id), { recursive: true, force: true }).catch(() => {})
       throw error
     }
   }
@@ -389,7 +648,7 @@ export class AppRuntimeHost {
         this.registerDeployment(packageInfo, updated, bumped, secrets)
       }
       await this.reconcileInstance(instanceId)
-      this.events.publish({ type: 'instance-changed', appId, instanceId })
+      this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId })
       return this.instances.get(instanceId)
     } catch (error) {
       for (const deployment of deployments) await this.supervisor.stop(deployment.key).catch(() => {})
@@ -438,7 +697,7 @@ export class AppRuntimeHost {
       await this.reconcileInstance(instanceId).catch(() => {})
       throw error
     }
-    this.events.publish({ type: 'instance-changed', appId, instanceId })
+    this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId })
     return this.getInstanceStatus(appId, instanceId)
   }
 
@@ -461,10 +720,10 @@ export class AppRuntimeHost {
     await this.instances.remove(instanceId)
     if (options.deleteCredentials) await this.credentials.remove(appId, instanceId)
     if (options.deleteData) {
-      await fsp.rm(path.join(this.dataDir, appId, 'instances', instanceId), { recursive: true, force: true })
-      await fsp.rm(path.join(this.runtimeDir, appId, instanceId), { recursive: true, force: true })
+      await fsp.rm(this.appDataPath(this.dataDir, appId, 'instances', instanceId), { recursive: true, force: true })
+      await fsp.rm(this.appDataPath(this.runtimeDir, appId, instanceId), { recursive: true, force: true })
     }
-    this.events.publish({ type: 'instance-removed', appId, instanceId })
+    this.publishRuntimeEvent({ type: 'instance-removed', appId, instanceId })
   }
 
   async clearInstanceCredentials(appId, instanceId) {
@@ -480,7 +739,7 @@ export class AppRuntimeHost {
       await this.supervisor.stop(deployment.key)
       await this.deployments.bumpGeneration(deployment.key)
     }
-    this.events.publish({ type: 'instance-changed', appId, instanceId })
+    this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId })
     return this.instances.get(instanceId)
   }
 
@@ -539,13 +798,35 @@ export class AppRuntimeHost {
     return this.channelHost.register(method, handler)
   }
 
-  async dispatchChannelRequest(request) {
+  registerHostProtocol(definition) {
+    return this.hostCapabilities.registerProtocol(definition)
+  }
+
+  registerHostHandler(protocol, method, handler) {
+    if (typeof this.hostCapabilities?.registerHandler !== 'function') {
+      throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker does not support handler registration')
+    }
+    return this.hostCapabilities.registerHandler(protocol, method, handler)
+  }
+
+  dispatchChannelRequest(request) {
+    return this.dispatchHostRequest({ ...request, protocol: MOSS_CHANNEL_PROTOCOL })
+  }
+
+  dispatchHostRequest(request) {
+    const owner = normalizeAppOwner(request.owner || this.currentOwner())
+    return this.withOwner(owner, () => this.dispatchHostRequestNow(request))
+  }
+
+  async dispatchHostRequestNow(request) {
+    const isChannel = request.protocol === MOSS_CHANNEL_PROTOCOL
+    const unavailableCode = isChannel ? APP_ERROR_CODES.channelUnavailable : APP_ERROR_CODES.hostUnavailable
     let deployment = this.deployments.get(request.key)
     if (!deployment) {
-      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel deployment is unavailable')
+      throw new AppServiceError(unavailableCode, 'App deployment is unavailable')
     }
     if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
-      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Channel request is outside the deployment scope')
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the deployment scope')
     }
     if (deployment.generation !== request.generation) {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel deployment generation is stale')
@@ -560,26 +841,72 @@ export class AppRuntimeHost {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel deployment generation is stale')
     }
     if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
-      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Channel request is outside the deployment scope')
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the deployment scope')
     }
     if (this.installations.get(request.appId)?.activeVersion !== request.version) {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel App version is stale')
     }
     this.authorizeInvocation(deployment)
     const backend = packageInfo.manifest.backend
-    if (typeof this.channelHost?.dispatch !== 'function') {
-      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host is not configured')
+    if (isChannel) {
+      if (!backend?.protocols?.includes(MOSS_CHANNEL_PROTOCOL)) {
+        throw new AppServiceError(
+          APP_ERROR_CODES.channelUnavailable,
+          `App Backend does not declare protocol: ${MOSS_CHANNEL_PROTOCOL}`,
+        )
+      }
+      const method = validateChannelHostMethod(request.method)
+      const permission = getChannelHostMethodPermission(method)
+      requireChannelPermission(packageInfo.manifest.permissions || [], permission)
+      requireChannelPermission(this.installations.get(request.appId)?.grants || [], permission)
+      request = { ...request, method, input: validateChannelHostInput(method, request.input) }
     }
-    return this.channelHost.dispatch({
+    const broker = isChannel ? this.channelHost : this.hostCapabilities
+    if (typeof broker?.dispatch !== 'function') {
+      throw new AppServiceError(unavailableCode, 'Host capability broker is not configured')
+    }
+    return broker.dispatch({
       ...request,
       appId: deployment.appId,
       instanceId: deployment.instanceId,
       version: packageInfo.manifest.version,
       generation: deployment.generation,
       target: { type: deployment.targetType, id: deployment.targetId },
+      owner: this.currentOwner(),
+      principal: this.currentOwner(),
       protocols: backend?.protocols || [],
       permissions: packageInfo.manifest.permissions || [],
+      grants: this.installations.get(request.appId)?.grants || packageInfo.manifest.permissions || [],
     })
+  }
+
+  async publishHostEvent(appId, instanceId, protocol, name, data = {}, options = {}) {
+    const installation = this.installations.get(appId)
+    if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
+    const instance = this.requireInstance(appId, instanceId)
+    if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+    const deployment = this.localDeployment(appId, instanceId)
+    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance is not deployed on this Host')
+    const packageInfo = await this.getActivePackage(appId)
+    const backend = packageInfo.manifest.backend
+    const prepared = this.hostCapabilities.prepareEvent({
+      appId,
+      instanceId,
+      protocol,
+      name,
+      data,
+      protocols: backend?.protocols || [],
+      permissions: packageInfo.manifest.permissions || [],
+      grants: installation.grants || packageInfo.manifest.permissions || [],
+    })
+    await this.prepareDeployment(deployment)
+    return this.supervisor.publishHostEvent(
+      deployment.key,
+      prepared.protocol,
+      prepared.name,
+      prepared.data,
+      options,
+    )
   }
 
   async publishChannelEvent(appId, instanceId, name, data = {}, options = {}) {
@@ -597,13 +924,33 @@ export class AppRuntimeHost {
         `App Backend does not declare protocol: ${MOSS_CHANNEL_PROTOCOL}`,
       )
     }
-    const normalizedName = validateChannelBackendEvent(name)
-    requireChannelPermission(
-      packageInfo.manifest.permissions || [],
-      getChannelBackendEventPermission(normalizedName),
-    )
+    const prepared = typeof this.channelHost.prepareEvent === 'function'
+      ? this.channelHost.prepareEvent({
+          appId,
+          instanceId,
+          name,
+          data,
+          protocols: backend.protocols || [],
+          permissions: packageInfo.manifest.permissions || [],
+          grants: installation.grants || packageInfo.manifest.permissions || [],
+        })
+      : {
+          name: validateChannelBackendEvent(name),
+          data,
+        }
+    if (typeof this.channelHost.prepareEvent !== 'function') {
+      const permission = getChannelBackendEventPermission(prepared.name)
+      requireChannelPermission(packageInfo.manifest.permissions || [], permission)
+      requireChannelPermission(installation.grants || [], permission)
+    }
     await this.prepareDeployment(deployment)
-    return this.supervisor.publishChannelEvent(deployment.key, normalizedName, data, options)
+    return this.supervisor.publishChannelEvent(deployment.key, prepared.name, prepared.data, options)
+  }
+
+  cancelHostEvent(appId, instanceId, protocol, eventId) {
+    this.requireInstance(appId, instanceId)
+    const deployment = this.localDeployment(appId, instanceId)
+    return deployment ? this.supervisor.cancelHostEvent(deployment.key, protocol, eventId) : false
   }
 
   cancelChannelEvent(appId, instanceId, eventId) {
@@ -620,7 +967,7 @@ export class AppRuntimeHost {
 
   async getLogs(appId, instanceId, options) {
     this.requireInstance(appId, instanceId)
-    return this.logs.list(appId, instanceId, options)
+    return this.logs.list(appId, instanceId, { ...options, owner: this.currentOwner() })
   }
 
   async prepareDeployment(deployment) {
@@ -647,12 +994,14 @@ export class AppRuntimeHost {
       lifecycle: backend.lifecycle,
       protocols: backend.protocols || [],
       permissions: packageInfo.manifest.permissions || [],
+      grants: this.installations.get(packageInfo.manifest.id)?.grants || packageInfo.manifest.permissions || [],
       packageRoot: packageInfo.root,
       config: instance.config || {},
       secrets: secrets || {},
-      dataDir: path.join(this.dataDir, packageInfo.manifest.id, 'instances', instance.id),
-      runtimeDir: path.join(this.runtimeDir, packageInfo.manifest.id, instance.id),
+      dataDir: this.appDataPath(this.dataDir, packageInfo.manifest.id, 'instances', instance.id),
+      runtimeDir: this.appDataPath(this.runtimeDir, packageInfo.manifest.id, instance.id),
       target: { type: deployment.targetType, id: deployment.targetId },
+      owner: this.currentOwner(),
     })
   }
 
@@ -722,7 +1071,7 @@ export class AppRuntimeHost {
   async restore() {
     for (const installation of this.installations.list()) {
       try { await this.reconcileApp(installation.appId) } catch (error) {
-        this.events.publish({ type: 'restore-error', appId: installation.appId, error: error.message })
+        this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
       }
     }
   }
@@ -746,25 +1095,39 @@ export class AppRuntimeHost {
     }
   }
 
-  async activateVersion(appId, version) {
-    return this.transitionApp(appId, () => this.activateVersionNow(appId, version))
+  async renewAllLeases() {
+    const owners = this.installations.listOwners()
+    if (!owners.length) owners.push(this.defaultOwner)
+    for (const owner of owners) await this.withOwner(owner, () => this.renewLeases())
   }
 
-  async activateVersionNow(appId, version) {
+  async activateVersion(appId, version, options = {}) {
+    return this.transitionApp(appId, () => this.activateVersionNow(appId, version, options))
+  }
+
+  async activateVersionNow(appId, version, options = {}) {
     const installation = this.installations.get(appId)
     if (!installation) throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `App is not installed: ${appId}`)
-    if (installation.activeVersion === version) return this.getApp(appId)
+    if (installation.activeVersion === version) {
+      return options.grants === undefined
+        ? this.getApp(appId)
+        : this.setAppGrantsNow(appId, options.grants)
+    }
     const targetPackage = await this.packages.get(appId, version)
     this.packageCache.set(`${appId}@${version}`, targetPackage)
     const previousVersion = installation.activeVersion
+    const previousGrants = installation.grants || []
+    const nextGrants = installationGrantsForPackage(installation, targetPackage.manifest, options.grants)
     const activeDeployments = this.deployments.list(appId)
     const activeInstanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
     await Promise.allSettled(activeDeployments.map((item) => this.supervisor.stop(item.key)))
     try {
-      await this.installations.upsert(appId, { activeVersion: version })
+      await this.installations.upsert(appId, { activeVersion: version, grants: nextGrants })
       for (const deployment of activeDeployments) await this.deployments.bumpGeneration(deployment.key)
       await this.reconcileApp(appId)
-      return this.getApp(appId)
+      const app = await this.getApp(appId)
+      this.publishRuntimeEvent({ type: 'installation-changed', appId })
+      return app
     } catch (error) {
       const snapshotKeys = new Set(activeDeployments.map((item) => item.key))
       for (const deployment of this.deployments.list(appId)) {
@@ -774,7 +1137,7 @@ export class AppRuntimeHost {
           await this.deployments.remove(deployment.key)
         }
       }
-      await this.installations.upsert(appId, { activeVersion: previousVersion })
+      await this.installations.upsert(appId, { activeVersion: previousVersion, grants: previousGrants })
       for (const instance of this.instances.list(appId)) {
         if (!activeInstanceIds.has(instance.id)) await this.instances.remove(instance.id).catch(() => {})
       }
@@ -831,7 +1194,7 @@ export class AppRuntimeHost {
       generation: (current?.generation || 0) + 1,
     })
     if (targetType === this.target && targetId === this.deploymentTargetId) await this.reconcileInstance(instanceId)
-    this.events.publish({ type: 'deployment-moved', appId, instanceId, deployment })
+    this.publishRuntimeEvent({ type: 'deployment-moved', appId, instanceId, deployment })
     return deployment
   }
 
@@ -849,12 +1212,14 @@ export class AppRuntimeHost {
     await this.deployments.removeForApp(appId)
     if (options.deleteData) await this.instances.removeForApp(appId)
     await this.installations.remove(appId)
-    await this.packages.removeApp(appId)
-    for (const key of this.packageCache.keys()) if (key.startsWith(`${appId}@`)) this.packageCache.delete(key)
+    if (!this.installations.listAll().some((item) => item.appId === appId)) {
+      await this.packages.removeApp(appId)
+      for (const key of this.packageCache.keys()) if (key.startsWith(`${appId}@`)) this.packageCache.delete(key)
+    }
     if (options.deleteData) {
-      await fsp.rm(path.join(this.dataDir, appId), { recursive: true, force: true })
-      await fsp.rm(path.join(this.runtimeDir, appId), { recursive: true, force: true })
-      await this.logs.removeApp(appId)
+      await fsp.rm(this.appDataPath(this.dataDir, appId), { recursive: true, force: true })
+      await fsp.rm(this.appDataPath(this.runtimeDir, appId), { recursive: true, force: true })
+      await this.logs.removeApp(appId, { owner: this.currentOwner() })
     }
     if (options.deleteCredentials) {
       await this.credentials.removeApp(appId)
@@ -864,7 +1229,7 @@ export class AppRuntimeHost {
         }
       }
     }
-    this.events.publish({ type: 'app-uninstalled', appId })
+    this.publishRuntimeEvent({ type: 'app-uninstalled', appId })
     return true
   }
 
@@ -872,7 +1237,13 @@ export class AppRuntimeHost {
     if (this.leaseTimer) clearInterval(this.leaseTimer)
     await this.supervisor.shutdown()
     if (this.target === 'server') {
-      await Promise.allSettled(this.deployments.list().map((item) => this.deployments.releaseLease(item.key, this.hostId)))
+      const owners = this.installations.listOwners()
+      if (!owners.length) owners.push(this.defaultOwner)
+      for (const owner of owners) {
+        await this.withOwner(owner, () => Promise.allSettled(
+          this.deployments.list().map((item) => this.deployments.releaseLease(item.key, this.hostId)),
+        ))
+      }
     }
   }
 }

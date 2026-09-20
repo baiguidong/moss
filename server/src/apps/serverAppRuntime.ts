@@ -116,7 +116,7 @@ export class ServerAppRuntime {
     }
   }
 
-  async installKnown(appId: string, version: string, activate = false): Promise<unknown> {
+  async installKnown(appId: string, version: string, activate = false, grants?: string[]): Promise<unknown> {
     const normalizedAppId = safeId(appId, 'App id')
     const normalizedVersion = safeVersion(version)
     const packageRoot = this.resolveKnownPackage(normalizedAppId, normalizedVersion)
@@ -133,8 +133,8 @@ export class ServerAppRuntime {
         `App does not support Server deployment: ${normalizedAppId}@${normalizedVersion}`,
       )
     }
-    const installed = await this.runtime.installFromDirectory(packageRoot)
-    if (activate) await this.runtime.activateVersion(normalizedAppId, normalizedVersion)
+    const installed = await this.runtime.installFromDirectory(packageRoot, { grants })
+    if (activate) await this.runtime.activateVersion(normalizedAppId, normalizedVersion, { grants })
     return installed
   }
 

@@ -3507,7 +3507,19 @@ function recordUsageForSession(event, sessionRecord) {
 
 async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
-  const connectorRuntimeCredentials = await resolveSessionConnectorRuntimeCredentials(sessionRecord);
+  const [connectorRuntimeCredentials, appTools] = await Promise.all([
+    resolveSessionConnectorRuntimeCredentials(sessionRecord),
+    sessionRecord?.agentMode === 'remote-direct' || !desktopAppRuntime
+      ? []
+      : desktopAppRuntime.listContributions({ kinds: ['tools'], loadSchemas: true })
+        .then((contributions) => contributions.tools || [])
+        .catch((error) => {
+          mossLog('error', 'app-runtime', 'Unable to load App Tool contributions', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }),
+  ]);
   const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
   const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
@@ -3540,6 +3552,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     webSearch: getRuntimeWebSearchSettings(),
     mcpServers: getSessionMcpServers(sessionRecord, connectorRuntimeCredentials),
     libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
+    appTools,
     addDirs: getSessionAddDirs(sessionRecord),
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
@@ -8944,6 +8957,27 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  if (event?.type === 'app_tool_invoke') {
+    if (sessionRecord?.agentMode === 'remote-direct') {
+      return { ok: false, error: 'Remote Direct sessions cannot invoke local App Tools.' };
+    }
+    if (!desktopAppRuntime) {
+      return { ok: false, error: 'The Desktop App Runtime is not ready.' };
+    }
+    try {
+      const result = await desktopAppRuntime.invokeToolContribution(
+        event.input?.contributionId,
+        event.input?.input || {},
+        {
+          requestId: event.input?.requestId,
+          signal: event.signal,
+        },
+      );
+      return { ok: true, result };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   if (event?.type === 'workflow_catalog_changed') {
     emitToRenderer('workflow:changed', {
       ...(event.input || {}),
@@ -11020,6 +11054,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onEvent: (event) => {
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
+        resetLocalRuntimesForMcpReload();
+      }
       for (const state of appWindowStates.values()) {
         if (state.id !== event.appId || state.webContents?.isDestroyed()) continue;
         state.webContents.send('app-ui:event:runtime', event);
@@ -11050,7 +11087,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
     remote: {
       listApps: fetchRemoteApps,
-      installApp: installRemoteApp,
+      installApp: (appId, version, grants) => installRemoteApp(appId, version, grants),
       updateApp: updateRemoteApp,
       uninstallApp: uninstallRemoteApp,
       createInstance: createRemoteAppInstance,
@@ -12899,6 +12936,15 @@ ipcMain.handle('workspace:read-file', async (_event, { sessionId, filePath }) =>
   return readWorkspaceFile(sessionRecord, filePath);
 });
 
+function enabledAppContributions(manifest, installation) {
+  if (!manifest?.contributes || !installation?.enabled) return null;
+  const grants = new Set(installation?.grants || []);
+  return Object.fromEntries(Object.entries(manifest.contributes).map(([kind, items]) => [
+    kind,
+    (items || []).filter((item) => !item.permission || grants.has(item.permission)),
+  ]));
+}
+
 ipcMain.handle('app:list', async () => {
   const results = [];
   const storedApps = listAllStoredApps();
@@ -12947,7 +12993,13 @@ ipcMain.handle('app:list', async () => {
       backend: manifest?.backend || null,
       serverBackend: remoteState?.manifest?.backend || null,
       serverVersion: remoteState?.installation?.activeVersion || null,
-      permissions: [...new Set([...(manifest?.permissions || []), ...(remoteState?.manifest?.permissions || [])])],
+      permissions: manifest?.permissions || [],
+      serverPermissions: remoteState?.manifest?.permissions || [],
+      trust: runtimeState?.trust || null,
+      serverTrust: remoteState?.trust || null,
+      grants: runtimeState?.installation?.grants || [],
+      serverGrants: remoteState?.installation?.grants || [],
+      contributes: enabledAppContributions(manifest, runtimeState?.installation),
       enabled: runtimeState?.installation?.enabled || false,
       configuration: runtimeState?.configuration || null,
       serverConfiguration: remoteState?.configuration || null,
@@ -12986,7 +13038,10 @@ ipcMain.handle('app:list', async () => {
       hasBackend: Boolean(manifest?.backend), backend: manifest?.backend || null,
       serverBackend: manifest?.backend || null,
       serverVersion: remoteState.installation?.activeVersion || null,
-      permissions: manifest?.permissions || [], configuration: remoteState.configuration || null,
+      permissions: [], serverPermissions: manifest?.permissions || [], configuration: remoteState.configuration || null,
+      trust: null, serverTrust: remoteState.trust || null,
+      grants: [], serverGrants: remoteState.installation?.grants || [],
+      contributes: null,
       serverConfiguration: remoteState.configuration || null,
       enabled: false, serverEnabled: remoteState.installation?.enabled || false,
       remoteInstalled: true, remoteOnly: true,

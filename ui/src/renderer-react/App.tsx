@@ -490,6 +490,7 @@ export default function App() {
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
+  const [embeddedAppRoute, setEmbeddedAppRoute] = React.useState('');
   const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const [newSessionAgentMode, setNewSessionAgentMode] = React.useState<'local' | 'remote-direct'>('local');
@@ -1401,6 +1402,18 @@ export default function App() {
     () => new Set(sidebarAppShortcuts.map(getStoredAppKey)),
     [sidebarAppShortcuts]
   );
+  const contributedAppViews = React.useMemo(
+    () => apps.flatMap((app) => (app.contributes?.views || [])
+      .filter((view) => view.location !== 'hidden')
+      .map((view) => ({
+        ...view,
+        appId: app.id || app.name,
+        appName: app.name,
+        id: `${app.id || app.name}/${view.id}`,
+      })))
+      .sort((left, right) => (left.order || 0) - (right.order || 0) || left.title.localeCompare(right.title)),
+    [apps],
+  );
 
   // chatMessages is built exclusively from session history.
   // The coordinator agent produces its own formatted summary in the history;
@@ -2249,8 +2262,9 @@ export default function App() {
     }
   }, [showPermissionNotice]);
 
-  const handleOpenEmbeddedApp = React.useCallback((name: string) => {
+  const handleOpenEmbeddedApp = React.useCallback((name: string, route = '') => {
     setEmbeddedAppName(name);
+    setEmbeddedAppRoute(route);
     setActiveView('embedded-app');
   }, []);
 
@@ -2571,6 +2585,7 @@ export default function App() {
           <AppSidebar
             sessions={sidebarSessions}
             apps={sidebarAppShortcuts}
+            appViews={contributedAppViews}
             activeSessionId={activeSessionId}
             activeView={activeView}
             appsCount={apps.length}
@@ -2793,8 +2808,9 @@ export default function App() {
             />
           ) : activeView === 'embedded-app' && embeddedAppName ? (
             <EmbeddedAppView
-              key={`${embeddedAppName}:${embeddedAppRevision}`}
+              key={`${embeddedAppName}:${embeddedAppRoute}:${embeddedAppRevision}`}
               appName={embeddedAppName}
+              route={embeddedAppRoute}
             />
           ) : activeView === 'apps' ? (
             <AppsPanel

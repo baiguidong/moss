@@ -87,8 +87,58 @@ try {
     const baseUrl = `http://127.0.0.1:${port}`
     assert.equal((await fetch(`${baseUrl}/api/v1/apps`)).status, 401)
     const login = authService.issueTokenFromPassword({ username: 'admin', password: 'admin-password' })
+    const adminAuth = authService.verifyAccessToken(login.access_token)
+    assert.ok(adminAuth)
+    const appUserRole = authService.createRole({
+      orgId: login.user.orgId,
+      name: 'App user',
+      permissions: ['apps:read', 'apps:manage', 'apps:deploy', 'apps:logs'],
+    }).role
+    authService.createUser({
+      orgId: login.user.orgId,
+      email: 'app-user@example.com',
+      name: 'app-user',
+      roleIds: [appUserRole.id],
+      password: 'app-user-password',
+    }, adminAuth)
+    const appUserLogin = authService.issueTokenFromPassword({
+      username: 'app-user',
+      password: 'app-user-password',
+    })
     const headers = { authorization: `Bearer ${login.access_token}`, 'content-type': 'application/json' }
-    const listResponse = await fetch(`${baseUrl}/api/v1/apps`, { headers })
+    const appUserHeaders = { authorization: `Bearer ${appUserLogin.access_token}`, 'content-type': 'application/json' }
+    const emptyUserListResponse = await fetch(`${baseUrl}/api/v1/apps`, { headers })
+    assert.equal(emptyUserListResponse.status, 200)
+    assert.equal(((await emptyUserListResponse.json()) as { apps: unknown[] }).apps.length, 0)
+    const userInstallResponse = await fetch(`${baseUrl}/api/v1/apps/install`, {
+      method: 'POST', headers, body: JSON.stringify({ appId, version, grants: [] }),
+    })
+    assert.equal(userInstallResponse.status, 200)
+    const userListResponse = await fetch(`${baseUrl}/api/v1/apps`, { headers })
+    const userApps = (await userListResponse.json()) as { apps: Array<{ installation: { owner: { scope: string; userId: string } } }> }
+    assert.equal(userApps.apps.length, 1)
+    assert.equal(userApps.apps[0]?.installation.owner.scope, 'user')
+    assert.equal(userApps.apps[0]?.installation.owner.userId, login.user.id)
+    const otherUserBeforeInstall = await fetch(`${baseUrl}/api/v1/apps`, { headers: appUserHeaders })
+    assert.equal(otherUserBeforeInstall.status, 200)
+    assert.equal(((await otherUserBeforeInstall.json()) as { apps: unknown[] }).apps.length, 0)
+    const otherUserInstall = await fetch(`${baseUrl}/api/v1/apps/install`, {
+      method: 'POST', headers: appUserHeaders, body: JSON.stringify({ appId, version, grants: [] }),
+    })
+    assert.equal(otherUserInstall.status, 200)
+    const otherUserApps = (await (await fetch(`${baseUrl}/api/v1/apps`, { headers: appUserHeaders })).json()) as {
+      apps: Array<{ installation: { owner: { userId: string } } }>
+    }
+    assert.equal(otherUserApps.apps.length, 1)
+    assert.equal(otherUserApps.apps[0]?.installation.owner.userId, appUserLogin.user.id)
+    const adminUserApps = (await (await fetch(`${baseUrl}/api/v1/apps`, { headers })).json()) as {
+      apps: Array<{ installation: { owner: { userId: string } } }>
+    }
+    assert.equal(adminUserApps.apps.length, 1)
+    assert.equal(adminUserApps.apps[0]?.installation.owner.userId, login.user.id)
+    assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=host`, { headers: appUserHeaders })).status, 403)
+    assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=org`, { headers: appUserHeaders })).status, 403)
+    const listResponse = await fetch(`${baseUrl}/api/v1/apps?owner_scope=host`, { headers })
     assert.equal(listResponse.status, 200)
     assert.equal(((await listResponse.json()) as { apps: unknown[] }).apps.length, 1)
     const availabilityResponse = await fetch(`${baseUrl}/api/v1/apps/availability`, {
@@ -114,7 +164,7 @@ try {
     })
     assert.equal(malformedResponse.status, 400)
     const disableResponse = await fetch(`${baseUrl}/api/v1/apps/${encodeURIComponent(appId)}`, {
-      method: 'PATCH', headers, body: JSON.stringify({ enabled: false }),
+      method: 'PATCH', headers, body: JSON.stringify({ enabled: false, ownerScope: 'host' }),
     })
     assert.equal(disableResponse.status, 200)
     assert.equal((await restored.runtime.getApp(appId)).installation.enabled, false)

@@ -3,6 +3,7 @@ import type { AuthContext } from '../auth/token.js'
 import type { AuthService } from '../auth/service.js'
 import type { ServerAppRuntime } from './serverAppRuntime.js'
 import { requireAppScope } from './appAuthorization.js'
+import type { AppOwner } from '../../../packages/app-runtime/src/index.mjs'
 
 type JsonBody = Record<string, unknown>
 
@@ -41,6 +42,31 @@ function decode(value: string): string {
   }
 }
 
+function appOwner(auth: AuthContext, url: URL, body?: JsonBody): AppOwner {
+  const requestedScope = text(body?.ownerScope) || text(url.searchParams.get('owner_scope')) || 'user'
+  if (requestedScope === 'host') {
+    if (!(auth.role === 'admin' || auth.systemRoles?.includes('admin'))) {
+      throw Object.assign(new Error('Host-scoped Apps require an administrator'), { statusCode: 403 })
+    }
+    return { scope: 'host', orgId: null, userId: null, key: 'host' }
+  }
+  if (requestedScope === 'org') {
+    if (!(auth.role === 'admin' || auth.systemRoles?.includes('admin'))) {
+      throw Object.assign(new Error('Organization-scoped Apps require an administrator'), { statusCode: 403 })
+    }
+    return { scope: 'org', orgId: auth.orgId, userId: null, key: `org:${encodeURIComponent(auth.orgId)}` }
+  }
+  if (requestedScope !== 'user') {
+    throw Object.assign(new Error('ownerScope must be host, org, or user'), { statusCode: 400 })
+  }
+  return {
+    scope: 'user',
+    orgId: auth.orgId,
+    userId: auth.userId,
+    key: `user:${encodeURIComponent(auth.orgId)}:${encodeURIComponent(auth.userId)}`,
+  }
+}
+
 export async function handleAppRoute(input: {
   req: http.IncomingMessage
   res: http.ServerResponse
@@ -53,11 +79,13 @@ export async function handleAppRoute(input: {
   const pathname = url.pathname
   if (!pathname.startsWith('/api/v1/apps')) return false
   const runtime = apps.runtime
+  const runAsOwner = <T>(body: JsonBody | undefined, operation: () => Promise<T> | T): Promise<T> | T =>
+    runtime.withOwner(appOwner(auth, url, body), operation)
 
   try {
     if (pathname === '/api/v1/apps' && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      writeJson(res, 200, { apps: await runtime.listApps() })
+      writeJson(res, 200, { apps: await runAsOwner(undefined, () => runtime.listApps()) })
       return true
     }
     if (pathname === '/api/v1/apps/install' && req.method === 'POST') {
@@ -66,7 +94,12 @@ export async function handleAppRoute(input: {
       const appId = text(body.appId)
       const version = text(body.version)
       if (!appId || !version) throw Object.assign(new Error('appId and version are required'), { statusCode: 400 })
-      writeJson(res, 200, { ok: true, app: await apps.installKnown(appId, version, body.activate === true) })
+      writeJson(res, 200, {
+        ok: true,
+        app: await runAsOwner(body, () => apps.installKnown(
+          appId, version, body.activate === true, Array.isArray(body.grants) ? body.grants.map(String) : [],
+        )),
+      })
       return true
     }
     if (pathname === '/api/v1/apps/availability' && req.method === 'POST') {
@@ -94,21 +127,25 @@ export async function handleAppRoute(input: {
     const instanceLogs = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/logs$/)
     if (instanceLogs && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:logs')
-      writeJson(res, 200, { logs: await runtime.getLogs(decode(instanceLogs[1]!), decode(instanceLogs[2]!), { limit: Number(url.searchParams.get('limit')) || 500 }) })
+      writeJson(res, 200, { logs: await runAsOwner(undefined, () => runtime.getLogs(decode(instanceLogs[1]!), decode(instanceLogs[2]!), { limit: Number(url.searchParams.get('limit')) || 500 })) })
       return true
     }
     const instanceAction = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/actions\/([^/]+)$/)
     if (instanceAction && req.method === 'POST') {
       requireAppScope(authService, auth, 'apps:deploy')
       const body = await readJson(req)
-      const result = await runtime.invoke(decode(instanceAction[1]!), decode(instanceAction[2]!), decode(instanceAction[3]!), body.input, { timeoutMs: body.timeoutMs })
+      const result = await runAsOwner(body, () => runtime.invoke(decode(instanceAction[1]!), decode(instanceAction[2]!), decode(instanceAction[3]!), body.input, { timeoutMs: body.timeoutMs }))
       writeJson(res, 200, { result })
       return true
     }
     const instanceRestart = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/restart$/)
     if (instanceRestart && req.method === 'POST') {
       requireAppScope(authService, auth, 'apps:deploy')
-      writeJson(res, 200, { status: await runtime.restartInstance(decode(instanceRestart[1]!), decode(instanceRestart[2]!)) })
+      const status = await runAsOwner(undefined, () => runtime.restartInstance(
+        decode(instanceRestart[1]!),
+        decode(instanceRestart[2]!),
+      ))
+      writeJson(res, 200, { status })
       return true
     }
     const instanceMatch = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)$/)
@@ -117,39 +154,42 @@ export async function handleAppRoute(input: {
       const body = await readJson(req)
       const appId = decode(instanceMatch[1]!)
       const instanceId = decode(instanceMatch[2]!)
-      if (body.enabled === false) await runtime.setInstanceEnabled(appId, instanceId, false)
-      if (body.clearCredentials === true) await runtime.clearInstanceCredentials(appId, instanceId)
-      const patch = Object.fromEntries(['displayName', 'config', 'secrets'].filter(key => body[key] !== undefined).map(key => [key, body[key]]))
-      const instance = Object.keys(patch).length ? await runtime.updateInstance(appId, instanceId, patch) : null
-      if (body.enabled === true) await runtime.setInstanceEnabled(appId, instanceId, true)
-      writeJson(res, 200, { ok: true, instance, status: await runtime.getInstanceStatus(appId, instanceId) })
+      const result = await runAsOwner(body, async () => {
+        if (body.enabled === false) await runtime.setInstanceEnabled(appId, instanceId, false)
+        if (body.clearCredentials === true) await runtime.clearInstanceCredentials(appId, instanceId)
+        const patch = Object.fromEntries(['displayName', 'config', 'secrets'].filter(key => body[key] !== undefined).map(key => [key, body[key]]))
+        const instance = Object.keys(patch).length ? await runtime.updateInstance(appId, instanceId, patch) : null
+        if (body.enabled === true) await runtime.setInstanceEnabled(appId, instanceId, true)
+        return { ok: true, instance, status: await runtime.getInstanceStatus(appId, instanceId) }
+      })
+      writeJson(res, 200, result)
       return true
     }
     if (instanceMatch && req.method === 'DELETE') {
       requireAppScope(authService, auth, 'apps:manage')
-      await runtime.removeInstance(decode(instanceMatch[1]!), decode(instanceMatch[2]!), {
+      await runAsOwner(undefined, () => runtime.removeInstance(decode(instanceMatch[1]!), decode(instanceMatch[2]!), {
         deleteData: url.searchParams.get('delete_data') === 'true',
         deleteCredentials: url.searchParams.get('delete_credentials') === 'true',
-      })
+      }))
       writeJson(res, 200, { ok: true })
       return true
     }
     const instancesMatch = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances$/)
     if (instancesMatch && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      writeJson(res, 200, { instances: await runtime.listInstances(decode(instancesMatch[1]!)) })
+      writeJson(res, 200, { instances: await runAsOwner(undefined, () => runtime.listInstances(decode(instancesMatch[1]!))) })
       return true
     }
     if (instancesMatch && req.method === 'POST') {
       requireAppScope(authService, auth, 'apps:manage')
       const body = await readJson(req)
-      writeJson(res, 201, { instance: await runtime.createInstance(decode(instancesMatch[1]!), body) })
+      writeJson(res, 201, { instance: await runAsOwner(body, () => runtime.createInstance(decode(instancesMatch[1]!), body)) })
       return true
     }
     const appMatch = pathname.match(/^\/api\/v1\/apps\/([^/]+)$/)
     if (appMatch && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      const app = await runtime.getApp(decode(appMatch[1]!))
+      const app = await runAsOwner(undefined, () => runtime.getApp(decode(appMatch[1]!)))
       if (!app) throw Object.assign(new Error('App not found'), { statusCode: 404 })
       writeJson(res, 200, { app })
       return true
@@ -158,18 +198,22 @@ export async function handleAppRoute(input: {
       requireAppScope(authService, auth, 'apps:manage')
       const appId = decode(appMatch[1]!)
       const body = await readJson(req)
-      if (body.enabled === false) await runtime.setAppEnabled(appId, false)
-      if (typeof body.activeVersion === 'string') await runtime.activateVersion(appId, body.activeVersion)
-      if (body.enabled === true) await runtime.setAppEnabled(appId, true)
-      writeJson(res, 200, { app: await runtime.getApp(appId) })
+      const app = await runAsOwner(body, async () => {
+        if (body.enabled === false) await runtime.setAppEnabled(appId, false)
+        if (typeof body.activeVersion === 'string') await runtime.activateVersion(appId, body.activeVersion)
+        if (Array.isArray(body.grants)) await runtime.setAppGrants(appId, body.grants)
+        if (body.enabled === true) await runtime.setAppEnabled(appId, true)
+        return runtime.getApp(appId)
+      })
+      writeJson(res, 200, { app })
       return true
     }
     if (appMatch && req.method === 'DELETE') {
       requireAppScope(authService, auth, 'apps:manage')
-      await runtime.uninstall(decode(appMatch[1]!), {
+      await runAsOwner(undefined, () => runtime.uninstall(decode(appMatch[1]!), {
         deleteData: url.searchParams.get('delete_data') === 'true',
         deleteCredentials: url.searchParams.get('delete_credentials') === 'true',
-      })
+      }))
       writeJson(res, 200, { ok: true })
       return true
     }

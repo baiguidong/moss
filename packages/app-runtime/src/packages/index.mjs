@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, verify as verifySignature } from 'node:crypto'
 import semver from 'semver'
 import {
   APP_ERROR_CODES,
@@ -29,6 +29,93 @@ function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   for (const child of Object.values(value)) deepFreeze(child)
   return Object.freeze(value)
+}
+
+function canonicalChecksums(checksums) {
+  return Object.fromEntries(Object.entries(checksums || {}).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+export function createAppSignaturePayload(manifest, checksums, metadata) {
+  return Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    appId: manifest.id,
+    version: manifest.version,
+    publisherId: metadata.publisherId,
+    keyId: metadata.keyId,
+    checksums: canonicalChecksums(checksums),
+  }), 'utf8')
+}
+
+function trustedPublisherKey(trustedPublishers, publisherId, keyId) {
+  const publisher = trustedPublishers instanceof Map
+    ? trustedPublishers.get(publisherId)
+    : trustedPublishers?.[publisherId]
+  if (!publisher) return null
+  if (typeof publisher === 'string' || Buffer.isBuffer(publisher)) return publisher
+  return publisher.keys?.[keyId] || publisher[keyId] || null
+}
+
+async function validatePackageSignature(root, manifest, checksums, options) {
+  const signaturePath = path.join(root, 'app-signature.json')
+  let raw
+  try {
+    raw = JSON.parse(await fsp.readFile(signaturePath, 'utf8'))
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+    if (error instanceof SyntaxError) {
+      throw new AppServiceError(APP_ERROR_CODES.integrityFailed, `Invalid app-signature.json: ${error.message}`)
+    }
+    if (options.requireTrustedPublisher || options.requireSignature) {
+      throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App package signature is required')
+    }
+    return Object.freeze({ status: 'unsigned', publisher: manifest.publisher || null })
+  }
+  if (
+    raw?.schemaVersion !== 1
+    || raw.algorithm !== 'ed25519'
+    || typeof raw.publisherId !== 'string'
+    || typeof raw.keyId !== 'string'
+    || typeof raw.signature !== 'string'
+    || !raw.publisherId
+    || !raw.keyId
+  ) {
+    throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'Invalid App signature metadata')
+  }
+  if (!manifest.publisher || manifest.publisher.id !== raw.publisherId) {
+    throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App signature publisher does not match the Manifest')
+  }
+  const signature = Buffer.from(raw.signature, 'base64')
+  if (signature.length !== 64) throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App signature is malformed')
+  const publicKey = trustedPublisherKey(options.trustedPublishers, raw.publisherId, raw.keyId)
+  if (!publicKey) {
+    if (options.requireTrustedPublisher) {
+      throw new AppServiceError(APP_ERROR_CODES.permissionDenied, `App publisher is not trusted: ${raw.publisherId}`)
+    }
+    return Object.freeze({
+      status: 'untrusted',
+      publisher: manifest.publisher,
+      publisherId: raw.publisherId,
+      keyId: raw.keyId,
+      algorithm: raw.algorithm,
+    })
+  }
+  let valid = false
+  try {
+    valid = verifySignature(
+      null,
+      createAppSignaturePayload(manifest, checksums, raw),
+      publicKey,
+      signature,
+    )
+  } catch {}
+  if (!valid) throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App package signature verification failed')
+  return Object.freeze({
+    status: 'trusted',
+    publisher: manifest.publisher,
+    publisherId: raw.publisherId,
+    keyId: raw.keyId,
+    algorithm: raw.algorithm,
+  })
 }
 
 export async function listPackageFiles(packageRoot, options = {}) {
@@ -105,10 +192,16 @@ function ensureConfigurationSchemaShape(schema, fieldName, options = {}) {
   }
 }
 
+function ensureToolInputSchemaShape(schema, fieldName) {
+  if (schema?.type !== 'object') {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `${fieldName} must describe an object`)
+  }
+}
+
 export async function createPackageChecksums(packageRoot) {
   const checksums = {}
   for (const file of await listPackageFiles(packageRoot)) {
-    if (file.relativePath === 'checksums.json') continue
+    if (file.relativePath === 'checksums.json' || file.relativePath === 'app-signature.json') continue
     checksums[file.relativePath] = sha256(await fsp.readFile(file.absolutePath))
   }
   return checksums
@@ -155,6 +248,16 @@ export async function validateAppPackage(packageRoot, options = {}) {
     if (action.inputSchema) loadJsonSchema(root, action.inputSchema, `action ${action.name} inputSchema`)
     if (action.outputSchema) loadJsonSchema(root, action.outputSchema, `action ${action.name} outputSchema`)
   }
+  for (const command of manifest.contributes?.commands || []) {
+    if (command.inputSchema) loadJsonSchema(root, command.inputSchema, `command ${command.id} inputSchema`)
+  }
+  for (const tool of manifest.contributes?.tools || []) {
+    ensureToolInputSchemaShape(
+      loadJsonSchema(root, tool.inputSchema, `tool ${tool.id} inputSchema`),
+      `tool ${tool.id} inputSchema`,
+    )
+    if (tool.outputSchema) loadJsonSchema(root, tool.outputSchema, `tool ${tool.id} outputSchema`)
+  }
   if (manifest.backend?.configuration?.schema) {
     ensureConfigurationSchemaShape(
       loadJsonSchema(root, manifest.backend.configuration.schema, 'configuration schema'),
@@ -193,13 +296,16 @@ export async function validateAppPackage(packageRoot, options = {}) {
       throw new AppServiceError(APP_ERROR_CODES.integrityFailed, `Checksum mismatch: ${relativePath}`)
     }
   }
-  return deepFreeze({ root, manifest, checksums: actualChecksums, files })
+  const trust = await validatePackageSignature(root, manifest, actualChecksums, options)
+  return deepFreeze({ root, manifest, checksums: actualChecksums, files, trust })
 }
 
 export class AppPackageStore {
   constructor(options) {
     this.appsDir = path.resolve(options.appsDir)
     this.hostApiVersion = options.hostApiVersion
+    this.trustedPublishers = options.trustedPublishers
+    this.requireTrustedPublisher = options.requireTrustedPublisher === true
   }
 
   appRoot(appId) {
@@ -225,7 +331,11 @@ export class AppPackageStore {
   }
 
   async get(appId, version) {
-    const packageInfo = await validateAppPackage(this.versionRoot(appId, version), { hostApiVersion: this.hostApiVersion })
+    const packageInfo = await validateAppPackage(this.versionRoot(appId, version), {
+      hostApiVersion: this.hostApiVersion,
+      trustedPublishers: this.trustedPublishers,
+      requireTrustedPublisher: this.requireTrustedPublisher,
+    })
     if (packageInfo.manifest.id !== appId || packageInfo.manifest.version !== version) {
       throw new AppServiceError(
         APP_ERROR_CODES.integrityFailed,
@@ -236,10 +346,19 @@ export class AppPackageStore {
   }
 
   async installFromDirectory(sourceDir, options = {}) {
-    const source = await validateAppPackage(sourceDir, { hostApiVersion: this.hostApiVersion, limits: options.limits })
+    const source = await validateAppPackage(sourceDir, {
+      hostApiVersion: this.hostApiVersion,
+      limits: options.limits,
+      trustedPublishers: options.trustedPublishers || this.trustedPublishers,
+      requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
+    })
     const destination = this.versionRoot(source.manifest.id, source.manifest.version)
     try {
-      const current = await validateAppPackage(destination, { hostApiVersion: this.hostApiVersion })
+      const current = await validateAppPackage(destination, {
+        hostApiVersion: this.hostApiVersion,
+        trustedPublishers: options.trustedPublishers || this.trustedPublishers,
+        requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
+      })
       if (JSON.stringify(current.checksums) !== JSON.stringify(source.checksums)) {
         throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'An immutable App version already exists with different contents')
       }
@@ -252,13 +371,22 @@ export class AppPackageStore {
     await fsp.mkdir(stagingRoot, { recursive: true })
     try {
       await fsp.cp(source.root, stagingDir, { recursive: true, errorOnExist: true, force: false })
-      await validateAppPackage(stagingDir, { hostApiVersion: this.hostApiVersion, limits: options.limits })
+      await validateAppPackage(stagingDir, {
+        hostApiVersion: this.hostApiVersion,
+        limits: options.limits,
+        trustedPublishers: options.trustedPublishers || this.trustedPublishers,
+        requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
+      })
       await fsp.mkdir(path.dirname(destination), { recursive: true })
       try {
         await fsp.rename(stagingDir, destination)
       } catch (error) {
         if (!fs.existsSync(destination)) throw error
-        const current = await validateAppPackage(destination, { hostApiVersion: this.hostApiVersion })
+        const current = await validateAppPackage(destination, {
+          hostApiVersion: this.hostApiVersion,
+          trustedPublishers: options.trustedPublishers || this.trustedPublishers,
+          requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
+        })
         if (JSON.stringify(current.checksums) !== JSON.stringify(source.checksums)) {
           throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'An immutable App version was installed concurrently with different contents')
         }
