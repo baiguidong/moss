@@ -29,6 +29,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
+  fastModel: '',
   maxTurns: 100,
   language: 'chinese',
   appendSystemPrompt: '',
@@ -311,6 +312,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
       stringField(result, 'model'),
       stringField(existingText, 'model'),
     ) || DEFAULT_DESKTOP_SETTINGS.model;
+
+  result.fastModel =
+    ownStringField(source, 'fastModel') ??
+    ownStringField(sourceText, 'fastModel') ??
+    ownStringField(result, 'fastModel') ??
+    ownStringField(existingText, 'fastModel') ??
+    DEFAULT_DESKTOP_SETTINGS.fastModel;
 
   if (source.appendSystemPrompt !== undefined) {
     result.appendSystemPrompt = source.appendSystemPrompt;
@@ -956,6 +964,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
       baseUrl: normalizeMossBaseUrl(normalizedSettings.url),
       apiKey: normalizedSettings.apiKey || '',
       model: normalizedSettings.model,
+      fastModel: normalizedSettings.fastModel || '',
       maxTurns: normalizedSettings.maxTurns,
       thinking: {
         ...existingTextThinking,
@@ -986,6 +995,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete toSave.remoteDirectWorkspace;
   delete toSave.remoteDirectProfileMode;
   delete toSave.model;
+  delete toSave.fastModel;
   delete toSave.maxTurns;
   delete toSave.thinkingMode;
   delete toSave.thinkingBudgetTokens;

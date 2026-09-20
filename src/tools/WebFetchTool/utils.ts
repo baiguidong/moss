@@ -1,6 +1,6 @@
 import axios, { type AxiosResponse } from 'axios'
 import { LRUCache } from 'lru-cache'
-import { queryHaiku } from '../../services/api/claude.js'
+import { queryFastModel } from '../../services/api/claude.js'
 import { AbortError } from '../../utils/errors.js'
 import { getWebFetchUserAgent } from '../../utils/http.js'
 import { logError } from '../../utils/log.js'
@@ -401,8 +401,8 @@ export async function getURLMarkdownContent(
 
   // Binary content: save raw bytes to disk with a proper extension so Claude
   // can inspect the file later. We still fall through to the utf-8 decode +
-  // Haiku path below — for PDFs in particular the decoded string has enough
-  // ASCII structure (/Title, text streams) that Haiku can summarize it, and
+  // Lightweight-model path below — for PDFs in particular the decoded string
+  // has enough ASCII structure (/Title, text streams) to summarize, and
   // the saved file is a supplement rather than a replacement.
   let persistedPath: string | undefined
   let persistedSize: number | undefined
@@ -467,7 +467,7 @@ export async function applyPromptToMarkdown(
     prompt,
     isPreapprovedDomain,
   )
-  const assistantMessage = await queryHaiku({
+  const assistantMessage = await queryFastModel({
     systemPrompt: asSystemPrompt([]),
     userPrompt: modelPrompt,
     signal,

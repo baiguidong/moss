@@ -47,6 +47,7 @@ export async function generateAwaySummary(
       options: {
         getToolPermissionContext: async () => getEmptyToolPermissionContext(),
         model: getSmallFastModel(),
+        modelRole: 'fast',
         toolChoice: undefined,
         isNonInteractiveSession: false,
         hasAppendSystemPrompt: false,

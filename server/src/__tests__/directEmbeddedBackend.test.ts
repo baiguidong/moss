@@ -48,6 +48,7 @@ describe('direct embedded backend model settings', () => {
         url: 'https://model.session.test',
         apiKey: 'model-session-key',
         model: 'session-model',
+        fastModel: 'session-fast-model',
         maxTurns: 55,
         thinkingMode: 'enabled',
         thinkingBudgetTokens: 12345,
@@ -61,6 +62,7 @@ describe('direct embedded backend model settings', () => {
       baseUrl: 'https://model.session.test',
       apiKey: 'model-session-key',
       model: 'session-model',
+      fastModel: 'session-fast-model',
       maxTurns: 55,
       thinking: {
         mode: 'enabled',
@@ -72,6 +74,7 @@ describe('direct embedded backend model settings', () => {
       MOSS_MODEL_AUTH_TOKEN: 'model-session-key',
     })
     expect(persisted.model).toBeUndefined()
+    expect(persisted.fastModel).toBeUndefined()
     expect(persisted.maxTurns).toBeUndefined()
     expect(persisted.thinkingMode).toBeUndefined()
     expect(persisted.thinkingBudgetTokens).toBeUndefined()
@@ -99,6 +102,149 @@ describe('direct embedded backend model settings', () => {
     expect(process.env.MOSS_MODEL_AUTH_TOKEN).toBeUndefined()
     expect(process.env.MOSS_SERVER_URL).toBeUndefined()
     expect(process.env.MOSS_SERVER_AUTH_TOKEN).toBeUndefined()
+  })
+
+  test('passes the fast model to ClaudeSession when starting a session', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-fast-model-'))
+    const createdOptions: Array<{ model?: string; fastModel?: string }> = []
+
+    class FakeSession {
+      constructor(options: { model?: string; fastModel?: string }) {
+        createdOptions.push(options)
+      }
+      async *send(): AsyncGenerator<unknown> {}
+      abort(): void {}
+      dispose(): void {}
+      setPermissionMode(): void {}
+    }
+
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async () => null,
+    })
+
+    const backend = new DirectEmbeddedBackend()
+    const baseSpawnOptions = {
+      cwd: join(tempRoot, 'workspace'),
+      runtime: {
+        backend: 'host' as const,
+        profileDir: join(tempRoot, 'profile'),
+        transcriptDir: join(tempRoot, 'transcripts'),
+        workspaceDir: join(tempRoot, 'workspace'),
+      },
+      systemSettings: makeSettings({
+        model: 'server-primary-model',
+        fastModel: 'server-fast-model',
+      }),
+    }
+
+    const serverConfigured = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-server-fast-model',
+    })
+    serverConfigured.destroy()
+
+    const sessionConfigured = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-runtime-fast-model',
+      runtimeOptions: {
+        model: 'runtime-primary-model',
+        fastModel: 'runtime-fast-model',
+      },
+    })
+    sessionConfigured.destroy()
+
+    const sessionWithFastFallback = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-runtime-fast-model-empty',
+      runtimeOptions: {
+        model: 'runtime-primary-model',
+        fastModel: '',
+      },
+    })
+    sessionWithFastFallback.destroy()
+
+    expect(createdOptions.map(({ model, fastModel }) => ({ model, fastModel }))).toEqual([
+      {
+        model: 'server-primary-model',
+        fastModel: 'server-fast-model',
+      },
+      {
+        model: 'runtime-primary-model',
+        fastModel: 'runtime-fast-model',
+      },
+      {
+        model: 'runtime-primary-model',
+        fastModel: undefined,
+      },
+    ])
+  })
+
+  test('requires both the client switch and server scope for Agent Mail', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-agent-mail-'))
+    const createdOptions: Array<{ agentMailEnabled?: boolean }> = []
+
+    class FakeSession {
+      constructor(options: { agentMailEnabled?: boolean }) {
+        createdOptions.push(options)
+      }
+      async *send(): AsyncGenerator<unknown> {}
+      abort(): void {}
+      dispose(): void {}
+      setPermissionMode(): void {}
+    }
+
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async () => null,
+    })
+
+    const backend = new DirectEmbeddedBackend()
+    const baseSpawnOptions = {
+      cwd: join(tempRoot, 'workspace'),
+      runtime: {
+        backend: 'host' as const,
+        profileDir: join(tempRoot, 'profile'),
+        transcriptDir: join(tempRoot, 'transcripts'),
+        workspaceDir: join(tempRoot, 'workspace'),
+      },
+      systemSettings: makeSettings(),
+    }
+
+    const legacy = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-agent-mail-legacy',
+      scopes: ['agent-mail:send'],
+    })
+    legacy.destroy()
+    const disabled = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-agent-mail-disabled',
+      scopes: ['agent-mail:send'],
+      runtimeOptions: { agentMailEnabled: false },
+    })
+    disabled.destroy()
+    const unauthorized = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-agent-mail-unauthorized',
+      scopes: [],
+      runtimeOptions: { agentMailEnabled: true },
+    })
+    unauthorized.destroy()
+    const enabled = await backend.spawn({
+      ...baseSpawnOptions,
+      sessionId: 'session-agent-mail-enabled',
+      scopes: ['agent-mail:send'],
+      runtimeOptions: { agentMailEnabled: true },
+    })
+    enabled.destroy()
+
+    expect(createdOptions.map(({ agentMailEnabled }) => agentMailEnabled)).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ])
   })
 
   test('bridges Moss app events through control request responses', async () => {
@@ -490,6 +636,7 @@ function makeSettings(
   return {
     bypassPermissions: false,
     model: 'default-model',
+    fastModel: '',
     maxTurns: 100,
     thinkingMode: 'adaptive',
     thinkingBudgetTokens: 16000,

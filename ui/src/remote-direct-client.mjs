@@ -1,10 +1,13 @@
 import {
   normalizeRemoteDirectCredentialMode,
 } from './desktop-settings.mjs';
+import { createReadStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 export const MAX_REMOTE_PREVIEW_DOWNLOAD_BYTES = 250 * 1024 * 1024;
+export const MAX_REMOTE_WORKSPACE_UPLOAD_BYTES = 250 * 1024 * 1024;
 
 let remoteDirectFetch = (...args) => globalThis.fetch(...args);
 
@@ -521,6 +524,257 @@ export async function fetchRemoteDirectWorkspaceFile({ serverUrl, authToken, ses
   return response.json();
 }
 
+export async function fetchRemoteDirectWorkspaceContent({
+  serverUrl,
+  authToken,
+  sessionId,
+  filePath,
+  method = 'GET',
+  headers = {},
+}) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Remote workspace file path is required.');
+  }
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/content`,
+    serverUrl,
+  );
+  endpoint.searchParams.set('file', filePath);
+
+  let response;
+  try {
+    response = await remoteDirectFetch(endpoint, {
+      method,
+      headers: {
+        ...headers,
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to fetch remote workspace file content', response),
+    );
+  }
+  return response;
+}
+
+export async function writeRemoteDirectWorkspaceFile({
+  serverUrl,
+  authToken,
+  sessionId,
+  filePath,
+  content,
+}) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Remote workspace file path is required.');
+  }
+  const body = Buffer.isBuffer(content)
+    ? content
+    : Buffer.from(String(content ?? ''), 'utf8');
+  if (body.byteLength > MAX_REMOTE_WORKSPACE_UPLOAD_BYTES) {
+    throw new Error(`Remote workspace file is too large (${body.byteLength} bytes).`);
+  }
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/content`,
+    serverUrl,
+  );
+  endpoint.searchParams.set('file', filePath);
+
+  let response;
+  try {
+    response = await remoteDirectFetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        'content-type': 'application/octet-stream',
+        'content-length': String(body.byteLength),
+      },
+      body,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to write remote workspace file', response),
+    );
+  }
+  return response.json();
+}
+
+async function uploadRemoteDirectWorkspaceBody({
+  serverUrl,
+  authToken,
+  sessionId,
+  fileName,
+  body,
+  contentLength,
+}) {
+  if (typeof fileName !== 'string' || !fileName.trim()) {
+    throw new Error('Remote workspace upload name is required.');
+  }
+  if (contentLength > MAX_REMOTE_WORKSPACE_UPLOAD_BYTES) {
+    throw new Error(`Remote workspace upload is too large (${contentLength} bytes).`);
+  }
+  const endpoint = new URL(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/upload`,
+    serverUrl,
+  );
+  endpoint.searchParams.set('name', fileName);
+
+  let response;
+  try {
+    response = await remoteDirectFetch(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        'content-type': 'application/octet-stream',
+        'content-length': String(contentLength),
+      },
+      body,
+      // Required by Node's fetch for streaming request bodies; ignored by
+      // Electron's net.fetch implementation.
+      duplex: 'half',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect to remote session server: ${message}`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      await parseRemoteDirectError('Failed to upload remote workspace file', response),
+    );
+  }
+  return response.json();
+}
+
+export async function uploadRemoteDirectWorkspaceData({
+  serverUrl,
+  authToken,
+  sessionId,
+  fileName,
+  data,
+}) {
+  const body = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
+  return uploadRemoteDirectWorkspaceBody({
+    serverUrl,
+    authToken,
+    sessionId,
+    fileName,
+    body,
+    contentLength: body.byteLength,
+  });
+}
+
+export async function uploadRemoteDirectWorkspaceFile({
+  serverUrl,
+  authToken,
+  sessionId,
+  fileName,
+  sourcePath,
+}) {
+  if (typeof sourcePath !== 'string' || !sourcePath.trim()) {
+    throw new Error('Local upload source path is required.');
+  }
+  const sourceStat = await fsp.stat(sourcePath);
+  if (!sourceStat.isFile()) throw new Error('Remote workspace upload source is not a file.');
+  const source = createReadStream(sourcePath);
+  try {
+    return await uploadRemoteDirectWorkspaceBody({
+      serverUrl,
+      authToken,
+      sessionId,
+      fileName: fileName || path.basename(sourcePath),
+      body: Readable.toWeb(source),
+      contentLength: sourceStat.size,
+    });
+  } finally {
+    source.destroy();
+  }
+}
+
+export async function fetchRemoteProfileSkillStatus({ serverUrl, authToken }) {
+  const response = await remoteDirectFetch(`${serverUrl}/api/v1/profile/skills`, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to query remote skills', response));
+  }
+  return response.json();
+}
+
+export async function uploadRemoteProfileSkills({
+  serverUrl,
+  authToken,
+  archive,
+  revision,
+}) {
+  const body = Buffer.isBuffer(archive) ? archive : Buffer.from(archive || []);
+  const response = await remoteDirectFetch(`${serverUrl}/api/v1/profile/skills`, {
+    method: 'PUT',
+    headers: {
+      authorization: `Bearer ${authToken}`,
+      'content-type': 'application/zip',
+      ...(revision ? { 'x-moss-content-sha256': revision } : {}),
+      'content-length': String(body.byteLength),
+    },
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to synchronize remote skills', response));
+  }
+  return response.json();
+}
+
+export async function fetchRemoteProfileMemory({ serverUrl, authToken }) {
+  const response = await remoteDirectFetch(`${serverUrl}/api/v1/profile/memory`, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to list remote memory', response));
+  }
+  return response.json();
+}
+
+export async function fetchRemoteProfileMemoryFile({
+  serverUrl,
+  authToken,
+  filePath,
+}) {
+  const endpoint = new URL('/api/v1/profile/memory/read', serverUrl);
+  endpoint.searchParams.set('file', filePath);
+  const response = await remoteDirectFetch(endpoint, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to read remote memory', response));
+  }
+  return response.json();
+}
+
+export async function fetchRemoteSessionMemory({ serverUrl, authToken, sessionId }) {
+  const response = await remoteDirectFetch(
+    `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/memory`,
+    {
+      method: 'GET',
+      headers: { authorization: `Bearer ${authToken}` },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to read remote session memory', response));
+  }
+  return response.json();
+}
+
 export async function downloadRemoteDirectWorkspaceFile({
   serverUrl,
   authToken,
@@ -700,6 +954,15 @@ export function createRemoteDirectClient({ getSettings }) {
     forkRemoteDirectSession,
     fetchRemoteDirectWorkspaceDir,
     fetchRemoteDirectWorkspaceFile,
+    fetchRemoteDirectWorkspaceContent,
+    writeRemoteDirectWorkspaceFile,
+    uploadRemoteDirectWorkspaceData,
+    uploadRemoteDirectWorkspaceFile,
+    fetchRemoteProfileSkillStatus,
+    uploadRemoteProfileSkills,
+    fetchRemoteProfileMemory,
+    fetchRemoteProfileMemoryFile,
+    fetchRemoteSessionMemory,
     resumeRemoteDirectSession,
   };
 }

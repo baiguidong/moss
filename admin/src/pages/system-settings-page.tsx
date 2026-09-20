@@ -40,7 +40,7 @@ import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'model' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
+  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
 >
 
 type SettingsSectionProps = {
@@ -69,6 +69,7 @@ const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
     model: settings.model,
+    fastModel: settings.fastModel,
     url: settings.url,
     apiKey: settings.apiKey,
     image: {
@@ -95,6 +96,9 @@ function buildSystemSettingsPatch(
   > = {}
   if (draft.model !== settings.model) {
     textPatch.model = draft.model
+  }
+  if (draft.fastModel !== settings.fastModel) {
+    textPatch.fastModel = draft.fastModel
   }
   if (draft.url !== settings.url) {
     textPatch.baseUrl = draft.url
@@ -415,6 +419,26 @@ export default function SystemSettingsPage() {
                 )
               }
               placeholder="claude-sonnet-4-6"
+            />
+          </SettingField>
+
+          <SettingField
+            label="快速模型"
+            description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
+          >
+            <Input
+              value={draft.fastModel}
+              onChange={(event) =>
+                setDraft(current =>
+                  current
+                    ? {
+                        ...current,
+                        fastModel: event.target.value,
+                      }
+                    : current,
+                )
+              }
+              placeholder="your-fast-model-name"
             />
           </SettingField>
 

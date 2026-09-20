@@ -33,7 +33,7 @@ import type {
 export type MemoryScope = "global" | "project" | "session";
 
 type MemorySelection =
-  | { scope: "global"; path: string }
+  | { scope: "global"; path: string; source?: "local" | "remote" }
   | { scope: "project"; projectId: string; kind: "overview" }
   | { scope: "project"; projectId: string; kind: "history"; sessionId: string }
   | { scope: "session"; sessionId: string };
@@ -49,7 +49,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 function selectionKey(selection: MemorySelection | null): string {
   if (!selection) return "";
-  if (selection.scope === "global") return `global:${selection.path}`;
+  if (selection.scope === "global") return `global:${selection.source || "local"}:${selection.path}`;
   if (selection.scope === "session") return `session:${selection.sessionId}`;
   return selection.kind === "overview"
     ? `project:${selection.projectId}:overview`
@@ -59,7 +59,7 @@ function selectionKey(selection: MemorySelection | null): string {
 function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySelection | null {
   if (scope === "global") {
     const first = catalog.global.files[0];
-    return first ? { scope: "global", path: first.path } : null;
+    return first ? { scope: "global", path: first.path, source: first.source } : null;
   }
   if (scope === "project") {
     const withOverview = catalog.projects.find((project) => project.hasOverview);
@@ -77,7 +77,9 @@ function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySel
 function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope): boolean {
   if (!selection || selection.scope !== scope) return false;
   if (selection.scope === "global") {
-    return catalog.global.files.some((entry) => entry.path === selection.path);
+    return catalog.global.files.some((entry) => (
+      entry.path === selection.path && (entry.source || "local") === (selection.source || "local")
+    ));
   }
   if (selection.scope === "session") {
     return catalog.sessions.some((entry) => entry.id === selection.sessionId);
@@ -204,13 +206,13 @@ export function GlobalList({
           {indexedEntries.map((entry) => (
             <MemoryListButton
               key={entry.id}
-              active={selected === `global:${entry.path}`}
+              active={selected === `global:${entry.source || "local"}:${entry.path}`}
               icon={entry.isIndex ? <BookOpenText className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
               title={entry.title}
-              description={entry.description || entry.path}
+              description={`${entry.source === "remote" ? "Moss Server · " : "本机 · "}${entry.description || entry.path}`}
               meta={TYPE_LABELS[entry.type] || entry.type}
               disabled={!entry.readable}
-              onClick={() => onSelect({ scope: "global", path: entry.path })}
+              onClick={() => onSelect({ scope: "global", path: entry.path, source: entry.source })}
             />
           ))}
         </div>
@@ -234,13 +236,13 @@ export function GlobalList({
               {unindexedEntries.map((entry) => (
                 <MemoryListButton
                   key={entry.id}
-                  active={selected === `global:${entry.path}`}
+                  active={selected === `global:${entry.source || "local"}:${entry.path}`}
                   icon={<FileText className="h-4 w-4" />}
                   title={entry.title}
-                  description={entry.description || entry.path}
+                  description={`${entry.source === "remote" ? "Moss Server · " : "本机 · "}${entry.description || entry.path}`}
                   meta="未索引"
                   disabled={!entry.readable}
-                  onClick={() => onSelect({ scope: "global", path: entry.path })}
+                  onClick={() => onSelect({ scope: "global", path: entry.path, source: entry.source })}
                 />
               ))}
             </div>

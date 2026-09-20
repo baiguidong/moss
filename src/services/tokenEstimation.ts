@@ -178,11 +178,10 @@ export function roughTokenCountEstimationForFileType(
 /**
  * Estimates token count for a Message object by extracting and analyzing its text content.
  * This provides a more reliable estimate than getTokenUsage for messages that may have been compacted.
- * Uses Haiku for token counting (Haiku 4.5 supports thinking blocks), except:
- * - Vertex global region: uses Sonnet (Haiku not available)
- * - Bedrock with thinking blocks: uses Sonnet (Haiku 3.5 doesn't support thinking)
+ * Uses the lightweight model for token counting, except where the provider
+ * requires the primary model for compatibility.
  */
-export async function countTokensViaHaikuFallback(
+export async function countTokensViaFastModelFallback(
   messages: Anthropic.Beta.Messages.BetaMessageParam[],
   tools: Anthropic.Beta.Messages.BetaToolUnion[],
 ): Promise<number | null> {
@@ -199,14 +198,15 @@ export async function countTokensViaHaikuFallback(
   // If we're on Vertex with thinking blocks, use Sonnet since Haiku 3.5 doesn't support thinking
   const isVertexWithThinking =
     isEnvTruthy(process.env.CLAUDE_CODE_USE_VERTEX) && containsThinking
-  // Otherwise always use Haiku - Haiku 4.5 supports thinking blocks.
-  // WARNING: if you change this to use a non-Haiku model, this request will fail in 1P unless it uses getCLISyspromptPrefix.
-  // Use getSmallFastModel() to respect ANTHROPIC_SMALL_FAST_MODEL env var for Bedrock users
-  // with global inference profiles (see issue #10883).
+  // Otherwise use the configured lightweight-model path. getSmallFastModel()
+  // preserves the standalone CLI/provider default when no session override exists.
   const model = resolveSessionMossModel(
     isVertexGlobalEndpoint || isBedrockWithThinking || isVertexWithThinking
       ? getDefaultSonnetModel()
       : getSmallFastModel(),
+    isVertexGlobalEndpoint || isBedrockWithThinking || isVertexWithThinking
+      ? 'primary'
+      : 'fast',
   )
   const anthropic = await getAnthropicClient({
     maxRetries: 1,

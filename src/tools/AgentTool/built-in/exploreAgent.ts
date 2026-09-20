@@ -7,6 +7,7 @@ import { GLOB_TOOL_NAME } from 'src/tools/GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from 'src/tools/GrepTool/prompt.js'
 import { NOTEBOOK_EDIT_TOOL_NAME } from 'src/tools/NotebookEditTool/constants.js'
 import { hasEmbeddedSearchTools } from 'src/utils/embeddedTools.js'
+import { getSmallFastModel } from 'src/utils/model/model.js'
 import { AGENT_TOOL_NAME } from '../constants.js'
 import type { BuiltInAgentDefinition } from '../loadAgentsDir.js'
 
@@ -73,7 +74,8 @@ export const EXPLORE_AGENT: BuiltInAgentDefinition = {
   ],
   source: 'built-in',
   baseDir: 'built-in',
-  model: 'haiku',
+  model: getSmallFastModel(),
+  modelRole: 'fast',
   // Explore is a fast read-only search agent — it doesn't need commit/PR/lint
   // project rules. The main agent has full context and interprets results.
   omitMossMd: true,

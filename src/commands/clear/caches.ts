@@ -94,7 +94,7 @@ export function clearSessionCaches(
   }
   // Clear repository detection caches
   clearRepositoryCaches()
-  // Clear bash command prefix caches (Haiku-extracted prefixes)
+  // Clear bash command prefix caches (model-extracted prefixes).
   clearCommandPrefixCaches()
   // Clear invoked skills cache (each entry holds full skill file content)
   clearInvokedSkills(preservedAgentIds)

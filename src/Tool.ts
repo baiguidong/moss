@@ -159,6 +159,8 @@ export type ToolUseContext = {
     commands: Command[]
     debug: boolean
     mainLoopModel: string
+    /** Route this request through the session's configured lightweight model. */
+    modelRole?: 'fast'
     tools: Tools
     verbose: boolean
     thinkingConfig: ThinkingConfig

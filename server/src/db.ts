@@ -19,6 +19,7 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
+  SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import {
   advancedSettingsSchema,
@@ -26,6 +27,7 @@ import {
   normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
+  normalizeSessionRuntimeOptions,
   sessionMemorySettingsSchema,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
@@ -110,6 +112,7 @@ function mapSession(row: SqlRow): SessionRecord {
     advancedSettings: parseAdvancedSettings(row.advanced_settings_json),
     autoMemory: parseAutoMemorySettings(row.auto_memory_json),
     sessionMemory: parseSessionMemorySettings(row.session_memory_json),
+    runtimeOptions: normalizeSessionRuntimeOptions(parseJsonValue(row.runtime_options_json)),
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -209,6 +212,7 @@ export class DirectConnectStore {
         advanced_settings_json TEXT NOT NULL DEFAULT '{}',
         auto_memory_json TEXT NOT NULL DEFAULT '{}',
         session_memory_json TEXT NOT NULL DEFAULT '{}',
+        runtime_options_json TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         ended_at INTEGER,
@@ -285,6 +289,11 @@ export class DirectConnectStore {
     } catch {
       // Column already exists, ignore
     }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN runtime_options_json TEXT NOT NULL DEFAULT '{}'`)
+    } catch {
+      // Column already exists, ignore
+    }
   }
 
   close(): void {
@@ -344,6 +353,7 @@ export class DirectConnectStore {
     advancedSettings?: AdvancedSettings
     autoMemory?: AutoMemorySettings
     sessionMemory?: SessionMemorySettings
+    runtimeOptions?: SessionRuntimeOptions
   }): SessionRecord {
     const ts = now()
     this.db.prepare(`
@@ -352,9 +362,9 @@ export class DirectConnectStore {
         cwd, docker_image, profile_dir,
         workspace_dir, transcript_dir, container_name,
         status, desired_state, transcript_path, title, assistant_name,
-        advanced_settings_json, auto_memory_json, session_memory_json,
+        advanced_settings_json, auto_memory_json, session_memory_json, runtime_options_json,
         created_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.sessionId,
       input.transcriptSessionId,
@@ -376,6 +386,7 @@ export class DirectConnectStore {
       JSON.stringify(input.advancedSettings ?? {}),
       JSON.stringify(input.autoMemory ?? {}),
       JSON.stringify(input.sessionMemory ?? {}),
+      JSON.stringify(input.runtimeOptions ?? {}),
       ts,
       ts,
     )

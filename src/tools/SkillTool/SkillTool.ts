@@ -661,6 +661,9 @@ export const SkillTool: Tool<InputSchema, Output, Progress> = buildTool({
                 model,
                 ctx.options.mainLoopModel,
               ),
+              // An explicit skill model must not inherit a fast routing role
+              // from a parent such as the built-in Explore agent.
+              modelRole: undefined,
             },
           }
         }

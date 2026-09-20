@@ -97,7 +97,7 @@ function resolveImagePath(src: string, workspace: string, homeDir: string): stri
     // not a URL-like path
   }
 
-  if (/^(data:|blob:|https?:|moss-media:)/i.test(trimmed)) return null;
+  if (/^(data:|blob:|https?:|moss-media:|moss-remote-workspace:)/i.test(trimmed)) return null;
 
   // Relative path: resolve against workspace directory
   if (workspace) {
@@ -166,7 +166,7 @@ export function LocalImage({
       }
       // If originalSrc looks like a bare filename (no protocol, no leading /),
       // it's a relative path that we couldn't resolve — show failure state.
-      if (originalSrc && !/^(data:|blob:|https?:|moss-media:)/i.test(originalSrc)) {
+      if (originalSrc && !/^(data:|blob:|https?:|moss-media:|moss-remote-workspace:)/i.test(originalSrc)) {
         setFailed(true);
         setResolvedSrc(null);
       } else {

@@ -235,18 +235,39 @@ export function createMemoryCatalog({
   listProjects,
   getProjectMemory,
   listSessions,
+  getRemoteMemoryCatalog,
+  readRemoteGlobalMemory,
+  readRemoteSessionMemory,
 }) {
   const paths = createDesktopDataPaths(mossHome);
   const globalMemoryRoot = path.join(paths.home, 'memory');
 
   async function getCatalog() {
-    const [globalFiles, projects, sessions] = await Promise.all([
+    const [localGlobalFiles, projects, sessions, remoteCatalog] = await Promise.all([
       listGlobalMemoryFiles(globalMemoryRoot),
       Promise.resolve(listProjects()),
       Promise.resolve(listSessions()),
+      typeof getRemoteMemoryCatalog === 'function'
+        ? Promise.resolve(getRemoteMemoryCatalog()).catch(() => null)
+        : null,
     ]);
     const visibleSessions = Array.isArray(sessions) ? sessions : [];
     const sessionsById = new Map(visibleSessions.map((session) => [session.id, session]));
+    const remoteGlobalFiles = Array.isArray(remoteCatalog?.global?.files)
+      ? remoteCatalog.global.files.map((entry) => ({
+          ...entry,
+          id: `remote:${entry.id || entry.path}`,
+          source: 'remote',
+        }))
+      : [];
+    const globalFiles = [
+      ...localGlobalFiles.map((entry) => ({ ...entry, source: 'local' })),
+      ...remoteGlobalFiles,
+    ];
+    const remoteSessionsById = new Map(
+      (Array.isArray(remoteCatalog?.sessions) ? remoteCatalog.sessions : [])
+        .map((entry) => [entry?.sessionId, entry]),
+    );
 
     const projectEntries = await Promise.all((Array.isArray(projects) ? projects : []).map(async (project) => {
       const projectId = normalizeId(project.id, 'project id');
@@ -271,10 +292,14 @@ export function createMemoryCatalog({
       .map(async (session) => {
         let metadata = null;
         let summaryPath = null;
-        try {
-          summaryPath = getSessionMemoryPath(paths, session);
-          metadata = summaryPath ? await fileMetadata(summaryPath) : null;
-        } catch {}
+        if (session.agentMode === 'remote-direct') {
+          metadata = remoteSessionsById.get(session.sessionId) || null;
+        } else {
+          try {
+            summaryPath = getSessionMemoryPath(paths, session);
+            metadata = summaryPath ? await fileMetadata(summaryPath) : null;
+          } catch {}
+        }
         return {
           id: session.id,
           title: session.title,
@@ -284,7 +309,9 @@ export function createMemoryCatalog({
           busy: Boolean(session.busy),
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
-          hasSummary: Boolean(metadata),
+          hasSummary: session.agentMode === 'remote-direct'
+            ? metadata?.exists === true
+            : Boolean(metadata),
           summaryUpdatedAt: metadata?.updatedAt || null,
           bytes: metadata?.bytes || 0,
           readable: metadata?.readable ?? true,
@@ -294,7 +321,9 @@ export function createMemoryCatalog({
     return {
       generatedAt: Date.now(),
       global: {
-        rootLabel: '~/.moss/memory',
+        rootLabel: remoteCatalog
+          ? '~/.moss/memory + Moss Server / memory'
+          : '~/.moss/memory',
         files: globalFiles,
       },
       projects: projectEntries.sort((a, b) => (b.memoryUpdatedAt || b.updatedAt) - (a.memoryUpdatedAt || a.updatedAt)),
@@ -305,6 +334,12 @@ export function createMemoryCatalog({
   async function readEntry(payload = {}) {
     if (payload.scope === 'global') {
       const relativePath = normalizeMarkdownPath(payload.path);
+      if (payload.source === 'remote') {
+        if (typeof readRemoteGlobalMemory !== 'function') {
+          throw new Error('远程记忆不可用。');
+        }
+        return readRemoteGlobalMemory(relativePath);
+      }
       const filePath = await resolveExistingFileWithin(globalMemoryRoot, relativePath);
       return readBoundedMarkdown(filePath);
     }
@@ -331,7 +366,12 @@ export function createMemoryCatalog({
       const session = (await Promise.resolve(listSessions())).find((entry) => entry.id === sessionId);
       if (!session) throw new Error('会话不存在。');
       if (session.agentMode === 'remote-direct') {
-        throw new Error('远程会话摘要尚未同步到本机。');
+        if (!session.sessionId || typeof readRemoteSessionMemory !== 'function') {
+          throw new Error('远程会话摘要尚未同步到本机。');
+        }
+        const result = await readRemoteSessionMemory(session.sessionId);
+        if (!result?.exists) throw new Error('该会话尚未生成摘要。');
+        return result;
       }
       const summaryPath = getSessionMemoryPath(paths, session);
       if (!summaryPath) throw new Error('该会话尚未生成摘要。');

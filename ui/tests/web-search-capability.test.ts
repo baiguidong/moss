@@ -7,6 +7,7 @@ import {
   createWebSearchCapabilityStore,
   getWebSearchCapabilityFingerprint,
   normalizeWebSearchSettings,
+  resolveNativeWebSearchModel,
   resolveWebSearchProviders,
   toPublicWebSearchSettings,
 } from '../src/web-search-capability.mjs';
@@ -20,6 +21,24 @@ afterEach(() => {
 });
 
 describe('WebSearch capability settings', () => {
+  it('probes the model that native WebSearch will actually use', () => {
+    expect(resolveNativeWebSearchModel({
+      model: 'primary-model',
+      fastModel: 'fast-model',
+      advanced: { moss_fast_web_search: true },
+    })).toBe('fast-model');
+    expect(resolveNativeWebSearchModel({
+      model: 'primary-model',
+      fastModel: '',
+      advanced: { moss_fast_web_search: true },
+    })).toBe('primary-model');
+    expect(resolveNativeWebSearchModel({
+      model: 'primary-model',
+      fastModel: 'fast-model',
+      advanced: { moss_fast_web_search: false },
+    })).toBe('primary-model');
+  });
+
   it('uses configured providers before a detected native endpoint', () => {
     const settings = normalizeWebSearchSettings({
       mode: 'auto',

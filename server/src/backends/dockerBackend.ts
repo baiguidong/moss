@@ -108,6 +108,7 @@ function snapshotSystemSettings(): BackendSystemSettings {
   return {
     bypassPermissions: settings.bypassPermissions,
     model: settings.model,
+    fastModel: settings.fastModel,
     maxTurns: settings.maxTurns,
     thinkingMode: settings.thinkingMode,
     thinkingBudgetTokens: settings.thinkingBudgetTokens,

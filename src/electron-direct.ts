@@ -331,6 +331,8 @@ export interface ClaudeSessionOptions {
   cwd?: string
   /** 模型名，如 'claude-sonnet-4-6' */
   model?: string
+  /** 用于检索、提取和摘要等轻量任务的模型名。 */
+  fastModel?: string
   /** 覆盖默认 API base URL（仅应用于当前 embedded session） */
   url?: string
   /** 覆盖默认 API token（仅应用于当前 embedded session） */
@@ -393,6 +395,7 @@ export interface ClaudeSessionOptions {
 type ResolvedClaudeSessionOptions = {
   cwd: string
   model: string
+  fastModel?: string
   url?: string
   apiKey?: string
   webSearch?: SessionWebSearchSettings
@@ -547,7 +550,10 @@ async function runDesktopPermissionRequestHooks(
 }
 
 function buildSessionApiOverrides(
-  opts: Pick<ClaudeSessionOptions, 'url' | 'apiKey' | 'model' | 'webSearch'>,
+  opts: Pick<
+    ClaudeSessionOptions,
+    'url' | 'apiKey' | 'model' | 'fastModel' | 'webSearch'
+  >,
 ): SessionApiOverrides | undefined {
   const mossBaseUrl = normalizeMossBaseUrl(
     typeof opts.url === 'string' ? opts.url : undefined,
@@ -556,8 +562,18 @@ function buildSessionApiOverrides(
     typeof opts.apiKey === 'string' ? opts.apiKey.trim() || undefined : undefined
   const mossModel =
     typeof opts.model === 'string' ? opts.model.trim() || undefined : undefined
+  const mossFastModel =
+    typeof opts.fastModel === 'string'
+      ? opts.fastModel.trim() || undefined
+      : undefined
 
-  if (!mossBaseUrl && !mossAuthToken && !mossModel && !opts.webSearch) {
+  if (
+    !mossBaseUrl &&
+    !mossAuthToken &&
+    !mossModel &&
+    !mossFastModel &&
+    !opts.webSearch
+  ) {
     return undefined
   }
 
@@ -565,6 +581,7 @@ function buildSessionApiOverrides(
     ...(mossBaseUrl ? { mossBaseUrl } : {}),
     ...(mossAuthToken ? { mossAuthToken } : {}),
     ...(mossModel ? { mossModel } : {}),
+    ...(mossFastModel ? { mossFastModel } : {}),
     ...(opts.webSearch ? { webSearch: opts.webSearch } : {}),
   }
 }
@@ -638,7 +655,8 @@ export class ClaudeSession {
 
   constructor(opts: ClaudeSessionOptions = {}) {
     this.sessionId = opts.sessionId ?? randomUUID()
-    this.#sessionApiOverrides = buildSessionApiOverrides(opts)
+    const model = opts.model?.trim() || 'claude-sonnet-4-6'
+    this.#sessionApiOverrides = buildSessionApiOverrides({ ...opts, model })
     if (opts.onAppEvent) {
       // Register keyed by this session's id so concurrent sessions'
       // app events don't all route to the most recently created session.
@@ -674,7 +692,8 @@ export class ClaudeSession {
     }
     this.#opts = {
       cwd,
-      model: opts.model ?? 'claude-sonnet-4-6',
+      model,
+      fastModel: opts.fastModel?.trim() || undefined,
       url: opts.url,
       apiKey: opts.apiKey,
       webSearch: opts.webSearch,

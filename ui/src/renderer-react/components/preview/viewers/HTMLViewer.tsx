@@ -8,14 +8,16 @@ import { TextViewer } from "./TextViewer";
 export function HTMLViewer({
   content,
   filePath,
+  baseUrl,
   sourceOnly = false,
 }: {
   content: string;
   filePath: string;
+  baseUrl?: string;
   sourceOnly?: boolean;
 }) {
   const [mode, setMode] = React.useState<"preview" | "source">(sourceOnly ? "source" : "preview");
-  const srcDoc = React.useMemo(() => buildHtmlDocument(content, filePath), [content, filePath]);
+  const srcDoc = React.useMemo(() => buildHtmlDocument(content, filePath, baseUrl), [baseUrl, content, filePath]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -28,7 +30,7 @@ export function HTMLViewer({
         </Button>
       </div>
       {mode === "preview" ? (
-        <iframe title={filePath} srcDoc={srcDoc} sandbox="allow-same-origin" className="h-full w-full bg-white" />
+        <iframe title={filePath} srcDoc={srcDoc} sandbox="allow-scripts allow-forms allow-modals" className="h-full w-full bg-white" />
       ) : (
         <TextViewer content={content} />
       )}

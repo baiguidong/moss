@@ -7,12 +7,19 @@ import {
   fetchRemoteAppAvailability,
   fetchRemoteDirectSessions,
   downloadRemoteDirectWorkspaceFile,
+  fetchRemoteProfileMemory,
+  fetchRemoteProfileMemoryFile,
+  fetchRemoteProfileSkillStatus,
+  fetchRemoteSessionMemory,
   forkRemoteDirectSession,
   getRemoteDirectSettings,
   parseRemoteDirectServerInput,
   requestRemoteDirectAuthentication,
   requestRemoteDirectAccessToken,
   startRemoteFeishuAdapter,
+  uploadRemoteDirectWorkspaceData,
+  uploadRemoteProfileSkills,
+  writeRemoteDirectWorkspaceFile,
 } from '../src/remote-direct-client.mjs';
 
 const originalFetch = globalThis.fetch;
@@ -248,5 +255,82 @@ describe('remote direct client settings', () => {
       destinationPath: path.join(os.tmpdir(), 'unused-moss-preview.bin'),
       maxBytes: 3,
     })).rejects.toThrow('too large to preview');
+  });
+
+  it('writes and uploads remote workspace files with bearer auth', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        path: '/workspace/inputs/demo.txt',
+        relativePath: 'inputs/demo.txt',
+        content: 'hello',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    await writeRemoteDirectWorkspaceFile({
+      serverUrl: 'https://moss.example.com',
+      authToken: 'access-token',
+      sessionId: 'session/1',
+      filePath: 'index.html',
+      content: '<h1>Hello</h1>',
+    });
+    await uploadRemoteDirectWorkspaceData({
+      serverUrl: 'https://moss.example.com',
+      authToken: 'access-token',
+      sessionId: 'session/1',
+      fileName: 'demo.txt',
+      data: Buffer.from('hello'),
+    });
+
+    expect(requests[0].url).toContain('/api/v1/sessions/session%2F1/workspace/content?file=index.html');
+    expect(requests[0].init.method).toBe('PUT');
+    expect(Buffer.from(requests[0].init.body as Buffer).toString()).toBe('<h1>Hello</h1>');
+    expect(requests[1].url).toContain('/api/v1/sessions/session%2F1/workspace/upload?name=demo.txt');
+    expect(requests[1].init.method).toBe('POST');
+    expect(requests[1].init.headers).toMatchObject({
+      authorization: 'Bearer access-token',
+      'content-length': '5',
+    });
+  });
+
+  it('queries and updates remote profile resources', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      const url = String(input);
+      if (url.endsWith('/profile/skills') && init.method === 'GET') {
+        return new Response(JSON.stringify({ revision: 'sha256:old', fileCount: 1 }), { status: 200 });
+      }
+      if (url.endsWith('/profile/skills') && init.method === 'PUT') {
+        return new Response(JSON.stringify({ revision: 'sha256:new', fileCount: 2 }), { status: 200 });
+      }
+      if (url.includes('/profile/memory/read')) {
+        return new Response(JSON.stringify({ content: '# Remote', bytes: 8, readable: true }), { status: 200 });
+      }
+      if (url.endsWith('/profile/memory')) {
+        return new Response(JSON.stringify({ global: { files: [] }, sessions: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ exists: true, content: '# Session' }), { status: 200 });
+    };
+    const connection = { serverUrl: 'https://moss.example.com', authToken: 'access-token' };
+
+    await expect(fetchRemoteProfileSkillStatus(connection)).resolves.toMatchObject({ revision: 'sha256:old' });
+    await expect(uploadRemoteProfileSkills({
+      ...connection,
+      archive: Buffer.from('zip'),
+      revision: 'sha256:new',
+    })).resolves.toMatchObject({ revision: 'sha256:new' });
+    await expect(fetchRemoteProfileMemory(connection)).resolves.toHaveProperty('global');
+    await expect(fetchRemoteProfileMemoryFile({ ...connection, filePath: 'preferences.md' }))
+      .resolves.toMatchObject({ content: '# Remote' });
+    await expect(fetchRemoteSessionMemory({ ...connection, sessionId: 'session-1' }))
+      .resolves.toMatchObject({ exists: true, content: '# Session' });
+
+    expect(requests[1].init.headers).toMatchObject({
+      authorization: 'Bearer access-token',
+      'x-moss-content-sha256': 'sha256:new',
+    });
+    expect(requests[3].url).toContain('file=preferences.md');
   });
 });

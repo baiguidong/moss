@@ -32,6 +32,7 @@ describe('system settings model layout', () => {
               baseUrl: 'https://model.initial.test',
               apiKey: 'model-key-initial',
               model: 'initial-model',
+              fastModel: 'initial-fast-model',
               maxTurns: 12,
               thinking: {
                 mode: 'enabled',
@@ -70,6 +71,7 @@ describe('system settings model layout', () => {
     const mod = await import(`../systemSettings.js?case=${randomUUID()}`)
     expect(mod.getSystemSettings()).toMatchObject({
       model: 'initial-model',
+      fastModel: 'initial-fast-model',
       maxTurns: 12,
       thinkingMode: 'enabled',
       thinkingBudgetTokens: 4096,
@@ -94,6 +96,7 @@ describe('system settings model layout', () => {
           baseUrl: 'https://model.updated.test',
           apiKey: 'model-key-updated',
           model: 'updated-model',
+          fastModel: 'updated-fast-model',
           maxTurns: 34,
           thinking: {
             mode: 'disabled',
@@ -112,6 +115,7 @@ describe('system settings model layout', () => {
     expect(updated).toMatchObject({
       bypassPermissions: true,
       model: 'updated-model',
+      fastModel: 'updated-fast-model',
       maxTurns: 34,
       thinkingMode: 'disabled',
       thinkingBudgetTokens: 8192,
@@ -132,6 +136,7 @@ describe('system settings model layout', () => {
       baseUrl: 'https://model.updated.test',
       apiKey: 'model-key-updated',
       model: 'updated-model',
+      fastModel: 'updated-fast-model',
       maxTurns: 34,
       thinking: {
         mode: 'disabled',
@@ -145,6 +150,7 @@ describe('system settings model layout', () => {
       model: 'image-updated',
     })
     expect(persisted.model).toBeUndefined()
+    expect(persisted.fastModel).toBeUndefined()
     expect(persisted.maxTurns).toBeUndefined()
     expect(persisted.thinkingMode).toBeUndefined()
     expect(persisted.thinkingBudgetTokens).toBeUndefined()
@@ -165,6 +171,14 @@ describe('system settings model layout', () => {
         key === 'MOSS_SERVER_AUTH_TOKEN',
       ),
     ).toBe(false)
+
+    expect(mod.updateSystemSettings({
+      models: { text: { fastModel: '   ' } },
+    }).fastModel).toBe('')
+    const cleared = JSON.parse(
+      await readFile(join(serverHome, 'settings.json'), 'utf8'),
+    )
+    expect(cleared.models.text.fastModel).toBe('')
   })
 })
 

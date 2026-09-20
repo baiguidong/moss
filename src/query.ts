@@ -603,6 +603,7 @@ async function* queryLoop(
                 return appState.toolPermissionContext
               },
               model: currentModel,
+              modelRole: toolUseContext.options.modelRole,
               ...(config.gates.fastModeEnabled && {
                 fastMode: appState.fastMode,
               }),
@@ -959,7 +960,7 @@ async function* queryLoop(
       return { reason: 'aborted_streaming' }
     }
 
-    // Yield tool use summary from previous turn — haiku (~1s) resolved during model streaming (5-30s)
+    // Yield the lightweight-model summary resolved during main-model streaming.
     if (pendingToolUseSummary) {
       const summary = await pendingToolUseSummary
       if (summary) {
@@ -1300,7 +1301,7 @@ async function* queryLoop(
       config.gates.emitToolUseSummaries &&
       toolUseBlocks.length > 0 &&
       !toolUseContext.abortController.signal.aborted &&
-      !toolUseContext.agentId // subagents don't surface in mobile UI — skip the Haiku call
+      !toolUseContext.agentId // subagents don't surface in mobile UI — skip the lightweight-model call
     ) {
       // Extract the last assistant text block for context
       const lastAssistantMessage = assistantMessages.at(-1)
@@ -1460,7 +1461,7 @@ async function* queryLoop(
 
     // Inject prefetched skill discovery. collectSkillDiscoveryPrefetch emits
     // hidden_by_main_turn — true when the prefetch resolved before this point
-    // (should be >98% at AKI@250ms / Haiku@573ms vs turn durations of 2-30s).
+    // (normally much faster than the 2-30s main turn duration).
     if (skillPrefetch && pendingSkillPrefetch) {
       const skillAttachments =
         await skillPrefetch.collectSkillDiscoveryPrefetch(pendingSkillPrefetch)

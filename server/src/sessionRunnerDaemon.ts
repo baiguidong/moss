@@ -372,6 +372,7 @@ export class SessionRunnerDaemon {
         advancedSettings: this.manifest.session.advancedSettings,
         autoMemory: this.manifest.session.autoMemory,
         sessionMemory: this.manifest.session.sessionMemory,
+        runtimeOptions: this.manifest.session.runtimeOptions,
       })
 
       this.#handle = handle

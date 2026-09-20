@@ -648,6 +648,9 @@ export async function* runAgent({
     debug: toolUseContext.options.debug,
     verbose: toolUseContext.options.verbose,
     mainLoopModel: resolvedAgentModel,
+    ...(!model && agentDefinition.modelRole
+      ? { modelRole: agentDefinition.modelRole }
+      : {}),
     // For fork children (useExactTools), inherit thinking config to match the
     // parent's API request prefix for prompt cache hits. For regular
     // sub-agents, disable thinking to control output token costs.

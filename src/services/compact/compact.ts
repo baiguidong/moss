@@ -1267,6 +1267,7 @@ async function streamCompactSummary({
             return appState.toolPermissionContext
           },
           model: context.options.mainLoopModel,
+          modelRole: context.options.modelRole,
           toolChoice: undefined,
           isNonInteractiveSession: context.options.isNonInteractiveSession,
           hasAppendSystemPrompt: !!context.options.appendSystemPrompt,

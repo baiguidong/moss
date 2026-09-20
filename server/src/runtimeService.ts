@@ -10,6 +10,7 @@ import {
   normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
+  normalizeSessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { getSystemSettings } from './systemSettings.js'
 import { SessionTurnLock } from './sessionTurnLock.js'
@@ -266,6 +267,7 @@ export class RuntimeService {
       sessionMemory: input.sessionMemory
         ? normalizeSessionMemorySettings(input.sessionMemory)
         : undefined,
+      runtimeOptions: normalizeSessionRuntimeOptions(input.runtimeOptions),
     })
 
     try {
@@ -353,6 +355,7 @@ export class RuntimeService {
       advancedSettings: source.advancedSettings,
       autoMemory: source.autoMemory,
       sessionMemory: source.sessionMemory,
+      runtimeOptions: source.runtimeOptions,
     })
 
     try {
@@ -534,6 +537,7 @@ export class RuntimeService {
         sessionMemory: session.sessionMemory
           ? normalizeSessionMemorySettings(session.sessionMemory)
           : undefined,
+        runtimeOptions: normalizeSessionRuntimeOptions(session.runtimeOptions),
         mountDirs,
         runtime: {
           ...session.runtime,

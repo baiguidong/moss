@@ -3,6 +3,7 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
+  SessionRuntimeOptions,
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
 
@@ -213,6 +214,7 @@ export type SessionRecord = {
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
+  runtimeOptions?: SessionRuntimeOptions
   createdAt: number
   lastActiveAt: number
   endedAt: number | null
@@ -298,6 +300,7 @@ export type SessionCreateInput = {
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
+  runtimeOptions?: SessionRuntimeOptions
 }
 
 export type SessionForkInput = {
@@ -328,6 +331,7 @@ export type RunnerManifest = {
     advancedSettings?: AdvancedSettings
     autoMemory?: AutoMemorySettings
     sessionMemory?: SessionMemorySettings
+    runtimeOptions?: SessionRuntimeOptions
   }
   attempt: {
     attemptId: string

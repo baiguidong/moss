@@ -172,4 +172,70 @@ describe('memory catalog', () => {
 
     await expect(service.readEntry({ scope: 'global', path: 'linked.md' })).rejects.toThrow('超出允许范围');
   });
+
+  it('merges Moss Server global memory and resolves remote session summaries', async () => {
+    const remoteReads: string[] = [];
+    const service = createMemoryCatalog({
+      mossHome: tempDir,
+      listProjects: () => [],
+      getProjectMemory: async () => ({}),
+      listSessions: () => [{
+        id: 'desktop-session-1',
+        sessionId: 'server-session-1',
+        title: '云端会话',
+        agentMode: 'remote-direct',
+        createdAt: 1,
+        updatedAt: 2,
+        busy: false,
+      }],
+      getRemoteMemoryCatalog: async () => ({
+        global: {
+          rootLabel: 'Moss Server / memory',
+          files: [{
+            id: 'MEMORY.md',
+            path: 'MEMORY.md',
+            title: '记忆索引',
+            description: '',
+            type: 'index',
+            isIndex: true,
+            indexed: true,
+            bytes: 20,
+            updatedAt: 10,
+            readable: true,
+          }],
+        },
+        sessions: [{
+          sessionId: 'server-session-1',
+          exists: true,
+          bytes: 30,
+          updatedAt: 11,
+          readable: true,
+        }],
+      }),
+      readRemoteGlobalMemory: async (filePath: string) => {
+        remoteReads.push(`global:${filePath}`);
+        return { content: '# Cloud memory', bytes: 14, updatedAt: 10, readable: true };
+      },
+      readRemoteSessionMemory: async (sessionId: string) => {
+        remoteReads.push(`session:${sessionId}`);
+        return { exists: true, content: '# Cloud session', bytes: 15, updatedAt: 11, readable: true };
+      },
+    });
+
+    const catalog = await service.getCatalog();
+    expect(catalog.global.files).toContainEqual(expect.objectContaining({
+      id: 'remote:MEMORY.md',
+      source: 'remote',
+    }));
+    expect(catalog.sessions[0]).toMatchObject({
+      id: 'desktop-session-1',
+      hasSummary: true,
+      summaryUpdatedAt: 11,
+    });
+    await expect(service.readEntry({ scope: 'global', source: 'remote', path: 'MEMORY.md' }))
+      .resolves.toMatchObject({ content: '# Cloud memory' });
+    await expect(service.readEntry({ scope: 'session', sessionId: 'desktop-session-1' }))
+      .resolves.toMatchObject({ content: '# Cloud session' });
+    expect(remoteReads).toEqual(['global:MEMORY.md', 'session:server-session-1']);
+  });
 });

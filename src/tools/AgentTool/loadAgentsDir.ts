@@ -102,6 +102,8 @@ export type BaseAgentDefinition = {
   hooks?: HooksSettings // Session-scoped hooks registered when agent starts
   color?: AgentColorName
   model?: string
+  /** Built-in agents may opt into the configured lightweight model route. */
+  modelRole?: 'fast'
   effort?: EffortValue
   permissionMode?: PermissionMode
   /** Enforce permissionMode even when the parent grants broader permissions.

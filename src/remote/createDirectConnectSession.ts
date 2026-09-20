@@ -10,6 +10,7 @@ import {
   type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
+  type SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { resolveDirectConnectAccessToken } from './authClient.js'
 import { fetchDirectConnect } from './directConnectFetch.js'
@@ -101,6 +102,7 @@ export async function createDirectConnectSession({
   advancedSettings,
   autoMemory,
   sessionMemory,
+  runtimeOptions,
 }: {
   serverUrl: string
   authToken?: string
@@ -114,6 +116,7 @@ export async function createDirectConnectSession({
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
+  runtimeOptions?: SessionRuntimeOptions
 }): Promise<{
   config: DirectConnectConfig
   workDir?: string
@@ -141,6 +144,7 @@ export async function createDirectConnectSession({
         ...(advancedSettings ? { advancedSettings } : {}),
         ...(autoMemory ? { autoMemory } : {}),
         ...(sessionMemory ? { sessionMemory } : {}),
+        ...(runtimeOptions ? { runtimeOptions } : {}),
       }),
     })
   } catch (err) {

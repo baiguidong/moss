@@ -86,6 +86,8 @@ type PreviewDrawerMetadata = Record<string, unknown> & {
   localPreviewPath?: string;
   modifiedAt?: number;
   remote?: boolean;
+  previewBaseUrl?: string;
+  remoteContentUrl?: string;
   ofvText?: boolean;
   previewEngine?: string;
   previewFamily?: string;
@@ -132,7 +134,7 @@ function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
     case "markdown":
       return <MarkdownViewer content={file.content} />;
     case "html":
-      return <HTMLViewer content={file.content} filePath={file.path} />;
+      return <HTMLViewer content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
       return <WordViewer filePath={previewPath} fileVersion={fileVersion} />;
     case "excel":

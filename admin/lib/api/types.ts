@@ -230,6 +230,7 @@ export interface SystemSettingsOpenIM {
 export interface SystemSettings {
   bypassPermissions: boolean
   model: string
+  fastModel: string
   maxTurns: number
   thinkingMode: ThinkingMode
   thinkingBudgetTokens: number
@@ -251,6 +252,7 @@ export interface UpdateSystemSettingsRequest {
       baseUrl?: string
       apiKey?: string
       model?: string
+      fastModel?: string
       maxTurns?: number
       thinking?: {
         mode?: ThinkingMode

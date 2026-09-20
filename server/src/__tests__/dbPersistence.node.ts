@@ -67,6 +67,13 @@ try {
         compactMinTextBlockMessages: 3,
         compactMaxTokens: 4000,
       },
+      runtimeOptions: {
+        model: 'desktop-model',
+        fastModel: 'desktop-fast-model',
+        url: 'https://model.example.test',
+        apiKey: 'secret',
+        thinkingConfig: { type: 'enabled', budgetTokens: 4096 },
+      },
     })
     assert.deepEqual(session.advancedSettings, {
       moss_auto_background_agents: true,
@@ -108,6 +115,13 @@ try {
       compactMinTextBlockMessages: 3,
       compactMaxTokens: 4000,
     })
+    assert.deepEqual(session.runtimeOptions, {
+      model: 'desktop-model',
+      fastModel: 'desktop-fast-model',
+      url: 'https://model.example.test',
+      apiKey: 'secret',
+      thinkingConfig: { type: 'enabled', budgetTokens: 4096 },
+    })
   } finally {
     store.close()
   }
@@ -116,6 +130,7 @@ try {
   legacyDb.exec('ALTER TABLE sessions DROP COLUMN advanced_settings_json')
   legacyDb.exec('ALTER TABLE sessions DROP COLUMN auto_memory_json')
   legacyDb.exec('ALTER TABLE sessions DROP COLUMN session_memory_json')
+  legacyDb.exec('ALTER TABLE sessions DROP COLUMN runtime_options_json')
   legacyDb.close()
 
   const migratedStore = new DirectConnectStore(dbPath)
@@ -135,6 +150,10 @@ try {
       columns.some(column => column.name === 'session_memory_json'),
       true,
     )
+    assert.equal(
+      columns.some(column => column.name === 'runtime_options_json'),
+      true,
+    )
     assert.equal(columns.some(column => column.name === 'runtime_backend'), false)
     const attemptColumns = migratedStore.db
       .prepare('PRAGMA table_info(session_attempts)')
@@ -146,6 +165,7 @@ try {
     assert.equal(migratedStore.getSession('session-1')?.advancedSettings, undefined)
     assert.equal(migratedStore.getSession('session-1')?.autoMemory, undefined)
     assert.equal(migratedStore.getSession('session-1')?.sessionMemory, undefined)
+    assert.equal(migratedStore.getSession('session-1')?.runtimeOptions, undefined)
   } finally {
     migratedStore.close()
   }

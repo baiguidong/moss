@@ -10,8 +10,15 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { createUsageLedger } from './usage-ledger.mjs';
-import { materializeRemoteBrowserFile } from './remote-browser-file.mjs';
+import { resolveRemoteWorkspaceFileUrl } from './remote-browser-file.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
+import { synchronizeRemoteSkills } from './remote-profile-sync.mjs';
+import {
+  installRemoteWorkspaceProtocol,
+  REMOTE_WORKSPACE_SCHEME,
+  toRemoteWorkspaceUrl,
+  parseRemoteWorkspaceUrl,
+} from './remote-workspace-protocol.mjs';
 import { createSessionSearchIndex } from './session-search-index.mjs';
 import { createWorkspaceCatalog } from './workspace-catalog.mjs';
 import {
@@ -121,6 +128,7 @@ import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
 import { createOpenIMIntegration } from './openim/openim-integration.mjs';
 import {
+  BROWSER_PARTITION,
   createBrowserViewManager,
   registerBrowserViewIpcHandlers,
 } from './browser-view-manager.mjs';
@@ -202,6 +210,7 @@ import {
 import {
   createWebSearchCapabilityStore,
   getWebSearchCapabilityFingerprint,
+  resolveNativeWebSearchModel,
   resolveWebSearchProviders,
   toPublicWebSearchSettings,
 } from './web-search-capability.mjs';
@@ -300,6 +309,16 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: APP_UI_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: REMOTE_WORKSPACE_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -775,6 +794,9 @@ const memoryCatalog = createMemoryCatalog({
   listProjects: () => listProjects(),
   getProjectMemory,
   listSessions: () => listVisibleSessionSummaries(),
+  getRemoteMemoryCatalog: () => getRemoteMemoryCatalogForDesktop(),
+  readRemoteGlobalMemory: (filePath) => readRemoteGlobalMemoryForDesktop(filePath),
+  readRemoteSessionMemory: (sessionId) => readRemoteSessionMemoryForDesktop(sessionId),
 });
 const feishuAdapterStore = createFeishuAdapterStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
@@ -1171,6 +1193,15 @@ const {
   forkRemoteDirectSession,
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
+  fetchRemoteDirectWorkspaceContent,
+  writeRemoteDirectWorkspaceFile,
+  uploadRemoteDirectWorkspaceData,
+  uploadRemoteDirectWorkspaceFile,
+  fetchRemoteProfileSkillStatus,
+  uploadRemoteProfileSkills,
+  fetchRemoteProfileMemory,
+  fetchRemoteProfileMemoryFile,
+  fetchRemoteSessionMemory,
   fetchRemoteFeishuAdapterStatus,
   fetchRemoteApps,
   fetchRemoteAppAvailability,
@@ -1193,6 +1224,78 @@ const {
   fetchRemoteAppLogs,
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
 
+const remoteSkillSyncPromises = new Map();
+const remoteAttachmentSources = new Map();
+const MAX_REMOTE_ATTACHMENT_SOURCE_BYTES = 64 * 1024 * 1024;
+let remoteAttachmentSourceBytes = 0;
+
+async function getRemoteMemoryCatalogForDesktop() {
+  if (!(desktopSettings.remoteEnabled ?? false) || !getRemoteDirectSettings().serverUrl) {
+    return null;
+  }
+  const connection = await resolveRemoteDirectConnection();
+  return fetchRemoteProfileMemory(connection);
+}
+
+async function readRemoteGlobalMemoryForDesktop(filePath) {
+  const connection = await resolveRemoteDirectConnection();
+  return fetchRemoteProfileMemoryFile({ ...connection, filePath });
+}
+
+async function readRemoteSessionMemoryForDesktop(sessionId) {
+  const connection = await resolveRemoteDirectConnection();
+  return fetchRemoteSessionMemory({ ...connection, sessionId });
+}
+
+async function syncRemoteSkillsForConnection(connection) {
+  const syncKey = createHash('sha256')
+    .update(`${connection.serverUrl}\0${connection.authToken}`)
+    .digest('hex');
+  const pending = remoteSkillSyncPromises.get(syncKey);
+  if (pending) return pending;
+  const operation = synchronizeRemoteSkills({
+    skillsDir: MOSS_SKILLS_DIR,
+    connection,
+    fetchStatus: fetchRemoteProfileSkillStatus,
+    uploadArchive: uploadRemoteProfileSkills,
+  }).then((result) => {
+    mossLog('info', 'remote-skills', result.unchanged
+      ? 'Remote skills are already synchronized'
+      : 'Synchronized desktop skills to Moss Server', {
+      revision: result.revision,
+      fileCount: result.fileCount,
+    });
+    return result;
+  }).finally(() => {
+    if (remoteSkillSyncPromises.get(syncKey) === operation) {
+      remoteSkillSyncPromises.delete(syncKey);
+    }
+  });
+  remoteSkillSyncPromises.set(syncKey, operation);
+  return operation;
+}
+
+function remoteAttachmentKey(sessionRecord, remoteReference) {
+  return `${sessionRecord.id}\0${remoteReference}`;
+}
+
+function rememberRemoteAttachmentSource(sessionRecord, remoteReference, source) {
+  const key = remoteAttachmentKey(sessionRecord, remoteReference);
+  const previous = remoteAttachmentSources.get(key);
+  remoteAttachmentSourceBytes -= previous?.data?.byteLength || 0;
+  remoteAttachmentSources.delete(key);
+  remoteAttachmentSources.set(key, source);
+  remoteAttachmentSourceBytes += source?.data?.byteLength || 0;
+}
+
+function takeRemoteAttachmentSource(sessionRecord, remoteReference) {
+  const key = remoteAttachmentKey(sessionRecord, remoteReference);
+  const source = remoteAttachmentSources.get(key);
+  remoteAttachmentSources.delete(key);
+  remoteAttachmentSourceBytes -= source?.data?.byteLength || 0;
+  return source;
+}
+
 function getDesktopSettingsPayload(extra = {}) {
   const fingerprint = getCurrentWebSearchCapabilityFingerprint();
   const capability = webSearchCapabilityStore.get(fingerprint);
@@ -1212,7 +1315,7 @@ function getDesktopSettingsPayload(extra = {}) {
 function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
   return getWebSearchCapabilityFingerprint({
     url: settings.url,
-    model: settings.model,
+    model: resolveNativeWebSearchModel(settings),
     apiKey: settings.apiKey,
   });
 }
@@ -1265,7 +1368,7 @@ async function detectNativeWebSearchCapability({ force = false } = {}) {
   }
 
   const settingsSnapshot = {
-    model: desktopSettings.model,
+    model: resolveNativeWebSearchModel(desktopSettings),
     url: desktopSettings.url,
     apiKey: desktopSettings.apiKey,
   };
@@ -3423,6 +3526,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   return {
     cwd,
     model: desktopSettings.model,
+    fastModel: desktopSettings.fastModel || undefined,
     customSystemPrompt: customSystemPrompt || undefined,
     appendSystemPrompt: appendSystemPrompt || undefined,
     maxTurns: desktopSettings.maxTurns,
@@ -3500,6 +3604,7 @@ function createRemoteDirectRuntime({
   onAppEvent,
   onSessionCreated,
   coordinatorMode = false,
+  runtimeSystemPrompt = '',
 }) {
   const shouldPersistSessionRecord = Boolean(
     sessionRecord &&
@@ -3529,6 +3634,36 @@ function createRemoteDirectRuntime({
       }
 
       const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      await syncRemoteSkillsForConnection({ serverUrl, authToken });
+      await prepareAssistantContextForSessionStart(sessionRecord);
+      const localRuntimeConfig = await buildClaudeSessionConfig(
+        sessionRecord.workspace,
+        sessionRecord,
+        runtimeSystemPrompt,
+      );
+      const runtimeOptions = {
+        model: localRuntimeConfig.model,
+        // Preserve an explicit empty value so the Server does not substitute
+        // its own fast model for a Desktop session that should fall back to
+        // this session's primary model.
+        fastModel: localRuntimeConfig.fastModel || '',
+        ...(localRuntimeConfig.url ? { url: localRuntimeConfig.url } : {}),
+        ...(localRuntimeConfig.apiKey ? { apiKey: localRuntimeConfig.apiKey } : {}),
+        ...(localRuntimeConfig.customSystemPrompt
+          ? { customSystemPrompt: localRuntimeConfig.customSystemPrompt }
+          : {}),
+        ...(localRuntimeConfig.appendSystemPrompt
+          ? { appendSystemPrompt: localRuntimeConfig.appendSystemPrompt }
+          : {}),
+        maxTurns: localRuntimeConfig.maxTurns,
+        thinkingConfig: localRuntimeConfig.thinkingConfig,
+        webSearch: localRuntimeConfig.webSearch,
+        mcpServers: localRuntimeConfig.mcpServers,
+        environment: localRuntimeConfig.environment,
+        libraryEnabled: localRuntimeConfig.libraryEnabled === true,
+        coordinatorMode: coordinatorMode === true,
+        agentMailEnabled: localRuntimeConfig.agentMailEnabled === true,
+      };
       let created;
 
       if (sessionRecord.underlyingSessionId) {
@@ -3586,6 +3721,7 @@ function createRemoteDirectRuntime({
           },
           autoMemory: desktopSettings.autoMemory,
           sessionMemory: desktopSettings.sessionMemory,
+          runtimeOptions,
         });
       }
 
@@ -3623,6 +3759,7 @@ function createRemoteDirectRuntime({
   return {
     kind: 'remote-direct',
     coordinatorMode,
+    ensureSession: ensureSessionConfig,
     async *send(prompt) {
       if (disposed) {
         throw new Error('Remote runtime has been disposed.');
@@ -3822,6 +3959,7 @@ function createRemoteDirectRuntime({
 
 function refreshDesktopSettings(payload = {}) {
   const sourcePayload = payload && typeof payload === 'object' ? payload : {};
+  const previousWebSearchFingerprint = getCurrentWebSearchCapabilityFingerprint();
   const webSearchPayload = sourcePayload.webSearch
     && typeof sourcePayload.webSearch === 'object'
     && !Array.isArray(sourcePayload.webSearch)
@@ -3944,10 +4082,7 @@ function refreshDesktopSettings(payload = {}) {
   }));
 
   const nativeDetectionMayHaveChanged = webSearchPayload
-    || Object.prototype.hasOwnProperty.call(sourcePayload, 'model')
-    || Object.prototype.hasOwnProperty.call(sourcePayload, 'url')
-    || Object.prototype.hasOwnProperty.call(sourcePayload, 'apiKey')
-    || Object.prototype.hasOwnProperty.call(sourcePayload, 'models');
+    || previousWebSearchFingerprint !== getCurrentWebSearchCapabilityFingerprint();
   if (nativeDetectionMayHaveChanged) {
     scheduleNativeWebSearchCapabilityDetection();
   }
@@ -5247,7 +5382,6 @@ async function runSessionPromptNow({
 
     const runtimePromptText = extractTextFromRuntimePrompt(runtimePrompt);
     const allowAutoCompactRetry =
-      sessionRecord.agentMode !== 'remote-direct' &&
       !runtimePromptText.trim().startsWith(AUTOMATIC_COMPACT_PROMPT);
 
     const runAutomaticCompactRetry = async (reason) => {
@@ -5351,6 +5485,9 @@ async function runSessionPromptNow({
       tasks: snapshotSessionTasks(sessionRecord),
     });
     emitSessionHistory(sessionRecord);
+    if (sessionRecord.agentMode === 'remote-direct') {
+      emitWorkspaceChanged(sessionRecord, 'remote-turn-completed', sessionRecord.remoteWorkspace);
+    }
     if (applyPendingMcpRuntimeReload(
       sessionRecord,
       disposeRuntime,
@@ -5528,6 +5665,7 @@ async function generateProjectSessionFinalization(project, sessionRecord, memory
     runtime = new ClaudeSession({
       cwd: sessionRecord.workspace,
       model: desktopSettings.model,
+      fastModel: desktopSettings.fastModel || undefined,
       customSystemPrompt: 'You are a project session finalizer. Analyze the supplied transcript and return only the requested JSON. Never call tools.',
       appendSystemPrompt: '',
       maxTurns: 1,
@@ -8999,32 +9137,23 @@ async function handleMossHostEvent(event, sessionRecord) {
     && event.input.url.trim().toLowerCase().startsWith('file:')
   ) {
     try {
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      const materialized = await materializeRemoteBrowserFile({
-        rawUrl: event.input.url,
-        remoteWorkspace: sessionRecord.remoteWorkspace,
-        cacheDir: REMOTE_PREVIEW_CACHE_DIR,
-        sessionId: sessionRecord.underlyingSessionId,
-        download: (remotePath, destinationPath) => downloadRemoteDirectWorkspaceFile({
-          serverUrl,
-          authToken,
-          sessionId: sessionRecord.underlyingSessionId,
-          filePath: remotePath,
-          destinationPath,
-        }),
-      });
-      if (!materialized) {
+      const remoteFile = resolveRemoteWorkspaceFileUrl(
+        event.input.url,
+        sessionRecord.remoteWorkspace,
+      );
+      if (!remoteFile) {
         return { ok: false, error: 'Remote browser file URL could not be resolved.' };
       }
+      const previewUrl = toRemoteWorkspaceUrl(sessionRecord.id, remoteFile.relativePath);
       const result = await mossAppEventHandler({
         ...event,
-        input: { ...event.input, url: materialized.localUrl },
+        input: { ...event.input, url: previewUrl },
       }, sessionRecord);
       return result?.ok
         ? {
             ...result,
             previewUrl: event.input.url,
-            message: 'The remote workspace file was downloaded and opened in the local Moss browser.',
+            message: 'The remote workspace file was opened through the authenticated Moss Server proxy.',
           }
         : result;
     } catch (error) {
@@ -9330,6 +9459,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
     sessionRecord.runtime = createRemoteDirectRuntime({
       sessionRecord,
       coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
+      runtimeSystemPrompt,
       onPermissionRequest,
       onAppEvent: (appEvent) => handleMossHostEvent(appEvent, sessionRecord),
       onSessionCreated: (created) => {
@@ -9784,6 +9914,117 @@ function initializeAutoUpdater() {
   Menu.setApplicationMenu(menu);
 }
 
+async function ensureRemoteSessionConnection(sessionRecord) {
+  if (sessionRecord.agentMode !== 'remote-direct') {
+    throw new Error('Session is not using Remote Direct mode.');
+  }
+  const runtime = await ensureRuntime(sessionRecord);
+  if (typeof runtime?.ensureSession !== 'function') {
+    throw new Error('Remote session runtime is not ready.');
+  }
+  const prepared = await runtime.ensureSession();
+  if (!prepared?.config?.sessionId) {
+    throw new Error('Remote session did not provide a session id.');
+  }
+  return prepared.config;
+}
+
+function getRemoteWorkspacePreviewUrls(sessionRecord, remoteFile) {
+  const relativePath = String(remoteFile?.relativePath || '').replace(/\\/g, '/');
+  if (!relativePath) return {};
+  const directory = path.posix.dirname(relativePath);
+  return {
+    remoteContentUrl: toRemoteWorkspaceUrl(sessionRecord.id, relativePath),
+    previewBaseUrl: toRemoteWorkspaceUrl(
+      sessionRecord.id,
+      directory === '.' ? '' : directory,
+      { directory: true },
+    ),
+  };
+}
+
+function decorateRemoteWorkspaceFile(sessionRecord, remoteFile) {
+  return {
+    ...remoteFile,
+    metadata: {
+      ...(remoteFile?.metadata || {}),
+      ...getRemoteWorkspacePreviewUrls(sessionRecord, remoteFile),
+      remote: true,
+    },
+  };
+}
+
+async function fetchRemoteWorkspaceProtocolContent(sessionRecord, filePath, request) {
+  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+  const range = request.headers.get('range');
+  return fetchRemoteDirectWorkspaceContent({
+    serverUrl,
+    authToken,
+    sessionId: sessionRecord.underlyingSessionId,
+    filePath,
+    headers: range ? { range } : {},
+  });
+}
+
+function pruneRemoteAttachmentSources() {
+  while (
+    remoteAttachmentSources.size > 100 ||
+    remoteAttachmentSourceBytes > MAX_REMOTE_ATTACHMENT_SOURCE_BYTES
+  ) {
+    const key = remoteAttachmentSources.keys().next().value;
+    if (typeof key !== 'string') break;
+    const source = remoteAttachmentSources.get(key);
+    remoteAttachmentSources.delete(key);
+    remoteAttachmentSourceBytes -= source?.data?.byteLength || 0;
+  }
+}
+
+async function uploadFileToRemoteSessionWorkspace(sessionRecord, {
+  sourcePath,
+  fileName,
+  data,
+}) {
+  const config = await ensureRemoteSessionConnection(sessionRecord);
+  const remoteFile = data === undefined
+    ? await uploadRemoteDirectWorkspaceFile({
+        ...config,
+        sourcePath,
+        fileName: fileName || path.basename(sourcePath),
+      })
+    : await uploadRemoteDirectWorkspaceData({
+        ...config,
+        fileName,
+        data,
+      });
+  const displayPath = toRemoteWorkspaceUrl(sessionRecord.id, remoteFile.relativePath);
+  rememberRemoteAttachmentSource(sessionRecord, displayPath, data === undefined
+    ? { sourcePath }
+    : { data: Buffer.isBuffer(data) ? data : Buffer.from(data || []) });
+  pruneRemoteAttachmentSources();
+  emitWorkspaceChanged(sessionRecord, 'upload', remoteFile.path);
+  return {
+    ...remoteFile,
+    path: displayPath,
+    remotePath: remoteFile.path,
+  };
+}
+
+async function writeWorkspaceFile(sessionRecord, filePath, content) {
+  if (sessionRecord.agentMode === 'remote-direct') {
+    const config = await ensureRemoteSessionConnection(sessionRecord);
+    const remoteFile = await writeRemoteDirectWorkspaceFile({
+      ...config,
+      filePath,
+      content,
+    });
+    emitWorkspaceChanged(sessionRecord, 'change', remoteFile.path);
+    return decorateRemoteWorkspaceFile(sessionRecord, remoteFile);
+  }
+  const targetPath = ensureInsideRoot(sessionRecord.workspace, filePath);
+  await fsp.writeFile(targetPath, String(content ?? ''), 'utf8');
+  return readWorkspaceFile(sessionRecord, targetPath);
+}
+
 async function listDirectoryEntries(sessionRecord, dirPath) {
   if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
     try {
@@ -9869,16 +10110,12 @@ async function readWorkspaceFile(sessionRecord, filePath) {
         sessionId: sessionRecord.underlyingSessionId,
         filePath,
       });
-      const metadata = {
-        ...(remoteFile.metadata || {}),
-        remote: true,
-        previewEditable: false,
-        previewSaveable: false,
-      };
+      const decoratedRemoteFile = decorateRemoteWorkspaceFile(sessionRecord, remoteFile);
+      const metadata = decoratedRemoteFile.metadata;
       if (isBinaryPreviewContentType(remoteFile.contentType)) {
         if (remoteFile.contentType === 'image' && remoteFile.size > MAX_IMAGE_BASE64_BYTES) {
           return {
-            ...remoteFile,
+            ...decoratedRemoteFile,
             contentType: 'unsupported',
             language: 'binary',
             metadata: { ...metadata, previewReason: 'too-large' },
@@ -9908,7 +10145,7 @@ async function readWorkspaceFile(sessionRecord, filePath) {
         }
         metadata.localPreviewPath = localPreviewPath;
       }
-      return { ...remoteFile, metadata };
+      return { ...decoratedRemoteFile, metadata };
     } catch (error) {
       mossLog('warn', 'workspace', 'Remote workspace read failed', {
         sessionId: sessionRecord.id,
@@ -10919,9 +11156,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerShellIpcHandlers();
   registerWorkspaceIpcHandlers({
     getSessionRecord,
-    ensureInsideRoot,
-    readWorkspaceFile,
-    fsp,
+    writeWorkspaceFile,
   });
   browserViewManager = createBrowserViewManager({
     createView: (options) => new WebContentsView(options),
@@ -10958,6 +11193,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   try {
     installMediaProtocol(protocol);
     installAppUiProtocol(protocol);
+    installRemoteWorkspaceProtocol(protocol, {
+      getSessionRecord,
+      fetchContent: fetchRemoteWorkspaceProtocolContent,
+    });
+    installRemoteWorkspaceProtocol(session.fromPartition(BROWSER_PARTITION).protocol, {
+      getSessionRecord,
+      fetchContent: fetchRemoteWorkspaceProtocolContent,
+    });
   } catch (err) {
     mossLog('error', 'app', 'Failed to initialize custom protocols', { error: err.message });
   }
@@ -13050,6 +13293,7 @@ registerFileSystemIpcHandlers({
   getSessionRecord,
   maxImageBase64Bytes: MAX_IMAGE_BASE64_BYTES,
   maxReadTextBytes: MAX_READ_TEXT_BYTES,
+  uploadRemoteWorkspaceFile: uploadFileToRemoteSessionWorkspace,
 });
 
 const execAsync = promisify(exec);
@@ -13141,16 +13385,66 @@ function getLargePromptSpillThreshold() {
   return DEFAULT_LARGE_PROMPT_SPILL_CHARS;
 }
 
-async function buildInlineImageBlocks(filePaths) {
+async function prepareRemoteFileAttachments(sessionRecord, filePaths) {
+  const runtimePaths = [];
+  const visiblePaths = [];
+  const inlineSources = new Map();
+
+  for (const filePath of filePaths) {
+    if (filePath.startsWith(`${REMOTE_WORKSPACE_SCHEME}:`)) {
+      const parsed = parseRemoteWorkspaceUrl(filePath);
+      if (parsed.sessionId !== sessionRecord.id) {
+        throw new Error('Remote workspace attachment belongs to a different session.');
+      }
+      const source = takeRemoteAttachmentSource(sessionRecord, filePath);
+      runtimePaths.push(parsed.filePath);
+      visiblePaths.push(filePath);
+      if (source) inlineSources.set(parsed.filePath, source);
+      continue;
+    }
+
+    let localFile = false;
+    try {
+      localFile = (await fsp.stat(filePath)).isFile();
+    } catch {}
+    if (!localFile) {
+      runtimePaths.push(filePath);
+      visiblePaths.push(filePath);
+      continue;
+    }
+
+    const uploaded = await uploadFileToRemoteSessionWorkspace(sessionRecord, {
+      sourcePath: filePath,
+      fileName: path.basename(filePath),
+    });
+    const runtimePath = uploaded.remotePath || uploaded.relativePath;
+    runtimePaths.push(runtimePath);
+    visiblePaths.push(uploaded.path);
+    const source = takeRemoteAttachmentSource(sessionRecord, uploaded.path);
+    if (source) inlineSources.set(runtimePath, source);
+  }
+
+  return { runtimePaths, visiblePaths, inlineSources };
+}
+
+async function buildInlineImageBlocks(filePaths, sourceByPath = new Map()) {
   const blocks = [];
   const inlinedPaths = new Set();
   for (const filePath of filePaths) {
-    const mediaType = INLINE_IMAGE_MEDIA_TYPES[path.extname(filePath).toLowerCase()];
+    const source = sourceByPath.get(filePath);
+    const sourcePath = source?.sourcePath || filePath;
+    const mediaType = INLINE_IMAGE_MEDIA_TYPES[path.extname(sourcePath).toLowerCase()];
     if (!mediaType) continue;
     try {
-      const stat = await fsp.stat(filePath);
-      if (!stat.isFile() || stat.size === 0 || stat.size > MAX_INLINE_IMAGE_BYTES) continue;
-      const data = await fsp.readFile(filePath);
+      let data;
+      if (source?.data) {
+        data = Buffer.isBuffer(source.data) ? source.data : Buffer.from(source.data);
+      } else {
+        const stat = await fsp.stat(sourcePath);
+        if (!stat.isFile() || stat.size === 0 || stat.size > MAX_INLINE_IMAGE_BYTES) continue;
+        data = await fsp.readFile(sourcePath);
+      }
+      if (data.byteLength === 0 || data.byteLength > MAX_INLINE_IMAGE_BYTES) continue;
       blocks.push({
         type: 'image',
         source: {
@@ -13161,7 +13455,7 @@ async function buildInlineImageBlocks(filePaths) {
       });
       inlinedPaths.add(filePath);
     } catch (err) {
-      console.warn('[agent:send] Failed to inline image attachment:', filePath, err?.message || err);
+      console.warn('[agent:send] Failed to inline image attachment:', sourcePath, err?.message || err);
     }
   }
   return { blocks, inlinedPaths };
@@ -13193,16 +13487,26 @@ async function maybeSpillLargePromptToWorkspace(sessionRecord, prompt) {
     return null;
   }
 
-  if (sessionRecord.agentMode === 'remote-direct') {
-    throw new Error(
-      `Prompt is too large (${formatLargePromptCharCount(prompt.length)} characters). Remote Direct sessions cannot auto-save large local prompt files yet; please attach a file in the remote workspace or send a shorter prompt.`,
-    );
-  }
-
   const createdAt = new Date().toISOString();
   const safeTimestamp = createdAt.replace(/[:.]/g, '-');
+  const fileName = `user-prompt-${safeTimestamp}-${randomUUID().slice(0, 8)}.md`;
+  if (sessionRecord.agentMode === 'remote-direct') {
+    const config = await ensureRemoteSessionConnection(sessionRecord);
+    const remoteFile = await uploadRemoteDirectWorkspaceData({
+      ...config,
+      fileName,
+      data: Buffer.from(buildLargePromptFileContent(prompt, createdAt), 'utf8'),
+    });
+    emitWorkspaceChanged(sessionRecord, 'upload', remoteFile.path);
+    return {
+      filePath: remoteFile.path,
+      charCount: prompt.length,
+      threshold,
+    };
+  }
+
   const promptDir = path.join(sessionRecord.workspace, '.moss', 'large-prompts');
-  const filePath = path.join(promptDir, `user-prompt-${safeTimestamp}-${randomUUID().slice(0, 8)}.md`);
+  const filePath = path.join(promptDir, fileName);
 
   await fsp.mkdir(promptDir, { recursive: true });
   await fsp.writeFile(filePath, buildLargePromptFileContent(prompt, createdAt), 'utf8');
@@ -13318,10 +13622,6 @@ async function sendAgentPromptNow(event, {
   let filePaths = Array.isArray(files)
     ? files.map((filePath) => typeof filePath === 'string' ? filePath.trim() : '').filter(Boolean)
     : [];
-  if (sessionRecord.agentMode === 'remote-direct'
-    && (filePaths.length > 0 || (Array.isArray(resources) && resources.length > 0))) {
-    throw new Error('Remote Direct mode does not support local file attachments yet.');
-  }
   if (Array.isArray(resources) && resources.length > 0 && !libraryService) {
     throw new Error('Library is not available.');
   }
@@ -13331,7 +13631,7 @@ async function sendAgentPromptNow(event, {
   filePaths.push(...libraryResources
     .filter((resource) => resource.selection === 'full-file')
     .map((resource) => resource.uri));
-  const visibleAttachmentReferences = filePaths.map((filePath) => (
+  let visibleAttachmentReferences = filePaths.map((filePath) => (
     filePath.startsWith('moss-library://') ? filePath : null
   ));
 
@@ -13340,6 +13640,15 @@ async function sendAgentPromptNow(event, {
     filePaths = await libraryService.resolveAttachmentUris(sessionRecord, filePaths);
   }
   filePaths = await localizeProjectSessionAttachments(sessionRecord, filePaths);
+  let remoteInlineSources = new Map();
+  if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
+    const preparedAttachments = await prepareRemoteFileAttachments(sessionRecord, filePaths);
+    filePaths = preparedAttachments.runtimePaths;
+    remoteInlineSources = preparedAttachments.inlineSources;
+    visibleAttachmentReferences = preparedAttachments.visiblePaths.map((visiblePath, index) => (
+      visibleAttachmentReferences[index] || visiblePath
+    ));
+  }
 
   if (!trimmedPrompt && filePaths.length === 0 && libraryResources.length === 0) {
     throw new Error('Prompt is required.');
@@ -13409,7 +13718,7 @@ async function sendAgentPromptNow(event, {
   // directly (same as pasting an image in the CLI REPL). Other files are
   // listed by path for the Read tool.
   const { blocks: imageBlocks, inlinedPaths } = filePaths.length > 0
-    ? await buildInlineImageBlocks(filePaths)
+    ? await buildInlineImageBlocks(filePaths, remoteInlineSources)
     : { blocks: [], inlinedPaths: new Set() };
   const readableFilePaths = filePaths.filter((p) => !inlinedPaths.has(p));
 

@@ -6,6 +6,7 @@ import {
   normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
+  normalizeSessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import type {
   BackendSpawnOptions,
@@ -43,6 +44,8 @@ function readBackendSystemSettings(
   return {
     bypassPermissions: value.bypassPermissions === true,
     model: value.model.trim(),
+    fastModel:
+      typeof value.fastModel === 'string' ? value.fastModel.trim() : '',
     maxTurns: boundedInt(value.maxTurns, 1, 10_000, 100),
     thinkingMode,
     thinkingBudgetTokens: boundedInt(
@@ -119,6 +122,7 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
         : normalizeSessionMemorySettings(
             value.sessionMemory ?? value.session_memory,
           ),
+    runtimeOptions: normalizeSessionRuntimeOptions(value.runtimeOptions),
     runtime: {
       backend: 'host',
       containerName:

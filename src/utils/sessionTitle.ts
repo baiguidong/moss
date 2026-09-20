@@ -1,5 +1,5 @@
 /**
- * Session title generation via Haiku.
+ * Session title generation via the lightweight model.
  *
  * Standalone module with minimal dependencies so it can be imported from
  * print.ts (SDK control request handler) without pulling in React/chalk/git.
@@ -11,7 +11,7 @@
 import { z } from 'zod/v4'
 import { getIsNonInteractiveSession } from '../bootstrap/state.js'
 import { logEvent } from '../services/analytics/index.js'
-import { queryHaiku } from '../services/api/claude.js'
+import { queryFastModel } from '../services/api/claude.js'
 import type { Message } from '../types/message.js'
 import { logForDebugging } from './debug.js'
 import { safeParseJSON } from './json.js'
@@ -22,7 +22,7 @@ import { asSystemPrompt } from './systemPromptType.js'
 const MAX_CONVERSATION_TEXT = 1000
 
 /**
- * Flatten a message array into a single text string for Haiku title input.
+ * Flatten a message array into a single text string for title generation.
  * Skips meta/non-human messages. Tail-slices to the last 1000 chars so
  * recent context wins when the conversation is long.
  */
@@ -67,7 +67,7 @@ const titleSchema = lazySchema(() => z.object({ title: z.string() }))
 
 /**
  * Generate a sentence-case session title from a description or first message.
- * Returns null on error or if Haiku returns an unparseable response.
+ * Returns null on error or if the lightweight model returns an unparseable response.
  *
  * @param description - The user's first message or a description of the session
  * @param signal - Abort signal for cancellation
@@ -80,7 +80,7 @@ export async function generateSessionTitle(
   if (!trimmed) return null
 
   try {
-    const result = await queryHaiku({
+    const result = await queryFastModel({
       systemPrompt: asSystemPrompt([SESSION_TITLE_PROMPT]),
       userPrompt: trimmed,
       outputFormat: {

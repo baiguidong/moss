@@ -43,6 +43,12 @@ export function normalizeWebSearchSettings(value, existing = {}) {
   };
 }
 
+export function resolveNativeWebSearchModel(settings) {
+  const primaryModel = normalizeString(settings?.model);
+  if (settings?.advanced?.moss_fast_web_search !== true) return primaryModel;
+  return normalizeString(settings?.fastModel) || primaryModel;
+}
+
 export function getWebSearchCapabilityFingerprint({
   url,
   model,

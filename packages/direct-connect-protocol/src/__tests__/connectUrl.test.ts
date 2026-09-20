@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { buildConnectUrl, parseConnectUrl } from '../index.js'
+import {
+  buildConnectUrl,
+  normalizeSessionRuntimeOptions,
+  parseConnectUrl,
+} from '../index.js'
 
 describe('direct connect URL protocol', () => {
   test('builds and parses an HTTP endpoint', () => {
@@ -15,5 +19,22 @@ describe('direct connect URL protocol', () => {
     expect(() => parseConnectUrl('cc://localhost:43127?token=secret')).toThrow(
       'Static token URLs are no longer supported',
     )
+  })
+
+  test('normalizes primary and fast session models independently', () => {
+    expect(normalizeSessionRuntimeOptions({
+      model: ' primary-model ',
+      fastModel: ' fast-model ',
+    })).toEqual({
+      model: 'primary-model',
+      fastModel: 'fast-model',
+    })
+    expect(normalizeSessionRuntimeOptions({
+      model: 'primary-model',
+      fastModel: '   ',
+    })).toEqual({
+      model: 'primary-model',
+      fastModel: '',
+    })
   })
 })

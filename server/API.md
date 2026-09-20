@@ -744,6 +744,21 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
     "compactMinTokens": 10000,
     "compactMinTextBlockMessages": 5,
     "compactMaxTokens": 40000
+  },
+  "runtimeOptions": {
+    "model": "claude-sonnet-4-6",
+    "fastModel": "claude-haiku-4-5",
+    "url": "https://model-gateway.example.com",
+    "apiKey": "session-model-token",
+    "appendSystemPrompt": "Additional session instructions",
+    "maxTurns": 100,
+    "thinkingConfig": { "type": "adaptive" },
+    "webSearch": { "mode": "auto" },
+    "mcpServers": {},
+    "environment": {},
+    "libraryEnabled": false,
+    "coordinatorMode": false,
+    "agentMailEnabled": false
   }
 }
 ```
@@ -753,6 +768,10 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 `sessionMemory` 同样可选，并可由 `MOSS_SESSION_MEMORY_SETTINGS`（JSON）进行全局覆盖。
 所有 session 固定使用用户级共享 Memory，因此 `autoMemory.dreamEnabled` 可以直接
 跨同一用户的会话进行聚合。
+
+`runtimeOptions` 可选，用来固定 Desktop 创建该远端会话时的模型、思考、系统提示、
+Web Search、MCP 和相关运行设置。该字段可能包含凭据，会持久化用于无重放恢复，但不会
+出现在 session 查询响应中。
 
 `cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
 未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，始终使用
@@ -808,6 +827,32 @@ profile/Memory 目录，但不会挂载该用户的其他 session 目录。显�
 
 读取 session workspace 内的文件预览。`file` 可传相对路径，也可传 workspace 内的绝对路径；超过预览大小或二进制文件会返回不可编辑预览信息。
 
+### GET/PUT `/api/v1/sessions/:sessionId/workspace/content?file=<path>`
+
+GET 流式读取 workspace 文件原始内容；PUT 原子写回一个已有目录中的文件。单次写入上限为 250 MB。
+
+### POST `/api/v1/sessions/:sessionId/workspace/upload?name=<fileName>`
+
+将请求体流式保存到 workspace 的 `inputs/` 目录，并返回文件预览元数据。服务端会清理文件名并生成唯一后缀，单次上传上限为 250 MB。
+
+### GET `/api/v1/sessions/:sessionId/memory`
+
+读取该会话的 session-memory 摘要；尚未生成时返回 `exists: false`。
+
+### GET/PUT `/api/v1/profile/skills`
+
+GET 返回当前用户由 Desktop 同步的技能版本；PUT 接收 ZIP，请求头
+`X-Moss-Content-SHA256` 可携带 `sha256:<hex>` 完整性校验。ZIP 中每个文件必须位于
+`<skillName>/...` 下，只会清理上一版由 Desktop 管理的文件。
+
+### GET `/api/v1/profile/memory`
+
+列出当前用户的全局 Memory 文件及其 session 摘要元数据。
+
+### GET `/api/v1/profile/memory/read?file=<path>`
+
+读取当前用户的一项 Markdown 全局记忆，单文件展示上限为 512 KB。
+
 ### POST `/api/v1/sessions/:sessionId/resume`
 
 确保 session 当前 runtime 可恢复，并返回新的 `ws_url`。
@@ -823,6 +868,10 @@ profile/Memory 目录，但不会挂载该用户的其他 session 目录。显�
 会话 WebSocket attach 路径。
 
 需要 `Authorization: Bearer <token>` header。
+
+`/compact` 与普通用户消息走同一条 WebSocket 通道。Desktop 在模型返回
+`Prompt is too long` 时也可先发送一次 `/compact`，收到 `compact_boundary` 后再重试
+原消息；恢复或重连不会重放这两个请求。
 
 ## Apps API
 

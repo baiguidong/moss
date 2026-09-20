@@ -11,6 +11,7 @@ export function registerFileSystemIpcHandlers({
   getSessionRecord,
   maxImageBase64Bytes,
   maxReadTextBytes,
+  uploadRemoteWorkspaceFile,
 }) {
   ipcMain.handle('fs:getImageBase64', async (event, { path: filePath }) => {
     try {
@@ -144,7 +145,13 @@ export function registerFileSystemIpcHandlers({
     try {
       const sessionRecord = getSessionRecord(sessionId);
       if (sessionRecord.agentMode === 'remote-direct') {
-        throw new Error('Remote Direct mode does not support uploading local images to the remote workspace yet.');
+        if (typeof uploadRemoteWorkspaceFile !== 'function') {
+          throw new Error('Remote workspace upload is unavailable.');
+        }
+        return await uploadRemoteWorkspaceFile(sessionRecord, {
+          fileName,
+          data: Buffer.from(data),
+        });
       }
       const safeName = String(fileName || 'image').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'image';
       const targetDir = sessionRecord.projectId
@@ -163,7 +170,13 @@ export function registerFileSystemIpcHandlers({
     try {
       const sessionRecord = getSessionRecord(sessionId);
       if (sessionRecord.agentMode === 'remote-direct') {
-        throw new Error('Remote Direct mode does not support uploading local files to the remote workspace yet.');
+        if (typeof uploadRemoteWorkspaceFile !== 'function') {
+          throw new Error('Remote workspace upload is unavailable.');
+        }
+        return await uploadRemoteWorkspaceFile(sessionRecord, {
+          sourcePath,
+          fileName,
+        });
       }
       const safeName = String(fileName || path.basename(sourcePath)).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'attachment';
       const targetDir = sessionRecord.projectId

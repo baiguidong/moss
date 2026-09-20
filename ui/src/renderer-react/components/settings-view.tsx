@@ -209,7 +209,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'model',
         title: '模型',
-        keywords: ['文本模型', '图片模型', 'model', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url'],
+        keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url'],
       },
       {
         id: 'web-search',
@@ -2761,6 +2761,19 @@ export function SettingsView({
                           value={settingsDraft.model || ''}
                           onChange={(event) => updateSetting('model', event.target.value)}
                           placeholder="your-model-name"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="快速模型"
+                        description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={settingsDraft.fastModel || ''}
+                          onChange={(event) => updateSetting('fastModel', event.target.value)}
+                          placeholder="your-fast-model-name"
                         />
                       </SettingsRow>
 

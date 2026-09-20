@@ -19,16 +19,17 @@ export function dirname(filePath: string): string {
   return index >= 0 ? normalized.slice(0, index + 1) : normalized;
 }
 
-export function buildHtmlDocument(content: string, filePath: string): string {
-  const baseHref = toFileUrl(dirname(filePath));
+export function buildHtmlDocument(content: string, filePath: string, baseUrl?: string): string {
+  const baseHref = baseUrl || toFileUrl(dirname(filePath));
+  const escapedBaseHref = baseHref.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
   if (/<base\s/i.test(content)) return content;
   if (/<head>/i.test(content)) {
-    return content.replace(/<head>/i, `<head><base href="${baseHref}">`);
+    return content.replace(/<head>/i, `<head><base href="${escapedBaseHref}">`);
   }
   if (/<html>/i.test(content)) {
-    return content.replace(/<html>/i, `<html><head><base href="${baseHref}"></head>`);
+    return content.replace(/<html>/i, `<html><head><base href="${escapedBaseHref}"></head>`);
   }
-  return `<head><base href="${baseHref}"></head>${content}`;
+  return `<head><base href="${escapedBaseHref}"></head>${content}`;
 }
 
 export function formatFileSize(bytes?: number): string {

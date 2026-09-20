@@ -64,6 +64,10 @@ describe('createDirectConnectSession', () => {
         compactMinTextBlockMessages: 3,
         compactMaxTokens: 4000,
       },
+      runtimeOptions: {
+        model: 'desktop-primary-model',
+        fastModel: 'desktop-fast-model',
+      },
     })
 
     expect(requestBody).toEqual({
@@ -103,6 +107,10 @@ describe('createDirectConnectSession', () => {
         compactMinTokens: 1000,
         compactMinTextBlockMessages: 3,
         compactMaxTokens: 4000,
+      },
+      runtimeOptions: {
+        model: 'desktop-primary-model',
+        fastModel: 'desktop-fast-model',
       },
     })
     expect(created.workDir).toBe('/srv/moss/sessions/remote-session/workspace')

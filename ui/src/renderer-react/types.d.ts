@@ -183,6 +183,7 @@ export type UsageOverview = {
 export type MemoryGlobalEntry = {
   id: string;
   path: string;
+  source?: 'local' | 'remote';
   title: string;
   description: string;
   type: string;
@@ -955,6 +956,7 @@ export type DesktopSettings = {
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
   model: string;
+  fastModel: string;
   maxTurns: number;
   language: string;
   appendSystemPrompt: string;
@@ -1677,7 +1679,7 @@ declare global {
       memory: {
         getCatalog: () => Promise<MemoryCatalog>;
         readEntry: (payload:
-          | { scope: 'global'; path: string }
+          | { scope: 'global'; path: string; source?: 'local' | 'remote' }
           | { scope: 'project'; projectId: string; kind: 'overview' }
           | { scope: 'project'; projectId: string; kind: 'history'; sessionId: string }
           | { scope: 'session'; sessionId: string }

@@ -1,9 +1,9 @@
 import http from 'http'
 import net from 'net'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { createReadStream, existsSync } from 'fs'
-import { open, readFile, readdir, realpath, stat } from 'fs/promises'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { mkdir, open, readFile, readdir, realpath, rename, rm, stat } from 'fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { WebSocketServer } from 'ws'
 import type { ServerConfig, SessionRecord } from './types.js'
 import {
@@ -12,10 +12,12 @@ import {
   normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
+  normalizeSessionRuntimeOptions,
   sessionMemorySettingsSchema,
   type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
+  type SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
@@ -41,6 +43,15 @@ import { handleAppRoute } from './apps/appRoutes.js'
 import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
+import { getUserProfileDir } from './runtimePaths.js'
+import {
+  getSkillSyncStatus,
+  installSkillArchive,
+  listProfileMemory,
+  MAX_PROFILE_ARCHIVE_BYTES,
+  readProfileMemory,
+  readSessionMemory,
+} from './profileResources.js'
 import {
   decodeWorkspaceTextBuffer,
   getWorkspaceFilePreviewInfo,
@@ -65,6 +76,8 @@ const MIME_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.webp': 'image/webp',
 }
+
+const MAX_WORKSPACE_UPLOAD_BYTES = 250 * 1024 * 1024
 
 class HttpError extends Error {
   constructor(
@@ -315,6 +328,104 @@ async function writeSessionWorkspaceFileContent(
   })
 }
 
+async function resolveWritableSessionWorkspacePath(
+  session: SessionRecord,
+  filePath: string,
+): Promise<{ root: string; targetPath: string }> {
+  const { root, targetPath } = resolveSessionWorkspacePath(session, filePath)
+  const realRoot = await realpath(root)
+  const realParent = await realpath(dirname(targetPath))
+  const safeTarget = join(realParent, basename(targetPath))
+  const rel = relative(realRoot, safeTarget)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new HttpError(400, 'Path is outside the session workspace')
+  }
+  try {
+    const targetStat = await stat(safeTarget)
+    if (!targetStat.isFile()) throw new HttpError(400, 'Target is not a file')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+  }
+  return { root, targetPath: safeTarget }
+}
+
+async function writeRequestBodyToFile(
+  req: http.IncomingMessage,
+  targetPath: string,
+  maxBytes = MAX_WORKSPACE_UPLOAD_BYTES,
+): Promise<number> {
+  const declaredLength = Number(req.headers['content-length'] || 0)
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new HttpError(413, 'Request body too large')
+  }
+  const temporaryPath = `${targetPath}.upload-${process.pid}-${randomUUID()}`
+  const handle = await open(temporaryPath, 'wx', 0o600)
+  let bytesWritten = 0
+  try {
+    for await (const chunk of req) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      bytesWritten += buffer.length
+      if (bytesWritten > maxBytes) {
+        throw new HttpError(413, 'Request body too large')
+      }
+      await handle.write(buffer)
+    }
+    await handle.sync()
+    await handle.close()
+    await rename(temporaryPath, targetPath)
+    return bytesWritten
+  } catch (error) {
+    await handle.close().catch(() => {})
+    await rm(temporaryPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
+async function writeSessionWorkspaceFile(
+  req: http.IncomingMessage,
+  session: SessionRecord,
+  filePath?: string | null,
+) {
+  if (!filePath?.trim()) throw new HttpError(400, 'Missing file path')
+  const { targetPath } = await resolveWritableSessionWorkspacePath(session, filePath)
+  await writeRequestBodyToFile(req, targetPath)
+  return readSessionWorkspaceFile(session, targetPath)
+}
+
+function sanitizeUploadName(value: string): string {
+  const safe = basename(value)
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .trim()
+  if (!safe || safe === '.' || safe === '..') throw new HttpError(400, 'Invalid upload name')
+  return safe.slice(0, 240)
+}
+
+async function uploadSessionWorkspaceFile(
+  req: http.IncomingMessage,
+  session: SessionRecord,
+  fileName?: string | null,
+) {
+  if (!fileName?.trim()) throw new HttpError(400, 'Missing upload name')
+  const root = await realpath(getSessionWorkspaceRoot(session))
+  const inputDir = join(root, 'inputs')
+  await mkdir(inputDir, { recursive: true })
+  const realInputDir = await realpath(inputDir)
+  if (!isInsidePath(root, realInputDir)) {
+    throw new HttpError(400, 'Upload directory is outside the session workspace')
+  }
+  const safeName = sanitizeUploadName(fileName)
+  const parsed = extname(safeName)
+  const stem = parsed ? safeName.slice(0, -parsed.length) : safeName
+  const targetPath = join(realInputDir, `${stem}-${randomUUID().slice(0, 8)}${parsed}`)
+  await writeRequestBodyToFile(req, targetPath)
+  return readSessionWorkspaceFile(session, targetPath)
+}
+
+function isInsidePath(root: string, target: string): boolean {
+  const rel = relative(resolve(root), resolve(target))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableJson).join(',')}]`
@@ -353,6 +464,34 @@ function readBody(
     })
     req.on('end', () => {
       if (!rejected) resolveBody(data)
+    })
+    req.on('error', error => {
+      if (!rejected) reject(error)
+    })
+  })
+}
+
+function readBufferBody(
+  req: http.IncomingMessage,
+  maxBytes: number,
+): Promise<Buffer> {
+  return new Promise((resolveBody, reject) => {
+    const chunks: Buffer[] = []
+    let bytes = 0
+    let rejected = false
+    req.on('data', chunk => {
+      if (rejected) return
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      bytes += buffer.length
+      if (bytes > maxBytes) {
+        rejected = true
+        reject(new HttpError(413, 'Request body too large'))
+        return
+      }
+      chunks.push(buffer)
+    })
+    req.on('end', () => {
+      if (!rejected) resolveBody(Buffer.concat(chunks, bytes))
     })
     req.on('error', error => {
       if (!rejected) reject(error)
@@ -579,6 +718,38 @@ function parseSessionMemorySettings(
     throw new HttpError(400, 'Invalid session-memory settings')
   }
   return normalizeSessionMemorySettings(parsed.data)
+}
+
+const BLOCKED_REMOTE_ENV_KEYS = new Set([
+  'HOME',
+  'PATH',
+  'NODE_OPTIONS',
+  'MOSS_CONFIG_DIR',
+  'MOSS_HOME',
+  'MOSS_SERVER_HOME',
+  'MOSS_SERVER_URL',
+  'MOSS_SERVER_AUTH_TOKEN',
+  'MOSS_SESSION_USER_ID',
+  'MOSS_SESSION_ORG_ID',
+  'MOSS_SESSION_ROLE',
+  'MOSS_SESSION_SCOPES',
+  'MOSS_SESSION_RUNTIME_TYPE',
+])
+
+function parseSessionRuntimeOptions(body: JsonBody): SessionRuntimeOptions | undefined {
+  const normalized = normalizeSessionRuntimeOptions(
+    body.runtimeOptions ?? body.runtime_options,
+  )
+  if (!normalized) return undefined
+  const environment = Object.fromEntries(
+    Object.entries(normalized.environment || {}).filter(([key]) => (
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && !BLOCKED_REMOTE_ENV_KEYS.has(key)
+    )),
+  )
+  return {
+    ...normalized,
+    ...(normalized.environment ? { environment } : {}),
+  }
 }
 
 function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
@@ -1417,6 +1588,85 @@ export function startServer(
         return
       }
 
+      if (req.method === 'GET' && pathname === '/api/v1/profile/skills') {
+        authService.requireScope(auth, 'sessions:create')
+        writeJson(
+          res,
+          200,
+          await getSkillSyncStatus(getUserProfileDir(config, auth.userId)),
+        )
+        return
+      }
+
+      if (req.method === 'PUT' && pathname === '/api/v1/profile/skills') {
+        authService.requireScope(auth, 'sessions:create')
+        const archive = await readBufferBody(req, MAX_PROFILE_ARCHIVE_BYTES)
+        const requestedRevision = typeof req.headers['x-moss-content-sha256'] === 'string'
+          ? req.headers['x-moss-content-sha256'].trim()
+          : ''
+        try {
+          writeJson(
+            res,
+            200,
+            await installSkillArchive(
+              getUserProfileDir(config, auth.userId),
+              archive,
+              requestedRevision,
+            ),
+          )
+        } catch (error) {
+          throw new HttpError(400, error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/profile/memory') {
+        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        const profileDir = getUserProfileDir(config, auth.userId)
+        const sessions = runtime.listSessionRecords({
+          orgId: auth.orgId,
+          userId: auth.userId,
+        })
+        const sessionEntries = await Promise.all(sessions.map(async session => {
+          const memory = await readSessionMemory(session)
+          return {
+            sessionId: session.sessionId,
+            exists: memory.exists,
+            bytes: memory.bytes,
+            updatedAt: memory.updatedAt,
+            readable: memory.readable,
+          }
+        }))
+        writeJson(res, 200, {
+          global: {
+            rootLabel: 'Moss Server / memory',
+            files: await listProfileMemory(profileDir),
+          },
+          sessions: sessionEntries,
+        })
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/profile/memory/read') {
+        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        try {
+          writeJson(
+            res,
+            200,
+            await readProfileMemory(
+              getUserProfileDir(config, auth.userId),
+              url.searchParams.get('file') || '',
+            ),
+          )
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+            throw new HttpError(404, 'Memory entry not found')
+          }
+          throw error
+        }
+        return
+      }
+
       if (pathname === '/api/v1/adapters/feishu/status' && req.method === 'GET') {
         authService.requireScope(auth, 'sessions:create')
         writeJson(res, 200, adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId))
@@ -1636,6 +1886,49 @@ export function startServer(
         return
       }
 
+      if (req.method === 'PUT' && sessionWorkspaceContentMatch) {
+        const sessionId = sessionWorkspaceContentMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(
+          res,
+          200,
+          await writeSessionWorkspaceFile(req, session, url.searchParams.get('file')),
+        )
+        return
+      }
+
+      const sessionWorkspaceUploadMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/upload$/)
+      if (req.method === 'POST' && sessionWorkspaceUploadMatch) {
+        const sessionId = sessionWorkspaceUploadMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(
+          res,
+          200,
+          await uploadSessionWorkspaceFile(req, session, url.searchParams.get('name')),
+        )
+        return
+      }
+
+      const sessionMemoryMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/memory$/)
+      if (req.method === 'GET' && sessionMemoryMatch) {
+        const sessionId = sessionMemoryMatch[1] || ''
+        const session = runtime.getSession(sessionId)
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeJson(res, 200, await readSessionMemory(session))
+        return
+      }
+
       const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (req.method === 'GET' && sessionIdMatch) {
         const sessionId = sessionIdMatch[1] || ''
@@ -1669,6 +1962,7 @@ export function startServer(
         const advancedSettings = parseAdvancedSettings(body)
         const autoMemory = parseAutoMemorySettings(body)
         const sessionMemory = parseSessionMemorySettings(body)
+        const runtimeOptions = parseSessionRuntimeOptions(body)
         const assistantName =
           typeof body.assistant_name === 'string' && body.assistant_name.trim()
             ? body.assistant_name.trim()
@@ -1684,6 +1978,7 @@ export function startServer(
           advancedSettings,
           autoMemory,
           sessionMemory,
+          runtimeOptions,
         })
         writeJson(res, 200, {
           session_id: created.sessionId,

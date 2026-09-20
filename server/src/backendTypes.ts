@@ -2,6 +2,7 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
+  SessionRuntimeOptions,
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import type { ThinkingMode } from './systemSettings.js'
@@ -11,6 +12,7 @@ export type { SessionRuntimeInfo }
 export type BackendSystemSettings = {
   bypassPermissions: boolean
   model: string
+  fastModel: string
   maxTurns: number
   thinkingMode: ThinkingMode
   thinkingBudgetTokens: number
@@ -35,6 +37,7 @@ export type BackendSpawnOptions = {
   advancedSettings?: AdvancedSettings
   autoMemory?: AutoMemorySettings
   sessionMemory?: SessionMemorySettings
+  runtimeOptions?: SessionRuntimeOptions
   systemSettings?: BackendSystemSettings
 }
 

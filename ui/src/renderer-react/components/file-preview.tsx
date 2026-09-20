@@ -29,6 +29,7 @@ interface FilePreviewProps {
 export function FilePreview({ path, name, onRemove, readonly = false }: FilePreviewProps) {
   const isImage = isImageFile(path);
   const isLibraryResource = path.startsWith('moss-library://');
+  const isRemoteWorkspaceFile = path.startsWith('moss-remote-workspace://');
   let libraryName = '';
   if (isLibraryResource) {
     try {
@@ -43,6 +44,10 @@ export function FilePreview({ path, name, onRemove, readonly = false }: FilePrev
   React.useEffect(() => {
     let cancelled = false;
     setImageUrl('');
+    if (isRemoteWorkspaceFile) {
+      if (isImage) setImageUrl(path);
+      return () => { cancelled = true; };
+    }
     window.agentDesktop.fs.getFileMetadata(path)
       .then((metadata: any) => {
         if (!cancelled && metadata?.size) setFileSize(formatFileSize(metadata.size));
@@ -58,7 +63,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: FilePrev
         .catch(() => { /* 忽略图片加载失败 */ });
     }
     return () => { cancelled = true; };
-  }, [path, isImage]);
+  }, [path, isImage, isRemoteWorkspaceFile]);
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();

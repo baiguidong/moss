@@ -51,7 +51,7 @@ export async function execPromptHook(
       `Hooks: Querying model with ${messagesToQuery.length} messages`,
     )
 
-    // Query the model with Haiku
+    // Use the configured lightweight model unless the hook overrides it.
     const hookTimeoutMs = hook.timeout ? hook.timeout * 1000 : 30000
 
     // Combined signal: aborts if either the hook signal or timeout triggers
@@ -77,6 +77,7 @@ Your response must be a JSON object matching one of the following schemas:
             return appState.toolPermissionContext
           },
           model: hook.model ?? getSmallFastModel(),
+          ...(!hook.model && { modelRole: 'fast' as const }),
           toolChoice: undefined,
           isNonInteractiveSession: true,
           hasAppendSystemPrompt: false,

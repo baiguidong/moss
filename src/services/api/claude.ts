@@ -83,7 +83,10 @@ import {
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
 import { tokenCountFromLastAPIResponse } from '../../utils/tokens.js'
-import { applySessionMossModel } from '../../utils/sessionApiOverrides.js'
+import {
+  applySessionMossModel,
+  type SessionModelRole,
+} from '../../utils/sessionApiOverrides.js'
 import {
   currentLimits,
   extractQuotaStatusFromError,
@@ -624,6 +627,7 @@ export function assistantMessageToMessageParam(
 export type Options = {
   getToolPermissionContext: () => Promise<ToolPermissionContext>
   model: string
+  modelRole?: SessionModelRole
   toolChoice?: BetaToolChoiceTool | BetaToolChoiceAuto | undefined
   isNonInteractiveSession: boolean
   extraToolSchemas?: BetaToolUnion[]
@@ -3079,9 +3083,12 @@ export function buildSystemPromptBlocks(
   })
 }
 
-type HaikuOptions = Omit<Options, 'model' | 'getToolPermissionContext'>
+type FastModelOptions = Omit<
+  Options,
+  'model' | 'modelRole' | 'getToolPermissionContext'
+>
 
-export async function queryHaiku({
+export async function queryFastModel({
   systemPrompt = asSystemPrompt([]),
   userPrompt,
   outputFormat,
@@ -3092,7 +3099,7 @@ export async function queryHaiku({
   userPrompt: string
   outputFormat?: BetaJSONOutputFormat
   signal: AbortSignal
-  options: HaikuOptions
+  options: FastModelOptions
 }): Promise<AssistantMessage> {
   const result = await withVCR(
     [
@@ -3119,6 +3126,7 @@ export async function queryHaiku({
         options: {
           ...options,
           model: getSmallFastModel(),
+          modelRole: 'fast',
           enablePromptCaching: options.enablePromptCaching ?? false,
           outputFormat,
           async getToolPermissionContext() {
@@ -3129,7 +3137,7 @@ export async function queryHaiku({
       return [result]
     },
   )
-  // We don't use streaming for Haiku so this is safe
+  // The lightweight model path is non-streaming, so this is safe.
   return result[0]! as AssistantMessage
 }
 

@@ -4,8 +4,11 @@ export type SessionApiOverrides = {
   mossBaseUrl?: string
   mossAuthToken?: string
   mossModel?: string
+  mossFastModel?: string
   webSearch?: SessionWebSearchSettings
 }
+
+export type SessionModelRole = 'primary' | 'fast'
 
 export type SessionWebSearchSettings = {
   mode: 'auto' | 'tavily' | 'brave' | 'native' | 'disabled'
@@ -32,27 +35,46 @@ export function getSessionMossModel(): string | undefined {
   return sessionApiOverridesStorage.getStore()?.mossModel
 }
 
+export function getSessionMossFastModel(): string | undefined {
+  return sessionApiOverridesStorage.getStore()?.mossFastModel
+}
+
 export function getSessionWebSearchSettings(): SessionWebSearchSettings | undefined {
   return sessionApiOverridesStorage.getStore()?.webSearch
 }
 
-export function resolveSessionMossModel(model: string): string {
-  return getSessionMossModel() || model
+export function resolveSessionMossModel(
+  model: string,
+  modelRole: SessionModelRole = 'primary',
+): string {
+  const overrides = sessionApiOverridesStorage.getStore()
+  if (!overrides) return model
+  if (modelRole === 'fast') {
+    return overrides.mossFastModel || overrides.mossModel || model
+  }
+  return overrides.mossModel || model
 }
 
 export function applySessionMossModel<
-  T extends { model: string; fallbackModel?: string; advisorModel?: string },
+  T extends {
+    model: string
+    modelRole?: SessionModelRole
+    fallbackModel?: string
+    advisorModel?: string
+  },
 >(options: T): T {
-  const mossModel = getSessionMossModel()
-  if (!mossModel) return options
+  const configuredModel = options.modelRole === 'fast'
+    ? getSessionMossFastModel() || getSessionMossModel()
+    : getSessionMossModel()
+  if (!configuredModel) return options
   if (
-    options.model === mossModel &&
+    options.model === configuredModel &&
     options.fallbackModel === undefined &&
     options.advisorModel === undefined
   ) return options
   return {
     ...options,
-    model: mossModel,
+    model: configuredModel,
     fallbackModel: undefined,
     advisorModel: undefined,
   }

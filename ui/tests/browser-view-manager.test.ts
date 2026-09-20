@@ -180,6 +180,9 @@ describe('browser URL and bounds normalization', () => {
   it('normalizes local development URLs and clamps renderer-provided bounds', () => {
     expect(normalizeBrowserUrl('localhost:5173')).toBe('http://localhost:5173');
     expect(normalizeBrowserUrl('example.com/path')).toBe('https://example.com/path');
+    expect(normalizeBrowserUrl('moss-remote-workspace://session/demo/index.html')).toBe(
+      'moss-remote-workspace://session/demo/index.html',
+    );
     expect(normalizeBrowserUrl('')).toBe(BROWSER_DEFAULT_URL);
     expect(clampBrowserBounds(
       { x: 1100, y: -20, width: 400, height: 900 },

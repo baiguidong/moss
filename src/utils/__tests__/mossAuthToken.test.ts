@@ -4,6 +4,7 @@ import {
   applySessionMossModel,
   getSessionMossBaseUrl,
   getSessionMossAuthToken,
+  getSessionMossFastModel,
   getSessionMossModel,
   resolveSessionMossModel,
   runWithSessionApiOverrides,
@@ -56,11 +57,13 @@ describe('Moss model auth token', () => {
         mossBaseUrl: 'https://moss.example.test',
         mossAuthToken: 'session-token',
         mossModel: 'moss-text-model',
+        mossFastModel: 'moss-fast-model',
       },
       () => ({
         baseUrl: getSessionMossBaseUrl(),
         token: getSessionMossAuthToken(),
         model: getSessionMossModel(),
+        fastModel: getSessionMossFastModel(),
       }),
     )
 
@@ -68,15 +71,20 @@ describe('Moss model auth token', () => {
       baseUrl: 'https://moss.example.test',
       token: 'session-token',
       model: 'moss-text-model',
+      fastModel: 'moss-fast-model',
     })
     expect(getSessionMossBaseUrl()).toBeUndefined()
     expect(getSessionMossAuthToken()).toBeUndefined()
     expect(getSessionMossModel()).toBeUndefined()
+    expect(getSessionMossFastModel()).toBeUndefined()
   })
 
-  test('forces every session request to use the configured Moss model', () => {
+  test('routes primary session requests to the configured Moss model', () => {
     const options = runWithSessionApiOverrides(
-      { mossModel: 'moss-text-model' },
+      {
+        mossModel: 'moss-text-model',
+        mossFastModel: 'moss-fast-model',
+      },
       () => applySessionMossModel({
         model: 'claude-haiku-4-5-20251001',
         fallbackModel: 'fallback-model',
@@ -90,9 +98,91 @@ describe('Moss model auth token', () => {
       advisorModel: undefined,
     })
     expect(runWithSessionApiOverrides(
-      { mossModel: 'moss-text-model' },
+      {
+        mossModel: 'moss-text-model',
+        mossFastModel: 'moss-fast-model',
+      },
       () => resolveSessionMossModel('claude-haiku-4-5-20251001'),
     )).toBe('moss-text-model')
+  })
+
+  test('routes fast requests to the configured fast model', () => {
+    const options = runWithSessionApiOverrides(
+      {
+        mossModel: 'moss-text-model',
+        mossFastModel: 'moss-fast-model',
+      },
+      () => applySessionMossModel({
+        model: 'built-in-lightweight-model',
+        modelRole: 'fast' as const,
+        fallbackModel: 'fallback-model',
+        advisorModel: 'advisor-model',
+      }),
+    )
+
+    expect(options).toEqual({
+      model: 'moss-fast-model',
+      modelRole: 'fast',
+      fallbackModel: undefined,
+      advisorModel: undefined,
+    })
+    expect(runWithSessionApiOverrides(
+      {
+        mossModel: 'moss-text-model',
+        mossFastModel: 'moss-fast-model',
+      },
+      () => resolveSessionMossModel('built-in-lightweight-model', 'fast'),
+    )).toBe('moss-fast-model')
+    expect(runWithSessionApiOverrides(
+      { mossFastModel: 'moss-fast-model' },
+      () => resolveSessionMossModel('built-in-primary-model'),
+    )).toBe('built-in-primary-model')
+  })
+
+  test('falls fast requests back to the configured primary model', () => {
+    expect(runWithSessionApiOverrides(
+      { mossModel: 'moss-text-model' },
+      () => resolveSessionMossModel('built-in-lightweight-model', 'fast'),
+    )).toBe('moss-text-model')
+  })
+
+  test('disables fallback models even when the fast model id already matches', () => {
+    const options = runWithSessionApiOverrides(
+      { mossFastModel: 'fast-model' },
+      () => applySessionMossModel({
+        model: 'fast-model',
+        modelRole: 'fast' as const,
+        fallbackModel: 'fallback-model',
+      }),
+    )
+
+    expect(options).toEqual({
+      model: 'fast-model',
+      modelRole: 'fast',
+      fallbackModel: undefined,
+      advisorModel: undefined,
+    })
+  })
+
+  test('isolates fast models across concurrent sessions', async () => {
+    const [first, second] = await Promise.all([
+      runWithSessionApiOverrides(
+        { mossModel: 'primary-a', mossFastModel: 'fast-a' },
+        async () => {
+          await Promise.resolve()
+          return resolveSessionMossModel('built-in-model', 'fast')
+        },
+      ),
+      runWithSessionApiOverrides(
+        { mossModel: 'primary-b', mossFastModel: 'fast-b' },
+        async () => {
+          await Promise.resolve()
+          return resolveSessionMossModel('built-in-model', 'fast')
+        },
+      ),
+    ])
+
+    expect([first, second]).toEqual(['fast-a', 'fast-b'])
   })
 
   test('is protected from settings overrides in host-managed sessions', () => {

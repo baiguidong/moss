@@ -258,7 +258,7 @@ function cloneAuthContext(value) {
 }
 
 function isBrowserUrl(value) {
-  return /^(?:https?|file):/i.test(value) || value === BROWSER_DEFAULT_URL;
+  return /^(?:https?|file|moss-remote-workspace):/i.test(value) || value === BROWSER_DEFAULT_URL;
 }
 
 function getExternalNavigationHref(value) {
@@ -285,7 +285,7 @@ function safeTitleFromUrl(url) {
 export function normalizeBrowserUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return BROWSER_DEFAULT_URL;
-  if (/^(?:https?|file):/i.test(raw) || raw === BROWSER_DEFAULT_URL) return raw;
+  if (/^(?:https?|file|moss-remote-workspace):/i.test(raw) || raw === BROWSER_DEFAULT_URL) return raw;
   if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(raw)) {
     return `http://${raw}`;
   }

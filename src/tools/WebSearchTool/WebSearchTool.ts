@@ -189,6 +189,9 @@ async function callNativeWebSearch(
     options: {
       getToolPermissionContext: async () => appState.toolPermissionContext,
       model: useFastWebSearch ? getSmallFastModel() : context.options.mainLoopModel,
+      modelRole: useFastWebSearch
+        ? 'fast'
+        : context.options.modelRole,
       toolChoice: useFastWebSearch ? { type: 'tool', name: 'web_search' } : undefined,
       isNonInteractiveSession: context.options.isNonInteractiveSession,
       hasAppendSystemPrompt: !!context.options.appendSystemPrompt,

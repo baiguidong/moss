@@ -49,8 +49,11 @@ type DirectAppEventResult =
 type DirectSessionOptions = {
   cwd?: string
   model?: string
+  fastModel?: string
   url?: string
   apiKey?: string
+  webSearch?: JsonObject
+  customSystemPrompt?: string
   appendSystemPrompt?: string
   permissionMode?: DirectPermissionMode | 'allow-all'
   onPermissionRequest?: (
@@ -60,12 +63,15 @@ type DirectSessionOptions = {
   ) => Promise<DirectPermissionDecision>
   onAppEvent?: (event: DirectAppEvent) => Promise<DirectAppEventResult>
   agentMailEnabled?: boolean
+  libraryEnabled?: boolean
   maxTurns?: number
   thinkingConfig?: unknown
   coordinatorMode?: boolean
   sessionId?: string
   projectDir?: string
   workspaceDirectories?: string[]
+  addDirs?: string[]
+  mcpServers?: Record<string, JsonObject>
   sourceJsonlFile?: string
   environment?: Record<string, string>
 }
@@ -213,6 +219,7 @@ export async function writeManagedSessionSettings(
         baseUrl: settings.url,
         apiKey: settings.apiKey,
         model: settings.model,
+        fastModel: settings.fastModel,
         maxTurns: settings.maxTurns,
         thinking: {
           ...existingTextThinking,
@@ -224,6 +231,7 @@ export async function writeManagedSessionSettings(
     bypassPermissions: settings.bypassPermissions,
   }
   delete next.model
+  delete next.fastModel
   delete next.maxTurns
   delete next.thinkingMode
   delete next.thinkingBudgetTokens
@@ -764,6 +772,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const profileDir = options.runtime.profileDir
     await mkdir(profileDir, { recursive: true })
     const settings = options.systemSettings ?? getSystemSettings()
+    const runtimeOptions = options.runtimeOptions ?? {}
     await writeManagedSessionSettings(profileDir, settings)
 
     const processEnvironment = buildSessionEnv(options, {
@@ -791,19 +800,32 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const bypassPermissions =
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
+    const fastModel = Object.prototype.hasOwnProperty.call(
+      runtimeOptions,
+      'fastModel',
+    )
+      ? runtimeOptions.fastModel || undefined
+      : settings.fastModel || undefined
     const sessionOptions: DirectSessionOptions = {
       cwd: options.cwd,
-      model: settings.model,
-      appendSystemPrompt: undefined,
-      maxTurns: settings.maxTurns,
-      thinkingConfig: buildThinkingConfig(settings),
+      model: runtimeOptions.model || settings.model,
+      fastModel,
+      customSystemPrompt: runtimeOptions.customSystemPrompt,
+      appendSystemPrompt: runtimeOptions.appendSystemPrompt,
+      maxTurns: runtimeOptions.maxTurns ?? settings.maxTurns,
+      thinkingConfig: runtimeOptions.thinkingConfig ?? buildThinkingConfig(settings),
+      coordinatorMode: runtimeOptions.coordinatorMode === true,
       projectDir: options.runtime.transcriptDir,
       workspaceDirectories: [options.cwd],
+      addDirs: [],
+      mcpServers: runtimeOptions.mcpServers,
       permissionMode: bypassPermissions ? 'allow-all' : 'default',
-      url: settings.url || undefined,
-      apiKey: settings.apiKey || undefined,
+      url: runtimeOptions.url || settings.url || undefined,
+      apiKey: runtimeOptions.apiKey || settings.apiKey || undefined,
+      webSearch: runtimeOptions.webSearch,
       sessionId: options.sessionId,
       environment: {
+        ...(runtimeOptions.environment || {}),
         MOSS_CONFIG_DIR: profileDir,
         ...(options.advancedSettings
           ? {
@@ -848,7 +870,13 @@ export class DirectEmbeddedBackend implements SessionBackend {
         }
         return handle.emitAppEvent(event)
       },
-      agentMailEnabled: options.scopes?.includes('agent-mail:send') === true,
+      agentMailEnabled:
+        options.scopes?.includes('agent-mail:send') === true &&
+        (
+          !Object.prototype.hasOwnProperty.call(runtimeOptions, 'agentMailEnabled') ||
+          runtimeOptions.agentMailEnabled === true
+        ),
+      libraryEnabled: runtimeOptions.libraryEnabled === true,
     }
 
     let session: DirectSession

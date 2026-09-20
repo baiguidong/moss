@@ -32,6 +32,7 @@ export type SystemSettingsOpenIM = {
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
+  fastModel: string
   maxTurns: number
   thinkingMode: ThinkingMode
   thinkingBudgetTokens: number
@@ -68,6 +69,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
 > = {
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: 'claude-sonnet-4-6',
+  fastModel: '',
   maxTurns: 100,
   thinkingMode: 'adaptive',
   thinkingBudgetTokens: 16000,
@@ -193,6 +195,13 @@ function normalizeSystemSettings(
       stringField(result, 'model'),
       stringField(existingText, 'model'),
     ) ?? DEFAULT_SYSTEM_SETTINGS.model
+
+  result.fastModel =
+    stringField(source, 'fastModel') ??
+    stringField(sourceText, 'fastModel') ??
+    stringField(result, 'fastModel') ??
+    stringField(existingText, 'fastModel') ??
+    DEFAULT_SYSTEM_SETTINGS.fastModel
 
   result.maxTurns =
     boundedInt(source.maxTurns, 1, 10_000) ??
@@ -401,6 +410,7 @@ function toSystemSettingsPayload(
   return {
     bypassPermissions: state.value.bypassPermissions,
     model: state.value.model,
+    fastModel: state.value.fastModel,
     maxTurns: state.value.maxTurns,
     thinkingMode: state.value.thinkingMode,
     thinkingBudgetTokens: state.value.thinkingBudgetTokens,
@@ -492,6 +502,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
       baseUrl: nextSettings.url,
       apiKey: nextSettings.apiKey,
       model: nextSettings.model,
+      fastModel: nextSettings.fastModel,
       maxTurns: nextSettings.maxTurns,
       thinking: {
         ...existingTextThinking,
@@ -513,6 +524,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
 
   delete toSave.image
   delete toSave.model
+  delete toSave.fastModel
   delete toSave.maxTurns
   delete toSave.thinkingMode
   delete toSave.thinkingBudgetTokens
@@ -533,6 +545,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   return {
     bypassPermissions: nextSettings.bypassPermissions,
     model: nextSettings.model,
+    fastModel: nextSettings.fastModel,
     maxTurns: nextSettings.maxTurns,
     thinkingMode: nextSettings.thinkingMode,
     thinkingBudgetTokens: nextSettings.thinkingBudgetTokens,

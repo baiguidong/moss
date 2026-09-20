@@ -46,6 +46,39 @@ export type AdvancedSettings = {
   moss_workflows_enabled?: boolean
 }
 
+export type SessionThinkingConfig =
+  | { type: 'adaptive' }
+  | { type: 'enabled'; budgetTokens: number }
+  | { type: 'disabled' }
+
+export type SessionWebSearchSettings = {
+  mode: 'auto' | 'tavily' | 'brave' | 'native' | 'disabled'
+  tavilyApiKey?: string
+  braveApiKey?: string
+  nativeCapability?: 'supported' | 'compatible' | 'unsupported' | 'unknown'
+}
+
+/**
+ * Serializable desktop preferences that affect one remote Agent session.
+ * Server lifecycle/storage settings intentionally remain server-owned.
+ */
+export type SessionRuntimeOptions = {
+  model?: string
+  fastModel?: string
+  url?: string
+  apiKey?: string
+  customSystemPrompt?: string
+  appendSystemPrompt?: string
+  maxTurns?: number
+  thinkingConfig?: SessionThinkingConfig
+  webSearch?: SessionWebSearchSettings
+  mcpServers?: Record<string, Record<string, unknown>>
+  environment?: Record<string, string>
+  libraryEnabled?: boolean
+  coordinatorMode?: boolean
+  agentMailEnabled?: boolean
+}
+
 export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
   enabled: true,
   extractionEnabled: false,
@@ -156,6 +189,51 @@ export const advancedSettingsSchema = lazySchema(() =>
   }),
 )
 
+const sessionThinkingConfigSchema = lazySchema(() =>
+  z.discriminatedUnion('type', [
+    z.object({ type: z.literal('adaptive') }),
+    z.object({
+      type: z.literal('enabled'),
+      budgetTokens: z.number().int().min(1024).max(128_000),
+    }),
+    z.object({ type: z.literal('disabled') }),
+  ]),
+)
+
+const sessionWebSearchSettingsSchema = lazySchema(() =>
+  z.object({
+    mode: z.enum(['auto', 'tavily', 'brave', 'native', 'disabled']),
+    tavilyApiKey: z.string().max(16_384).optional(),
+    braveApiKey: z.string().max(16_384).optional(),
+    nativeCapability: z
+      .enum(['supported', 'compatible', 'unsupported', 'unknown'])
+      .optional(),
+  }),
+)
+
+export const sessionRuntimeOptionsSchema = lazySchema(() =>
+  z.object({
+    model: z.string().trim().min(1).max(256).optional(),
+    fastModel: z.string().trim().max(256).optional(),
+    url: z.string().trim().max(4096).optional(),
+    apiKey: z.string().max(16_384).optional(),
+    customSystemPrompt: z.string().max(1_000_000).optional(),
+    appendSystemPrompt: z.string().max(1_000_000).optional(),
+    maxTurns: z.number().int().min(1).max(10_000).optional(),
+    thinkingConfig: sessionThinkingConfigSchema().optional(),
+    webSearch: sessionWebSearchSettingsSchema().optional(),
+    mcpServers: z
+      .record(z.string().min(1).max(160), z.record(z.string(), z.unknown()))
+      .optional(),
+    environment: z
+      .record(z.string().min(1).max(256), z.string().max(1_000_000))
+      .optional(),
+    libraryEnabled: z.boolean().optional(),
+    coordinatorMode: z.boolean().optional(),
+    agentMailEnabled: z.boolean().optional(),
+  }),
+)
+
 export function normalizeAutoMemorySettings(value: unknown): AutoMemorySettings {
   const parsed = autoMemorySettingsSchema().safeParse(value)
   return parsed.success
@@ -179,6 +257,14 @@ export function normalizeAdvancedSettings(value: unknown): AdvancedSettings {
   return parsed.success
     ? { ...DEFAULT_ADVANCED_SETTINGS, ...parsed.data }
     : { ...DEFAULT_ADVANCED_SETTINGS }
+}
+
+export function normalizeSessionRuntimeOptions(
+  value: unknown,
+): SessionRuntimeOptions | undefined {
+  const parsed = sessionRuntimeOptionsSchema().safeParse(value)
+  if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
+  return parsed.data
 }
 
 export const runtimeInfoSchema = lazySchema(() =>

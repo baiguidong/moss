@@ -157,6 +157,7 @@ describe('desktop settings', () => {
           baseUrl: 'https://models.example.com/v1/',
           apiKey: ' secret ',
           model: 'model-a',
+          fastModel: ' model-fast ',
           maxTurns: 42,
           thinking: { mode: 'enabled', budgetTokens: 8192 },
         },
@@ -177,6 +178,7 @@ describe('desktop settings', () => {
 
     expect(settings).toMatchObject({
       model: 'model-a',
+      fastModel: 'model-fast',
       maxTurns: 42,
       thinkingMode: 'enabled',
       thinkingBudgetTokens: 8192,
@@ -366,6 +368,30 @@ describe('desktop settings', () => {
     expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
     expect(persisted.remoteDirect.userName).toBe('Moss User');
     expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
+  });
+
+  it('persists the fast model with text model settings and allows clearing it', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-fast-model-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    store.save({
+      ...store.value,
+      model: 'primary-model',
+      fastModel: 'fast-model',
+    });
+
+    let persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(persisted.models.text.model).toBe('primary-model');
+    expect(persisted.models.text.fastModel).toBe('fast-model');
+    expect(persisted).not.toHaveProperty('fastModel');
+    expect(createDesktopSettingsStore({ settingsPath }).value.fastModel).toBe('fast-model');
+
+    store.save({ ...store.value, fastModel: '' });
+    persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(persisted.models.text.fastModel).toBe('');
+    expect(createDesktopSettingsStore({ settingsPath }).value.fastModel).toBe('');
   });
 
   it('persists tool loading choices and fills missing tools from defaults', () => {
