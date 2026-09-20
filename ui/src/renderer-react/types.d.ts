@@ -1141,12 +1141,14 @@ export type StoredApp = {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
+    protocols?: Array<'moss.channel/v1'>;
     actions: Array<{ name: string }>;
   } | null;
   serverBackend?: {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
+    protocols?: Array<'moss.channel/v1'>;
     actions: Array<{ name: string }>;
   } | null;
   permissions?: string[];

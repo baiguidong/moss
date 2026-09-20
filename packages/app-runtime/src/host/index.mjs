@@ -1,8 +1,17 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { APP_ERROR_CODES, AppServiceError, loadJsonSchema } from '../../../app-sdk/src/index.mjs'
+import {
+  APP_ERROR_CODES,
+  AppServiceError,
+  MOSS_CHANNEL_PROTOCOL,
+  getChannelBackendEventPermission,
+  loadJsonSchema,
+  requireChannelPermission,
+  validateChannelBackendEvent,
+} from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
+import { AppChannelHost } from '../channel/index.mjs'
 import { AppEventBroker } from '../events/index.mjs'
 import { AppLogStore } from '../logging/index.mjs'
 import { AppPackageStore, validateAppPackage } from '../packages/index.mjs'
@@ -55,12 +64,18 @@ export class AppRuntimeHost {
       secretProvider: async (appId, instanceId) => Object.values(await this.credentials.get(appId, instanceId)),
       ...(options.logOptions || {}),
     })
+    if (options.channelHost !== undefined && options.channelHost !== null
+      && typeof options.channelHost.dispatch !== 'function') {
+      throw new TypeError('channelHost must implement dispatch(request)')
+    }
+    this.channelHost = options.channelHost ?? new AppChannelHost(options.channelOptions)
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
       onStatus: (status) => this.events.publish({ type: 'status', ...status }),
       onEvent: (event) => this.events.publish({ type: 'backend-event', ...event }),
       onLog: (entry) => this.logs.append(entry).catch(() => {}),
       ...(options.processOptions || {}),
+      onChannelRequest: (request) => this.dispatchChannelRequest(request),
     })
     this.actions = new AppActionBroker({
       ...(options.actionOptions || {}),
@@ -517,6 +532,86 @@ export class AppRuntimeHost {
     return this.actions.invoke(deployment, actionName, input, options)
   }
 
+  registerChannelHandler(method, handler) {
+    if (typeof this.channelHost?.register !== 'function') {
+      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host does not support handler registration')
+    }
+    return this.channelHost.register(method, handler)
+  }
+
+  async dispatchChannelRequest(request) {
+    let deployment = this.deployments.get(request.key)
+    if (!deployment) {
+      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel deployment is unavailable')
+    }
+    if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Channel request is outside the deployment scope')
+    }
+    if (deployment.generation !== request.generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel deployment generation is stale')
+    }
+    this.authorizeInvocation(deployment)
+    const packageInfo = await this.getActivePackage(request.appId)
+    if (packageInfo.manifest.version !== request.version) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel App version is stale')
+    }
+    deployment = this.deployments.get(request.key)
+    if (!deployment || deployment.generation !== request.generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel deployment generation is stale')
+    }
+    if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Channel request is outside the deployment scope')
+    }
+    if (this.installations.get(request.appId)?.activeVersion !== request.version) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Channel App version is stale')
+    }
+    this.authorizeInvocation(deployment)
+    const backend = packageInfo.manifest.backend
+    if (typeof this.channelHost?.dispatch !== 'function') {
+      throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel Host is not configured')
+    }
+    return this.channelHost.dispatch({
+      ...request,
+      appId: deployment.appId,
+      instanceId: deployment.instanceId,
+      version: packageInfo.manifest.version,
+      generation: deployment.generation,
+      target: { type: deployment.targetType, id: deployment.targetId },
+      protocols: backend?.protocols || [],
+      permissions: packageInfo.manifest.permissions || [],
+    })
+  }
+
+  async publishChannelEvent(appId, instanceId, name, data = {}, options = {}) {
+    const installation = this.installations.get(appId)
+    if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
+    const instance = this.requireInstance(appId, instanceId)
+    if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+    const deployment = this.localDeployment(appId, instanceId)
+    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.channelUnavailable, 'Channel instance is not deployed on this Host')
+    const packageInfo = await this.getActivePackage(appId)
+    const backend = packageInfo.manifest.backend
+    if (!backend?.protocols?.includes(MOSS_CHANNEL_PROTOCOL)) {
+      throw new AppServiceError(
+        APP_ERROR_CODES.channelUnavailable,
+        `App Backend does not declare protocol: ${MOSS_CHANNEL_PROTOCOL}`,
+      )
+    }
+    const normalizedName = validateChannelBackendEvent(name)
+    requireChannelPermission(
+      packageInfo.manifest.permissions || [],
+      getChannelBackendEventPermission(normalizedName),
+    )
+    await this.prepareDeployment(deployment)
+    return this.supervisor.publishChannelEvent(deployment.key, normalizedName, data, options)
+  }
+
+  cancelChannelEvent(appId, instanceId, eventId) {
+    this.requireInstance(appId, instanceId)
+    const deployment = this.localDeployment(appId, instanceId)
+    return deployment ? this.supervisor.cancelChannelEvent(deployment.key, eventId) : false
+  }
+
   cancel(appId, instanceId, requestId) {
     this.requireInstance(appId, instanceId)
     const deployment = this.localDeployment(appId, instanceId)
@@ -550,6 +645,8 @@ export class AppRuntimeHost {
       generation: deployment.generation,
       entry: backend.entry,
       lifecycle: backend.lifecycle,
+      protocols: backend.protocols || [],
+      permissions: packageInfo.manifest.permissions || [],
       packageRoot: packageInfo.root,
       config: instance.config || {},
       secrets: secrets || {},

@@ -32,6 +32,10 @@ export class AppRuntimeHost {
   restartInstance(appId: string, instanceId: string): Promise<any>
   invoke(appId: string, instanceId: string, action: string, input: unknown, options?: Record<string, any>): Promise<any>
   cancel(appId: string, instanceId: string, requestId: string): boolean
+  registerChannelHandler(method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
+  dispatchChannelRequest(request: Record<string, any>): Promise<unknown>
+  publishChannelEvent(appId: string, instanceId: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
+  cancelChannelEvent(appId: string, instanceId: string, eventId: string): boolean
   getLogs(appId: string, instanceId: string, options?: Record<string, any>): Promise<any[]>
   activateVersion(appId: string, version: string): Promise<any>
   moveDeployment(appId: string, instanceId: string, targetType: string, targetId: string, options?: Record<string, any>): Promise<any>
@@ -42,6 +46,7 @@ export class AppRuntimeHost {
   readonly deployments: DeploymentStore
   readonly packages: AppPackageStore
   readonly actions: AppActionBroker
+  readonly channelHost: AppChannelHost
   readonly events: AppEventBroker
   readonly logs: AppLogStore
   readonly supervisor: AppProcessSupervisor
@@ -128,10 +133,23 @@ export class AppProcessSupervisor {
   restart(key: string): Promise<any>
   invoke(key: string, actionName: string, input: unknown, options?: Record<string, any>): Promise<any>
   cancel(key: string, requestId: string): boolean
+  publishChannelEvent(key: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
+  cancelChannelEvent(key: string, eventId: string): boolean
   shutdown(): Promise<void>
 }
 
 export class AppActionBroker { constructor(options: Record<string, any>) }
+export class AppChannelHost {
+  constructor(options?: {
+    handlers?: Record<string, (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>>
+    handleRequest?: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>
+    maxConcurrentPerInstance?: number
+    maxConcurrentTotal?: number
+  })
+  register(method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
+  listMethods(): string[]
+  dispatch(request: Record<string, any>): Promise<unknown>
+}
 export class AppEventBroker {
   on(eventName: string, listener: (event: any) => void): this
   publish(event: any): any

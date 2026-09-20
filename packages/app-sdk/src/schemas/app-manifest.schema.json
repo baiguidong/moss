@@ -60,6 +60,11 @@
           "uniqueItems": true,
           "items": { "enum": ["desktop", "server"] }
         },
+        "protocols": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["moss.channel/v1"] }
+        },
         "actions": {
           "type": "array",
           "items": {

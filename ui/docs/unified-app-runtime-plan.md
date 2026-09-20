@@ -341,7 +341,7 @@ Protocol requirements:
 - App ID, version, Backend API version, instance ID, deployment generation, and one-time launch token in handshake.
 - Stale process messages are rejected by deployment generation and launch token.
 
-Future capability protocols, such as `moss.channel/v1`, use the same process and base lifecycle but define their own domain messages in App SDK. They are not part of this plan.
+领域协议复用相同的进程和基础生命周期。`moss.channel/v1` 已在后续工作中实现为 App SDK 与 Runtime 的可选双向协议；其业务 Host handler 由 Desktop 或 Server 注册，不进入基础 Action 协议。
 
 ## Persistent data model
 
@@ -612,9 +612,9 @@ The future Feishu alignment point is intentionally limited to:
 - A `persistent` Backend.
 - `instanceMode: "multiple"`.
 - Desktop and Server targets.
-- A future `moss.channel/v1` domain protocol layered on App Service protocol.
+- The `moss.channel/v1` domain protocol layered on App Service protocol (implemented after this plan).
 
-The Feishu migration must not be started until App Runtime V2 satisfies all completion gates below.
+The App Runtime V2 completion gates are satisfied; Feishu can migrate after Desktop and Server register their Channel business handlers.
 
 ## Implementation phases
 

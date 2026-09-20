@@ -1,6 +1,121 @@
 export type AppTarget = 'desktop' | 'server'
 export type AppBackendLifecycle = 'on-demand' | 'persistent'
 export type AppInstanceMode = 'single' | 'multiple'
+export type AppBackendProtocol = 'moss.channel/v1'
+
+export type ChannelPermission =
+  | 'channel:connection'
+  | 'channel:pairing'
+  | 'channel:sessions:read'
+  | 'channel:sessions:write'
+  | 'channel:messages'
+  | 'channel:deliveries'
+  | 'channel:notifications'
+  | 'channel:decisions'
+
+export type ChannelHostMethod =
+  | 'connection.update'
+  | 'pairing.attempt'
+  | 'conversation.list'
+  | 'conversation.current'
+  | 'conversation.create'
+  | 'conversation.select'
+  | 'session.abort'
+  | 'message.receive'
+  | 'delivery.ack'
+  | 'decision.respond'
+
+export type ChannelBackendEvent =
+  | 'turn.accepted'
+  | 'turn.output'
+  | 'turn.completed'
+  | 'turn.failed'
+  | 'notification.deliver'
+  | 'decision.resolved'
+
+export interface ChannelExternalIdentity {
+  externalUserId: string
+  externalConversationId?: string
+  externalEventId?: string
+}
+
+export type ChannelIdempotentIdentity = ChannelExternalIdentity & { externalEventId: string }
+
+export interface ChannelSessionSummary {
+  id: string
+  title: string
+  preview?: string
+  updatedAt: number
+  busy: boolean
+  projectName?: string | null
+  originChannel?: string
+}
+
+export interface ChannelAttachment {
+  type: 'file' | 'image'
+  name?: string
+  mimeType?: string
+  data?: string
+  path?: string
+}
+
+export interface ChannelHostRequestMap {
+  'connection.update': { connected: boolean; error?: string | null; metadata?: Record<string, unknown> }
+  'pairing.attempt': Required<ChannelExternalIdentity> & { code: string; displayName?: string }
+  'conversation.list': ChannelExternalIdentity & { category?: string; page?: number; pageSize?: number; query?: string }
+  'conversation.current': ChannelExternalIdentity
+  'conversation.create': ChannelIdempotentIdentity & { title?: string }
+  'conversation.select': ChannelIdempotentIdentity & { sessionId: string }
+  'session.abort': ChannelIdempotentIdentity
+  'message.receive': Required<ChannelExternalIdentity> & { text?: string; attachments?: ChannelAttachment[] }
+  'delivery.ack': { deliveryId: string; ok: boolean; externalMessageId?: string; externalCardId?: string; error?: string }
+  'decision.respond': Required<ChannelExternalIdentity> & { decisionId: string; actionToken: string; allowed: boolean }
+}
+
+export interface ChannelHostResultMap {
+  'connection.update': Record<string, unknown>
+  'pairing.attempt': { paired: boolean; conversationId?: string }
+  'conversation.list': { sessions: ChannelSessionSummary[]; currentSession?: ChannelSessionSummary | null; [key: string]: unknown }
+  'conversation.current': { session?: ChannelSessionSummary | null; [key: string]: unknown }
+  'conversation.create': { session: ChannelSessionSummary; [key: string]: unknown }
+  'conversation.select': { session: ChannelSessionSummary; [key: string]: unknown }
+  'session.abort': { cancelled?: number; [key: string]: unknown }
+  'message.receive': { accepted?: boolean; duplicate?: boolean; turnId?: string | null; session?: ChannelSessionSummary; [key: string]: unknown }
+  'delivery.ack': Record<string, unknown>
+  'decision.respond': Record<string, unknown>
+}
+
+export interface ChannelBackendEventMap {
+  'turn.accepted': { turnId: string; externalConversationId: string; [key: string]: unknown }
+  'turn.output': { turnId: string; externalConversationId: string; [key: string]: unknown }
+  'turn.completed': { turnId: string; externalConversationId: string; [key: string]: unknown }
+  'turn.failed': { turnId: string; externalConversationId: string; [key: string]: unknown }
+  'notification.deliver': { deliveryId: string; externalConversationId: string; [key: string]: unknown }
+  'decision.resolved': { decisionId: string; [key: string]: unknown }
+}
+
+export interface ChannelEventContext extends AppBackendContext {
+  channel: AppChannelApi
+  signal: AbortSignal
+  eventId: string
+  name: ChannelBackendEvent
+  protocol: 'moss.channel/v1'
+}
+
+export type ChannelEventHandler<Data = Record<string, unknown>, Result = unknown> =
+  (data: Data, context: ChannelEventContext) => Result | Promise<Result>
+
+export interface AppChannelApi {
+  request<Method extends ChannelHostMethod>(
+    method: Method,
+    input: ChannelHostRequestMap[Method],
+    options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ChannelHostResultMap[Method]>
+  on<Name extends ChannelBackendEvent, Result = unknown>(
+    name: Name,
+    handler: ChannelEventHandler<ChannelBackendEventMap[Name], Result>,
+  ): () => void
+}
 
 export interface AppActionManifest {
   name: string
@@ -25,6 +140,7 @@ export interface AppManifestV2 {
     lifecycle: AppBackendLifecycle
     instanceMode: AppInstanceMode
     targets: AppTarget[]
+    protocols?: AppBackendProtocol[]
     actions: AppActionManifest[]
     configuration?: { schema?: string; secrets?: string }
   }
@@ -50,6 +166,9 @@ export interface AppBackendContext {
   dataDir: string
   runtimeDir: string
   target: { type: AppTarget; id: string }
+  protocols: AppBackendProtocol[]
+  permissions: string[]
+  channel: AppChannelApi
 }
 
 export interface AppActionContext extends AppBackendContext {
@@ -101,6 +220,9 @@ export class AppServiceError extends Error {
 export class AppBackendClient {
   constructor(options?: Record<string, unknown>)
   registerAction(name: string, handler: AppActionHandler): this
+  requestChannelHost<Method extends ChannelHostMethod>(method: Method, input: ChannelHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<ChannelHostResultMap[Method]>
+  onChannelEvent<Name extends ChannelBackendEvent, Result = unknown>(name: Name, handler: ChannelEventHandler<ChannelBackendEventMap[Name], Result>): () => void
+  readonly channel: AppChannelApi
   emit(name: string, data?: unknown): void
   log(level: string, message: string, details?: unknown): void
   status(state: string, details?: unknown): void
@@ -110,6 +232,12 @@ export class AppBackendClient {
 
 export const APP_SERVICE_PROTOCOL_VERSION: 1
 export const APP_BACKEND_API_VERSION: 1
+export const MOSS_CHANNEL_PROTOCOL: 'moss.channel/v1'
+export const CHANNEL_PERMISSIONS: Readonly<Record<string, ChannelPermission>>
+export const CHANNEL_HOST_METHOD_PERMISSIONS: Readonly<Record<ChannelHostMethod, ChannelPermission>>
+export const CHANNEL_BACKEND_EVENT_PERMISSIONS: Readonly<Record<ChannelBackendEvent, ChannelPermission>>
+export const CHANNEL_HOST_METHODS: readonly ChannelHostMethod[]
+export const CHANNEL_BACKEND_EVENTS: readonly ChannelBackendEvent[]
 export const DEFAULT_MAX_MESSAGE_BYTES: number
 export const APP_HOST_API_VERSION: string
 export const APP_MANIFEST_SCHEMA: Record<string, unknown>
@@ -122,6 +250,15 @@ export function createEnvelope<T = unknown>(type: string, payload?: T, options?:
 export function validateEnvelope<T = unknown>(raw: unknown, options?: { allowedTypes?: string[]; maxBytes?: number }): AppServiceEnvelope<T>
 export function getEnvelopeByteLength(envelope: unknown): number
 export function serializeError(error: unknown, fallbackCode?: string): { code: string; message: string; details?: unknown }
+export function validateChannelHostMethod(value: unknown): ChannelHostMethod
+export function validateChannelBackendEvent(value: unknown): ChannelBackendEvent
+export function getChannelHostMethodPermission(method: ChannelHostMethod): ChannelPermission
+export function getChannelBackendEventPermission(name: ChannelBackendEvent): ChannelPermission
+export function validateChannelProtocol(value: unknown): 'moss.channel/v1'
+export function validateChannelData(value: unknown, label?: string): Record<string, unknown>
+export function validateChannelHostInput(method: ChannelHostMethod, value: unknown): Record<string, unknown>
+export function validateChannelBackendEventData(name: ChannelBackendEvent, value: unknown): Record<string, unknown>
+export function requireChannelPermission(permissions: string[], requiredPermission: ChannelPermission): true
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
 export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>

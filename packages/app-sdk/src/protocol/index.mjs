@@ -8,6 +8,9 @@ export const HOST_MESSAGE_TYPES = Object.freeze([
   'service.init',
   'action.invoke',
   'action.cancel',
+  'channel.response',
+  'channel.event',
+  'channel.event.cancel',
   'service.ping',
   'service.shutdown',
 ])
@@ -18,6 +21,9 @@ export const BACKEND_MESSAGE_TYPES = Object.freeze([
   'service.status',
   'action.result',
   'action.error',
+  'channel.request',
+  'channel.cancel',
+  'channel.event.response',
   'event.emit',
   'service.pong',
   'log.write',
@@ -40,6 +46,10 @@ export const APP_ERROR_CODES = Object.freeze({
   staleGeneration: 'APP_STALE_GENERATION',
   crashLoop: 'APP_CRASH_LOOP',
   unauthorized: 'APP_UNAUTHORIZED',
+  permissionDenied: 'APP_PERMISSION_DENIED',
+  channelUnavailable: 'APP_CHANNEL_UNAVAILABLE',
+  channelTimeout: 'APP_CHANNEL_TIMEOUT',
+  channelProtocol: 'APP_CHANNEL_PROTOCOL_ERROR',
 })
 
 export class AppServiceError extends Error {

@@ -85,6 +85,8 @@ example-app/
 
 App repo 的运行时代码只依赖 `@moss/app-sdk`，不能导入 `ui/`、`server/`、Session 或 Connector 内部源码。Backend 通过 `defineAppBackend()` 注册 Manifest 已声明的 Action；UI 通过受 App ID 约束的 `window.mossApp.actions` 调用。SDK 的协议、Manifest schema 和测试辅助 API 位于根仓库 `packages/app-sdk`。
 
+需要接入外部 IM 的常驻 App 使用 `moss.channel/v1`。该协议提供 Backend 到 Host 的受权限控制请求，以及 Host 到 Backend 的可确认事件；具体契约见 [Channel Host API](./channel-host-api.md)。
+
 ## Desktop 数据与进程
 
 ```text

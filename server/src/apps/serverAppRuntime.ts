@@ -42,7 +42,11 @@ export class ServerAppRuntime {
     this.sourceDir = sourceDir ? resolve(sourceDir) : null
   }
 
-  static async create(config: ServerConfig, serverInstanceId: string): Promise<ServerAppRuntime> {
+  static async create(
+    config: ServerConfig,
+    serverInstanceId: string,
+    options: { channelHost?: unknown; channelOptions?: Record<string, unknown> } = {},
+  ): Promise<ServerAppRuntime> {
     const state = await new SqliteAppStateStore(config.dbPath).initialize()
     const runtime = await new AppRuntimeHost({
       rootDir: config.rootDir,
@@ -55,6 +59,8 @@ export class ServerAppRuntime {
       nodeExecutable: process.env.MOSS_NODE_PATH || process.execPath,
       stateStore: state,
       credentialAdapter: new ServerAppCredentialAdapter(config.rootDir),
+      channelHost: options.channelHost,
+      channelOptions: options.channelOptions,
     }).initialize()
     return new ServerAppRuntime(runtime, state, config.appSourceDir)
   }

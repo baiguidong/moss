@@ -50,6 +50,44 @@ describe('App manifest V2', () => {
     expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
   })
 
+  it('requires persistent Backends and explicit permissions for the Channel protocol', () => {
+    const backend = {
+      entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+      lifecycle: 'persistent', instanceMode: 'multiple', targets: ['desktop'],
+      protocols: ['moss.channel/v1'], actions: [],
+    }
+    expect(validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend,
+      permissions: ['channel:messages'],
+    }).backend?.protocols).toEqual(['moss.channel/v1'])
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: { ...backend, lifecycle: 'on-demand' },
+      permissions: ['channel:messages'],
+    })).toThrow(/persistent Backend/)
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend,
+      permissions: [],
+    })).toThrow(/channel permission/)
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend,
+      permissions: ['channel:not-real'],
+    })).toThrow(/channel permission/)
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: { ...backend, protocols: ['moss.unknown/v1'] },
+      permissions: ['channel:messages'],
+    })).toThrow()
+  })
+
   it('reports Backend initialization failures instead of leaving an unhandled rejection', async () => {
     const received: any[] = []
     let receive: ((message: any) => void) | null = null

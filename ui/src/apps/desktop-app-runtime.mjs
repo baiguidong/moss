@@ -173,6 +173,8 @@ export async function createDesktopAppRuntime(options) {
     hostId: options.hostId || 'desktop-local',
     nodeExecutable: options.nodeExecutable,
     credentialAdapter: new DesktopAppCredentialAdapter(options.mossHome),
+    channelHost: options.channelHost,
+    channelOptions: options.channelOptions,
   })
   runtime.events.on('event', (event) => options.onEvent?.(event))
   await runtime.initialize()
