@@ -1,3 +1,5 @@
+import { fetchDirectConnect } from './directConnectFetch.js'
+
 export async function resolveDirectConnectAccessToken(options: {
   authToken?: string
   serverUrl?: string
@@ -29,7 +31,7 @@ export async function resolveDirectConnectAccessToken(options: {
     return undefined
   }
 
-  const response = await fetch(
+  const response = await fetchDirectConnect(
     `${serverUrl.replace(/\/+$/, '')}/api/v1/auth/token`,
     {
       method: 'POST',

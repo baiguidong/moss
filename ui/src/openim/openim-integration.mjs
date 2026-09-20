@@ -54,6 +54,7 @@ export function createOpenIMIntegration({
   allowMediaRoot,
   resolveMossServerConnection,
   log,
+  fetchImpl = fetch,
 }) {
   const dataDir = path.join(mossHome, 'openim', 'sdk');
   const logFilePath = path.join(mossHome, 'openim', 'logs');
@@ -67,7 +68,7 @@ export function createOpenIMIntegration({
 
   async function requestMossServer(pathname, { method = 'GET', body } = {}) {
     const connection = await resolveMossServerConnection();
-    const response = await fetch(`${connection.serverUrl}${pathname}`, {
+    const response = await fetchImpl(`${connection.serverUrl}${pathname}`, {
       method,
       signal: AbortSignal.timeout(20_000),
       headers: {
@@ -239,7 +240,7 @@ export function createOpenIMIntegration({
     if (!/^https?:\/\//i.test(url)) throw new Error('下载地址无效');
     const selected = await dialog.showSaveDialog({ defaultPath: fileName });
     if (selected.canceled || !selected.filePath) return { canceled: true };
-    const response = await fetch(url);
+    const response = await fetchImpl(url);
     if (!response.ok) throw new Error(`下载失败 (${response.status})`);
     fs.writeFileSync(selected.filePath, Buffer.from(await response.arrayBuffer()));
     return { canceled: false, filePath: selected.filePath };

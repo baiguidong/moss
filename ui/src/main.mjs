@@ -1,5 +1,5 @@
 import electron from 'electron';
-const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -253,6 +253,7 @@ import {
   createRemoteDirectClient,
   downloadRemoteDirectWorkspaceFile,
   parseRemoteDirectServerInput,
+  setRemoteDirectFetchImplementation,
 } from './remote-direct-client.mjs';
 import {
   applyRemoteSessionTitle,
@@ -260,6 +261,7 @@ import {
 } from './remote-session-reconcile.mjs';
 import { performRemoteDirectOAuth } from './remote-direct-oauth.mjs';
 import { openRemoteDirectAuthorizationWindow } from './remote-direct-auth-window.mjs';
+import { createRemoteDirectTrustStore } from './remote-direct-tls.mjs';
 import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
 import {
   deleteAgentMail,
@@ -330,6 +332,14 @@ const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const REMOTE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), `moss-remote-preview-${process.pid}`);
 const WORKSPACE_WATCH_DIRECTORY_LIMIT = 512;
 const MOSS_HOME = path.join(os.homedir(), '.moss');
+const REMOTE_DIRECT_TRUST_DIR = path.join(MOSS_HOME, 'certificates', 'remote-direct');
+const remoteDirectTrustStore = createRemoteDirectTrustStore({
+  trustDir: REMOTE_DIRECT_TRUST_DIR,
+});
+const remoteDirectCertificateVerifyProc = (request, callback) => {
+  remoteDirectTrustStore.verifyCertificate(request, callback);
+};
+const remoteDirectNetFetch = (input, init) => net.fetch(input, init);
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
@@ -719,6 +729,7 @@ const openIMIntegration = createOpenIMIntegration({
   allowMediaRoot,
   resolveMossServerConnection: () => resolveRemoteDirectConnection(),
   log: mossLog,
+  fetchImpl: remoteDirectNetFetch,
 });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
@@ -1151,6 +1162,7 @@ try {
     error: error instanceof Error ? error.message : String(error),
   });
 }
+
 const {
   fetchRemoteDirectSessionContext,
   fetchRemoteDirectSessionInfo,
@@ -4366,6 +4378,7 @@ async function getClaudeRuntimeModule() {
           mod.getAuthDebugSnapshot();
         }
       } catch {}
+      mod.setDirectConnectFetchImplementation?.(remoteDirectNetFetch);
       return mod;
     })
     .catch((error) => {
@@ -4374,6 +4387,24 @@ async function getClaudeRuntimeModule() {
     });
 
   return claudeRuntimeModulePromise;
+}
+
+async function reloadRemoteDirectRuntimeTlsTrust() {
+  if (!claudeRuntimeModulePromise) return;
+  const runtime = await claudeRuntimeModulePromise;
+  runtime.reloadRemoteTlsTrust?.();
+}
+
+async function initializeRemoteDirectTlsTrust() {
+  try {
+    await remoteDirectTrustStore.load();
+  } catch (error) {
+    mossLog('warn', 'remote-auth', 'Failed to load the Moss Server certificate trust store', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  session.defaultSession.setCertificateVerifyProc(remoteDirectCertificateVerifyProc);
+  setRemoteDirectFetchImplementation(remoteDirectNetFetch);
 }
 
 async function getClaudeSessionCtor() {
@@ -8712,6 +8743,7 @@ async function resolveAgentMailConnection() {
   }
   return {
     ...connection,
+    fetchImpl: remoteDirectNetFetch,
     mailboxKey,
     mailboxLabel: buildAgentMailMailboxLabel(connection),
   };
@@ -10579,6 +10611,7 @@ async function syncFeishuAdapterRuntime(adapters, { pullRemoteState = false, pre
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  await initializeRemoteDirectTlsTrust();
   void startManagedRuntimeInstall();
 
   const decisionSigningSecret = getOrCreateDecisionSigningSecret();
@@ -11038,23 +11071,32 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   const parsed = parseRemoteDirectServerInput(rawServerUrl);
   const controller = new AbortController();
   mossLog('info', 'remote-auth', 'Moss Server authentication started');
-  const promise = performRemoteDirectOAuth({
-    serverUrl: parsed.serverUrl,
-    openAuthorization: (authorizationUrl, { redirectUri, signal }) => (
-      openRemoteDirectAuthorizationWindow({
-        createWindow: (options) => new BrowserWindow(options),
-        parentWindow: mainWindow,
-        authorizationUrl,
-        redirectUri,
-        signal,
-        onUserClosed: () => {
-          mossLog('info', 'remote-auth', 'Authentication window closed by user');
-          controller.abort(new Error('认证已取消。'));
-        },
-      })
-    ),
-    signal: controller.signal,
-  });
+  const promise = (async () => {
+    const trust = await remoteDirectTrustStore.ensureTrusted(parsed.serverUrl);
+    await reloadRemoteDirectRuntimeTlsTrust();
+    mossLog('info', 'remote-auth', trust.pinned
+      ? 'Moss Server self-signed certificate accepted from the local trust store'
+      : 'Moss Server certificate accepted by the system trust store');
+    return performRemoteDirectOAuth({
+      serverUrl: parsed.serverUrl,
+      fetchImpl: remoteDirectNetFetch,
+      openAuthorization: (authorizationUrl, { redirectUri, signal }) => (
+        openRemoteDirectAuthorizationWindow({
+          createWindow: (options) => new BrowserWindow(options),
+          parentWindow: mainWindow,
+          authorizationUrl,
+          redirectUri,
+          signal,
+          certificateVerifyProc: remoteDirectCertificateVerifyProc,
+          onUserClosed: () => {
+            mossLog('info', 'remote-auth', 'Authentication window closed by user');
+            controller.abort(new Error('认证已取消。'));
+          },
+        })
+      ),
+      signal: controller.signal,
+    });
+  })();
   const authentication = { controller, promise };
   remoteDirectOAuthInFlight = authentication;
   try {

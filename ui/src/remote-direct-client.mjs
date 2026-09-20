@@ -6,6 +6,14 @@ import path from 'node:path';
 
 export const MAX_REMOTE_PREVIEW_DOWNLOAD_BYTES = 250 * 1024 * 1024;
 
+let remoteDirectFetch = (...args) => globalThis.fetch(...args);
+
+export function setRemoteDirectFetchImplementation(fetchImpl) {
+  remoteDirectFetch = typeof fetchImpl === 'function'
+    ? fetchImpl
+    : (...args) => globalThis.fetch(...args);
+}
+
 function objectField(source, key) {
   const value = source?.[key];
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -171,7 +179,7 @@ export async function requestRemoteDirectAuthentication({
 
   let response;
   try {
-    response = await fetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
+    response = await remoteDirectFetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -266,7 +274,7 @@ async function requestRemoteFeishuAdapter(settings, path, { method = 'GET', body
   const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
   let response;
   try {
-    response = await fetch(`${serverUrl}/api/v1/adapters/feishu/${path}`, {
+    response = await remoteDirectFetch(`${serverUrl}/api/v1/adapters/feishu/${path}`, {
       method,
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -303,7 +311,7 @@ async function requestRemoteApps(settings, path = '', { method = 'GET', body } =
   const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
   let response;
   try {
-    response = await fetch(`${serverUrl}/api/v1/apps${path}`, {
+    response = await remoteDirectFetch(`${serverUrl}/api/v1/apps${path}`, {
       method,
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -375,7 +383,7 @@ export async function fetchRemoteAppLogs(settings, appId, instanceId, limit = 50
 export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
   let response;
   try {
-    response = await fetch(`${serverUrl}/api/v1/sessions`, {
+    response = await remoteDirectFetch(`${serverUrl}/api/v1/sessions`, {
       method: 'GET',
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -401,7 +409,7 @@ export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
 export async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessionId }) {
   let response;
   try {
-    response = await fetch(
+    response = await remoteDirectFetch(
       `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
       {
         method: 'GET',
@@ -427,7 +435,7 @@ export async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessi
 export async function fetchRemoteDirectSessionContext({ serverUrl, authToken, sessionId }) {
   let response;
   try {
-    response = await fetch(
+    response = await remoteDirectFetch(
       `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/context`,
       {
         method: 'GET',
@@ -461,7 +469,7 @@ export async function fetchRemoteDirectWorkspaceDir({ serverUrl, authToken, sess
 
   let response;
   try {
-    response = await fetch(endpoint, {
+    response = await remoteDirectFetch(endpoint, {
       method: 'GET',
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -493,7 +501,7 @@ export async function fetchRemoteDirectWorkspaceFile({ serverUrl, authToken, ses
 
   let response;
   try {
-    response = await fetch(endpoint, {
+    response = await remoteDirectFetch(endpoint, {
       method: 'GET',
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -535,7 +543,7 @@ export async function downloadRemoteDirectWorkspaceFile({
 
   let response;
   try {
-    response = await fetch(endpoint, {
+    response = await remoteDirectFetch(endpoint, {
       method: 'GET',
       headers: {
         authorization: `Bearer ${authToken}`,
@@ -589,7 +597,7 @@ export async function downloadRemoteDirectWorkspaceFile({
 export async function resumeRemoteDirectSession({ serverUrl, authToken, sessionId }) {
   let response;
   try {
-    response = await fetch(
+    response = await remoteDirectFetch(
       `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/resume`,
       {
         method: 'POST',
@@ -632,7 +640,7 @@ export async function resumeRemoteDirectSession({ serverUrl, authToken, sessionI
 export async function forkRemoteDirectSession({ serverUrl, authToken, sessionId, title, dangerouslySkipPermissions = false }) {
   let response;
   try {
-    response = await fetch(
+    response = await remoteDirectFetch(
       `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/fork`,
       {
         method: 'POST',

@@ -12,6 +12,7 @@ import {
   type SessionMemorySettings,
 } from '../../packages/direct-connect-protocol/src/index.js'
 import { resolveDirectConnectAccessToken } from './authClient.js'
+import { fetchDirectConnect } from './directConnectFetch.js'
 
 type AttachSessionResponse = z.infer<
   ReturnType<typeof attachSessionResponseSchema>
@@ -128,7 +129,7 @@ export async function createDirectConnectSession({
 
   let resp: Response
   try {
-    resp = await fetch(`${serverUrl}/api/v1/sessions`, {
+    resp = await fetchDirectConnect(`${serverUrl}/api/v1/sessions`, {
       method: 'POST',
       headers,
       body: jsonStringify({
@@ -206,7 +207,7 @@ export async function attachDirectConnectSession({
 
   let resp: Response
   try {
-    resp = await fetch(
+    resp = await fetchDirectConnect(
       `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
       {
         method: 'GET',

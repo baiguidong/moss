@@ -1,16 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createDirectConnectSession } from './createDirectConnectSession.js'
+import { setDirectConnectFetchImplementation } from './directConnectFetch.js'
 
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
+  setDirectConnectFetchImplementation()
   globalThis.fetch = originalFetch
 })
 
 describe('createDirectConnectSession', () => {
   test('lets the server choose cwd and sends runtime settings', async () => {
     let requestBody: Record<string, unknown> | null = null
-    globalThis.fetch = async (_input, init) => {
+    setDirectConnectFetchImplementation(async (_input, init) => {
       requestBody = JSON.parse(String(init?.body || '{}'))
       return new Response(JSON.stringify({
         session_id: 'remote-session',
@@ -20,7 +22,7 @@ describe('createDirectConnectSession', () => {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
-    }
+    })
 
     const created = await createDirectConnectSession({
       serverUrl: 'https://moss.example.com',

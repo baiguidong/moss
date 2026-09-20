@@ -13,11 +13,14 @@ function fakeWindow() {
   const session = new EventEmitter() as EventEmitter & {
     setPermissionRequestHandler: (handler: unknown) => void;
     setPermissionCheckHandler: (handler: unknown) => void;
+    setCertificateVerifyProc: (handler: unknown) => void;
+    certificateVerifyProc?: unknown;
     clearStorageData: () => Promise<void>;
     clearCache: () => Promise<void>;
   };
   session.setPermissionRequestHandler = () => {};
   session.setPermissionCheckHandler = () => {};
+  session.setCertificateVerifyProc = (handler) => { session.certificateVerifyProc = handler; };
   session.clearStorageData = async () => {};
   session.clearCache = async () => {};
 
@@ -85,6 +88,7 @@ describe('remote direct authentication window', () => {
     const window = fakeWindow();
     let options: Record<string, any> | null = null;
     let userClosed = false;
+    const certificateVerifyProc = () => {};
     await openRemoteDirectAuthorizationWindow({
       createWindow: (value: Record<string, any>) => {
         options = value;
@@ -92,6 +96,7 @@ describe('remote direct authentication window', () => {
       },
       authorizationUrl: AUTHORIZATION_URL,
       redirectUri: REDIRECT_URI,
+      certificateVerifyProc,
       onUserClosed: () => { userClosed = true; },
     });
 
@@ -105,6 +110,7 @@ describe('remote direct authentication window', () => {
       webviewTag: false,
     });
     expect(options?.webPreferences.partition).toMatch(/^remote-auth-/);
+    expect(window.webContents.session.certificateVerifyProc).toBe(certificateVerifyProc);
 
     const blocked = { prevented: false, preventDefault() { this.prevented = true; } };
     window.webContents.emit('will-navigate', blocked, 'https://example.com/');
@@ -112,6 +118,7 @@ describe('remote direct authentication window', () => {
 
     window.close();
     expect(userClosed).toBe(true);
+    expect(window.webContents.session.certificateVerifyProc).toBe(null);
   });
 
   it('closes on abort without reporting a user cancellation', async () => {

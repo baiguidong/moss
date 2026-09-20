@@ -35,6 +35,7 @@ export async function openRemoteDirectAuthorizationWindow({
   redirectUri,
   signal,
   onUserClosed,
+  certificateVerifyProc,
 }) {
   if (typeof createWindow !== 'function') {
     throw new Error('Unable to create the Moss authentication window.');
@@ -110,6 +111,9 @@ export async function openRemoteDirectAuthorizationWindow({
     (_webContents, _permission, callbackHandler) => callbackHandler(false),
   );
   authSession.setPermissionCheckHandler(() => false);
+  if (typeof certificateVerifyProc === 'function') {
+    authSession.setCertificateVerifyProc(certificateVerifyProc);
+  }
   authSession.on('will-download', blockDownload);
 
   authWindow.once('ready-to-show', () => {
@@ -121,6 +125,9 @@ export async function openRemoteDirectAuthorizationWindow({
     try {
       authSession.setPermissionRequestHandler(null);
       authSession.setPermissionCheckHandler(null);
+      if (typeof certificateVerifyProc === 'function') {
+        authSession.setCertificateVerifyProc(null);
+      }
     } catch {
       // The isolated session may already be disposed during application shutdown.
     }

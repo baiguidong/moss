@@ -177,6 +177,9 @@ import {
   revokeServerTokens,
 } from './services/mcp/auth.js'
 import { discardSessionMemoryState } from './services/SessionMemory/sessionMemoryUtils.js'
+import { clearCACertsCache } from './utils/caCerts.js'
+import { clearMTLSCache } from './utils/mtls.js'
+import { clearProxyCache } from './utils/proxy.js'
 
 // Bundled skills 必须在模块初始化阶段注册，不能等到 bootstrapHeadless()，
 // 因为 loadAllCommands 是 memoized 的，如果在 initBundledSkills() 执行之前
@@ -191,6 +194,7 @@ export {
   attachDirectConnectSession,
   DirectConnectError,
 } from './remote/createDirectConnectSession.js'
+export { setDirectConnectFetchImplementation } from './remote/directConnectFetch.js'
 export {
   DirectConnectSessionManager,
   type DirectConnectConfig,
@@ -219,6 +223,12 @@ export async function prewarmHeadlessGlobalInit(): Promise<void> {
 
 export function resetEmbeddedSettingsCache(): void {
   resetSettingsCache()
+}
+
+export function reloadRemoteTlsTrust(): void {
+  clearCACertsCache()
+  clearMTLSCache()
+  clearProxyCache()
 }
 
 function assertRemoteMcpConfig(
