@@ -110,6 +110,9 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     enabled: false,
     extensionGuideAcknowledged: false,
   },
+  workflows: {
+    enabled: false,
+  },
   agentMail: {
     enabled: false,
     sessionMode: 'fixed',
@@ -692,6 +695,21 @@ export function normalizeDesktopSettings(input, existing = {}) {
         : existingLibrary.extensionGuideAcknowledged !== undefined
           ? Boolean(existingLibrary.extensionGuideAcknowledged)
           : DEFAULT_DESKTOP_SETTINGS.library.extensionGuideAcknowledged,
+  };
+
+  const sourceWorkflows = source.workflows && typeof source.workflows === 'object'
+    ? source.workflows
+    : {};
+  const existingWorkflows = result.workflows && typeof result.workflows === 'object'
+    ? result.workflows
+    : {};
+  result.workflows = {
+    enabled:
+      sourceWorkflows.enabled !== undefined
+        ? Boolean(sourceWorkflows.enabled)
+        : existingWorkflows.enabled !== undefined
+          ? Boolean(existingWorkflows.enabled)
+          : DEFAULT_DESKTOP_SETTINGS.workflows.enabled,
   };
 
   const sourceAgentMail = source.agentMail && typeof source.agentMail === 'object'

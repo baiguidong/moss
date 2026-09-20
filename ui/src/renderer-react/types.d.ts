@@ -1047,6 +1047,9 @@ export type DesktopSettings = {
     enabled?: boolean;
     extensionGuideAcknowledged?: boolean;
   };
+  workflows?: {
+    enabled?: boolean;
+  };
   agentMail?: {
     enabled?: boolean;
     sessionMode?: 'fixed' | 'new';

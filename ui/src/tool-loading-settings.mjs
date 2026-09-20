@@ -42,6 +42,28 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
       { name: 'image_edit', description: '编辑工作区中的图片', defaultMode: 'deferred' },
     ],
   },
+  {
+    id: 'library',
+    label: '资料库',
+    feature: 'library',
+    tools: [
+      { name: 'library_list', description: '列出资料库集合、来源和资源', defaultMode: 'deferred' },
+      { name: 'library_search', description: '检索资料库中的已索引内容', defaultMode: 'deferred' },
+      { name: 'library_read', description: '读取资料库资源的索引内容', defaultMode: 'deferred' },
+      { name: 'library_write', description: '将工作区文件写入资料库', defaultMode: 'deferred' },
+    ],
+  },
+  {
+    id: 'workflows',
+    label: '工作流',
+    feature: 'workflows',
+    tools: [
+      { name: 'WorkflowRun', description: '运行已保存的结构化工作流', defaultMode: 'deferred' },
+      { name: 'WorkflowCreate', description: '创建结构化工作流草稿', defaultMode: 'deferred' },
+      { name: 'WorkflowEdit', description: '编辑工作流草稿并生成新版本', defaultMode: 'deferred' },
+      { name: 'WorkflowManage', description: '查询、发布和管理工作流', defaultMode: 'deferred' },
+    ],
+  },
 ]);
 
 export const DEFAULT_MOSS_TOOL_LOADING = Object.freeze(Object.fromEntries(

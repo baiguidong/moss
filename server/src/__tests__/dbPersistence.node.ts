@@ -46,6 +46,7 @@ try {
         moss_file_read_max_tokens: 50_000,
         moss_request_attribution_enabled: false,
         moss_context_compaction_strategy: 'reactive',
+        moss_workflows_enabled: false,
       },
       autoMemory: {
         enabled: true,
@@ -86,6 +87,7 @@ try {
       moss_context_compaction_strategy: 'reactive',
       moss_session_debug_logging: false,
       moss_tool_loading: {},
+      moss_workflows_enabled: false,
     })
     assert.deepEqual(session.autoMemory, {
       enabled: true,

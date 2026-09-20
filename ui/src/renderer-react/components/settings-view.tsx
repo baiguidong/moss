@@ -37,7 +37,7 @@ import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpSer
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'tools' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'tools' | 'library' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'tools' | 'library' | 'workflows' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -245,6 +245,11 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         keywords: ['library', '资料库', '知识库', '检索', 'tool', '工具'],
       },
       {
+        id: 'workflows',
+        title: '工作流',
+        keywords: ['workflow', 'workflows', '工作流', '编排', 'tool', '工具'],
+      },
+      {
         id: 'mcp',
         title: 'MCP',
         keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
@@ -382,9 +387,11 @@ function SettingsGroup({ children, className }: SettingsGroupProps) {
 export function ToolLoadingSettingsTable({
   value,
   onChange,
+  featureEnabled = {},
 }: {
   value: Record<string, MossToolLoadingMode>;
   onChange: (name: string, mode: MossToolLoadingMode) => void;
+  featureEnabled?: Partial<Record<'library' | 'workflows', boolean>>;
 }) {
   return (
     <Surface>
@@ -396,12 +403,14 @@ export function ToolLoadingSettingsTable({
             <col />
             <col className="w-[72px]" />
             <col className="w-[72px]" />
+            <col className="w-[72px]" />
           </colgroup>
           <thead>
             <tr className="border-b border-sidebar-border bg-sidebar-accent/45 text-xs font-medium text-muted-foreground">
               <th className="px-4 py-3 font-medium">分组</th>
               <th className="px-4 py-3 font-medium">工具</th>
               <th className="px-4 py-3 font-medium">简短说明</th>
+              <th className="px-2 py-3 text-center font-medium">关闭</th>
               <th className="px-2 py-3 text-center font-medium">常驻</th>
               <th className="px-2 py-3 text-center font-medium">按需</th>
             </tr>
@@ -410,6 +419,9 @@ export function ToolLoadingSettingsTable({
             <tbody key={group.id} className="border-b border-sidebar-border last:border-b-0">
               {group.tools.map((tool, toolIndex) => {
                 const selectedMode = value[tool.name] ?? tool.defaultMode;
+                const closed = group.feature
+                  ? featureEnabled[group.feature] !== true
+                  : false;
                 return (
                   <tr
                     key={tool.name}
@@ -432,14 +444,29 @@ export function ToolLoadingSettingsTable({
                     <td className="px-4 py-3 align-middle text-xs leading-5 text-muted-foreground">
                       {tool.description}
                     </td>
+                    <td className="px-2 py-3 text-center align-middle">
+                      <input
+                        type="radio"
+                        name={`tool-loading-${tool.name}`}
+                        value="disabled"
+                        checked={closed}
+                        disabled
+                        aria-label={`${tool.name} 关闭`}
+                        className="h-4 w-4 accent-muted-foreground"
+                      />
+                    </td>
                     {(['always', 'deferred'] as const).map((mode) => (
                       <td key={mode} className="px-2 py-3 text-center align-middle">
-                        <label className="inline-flex cursor-pointer items-center justify-center">
+                        <label className={cn(
+                          'inline-flex items-center justify-center',
+                          closed ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
+                        )}>
                           <input
                             type="radio"
                             name={`tool-loading-${tool.name}`}
                             value={mode}
-                            checked={selectedMode === mode}
+                            checked={!closed && selectedMode === mode}
+                            disabled={closed}
                             onChange={() => onChange(tool.name, mode)}
                             aria-label={`${tool.name} ${mode === 'always' ? '常驻' : '按需'}`}
                             className="h-4 w-4 accent-primary"
@@ -1270,6 +1297,7 @@ export function SettingsView({
     'web-search': null,
     tools: null,
     library: null,
+    workflows: null,
     mcp: null,
     feishu: null,
     appearance: null,
@@ -2586,6 +2614,10 @@ export function SettingsView({
                     <ToolLoadingSettingsTable
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
+                      featureEnabled={{
+                        library: settingsDraft?.library?.enabled === true,
+                        workflows: settingsDraft?.workflows?.enabled === true,
+                      }}
                     />
                   </section>
                 ) : null}
@@ -2609,6 +2641,32 @@ export function SettingsView({
                             checked={settingsDraft.library?.enabled === true}
                             onCheckedChange={(enabled) => updateSetting('library', { enabled })}
                             label="启用资料库"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'workflows') ? (
+                  <SettingsSection
+                    id="workflows"
+                    title="工作流"
+                    sectionRef={(element) => {
+                      sectionRefs.current.workflows = element;
+                    }}
+                  >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="启用工作流"
+                        description="允许 Agent 创建、管理和运行结构化工作流，并在“更多”中显示工作流入口。关闭后保留已有工作流。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={settingsDraft.workflows?.enabled === true}
+                            onCheckedChange={(enabled) => updateSetting('workflows', { enabled })}
+                            label="启用工作流"
                           />
                         </div>
                       </SettingsRow>

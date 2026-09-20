@@ -112,7 +112,7 @@ export function WorkflowLibraryView({
           <GitFork className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-sm font-semibold text-foreground">Workflows</h1>
+          <h1 className="text-sm font-semibold text-foreground">工作流</h1>
           <p className="text-[11px] text-muted-foreground">已确认发布、可直接使用的流程模板</p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => void refresh()} title="刷新">

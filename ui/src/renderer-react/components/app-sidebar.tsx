@@ -74,20 +74,23 @@ export interface SidebarSession {
 
 export type MainView = "chat" | "projects" | "workflows" | "overview" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "library" | "mail" | "openim" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "overview" | "library" | "workflows" | "mail" | "openim" | "cron" | "audit">;
 
 export function getSidebarMoreViews({
   libraryEnabled,
+  workflowsEnabled,
   remoteEnabled,
   agentMailEnabled,
 }: {
   libraryEnabled: boolean;
+  workflowsEnabled: boolean;
   remoteEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
     ...(libraryEnabled ? ["library" as const] : []),
+    ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
     "openim",
     "audit",
@@ -98,6 +101,7 @@ export function getSidebarMoreViews({
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
   overview: { label: "概览", icon: ChartNoAxesCombined },
   library: { label: "资料库", icon: BookOpen },
+  workflows: { label: "工作流", icon: GitFork },
   mail: { label: "协作邮箱", icon: Mail },
   openim: { label: "即时消息", icon: MessageSquareText },
   audit: { label: "审计中心", icon: ShieldCheck },
@@ -117,6 +121,7 @@ interface AppSidebarProps {
   localEnabled?: boolean;
   remoteEnabled?: boolean;
   libraryEnabled?: boolean;
+  workflowsEnabled?: boolean;
   agentMailEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onChangeView: (view: MainView) => void;
@@ -346,6 +351,7 @@ export function AppSidebar({
   localEnabled = true,
   remoteEnabled = false,
   libraryEnabled = false,
+  workflowsEnabled = false,
   agentMailEnabled = false,
   newSessionMode = 'local',
   onChangeView,
@@ -394,7 +400,7 @@ export function AppSidebar({
     )
   ));
   const projectTrees = groupProjectSessionTrees(displaySessions);
-  const moreViews = getSidebarMoreViews({ libraryEnabled, remoteEnabled, agentMailEnabled });
+  const moreViews = getSidebarMoreViews({ libraryEnabled, workflowsEnabled, remoteEnabled, agentMailEnabled });
   const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
     feishu: Bot,
@@ -493,15 +499,6 @@ export function AppSidebar({
           >
             <FolderKanban className="h-4 w-4" />
             {!collapsed && "项目"}
-          </Button>
-          <Button
-            variant={activeView === "workflows" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("workflows")}
-            title="Workflows"
-          >
-            <GitFork className="h-4 w-4" />
-            {!collapsed && "Workflows"}
           </Button>
           <Button
             variant={activeView === "connectors" || activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}

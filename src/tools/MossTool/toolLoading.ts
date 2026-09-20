@@ -30,6 +30,18 @@ export const MOSS_TOOL_GROUPS = {
     'image_generate',
     'image_edit',
   ],
+  library: [
+    'library_list',
+    'library_search',
+    'library_read',
+    'library_write',
+  ],
+  workflows: [
+    'WorkflowRun',
+    'WorkflowCreate',
+    'WorkflowEdit',
+    'WorkflowManage',
+  ],
 } as const
 
 export const DEFAULT_MOSS_TOOL_LOADING = {
@@ -52,6 +64,14 @@ export const DEFAULT_MOSS_TOOL_LOADING = {
   connector_mcp_authenticate: 'deferred',
   image_generate: 'deferred',
   image_edit: 'deferred',
+  library_list: 'deferred',
+  library_search: 'deferred',
+  library_read: 'deferred',
+  library_write: 'deferred',
+  WorkflowRun: 'deferred',
+  WorkflowCreate: 'deferred',
+  WorkflowEdit: 'deferred',
+  WorkflowManage: 'deferred',
 } as const satisfies Record<string, MossToolLoadingMode>
 
 export type MossToolName = keyof typeof DEFAULT_MOSS_TOOL_LOADING

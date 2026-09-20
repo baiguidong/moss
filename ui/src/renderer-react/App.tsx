@@ -563,6 +563,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const libraryEnabled = desktopSettings?.library?.enabled === true;
+  const workflowsEnabled = desktopSettings?.workflows?.enabled === true;
   const agentMailEnabled =
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
@@ -1058,6 +1059,12 @@ export default function App() {
       setActiveView('chat');
     }
   }, [activeView, libraryEnabled]);
+
+  React.useEffect(() => {
+    if (!workflowsEnabled && activeView === 'workflows') {
+      setActiveView('chat');
+    }
+  }, [activeView, workflowsEnabled]);
 
   React.useEffect(() => {
     if (!appsLoaded) return;
@@ -2570,6 +2577,7 @@ export default function App() {
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
             libraryEnabled={libraryEnabled}
+            workflowsEnabled={workflowsEnabled}
             agentMailEnabled={agentMailEnabled}
             newSessionMode={desktopSettings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local'}
             onChangeView={setActiveView}
@@ -2684,7 +2692,7 @@ export default function App() {
                 turnTokens={turnTokens}
                 agentTeams={agentTeamsBySession[activeSessionId] ?? null}
                 onWorkflowPublished={(workflow) => {
-                  showPermissionNotice(`“${workflow.record.title}”已发布到 Workflows`, 'info', 3500);
+                  showPermissionNotice(`“${workflow.record.title}”已发布到工作流`, 'info', 3500);
                 }}
                 toolPermissionRequest={activeToolPermissionRequest}
                 onSubmitToolPermission={handleSubmitQuestion}
@@ -2745,7 +2753,7 @@ export default function App() {
               onUseScope={handleUseLibraryScope}
               onPrepareDirectoryImport={handlePrepareLibraryDirectoryImport}
             />
-          ) : activeView === 'workflows' ? (
+          ) : activeView === 'workflows' && workflowsEnabled ? (
             <WorkflowLibraryView
               onCreateInChat={handleCreateWorkflowInChat}
               onEditInChat={handleEditWorkflowInChat}

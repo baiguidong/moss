@@ -99,6 +99,16 @@ describe('desktop settings', () => {
     ).library).toEqual({ enabled: true, extensionGuideAcknowledged: true });
   });
 
+  it('keeps Workflow tools opt-in and normalizes the persisted switch', () => {
+    expect(normalizeDesktopSettings({}).workflows).toEqual({ enabled: false });
+    expect(normalizeDesktopSettings({ workflows: { enabled: true } }).workflows)
+      .toEqual({ enabled: true });
+    expect(normalizeDesktopSettings(
+      { model: 'next-model' },
+      { workflows: { enabled: true } },
+    ).workflows).toEqual({ enabled: true });
+  });
+
   it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {
     expect(normalizeDesktopSettings({}).agentMail).toEqual({
       enabled: false,

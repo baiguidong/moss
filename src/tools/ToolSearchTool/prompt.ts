@@ -54,9 +54,10 @@ export function isDeferredTool(tool: Tool): boolean {
   // MCP tools are always deferred (workflow-specific)
   if (tool.isMcp === true) return true
 
-  if (tool.deferLoading === true) return true
+  // Desktop-configurable tools may override their built-in deferred default.
+  if (isMossToolName(tool.name)) return shouldDeferMossTool(tool.name)
 
-  return isMossToolName(tool.name) && shouldDeferMossTool(tool.name)
+  return tool.deferLoading === true
 }
 
 /**

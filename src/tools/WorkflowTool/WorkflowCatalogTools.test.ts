@@ -14,6 +14,7 @@ import { expandMatchesWithConfiguredGroups } from '../ToolSearchTool/ToolSearchT
 import { runWithSessionIdContext } from '../../utils/sessionIdContext.js'
 import { asSessionId } from '../../types/ids.js'
 import type { ToolUseContext } from '../../Tool.js'
+import { MOSS_RUNTIME_ADVANCED_SETTINGS_ENV } from '../../services/advancedSettings.js'
 
 const GENERIC_DEFINITION = {
   version: 3,
@@ -77,11 +78,27 @@ describe('workflow catalog tools', () => {
     expect(serialized).not.toContain('Compact envelope')
   })
 
-  test('loads each Workflow tool on demand without activating the whole family', () => {
+  test('loads Workflow tools as one configurable on-demand group', () => {
     const tools = [WorkflowRunTool, ...WorkflowCatalogTools]
     expect(tools.every(isDeferredTool)).toBe(true)
     expect(expandMatchesWithConfiguredGroups(['WorkflowCreate'], tools))
-      .toEqual(['WorkflowCreate'])
+      .toEqual(['WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage'])
+
+    runWithSessionIdContext(
+      asSessionId('workflow-loading-test'),
+      undefined,
+      () => {
+        expect(tools.every(tool => !isDeferredTool(tool))).toBe(true)
+        expect(tools.every(tool => tool.isEnabled())).toBe(false)
+      },
+      undefined,
+      {
+        [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
+          moss_tool_loading: Object.fromEntries(tools.map(tool => [tool.name, 'always'])),
+          moss_workflows_enabled: false,
+        }),
+      },
+    )
   })
 
   test('associates drafts with the stable owning conversation', () => {

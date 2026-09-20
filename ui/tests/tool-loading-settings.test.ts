@@ -13,7 +13,7 @@ import {
 describe('Moss tool loading settings', () => {
   it('defines every split host tool exactly once', () => {
     const names = MOSS_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => tool.name));
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(27);
     expect(new Set(names).size).toBe(names.length);
     expect(Object.keys(DEFAULT_MOSS_TOOL_LOADING)).toEqual(names);
   });
@@ -39,6 +39,13 @@ describe('Moss tool loading settings', () => {
       'browser_click',
       'browser_type',
     ]);
+    expect(DEFAULT_MOSS_TOOL_LOADING).toMatchObject({
+      library_search: 'deferred',
+      WorkflowRun: 'deferred',
+      WorkflowCreate: 'deferred',
+      WorkflowEdit: 'deferred',
+      WorkflowManage: 'deferred',
+    });
   });
 
   it('uses defaults for missing or invalid entries and ignores unknown tools', () => {

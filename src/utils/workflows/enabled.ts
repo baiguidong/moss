@@ -1,5 +1,6 @@
 import { getGlobalConfig } from '../config.js'
 import { isEnvTruthy } from '../envUtils.js'
+import { getAdvancedSetting } from '../../services/advancedSettings.js'
 import {
   getSettings_DEPRECATED,
   getSettingsForSource,
@@ -44,6 +45,7 @@ export const WORKFLOW_ASSUMED_TOKENS_PER_AGENT = 70_000
  * know it was their organisation, not a toggle they flipped.
  */
 export function getWorkflowsDisabledReason(): WorkflowsDisabledReason | null {
+  if (getAdvancedSetting('moss_workflows_enabled') === false) return 'settings'
   if (
     isEnvTruthy(process.env.MOSS_DISABLE_WORKFLOWS) ||
     isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_WORKFLOWS)

@@ -42,9 +42,9 @@ describe('split Moss host tools', () => {
       'image_generate',
       'image_edit',
     ])
-    expect(Object.values(MOSS_TOOL_GROUPS).flat()).toEqual(
-      MossTools.map(tool => tool.name),
-    )
+    const mossToolNames = new Set(MossTools.map(tool => tool.name))
+    expect(Object.values(MOSS_TOOL_GROUPS).flat().filter(name => mossToolNames.has(name)))
+      .toEqual(MossTools.map(tool => tool.name))
   })
 
   test('uses action-specific schemas with required fields', () => {

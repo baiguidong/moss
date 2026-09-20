@@ -6,12 +6,14 @@ import { AppSidebar, getSidebarMoreViews } from '../src/renderer-react/component
 
 function renderSidebar({
   libraryEnabled = false,
+  workflowsEnabled = false,
   remoteEnabled = false,
   agentMailEnabled = false,
   sessions = [],
   activeView = 'chat',
 }: {
   libraryEnabled?: boolean;
+  workflowsEnabled?: boolean;
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
@@ -29,6 +31,7 @@ function renderSidebar({
       collapsed={false}
       searchQuery=""
       libraryEnabled={libraryEnabled}
+      workflowsEnabled={workflowsEnabled}
       remoteEnabled={remoteEnabled}
       agentMailEnabled={agentMailEnabled}
       onChangeView={() => {}}
@@ -47,25 +50,34 @@ function renderSidebar({
 
 describe('app sidebar more menu', () => {
   test('keeps secondary destinations behind one compact trigger', () => {
-    const html = renderSidebar({ libraryEnabled: true, remoteEnabled: true, agentMailEnabled: true });
+    const html = renderSidebar({ libraryEnabled: true, workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true });
     expect(html).toContain('title="更多"');
     expect(html).not.toContain('title="资料库"');
     expect(html).not.toContain('title="协作邮箱"');
     expect(html).not.toContain('title="即时消息"');
     expect(html).not.toContain('title="审计中心"');
     expect(html).not.toContain('title="定时任务"');
+    expect(html).not.toContain('title="工作流"');
   });
 
   test('builds menu entries from feature availability', () => {
-    expect(getSidebarMoreViews({ libraryEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
+    expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
       .toEqual(['overview', 'openim', 'audit', 'cron']);
-    expect(getSidebarMoreViews({ libraryEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['overview', 'library', 'mail', 'openim', 'audit', 'cron']);
+    expect(getSidebarMoreViews({ libraryEnabled: true, workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
+      .toEqual(['overview', 'library', 'workflows', 'mail', 'openim', 'audit', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {
-    expect(getSidebarMoreViews({ libraryEnabled: false, remoteEnabled: false, agentMailEnabled: true })).not.toContain('mail');
-    expect(getSidebarMoreViews({ libraryEnabled: false, remoteEnabled: true, agentMailEnabled: false })).not.toContain('mail');
+    expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: true })).not.toContain('mail');
+    expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: false, remoteEnabled: true, agentMailEnabled: false })).not.toContain('mail');
+  });
+
+  test('shows the localized workflow destination only when enabled', () => {
+    expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
+      .not.toContain('workflows');
+    expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: true, remoteEnabled: false, agentMailEnabled: false }))
+      .toContain('workflows');
+    expect(renderSidebar({ workflowsEnabled: true })).not.toContain('title="Workflows"');
   });
 
   test('applies the same dependency to collaborative mailbox sessions', () => {
