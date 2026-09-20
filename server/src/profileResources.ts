@@ -223,9 +223,10 @@ async function resolveExistingFileWithin(root: string, relativePath: string): Pr
 export async function listProfileMemory(profileDir: string) {
   const root = await resolveProfileDirectory(profileDir, 'memory', false)
   if (!root) return []
+  const memoryRoot = root
   let indexedPaths = new Set<string>()
   try {
-    const indexPath = await resolveExistingFileWithin(root, 'MEMORY.md')
+    const indexPath = await resolveExistingFileWithin(memoryRoot, 'MEMORY.md')
     const index = await readBoundedMarkdown(indexPath)
     indexedPaths = parseMemoryIndexPaths(index.content)
   } catch {}
@@ -252,7 +253,7 @@ export async function listProfileMemory(profileDir: string) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
       let safeFilePath: string
       try {
-        safeFilePath = await resolveExistingFileWithin(root, relativePath)
+        safeFilePath = await resolveExistingFileWithin(memoryRoot, relativePath)
       } catch {
         continue
       }
@@ -273,7 +274,7 @@ export async function listProfileMemory(profileDir: string) {
       })
     }
   }
-  await walk(root)
+  await walk(memoryRoot)
   return files
 }
 

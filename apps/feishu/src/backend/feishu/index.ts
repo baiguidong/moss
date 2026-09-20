@@ -32,6 +32,7 @@ import { isAllowedUser as isLegacyAllowedUser } from '../common/pairing.js'
 import { optimizeMarkdownForFeishu } from './markdown-style.js'
 import { extractInboundPayload } from './extract-payload.js'
 import { FeishuMediaService } from './media.js'
+import { createFeishuConnectionLifecycle } from './connection-lifecycle.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { ImageBlockWatcher } from '../common/attachment/image-block-watcher.js'
@@ -1364,8 +1365,12 @@ async function handleMessage(data: any): Promise<void> {
           }).catch((error) => {
             console.error('[Feishu] Unable to pair with Moss Desktop:', error)
             return { paired: false }
-          }) as { paired?: boolean; alreadyPaired?: boolean }
-          : { paired: false, alreadyPaired: false }
+          }) as { paired?: boolean; alreadyPaired?: boolean; duplicate?: boolean }
+          : { paired: false, alreadyPaired: false, duplicate: false }
+        if (result.duplicate) {
+          if (result.paired) await sendText(chatId, '已完成配对，可以继续发送消息。')
+          return
+        }
         if (result.paired) {
           appAuthorizedUsers.add(senderOpenId)
           if (!result.alreadyPaired) {
@@ -1652,8 +1657,6 @@ async function start(): Promise<void> {
   console.log(`[Feishu] App ID: ${config.feishu.appId}`)
   console.log('[Feishu] Moss host bridge ready')
 
-  await resolveBotOpenId()
-
   const dispatcher = new Lark.EventDispatcher({
     encryptKey: config.feishu.encryptKey,
     verificationToken: config.feishu.verificationToken,
@@ -1683,21 +1686,23 @@ async function start(): Promise<void> {
     },
   } as any)
 
+  const connection = createFeishuConnectionLifecycle(reportConnection)
   wsClient = new Lark.WSClient({
     appId: config.feishu.appId,
     appSecret: config.feishu.appSecret,
     domain: Lark.Domain.Feishu,
     loggerLevel: Lark.LoggerLevel.info,
-    onReady: () => { void reportConnection(true) },
-    onError: (error) => { void reportConnection(false, error) },
-    onReconnecting: () => { void reportConnection(false, 'Feishu WebSocket reconnecting') },
-    onReconnected: () => { void reportConnection(true) },
+    onReady: connection.onReady,
+    onError: connection.onError,
+    onReconnecting: connection.onReconnecting,
+    onReconnected: connection.onReconnected,
   })
 
   await wsClient.start({ eventDispatcher: dispatcher })
-  await reportConnection(true, undefined, true)
+  await connection.initialReady
   if (desktopBridge instanceof AppChannelBridge) desktopBridge.ready()
   console.log('[Feishu] Bot is running! (WebSocket connected)')
+  void resolveBotOpenId()
 }
 
 start().catch((err) => {

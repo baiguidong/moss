@@ -2,12 +2,17 @@ import { describe, expect, it } from 'bun:test'
 import {
   FEISHU_APP_ID,
   FEISHU_APP_INSTANCE_ID,
+  claimFeishuPairingEvent,
   configureFeishuAppFromLegacy,
   createFeishuChannelHandlers,
+  getFeishuAppProcessStatus,
   hasFeishuAppMigrationMarker,
+  isFeishuAppReady,
   isFeishuLegacyFallbackEnabled,
   mapChannelRequestToLegacy,
   mapLegacyFeishuEventToChannel,
+  persistFeishuAppAuthorization,
+  resolveFeishuChannelIdentity,
   splitLegacyFeishuAppConfiguration,
   withFeishuAppMigrationMarker,
 } from '../src/feishu-app-runtime.mjs'
@@ -42,6 +47,69 @@ describe('Feishu App runtime integration', () => {
       },
       secrets: { appSecret: 'secret', encryptKey: 'encrypt', verificationToken: 'verify' },
     })
+  })
+
+  it('authorizes identities directly from App instance configuration', () => {
+    expect(resolveFeishuChannelIdentity({
+      appId: 'cli_app',
+      allowedUsers: ['ou_allowed'],
+      pairedUsers: [{ userId: 'ou_paired', displayName: 'User', pairedAt: 1 }],
+    }, 'ou_paired')).toEqual({
+      adapterInstanceId: 'feishu:cli_app',
+      tenantKey: 'cli_app',
+    })
+    expect(resolveFeishuChannelIdentity({ appId: 'cli_app', allowedUsers: ['ou_allowed'] }, 'ou_allowed'))
+      .toEqual({ adapterInstanceId: 'feishu:cli_app', tenantKey: 'cli_app' })
+    expect(() => resolveFeishuChannelIdentity({ appId: 'cli_app' }, 'ou_other'))
+      .toThrow('not paired')
+  })
+
+  it('recovers claimed pairing events while keeping terminal retries idempotent', () => {
+    const events = new Map<string, any>()
+    const store = {
+      getEvent: (adapterInstanceId: string, eventId: string) => (
+        events.get(`${adapterInstanceId}:${eventId}`) || null
+      ),
+      claimEvent: (input: any) => {
+        const key = `${input.adapterInstanceId}:${input.eventId}`
+        if (events.has(key)) return { claimed: false, event: events.get(key) }
+        const event = { ...input, status: 'received' }
+        events.set(key, event)
+        return { claimed: true, event }
+      },
+    }
+    const identity = { adapterInstanceId: 'feishu:cli_app', eventId: 'om_pairing' }
+
+    expect(claimFeishuPairingEvent(store, identity)).toMatchObject({
+      proceed: true,
+      existingEvent: { eventType: 'pairing', status: 'received' },
+    })
+    // A persisted `received` row is deliberately resumable after a crash.
+    expect(claimFeishuPairingEvent(store, identity)).toMatchObject({ proceed: true })
+
+    const event = events.get('feishu:cli_app:om_pairing')
+    Object.assign(event, { status: 'completed', conversationId: 'conversation-1' })
+    expect(claimFeishuPairingEvent(store, { ...identity, knownUser: true })).toEqual({
+      proceed: false,
+      result: {
+        paired: true,
+        alreadyPaired: true,
+        duplicate: true,
+        conversationId: 'conversation-1',
+      },
+    })
+
+    events.set('feishu:cli_app:om_message', {
+      eventType: 'message', status: 'completed',
+    })
+    expect(claimFeishuPairingEvent(store, {
+      adapterInstanceId: 'feishu:cli_app', eventId: 'om_message', knownUser: false,
+    })).toEqual({ proceed: false, result: { paired: false, duplicate: true } })
+
+    expect(claimFeishuPairingEvent(store, {
+      adapterInstanceId: 'feishu:cli_app', eventId: 'om_known', knownUser: true,
+    })).toEqual({ proceed: true, existingEvent: null })
+    expect(events.has('feishu:cli_app:om_known')).toBe(false)
   })
 
   it('maps every Channel request to the existing Core controller contract', () => {
@@ -157,5 +225,69 @@ describe('Feishu App runtime integration', () => {
     calls.length = 0
     await configureFeishuAppFromLegacy(runtime, adapters, { enable: true })
     expect(calls).toEqual([])
+  })
+
+  it('refreshes the deployment snapshot after persisting paired users', async () => {
+    const instance: any = {
+      id: FEISHU_APP_INSTANCE_ID,
+      appId: FEISHU_APP_ID,
+      config: { appId: 'cli_app', pairedUsers: [], pairing: {} },
+    }
+    const deployment = { key: 'feishu-local' }
+    const prepared: any[] = []
+    const events: any[] = []
+    const transitions: string[] = []
+    const runtime: any = {
+      instances: {
+        get: () => instance,
+        update: async (_instanceId: string, patch: any) => {
+          instance.config = patch.config
+          return instance
+        },
+      },
+      localDeployment: () => deployment,
+      prepareDeployment: async (value: any) => { prepared.push({ value, config: instance.config }) },
+      publishRuntimeEvent: (event: any) => { events.push(event) },
+      transitionApp: async (appId: string, operation: () => Promise<unknown>) => {
+        transitions.push(appId)
+        return operation()
+      },
+    }
+
+    await expect(persistFeishuAppAuthorization(runtime, {
+      feishu: {
+        appId: 'cli_app',
+        pairedUsers: [{ userId: 'ou_user', displayName: 'User', pairedAt: 10 }],
+      },
+      pairing: { code: null, expiresAt: null, createdAt: null },
+    })).resolves.toBe(true)
+    expect(transitions).toEqual([FEISHU_APP_ID])
+    expect(prepared).toEqual([{ value: deployment, config: instance.config }])
+    expect(instance.config.pairedUsers).toEqual([
+      { userId: 'ou_user', displayName: 'User', pairedAt: 10 },
+    ])
+    expect(events).toEqual([{
+      type: 'instance-changed', appId: FEISHU_APP_ID, instanceId: FEISHU_APP_INSTANCE_ID,
+    }])
+  })
+
+  it('commits migration readiness only after both Backend and transport are ready', () => {
+    const installation = { appId: FEISHU_APP_ID, enabled: true }
+    const instance = { id: FEISHU_APP_INSTANCE_ID, appId: FEISHU_APP_ID, enabled: true }
+    let state = 'starting'
+    const runtime: any = {
+      installations: { get: () => installation },
+      instances: { get: () => instance },
+      localDeployment: () => ({ key: 'feishu-local' }),
+      supervisor: { status: () => ({ state, pid: 42 }) },
+    }
+
+    expect(getFeishuAppProcessStatus(runtime)).toMatchObject({
+      status: 'running', bridgeReady: false, enabled: true,
+    })
+    expect(isFeishuAppReady(runtime, { connected: true })).toBe(false)
+    state = 'running'
+    expect(isFeishuAppReady(runtime, { connected: false })).toBe(false)
+    expect(isFeishuAppReady(runtime, { connected: true })).toBe(true)
   })
 })

@@ -219,6 +219,32 @@ describe('Feishu adapter controller', () => {
     expect(projectPage.sessions.map((session: any) => session.id)).toEqual(['s3']);
   });
 
+  it('passes the authenticated Channel context into identity resolution', async () => {
+    const store = createMemoryStore();
+    const contexts: any[] = [];
+    const controller = createFeishuAdapterController({
+      store,
+      resolveIdentity: (_openId: string, context: any) => {
+        contexts.push(context);
+        return { adapterInstanceId: 'feishu:app-config', tenantKey: 'app-config' };
+      },
+      listWritableSessions: () => [],
+      getWritableSession: () => null,
+      createSession: async () => ({ id: 'session-1', title: '飞书会话', busy: false }),
+      sendPrompt: async () => ({ assistantText: '' }),
+      abortSession: async () => {},
+      sendAdapterEvent: () => true,
+    });
+    const context = { appId: 'moss.feishu', instanceId: 'moss.feishu--default' };
+
+    await controller.handleRequest({
+      type: 'conversation.current',
+      payload: { chatId: 'chat', openId: 'user' },
+    }, context);
+
+    expect(contexts).toEqual([context]);
+  });
+
   it('authorizes decision callbacks only for the delivered Feishu conversation', () => {
     const identity = { adapterInstanceId: 'feishu:app', tenantKey: 'app' };
     const decision = { notificationId: 'notification-1' };

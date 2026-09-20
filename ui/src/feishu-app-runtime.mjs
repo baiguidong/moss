@@ -43,6 +43,68 @@ export function isFeishuLegacyFallbackEnabled(env = process.env) {
   return env.MOSS_FEISHU_LEGACY_ADAPTER === '1';
 }
 
+export function resolveFeishuChannelIdentity(configuration, externalUserId) {
+  const feishu = isRecord(configuration) ? configuration : {};
+  const appId = text(feishu.appId);
+  const userId = text(externalUserId);
+  if (!appId) throw new Error('Feishu Adapter is not configured.');
+  const authorized = normalizePairedUsers(feishu.pairedUsers)
+    .some((entry) => entry.userId === userId)
+    || normalizeStringList(feishu.allowedUsers).includes(userId);
+  if (!userId || !authorized) throw new Error('Feishu user is not paired with this Moss client.');
+  return { adapterInstanceId: `feishu:${appId}`, tenantKey: appId };
+}
+
+export function claimFeishuPairingEvent(store, {
+  adapterInstanceId,
+  eventId,
+  knownUser = false,
+} = {}) {
+  const normalizedAdapterInstanceId = text(adapterInstanceId);
+  const normalizedEventId = text(eventId);
+  const existingEvent = normalizedAdapterInstanceId && normalizedEventId
+    ? store.getEvent(normalizedAdapterInstanceId, normalizedEventId)
+    : null;
+
+  if (existingEvent?.eventType !== undefined && existingEvent.eventType !== 'pairing') {
+    return { proceed: false, result: { paired: false, duplicate: true } };
+  }
+  if (existingEvent && existingEvent.status !== 'received') {
+    return {
+      proceed: false,
+      result: {
+        paired: Boolean(knownUser && existingEvent.status === 'completed'),
+        alreadyPaired: Boolean(knownUser),
+        duplicate: true,
+        conversationId: existingEvent.conversationId || null,
+      },
+    };
+  }
+  // A known user must not claim this event as pairing: the Backend will pass
+  // the same event through as a normal message after refreshing its auth set.
+  if (knownUser) return { proceed: true, existingEvent };
+  if (!normalizedAdapterInstanceId) {
+    return { proceed: false, result: { paired: false } };
+  }
+  if (!normalizedEventId) return { proceed: true, existingEvent: null };
+
+  const claim = existingEvent
+    ? { claimed: false, event: existingEvent }
+    : store.claimEvent({
+        adapterInstanceId: normalizedAdapterInstanceId,
+        eventId: normalizedEventId,
+        conversationId: null,
+        eventType: 'pairing',
+      });
+  if (
+    !claim.claimed
+    && (claim.event?.eventType !== 'pairing' || claim.event?.status !== 'received')
+  ) {
+    return { proceed: false, result: { paired: false, duplicate: true } };
+  }
+  return { proceed: true, existingEvent: claim.event || null };
+}
+
 export function hasFeishuAppMigrationMarker(adapters) {
   return Number(adapters?.feishu?.appMigrationVersion) >= FEISHU_APP_MIGRATION_VERSION;
 }
@@ -246,6 +308,11 @@ export function getFeishuAppProcessStatus(runtime) {
   };
 }
 
+export function isFeishuAppReady(runtime, transportStatus) {
+  const status = getFeishuAppProcessStatus(runtime);
+  return Boolean(status?.enabled && status.bridgeReady && transportStatus?.connected);
+}
+
 export async function configureFeishuAppFromLegacy(runtime, adapters, { enable = false } = {}) {
   if (!runtime) return { available: false, configured: false, changed: false };
   const app = await runtime.getApp(FEISHU_APP_ID).catch(() => null);
@@ -291,21 +358,31 @@ export async function configureFeishuAppFromLegacy(runtime, adapters, { enable =
 }
 
 export async function persistFeishuAppAuthorization(runtime, adapters) {
-  const instance = runtime?.instances?.get(FEISHU_APP_INSTANCE_ID);
-  if (!instance || instance.appId !== FEISHU_APP_ID) return false;
-  const desired = splitLegacyFeishuAppConfiguration(adapters).config;
-  const config = {
-    ...(instance.config || {}),
-    allowedUsers: desired.allowedUsers,
-    pairedUsers: desired.pairedUsers,
-    pairing: desired.pairing,
+  if (!runtime) return false;
+  const persist = async () => {
+    const instance = runtime.instances?.get(FEISHU_APP_INSTANCE_ID);
+    if (!instance || instance.appId !== FEISHU_APP_ID) return false;
+    const desired = splitLegacyFeishuAppConfiguration(adapters).config;
+    const config = {
+      ...(instance.config || {}),
+      allowedUsers: desired.allowedUsers,
+      pairedUsers: desired.pairedUsers,
+      pairing: desired.pairing,
+    };
+    if (sameJson(instance.config || {}, config)) return false;
+    await runtime.instances.update(FEISHU_APP_INSTANCE_ID, { config });
+    const deployment = runtime.localDeployment?.(FEISHU_APP_ID, FEISHU_APP_INSTANCE_ID);
+    if (deployment && typeof runtime.prepareDeployment === 'function') {
+      await runtime.prepareDeployment(deployment);
+    }
+    runtime.publishRuntimeEvent?.({
+      type: 'instance-changed',
+      appId: FEISHU_APP_ID,
+      instanceId: FEISHU_APP_INSTANCE_ID,
+    });
+    return true;
   };
-  if (sameJson(instance.config || {}, config)) return false;
-  await runtime.instances.update(FEISHU_APP_INSTANCE_ID, { config });
-  runtime.publishRuntimeEvent?.({
-    type: 'instance-changed',
-    appId: FEISHU_APP_ID,
-    instanceId: FEISHU_APP_INSTANCE_ID,
-  });
-  return true;
+  return typeof runtime.transitionApp === 'function'
+    ? runtime.transitionApp(FEISHU_APP_ID, persist)
+    : persist();
 }

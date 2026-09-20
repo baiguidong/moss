@@ -35,11 +35,11 @@ export function createFeishuAdapterController({
 }) {
   const drains = new Map();
 
-  function getConversation(payload = {}) {
+  function getConversation(payload = {}, requestContext = null) {
     const chatId = normalizeText(payload.chatId);
     const openId = normalizeText(payload.openId);
     if (!openId) throw new Error('Feishu user identity is incomplete.');
-    const identity = resolveIdentity(openId);
+    const identity = resolveIdentity(openId, requestContext);
     if (!chatId) {
       const conversation = store.listConversations?.()
         .filter((entry) => entry.adapterInstanceId === identity.adapterInstanceId
@@ -121,9 +121,9 @@ export function createFeishuAdapterController({
     return drain;
   }
 
-  async function handleRequest(request) {
+  async function handleRequest(request, requestContext = null) {
     const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    const { adapterInstanceId, conversation } = getConversation(payload);
+    const { adapterInstanceId, conversation } = getConversation(payload, requestContext);
 
     if (request.type === 'conversation.list') {
       const category = ['feishu', 'project'].includes(payload.category) ? payload.category : 'recent';

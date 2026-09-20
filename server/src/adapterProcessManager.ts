@@ -665,18 +665,53 @@ export class AdapterProcessManager {
     return this.handleConversationRequest(hosted, request)
   }
 
-  private handlePairing(hosted: HostedProcess, payload: Record<string, unknown>): { paired: boolean; conversationId?: string } {
+  private handlePairing(hosted: HostedProcess, payload: Record<string, unknown>): {
+    paired: boolean
+    alreadyPaired?: boolean
+    duplicate?: boolean
+    conversationId?: string
+  } {
     const openId = normalizeText(payload.openId)
     const chatId = normalizeText(payload.chatId)
+    const eventId = normalizeText(payload.eventId)
     const code = normalizeText(payload.code)
+    if (!openId || !chatId || !code) return { paired: false }
+
+    const knownUser = this.isAllowed(hosted.config, openId)
+    const existing = eventId ? this.getEvent(hosted, eventId) : null
+    if (existing && existing.status !== 'received') {
+      return {
+        paired: knownUser && existing.status === 'completed',
+        alreadyPaired: knownUser,
+        duplicate: true,
+        ...(knownUser ? { conversationId: `${hosted.config.appId}:${chatId}` } : {}),
+      }
+    }
+    if (knownUser) {
+      this.upsertConversation(hosted, chatId, openId)
+      if (eventId && existing) this.updateEvent(hosted, eventId, 'completed')
+      return {
+        paired: true,
+        alreadyPaired: true,
+        duplicate: Boolean(existing),
+        conversationId: `${hosted.config.appId}:${chatId}`,
+      }
+    }
+
+    if (eventId && !existing) this.saveEvent(hosted, eventId, chatId, '', null, 'received')
     const pairing = hosted.config.pairing
-    if (!openId || !chatId || !code || !pairing?.code || !pairing.expiresAt || pairing.expiresAt <= Date.now()) {
+    if (!pairing?.code || !pairing.expiresAt || pairing.expiresAt <= Date.now()) {
+      if (eventId) this.updateEvent(hosted, eventId, 'failed', '', 'Pairing code is missing or expired.')
       return { paired: false }
     }
     const failureKey = this.pairingFailureKey(hosted, openId)
-    if (this.isPairingRateLimited(failureKey)) return { paired: false }
+    if (this.isPairingRateLimited(failureKey)) {
+      if (eventId) this.updateEvent(hosted, eventId, 'failed', '', 'Pairing rate limit exceeded.')
+      return { paired: false }
+    }
     if (!constantTimeCodeEqual(code, pairing.code)) {
       this.recordPairingFailure(failureKey)
+      if (eventId) this.updateEvent(hosted, eventId, 'failed', '', 'Pairing code is invalid.')
       return { paired: false }
     }
     this.pairingFailures.delete(failureKey)
@@ -697,6 +732,7 @@ export class AdapterProcessManager {
     this.saveDeployment({ ...hosted.auth, config: nextConfig, enabled: true })
     hosted.config = nextConfig
     this.upsertConversation(hosted, chatId, openId)
+    if (eventId) this.updateEvent(hosted, eventId, 'completed')
     return { paired: true, conversationId: `${hosted.config.appId}:${chatId}` }
   }
 

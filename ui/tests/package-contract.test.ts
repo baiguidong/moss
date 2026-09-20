@@ -239,6 +239,7 @@ describe('desktop package contract', () => {
       },
     });
     expect(packageJson.scripts?.build).toBe('node scripts/build.mjs');
+    expect(packageJson.devDependencies?.typescript).toBeTruthy();
     expect(existsSync(path.join(repoRoot, 'apps', 'feishu', 'scripts', 'build.mjs'))).toBe(true);
     expect(desktopBuild).toContain("'apps', 'feishu'");
     expect(desktopBuild).toContain("spawnSync('bun', ['run', 'build']");

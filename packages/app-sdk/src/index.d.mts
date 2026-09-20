@@ -82,7 +82,12 @@ export interface ChannelHostRequestMap {
 
 export interface ChannelHostResultMap {
   'connection.update': Record<string, unknown>
-  'pairing.attempt': { paired: boolean; conversationId?: string }
+  'pairing.attempt': {
+    paired: boolean
+    alreadyPaired?: boolean
+    duplicate?: boolean
+    conversationId?: string | null
+  }
   'conversation.list': { sessions: ChannelSessionSummary[]; currentSession?: ChannelSessionSummary | null; [key: string]: unknown }
   'conversation.current': { session?: ChannelSessionSummary | null; [key: string]: unknown }
   'conversation.create': { session: ChannelSessionSummary; [key: string]: unknown }

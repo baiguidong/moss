@@ -151,6 +151,41 @@ describe('server Feishu adapter manager', () => {
     expect((manager as any).getWritableSession(hosted, 'terminated-session')).toBeNull()
   })
 
+  test('does not replay a completed pairing event as a normal prompt after restart', async () => {
+    const db = createDb()
+    const manager = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
+    ;(manager as any).writeRuntimeConfig = () => {}
+    ;(manager as any).saveDeployment = () => {}
+    const hosted = {
+      config: {
+        appId: 'cli_test', appSecret: 'secret', allowedUsers: [], pairedUsers: [],
+        pairing: { code: 'ABC234', createdAt: Date.now(), expiresAt: Date.now() + 60_000 },
+      },
+      auth: { orgId: 'org-1', userId: 'user-1', role: 'user', scopes: ['sessions:create'] },
+      configDir: '/unused',
+    }
+    const payload = {
+      openId: 'ou_user', chatId: 'chat-1', eventId: 'om_pairing', code: 'ABC234',
+    }
+
+    expect((manager as any).handlePairing(hosted, payload)).toEqual({
+      paired: true,
+      conversationId: 'cli_test:chat-1',
+    })
+
+    const restarted = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
+    const duplicate = (restarted as any).handlePairing(hosted, payload)
+    expect(duplicate).toMatchObject({ paired: true, alreadyPaired: true, duplicate: true })
+    await expect((restarted as any).handleConversationRequest(hosted, {
+      type: 'chat.message.received',
+      payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'om_pairing', text: 'ABC234' },
+    })).resolves.toMatchObject({ duplicate: true, status: 'completed' })
+
+    await manager.dispose()
+    await restarted.dispose()
+    db.close()
+  })
+
   test('preserves the origin of an existing Server session selected from Feishu', async () => {
     const db = createDb()
     const session = {

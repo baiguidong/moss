@@ -55,6 +55,7 @@ Channel App 必须使用 persistent Backend，显式声明协议及实际需要�
 
 外部身份字段统一使用 `externalUserId`、`externalConversationId` 和 `externalEventId`。`message.receive` 和会产生副作用的方法必须携带稳定的 `externalEventId`，由 Host 做持久化幂等。
 `delivery.ack` 可用 `kind: "turn" | "notification"` 区分回合与通知；回合确认还必须携带 `externalConversationId`，防止跨会话确认。
+`pairing.attempt` 的响应除 `paired` 外还可包含 `alreadyPaired` 和 `duplicate`；Backend 遇到 `duplicate` 时不得再把同一条配对消息转交给 Agent。
 
 ```js
 const accepted = await backend.channel.request('message.receive', {
