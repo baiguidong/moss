@@ -136,17 +136,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
 
 
 export function normalizeMossBaseUrl(value) {
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (!trimmed) return '';
-
-  try {
-    const url = new URL(trimmed);
-    // Version segments can be part of a gateway's required base path.
-    const normalizedPath = url.pathname.replace(/\/+$/, '');
-    return `${url.origin}${normalizedPath}${url.search}${url.hash}`;
-  } catch {
-    return trimmed.replace(/\/+$/, '');
-  }
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function objectField(source, key) {
@@ -173,10 +163,6 @@ function ownRawStringField(source, key) {
     typeof source?.[key] === 'string'
     ? source[key]
     : undefined;
-}
-
-function firstNonEmptyString(...values) {
-  return values.find(value => typeof value === 'string' && value.length > 0);
 }
 
 function boundedInt(value, min, max) {
@@ -307,12 +293,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
   }
 
   result.model =
-    firstNonEmptyString(
-      stringField(source, 'model'),
-      stringField(sourceText, 'model'),
-      stringField(result, 'model'),
-      stringField(existingText, 'model'),
-    ) || DEFAULT_DESKTOP_SETTINGS.model;
+    stringField(source, 'model') ??
+    stringField(sourceText, 'model') ??
+    stringField(result, 'model') ??
+    stringField(existingText, 'model') ??
+    DEFAULT_DESKTOP_SETTINGS.model;
 
   result.fastModel =
     ownStringField(source, 'fastModel') ??
@@ -368,23 +353,20 @@ export function normalizeDesktopSettings(input, existing = {}) {
   // Keep the legacy field in sync for older desktop builds and settings files.
   result.bypassPermissions = result.permissionMode === 'bypassPermissions';
 
-  result.url =
-    normalizeMossBaseUrl(
-      firstNonEmptyString(
-        stringField(source, 'url'),
-        stringField(sourceText, 'baseUrl'),
-        stringField(result, 'url'),
-        stringField(existingText, 'baseUrl'),
-      ) || '',
-    ) || DEFAULT_DESKTOP_SETTINGS.url;
+  result.url = normalizeMossBaseUrl(
+    stringField(source, 'url') ??
+    stringField(sourceText, 'baseUrl') ??
+    stringField(result, 'url') ??
+    stringField(existingText, 'baseUrl') ??
+    DEFAULT_DESKTOP_SETTINGS.url,
+  );
 
   result.apiKey =
-    firstNonEmptyString(
-      stringField(source, 'apiKey'),
-      stringField(sourceText, 'apiKey'),
-      stringField(result, 'apiKey'),
-      stringField(existingText, 'apiKey'),
-    ) || DEFAULT_DESKTOP_SETTINGS.apiKey;
+    stringField(source, 'apiKey') ??
+    stringField(sourceText, 'apiKey') ??
+    stringField(result, 'apiKey') ??
+    stringField(existingText, 'apiKey') ??
+    DEFAULT_DESKTOP_SETTINGS.apiKey;
 
   result.webSearch = normalizeWebSearchSettings(
     source.webSearch,

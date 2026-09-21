@@ -182,7 +182,7 @@ describe('desktop settings', () => {
       maxTurns: 42,
       thinkingMode: 'enabled',
       thinkingBudgetTokens: 8192,
-      url: 'https://models.example.com/v1',
+      url: 'https://models.example.com/v1/',
       apiKey: 'secret',
       image: {
         provider: 'provider-a',
@@ -198,12 +198,12 @@ describe('desktop settings', () => {
     expect(settings.remoteDirect).not.toHaveProperty('profileMode');
   });
 
-  it('preserves model base URL paths while removing trailing slashes', () => {
+  it('preserves the complete model base URL while trimming outer whitespace', () => {
     expect(normalizeMossBaseUrl('https://napi.sudorouter.ai/v1')).toBe(
       'https://napi.sudorouter.ai/v1',
     );
-    expect(normalizeMossBaseUrl('https://example.com/gateway/v1/')).toBe(
-      'https://example.com/gateway/v1',
+    expect(normalizeMossBaseUrl('  https://example.com/gateway/v1/  ')).toBe(
+      'https://example.com/gateway/v1/',
     );
     expect(normalizeMossBaseUrl('https://example.com/v10')).toBe('https://example.com/v10');
   });
@@ -389,6 +389,38 @@ describe('desktop settings', () => {
     expect(createDesktopSettingsStore({ settingsPath }).value.url).toBe(
       'https://napi.sudorouter.ai/v1',
     );
+  });
+
+  it('allows text model settings to be explicitly cleared', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-empty-model-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    store.save({
+      ...store.value,
+      model: 'custom-model',
+      url: 'https://model.example.com/v1/',
+      apiKey: 'secret',
+    });
+    store.save({
+      ...store.value,
+      model: '',
+      url: '',
+      apiKey: '',
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(persisted.models.text).toMatchObject({
+      model: '',
+      baseUrl: '',
+      apiKey: '',
+    });
+    expect(createDesktopSettingsStore({ settingsPath }).value).toMatchObject({
+      model: '',
+      url: '',
+      apiKey: '',
+    });
   });
 
   it('persists the fast model with text model settings and allows clearing it', () => {

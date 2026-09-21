@@ -189,12 +189,11 @@ function normalizeSystemSettings(
   const existingTextThinking = recordField(existingText, 'thinking')
 
   result.model =
-    firstNonEmptyString(
-      stringField(source, 'model'),
-      stringField(sourceText, 'model'),
-      stringField(result, 'model'),
-      stringField(existingText, 'model'),
-    ) ?? DEFAULT_SYSTEM_SETTINGS.model
+    stringField(source, 'model') ??
+    stringField(sourceText, 'model') ??
+    stringField(result, 'model') ??
+    stringField(existingText, 'model') ??
+    DEFAULT_SYSTEM_SETTINGS.model
 
   result.fastModel =
     stringField(source, 'fastModel') ??
@@ -231,20 +230,18 @@ function normalizeSystemSettings(
     DEFAULT_SYSTEM_SETTINGS.thinkingBudgetTokens
 
   result.url =
-    firstNonEmptyString(
-      stringField(source, 'url'),
-      stringField(sourceText, 'baseUrl'),
-      stringField(result, 'url'),
-      stringField(existingText, 'baseUrl'),
-    ) ?? DEFAULT_SYSTEM_SETTINGS.url
+    stringField(source, 'url') ??
+    stringField(sourceText, 'baseUrl') ??
+    stringField(result, 'url') ??
+    stringField(existingText, 'baseUrl') ??
+    DEFAULT_SYSTEM_SETTINGS.url
 
   result.apiKey =
-    firstNonEmptyString(
-      stringField(source, 'apiKey'),
-      stringField(sourceText, 'apiKey'),
-      stringField(result, 'apiKey'),
-      stringField(existingText, 'apiKey'),
-    ) ?? DEFAULT_SYSTEM_SETTINGS.apiKey
+    stringField(source, 'apiKey') ??
+    stringField(sourceText, 'apiKey') ??
+    stringField(result, 'apiKey') ??
+    stringField(existingText, 'apiKey') ??
+    DEFAULT_SYSTEM_SETTINGS.apiKey
 
   const sourceImage = isRecord(source.image)
     ? source.image

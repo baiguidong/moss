@@ -179,6 +179,28 @@ describe('system settings model layout', () => {
       await readFile(join(serverHome, 'settings.json'), 'utf8'),
     )
     expect(cleared.models.text.fastModel).toBe('')
+
+    expect(mod.updateSystemSettings({
+      models: {
+        text: {
+          model: '',
+          baseUrl: '',
+          apiKey: '',
+        },
+      },
+    })).toMatchObject({
+      model: '',
+      url: '',
+      apiKey: '',
+    })
+    const clearedTextModel = JSON.parse(
+      await readFile(join(serverHome, 'settings.json'), 'utf8'),
+    )
+    expect(clearedTextModel.models.text).toMatchObject({
+      model: '',
+      baseUrl: '',
+      apiKey: '',
+    })
   })
 })
 

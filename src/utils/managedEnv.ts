@@ -17,15 +17,7 @@ import { getTextModelConfig } from './model/textModelConfig.js'
 function normalizeUrl(value: string | undefined): string | undefined {
   if (!value) return value
   const trimmed = value.trim()
-  if (!trimmed) return undefined
-
-  try {
-    const url = new URL(trimmed)
-    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '')
-    return `${url.origin}${normalizedPath}${url.search}${url.hash}`
-  } catch {
-    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
-  }
+  return trimmed || undefined
 }
 
 function normalizeMossBaseUrl(value: string | undefined): string | undefined {

@@ -76,7 +76,7 @@ describe('applySafeConfigEnvironmentVariables', () => {
     applySafeConfigEnvironmentVariables()
 
     expect(process.env.MOSS_MODEL_BASE_URL).toBe(
-      'https://model.settings.test',
+      'https://model.settings.test/v1/',
     )
     expect(process.env.MOSS_MODEL_AUTH_TOKEN).toBe('settings-token')
   })
