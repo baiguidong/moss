@@ -273,6 +273,7 @@ import {
 import {
   createAgentChannelController,
   resolveAgentChannelConnectorIds,
+  resolveAgentChannelToolSelectors,
   validateAgentChannelConnectorTool,
   validateAgentChannelDelegation,
 } from './agent-channel-controller.mjs';
@@ -3351,16 +3352,6 @@ async function authorizeAgentChannelPolicy(policy) {
   };
 }
 
-function agentChannelToolSelectors(policy) {
-  if (policy?.resources?.tools === null) return null;
-  const selectors = [...(policy?.resources?.tools || [])];
-  if (policy?.agentId) selectors.push('Agent', 'TaskOutput', 'TaskStop');
-  if ((policy?.resources?.skills || []).length > 0) selectors.push('Skill');
-  const connectorServers = Object.keys(getConnectorMcpServers(policy?.resources?.connectors || []));
-  selectors.push(...connectorServers.map((name) => `mcp__${name.replaceAll('-', '_')}__*`));
-  return [...new Set(selectors)];
-}
-
 function matchesAgentChannelTool(toolName, selectors) {
   if (selectors === null || selectors.includes('*')) return true;
   return selectors.some((selector) => (
@@ -3374,8 +3365,8 @@ async function applyAgentChannelSessionPolicy(session, policy) {
     ...policy,
     resources: {
       tools: Object.hasOwn(policy?.resources || {}, 'tools') ? policy.resources.tools : null,
-      skills: Object.hasOwn(policy?.resources || {}, 'skills') ? policy.resources.skills : [],
-      connectors: Object.hasOwn(policy?.resources || {}, 'connectors') ? policy.resources.connectors : [],
+      skills: Object.hasOwn(policy?.resources || {}, 'skills') ? policy.resources.skills : null,
+      connectors: Object.hasOwn(policy?.resources || {}, 'connectors') ? policy.resources.connectors : null,
     },
   };
   const previousFingerprint = session.channelRuntimePolicy
@@ -4108,6 +4099,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean)
     .join('\n\n');
+  const mcpServers = getSessionMcpServers(sessionRecord, connectorRuntimeCredentials);
 
   return {
     cwd,
@@ -4124,13 +4116,13 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     url: desktopSettings.url || undefined,
     apiKey: desktopSettings.apiKey || undefined,
     webSearch: getRuntimeWebSearchSettings(),
-    mcpServers: getSessionMcpServers(sessionRecord, connectorRuntimeCredentials),
+    mcpServers,
     libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     appTools,
     addDirs: getSessionAddDirs(sessionRecord),
     disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
     allowedTools: sessionRecord?.channelRuntimePolicy
-      ? agentChannelToolSelectors(sessionRecord.channelRuntimePolicy)
+      ? resolveAgentChannelToolSelectors(sessionRecord.channelRuntimePolicy, Object.keys(mcpServers))
       : null,
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
@@ -6855,7 +6847,10 @@ function validateSessionToolUse(sessionRecord, toolName, input) {
     if (connectorViolation) {
       return { behavior: 'deny', message: connectorViolation };
     }
-    const selectors = agentChannelToolSelectors(channelPolicy);
+    const selectors = resolveAgentChannelToolSelectors(
+      channelPolicy,
+      Object.keys(getSessionMcpServers(sessionRecord)),
+    );
     if (!matchesAgentChannelTool(toolName, selectors)) {
       return {
         behavior: 'deny',
@@ -11665,13 +11660,17 @@ function getFeishuAdapterStatus() {
     ? desktopAppRuntime?.instances?.get(FEISHU_APP_INSTANCE_ID)?.config || {}
     : {};
   const transportStatus = appStatus ? feishuAppTransportStatus : feishuLegacyTransportStatus;
+  const runtimeStatus = appStatus
+    || feishuAdapterProcessManager?.getStatus()
+    || { status: 'stopped', pid: null, bridgeReady: false };
+  const runtimeEnabled = appStatus ? appStatus.enabled : hasFeishuAdapterCredentials(adapters);
   return {
-    ...(appStatus || feishuAdapterProcessManager?.getStatus() || { status: 'stopped', pid: null, bridgeReady: false }),
-    transportConnected: Boolean(transportStatus.connected),
+    ...runtimeStatus,
+    transportConnected: Boolean(runtimeEnabled && runtimeStatus.bridgeReady && transportStatus.connected),
     transportUpdatedAt: transportStatus.updatedAt,
-    transportError: transportStatus.error,
+    transportError: runtimeEnabled ? transportStatus.error : null,
     location: 'desktop',
-    enabled: appStatus ? appStatus.enabled : hasFeishuAdapterCredentials(adapters),
+    enabled: runtimeEnabled,
     pairedUsers: Array.isArray(appConfig.pairedUsers)
       ? appConfig.pairedUsers
       : Array.isArray(adapters?.feishu?.pairedUsers) ? adapters.feishu.pairedUsers : [],
@@ -11790,6 +11789,10 @@ async function syncFeishuAdapterRuntime(adapters, {
         ...remoteFeishuStatus,
         ...(stopped.status || {}),
         status: 'disabled',
+        bridgeReady: false,
+        transportConnected: false,
+        transportError: null,
+        enabled: false,
         location: 'server',
       };
       return remoteFeishuStatus;

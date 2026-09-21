@@ -256,7 +256,8 @@ export function AppInstanceRow({ app, instance, onChanged }: {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const scopedDeployment = app.deployments?.find((item) => item.deployment.instanceId === instance.id && item.deployment.targetType === target);
-  const state = scopedDeployment?.runtime.state || "stopped";
+  const hostEnabled = target === "server" ? app.serverEnabled : app.enabled;
+  const state = hostEnabled && instance.enabled ? scopedDeployment?.runtime.state || "stopped" : "stopped";
   const runtimeError = scopedDeployment?.runtime.lastError || "";
 
   const run = async (operation: () => Promise<unknown>) => {

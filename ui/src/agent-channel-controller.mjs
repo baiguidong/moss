@@ -14,6 +14,26 @@ function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function sanitizeExternalMessage(input) {
+  const attachments = Array.isArray(input?.attachments)
+    ? input.attachments.slice(0, 32).map((attachment) => ({
+        type: normalizeText(attachment?.type) || 'file',
+        name: normalizeText(attachment?.name).slice(0, 300),
+        mimeType: normalizeText(attachment?.mimeType).slice(0, 200),
+      }))
+    : [];
+  return {
+    externalUserId: normalizeText(input?.externalUserId),
+    externalConversationId: normalizeText(input?.externalConversationId),
+    externalEventId: normalizeText(input?.externalEventId),
+    text: typeof input?.text === 'string' ? input.text : '',
+    attachments,
+    mentioned: input?.mentioned === true,
+    source: ['human', 'agent', 'system'].includes(input?.source) ? input.source : 'human',
+    hop: Number.isInteger(input?.hop) ? input.hop : 0,
+  };
+}
+
 function contextScope(context) {
   const appId = normalizeText(context?.appId);
   const instanceId = normalizeText(context?.instanceId);
@@ -148,6 +168,17 @@ export function resolveAgentChannelConnectorIds(policy, baseConnectorIds) {
   return [...new Set((Array.isArray(source) ? source : [])
     .map((value) => normalizeText(value))
     .filter(Boolean))];
+}
+
+export function resolveAgentChannelToolSelectors(policy, mcpServerNames = []) {
+  if (policy?.resources?.tools === null) return null;
+  const selectors = [...(policy?.resources?.tools || [])];
+  if (policy?.agentId) selectors.push('Agent', 'TaskOutput', 'TaskStop');
+  if (policy?.resources?.skills === null || (policy?.resources?.skills || []).length > 0) {
+    selectors.push('Skill');
+  }
+  selectors.push(...mcpServerNames.map((name) => `mcp__${name.replaceAll('-', '_')}__*`));
+  return [...new Set(selectors)];
 }
 
 export function validateAgentChannelConnectorTool(policy, toolName, input, resolveServerConnectorId = () => '') {
@@ -361,17 +392,13 @@ export function createAgentChannelController({
 
   async function startTurn(input, context, requestProtocol) {
     const scope = contextScope(context);
-    const message = {
-      ...input,
-      externalUserId: normalizeText(input.externalUserId),
-      externalConversationId: normalizeText(input.externalConversationId),
-      externalEventId: normalizeText(input.externalEventId),
-      source: ['human', 'agent', 'system'].includes(input.source) ? input.source : 'human',
-      hop: Number.isInteger(input.hop) ? input.hop : 0,
-    };
+    const message = sanitizeExternalMessage(input);
     const queueKey = `${scope.appId}\u0000${scope.instanceId}\u0000${message.externalConversationId}`;
     return inConversationQueue(queueKey, async () => {
-      const binding = await effectiveBinding(message, context);
+      const binding = await effectiveBinding({
+        externalConversationId: message.externalConversationId,
+        externalMemberId: message.externalUserId,
+      }, context);
       if (binding.agentId && binding.agentAvailable === false) {
         throw new Error(`Configured Agent is unavailable: ${binding.agentId}`);
       }

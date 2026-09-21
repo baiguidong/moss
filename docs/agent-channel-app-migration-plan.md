@@ -158,10 +158,20 @@ Desktop 使用现有 `sessions.db` 新增：
 
 ## 9. 本轮验证记录
 
-- Moss Desktop：`637 pass, 0 fail`。
+- Moss Desktop：`643 pass, 0 fail`。
 - Moss Core：`340 pass, 0 fail`。
 - Moss Server：`64 pass, 0 fail`。
-- `moss-apps`：`301 pass, 0 fail`。
+- `moss-apps`：`304 pass, 0 fail`。
 - `moss.feishu@0.2.0` 已通过 TypeScript 检查、构建、Manifest 校验和本地 ZIP 打包。
 
 本轮没有把 Moss 的预装锁提前指向 `0.2.0`。只有 GitHub Release 实际存在后才能更新锁文件，否则客户端更新时会再次出现 `Marketplace version not found`。
+
+## 10. Review 加固（已完成）
+
+- [x] Account、Agent 与 Channel 请求拒绝未知字段；消息正文、附件数量和附件字段均有明确上限。
+- [x] Turn 只持久化安全消息字段，不保存附件本地路径或原始 data，也不能用额外成员字段冒用其他成员策略。
+- [x] `resources.* = null` 在选择 Agent 后仍保持“不额外限制”的语义；技能和 Connector MCP 工具不会被误关。
+- [x] 飞书设置页按原始 Binding 呈现资源选择，保留暂时不可用的 Agent/资源及混合 `null/array` 配置。
+- [x] 人工接管会即时反馈给飞书用户；待审核通知使用稳定消息 UUID，重放不会重复发消息。
+- [x] 解绑同时移除配对记录和静态白名单；状态页优先展示传输错误并避免旧请求覆盖新状态。
+- [x] Turn 终态内容不可再次修改，仅允许更新投递确认；Agent 文件按 UTF-8 字节限制总大小。

@@ -5,6 +5,7 @@ import {
   MOSS_AGENT_PROTOCOL,
   validateAccountHostInput,
   validateAgentHostInput,
+  validateChannelHostInput,
 } from '../../packages/app-sdk/src/index.mjs'
 import {
   AppHostCapabilityRegistry,
@@ -66,6 +67,43 @@ describe('Account and Agent Host protocols', () => {
     expect(() => validateAgentHostInput('binding.get', {
       appId: 'another.app', externalConversationId: 'chat-1',
     })).toThrow(/cannot override Runtime identity/)
+  })
+
+  it('bounds external message data and rejects fields outside the protocol contract', () => {
+    const identity = {
+      externalUserId: 'user-1',
+      externalConversationId: 'chat-1',
+      externalEventId: 'event-1',
+    }
+    expect(validateChannelHostInput('message.receive', {
+      ...identity,
+      text: 'hello',
+      attachments: [{ type: 'file', name: 'note.txt', mimeType: 'text/plain' }],
+    })).toMatchObject({ text: 'hello' })
+    expect(() => validateChannelHostInput('message.receive', {
+      ...identity,
+      text: 'hello',
+      externalMemberId: 'another-user',
+    })).toThrow(/unknown field: externalMemberId/)
+    expect(() => validateAgentHostInput('turn.start', {
+      ...identity,
+      text: 'hello',
+      externalMemberId: 'another-user',
+    })).toThrow(/unknown field: externalMemberId/)
+    expect(() => validateChannelHostInput('message.receive', {
+      ...identity,
+      text: 'x'.repeat(100_001),
+    })).toThrow(/text is invalid/)
+    expect(() => validateAgentHostInput('turn.start', {
+      ...identity,
+      attachments: Array.from({ length: 33 }, () => ({ type: 'file' })),
+    })).toThrow(/at most 32/)
+    expect(() => validateChannelHostInput('message.receive', {
+      ...identity,
+      attachments: [{ type: 'file', secret: 'value' }],
+    })).toThrow(/unknown field: secret/)
+    expect(() => validateAccountHostInput('identity.current', { debug: true }))
+      .toThrow(/unknown field: debug/)
   })
 
   it('uses manifest permission and installation grant checks for both protocols', async () => {

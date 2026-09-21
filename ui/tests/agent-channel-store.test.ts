@@ -133,6 +133,32 @@ describe('Agent Channel store', () => {
     expect(result).toEqual({ status: 'human', rejected: true })
   })
 
+  it('keeps terminal turn content immutable while allowing delivery acknowledgement', () => {
+    const result = runStoreScenario(`
+      let timestamp = 100;
+      const store = createAgentChannelStore(db, { now: () => ++timestamp });
+      const turn = store.claimTurn({
+        appId: 'moss.openim', instanceId: 'default', externalConversationId: 'chat-1',
+        externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'human_only',
+        policy: {}, input: {},
+      }).turn;
+      store.updateTurn(turn.id, { status: 'human' });
+      const completed = store.updateTurn(turn.id, { status: 'completed', resultText: 'original' });
+      let immutable = false;
+      try {
+        store.updateTurn(turn.id, { status: 'completed', resultText: 'tampered' });
+      } catch (error) {
+        immutable = /already terminal/.test(error.message);
+      }
+      const acknowledged = store.updateTurn(turn.id, { delivered: true });
+      console.log(JSON.stringify({ completed, immutable, acknowledged }));
+    `)
+    expect(result.immutable).toBe(true)
+    expect(result.acknowledged).toMatchObject({
+      status: 'completed', resultText: 'original', deliveredAt: expect.any(Number),
+    })
+  })
+
   it('lists scoped review turns without leaking another App instance', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);

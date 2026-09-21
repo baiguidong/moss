@@ -4,12 +4,12 @@ import { AppInstanceRow } from '../src/renderer-react/components/apps-panel';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
-function renderInstance(hasSettings: boolean) {
+function renderInstance(hasSettings: boolean, enabled = true) {
   const app = {
     id: 'moss.feishu',
     name: 'feishu',
     hasSettings,
-    enabled: true,
+    enabled,
     backend: {
       lifecycle: 'persistent',
       instanceMode: 'single',
@@ -33,7 +33,7 @@ function renderInstance(hasSettings: boolean) {
     id: 'moss.feishu--default',
     displayName: 'Default',
     target: 'desktop',
-    enabled: true,
+    enabled,
     config: { appId: 'cli_example', allowedUsers: [] },
     secretRefs: { appSecret: { configured: true } },
   } as AppInstance;
@@ -69,5 +69,11 @@ describe('Apps management', () => {
 
   test('keeps the instance settings entry for Apps without a settings page', () => {
     expect(renderInstance(false)).toContain('title="配置实例"');
+  });
+
+  test('does not show a stale running state for a disabled host and instance', () => {
+    const markup = renderInstance(true, false);
+    expect(markup).toContain('Desktop · 已停止');
+    expect(markup).not.toContain('Desktop · 运行中');
   });
 });

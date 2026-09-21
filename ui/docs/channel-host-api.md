@@ -57,6 +57,8 @@ Channel App 必须使用 persistent Backend，显式声明协议及实际需要�
 `delivery.ack` 可用 `kind: "turn" | "notification"` 区分回合与通知；回合确认还必须携带 `externalConversationId`，防止跨会话确认。
 `pairing.attempt` 的响应除 `paired` 外还可包含 `alreadyPaired` 和 `duplicate`；Backend 遇到 `duplicate` 时不得再把同一条配对消息转交给 Agent。
 
+Host 会拒绝协议未声明的顶层字段、超过 100,000 字符的正文、超过 32 个附件以及异常附件字段。附件中的 `path` 和 `data` 只属于有界传输输入，不会写入 Agent Channel Turn；当前持久化内容仅保留类型、名称和 MIME 类型。成员策略始终按 `externalUserId` 解析，Backend 不能通过额外字段替换消息发送者。
+
 ```js
 const accepted = await backend.channel.request('message.receive', {
   externalUserId: senderId,

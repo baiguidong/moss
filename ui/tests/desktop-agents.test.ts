@@ -124,6 +124,33 @@ describe('desktop Agents store', () => {
     })).rejects.toThrow(/符号链接/);
   });
 
+  it('enforces UTF-8 file size and bounded model and tool fields', async () => {
+    const fixture = createFixture();
+    await expect(fixture.store.create({
+      workspace: fixture.workspace,
+      scope: 'user',
+      name: 'oversized',
+      description: 'UTF-8 size',
+      prompt: '你'.repeat(400_000),
+    })).rejects.toThrow(/内容过大/);
+    await expect(fixture.store.create({
+      workspace: fixture.workspace,
+      scope: 'user',
+      name: 'bad-model',
+      description: 'Bad model',
+      prompt: 'Prompt',
+      model: 'model\nother',
+    })).rejects.toThrow(/模型名称无效/);
+    await expect(fixture.store.create({
+      workspace: fixture.workspace,
+      scope: 'user',
+      name: 'too-many-tools',
+      description: 'Many tools',
+      prompt: 'Prompt',
+      tools: Array.from({ length: 257 }, (_, index) => `Tool${index}`),
+    })).rejects.toThrow(/最多包含 256 项/);
+  });
+
   it('builds a mandatory explicit Boss dispatch instruction', () => {
     const instruction = buildExplicitAgentDispatchInstruction('code-reviewer');
     expect(instruction).toContain('MUST call the Agent tool');

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
   resolveAgentChannelConnectorIds,
+  resolveAgentChannelToolSelectors,
   toPublicAgentChannelTurn,
   validateAgentChannelConnectorTool,
   validateAgentChannelDelegation,
@@ -53,6 +54,18 @@ describe('Agent Channel controller', () => {
     expect(base).toEqual(['crm', 'mail'])
     expect(resolveAgentChannelConnectorIds({ resources: { connectors: null } }, base))
       .toEqual(['crm', 'mail'])
+  })
+
+  it('keeps unrestricted skills and connectors available when an Agent narrows base tools', () => {
+    expect(resolveAgentChannelToolSelectors({
+      agentId: 'support',
+      resources: { tools: ['Read'], skills: null, connectors: null },
+    }, ['crm-server'])).toEqual([
+      'Read', 'Agent', 'TaskOutput', 'TaskStop', 'Skill', 'mcp__crm_server__*',
+    ])
+    expect(resolveAgentChannelToolSelectors({
+      resources: { tools: null, skills: [], connectors: [] },
+    }, [])).toBeNull()
   })
 
   it('prevents connector setup and authentication outside the binding policy', () => {
@@ -141,6 +154,36 @@ describe('Agent Channel controller', () => {
     expect(result.own.policy.replyMode).toBe('mention_only')
     expect(result.updated.binding).toMatchObject({
       appId: 'moss.openim', instanceId: 'moss.openim--default',
+    })
+  })
+
+  it('derives member policy from the sender and persists only safe message fields', () => {
+    const result = runControllerScenario(`
+      const fixture = setup();
+      fixture.store.updateBinding({
+        ...fixture.context, externalConversationId: 'chat-1', externalMemberId: 'user-1',
+        patch: { replyMode: 'ai_auto', session: { mode: 'fixed' } },
+      });
+      const accepted = await fixture.controller.startTurn({
+        externalUserId: 'user-1', externalMemberId: 'different-user',
+        externalConversationId: 'chat-1', externalEventId: 'event-safe', text: 'hello',
+        unknown: 'discard me',
+        attachments: [{ type: 'file', name: 'a.txt', mimeType: 'text/plain', path: '/private/a.txt', data: 'secret' }],
+      }, fixture.context, 'moss.agent/v1');
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'completed');
+      console.log(JSON.stringify({ accepted, stored: fixture.store.getTurn(accepted.turnId).input.message }));
+      fixture.db.close();
+    `)
+    expect(result.accepted).toMatchObject({ accepted: true, routing: 'ai_auto' })
+    expect(result.stored).toEqual({
+      externalUserId: 'user-1',
+      externalConversationId: 'chat-1',
+      externalEventId: 'event-safe',
+      text: 'hello',
+      attachments: [{ type: 'file', name: 'a.txt', mimeType: 'text/plain' }],
+      mentioned: false,
+      source: 'human',
+      hop: 0,
     })
   })
 

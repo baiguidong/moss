@@ -98,6 +98,19 @@ function normalizeStringList(value) {
   return values.length > 0 ? values : undefined;
 }
 
+function validateDraftStringList(value, field) {
+  const items = normalizeStringList(value);
+  if (!items) return undefined;
+  if (items.length > 256 || items.some((item) => item.length > 256)) {
+    throw new Error(`${field}最多包含 256 项，且每项不能超过 256 个字符。`);
+  }
+  return items;
+}
+
+function assertUtf8Size(value, maximum, message) {
+  if (Buffer.byteLength(value, 'utf8') > maximum) throw new Error(message);
+}
+
 function normalizeDraft(input) {
   const scope = assertScope(input?.scope);
   const name = assertAgentName(input?.name);
@@ -106,15 +119,17 @@ function normalizeDraft(input) {
   if (!description) throw new Error('请填写 Agent 的使用场景。');
   if (!prompt) throw new Error('请填写 Agent 的系统提示。');
   if (description.length > 2_000) throw new Error('使用场景不能超过 2,000 个字符。');
-  if (prompt.length > MAX_AGENT_FILE_BYTES) throw new Error('系统提示内容过大。');
+  assertUtf8Size(prompt, MAX_AGENT_FILE_BYTES, '系统提示内容过大。');
   const model = typeof input?.model === 'string' ? input.model.trim() : '';
+  if (model.length > 256 || /[\r\n]/.test(model)) throw new Error('模型名称无效。');
+  const tools = validateDraftStringList(input?.tools, '工具列表');
   return {
     scope,
     name,
     description,
     prompt,
     ...(model ? { model } : {}),
-    ...(normalizeStringList(input?.tools) ? { tools: normalizeStringList(input.tools) } : {}),
+    ...(tools ? { tools } : {}),
     ...(input?.background === true ? { background: true } : {}),
   };
 }
@@ -180,7 +195,9 @@ export function createDesktopAgentStore({
     const root = getRoot(draft.scope, workspace);
     const target = await resolveAgentFile(root, `${draft.name}.md`, { createRoot: true });
     if (fs.existsSync(target)) throw new Error(`Agent “${draft.name}”已存在。`);
-    await writeTextAtomic(target, serializeAgentDocument(draft));
+    const content = serializeAgentDocument(draft);
+    assertUtf8Size(content, MAX_AGENT_FILE_BYTES, 'Agent 文件过大，无法保存。');
+    await writeTextAtomic(target, content);
     return { scope: draft.scope, fileName: `${draft.name}.md`, path: target };
   };
 
@@ -198,7 +215,9 @@ export function createDesktopAgentStore({
     if (newTarget !== oldTarget && fs.existsSync(newTarget)) {
       throw new Error(`Agent “${draft.name}”已存在。`);
     }
-    await writeTextAtomic(newTarget, serializeAgentDocument(draft, metadata));
+    const content = serializeAgentDocument(draft, metadata);
+    assertUtf8Size(content, MAX_AGENT_FILE_BYTES, 'Agent 文件过大，无法保存。');
+    await writeTextAtomic(newTarget, content);
     if (newTarget !== oldTarget) await fsp.rm(oldTarget, { force: true });
     return { scope: draft.scope, fileName: `${draft.name}.md`, path: newTarget };
   };

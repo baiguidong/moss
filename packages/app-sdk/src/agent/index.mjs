@@ -1,4 +1,5 @@
 import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
+import { validateChannelMessageContent } from '../channel/index.mjs'
 
 export const MOSS_AGENT_PROTOCOL = 'moss.agent/v1'
 
@@ -106,6 +107,13 @@ function validateBindingTarget(input, method) {
   requireText(input, 'externalMemberId', method, { optional: true })
 }
 
+function rejectUnknownFields(input, fields, method) {
+  const allowed = new Set(fields)
+  for (const field of Object.keys(input)) {
+    if (!allowed.has(field)) fail(`${method} contains an unknown field: ${field}`)
+  }
+}
+
 function validateBindingPatch(value) {
   const patch = record(value, 'binding.update patch')
   const allowed = new Set(['replyMode', 'agentId', 'permissionMode', 'resources', 'session', 'proactive'])
@@ -194,16 +202,22 @@ export function validateAgentHostInput(method, value) {
   }
   switch (normalizedMethod) {
     case 'catalog.list':
+      rejectUnknownFields(input, ['kinds'], normalizedMethod)
       if (input.kinds !== undefined) {
         validateStringList(input.kinds, 'catalog.list kinds', { nullable: false, maxItems: AGENT_CATALOG_KINDS.length })
         if (input.kinds.some((kind) => !AGENT_CATALOG_KINDS.includes(kind))) fail('catalog.list contains an unknown kind')
       }
       break
     case 'binding.get':
+      rejectUnknownFields(input, ['externalConversationId', 'externalMemberId'], normalizedMethod)
       validateBindingTarget(input, normalizedMethod)
       break
     case 'binding.update':
+      rejectUnknownFields(input, [
+        'externalConversationId', 'externalMemberId', 'expectedRevision', 'patch',
+      ], normalizedMethod)
       validateBindingTarget(input, normalizedMethod)
+      if (!Object.hasOwn(input, 'patch')) fail('binding.update requires a patch')
       validateBindingPatch(input.patch)
       if (input.expectedRevision !== undefined
         && (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0)) {
@@ -211,13 +225,14 @@ export function validateAgentHostInput(method, value) {
       }
       break
     case 'turn.start':
+      rejectUnknownFields(input, [
+        'externalUserId', 'externalConversationId', 'externalEventId',
+        'text', 'attachments', 'mentioned', 'source', 'hop',
+      ], normalizedMethod)
       requireText(input, 'externalUserId', normalizedMethod)
       requireText(input, 'externalConversationId', normalizedMethod)
       requireText(input, 'externalEventId', normalizedMethod)
-      if ((typeof input.text !== 'string' || !input.text.trim())
-        && (!Array.isArray(input.attachments) || input.attachments.length === 0)) {
-        fail('turn.start requires text or attachments')
-      }
+      validateChannelMessageContent(input, normalizedMethod)
       if (input.mentioned !== undefined && typeof input.mentioned !== 'boolean') {
         fail('turn.start mentioned must be a boolean')
       }
@@ -231,9 +246,11 @@ export function validateAgentHostInput(method, value) {
       break
     case 'turn.get':
     case 'turn.abort':
+      rejectUnknownFields(input, ['turnId'], normalizedMethod)
       requireText(input, 'turnId', normalizedMethod)
       break
     case 'turn.list':
+      rejectUnknownFields(input, ['externalConversationId', 'statuses', 'limit'], normalizedMethod)
       requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
       if (input.statuses !== undefined) {
         validateStringList(input.statuses, 'turn.list statuses', { nullable: false, maxItems: 9 })
@@ -249,6 +266,7 @@ export function validateAgentHostInput(method, value) {
       }
       break
     case 'turn.review':
+      rejectUnknownFields(input, ['turnId', 'action', 'text'], normalizedMethod)
       requireText(input, 'turnId', normalizedMethod)
       if (!['approve', 'reject'].includes(input.action)) {
         fail('turn.review action must be approve or reject')
@@ -258,6 +276,7 @@ export function validateAgentHostInput(method, value) {
       }
       break
     case 'turn.reply':
+      rejectUnknownFields(input, ['turnId', 'action', 'text'], normalizedMethod)
       requireText(input, 'turnId', normalizedMethod)
       if (!['send', 'dismiss'].includes(input.action)) {
         fail('turn.reply action must be send or dismiss')

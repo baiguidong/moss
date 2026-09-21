@@ -665,6 +665,16 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
     updateTurn(turnId, patch) {
       const current = normalizeTurn(selectTurn.get(text(turnId, 'turnId')));
       if (!current) throw new Error('Agent Channel turn not found.');
+      const patchFields = Object.keys(isRecord(patch) ? patch : {});
+      if (TURN_TRANSITIONS[current.status]?.size === 0) {
+        if (patchFields.some((field) => field !== 'delivered')) {
+          throw new AppServiceError(
+            APP_ERROR_CODES.hostProtocol,
+            `Agent Channel turn is already terminal: ${current.status}`,
+          );
+        }
+        if (!patchFields.length) return current;
+      }
       const nextStatus = patch.status || current.status;
       if (nextStatus !== current.status && !TURN_TRANSITIONS[current.status]?.has(nextStatus)) {
         throw new AppServiceError(
