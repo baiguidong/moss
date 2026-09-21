@@ -182,7 +182,7 @@ describe('desktop settings', () => {
       maxTurns: 42,
       thinkingMode: 'enabled',
       thinkingBudgetTokens: 8192,
-      url: 'https://models.example.com',
+      url: 'https://models.example.com/v1',
       apiKey: 'secret',
       image: {
         provider: 'provider-a',
@@ -198,9 +198,12 @@ describe('desktop settings', () => {
     expect(settings.remoteDirect).not.toHaveProperty('profileMode');
   });
 
-  it('removes only a trailing API version from model base URLs', () => {
+  it('preserves model base URL paths while removing trailing slashes', () => {
+    expect(normalizeMossBaseUrl('https://napi.sudorouter.ai/v1')).toBe(
+      'https://napi.sudorouter.ai/v1',
+    );
     expect(normalizeMossBaseUrl('https://example.com/gateway/v1/')).toBe(
-      'https://example.com/gateway',
+      'https://example.com/gateway/v1',
     );
     expect(normalizeMossBaseUrl('https://example.com/v10')).toBe('https://example.com/v10');
   });
@@ -368,6 +371,24 @@ describe('desktop settings', () => {
     expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
     expect(persisted.remoteDirect.userName).toBe('Moss User');
     expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
+  });
+
+  it('persists a text model API URL ending in /v1', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-model-url-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    store.save({
+      ...store.value,
+      url: 'https://napi.sudorouter.ai/v1',
+    });
+
+    const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(persisted.models.text.baseUrl).toBe('https://napi.sudorouter.ai/v1');
+    expect(createDesktopSettingsStore({ settingsPath }).value.url).toBe(
+      'https://napi.sudorouter.ai/v1',
+    );
   });
 
   it('persists the fast model with text model settings and allows clearing it', () => {

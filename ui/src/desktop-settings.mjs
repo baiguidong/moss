@@ -141,10 +141,11 @@ export function normalizeMossBaseUrl(value) {
 
   try {
     const url = new URL(trimmed);
-    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
+    // Version segments can be part of a gateway's required base path.
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
     return `${url.origin}${normalizedPath}${url.search}${url.hash}`;
   } catch {
-    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '');
+    return trimmed.replace(/\/+$/, '');
   }
 }
 

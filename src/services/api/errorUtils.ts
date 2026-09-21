@@ -197,6 +197,14 @@ function extractNestedErrorMessage(error: APIError): string | null {
   return null
 }
 
+function withStatusCode(error: APIError, message: string): string {
+  if (error.status === undefined) return message
+  const status = String(error.status)
+  return message === status || message.startsWith(`${status} `)
+    ? message
+    : `${status} ${message}`
+}
+
 export function formatAPIError(error: APIError): string {
   // Extract connection error details from the cause chain
   const connectionDetails = extractConnectionErrorDetails(error)
@@ -235,11 +243,32 @@ export function formatAPIError(error: APIError): string {
   }
 
   if (error.message === 'Connection error.') {
-    // If we have a code but it's not SSL, include it for debugging
+    // A connection error has no upstream HTTP response. Preserve the deepest
+    // transport message so users see the actual cause instead of only an
+    // opaque Undici/Node error code.
     if (connectionDetails?.code) {
-      return `Unable to connect to API (${connectionDetails.code})`
+      const causeMessage = sanitizeMessageHTML(connectionDetails.message).trim()
+      const detail = causeMessage && causeMessage !== error.message
+        ? causeMessage
+        : 'request failed before receiving a response'
+      const codeSuffix = detail.includes(connectionDetails.code)
+        ? ''
+        : ` (${connectionDetails.code})`
+      const configurationHint = connectionDetails.code === 'UND_ERR_INVALID_ARG'
+        ? ' Check the configured model API URL and proxy settings.'
+        : ''
+      return `No response received from model API. Transport error: ${detail}${codeSuffix}.${configurationHint}`
     }
     return 'Unable to connect to API. Check your internet connection'
+  }
+
+  // SDK errors often wrap the provider response as
+  // `{ error: { message: ... } }`. Prefer that original message over the
+  // SDK's JSON-stringified envelope so endpoint and quota failures remain
+  // understandable.
+  const upstreamMessage = extractNestedErrorMessage(error)
+  if (upstreamMessage) {
+    return withStatusCode(error, upstreamMessage)
   }
 
   // Guard: when deserialized from JSONL (e.g. --resume), the error object may
@@ -255,6 +284,6 @@ export function formatAPIError(error: APIError): string {
   const sanitizedMessage = sanitizeAPIError(error)
   // Use sanitized message if it's different from the original (i.e., HTML was sanitized)
   return sanitizedMessage !== error.message && sanitizedMessage.length > 0
-    ? sanitizedMessage
+    ? withStatusCode(error, sanitizedMessage)
     : error.message
 }

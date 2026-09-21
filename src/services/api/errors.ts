@@ -602,11 +602,13 @@ export function getAssistantMessageFromError(
     error instanceof APIError &&
     (error.status === 401 || error.status === 403)
   ) {
+    const upstreamError = formatAPIError(error)
     return createAssistantAPIErrorMessage({
       error: 'authentication_failed',
       content: getIsNonInteractiveSession()
-        ? `Failed to authenticate. ${API_ERROR_MESSAGE_PREFIX}: ${error.message}`
-        : `Check your configured credentials · ${API_ERROR_MESSAGE_PREFIX}: ${error.message}`,
+        ? `Failed to authenticate. ${API_ERROR_MESSAGE_PREFIX}: ${upstreamError}`
+        : `Check your configured credentials · ${API_ERROR_MESSAGE_PREFIX}: ${upstreamError}`,
+      errorDetails: error.message,
     })
   }
 
@@ -633,11 +635,13 @@ export function getAssistantMessageFromError(
   if (error instanceof APIError && error.status === 404) {
     const switchCmd = getIsNonInteractiveSession() ? '--model' : '/model'
     const fallbackSuggestion = get3PModelFallbackSuggestion(model)
+    const upstreamError = `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)}`
     return createAssistantAPIErrorMessage({
       content: fallbackSuggestion
-        ? `The model ${model} is not available on your ${getAPIProvider()} deployment. Try ${switchCmd} to switch to ${fallbackSuggestion}, or ask your admin to enable this model.`
-        : `There's an issue with the selected model (${model}). It may not exist or you may not have access to it. Run ${switchCmd} to pick a different model.`,
+        ? `${upstreamError}\nThe model ${model} may be unavailable on your ${getAPIProvider()} deployment. Try ${switchCmd} to switch to ${fallbackSuggestion}, or ask your admin to enable this model.`
+        : `${upstreamError}\nCheck the configured API URL and model name. Run ${switchCmd} to pick a different model.`,
       error: 'invalid_request',
+      errorDetails: error.message,
     })
   }
 
@@ -646,6 +650,14 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)}`,
       error: 'unknown',
+    })
+  }
+
+  if (error instanceof APIError) {
+    return createAssistantAPIErrorMessage({
+      content: `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)}`,
+      error: 'unknown',
+      errorDetails: error.message,
     })
   }
 
