@@ -203,6 +203,7 @@ export function listAppVersions(appId) {
         createdAt: Number(report.completedAt || report.publishedAt) || stat.birthtimeMs || stat.ctimeMs,
         reason: String(report.reason || 'published'),
         note: String(report.note || ''),
+        marketplaceSource: report.marketplaceSource || null,
         description: String(manifest.description || ''),
         width: Number(manifest.ui?.window?.width) || 1100,
         height: Number(manifest.ui?.window?.height) || 760,
@@ -256,13 +257,18 @@ function registryEntryFromPublished(published, previous = {}) {
 
 export async function publishAppFromBuild(buildDir, options = {}) {
   const resolvedBuildDir = path.resolve(buildDir)
-  const source = await validateAppPackage(resolvedBuildDir)
-  const store = new AppPackageStore({ appsDir: APPS_DIR })
-  await store.installFromDirectory(source.root)
+  const validationOptions = {
+    trustedPublishers: options.trustedPublishers,
+    requireTrustedPublisher: options.requireTrustedPublisher,
+  }
+  const source = await validateAppPackage(resolvedBuildDir, validationOptions)
+  const store = new AppPackageStore({ appsDir: APPS_DIR, ...validationOptions })
+  await store.installFromDirectory(source.root, validationOptions)
   writeJsonFile(path.join(getAppRoot(source.manifest.id), 'version-metadata', `${source.manifest.version}.json`), {
     reason: options.reason || 'published',
     note: options.note || '',
     publishedAt: now(),
+    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource } : {}),
   })
   writeJsonFile(getAppCurrentPath(source.manifest.id), { version: source.manifest.version, updatedAt: now() })
   const sourceRoot = options.sourceRoot
@@ -271,14 +277,21 @@ export async function publishAppFromBuild(buildDir, options = {}) {
   await fsp.mkdir(path.join(getAppRoot(source.manifest.id), 'sources'), { recursive: true })
   await tarDirectory(sourceRoot, path.join(getAppRoot(source.manifest.id), 'sources', `${source.manifest.version}.tar.gz`))
   const published = getPublishedApp(source.manifest.id)
-  return upsertAppRegistryEntry(registryEntryFromPublished(
+  const registryEntry = registryEntryFromPublished(
     published,
     readAppRegistry().apps.find((item) => item.id === source.manifest.id),
-  ))
+  )
+  return upsertAppRegistryEntry({
+    ...registryEntry,
+    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource } : {}),
+  })
 }
 
 export async function installBuiltInAppFromBuild(buildDir, options = {}) {
-  const source = await validateAppPackage(path.resolve(buildDir))
+  const source = await validateAppPackage(path.resolve(buildDir), {
+    trustedPublishers: options.trustedPublishers,
+    requireTrustedPublisher: options.requireTrustedPublisher,
+  })
   const versions = listAppVersions(source.manifest.id)
   const existing = versions.find((item) => item.version === source.manifest.version)
   if (existing) {

@@ -71,11 +71,11 @@ import {
   APPS_DIR,
   APP_REGISTRY_PATH,
   APP_KINDS,
-  buildAppFromWorkspace,
   deleteApp,
   getPublishedApp,
   installBuiltInAppFromBuild,
   listAppVersions,
+  publishAppFromBuild,
   readAppManifestFromDir,
   rollbackAppToVersion,
 } from './app-platform.mjs';
@@ -88,6 +88,8 @@ import {
 } from './apps/app-ui-protocol.mjs';
 import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
+import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
+import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
 import {
   findAssistantDirByName,
   readAssistantContext,
@@ -389,14 +391,14 @@ const LIBRARY_FEATURE_FLAGS = Object.freeze({
   composerResources: process.env.MOSS_LIBRARY_COMPOSER_RESOURCES !== '0',
   migration: process.env.MOSS_LIBRARY_MIGRATION !== '0',
 });
-const MOSS_BUNDLED_APPS_WORKSPACE_DIR = path.join(MOSS_HOME, 'bundled-apps-workspace');
+const MOSS_BUNDLED_APPS_DIR = path.join(uiRoot, 'dist', 'bundled-apps');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const WEB_SEARCH_CAPABILITIES_PATH = path.join(MOSS_HOME, 'web-search-capabilities.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 const RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb']);
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
-const MOSS_REPO_APPS_DIR = path.join(repoRoot, 'apps');
+const MOSS_REPO_APP_MARKET_DIR = path.join(uiRoot, 'resources', 'app-market');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
@@ -6160,7 +6162,7 @@ function getBootStatus() {
     defaultWorkspaceRoot: MOSS_SESSIONS_DIR,
     appsDir: APPS_DIR,
     appRegistryPath: APP_REGISTRY_PATH,
-    bundledAppsWorkspaceDir: MOSS_BUNDLED_APPS_WORKSPACE_DIR,
+    bundledAppsDir: getBundledResourceDir('apps', MOSS_BUNDLED_APPS_DIR),
     skillsDir: MOSS_SKILLS_DIR,
     assistantsDir: MOSS_ASSISTANTS_DIR,
     appRuntimeReady: Boolean(desktopAppRuntime),
@@ -6879,11 +6881,6 @@ async function emitAppsChanged(payload = {}) {
   broadcast();
 }
 
-function shouldCopyBundledAppPath(sourcePath) {
-  const basename = path.basename(sourcePath);
-  return basename !== 'build' && basename !== 'node_modules' && basename !== '.git';
-}
-
 function shouldCopyBundledManagedPath(sourcePath) {
   const basename = path.basename(sourcePath);
   return basename !== 'node_modules' && basename !== '.git';
@@ -7025,14 +7022,12 @@ async function initializeBundledSkills() {
 }
 
 /**
- * Initialize every bundled app under apps/<app-id>/app.moss.json to ~/.moss/apps.
+ * Initialize every prebuilt App package under apps/<app-id>/app.moss.json to ~/.moss/apps.
  * In packaged mode, reads from process.resourcesPath/apps.
  */
-async function initializeBundledApps() {
-  const srcDir = getBundledResourceDir('apps', MOSS_REPO_APPS_DIR);
+async function initializeBundledApps({ trustedPublishers } = {}) {
+  const srcDir = getBundledResourceDir('apps', MOSS_BUNDLED_APPS_DIR);
   if (!fs.existsSync(srcDir)) return;
-
-  await fsp.mkdir(MOSS_BUNDLED_APPS_WORKSPACE_DIR, { recursive: true });
 
   const entries = fs.readdirSync(srcDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
@@ -7042,21 +7037,10 @@ async function initializeBundledApps() {
     const srcPath = path.join(srcDir, entry.name);
     try {
       const manifest = readAppManifestFromDir(srcPath);
-      const workspaceAppDir = path.join(MOSS_BUNDLED_APPS_WORKSPACE_DIR, 'apps', manifest.id);
-      await fsp.rm(workspaceAppDir, { recursive: true, force: true });
-      await fsp.mkdir(path.dirname(workspaceAppDir), { recursive: true });
-      await fsp.cp(srcPath, workspaceAppDir, {
-        recursive: true,
-        filter: shouldCopyBundledAppPath,
-      });
-
-      const build = await buildAppFromWorkspace(
-        MOSS_BUNDLED_APPS_WORKSPACE_DIR,
-        manifest.id,
-        { runPackageBuild: false },
-      );
-      const installed = await installBuiltInAppFromBuild(build.buildDir, {
+      const installed = await installBuiltInAppFromBuild(srcPath, {
         description: manifest.description,
+        trustedPublishers,
+        requireTrustedPublisher: true,
       });
 
       mossLog('info', 'app', installed.skipped ? 'Bundled app already current' : 'Bundled app installed', {
@@ -11404,8 +11388,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     log: mossLog,
   });
 
-  // Initialize bundled apps from repo apps to ~/.moss/apps
-  await initializeBundledApps();
+  const appMarketResourceDir = getBundledResourceDir('app-market', MOSS_REPO_APP_MARKET_DIR);
+  const { trustedPublishers } = loadAppTrustConfiguration(appMarketResourceDir);
+  const appMarketConfiguration = loadAppMarketConfiguration(appMarketResourceDir);
+
+  // Initialize immutable App packages downloaded from the official release catalog at build time.
+  await initializeBundledApps({ trustedPublishers });
 
   await startManagedRuntimeInstall();
   const managedNode = getManagedRuntimeStatus().node;
@@ -11413,6 +11401,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
+    trustedPublishers,
     channelOptions: {
       handlers: createFeishuChannelHandlers({
         handleRequest: handleFeishuProcessRequest,
@@ -11482,16 +11471,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  const installAppPackage = (packageRoot, options = {}) => publishAppFromBuild(packageRoot, {
+    reason: options.marketplaceSource ? 'marketplace' : 'installed',
+    note: options.marketplaceSource ? 'Moss 应用市场' : 'archive',
+    sourceRoot: packageRoot,
+    ...options,
+  });
   registerAppRuntimeIpc({
     ipcMain,
     dialog,
     getRuntime: () => desktopAppRuntime,
     emitChanged: emitAppsChanged,
-    installArchivePackage: (packageRoot) => publishAppFromBuild(packageRoot, {
-      reason: 'installed',
-      note: 'archive',
-      sourceRoot: packageRoot,
-    }),
+    installArchivePackage: installAppPackage,
     remote: {
       listApps: fetchRemoteApps,
       installApp: (appId, version, grants) => installRemoteApp(appId, version, grants),
@@ -11503,6 +11494,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       restartInstance: restartRemoteAppInstance,
       getLogs: fetchRemoteAppLogs,
     },
+  });
+  registerAppMarketplaceIpc({
+    ipcMain,
+    service: createAppMarketplaceService({
+      indexUrl: appMarketConfiguration.indexUrl,
+      cachePath: path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'),
+      trustedPublishers,
+      getRuntime: () => desktopAppRuntime,
+      getInstalledApps: () => listAllStoredApps(),
+      installPackage: installAppPackage,
+      rollbackPackage: async ({ appId, previousVersion }) => {
+        if (previousVersion) rollbackAppToVersion(appId, previousVersion);
+        else await deleteApp(appId);
+      },
+      emitChanged: emitAppsChanged,
+    }),
   });
 
   // Register app IPC handlers

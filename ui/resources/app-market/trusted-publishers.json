@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "publishers": {
+    "moss": {
+      "name": "Moss",
+      "keys": {
+        "release-1": "publishers/moss/release-1.pem"
+      }
+    }
+  }
+}

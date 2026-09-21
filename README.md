@@ -7,7 +7,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 - [Moss Server API](server/API.md)
 - [Moss Server Docker Compose 部署](deps/server/README.md)
 - [Moss Server 旧版宿主机部署](deploy/README.md)
-- [飞书 App 配置与完整权限清单](apps/feishu/README.md)
+- [飞书 App 配置与完整权限清单](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
 `src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
@@ -83,7 +83,16 @@ Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Se
 - [ ] 手机端“允许一次 / 拒绝”只处理对应会话的对应请求，并同步更新桌面端和飞书卡片。
 - [ ] 重启 Moss 后 Adapter 自动重连，配对关系、当前会话绑定和待推送重试仍然有效。
 
-详细配置步骤、权限用途、降级行为和飞书官方文档链接见[飞书 App README](apps/feishu/README.md)。
+详细配置步骤、权限用途、降级行为和飞书官方文档链接见独立仓库中的[飞书 App README](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)。
+
+## App 市场与预装
+
+官方 App 清单由 `https://baiguidong.github.io/moss-apps/v1/index.json` 提供，App ZIP 由
+`baiguidong/moss-apps` 的 GitHub Releases 托管。桌面端可在“Apps → 应用市场”中查看详情、
+安装、更新或选择历史版本；所有下载都会校验锁定的发布者签名与 SHA-256。
+
+预装 App 由 [`config/bundled-apps.lock.json`](config/bundled-apps.lock.json) 固定版本。
+CI 在打包 Moss 时下载对应 Release ZIP 并验证，不会在主仓库内编译 App 源码，也不会自动追随市场最新版。
 
 ## 快速启动
 
@@ -95,7 +104,6 @@ Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Se
 # 在仓库根目录执行，生成 electron-direct.mjs 和相关依赖
 bun install
 bun install --cwd admin
-bun install --cwd apps/feishu
 bun run build:node
 ```
 

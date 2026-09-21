@@ -1,9 +1,9 @@
-# Bundled Apps
+# Moss Apps
 
-Built-in Moss App source directories live here. The desktop packager copies
-this directory into application resources. Each App owns its source, schemas,
-assets, tests and generated `dist/` output so it can later move to a separate
-repository without depending on Desktop implementation modules.
+App 源码已迁移到独立仓库：<https://github.com/baiguidong/moss-apps>。
 
-Persistent external-message integrations should be packaged as App Backends
-using `moss.channel/v1`; see `ui/docs/channel-host-api.md` for the contract.
+Moss 主仓库只通过 `config/bundled-apps.lock.json` 锁定预装版本；构建时从
+GitHub Releases 下载 ZIP，校验 SHA-256 和发布者签名后再打入安装包。应用市场
+索引由 GitHub Pages 提供，客户端运行时不会从本目录编译 App 源码。
+
+App Backend 的 Host API 契约仍见 `ui/docs/channel-host-api.md`。

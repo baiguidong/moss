@@ -186,6 +186,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   answerQuestion: (payload) => ipcRenderer.invoke('agent:answer-question', payload),
   rejectQuestion: (payload) => ipcRenderer.invoke('agent:reject-question', payload),
   abort: (payload) => ipcRenderer.invoke('agent:abort', payload),
+  appMarketplace: {
+    list: (payload) => ipcRenderer.invoke('app-market:list', payload),
+    getDetails: (payload) => ipcRenderer.invoke('app-market:get-details', payload),
+    install: (payload) => ipcRenderer.invoke('app-market:install', payload),
+  },
   listApps: () => ipcRenderer.invoke('app:list'),
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),
   launchApp: (payload) => ipcRenderer.invoke('app:launch', payload),

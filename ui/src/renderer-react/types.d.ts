@@ -1127,6 +1127,11 @@ export type StoredApp = {
   currentVersionId?: string | null;
   currentVersion?: string | null;
   publishedVersion?: string | null;
+  marketplaceSource?: {
+    catalogUrl: string;
+    appId: string;
+    version: string;
+  };
   hasUi?: boolean;
   hasSettings?: boolean;
   hasBackend?: boolean;
@@ -1205,6 +1210,11 @@ export type AppVersion = {
   createdAt: number;
   reason: string;
   note: string;
+  marketplaceSource?: {
+    catalogUrl: string;
+    appId: string;
+    version: string;
+  } | null;
   description: string;
   width: number;
   height: number;
@@ -1215,6 +1225,69 @@ export type AppVersion = {
   hasUi?: boolean;
   hasBackend?: boolean;
   checksumStatus?: string;
+};
+
+export type AppMarketplaceArtifact = {
+  fileName: string;
+  downloadUrl: string;
+  sha256: string;
+  size: number;
+  signed: boolean;
+  publisherId: string;
+  keyId: string;
+};
+
+export type AppMarketplaceVersion = {
+  version: string;
+  hostApi: string;
+  platforms: string[];
+  permissions: string[];
+  publishedAt: string;
+  releaseNotes: string;
+  artifact: AppMarketplaceArtifact;
+  platformCompatible?: boolean;
+  hostCompatible?: boolean;
+};
+
+export type AppMarketplaceEntry = {
+  id: string;
+  displayName: string;
+  summary: string;
+  description?: string;
+  publisher: { id: string; name: string } | null;
+  categories: string[];
+  keywords?: string[];
+  featured: boolean;
+  iconUrl: string;
+  detailUrl: string;
+  latestVersion: string;
+  latest: AppMarketplaceVersion;
+  installedVersion: string | null;
+  updateAvailable: boolean;
+  platformCompatible: boolean;
+  hostCompatible: boolean;
+};
+
+export type AppMarketplaceDetail = Omit<AppMarketplaceEntry, 'detailUrl' | 'latest' | 'installedVersion' | 'updateAvailable' | 'platformCompatible' | 'hostCompatible'> & {
+  homepage: string;
+  repository: string;
+  license: string;
+  versions: AppMarketplaceVersion[];
+  warning?: string;
+};
+
+export type AppMarketplaceCatalog = {
+  schemaVersion: 1;
+  catalogId: string;
+  displayName: string;
+  generatedAt: string;
+  sourceUrl: string;
+  fetchedAt: number;
+  cached: boolean;
+  warning: string;
+  platform: string;
+  hostApiVersion: string;
+  apps: AppMarketplaceEntry[];
 };
 
 export type FileTreeNode = {
@@ -1974,6 +2047,19 @@ declare global {
         message?: string;
       }) => Promise<{ ok: boolean }>;
       abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      appMarketplace: {
+        list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
+        getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
+        install: (payload: { appId: string; version?: string; acceptPermissions?: boolean }) => Promise<{
+          ok: boolean;
+          alreadyInstalled?: boolean;
+          requiresPermissionApproval?: boolean;
+          permissions?: string[];
+          appId: string;
+          version: string;
+          app?: StoredApp;
+        }>;
+      };
       listApps: () => Promise<StoredApp[]>;
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;

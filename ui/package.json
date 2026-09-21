@@ -119,14 +119,23 @@
         ]
       },
       {
-        "from": "../apps",
+        "from": "dist/bundled-apps",
         "to": "apps",
         "filter": [
           "**/*",
-          "!**/.git/**",
-          "!**/build/**",
-          "!**/node_modules/**"
+          "!**/.prepared.json"
         ]
+      },
+      {
+        "from": "resources/app-market",
+        "to": "app-market",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../config/bundled-apps.lock.json",
+        "to": "app-market/bundled-apps.lock.json"
       },
       {
         "from": "resources/connectors",

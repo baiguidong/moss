@@ -259,7 +259,8 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 
 实现记录（2026-09-20）：
 
-- 可迁移源码集中在 `apps/feishu/`，Manifest ID 固定为 `moss.feishu`，便于后续整目录拆分到独立仓库。
+- 飞书源码已迁移至独立的 [`baiguidong/moss-apps`](https://github.com/baiguidong/moss-apps) 仓库，Manifest ID 固定为 `moss.feishu`。
+- Moss 构建通过 `config/bundled-apps.lock.json` 下载、校验并预装固定版本，不再从主仓库编译飞书源码。
 - 飞书 SDK、长连接、卡片、消息转换、配置 schema、设置页和测试均归 App；Desktop 与旧 Server 回退包从同一入口构建。
 - Desktop 已注册真实 `moss.channel/v1` handlers，并继续持有身份授权、Session/Turn、通知、决策和幂等账本。
 - 旧配置先拆分为普通 config 与加密 secrets，等待 App Backend 建立飞书长连接并完成 Host 握手后才写入迁移标记。

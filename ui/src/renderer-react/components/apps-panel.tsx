@@ -5,13 +5,14 @@ import DOMPurify from "dompurify";
 import {
   Activity, AlertCircle, ArrowLeftRight, ChevronDown, ChevronRight, Download, ExternalLink, History,
   KeyRound, MonitorPlay, PanelLeft, PanelLeftClose, Pencil, Plus, RefreshCw, RotateCcw,
-  ServerOff, Settings2, ShieldCheck, SquareTerminal, Trash2, X,
+  ServerOff, Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { appCanDeployToServer, appCanMoveInstance, availableInstanceTargets, backendForTarget } from "@/lib/app-runtime-targets";
+import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
 function formatTimestamp(timestamp: number) {
@@ -385,6 +386,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = React.useState<string | null>(null);
   const [addingInstance, setAddingInstance] = React.useState<string | null>(null);
+  const [marketOpen, setMarketOpen] = React.useState(false);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
 
@@ -403,11 +405,18 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
     });
   };
 
+  if (marketOpen) {
+    return <AppMarketplacePanel installedApps={apps} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex items-center justify-between border-b border-border px-6 py-4">
         <div><h1 className="text-lg font-semibold">Apps</h1><div className="text-xs text-muted-foreground">{apps.length} 个已安装 App</div></div>
-        <Button size="sm" disabled={busy === "install"} onClick={install}><Download className="h-4 w-4" />安装 App</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />应用市场</Button>
+          <Button size="sm" disabled={busy === "install"} onClick={install}><Download className="h-4 w-4" />本地安装</Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}

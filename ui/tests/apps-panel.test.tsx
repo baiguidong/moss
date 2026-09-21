@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppInstanceRow } from '../src/renderer-react/components/apps-panel';
+import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
 function renderInstance(hasSettings: boolean) {
@@ -43,6 +44,17 @@ function renderInstance(hasSettings: boolean) {
 }
 
 describe('Apps management', () => {
+  test('renders an accessible marketplace loading shell', () => {
+    const markup = renderToStaticMarkup(
+      <AppMarketplacePanel installedApps={[]} onBack={() => {}} onInstalled={async () => {}} />,
+    );
+
+    expect(markup).toContain('应用市场');
+    expect(markup).toContain('placeholder="搜索 App"');
+    expect(markup).toContain('title="返回已安装 App"');
+    expect(markup).toContain('正在加载应用市场');
+  });
+
   test('keeps runtime controls but removes duplicate settings for Apps with their own settings page', () => {
     const markup = renderInstance(true);
 

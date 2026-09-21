@@ -38,7 +38,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
-          bun install --frozen-lockfile --cwd apps/feishu
           bun install --frozen-lockfile --cwd ui
 
       - name: Type checks
@@ -51,7 +50,6 @@ jobs:
         run: |
           bun run test
           bun run --cwd server test
-          bun run --cwd apps/feishu test
           bun run --cwd ui test
 
       - name: Build all Node targets
@@ -78,7 +76,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
-          bun install --frozen-lockfile --cwd apps/feishu
           bun install --frozen-lockfile --cwd ui
 
       - name: Build and verify macOS arm64 installers
@@ -118,7 +115,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
-          bun install --frozen-lockfile --cwd apps/feishu
           bun install --frozen-lockfile --cwd ui
 
       - name: Build and verify Windows x64 installers
@@ -161,7 +157,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
-          bun install --frozen-lockfile --cwd apps/feishu
 
       - name: Validate deployment scripts
         run: |

@@ -172,6 +172,8 @@ export async function createDesktopAppRuntime(options) {
     target: 'desktop',
     hostId: options.hostId || 'desktop-local',
     nodeExecutable: options.nodeExecutable,
+    trustedPublishers: options.trustedPublishers,
+    requireTrustedPublisher: options.requireTrustedPublisher,
     credentialAdapter: new DesktopAppCredentialAdapter(options.mossHome),
     channelHost: options.channelHost,
     channelOptions: options.channelOptions,

@@ -161,7 +161,7 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain('verifyUnsignedPackage(platform, paths, installerFiles)');
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
     expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
-    expect(verifierSource).toContain("path.join(paths.resourcesDir, 'apps', 'README.md')");
+    expect(verifierSource).toContain("path.join(paths.resourcesDir, 'apps', 'moss.feishu', 'app-signature.json')");
     expect(verifierSource).toContain("'connectors', 'cloud-auth-providers.json'");
     expect(verifierSource).toContain("'connectors', 'connector-mcp-overrides.json'");
     expect(verifierSource).toContain("'connectors', 'connector-cli-overrides.json'");
@@ -214,48 +214,35 @@ describe('desktop package contract', () => {
     expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
-  test('installs Feishu App dependencies in every clean CI build that compiles its backend', () => {
+  test('prepares bundled Apps from immutable release artifacts instead of App source', () => {
     const ciSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
-    const serverCiJob = ciSource.split('  build-server-images:')[1] || '';
-    const serverReleaseJob = releaseSource.split('  build-server-linux-amd64:')[1]
-      ?.split('\n  publish-release:')[0] || '';
-    expect(ciSource.match(/bun install --frozen-lockfile --cwd apps\/feishu/g)?.length).toBe(4);
-    expect(serverCiJob).toContain('needs: quality');
-    expect(serverCiJob).toContain('bun install --frozen-lockfile --cwd apps/feishu');
-    expect(serverReleaseJob).toContain('bun install --frozen-lockfile --cwd apps/feishu');
-  });
-
-  test('owns Feishu source under the relocatable App directory', () => {
-    const manifest = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'app.moss.json'), 'utf8'));
-    const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'package.json'), 'utf8'));
-    const settingsUi = readFileSync(path.join(repoRoot, 'apps', 'feishu', 'src', 'index.html'), 'utf8');
-    const appPreload = readFileSync(path.join(uiRoot, 'src', 'apps', 'app-preload.mjs'), 'utf8');
+    const lock = JSON.parse(readFileSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'), 'utf8'));
+    const bundledAppsSource = readFileSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'), 'utf8');
     const desktopBuild = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'), 'utf8');
     const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
-    expect(manifest).toMatchObject({
-      id: 'moss.feishu',
-      backend: {
-        lifecycle: 'persistent',
-        protocols: ['moss.channel/v1'],
-      },
+    const trustedPublishers = JSON.parse(readFileSync(
+      path.join(uiRoot, 'resources', 'app-market', 'trusted-publishers.json'),
+      'utf8',
+    ));
+    expect(lock).toMatchObject({
+      schemaVersion: 1,
+      apps: [{
+        id: 'moss.feishu',
+        version: '0.1.2',
+        url: 'https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.2/moss.feishu-0.1.2.zip',
+        publisherId: 'moss',
+        keyId: 'release-1',
+      }],
     });
-    expect(manifest.version).toBe(packageJson.version);
-    expect(packageJson.scripts?.build).toBe('node scripts/build.mjs');
-    expect(packageJson.devDependencies?.typescript).toBeTruthy();
-    expect(settingsUi).toContain('这里沿用原“设置 → IM 接入 → 飞书”的配置');
-    expect(settingsUi).toContain('im.message.receive_v1');
-    expect(settingsUi).toContain('card.action.trigger');
-    expect(settingsUi).toContain('moss.sessions');
-    expect(settingsUi).toContain('数据存储与安全');
-    expect(settingsUi).toContain('bridge.updateConfig');
-    expect(settingsUi).not.toContain('instances.setEnabled');
-    expect(settingsUi).not.toContain('留空则保持不变');
-    expect(appPreload).toContain("'app-ui:feishu:update-config'");
-    expect(existsSync(path.join(repoRoot, 'apps', 'feishu', 'scripts', 'build.mjs'))).toBe(true);
-    expect(desktopBuild).toContain("'apps', 'feishu'");
-    expect(desktopBuild).toContain("spawnSync('bun', ['run', 'build']");
-    expect(serverBuild).toContain('apps/feishu/src/backend/feishu/index.ts');
+    expect(lock.apps[0].sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(trustedPublishers.publishers.moss.keys['release-1']).toBe('publishers/moss/release-1.pem');
+    expect(existsSync(path.join(uiRoot, 'resources', 'app-market', 'publishers', 'moss', 'release-1.pem'))).toBe(true);
+    expect(bundledAppsSource).toContain('requireTrustedPublisher: true');
+    expect(desktopBuild).toContain('prepareBundledApps');
+    expect(serverBuild).toContain('prepareBundledApps');
+    expect(`${ciSource}\n${releaseSource}`).not.toContain('apps/feishu');
+    expect(existsSync(path.join(repoRoot, 'apps', 'feishu'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'adapters', 'feishu', 'index.ts'))).toBe(false);
   });
 });
