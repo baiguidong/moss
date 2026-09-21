@@ -27,9 +27,19 @@ function nativeLibraryLocation(isPackaged) {
 function errorMessage(error) {
   if (error instanceof Error) return error.message;
   if (error && typeof error === 'object') {
-    return String(error.errDlt || error.errMsg || error.message || JSON.stringify(error));
+    if (error.errDlt || error.errMsg || error.message) {
+      return String(error.errDlt || error.errMsg || error.message);
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {}
+    return 'OpenIM 请求失败';
   }
   return String(error || 'OpenIM 请求失败');
+}
+
+function normalizeError(error) {
+  return error instanceof Error ? error : new Error(errorMessage(error));
 }
 
 const FILE_FILTERS = {
@@ -170,9 +180,6 @@ export function createOpenIMIntegration({
   const logFilePath = path.join(appInstanceDataDir, 'logs');
   const mediaCacheDir = path.join(appInstanceDataDir, 'media');
   const sentMessagesPath = path.join(appInstanceDataDir, 'sent-messages.json');
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.mkdirSync(logFilePath, { recursive: true });
-  fs.mkdirSync(mediaCacheDir, { recursive: true });
 
   let sdkMain = null;
   let sdkError = '';
@@ -185,6 +192,14 @@ export function createOpenIMIntegration({
   const sentMessages = new Map();
   const pendingSends = new Map();
   const approvedLocalFiles = new Set();
+
+  function ensureRuntimeDirectories() {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(logFilePath, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(mediaCacheDir, { recursive: true, mode: 0o700 });
+  }
+
+  ensureRuntimeDirectories();
   try {
     const entries = JSON.parse(fs.readFileSync(sentMessagesPath, 'utf8'));
     if (Array.isArray(entries)) {
@@ -271,9 +286,16 @@ export function createOpenIMIntegration({
 
   function handle(channel, permission, handler) {
     ipcMain.handle(channel, (event, ...args) => {
-      const requiredPermission = typeof permission === 'function' ? permission(...args) : permission;
-      authorizeClient(event, requiredPermission, channel);
-      return handler(event, ...args);
+      try {
+        const requiredPermission = typeof permission === 'function' ? permission(...args) : permission;
+        authorizeClient(event, requiredPermission, channel);
+        const result = handler(event, ...args);
+        return result && typeof result.then === 'function'
+          ? result.catch((error) => { throw normalizeError(error); })
+          : result;
+      } catch (error) {
+        throw normalizeError(error);
+      }
     });
   }
 
@@ -303,6 +325,10 @@ export function createOpenIMIntegration({
     if (sessionPromise) return sessionPromise;
     sessionPromise = (async () => {
       if (sdkError) throw new Error(sdkError);
+      // App data can be deleted while the Desktop Host remains running (for
+      // example, uninstall with deleteData followed by reinstall). The native
+      // SDK does not recreate dataDir before opening its SQLite database.
+      ensureRuntimeDirectories();
       const profile = await requestMossServer('/api/v1/im/session', {
         method: 'POST',
         body: { platform_id: platformID() },
@@ -310,6 +336,7 @@ export function createOpenIMIntegration({
       issuedSession = profile;
       const sdk = ensureSdk().sdk;
       if (!sdkInitialized) {
+        ensureRuntimeDirectories();
         const initialized = await sdk.initSDK({
           platformID: platformID(),
           apiAddr: profile.apiAddr,
@@ -338,6 +365,7 @@ export function createOpenIMIntegration({
         || (activeSession?.imToken && activeSession.imToken !== profile.imToken)
       ) {
         if ([2, 3].includes(Number(status?.data))) await sdk.logout().catch(() => {});
+        ensureRuntimeDirectories();
         await sdk.login({ userID: profile.userID, token: profile.imToken });
       }
       activeSession = profile;
@@ -348,7 +376,9 @@ export function createOpenIMIntegration({
       };
     })().catch((error) => {
       activeSession = null;
-      throw error;
+      const normalized = normalizeError(error);
+      log('error', 'openim', 'OpenIM session setup failed', { error: normalized.message });
+      throw normalized;
     }).finally(() => {
       sessionPromise = null;
     });

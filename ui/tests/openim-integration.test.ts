@@ -12,7 +12,12 @@ afterEach(() => {
   }
 })
 
-function fixture(root: string, shared: { sendCalls: any[]; initCalls?: any[]; loginCalls?: any[] }) {
+function fixture(root: string, shared: {
+  sendCalls: any[];
+  initCalls?: any[];
+  loginCalls?: any[];
+  loginError?: unknown;
+}) {
   const handlers = new Map<string, (...args: any[]) => any>()
   const permissions: Array<{ permission: string; channel: string }> = []
   const sinks: any[] = []
@@ -21,7 +26,11 @@ function fixture(root: string, shared: { sendCalls: any[]; initCalls?: any[]; lo
     initSDK: async (config: any) => { shared.initCalls?.push(config); return true },
     getLoginStatus: async () => ({ data: loginStatus }),
     getSelfUserInfo: async () => ({ data: { userID: 'self' } }),
-    login: async (input: any) => { shared.loginCalls?.push(input); loginStatus = 3 },
+    login: async (input: any) => {
+      shared.loginCalls?.push(input)
+      if (shared.loginError) throw shared.loginError
+      loginStatus = 3
+    },
     logout: async () => { loginStatus = 1 },
     getAllConversationList: async () => ({ data: [] }),
     createTextMessage: async (text: string) => ({ data: { clientMsgID: 'generated', textElem: { content: text } } }),
@@ -118,6 +127,32 @@ describe('OpenIM native integration', () => {
     ])
     expect(shared.initCalls).toHaveLength(1)
     expect(shared.loginCalls).toEqual([{ userID: 'self', token: 'im-token' }])
+  })
+
+  it('recreates native SDK directories deleted while the Host is still running', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const built = fixture(root, { sendCalls: [] })
+    const sdkDirectory = path.join(
+      root, 'apps-data', 'moss.openim', 'instances', 'moss.openim--default', 'openim', 'sdk',
+    )
+    fs.rmSync(sdkDirectory, { recursive: true, force: true })
+
+    await built.handlers.get('openim:create-session')!({ sender: {} })
+
+    expect(fs.statSync(sdkDirectory).isDirectory()).toBe(true)
+  })
+
+  it('normalizes native SDK object rejections before they cross Electron IPC', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const built = fixture(root, {
+      sendCalls: [],
+      loginError: { errCode: 10006, errMsg: 'unable to open database file' },
+    })
+
+    await expect(built.handlers.get('openim:create-session')!({ sender: {} }))
+      .rejects.toThrow('unable to open database file')
   })
 
   it('forwards native events and exposes only permission-scoped helper IPC', async () => {

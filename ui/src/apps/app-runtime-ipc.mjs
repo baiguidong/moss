@@ -1,6 +1,8 @@
 import { installAppArchive } from './desktop-app-runtime.mjs'
+import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 
 const MOVE_HEALTH_STABILITY_MS = 250
+const INSTALL_PERMISSION_CANCELLED = 'MOSS_APP_INSTALL_PERMISSION_CANCELLED'
 
 async function waitForStableDeployment(readStatuses, label) {
   await new Promise((resolve) => setTimeout(resolve, MOVE_HEALTH_STABILITY_MS))
@@ -12,7 +14,16 @@ async function waitForStableDeployment(readStatuses, label) {
 }
 
 export function registerAppRuntimeIpc(options) {
-  const { ipcMain, dialog, getRuntime, emitChanged, installArchivePackage, remote } = options
+  const {
+    ipcMain,
+    dialog,
+    getRuntime,
+    emitChanged,
+    installArchivePackage,
+    remote,
+    installArchive = installAppArchive,
+    validatePackage = validateAppPackage,
+  } = options
   const runtime = () => {
     const value = getRuntime()
     if (!value) throw new Error('Desktop App Runtime is not ready')
@@ -36,13 +47,45 @@ export function registerAppRuntimeIpc(options) {
       installation.appId,
       installation.grants || [],
     ]))
-    const app = await installAppArchive(runtime(), selection.filePaths[0], {
-      installPackage: installArchivePackage,
-    })
+    let approvedGrants = []
+    let app
+    try {
+      app = await installArchive(runtime(), selection.filePaths[0], {
+        installPackage: async (packageRoot) => {
+          const packageInfo = await validatePackage(packageRoot)
+          const appId = packageInfo.manifest.id
+          const currentGrants = previousGrants.get(appId) || []
+          const addedPermissions = (packageInfo.manifest.permissions || [])
+            .filter((permission) => !currentGrants.includes(permission))
+          if (addedPermissions.length) {
+            const confirmation = await dialog.showMessageBox({
+              type: 'question',
+              title: '安装 Moss App',
+              message: `“${packageInfo.manifest.displayName || appId}”需要以下权限`,
+              detail: addedPermissions.map((permission) => `• ${permission}`).join('\n'),
+              buttons: ['取消', '安装并授权'],
+              defaultId: 1,
+              cancelId: 0,
+              noLink: true,
+            })
+            if (confirmation.response !== 1) {
+              throw Object.assign(new Error('App installation permission approval was canceled'), {
+                code: INSTALL_PERMISSION_CANCELLED,
+              })
+            }
+          }
+          approvedGrants = [...new Set([...currentGrants, ...addedPermissions])]
+          return installArchivePackage(packageRoot)
+        },
+      })
+    } catch (error) {
+      if (error?.code === INSTALL_PERMISSION_CANCELLED) return { ok: false, canceled: true }
+      throw error
+    }
     const appId = app.id || app.manifest?.id
     const version = app.currentVersion || app.version || app.manifest?.version
     if (!appId || !version) throw new Error('Installed App package did not return an identity and version')
-    await runtime().registerInstalled(appId, version, { grants: previousGrants.get(appId) || [] })
+    await runtime().registerInstalled(appId, version, { grants: approvedGrants })
     return { ok: true, app: await changed('installed', appId, app) }
   })
   ipcMain.handle('app:install-server', async (_event, { appId, version }) => {

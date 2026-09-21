@@ -19,6 +19,11 @@
 - [x] 增加草稿编辑/批准/拒绝、AI 活动状态、重置上下文，以及人工输入或发送时取消未投递回复。
 - [x] 将本机人工发送内容作为受限观察记录补入下一次 Agent 上下文；人工模式下不会累积隐式历史。
 - [x] 增加后台断线恢复、过期消息拦截、来源事件去重、严格单聊串行、持久发送回执、稳定消息 ID 和失败指数退避。
+- [x] 统一 UI 与 Backend 的 OpenIM Session 建立入口，避免并发初始化或重复登录；账号切换时清空旧联系人、消息、草稿和上下文状态，并丢弃旧账号异步结果。
+- [x] “允许全部 Connector”在执行时同步当前已启用 Connector，Connector 变化会触发运行时重载，不再把空列表误解释为无权限。
+- [x] 收紧正式 App 的摄像头/麦克风授权范围，并将浏览器可用的 OpenIM 标识符拆为独立 SDK 子路径，避免 UI Bundle 引入 Node 模块。
+- [x] 修复本地 ZIP 安装未持久化 Manifest 权限的问题；本地安装现在先展示新增权限，确认后再安装并写入 grants。
+- [x] App 数据被卸载流程删除后，Host 会在 OpenIM SDK 初始化和登录前重建私有目录，并将原生 SDK 对象错误转换为可读错误。
 - [x] 完成协议、策略覆盖、草稿状态机、人工接管、观察记录、原生桥、迁移和投递重试自动化测试。
 
 未在本地代码阶段伪造完成的发布门槛：真实双账号联调、macOS/Windows 安装包验收、长会话真实 compact、签名 Release 与 Marketplace 发布。上述项目需在 CI 产物和真实服务可用后执行。
@@ -236,7 +241,9 @@ A ↔ D → Agent Session D
 - [x] AI Review：覆盖上下文隔离、重复回复、旧草稿、人工接管、投递重试和自动回复环路。
 - [x] 数据 Review：覆盖迁移幂等、marker、崩溃后 Turn 恢复和卸载保留边界。
 - [x] UI Review：复用 Moss 全量主题变量与组件，并检查键盘、滚动、窄窗口和错误反馈。
-- [x] 依赖与打包 Review：App ZIP 不含原生库，平台库由兼容 Host 提供；Manifest 与 Marketplace 元数据通过校验。
+- [x] 依赖与打包 Review：App ZIP 不含原生库，平台库由兼容 Host 提供；浏览器 Bundle 不含 Node shim；Manifest 与 Marketplace 元数据通过校验。
+- [x] 权限 Review：正式启用且获得授权的 `moss.openim` 才能申请音视频权限；预览、其他 App、停用实例和撤权场景均拒绝。
+- [x] 账号 Review：策略、Turn、审核、取消、ACK、恢复队列和 UI 异步结果均校验当前 OpenIM 账号。
 - [x] 本地 Review 未发现遗留 P0/P1；P2 记录见下方。
 
 阶段 3 完成条件：Review 结论有对应测试或验证证据，不以“代码已阅读”代替修复验收。
@@ -257,7 +264,16 @@ A ↔ D → Agent Session D
 - [ ] 使用真实签名包完成安装、升级、降级、回滚、禁用、卸载和保留数据重装测试。
 - [x] Moss Desktop 与 `moss-apps` 自动化回归通过；Core/Server 代码未增加 OpenIM App 运行依赖。
 
-### 8.1.1 已记录 P2
+### 8.1.1 最终本地验证（2026-09-21）
+
+- Moss Desktop 静态检查和生产 Renderer 构建通过；UI `669 pass / 0 fail`，包含本地安装授权与 OpenIM SDK 目录恢复回归测试。
+- Moss Core `341 pass / 0 fail`。
+- Moss Server 静态检查通过；`65 pass / 0 fail`。
+- `moss-apps` 清单校验与 TypeScript 检查通过；发布脚本 `1 pass`、飞书 `37 pass`、OpenIM `7 pass`，均为 `0 fail`。
+- 本地签名的正式构建流程已成功生成 `moss.openim@0.1.1`，ZIP SHA-256 为 `34ba1e2ba330a96b3ec533393a4364ab18143259a2cdb324162ff5fef842c25c`。
+- ZIP 内无 `.node`、`.dll`、`.dylib` 或 `.so`；浏览器 Bundle 无 `node:*` 或 Vite browser-external shim。
+
+### 8.1.2 已记录 P2
 
 - 连续短消息按联系人设置可配置的聚合窗口。
 - 联系人专属语气、语言和业务边界提示。
