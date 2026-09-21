@@ -229,6 +229,8 @@ describe('desktop package contract', () => {
   test('owns Feishu source under the relocatable App directory', () => {
     const manifest = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'app.moss.json'), 'utf8'));
     const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'apps', 'feishu', 'package.json'), 'utf8'));
+    const settingsUi = readFileSync(path.join(repoRoot, 'apps', 'feishu', 'src', 'index.html'), 'utf8');
+    const appPreload = readFileSync(path.join(uiRoot, 'src', 'apps', 'app-preload.mjs'), 'utf8');
     const desktopBuild = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'), 'utf8');
     const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
     expect(manifest).toMatchObject({
@@ -238,8 +240,18 @@ describe('desktop package contract', () => {
         protocols: ['moss.channel/v1'],
       },
     });
+    expect(manifest.version).toBe(packageJson.version);
     expect(packageJson.scripts?.build).toBe('node scripts/build.mjs');
     expect(packageJson.devDependencies?.typescript).toBeTruthy();
+    expect(settingsUi).toContain('这里沿用原“设置 → IM 接入 → 飞书”的配置');
+    expect(settingsUi).toContain('im.message.receive_v1');
+    expect(settingsUi).toContain('card.action.trigger');
+    expect(settingsUi).toContain('moss.sessions');
+    expect(settingsUi).toContain('数据存储与安全');
+    expect(settingsUi).toContain('bridge.updateConfig');
+    expect(settingsUi).not.toContain('instances.setEnabled');
+    expect(settingsUi).not.toContain('留空则保持不变');
+    expect(appPreload).toContain("'app-ui:feishu:update-config'");
     expect(existsSync(path.join(repoRoot, 'apps', 'feishu', 'scripts', 'build.mjs'))).toBe(true);
     expect(desktopBuild).toContain("'apps', 'feishu'");
     expect(desktopBuild).toContain("spawnSync('bun', ['run', 'build']");

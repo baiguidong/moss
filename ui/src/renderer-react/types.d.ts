@@ -1128,6 +1128,7 @@ export type StoredApp = {
   currentVersion?: string | null;
   publishedVersion?: string | null;
   hasUi?: boolean;
+  hasSettings?: boolean;
   hasBackend?: boolean;
   enabled?: boolean;
   serverEnabled?: boolean;

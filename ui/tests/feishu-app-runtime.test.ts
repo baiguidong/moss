@@ -13,6 +13,7 @@ import {
   mapLegacyFeishuEventToChannel,
   persistFeishuAppAuthorization,
   resolveFeishuChannelIdentity,
+  shouldUseFeishuAppStatus,
   splitLegacyFeishuAppConfiguration,
   withFeishuAppMigrationMarker,
 } from '../src/feishu-app-runtime.mjs'
@@ -289,5 +290,12 @@ describe('Feishu App runtime integration', () => {
     state = 'running'
     expect(isFeishuAppReady(runtime, { connected: false })).toBe(false)
     expect(isFeishuAppReady(runtime, { connected: true })).toBe(true)
+  })
+
+  it('uses an enabled App as the authoritative Desktop status before mode catches up', () => {
+    expect(shouldUseFeishuAppStatus({ appMode: false, appEnabled: true })).toBe(true)
+    expect(shouldUseFeishuAppStatus({ appMode: true, appEnabled: false })).toBe(true)
+    expect(shouldUseFeishuAppStatus({ appMode: true, appEnabled: true, legacyPid: 42 })).toBe(false)
+    expect(shouldUseFeishuAppStatus({ appMode: true, appEnabled: true, legacyFallback: true })).toBe(false)
   })
 })

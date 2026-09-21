@@ -181,5 +181,24 @@ export function cleanIpcErrorMessage(error: unknown): string {
   while (/^Error:\s*/i.test(message)) {
     message = message.replace(/^Error:\s*/i, '').trim();
   }
+  message = message.replace(/^AppServiceError:\s*/i, '').trim();
+  const validation = message.match(/^Invalid App (configuration|secrets):\s*(\[[\s\S]*\])$/i);
+  if (validation) {
+    try {
+      const issues = JSON.parse(validation[2]) as Array<{
+        keyword?: string;
+        instancePath?: string;
+        params?: { missingProperty?: string };
+        message?: string;
+      }>;
+      const required = [...new Set(issues
+        .filter((issue) => issue?.keyword === 'required' && issue.params?.missingProperty)
+        .map((issue) => issue.params!.missingProperty!))];
+      if (required.length) {
+        const subject = validation[1].toLowerCase() === 'secrets' ? 'App 密钥' : 'App 配置';
+        return `${subject}缺少必填项：${required.join('、')}。请先保存完整配置。`;
+      }
+    } catch {}
+  }
   return message || '连接器授权请求失败';
 }

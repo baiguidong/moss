@@ -29,6 +29,12 @@ describe('app notification history', () => {
     )).toBe('OAuth callback timed out');
   });
 
+  it('turns App schema required errors into an actionable message', () => {
+    expect(cleanIpcErrorMessage(new Error(
+      'AppServiceError: Invalid App configuration: [{"instancePath":"","schemaPath":"#/required","keyword":"required","params":{"missingProperty":"appId"},"message":"must have required property \'appId\'"}]',
+    ))).toBe('App 配置缺少必填项：appId。请先保存完整配置。');
+  });
+
   it('folds a repeated error within the dedupe window', () => {
     const first = appendAppNotification([], {
       severity: 'error',

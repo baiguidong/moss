@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('mossApp', {
     removeItem: (key) => ipcRenderer.invoke('app-ui:storage:remove', { key }),
     list: () => ipcRenderer.invoke('app-ui:storage:list'),
   },
+  feishu: {
+    getConfig: () => ipcRenderer.invoke('app-ui:feishu:get-config'),
+    updateConfig: (payload) => ipcRenderer.invoke('app-ui:feishu:update-config', payload),
+    applyRuntime: (payload) => ipcRenderer.invoke('app-ui:feishu:apply-runtime', payload),
+    getStatus: () => ipcRenderer.invoke('app-ui:feishu:get-status'),
+  },
   events: { on: (eventName, callback) => on(`app-ui:event:${String(eventName || '')}`, callback) },
 })
 

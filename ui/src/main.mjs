@@ -267,6 +267,7 @@ import {
   persistFeishuAppAuthorization,
   publishFeishuAppEvent,
   resolveFeishuChannelIdentity,
+  shouldUseFeishuAppStatus,
   splitLegacyFeishuAppConfiguration,
   withFeishuAppMigrationMarker,
 } from './feishu-app-runtime.mjs';
@@ -10814,8 +10815,7 @@ async function handleFeishuProcessRequest(request, channelContext = null) {
       feishuLegacyTransportStatus = nextStatus;
       if (nextStatus.connected) feishuAdapterProcessManager?.markHealthy();
     }
-    const status = getFeishuAdapterStatus();
-    emitToRenderer('agent:adapter-status', status);
+    const status = emitFeishuAdapterStatus();
     return status;
   }
   if (request.type === 'delivery.ack') {
@@ -11035,8 +11035,14 @@ function getFeishuAdapterStatus() {
     return { ...remoteFeishuStatus, location: 'server' };
   }
   const adapters = readPersistedAdapterSettings();
-  const appStatus = feishuAppMode
-    ? getFeishuAppProcessStatus(desktopAppRuntime) || {
+  const runtimeAppStatus = getFeishuAppProcessStatus(desktopAppRuntime);
+  const appStatus = shouldUseFeishuAppStatus({
+    appMode: feishuAppMode,
+    appEnabled: runtimeAppStatus?.enabled,
+    legacyFallback: isFeishuLegacyFallbackEnabled(),
+    legacyPid: feishuAdapterProcessManager?.getStatus().pid,
+  })
+    ? runtimeAppStatus || {
         status: 'disabled',
         pid: null,
         bridgeReady: false,
@@ -11064,6 +11070,16 @@ function getFeishuAdapterStatus() {
         ? adapters.pairing
       : { code: null, expiresAt: null, createdAt: null },
   };
+}
+
+function emitFeishuAdapterStatus(status = getFeishuAdapterStatus()) {
+  emitToRenderer('agent:adapter-status', status);
+  for (const state of appWindowStates.values()) {
+    if (state.id === FEISHU_APP_ID && !state.webContents?.isDestroyed()) {
+      state.webContents.send('app-ui:event:feishu-status', status);
+    }
+  }
+  return status;
 }
 
 async function refreshRemoteFeishuStatus() {
@@ -11369,7 +11385,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (status.status !== 'running') {
         feishuLegacyTransportStatus = { connected: false, updatedAt: Date.now(), error: null };
       }
-      emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
+      emitFeishuAdapterStatus();
     },
   });
 
@@ -11426,7 +11442,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           };
         }
         refreshFeishuAppBackendReadiness();
-        emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
+        emitFeishuAdapterStatus();
       }
       if (event.appId === FEISHU_APP_ID && event.type === 'app-uninstalled') {
         feishuAppTransportStatus = {
@@ -11435,7 +11451,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           error: '飞书 App 未安装',
         };
         refreshFeishuAppBackendReadiness();
-        emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
+        emitFeishuAdapterStatus();
       }
       if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
         resetLocalRuntimesForMcpReload();
@@ -12278,23 +12294,32 @@ function readPersistedAdapterSettings() {
   return desktopSettings.adapters || {};
 }
 
-ipcMain.handle('agent:get-adapter-config', () => (
-  maskAdapterSettings(readPersistedAdapterSettings())
-));
-ipcMain.handle('agent:update-adapter-config', async (_event, payload = {}) => {
+function getAdapterConfigForUi() {
+  return maskAdapterSettings(readPersistedAdapterSettings());
+}
+
+async function updateAdapterConfigFromUi(payload = {}) {
   return enqueueFeishuRuntimeTransition(async () => {
     const previousAdapters = readPersistedAdapterSettings();
     const configPatch = withoutFeishuRunLocation(payload);
     const merged = mergeAdapterSettings(previousAdapters, configPatch);
     saveDesktopSettings({ ...desktopSettings, adapters: merged });
-    await syncFeishuAdapterRuntime(merged, {
-      previousAdapters,
-      activateLocalApp: getFeishuRunLocation(merged) === 'desktop',
-    });
+    try {
+      await syncFeishuAdapterRuntime(merged, {
+        previousAdapters,
+        activateLocalApp: getFeishuRunLocation(merged) === 'desktop',
+      });
+    } finally {
+      const status = getFeishuAdapterStatus();
+      emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
+      emitFeishuAdapterStatus(status);
+      await emitAppsChanged({ action: 'feishu-configuration-updated', appId: FEISHU_APP_ID });
+    }
     return maskAdapterSettings(readPersistedAdapterSettings());
   });
-});
-ipcMain.handle('agent:apply-adapter-runtime', async (_event, payload = {}) => {
+}
+
+async function applyAdapterRuntimeFromUi(payload = {}) {
   if (payload.runLocation !== 'desktop' && payload.runLocation !== 'server') {
     throw new Error('Feishu run location must be desktop or server.');
   }
@@ -12326,21 +12351,32 @@ ipcMain.handle('agent:apply-adapter-runtime', async (_event, payload = {}) => {
           error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         });
       });
-      emitToRenderer('agent:adapter-status', getFeishuAdapterStatus());
+      emitFeishuAdapterStatus();
       throw error;
     }
     const config = maskAdapterSettings(readPersistedAdapterSettings());
     const status = getFeishuAdapterStatus();
     emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
-    emitToRenderer('agent:adapter-status', status);
+    emitFeishuAdapterStatus(status);
+    await emitAppsChanged({ action: 'feishu-runtime-moved', appId: FEISHU_APP_ID });
     return { config, status };
   });
-});
-ipcMain.handle('agent:get-adapter-status', async () => (
-  getFeishuRunLocation() === 'server'
+}
+
+async function getAdapterStatusForUi() {
+  return getFeishuRunLocation() === 'server'
     ? refreshRemoteFeishuStatus()
-    : getFeishuAdapterStatus()
+    : getFeishuAdapterStatus();
+}
+
+ipcMain.handle('agent:get-adapter-config', getAdapterConfigForUi);
+ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => (
+  updateAdapterConfigFromUi(payload)
 ));
+ipcMain.handle('agent:apply-adapter-runtime', (_event, payload = {}) => (
+  applyAdapterRuntimeFromUi(payload)
+));
+ipcMain.handle('agent:get-adapter-status', getAdapterStatusForUi);
 ipcMain.handle('usage:get-overview', () => usageLedger.getOverview());
 ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
@@ -13386,6 +13422,7 @@ ipcMain.handle('app:list', async () => {
     results.push({
       ...appEntry,
       hasUi: Boolean(manifest?.ui),
+      hasSettings: Boolean(manifest?.ui && manifest?.contributes?.settings?.length),
       hasBackend: Boolean(manifest?.backend || remoteState?.manifest?.backend),
       backend: manifest?.backend || null,
       serverBackend: remoteState?.manifest?.backend || null,
@@ -13432,6 +13469,7 @@ ipcMain.handle('app:list', async () => {
       currentVersionId: remoteState.installation?.activeVersion,
       versionCount: 1,
       hasUi: false,
+      hasSettings: false,
       hasBackend: Boolean(manifest?.backend), backend: manifest?.backend || null,
       serverBackend: manifest?.backend || null,
       serverVersion: remoteState.installation?.activeVersion || null,
@@ -13635,6 +13673,14 @@ ipcMain.on('debug:close', (event) => {
   }
 });
 
+function requireFeishuAppUi(event) {
+  const state = getAppWindowStateBySender(event.sender);
+  if (state.id !== FEISHU_APP_ID || state.runtime !== desktopAppRuntime) {
+    throw new Error('Feishu settings are only available to the installed moss.feishu App.');
+  }
+  return state;
+}
+
 ipcMain.handle('app-ui:get-info', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
   return {
@@ -13737,6 +13783,27 @@ ipcMain.handle('app-ui:storage:remove', async (event, { key }) => {
 ipcMain.handle('app-ui:storage:list', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
   return Object.keys(readAppStorageSnapshot(state));
+});
+
+ipcMain.handle('app-ui:feishu:get-config', (event) => {
+  requireFeishuAppUi(event);
+  return getAdapterConfigForUi();
+});
+
+ipcMain.handle('app-ui:feishu:update-config', async (event, payload = {}) => {
+  requireFeishuAppUi(event);
+  const config = await updateAdapterConfigFromUi(payload);
+  return { config, status: await getAdapterStatusForUi() };
+});
+
+ipcMain.handle('app-ui:feishu:apply-runtime', (event, payload = {}) => {
+  requireFeishuAppUi(event);
+  return applyAdapterRuntimeFromUi(payload);
+});
+
+ipcMain.handle('app-ui:feishu:get-status', (event) => {
+  requireFeishuAppUi(event);
+  return getAdapterStatusForUi();
 });
 
 registerFileSystemIpcHandlers({

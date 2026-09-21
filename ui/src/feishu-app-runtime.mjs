@@ -313,6 +313,15 @@ export function isFeishuAppReady(runtime, transportStatus) {
   return Boolean(status?.enabled && status.bridgeReady && transportStatus?.connected);
 }
 
+export function shouldUseFeishuAppStatus({
+  appMode = false,
+  appEnabled = false,
+  legacyFallback = false,
+  legacyPid = null,
+} = {}) {
+  return Boolean(!legacyFallback && !legacyPid && (appMode || appEnabled));
+}
+
 export async function configureFeishuAppFromLegacy(runtime, adapters, { enable = false } = {}) {
   if (!runtime) return { available: false, configured: false, changed: false };
   const app = await runtime.getApp(FEISHU_APP_ID).catch(() => null);

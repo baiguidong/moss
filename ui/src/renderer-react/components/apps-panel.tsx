@@ -47,6 +47,33 @@ function configurationForTarget(app: StoredApp, target: "desktop" | "server") {
     : app.configuration;
 }
 
+function isMissingRequiredValue(value: unknown) {
+  return value === undefined || value === null || (typeof value === "string" && !value.trim());
+}
+
+function missingRequiredConfiguration(app: StoredApp, instance: AppInstance, target: "desktop" | "server") {
+  const configuration = configurationForTarget(app, target);
+  const missing: string[] = [];
+  const collect = (schema: Record<string, any> | null | undefined, values: Record<string, any>, secret = false) => {
+    const required = Array.isArray(schema?.required) ? schema.required : [];
+    const properties = schema?.properties && typeof schema.properties === "object" ? schema.properties : {};
+    for (const name of required) {
+      const configured = secret ? instance.secretRefs?.[name]?.configured : !isMissingRequiredValue(values?.[name]);
+      if (!configured) missing.push(properties[name]?.title || name);
+    }
+  };
+  collect(configuration?.schema, instance.config || {});
+  collect(configuration?.secrets, {}, true);
+  return missing;
+}
+
+function requireInstanceConfiguration(app: StoredApp, instance: AppInstance, target: "desktop" | "server") {
+  const missing = missingRequiredConfiguration(app, instance, target);
+  if (!missing.length) return;
+  const entry = app.hasSettings ? "打开 App 配置页" : "展开实例设置";
+  throw new Error(`请先${entry}并保存必填项：${missing.join("、")}`);
+}
+
 async function setAppHostEnabled(app: StoredApp, target: "desktop" | "server", enabled: boolean) {
   const appId = app.id || app.name;
   const backend = backendForTarget(app, target);
@@ -55,6 +82,7 @@ async function setAppHostEnabled(app: StoredApp, target: "desktop" | "server", e
     : null;
   let enabledDefaultInstance = false;
   try {
+    if (enabled && defaultInstance) requireInstanceConfiguration(app, defaultInstance, target);
     if (enabled && defaultInstance && !defaultInstance.enabled) {
       await window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: defaultInstance.id, enabled: true, target });
       enabledDefaultInstance = true;
@@ -66,6 +94,14 @@ async function setAppHostEnabled(app: StoredApp, target: "desktop" | "server", e
     }
     throw error;
   }
+}
+
+function isAppHostEnabled(app: StoredApp, target: "desktop" | "server") {
+  const hostEnabled = target === "server" ? app.serverEnabled : app.enabled;
+  const backend = backendForTarget(app, target);
+  if (!hostEnabled || backend?.instanceMode !== "single") return Boolean(hostEnabled);
+  const defaultInstance = app.instances?.find((instance) => (instance.target || "desktop") === target);
+  return Boolean(defaultInstance?.enabled);
 }
 
 function fieldType(field: Record<string, any>) {
@@ -200,11 +236,16 @@ function errorMessage(error: unknown) {
   return cleanIpcErrorMessage(error);
 }
 
-function AppInstanceRow({ app, instance, onChanged }: { app: StoredApp; instance: AppInstance; onChanged: () => Promise<unknown> }) {
+export function AppInstanceRow({ app, instance, onChanged }: {
+  app: StoredApp;
+  instance: AppInstance;
+  onChanged: () => Promise<unknown>;
+}) {
   const appId = app.id || app.name;
   const target = instance.target || "desktop";
   const backend = backendForTarget(app, target);
   const configuration = configurationForTarget(app, target);
+  const instanceName = app.hasSettings && instance.displayName === "Default" ? "默认实例" : instance.displayName;
   const [expanded, setExpanded] = React.useState(false);
   const [logsOpen, setLogsOpen] = React.useState(false);
   const [logs, setLogs] = React.useState<any[]>([]);
@@ -236,14 +277,21 @@ function AppInstanceRow({ app, instance, onChanged }: { app: StoredApp; instance
   return (
     <div className="border-t border-border/70 py-3 first:border-t-0">
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-7 w-7" title="配置实例" onClick={() => setExpanded(!expanded)}>
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </Button>
+        {app.hasSettings
+          ? <span className="h-7 w-7" aria-hidden="true" />
+          : (
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="配置实例" onClick={() => setExpanded(!expanded)}>
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          )}
         <div className="min-w-[140px] flex-1">
-          <div className="truncate text-sm font-medium">{instance.displayName}</div>
+          <div className="truncate text-sm font-medium">{instanceName}</div>
           <div className="flex items-center gap-1 text-[11px] text-muted-foreground"><Activity className="h-3 w-3" />{target === "server" ? "Server" : "Desktop"} · {statusLabel(state)}</div>
         </div>
-        <Toggle checked={instance.enabled} disabled={busy} label={instance.enabled ? "已启用" : "已停用"} onChange={(enabled) => run(() => window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: instance.id, enabled, target }))} />
+        <Toggle checked={instance.enabled} disabled={busy} label={instance.enabled ? "已启用" : "已停用"} onChange={(enabled) => run(() => {
+          if (enabled) requireInstanceConfiguration(app, instance, target);
+          return window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: instance.id, enabled, target });
+        })} />
         <Button variant="ghost" size="icon" className="h-8 w-8" title="重启" disabled={busy || !instance.enabled || (target === "server" ? !app.serverEnabled : !app.enabled)} onClick={() => run(() => window.agentDesktop.restartAppInstance({ appId, instanceId: instance.id, target }))}><RefreshCw className="h-4 w-4" /></Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="日志" onClick={openLogs}><SquareTerminal className="h-4 w-4" /></Button>
         {appCanMoveInstance(app, target) && (
@@ -262,7 +310,7 @@ function AppInstanceRow({ app, instance, onChanged }: { app: StoredApp; instance
           }}><Trash2 className="h-4 w-4" /></Button>
         )}
       </div>
-      {expanded && (
+      {expanded && !app.hasSettings && (
         <div className="ml-10 mt-3 grid gap-3 border-l border-border pl-4">
           <label className="grid max-w-sm gap-1 text-xs text-muted-foreground"><span>实例名称</span><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
           <SchemaFields schema={configuration?.schema} value={config} onChange={setConfig} />
@@ -380,15 +428,17 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const trust = app.remoteOnly ? app.serverTrust : app.trust;
               const desktopPermissions = app.permissions || [];
               const serverPermissions = app.serverPermissions || [];
+              const desktopEnabled = isAppHostEnabled(app, "desktop");
+              const serverEnabled = isAppHostEnabled(app, "server");
               return (
                 <section key={appId} className={`flex min-w-0 flex-col rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
                   <div className="flex items-start gap-3">
                     <AppIcon icon={app.icon} />
                     <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
                     <div className="grid justify-items-end gap-2">
-                      {desktopBackend && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`Desktop ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
+                      {desktopBackend && <Toggle checked={desktopEnabled} disabled={busy === appId} label={`Desktop ${desktopEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
                       {!desktopBackend && !app.remoteOnly && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`App ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
-                      {serverBackend && <Toggle checked={Boolean(app.serverEnabled)} disabled={busy === appId} label={`Server ${app.serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "server", enabled))} />}
+                      {serverBackend && <Toggle checked={serverEnabled} disabled={busy === appId} label={`Server ${serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "server", enabled))} />}
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
