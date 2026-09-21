@@ -63,6 +63,7 @@ describe('remote direct TLS trust store', () => {
       await store.load();
       const trusted = await store.ensureTrusted('https://moss.example.com');
       expect(trusted.pinned).toBe(true);
+      expect(trusted.trustUpdated).toBe(true);
       expect(trusted.caBundlePath).toBe(path.join(trustDir, 'trusted-ca-bundle.pem'));
       expect(process.env.NODE_EXTRA_CA_CERTS).toBe(trusted.caBundlePath);
 
@@ -149,6 +150,7 @@ describe('remote direct TLS trust store', () => {
       });
       expect(replaced).toMatchObject({
         pinned: true,
+        trustUpdated: true,
         fingerprint256: observed.fingerprint256,
       });
       expect(reloaded.getRecords()[0]?.fingerprint256).toBe(observed.fingerprint256);
@@ -160,13 +162,15 @@ describe('remote direct TLS trust store', () => {
       }, (result: number) => { verificationResult = result; });
       expect(verificationResult).toBe(0);
 
-      await expect(ensureRemoteDirectTrustWithConfirmation({
+      const unchanged = await ensureRemoteDirectTrustWithConfirmation({
         trustStore: reloaded,
         serverUrl: 'https://moss.example.com',
         confirmCertificateChange: async () => {
           throw new Error('不应再次要求确认');
         },
-      })).resolves.toMatchObject({ pinned: true });
+      });
+      expect(unchanged).toMatchObject({ pinned: true });
+      expect(unchanged.trustUpdated).toBeUndefined();
     } finally {
       if (originalExtraCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS;
       else process.env.NODE_EXTRA_CA_CERTS = originalExtraCa;

@@ -16,19 +16,19 @@ describe('adapter settings', () => {
         appId: 'cli_test',
         appSecret: 'secret-value',
         encryptKey: 'encrypt-value',
+        streamingCard: true,
       },
     };
     const merged = mergeAdapterSettings(current, {
       feishu: {
         appSecret: '****alue',
         encryptKey: '****alue',
-        streamingCard: true,
       },
     });
 
     expect(merged.feishu.appSecret).toBe('secret-value');
     expect(merged.feishu.encryptKey).toBe('encrypt-value');
-    expect(merged.feishu.streamingCard).toBe(true);
+    expect(merged.feishu.streamingCard).toBeUndefined();
   });
 
   it('masks credentials and pairing codes returned to the renderer', () => {
@@ -44,13 +44,13 @@ describe('adapter settings', () => {
     expect(masked.feishu.verificationToken).toBe('****cret');
   });
 
-  it('starts only with an app id and app secret and restarts for runtime changes', () => {
+  it('starts only with an app id and app secret and fingerprints active runtime settings', () => {
     expect(hasFeishuAdapterCredentials({ feishu: { appId: 'cli_test' } })).toBe(false);
     const first = {
-      feishu: { appId: 'cli_test', appSecret: 'secret', streamingCard: false },
+      feishu: { appId: 'cli_test', appSecret: 'secret', verificationToken: 'first' },
     };
     const second = {
-      feishu: { appId: 'cli_test', appSecret: 'secret', streamingCard: true },
+      feishu: { appId: 'cli_test', appSecret: 'secret', verificationToken: 'second' },
     };
     expect(hasFeishuAdapterCredentials(first)).toBe(true);
     expect(getFeishuAdapterFingerprint(first)).not.toBe(getFeishuAdapterFingerprint(second));

@@ -1,14 +1,14 @@
 # Agent Channel 与独立 IM App 改造计划
 
-状态：阶段 A、阶段 B 和飞书试点已完成；阶段 C 的 Server Agent 执行链与 OpenIM App 待后续迁移
+状态：阶段 A、阶段 B 和飞书试点已完成；OpenIM 按独立的个人 AI 回复模型另行迁移，详见 [OpenIM 独立 App 与个人 AI 回复改造计划](./openim-app-migration-plan.md)
 
-负责人边界：Moss Core 提供账号、Agent、权限和会话能力；市场 App 只负责渠道协议、消息展示与人工操作。
+负责人边界：Moss Core 提供账号、Agent、权限和会话能力；市场 App 负责渠道协议、消息展示以及该产品实际需要的交互。
 
 ## 1. 目标
 
 把飞书、OpenIM 以及后续 IM 接入统一成可安装的 Channel App，同时保证：
 
-- 每个外部会话有默认回复策略，并可按成员覆盖。
+- 每个外部会话有可审计的回复策略；不同产品可以采用渠道成员限制或本地用户联系人策略。
 - AI 只能使用 Core 最终授权的 Agent、Tool、Skill 和 Connector。
 - 外部消息可以使用固定会话、自动轮换会话或每次新会话。
 - AI 自动回复、人工回复、AI 草稿人工确认都有明确且可审计的状态。
@@ -28,7 +28,9 @@
 | `mention_only` | 只有明确 @ AI 时才启动 Agent，其余消息由人工处理。 |
 | `inherit` | 仅用于成员覆盖，继承会话默认策略。 |
 
-群聊中成员覆盖不能扩大管理员或会话级能力。成员策略只决定是否触发和缩小资源范围。
+这些策略是通用 Agent Channel 能力，并不要求每个渠道全部暴露。飞书只使用 `ai_auto + fixed`，不提供成员覆盖、人工收件箱、草稿审核或会话控制。
+
+OpenIM 不采用这一产品模型。它是当前登录用户自己的即时消息客户端：默认策略只是模板，每个单聊联系人都可以在当前用户实际拥有的 Core 权限范围内完整覆盖 Agent、资源、回复方式和上下文策略。
 
 ### 2.2 会话策略
 
@@ -38,7 +40,7 @@
 | `rotating` | 达到轮次阈值后生成可信摘要，再切换新 Session。 | 默认；兼顾上下文和成本 |
 | `new_each_turn` | 每条消息创建新 Session，不继承历史。 | 高隔离、一次性问答 |
 
-默认使用 `rotating`。摘要必须由 Core 生成并保存，App 传入的“摘要”只能作为不可信消息内容，不能作为系统上下文。
+具体默认值由产品决定；飞书使用 `fixed`。轮换模式的摘要必须由 Core 生成并保存，App 传入的“摘要”只能作为不可信消息内容，不能作为系统上下文。
 
 ### 2.3 权限计算
 
@@ -57,7 +59,7 @@ Skill、Connector 使用同样的交集原则。`bypassPermissions` 不允许用
 
 ### `moss.channel/v1`
 
-保留传输职责：连接、配对、外部消息接收、会话选择、投递确认和决策回传。协议增加消息来源、@ 状态和草稿投递语义，但保持飞书兼容。
+保留传输职责：连接、配对、外部消息接收、会话选择、投递确认和决策回传。消息来源、可选 @ 状态和草稿投递语义供有需要的 Channel App 使用。
 
 ### `moss.account/v1`
 
@@ -118,19 +120,21 @@ Desktop 使用现有 `sessions.db` 新增：
 - [x] 实现 `fixed`、`rotating`、`new_each_turn` 和可信摘要轮换。
 - [x] 增加主动消息限流、hop 限制、并发串行、崩溃恢复、草稿审核和投递确认测试。
 
-### 阶段 C：Server 与 OpenIM App（已开始）
+### 阶段 C：Server 与 OpenIM App（Desktop 已完成，Server 待后续）
+
+OpenIM 的详细阶段、验收和个人联系人策略以 [OpenIM 独立 App 与个人 AI 回复改造计划](./openim-app-migration-plan.md) 为准；下列条目只保留总体里程碑。
 
 - [x] Server 注册 Account Host handlers，并以 App owner 的组织/用户权限读取脱敏通讯录。
 - [ ] Server 注册 Agent Host handlers，并接入 Server Session/Turn 执行链。
-- [ ] 将 OpenIM SDK、媒体、RTC 和平台账号供应迁入 `moss.openim` App。
-- [ ] OpenIM App 使用 `moss.account/v1` 展示通讯录，使用 `moss.agent/v1` 管理成员策略。
-- [ ] 即时消息入口改为市场 App View；Core 只保留通用能力和原生桥接。
+- [x] 将 OpenIM UI、消息协议、媒体和 RTC 交互迁入 `moss.openim` App，Desktop Core 只保留受控原生桥和账号供应代理。
+- [x] OpenIM App 通过 first-party 平台 Broker 展示脱敏通讯录，并使用 `moss.agent/v1` 管理当前用户的默认策略和每个单聊联系人的完整自定义策略。
+- [x] 即时消息入口由市场 App View 接管；禁用或卸载时暂时恢复旧内置入口。
 
 ### 阶段 D：迁移与发布（飞书代码已完成，待发布）
 
 - [x] 对现有飞书实例应用 `ai_auto + fixed + 不额外收窄资源` 的兼容默认值，不改变老用户行为。
 - [x] 新 Channel App 默认 `human_only + rotating + 空资源权限`。
-- [x] `moss.feishu` 升级到 `0.2.0`，要求 Host API `^1.2.0`，并保留旧配对与会话映射兼容层。
+- [x] `moss.feishu` 升级到 `0.2.0`，要求 Host API `^1.2.0`，只开放执行权限设置，并保留旧配对与固定会话映射兼容层。
 - [x] `moss-apps` CI 已具备测试、签名 ZIP、GitHub Release 和 GitHub Pages Marketplace 发布流程。
 - [ ] 创建 `moss.feishu-v0.2.0` 发布标签，发布后再把 Moss 预装锁从已发布的 `0.1.3` 更新为 `0.2.0`。
 
@@ -143,7 +147,7 @@ Desktop 使用现有 `sessions.db` 新增：
 - `human_only` 不调用模型；草稿未经批准不会进入可发送状态。
 - Channel 会话无法启用 `bypassPermissions`，未授权 Tool/Skill/Connector 在执行层被拒绝。
 - 固定、轮换、新会话三种策略重启后行为一致。
-- 飞书现有配对、会话选择、通知和决策能力无回归。
+- 飞书配对、固定会话和普通文本回复无回归，且不暴露会话控制或卡片交互。
 
 ## 8. Moss 仍需补齐的独立 App 基础能力
 
@@ -161,7 +165,7 @@ Desktop 使用现有 `sessions.db` 新增：
 - Moss Desktop：`643 pass, 0 fail`。
 - Moss Core：`340 pass, 0 fail`。
 - Moss Server：`64 pass, 0 fail`。
-- `moss-apps`：`304 pass, 0 fail`。
+- `moss-apps` 飞书：`37 pass, 0 fail`。
 - `moss.feishu@0.2.0` 已通过 TypeScript 检查、构建、Manifest 校验和本地 ZIP 打包。
 
 本轮没有把 Moss 的预装锁提前指向 `0.2.0`。只有 GitHub Release 实际存在后才能更新锁文件，否则客户端更新时会再次出现 `Marketplace version not found`。
@@ -171,7 +175,7 @@ Desktop 使用现有 `sessions.db` 新增：
 - [x] Account、Agent 与 Channel 请求拒绝未知字段；消息正文、附件数量和附件字段均有明确上限。
 - [x] Turn 只持久化安全消息字段，不保存附件本地路径或原始 data，也不能用额外成员字段冒用其他成员策略。
 - [x] `resources.* = null` 在选择 Agent 后仍保持“不额外限制”的语义；技能和 Connector MCP 工具不会被误关。
-- [x] 飞书设置页按原始 Binding 呈现资源选择，保留暂时不可用的 Agent/资源及混合 `null/array` 配置。
-- [x] 人工接管会即时反馈给飞书用户；待审核通知使用稳定消息 UUID，重放不会重复发消息。
+- [x] 飞书设置页只呈现确认方式与资源选择，并保留暂时不可用的资源及混合 `null/array` 配置。
+- [x] 飞书只订阅完成/失败事件并发送普通文本；稳定 Turn ID 保证重放不会重复投递。
 - [x] 解绑同时移除配对记录和静态白名单；状态页优先展示传输错误并避免旧请求覆盖新状态。
 - [x] Turn 终态内容不可再次修改，仅允许更新投递确认；Agent 文件按 UTF-8 字节限制总大小。

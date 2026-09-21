@@ -1682,7 +1682,6 @@ export function startServer(
 
       if (pathname === '/api/v1/adapters/feishu/start' && req.method === 'POST') {
         authService.requireScope(auth, 'sessions:create')
-        authService.requireScope(auth, 'sessions:list')
         authService.requireScope(auth, 'sessions:attach')
         const body = await readJsonBody(req, 64 * 1024)
         if (

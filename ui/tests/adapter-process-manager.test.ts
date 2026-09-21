@@ -135,7 +135,7 @@ describe('Feishu adapter process manager', () => {
       },
     });
     const base = {
-      feishu: { appId: 'cli_test', appSecret: 'secret', streamingCard: false },
+      feishu: { appId: 'cli_test', appSecret: 'secret', verificationToken: 'first' },
     };
 
     expect((await manager.sync(base)).status).toBe('running');
@@ -143,7 +143,7 @@ describe('Feishu adapter process manager', () => {
     expect(children).toHaveLength(1);
 
     expect((await manager.sync({
-      feishu: { ...base.feishu, streamingCard: true },
+      feishu: { ...base.feishu, verificationToken: 'second' },
     })).status).toBe('running');
     expect(children).toHaveLength(2);
     expect(children[0]!.kills).toEqual(['SIGTERM']);

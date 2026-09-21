@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  authorizeFeishuDecisionResponse,
-  createFeishuAdapterController,
-} from '../src/feishu-adapter-controller.mjs';
+import { createFeishuAdapterController } from '../src/feishu-adapter-controller.mjs';
 
 function createMemoryStore() {
   const conversations = new Map<string, any>();
@@ -99,7 +96,6 @@ describe('Feishu adapter controller', () => {
     const controller = createFeishuAdapterController({
       store,
       resolveIdentity: () => ({ adapterInstanceId: 'feishu:app', tenantKey: 'app' }),
-      listWritableSessions: () => [...sessions.values()],
       getWritableSession: (id: string) => sessions.get(id) || null,
       createSession: async () => {
         const session = { id: `session-${sessions.size + 1}`, title: '飞书会话', busy: false };
@@ -110,7 +106,6 @@ describe('Feishu adapter controller', () => {
         prompts.push(prompt);
         return { assistantText: `reply:${prompt}` };
       },
-      abortSession: async () => {},
       sendAdapterEvent: (type: string, payload: any) => {
         deliveries.push({ type, payload });
         return true;
@@ -137,86 +132,74 @@ describe('Feishu adapter controller', () => {
     expect(deliveries).toHaveLength(2);
   });
 
-  it('selects an old session and preserves message order while draining', async () => {
+  it('reuses one fixed session and treats slash-like controls as ordinary messages', async () => {
     const store = createMemoryStore();
-    const sessions = new Map<string, any>([
-      ['old-session', { id: 'old-session', title: '老会话', busy: false }],
-    ]);
-    const prompts: string[] = [];
+    const sessions = new Map<string, any>();
+    const prompts: Array<{ sessionId: string; prompt: string }> = [];
     const releases: Array<() => void> = [];
+    let created = 0;
     const controller = createFeishuAdapterController({
       store,
       resolveIdentity: () => ({ adapterInstanceId: 'feishu:app', tenantKey: 'app' }),
-      listWritableSessions: () => [...sessions.values()],
       getWritableSession: (id: string) => sessions.get(id) || null,
-      createSession: async () => { throw new Error('should not create'); },
-      sendPrompt: async (_sessionId: string, prompt: string) => {
-        prompts.push(prompt);
+      createSession: async () => {
+        created += 1;
+        const session = { id: `session-${created}`, title: '飞书会话', busy: false };
+        sessions.set(session.id, session);
+        return session;
+      },
+      sendPrompt: async (sessionId: string, prompt: string) => {
+        prompts.push({ sessionId, prompt });
         await new Promise<void>((resolve) => releases.push(resolve));
         return { assistantText: `reply:${prompt}` };
       },
-      abortSession: async () => {},
       sendAdapterEvent: () => true,
     });
     await controller.handleRequest({
-      type: 'conversation.select',
-      payload: { chatId: 'chat', openId: 'user', sessionId: 'old-session' },
+      type: 'chat.message.received',
+      payload: { chatId: 'chat', openId: 'user', eventId: 'message-1', text: '/new' },
     });
     await controller.handleRequest({
       type: 'chat.message.received',
-      payload: { chatId: 'chat', openId: 'user', eventId: 'message-1', text: 'first' },
-    });
-    await controller.handleRequest({
-      type: 'chat.message.received',
-      payload: { chatId: 'chat', openId: 'user', eventId: 'message-2', text: 'second' },
+      payload: { chatId: 'chat', openId: 'user', eventId: 'message-2', text: '/stop' },
     });
     await waitUntil(() => prompts.length === 1);
-    expect(prompts).toEqual(['first']);
+    expect(created).toBe(1);
+    expect(prompts).toEqual([{ sessionId: 'session-1', prompt: '/new' }]);
     releases.shift()?.();
     await waitUntil(() => prompts.length === 2);
-    expect(prompts).toEqual(['first', 'second']);
+    expect(created).toBe(1);
+    expect(prompts).toEqual([
+      { sessionId: 'session-1', prompt: '/new' },
+      { sessionId: 'session-1', prompt: '/stop' },
+    ]);
     releases.shift()?.();
   });
 
-  it('lists customer-facing session pages and resolves bot menu requests by user', async () => {
+  it('rejects all legacy session-management requests', async () => {
     const store = createMemoryStore();
-    store.getOrCreateConversation({
-      adapterInstanceId: 'feishu:app',
-      tenantKey: 'app',
-      chatId: 'chat',
-      pairedOpenId: 'user',
-    });
-    const sessions = new Map<string, any>([
-      ['s1', { id: 's1', title: '飞书一', updatedAt: 6, busy: false, originChannel: 'feishu' }],
-      ['s2', { id: 's2', title: '飞书二', updatedAt: 5, busy: false, originChannel: 'feishu' }],
-      ['s3', { id: 's3', title: '项目一', updatedAt: 4, busy: false, originChannel: 'desktop', projectName: 'Moss' }],
-      ['s4', { id: 's4', title: '桌面一', updatedAt: 3, busy: false, originChannel: 'desktop' }],
-    ]);
     const controller = createFeishuAdapterController({
       store,
       resolveIdentity: () => ({ adapterInstanceId: 'feishu:app', tenantKey: 'app' }),
-      listWritableSessions: () => [...sessions.values()],
-      getWritableSession: (id: string) => sessions.get(id) || null,
+      getWritableSession: () => null,
       createSession: async () => { throw new Error('should not create'); },
       sendPrompt: async () => ({ assistantText: '' }),
-      abortSession: async () => {},
       sendAdapterEvent: () => true,
     });
 
-    const firstPage = await controller.handleRequest({
-      type: 'conversation.list',
-      payload: { openId: 'user', category: 'recent', page: 0, pageSize: 2 },
-    });
-    expect(firstPage).toMatchObject({
-      chatId: 'chat', page: 0, pageSize: 2, total: 4, hasPrevious: false, hasNext: true,
-    });
-    expect(firstPage.sessions.map((session: any) => session.id)).toEqual(['s1', 's2']);
-
-    const projectPage = await controller.handleRequest({
-      type: 'conversation.list',
-      payload: { openId: 'user', category: 'project' },
-    });
-    expect(projectPage.sessions.map((session: any) => session.id)).toEqual(['s3']);
+    for (const type of [
+      'conversation.list',
+      'conversation.current',
+      'conversation.select',
+      'conversation.new',
+      'session.abort',
+      'decision.respond',
+    ]) {
+      await expect(controller.handleRequest({
+        type,
+        payload: { chatId: 'chat', openId: 'user' },
+      })).rejects.toThrow('Unsupported Feishu Adapter request');
+    }
   });
 
   it('passes the authenticated Channel context into identity resolution', async () => {
@@ -228,61 +211,19 @@ describe('Feishu adapter controller', () => {
         contexts.push(context);
         return { adapterInstanceId: 'feishu:app-config', tenantKey: 'app-config' };
       },
-      listWritableSessions: () => [],
       getWritableSession: () => null,
       createSession: async () => ({ id: 'session-1', title: '飞书会话', busy: false }),
       sendPrompt: async () => ({ assistantText: '' }),
-      abortSession: async () => {},
       sendAdapterEvent: () => true,
     });
     const context = { appId: 'moss.feishu', instanceId: 'moss.feishu--default' };
 
     await controller.handleRequest({
-      type: 'conversation.current',
-      payload: { chatId: 'chat', openId: 'user' },
+      type: 'chat.message.received',
+      payload: { chatId: 'chat', openId: 'user', eventId: 'message-1', text: 'hello' },
     }, context);
 
     expect(contexts).toEqual([context]);
   });
 
-  it('authorizes decision callbacks only for the delivered Feishu conversation', () => {
-    const identity = { adapterInstanceId: 'feishu:app', tenantKey: 'app' };
-    const decision = { notificationId: 'notification-1' };
-    const store = {
-      findConversation({ chatId }: any) {
-        return chatId === 'chat-1'
-          ? { id: 'conversation-1', chatId, pairedOpenId: 'user-1' }
-          : null;
-      },
-      listNotificationDeliveries() {
-        return [{
-          conversationId: 'conversation-1',
-          status: 'delivered',
-          externalMessageId: 'message-1',
-        }];
-      },
-    };
-
-    expect(authorizeFeishuDecisionResponse({
-      store, identity, decision, chatId: 'chat-1', openId: 'user-1',
-    })).toMatchObject({ conversation: { id: 'conversation-1' } });
-    expect(() => authorizeFeishuDecisionResponse({
-      store, identity, decision, chatId: 'chat-2', openId: 'user-1',
-    })).toThrow('not authorized');
-    expect(() => authorizeFeishuDecisionResponse({
-      store, identity, decision, chatId: 'chat-1', openId: 'user-2',
-    })).toThrow('not authorized');
-    expect(() => authorizeFeishuDecisionResponse({
-      store: {
-        ...store,
-        listNotificationDeliveries: () => [{
-          conversationId: 'conversation-1', status: 'pending', externalMessageId: null,
-        }],
-      },
-      identity,
-      decision,
-      chatId: 'chat-1',
-      openId: 'user-1',
-    })).toThrow('not delivered');
-  });
 });

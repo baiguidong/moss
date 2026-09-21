@@ -80,18 +80,20 @@ export function getSidebarMoreViews({
   workflowsEnabled,
   remoteEnabled,
   agentMailEnabled,
+  openIMAppEnabled = false,
 }: {
   libraryEnabled: boolean;
   workflowsEnabled: boolean;
   remoteEnabled: boolean;
   agentMailEnabled: boolean;
+  openIMAppEnabled?: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
     ...(libraryEnabled ? ["library" as const] : []),
     ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
-    "openim",
+    ...(!openIMAppEnabled ? ["openim" as const] : []),
     "audit",
     "cron",
   ];
@@ -388,7 +390,14 @@ export function AppSidebar({
     )
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
-  const moreViews = getSidebarMoreViews({ libraryEnabled, workflowsEnabled, remoteEnabled, agentMailEnabled });
+  const openIMAppEnabled = appViews.some((view) => view.appId === 'moss.openim');
+  const moreViews = getSidebarMoreViews({
+    libraryEnabled,
+    workflowsEnabled,
+    remoteEnabled,
+    agentMailEnabled,
+    openIMAppEnabled,
+  });
   const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
     feishu: Bot,

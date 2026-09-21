@@ -9,7 +9,7 @@ import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { MOSS_SERVER_ASSET_ROOT, MOSS_SERVER_HOME } from './lib/env.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import type { RuntimeService } from './runtimeService.js'
-import type { SessionRecord, SessionSummary } from './types.js'
+import type { SessionRecord } from './types.js'
 import {
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
@@ -40,7 +40,6 @@ export type FeishuAdapterConfig = {
   allowedUsers?: string[]
   pairedUsers?: PairedUser[]
   defaultWorkDir?: string
-  streamingCard?: boolean
   pairing?: PairingState
   autoMemory: AutoMemorySettings
   sessionMemory: SessionMemorySettings
@@ -99,19 +98,6 @@ type QueuedTurn = {
 type PairingFailure = {
   count: number
   startedAt: number
-}
-
-type PendingPermission = {
-  id: string
-  actionToken: string
-  requestId: string
-  sessionId: string
-  chatId: string
-  toolName: string
-  input: Record<string, unknown>
-  hosted: HostedProcess
-  socket: net.Socket
-  timer: ReturnType<typeof setTimeout>
 }
 
 const BRIDGE_VERSION = 1
@@ -180,7 +166,6 @@ function normalizeConfig(value: unknown): FeishuAdapterConfig {
       : [],
     pairedUsers,
     defaultWorkDir: normalizeText(value.defaultWorkDir),
-    streamingCard: value.streamingCard === true,
     autoMemory: normalizeAutoMemorySettings(value.autoMemory),
     sessionMemory: normalizeSessionMemorySettings(value.sessionMemory),
     pairing: {
@@ -209,41 +194,7 @@ function connectionFingerprint(config: FeishuAdapterConfig): string {
     appSecret: config.appSecret,
     encryptKey: config.encryptKey || '',
     verificationToken: config.verificationToken || '',
-    streamingCard: config.streamingCard === true,
   })
-}
-
-function redactPermissionInput(value: unknown, depth = 0): unknown {
-  if (depth >= 6) return '[truncated]'
-  if (Array.isArray(value)) return value.slice(0, 20).map(entry => redactPermissionInput(entry, depth + 1))
-  if (!isRecord(value)) return value
-  const result: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value).slice(0, 50)) {
-    result[key] = /secret|token|password|api.?key|authorization/i.test(key)
-      ? '[redacted]'
-      : redactPermissionInput(entry, depth + 1)
-  }
-  return result
-}
-
-function permissionSummary(toolName: string, input: Record<string, unknown>): string {
-  const serialized = JSON.stringify(redactPermissionInput(input), null, 2)
-  const preview = serialized.length > 1_200 ? `${serialized.slice(0, 1_197)}...` : serialized
-  return `${toolName} 请求在 Server 会话中执行\n${preview}`
-}
-
-function sessionOption(session: SessionRecord | SessionSummary, busy: boolean, originChannel?: 'feishu') {
-  const id = 'sessionId' in session ? session.sessionId : ''
-  if (!id) return null
-  return {
-    id,
-    title: 'title' in session && session.title ? session.title : 'Moss Server 会话',
-    preview: 'summary' in session && session.summary ? session.summary : '',
-    updatedAt: 'lastActiveAt' in session ? session.lastActiveAt : Date.now(),
-    busy,
-    projectName: null,
-    originChannel,
-  }
 }
 
 export class AdapterProcessManager {
@@ -252,8 +203,6 @@ export class AdapterProcessManager {
   private readonly turns = new Map<string, HostedTurn>()
   private readonly turnQueues = new Map<string, QueuedTurn[]>()
   private readonly drainingSessions = new Set<string>()
-  private readonly cancelledSessions = new Set<string>()
-  private readonly pendingPermissions = new Map<string, PendingPermission>()
   private readonly pairingFailures = new Map<string, PairingFailure>()
   private readonly restartTimers = new Map<ProcessKey, ReturnType<typeof setTimeout>>()
   private readonly restartAttempts = new Map<ProcessKey, number>()
@@ -370,7 +319,7 @@ export class AdapterProcessManager {
     persist: boolean,
   ): Promise<void> {
     if (this.disposed) throw new Error('Feishu Adapter manager is shutting down')
-    for (const scope of ['sessions:create', 'sessions:list', 'sessions:attach']) {
+    for (const scope of ['sessions:create', 'sessions:attach']) {
       if (!hasScope(input.scopes, scope)) {
         throw new Error(`Feishu Server hosting requires the ${scope} scope`)
       }
@@ -520,8 +469,6 @@ export class AdapterProcessManager {
     this.disposed = true
     for (const timer of this.restartTimers.values()) clearTimeout(timer)
     this.restartTimers.clear()
-    for (const permission of this.pendingPermissions.values()) clearTimeout(permission.timer)
-    this.pendingPermissions.clear()
     const keys = new Set<ProcessKey>([...this.processes.keys(), ...this.transitions.keys()])
     await Promise.all([...keys].map(key => this.enqueueTransition(key, () => this.stopProcess(key))))
   }
@@ -546,12 +493,6 @@ export class AdapterProcessManager {
     this.states.set(key, initialState())
     if (hosted?.handshakeTimer) clearTimeout(hosted.handshakeTimer)
     if (hosted) {
-      for (const permission of this.pendingPermissions.values()) {
-        if (permission.hosted !== hosted) continue
-        clearTimeout(permission.timer)
-        this.pendingPermissions.delete(permission.id)
-        this.writePermissionResponse(permission, false, 'Feishu runtime stopped.')
-      }
       for (const [sessionId, queue] of this.turnQueues) {
         const retained = queue.filter(turn => turn.hosted !== hosted)
         for (const turn of queue) {
@@ -650,19 +591,10 @@ export class AdapterProcessManager {
       `).run(Date.now(), Date.now(), hosted.auth.orgId, hosted.auth.userId, hosted.config.appId, normalizeText(payload.turnId))
       return { ok: true }
     }
-    if (request.type === 'delivery.ack') {
-      if (payload.ok === false) {
-        const permission = this.pendingPermissions.get(normalizeText(payload.deliveryId))
-        if (permission?.hosted === hosted) {
-          clearTimeout(permission.timer)
-          this.pendingPermissions.delete(permission.id)
-          this.writePermissionResponse(permission, false, 'Feishu permission card delivery failed.')
-        }
-      }
-      return { ok: true }
+    if (request.type !== 'chat.message.received') {
+      throw new Error(`Unsupported Feishu Adapter request: ${request.type}`)
     }
-    if (request.type === 'decision.respond') return this.handlePermissionDecision(hosted, payload)
-    return this.handleConversationRequest(hosted, request)
+    return this.handleMessageRequest(hosted, request)
   }
 
   private handlePairing(hosted: HostedProcess, payload: Record<string, unknown>): {
@@ -736,155 +668,41 @@ export class AdapterProcessManager {
     return { paired: true, conversationId: `${hosted.config.appId}:${chatId}` }
   }
 
-  private async handleConversationRequest(hosted: HostedProcess, request: BridgeRequest): Promise<unknown> {
+  private async handleMessageRequest(hosted: HostedProcess, request: BridgeRequest): Promise<unknown> {
+    if (request.type !== 'chat.message.received') {
+      throw new Error(`Unsupported Feishu Adapter request: ${request.type}`)
+    }
     const payload = isRecord(request.payload) ? request.payload : {}
     const openId = normalizeText(payload.openId)
-    const chatId = normalizeText(payload.chatId) || this.findLatestChatId(hosted, openId)
+    const chatId = normalizeText(payload.chatId)
     if (!openId || !chatId || !this.isAllowed(hosted.config, openId)) {
       throw new Error('This Feishu user is not paired with the Moss Server deployment.')
     }
     const conversation = this.upsertConversation(hosted, chatId, openId)
 
-    if (request.type === 'conversation.list') {
-      const category = ['feishu', 'project'].includes(normalizeText(payload.category))
-        ? normalizeText(payload.category)
-        : 'recent'
-      const page = Math.max(0, Number.parseInt(String(payload.page ?? 0), 10) || 0)
-      const pageSize = Math.min(8, Math.max(1, Number.parseInt(String(payload.pageSize ?? 5), 10) || 5))
-      const query = normalizeText(payload.query).toLowerCase()
-      const feishuSessions = new Set(this.listFeishuSessionIds(
-        hosted.auth.orgId,
-        hosted.auth.userId,
-      ))
-      const sessions = this.runtime.listSessionRecords({
-        orgId: hosted.auth.orgId,
-        userId: hosted.auth.userId,
-        activeOnly: false,
-      }).filter(session => session.desiredState !== 'terminated')
-        .map(session => sessionOption(session, this.isSessionBusy(session.sessionId), feishuSessions.has(session.sessionId) ? 'feishu' : undefined))
-        .filter(Boolean)
-        .filter(session => !query || session!.title.toLowerCase().includes(query) || session!.preview.toLowerCase().includes(query))
-        .filter(session => category === 'recent'
-          || (category === 'feishu' && session!.originChannel === 'feishu')
-          || (category === 'project' && Boolean(session!.projectName)))
-      const total = sessions.length
-      const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1)
-      const effectivePage = Math.min(page, lastPage)
-      const active = conversation.activeSessionId
-        ? this.getWritableSession(hosted, conversation.activeSessionId)
-        : null
-      return {
-        chatId,
-        activeSessionId: conversation.activeSessionId,
-        currentSession: active ? sessionOption(active, this.isSessionBusy(active.sessionId), feishuSessions.has(active.sessionId) ? 'feishu' : undefined) : null,
-        sessions: sessions.slice(effectivePage * pageSize, (effectivePage + 1) * pageSize),
-        category,
-        query: normalizeText(payload.query),
-        page: effectivePage,
-        pageSize,
-        total,
-        hasPrevious: effectivePage > 0,
-        hasNext: (effectivePage + 1) * pageSize < total,
-      }
+    const eventId = normalizeText(payload.eventId)
+    const text = normalizeText(payload.text)
+    if (!eventId || !text) throw new Error('Feishu message id and text are required.')
+    const existing = this.getEvent(hosted, eventId)
+    if (existing) {
+      return { duplicate: true, sessionId: existing.sessionId, turnId: existing.turnId, status: existing.status }
     }
 
-    if (request.type === 'conversation.current') {
-      const session = conversation.activeSessionId
-        ? this.getWritableSession(hosted, conversation.activeSessionId)
-        : null
-      return {
-        chatId,
-        session: session
-          ? sessionOption(
-            session,
-            this.isSessionBusy(session.sessionId),
-            this.getSessionOriginChannel(hosted, session.sessionId),
-          )
-          : null,
-      }
-    }
-
-    if (request.type === 'conversation.select') {
-      const session = this.getWritableSession(hosted, normalizeText(payload.sessionId))
-      if (!session) throw new Error('The selected Moss Server session is not writable.')
+    let session = conversation.activeSessionId
+      ? this.getWritableSession(hosted, conversation.activeSessionId)
+      : null
+    if (!session) {
+      session = await this.createSession(hosted)
       this.setActiveSession(hosted, chatId, session.sessionId)
-      return {
-        session: sessionOption(
-          session,
-          this.isSessionBusy(session.sessionId),
-          this.getSessionOriginChannel(hosted, session.sessionId),
-        ),
-      }
     }
-
-    if (request.type === 'conversation.new') {
-      const existing = normalizeText(payload.eventId) ? this.getEvent(hosted, normalizeText(payload.eventId)) : null
-      if (existing?.sessionId) {
-        const session = this.getWritableSession(hosted, existing.sessionId)
-        if (session) return { duplicate: true, session: sessionOption(session, this.isSessionBusy(session.sessionId), 'feishu') }
-      }
-      const session = await this.createSession(hosted, normalizeText(payload.title))
-      this.setActiveSession(hosted, chatId, session.sessionId)
-      if (normalizeText(payload.eventId)) this.saveEvent(hosted, normalizeText(payload.eventId), chatId, session.sessionId, null, 'completed')
-      return { session: sessionOption(session, false, 'feishu') }
-    }
-
-    if (request.type === 'session.abort') {
-      const session = conversation.activeSessionId ? this.getWritableSession(hosted, conversation.activeSessionId) : null
-      if (!session) throw new Error('No writable Moss Server session is selected.')
-      const activeTurn = this.turns.get(session.sessionId)
-      if (activeTurn) {
-        if (!activeTurn.socket.destroyed) activeTurn.socket.write(`${JSON.stringify({ type: 'interrupt' })}\n`)
-      }
-      if (this.drainingSessions.has(session.sessionId)) this.cancelledSessions.add(session.sessionId)
-      const queued = this.turnQueues.get(session.sessionId) ?? []
-      this.turnQueues.delete(session.sessionId)
-      for (const turn of queued) {
-        this.updateEvent(turn.hosted, turn.eventId, 'cancelled', '', 'Turn cancelled by user.')
-      }
-      return {
-        session: sessionOption(
-          session,
-          Boolean(activeTurn),
-          this.getSessionOriginChannel(hosted, session.sessionId),
-        ),
-        cancelled: queued.length,
-      }
-    }
-
-    if (request.type === 'chat.message.received') {
-      const eventId = normalizeText(payload.eventId)
-      const text = normalizeText(payload.text)
-      if (!eventId || !text) throw new Error('Feishu message id and text are required.')
-      const existing = this.getEvent(hosted, eventId)
-      if (existing) {
-        return { duplicate: true, sessionId: existing.sessionId, turnId: existing.turnId, status: existing.status }
-      }
-      let session = conversation.activeSessionId ? this.getWritableSession(hosted, conversation.activeSessionId) : null
-      if (!session) {
-        session = await this.createSession(hosted)
-        this.setActiveSession(hosted, chatId, session.sessionId)
-      }
-      const queued = this.isSessionBusy(session.sessionId)
-      const turnId = randomUUID()
-      this.saveEvent(hosted, eventId, chatId, session.sessionId, turnId, 'accepted')
-      const queue = this.turnQueues.get(session.sessionId) ?? []
-      queue.push({ hosted, eventId, turnId, chatId, session, prompt: text })
-      this.turnQueues.set(session.sessionId, queue)
-      void this.drainTurnQueue(session.sessionId)
-      return {
-        accepted: true,
-        queued,
-        turnId,
-        session: sessionOption(
-          session,
-          true,
-          this.getSessionOriginChannel(hosted, session.sessionId),
-        ),
-      }
-    }
-
-    throw new Error(`Unsupported Feishu Adapter request: ${request.type}`)
+    const queued = this.isSessionBusy(session.sessionId)
+    const turnId = randomUUID()
+    this.saveEvent(hosted, eventId, chatId, session.sessionId, turnId, 'accepted')
+    const queue = this.turnQueues.get(session.sessionId) ?? []
+    queue.push({ hosted, eventId, turnId, chatId, session, prompt: text })
+    this.turnQueues.set(session.sessionId, queue)
+    void this.drainTurnQueue(session.sessionId)
+    return { accepted: true, queued, turnId, sessionId: session.sessionId }
   }
 
   private async runTurn(
@@ -897,8 +715,7 @@ export class AdapterProcessManager {
   ): Promise<void> {
     this.updateEvent(hosted, eventId, 'running')
     try {
-      if (this.cancelledSessions.has(session.sessionId)) throw new Error('Turn cancelled by user.')
-      const text = await this.sendPrompt(hosted, chatId, session.sessionId, prompt)
+      const text = await this.sendPrompt(hosted, session.sessionId, prompt)
       this.updateEvent(hosted, eventId, 'completed', text)
       const delivered = this.sendEvent(this.getCurrentHost(hosted), 'turn.completed', {
         turnId,
@@ -923,8 +740,6 @@ export class AdapterProcessManager {
         this.markEventDelivered(hosted, eventId)
       }
       this.logger.error(`[AdapterProcess] Feishu turn ${turnId} failed: ${message}`)
-    } finally {
-      this.cancelledSessions.delete(session.sessionId)
     }
   }
 
@@ -961,13 +776,13 @@ export class AdapterProcessManager {
     }
   }
 
-  private async sendPrompt(hosted: HostedProcess, chatId: string, sessionId: string, prompt: string): Promise<string> {
+  private async sendPrompt(hosted: HostedProcess, sessionId: string, prompt: string): Promise<string> {
     const releaseTurn = await this.runtime.acquireSessionTurn(sessionId)
     try {
       const ready = await this.runtime.ensureSessionReady(sessionId)
       const socket = await this.runtime.connectToAttempt(ready.attempt)
       const key = makeKey(hosted.auth.orgId, hosted.auth.userId, 'feishu')
-      if (this.processes.get(key) !== hosted || this.cancelledSessions.has(sessionId)) {
+      if (this.processes.get(key) !== hosted) {
         socket.destroy()
         throw new Error('Feishu runtime stopped before the turn started.')
       }
@@ -978,11 +793,6 @@ export class AdapterProcessManager {
           if (settled) return
           settled = true
           this.turns.delete(sessionId)
-          for (const permission of this.pendingPermissions.values()) {
-            if (permission.sessionId !== sessionId) continue
-            clearTimeout(permission.timer)
-            this.pendingPermissions.delete(permission.id)
-          }
           socket.destroy()
           releaseTurn()
           if (error) reject(error)
@@ -1004,7 +814,7 @@ export class AdapterProcessManager {
               if (message.type === 'control_request') {
                 const request = isRecord(message.request) ? message.request : {}
                 if (request.subtype === 'can_use_tool') {
-                  this.requestToolPermission(hosted, socket, sessionId, chatId, message)
+                  this.denyInteractiveToolRequest(socket, message)
                 } else {
                   const response = JSON.stringify({
                     type: 'control_response',
@@ -1042,10 +852,10 @@ export class AdapterProcessManager {
     }
   }
 
-  private async createSession(hosted: HostedProcess, title = ''): Promise<SessionRecord> {
+  private async createSession(hosted: HostedProcess): Promise<SessionRecord> {
     const session = await this.runtime.createSession({
       cwd: hosted.config.defaultWorkDir || undefined,
-      title: title.slice(0, 120) || '飞书会话',
+      title: '飞书会话',
       dangerouslySkipPermissions: false,
       userId: hosted.auth.userId,
       orgId: hosted.auth.orgId,
@@ -1063,6 +873,7 @@ export class AdapterProcessManager {
 
   private getWritableSession(hosted: HostedProcess, sessionId: string): SessionRecord | null {
     if (!sessionId) return null
+    if (!this.getSessionOriginChannel(hosted, sessionId)) return null
     const session = this.runtime.getSession(sessionId)
     if (!session || session.orgId !== hosted.auth.orgId || session.userId !== hosted.auth.userId) return null
     return session.desiredState !== 'terminated' && !session.deletedAt ? session : null
@@ -1099,118 +910,25 @@ export class AdapterProcessManager {
     return current?.config.appId === fallback.config.appId ? current : fallback
   }
 
-  private requestToolPermission(
-    hosted: HostedProcess,
-    socket: net.Socket,
-    sessionId: string,
-    chatId: string,
-    message: Record<string, unknown>,
-  ): void {
+  private denyInteractiveToolRequest(socket: net.Socket, message: Record<string, unknown>): void {
     const request = isRecord(message.request) ? message.request : {}
     const requestId = normalizeText(message.request_id)
     if (!requestId) return
-    const id = randomUUID()
-    const actionToken = randomUUID()
     const toolName = normalizeText(request.tool_name) || '工具操作'
-    const input = isRecord(request.input) ? request.input : {}
-    if (toolName === ASK_USER_QUESTION_TOOL_NAME) {
-      const response = JSON.stringify({
-        type: 'control_response',
-        response: {
-          subtype: 'success',
-          request_id: requestId,
-          response: {
-            behavior: 'deny',
-            message: 'Ask the user in a normal assistant response and wait for their next Feishu message.',
-          },
-        },
-      })
-      socket.write(`${JSON.stringify({ type: 'stdin', data: `${response}\n` })}\n`)
-      return
-    }
-    const timer = setTimeout(() => {
-      const permission = this.pendingPermissions.get(id)
-      if (!permission) return
-      this.pendingPermissions.delete(id)
-      this.writePermissionResponse(permission, false, 'Permission request expired.')
-      this.sendEvent(hosted, 'decision.resolved', {
-        decision: { id, status: 'expired', mobileTitle: 'Moss Server 操作确认', mobileSummary: `${toolName} 请求已过期` },
-        reason: 'expired',
-        deliveries: [],
-      })
-    }, 10 * 60_000)
-    timer.unref?.()
-    const permission: PendingPermission = {
-      id,
-      actionToken,
-      requestId,
-      sessionId,
-      chatId,
-      toolName,
-      input,
-      hosted,
-      socket,
-      timer,
-    }
-    this.pendingPermissions.set(id, permission)
-    const sent = this.sendEvent(hosted, 'notification.deliver', {
-      deliveryId: id,
-      chatId,
-      title: 'Moss Server 操作确认',
-      summary: permissionSummary(toolName, input),
-      decisionRequestId: id,
-      actionToken,
-    })
-    if (!sent) {
-      clearTimeout(timer)
-      this.pendingPermissions.delete(id)
-      this.writePermissionResponse(permission, false, 'Feishu permission card could not be delivered.')
-    }
-  }
-
-  private handlePermissionDecision(hosted: HostedProcess, payload: Record<string, unknown>): { ok: true } {
-    const decisionId = normalizeText(payload.decisionId)
-    const permission = this.pendingPermissions.get(decisionId)
-    if (!permission || permission.hosted !== hosted) throw new Error('This permission request is no longer pending.')
-    const chatId = normalizeText(payload.chatId)
-    const openId = normalizeText(payload.openId)
-    const token = normalizeText(payload.actionToken)
-    if (chatId !== permission.chatId || !this.isAllowed(hosted.config, openId)) {
-      throw new Error('This Feishu conversation cannot answer the permission request.')
-    }
-    if (!token || !constantTimeCodeEqual(token, permission.actionToken)) {
-      throw new Error('Permission action token is invalid.')
-    }
-    clearTimeout(permission.timer)
-    this.pendingPermissions.delete(permission.id)
-    const allowed = payload.allowed === true
-    this.writePermissionResponse(permission, allowed, allowed ? '' : 'Denied from Feishu.')
-    this.sendEvent(hosted, 'decision.resolved', {
-      decision: {
-        id: permission.id,
-        status: allowed ? 'resolved' : 'rejected',
-        mobileTitle: 'Moss Server 操作确认',
-        mobileSummary: `${permission.toolName} 请求${allowed ? '已允许' : '已拒绝'}`,
-      },
-      reason: allowed ? 'resolved' : 'rejected',
-      deliveries: [],
-    })
-    return { ok: true }
-  }
-
-  private writePermissionResponse(permission: PendingPermission, allowed: boolean, message: string): void {
-    if (permission.socket.destroyed) return
     const response = JSON.stringify({
       type: 'control_response',
       response: {
         subtype: 'success',
-        request_id: permission.requestId,
-        response: allowed
-          ? { behavior: 'allow', updatedInput: permission.input }
-          : { behavior: 'deny', message },
+        request_id: requestId,
+        response: {
+          behavior: 'deny',
+          message: toolName === ASK_USER_QUESTION_TOOL_NAME
+            ? 'Ask the user in a normal assistant response and wait for their next Feishu message.'
+            : 'Interactive tool approval is unavailable in the Feishu channel.',
+        },
       },
     })
-    permission.socket.write(`${JSON.stringify({ type: 'stdin', data: `${response}\n` })}\n`)
+    socket.write(`${JSON.stringify({ type: 'stdin', data: `${response}\n` })}\n`)
   }
 
   private redeliverPending(hosted: HostedProcess): void {
@@ -1259,15 +977,6 @@ export class AdapterProcessManager {
       UPDATE feishu_adapter_conversations SET active_session_id = ?, updated_at = ?
       WHERE org_id = ? AND user_id = ? AND app_id = ? AND chat_id = ?
     `).run(sessionId, Date.now(), hosted.auth.orgId, hosted.auth.userId, hosted.config.appId, chatId)
-  }
-
-  private findLatestChatId(hosted: HostedProcess, openId: string): string {
-    const row = this.db.prepare(`
-      SELECT chat_id FROM feishu_adapter_conversations
-      WHERE org_id = ? AND user_id = ? AND app_id = ? AND open_id = ?
-      ORDER BY updated_at DESC LIMIT 1
-    `).get(hosted.auth.orgId, hosted.auth.userId, hosted.config.appId, openId) as Record<string, unknown> | undefined
-    return normalizeText(row?.chat_id)
   }
 
   listFeishuSessionIds(orgId: string, userId: string): string[] {
@@ -1347,7 +1056,6 @@ export class AdapterProcessManager {
           allowedUsers: config.allowedUsers ?? [],
           pairedUsers: config.pairedUsers ?? [],
           defaultWorkDir: config.defaultWorkDir || '',
-          streamingCard: config.streamingCard === true,
         },
         pairing: config.pairing ?? { code: null, expiresAt: null, createdAt: null },
       },

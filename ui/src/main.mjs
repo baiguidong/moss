@@ -94,12 +94,16 @@ import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
 import {
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
+  createOpenIMProtocolDefinition,
+  defaultInstanceId,
 } from '../../packages/app-runtime/src/index.mjs';
 import {
   AGENT_HOST_METHODS,
   CHANNEL_HOST_METHODS,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
+  MOSS_OPENIM_PROTOCOL,
+  openIMDefaultConversationIdFor,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
@@ -144,6 +148,16 @@ import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
 import { createOpenIMIntegration } from './openim/openim-integration.mjs';
 import {
+  isOpenIMConversationOwnedBy,
+  normalizeOpenIMReceivedMessages,
+  normalizeOpenIMSessionEvent,
+} from './openim/openim-app-bridge.mjs';
+import {
+  OPENIM_APP_ID,
+  isAllowedOpenIMMediaPermission,
+  isAuthorizedOpenIMAppState as hasAuthorizedOpenIMAppState,
+} from './openim/openim-app-permissions.mjs';
+import {
   BROWSER_PARTITION,
   createBrowserViewManager,
   registerBrowserViewIpcHandlers,
@@ -160,6 +174,7 @@ import {
 import {
   MEDIA_SCHEME,
   installMediaProtocol,
+  allowMediaFile,
   allowMediaRoot,
 } from './media-protocol.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
@@ -277,15 +292,13 @@ import {
   validateAgentChannelConnectorTool,
   validateAgentChannelDelegation,
 } from './agent-channel-controller.mjs';
-import {
-  authorizeFeishuDecisionResponse,
-  createFeishuAdapterController,
-} from './feishu-adapter-controller.mjs';
+import { createFeishuAdapterController } from './feishu-adapter-controller.mjs';
 import {
   FEISHU_APP_ID,
   FEISHU_APP_INSTANCE_ID,
   claimFeishuPairingEvent,
   configureFeishuAppFromLegacy,
+  constrainFeishuAgentPolicy,
   getFeishuAppProcessStatus,
   hasFeishuAppMigrationMarker,
   isFeishuAppReady,
@@ -298,10 +311,7 @@ import {
   splitLegacyFeishuAppConfiguration,
   withFeishuAppMigrationMarker,
 } from './feishu-app-runtime.mjs';
-import {
-  createAppNotificationBroker,
-  sanitizeMobileNotificationText,
-} from './app-notification-broker.mjs';
+import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import {
   createRemoteDirectClient,
@@ -743,10 +753,10 @@ let remoteFeishuStatus = {
 let remoteSessionSyncPromise = null;
 let localSessionReconciliationPromise = null;
 let lastRemoteSessionSyncErrorMessage = '';
+let remoteDirectTlsRestartRequired = false;
+const REMOTE_DIRECT_TLS_RESTART_MESSAGE = '新证书已接受并保存。请完全退出并重新启动 Moss，然后再次点击“重新认证”。';
 let feishuRuntimeTransition = Promise.resolve();
 let remoteFeishuMemorySyncTimer = null;
-const feishuNotificationRetryTimers = new Map();
-const FEISHU_NOTIFICATION_RETRY_MAX_MS = 5 * 60_000;
 const feishuPairingFailures = new Map();
 const FEISHU_PAIRING_RATE_WINDOW_MS = 5 * 60_000;
 const FEISHU_PAIRING_MAX_FAILURES = 5;
@@ -777,9 +787,20 @@ const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
 const appWindows = new Map();
 const appWindowStates = new Map();
+const OPENIM_APP_INSTANCE_ID = defaultInstanceId(OPENIM_APP_ID);
 const pendingEmbeddedApps = new Map();
 const pendingEmbeddedAppsByToken = new Map();
 const configuredAppSessions = new WeakSet();
+
+function isAuthorizedOpenIMAppState(state, permission = 'openim:client') {
+  const installation = desktopAppRuntime?.installations?.get?.(OPENIM_APP_ID);
+  return hasAuthorizedOpenIMAppState({
+    state,
+    runtime: desktopAppRuntime,
+    installation,
+    permission,
+  });
+}
 const pendingWebviewAttachments = [];
 const configuredRightBrowserContents = new WeakSet();
 const MAX_APP_STORAGE_BYTES = 1024 * 1024;
@@ -803,8 +824,57 @@ const openIMIntegration = createOpenIMIntegration({
   mossHome: MOSS_HOME,
   allowMediaRoot,
   resolveMossServerConnection: () => resolveRemoteDirectConnection(),
+  authorizeClient: (event, permission = 'openim:client') => {
+    if (mainWindow?.webContents === event.sender) return;
+    const state = appWindowStates.get(event.sender.id);
+    if (!isAuthorizedOpenIMAppState(state, permission)) {
+      throw new Error('OpenIM native capabilities are only available to the enabled moss.openim App.');
+    }
+  },
+  isTrustedClient: (event) => mainWindow?.webContents === event.sender,
+  allowMediaFile,
   log: mossLog,
   fetchImpl: remoteDirectNetFetch,
+});
+openIMIntegration.onEvent((eventName, payload) => {
+  if (!desktopAppRuntime?.installations?.get(OPENIM_APP_ID)?.enabled) return;
+  if (!desktopAppRuntime.instances.get(OPENIM_APP_INSTANCE_ID)?.enabled) return;
+  const sessionEvent = normalizeOpenIMSessionEvent(
+    eventName,
+    payload,
+    openIMIntegration.getCurrentUserId(),
+  );
+  if (sessionEvent) {
+    if (sessionEvent.connected) {
+      const readyScope = currentOpenIMReadyScope(OPENIM_APP_ID, OPENIM_APP_INSTANCE_ID);
+      if (readyScope) agentChannelController?.onReady(readyScope);
+    }
+    void desktopAppRuntime.publishHostEvent(
+      OPENIM_APP_ID,
+      OPENIM_APP_INSTANCE_ID,
+      MOSS_OPENIM_PROTOCOL,
+      'session.changed',
+      sessionEvent,
+      { eventId: `openim-session:${eventName}:${Date.now()}` },
+    ).catch((error) => mossLog('warn', 'openim-app', 'Unable to publish OpenIM session event', {
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
+  for (const message of normalizeOpenIMReceivedMessages(eventName, payload, {
+    currentUserId: openIMIntegration.getCurrentUserId(),
+  })) {
+    void desktopAppRuntime.publishHostEvent(
+      OPENIM_APP_ID,
+      OPENIM_APP_INSTANCE_ID,
+      MOSS_OPENIM_PROTOCOL,
+      'message.received',
+      message,
+      { eventId: `openim-message:${message.externalEventId}` },
+    ).catch((error) => mossLog('warn', 'openim-app', 'Unable to publish OpenIM message event', {
+      externalEventId: message.externalEventId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
 });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
@@ -858,7 +928,6 @@ const agentChannelStore = createAgentChannelStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
   onChanged: (payload) => emitToRenderer('notification:changed', payload),
-  onDeliver: (payload) => queueFeishuNotificationDelivery(payload),
 });
 let agentMailPoller = null;
 let agentMailStatus = {
@@ -3301,10 +3370,13 @@ function filterAgentChannelResourceSelection(requested, available, aliases = new
   return { selected: [...new Set(selected)], unavailable };
 }
 
-async function authorizeAgentChannelPolicy(policy) {
+async function authorizeAgentChannelPolicy(policy, context = null) {
+  const requestedPolicy = context?.appId === FEISHU_APP_ID
+    ? constrainFeishuAgentPolicy(policy)
+    : policy;
   const catalog = await getAgentChannelCatalog();
-  const agent = policy.agentId
-    ? catalog.agents.find((entry) => entry.id === policy.agentId)
+  const agent = requestedPolicy.agentId
+    ? catalog.agents.find((entry) => entry.id === requestedPolicy.agentId)
     : null;
   const toolAliases = new Map(catalog.tools.flatMap((tool) => [
     [tool.id, tool.id],
@@ -3315,17 +3387,17 @@ async function authorizeAgentChannelPolicy(policy) {
     [skill.name, skill.name],
   ]));
   const tools = filterAgentChannelResourceSelection(
-    policy.resources?.tools,
+    requestedPolicy.resources?.tools,
     catalog.tools.map((tool) => tool.id),
     toolAliases,
   );
   const skills = filterAgentChannelResourceSelection(
-    policy.resources?.skills,
+    requestedPolicy.resources?.skills,
     catalog.skills.map((skill) => skill.name),
     skillAliases,
   );
   const connectors = filterAgentChannelResourceSelection(
-    policy.resources?.connectors,
+    requestedPolicy.resources?.connectors,
     catalog.connectors.map((connector) => connector.id),
   );
   let effectiveTools = tools.selected;
@@ -3336,15 +3408,15 @@ async function authorizeAgentChannelPolicy(policy) {
       : effectiveTools.filter((tool) => agentTools.has(tool));
   }
   return {
-    ...policy,
-    agentAvailable: !policy.agentId || Boolean(agent),
+    ...requestedPolicy,
+    agentAvailable: !requestedPolicy.agentId || Boolean(agent),
     resources: {
       tools: effectiveTools,
       skills: skills.selected,
       connectors: connectors.selected,
     },
     unavailableResources: {
-      agents: policy.agentId && !agent ? [policy.agentId] : [],
+      agents: requestedPolicy.agentId && !agent ? [requestedPolicy.agentId] : [],
       tools: tools.unavailable,
       skills: skills.unavailable,
       connectors: connectors.unavailable,
@@ -3369,15 +3441,24 @@ async function applyAgentChannelSessionPolicy(session, policy) {
       connectors: Object.hasOwn(policy?.resources || {}, 'connectors') ? policy.resources.connectors : null,
     },
   };
+  const availableConnectorIds = next.resources.connectors === null
+    ? (await listInstalledConnectors())
+      .filter((connector) => connector.enabled !== false)
+      .map((connector) => connector.id)
+    : [];
+  const nextConnectorIds = resolveAgentChannelConnectorIds(next, availableConnectorIds);
   const previousFingerprint = session.channelRuntimePolicy
     ? JSON.stringify(session.channelRuntimePolicy)
     : '';
   const nextFingerprint = JSON.stringify(next);
+  const connectorsChanged = JSON.stringify(normalizeStringList(session.connectorIds))
+    !== JSON.stringify(nextConnectorIds);
   session.channelRuntimePolicy = next;
+  session.connectorIds = nextConnectorIds;
   session.permissionMode = ['default', 'acceptEdits', 'dontAsk'].includes(next.permissionMode)
     ? next.permissionMode
     : 'default';
-  if (session.runtime && previousFingerprint !== nextFingerprint) {
+  if (session.runtime && (previousFingerprint !== nextFingerprint || connectorsChanged)) {
     if (session.busy || hasActiveAgentTeam(session)) session.pendingMcpRuntimeReload = true;
     else disposeRuntime(session);
   }
@@ -3387,7 +3468,11 @@ async function applyAgentChannelSessionPolicy(session, policy) {
 function toAgentChannelSessionOption(sessionRecord, context) {
   const session = toFeishuSessionOption(sessionRecord);
   if (!session) return null;
-  if (context?.appId === FEISHU_APP_ID) return { ...session, messageCount: sessionRecord.messageCount };
+  if (context?.appId === FEISHU_APP_ID) {
+    return sessionRecord.originChannel === 'feishu'
+      ? { ...session, messageCount: sessionRecord.messageCount }
+      : null;
+  }
   return sessionRecord.channelAppId === context?.appId
     && sessionRecord.channelInstanceId === context?.instanceId
     ? { ...session, messageCount: sessionRecord.messageCount }
@@ -3401,17 +3486,11 @@ function getWritableAgentChannelSession(sessionId, context) {
   );
 }
 
-function listWritableAgentChannelSessions(query = '', context = null, input = {}) {
+function listWritableAgentChannelSessions(query = '', context = null) {
   const normalizedQuery = String(query || '').trim().toLowerCase();
-  const category = context?.appId === FEISHU_APP_ID && ['feishu', 'project'].includes(input.category)
-    ? input.category
-    : 'recent';
   return [...sessions.values()]
     .map((sessionRecord) => toAgentChannelSessionOption(sessionRecord, context))
     .filter(Boolean)
-    .filter((entry) => category === 'recent'
-      || (category === 'feishu' && entry.originChannel === 'feishu')
-      || (category === 'project' && Boolean(entry.projectName)))
     .filter((entry) => !normalizedQuery || [entry.title, entry.preview, entry.projectName]
       .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
     .sort((left, right) => right.updatedAt - left.updatedAt);
@@ -3549,10 +3628,65 @@ const FEISHU_AGENT_CHANNEL_DEFAULTS = Object.freeze({
   session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
 });
 
+const OPENIM_AGENT_CHANNEL_DEFAULTS = Object.freeze({
+  ...DEFAULT_AGENT_CHANNEL_POLICY,
+  replyMode: 'human_only',
+  resources: Object.freeze({ tools: Object.freeze([]), skills: Object.freeze([]), connectors: Object.freeze([]) }),
+  session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
+});
+
+function currentOpenIMReadyScope(appId, instanceId) {
+  if (appId !== OPENIM_APP_ID) return { appId, instanceId };
+  const currentUserId = openIMIntegration.getCurrentUserId();
+  return currentUserId
+    ? { appId, instanceId, externalConversationPrefix: `openim-user:${encodeURIComponent(currentUserId)}/` }
+    : null;
+}
+
+function requireCurrentOpenIMConversation(externalConversationId, externalUserId = '', options = {}) {
+  const currentUserId = openIMIntegration.getCurrentUserId();
+  if (!isOpenIMConversationOwnedBy(externalConversationId, currentUserId, {
+    allowDefault: options.allowDefault === true,
+    peerUserId: externalUserId,
+  })) {
+    throw new Error('OpenIM conversation does not belong to the active account.');
+  }
+}
+
+function authorizeOpenIMAgentRequest(method, input, context) {
+  if (context?.appId !== OPENIM_APP_ID || method === 'catalog.list') return;
+  if (['binding.get', 'binding.update', 'binding.reset'].includes(method)) {
+    requireCurrentOpenIMConversation(input.externalConversationId, '', { allowDefault: true });
+    return;
+  }
+  if (['context.observe', 'turn.start'].includes(method)) {
+    requireCurrentOpenIMConversation(input.externalConversationId, input.externalUserId);
+    return;
+  }
+  if (method === 'turn.list') {
+    requireCurrentOpenIMConversation(input.externalConversationId);
+    return;
+  }
+  const turn = agentChannelStore.getTurn(input.turnId, {
+    appId: context.appId,
+    instanceId: context.instanceId,
+  });
+  if (turn) requireCurrentOpenIMConversation(turn.externalConversationId, turn.externalUserId);
+  if (input.externalConversationId) requireCurrentOpenIMConversation(input.externalConversationId);
+}
+
+function authorizeOpenIMChannelRequest(method, input, context) {
+  if (context?.appId !== OPENIM_APP_ID) return;
+  if (!['conversation.list', 'conversation.current', 'conversation.create', 'conversation.select', 'session.abort'].includes(method)) {
+    throw new Error(`Unsupported OpenIM Channel request: ${method}`);
+  }
+  requireCurrentOpenIMConversation(input.externalConversationId, input.externalUserId);
+}
+
 function agentChannelDefaults(context) {
-  return context?.appId === FEISHU_APP_ID
-    ? FEISHU_AGENT_CHANNEL_DEFAULTS
-    : DEFAULT_AGENT_CHANNEL_POLICY;
+  if (context?.appId === FEISHU_APP_ID) return FEISHU_AGENT_CHANNEL_DEFAULTS;
+  if (context?.appId === OPENIM_APP_ID) return OPENIM_AGENT_CHANNEL_DEFAULTS;
+  return DEFAULT_AGENT_CHANNEL_POLICY;
 }
 
 function assertDesktopChannelAvailable(context) {
@@ -3569,21 +3703,13 @@ function assertDesktopChannelAvailable(context) {
 function resolveFeishuChannelConversation(input, context) {
   const openId = String(input.externalUserId || '').trim();
   const requestedChatId = String(input.externalConversationId || '').trim();
+  if (!requestedChatId) throw new Error('Feishu private-chat identity is incomplete.');
   const identity = resolveFeishuAdapterIdentity(openId, context);
-  const legacyConversation = requestedChatId
-    ? feishuAdapterStore.getOrCreateConversation({
-        ...identity,
-        chatId: requestedChatId,
-        pairedOpenId: openId,
-      })
-    : feishuAdapterStore.listConversations()
-      .filter((entry) => entry.adapterInstanceId === identity.adapterInstanceId
-        && entry.tenantKey === identity.tenantKey
-        && entry.pairedOpenId === openId)
-      .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0];
-  if (!legacyConversation) {
-    throw new Error('Send a message to Moss before using the Feishu bot menu.');
-  }
+  const legacyConversation = feishuAdapterStore.getOrCreateConversation({
+    ...identity,
+    chatId: requestedChatId,
+    pairedOpenId: openId,
+  });
 
   const normalizedInput = {
     ...input,
@@ -3601,38 +3727,30 @@ function resolveFeishuChannelConversation(input, context) {
   ) {
     agentChannelStore.setConversationSession(conversation.id, legacyConversation.activeSessionId);
   }
-  return { input: normalizedInput, legacyConversation, conversation };
+  return { input: normalizedInput, legacyConversation };
 }
 
 async function handleDesktopChannelRequest(method, input, context) {
   assertDesktopChannelAvailable(context);
   if (context.appId === FEISHU_APP_ID) {
-    if (method === 'connection.update' || method === 'pairing.attempt' || method === 'decision.respond') {
+    if (method === 'connection.update' || method === 'pairing.attempt') {
       return handleFeishuProcessRequest(mapChannelRequestToLegacy(method, input), context);
     }
-    if (method === 'delivery.ack' && input.kind !== 'turn') {
-      return handleFeishuProcessRequest(mapChannelRequestToLegacy(method, input), context);
-    }
-    if (method !== 'delivery.ack') {
+    if (method === 'message.receive') {
       const resolved = resolveFeishuChannelConversation(input, context);
       const result = await agentChannelController.handleChannelRequest(method, resolved.input, context);
       const selectedSession = result?.session || result?.currentSession || null;
       if (selectedSession?.id) {
         feishuAdapterStore.setActiveSession(resolved.legacyConversation.id, selectedSession.id);
       }
-      if (method === 'conversation.list') {
-        return {
-          ...result,
-          conversationId: resolved.conversation.id,
-          chatId: resolved.legacyConversation.chatId,
-          activeSessionId: result.currentSession?.id || null,
-          category: ['feishu', 'project'].includes(input.category) ? input.category : 'recent',
-          query: String(input.query || '').trim(),
-        };
-      }
       return result;
     }
+    if (method === 'delivery.ack' && input.kind === 'turn') {
+      return agentChannelController.handleChannelRequest(method, input, context);
+    }
+    throw new Error(`Unsupported Feishu Channel method: ${method}`);
   }
+  authorizeOpenIMChannelRequest(method, input, context);
   return agentChannelController.handleChannelRequest(method, input, context);
 }
 
@@ -4664,6 +4782,9 @@ function refreshDesktopSettings(payload = {}) {
     desktopSettings.remoteDirectServerUrl,
   );
   const nextServerUrl = getRemoteCredentialServerUrl(nextSettings.remoteDirectServerUrl);
+  if (previousServerUrl !== nextServerUrl) {
+    remoteDirectTlsRestartRequired = false;
+  }
   const nestedRemotePayload = payload?.remoteDirect && typeof payload.remoteDirect === 'object'
     ? payload.remoteDirect
     : {};
@@ -7728,6 +7849,14 @@ function createAppWindowState(appEntry, appWindow, source) {
   return createAppWebContentsState(appEntry, appWindow.webContents, source, appWindow);
 }
 
+function appUiPreloadPath(appId) {
+  return path.join(
+    __dirname,
+    'apps',
+    appId === OPENIM_APP_ID ? 'openim-app-preload.mjs' : 'app-preload.mjs',
+  );
+}
+
 function getAppWindowStateBySender(sender) {
   const state = appWindowStates.get(sender.id);
   if (!state) {
@@ -7757,10 +7886,11 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
   }
 
   pending.webContentsId = targetWebContents.id;
-  createAppWebContentsState(pending.appEntry, targetWebContents, {
+  const state = createAppWebContentsState(pending.appEntry, targetWebContents, {
     mode: 'embedded',
     embedId,
   });
+  if (isAuthorizedOpenIMAppState(state)) openIMIntegration.attach(targetWebContents);
   configureAppWebContents(targetWebContents, pending.bundleToken);
   targetWebContents.once('destroyed', () => {
     disposeAppWebContentsState(targetWebContents.id);
@@ -7897,8 +8027,19 @@ function configureAppSession(appSession) {
   if (configuredAppSessions.has(appSession)) return;
   configuredAppSessions.add(appSession);
   installAppUiProtocol(appSession.protocol);
-  appSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  appSession.setPermissionCheckHandler(() => false);
+  const allowed = (webContents, permission, details = {}) => isAllowedOpenIMMediaPermission({
+    state: appWindowStates.get(webContents?.id),
+    runtime: desktopAppRuntime,
+    installation: desktopAppRuntime?.installations?.get?.(OPENIM_APP_ID),
+    permission,
+    mediaTypes: details?.mediaTypes,
+  });
+  appSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(allowed(webContents, permission, details));
+  });
+  appSession.setPermissionCheckHandler((webContents, permission, _origin, details) => (
+    allowed(webContents, permission, details)
+  ));
 }
 
 async function openExternalUrl(href) {
@@ -8027,7 +8168,7 @@ function launchAppWindow(appEntry, source = {}) {
       backgroundColor: '#0b1120',
       autoHideMenuBar: true,
       webPreferences: {
-        preload: path.join(__dirname, 'apps', 'app-preload.mjs'),
+        preload: appUiPreloadPath(appId),
         partition,
         sandbox: false,
         contextIsolation: true,
@@ -8036,7 +8177,8 @@ function launchAppWindow(appEntry, source = {}) {
     });
 
     appWindows.set(windowKey, appWindow);
-    createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
+    const state = createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
+    if (isAuthorizedOpenIMAppState(state)) openIMIntegration.attach(appWindow.webContents);
     configureAppWebContents(appWindow.webContents, bundleToken);
     appWindow.on('closed', () => {
       disposeAppWebContentsState(appWindow.webContents.id);
@@ -10492,7 +10634,7 @@ function createWindow() {
     pendingWebviewAttachments.push({ kind: 'app-ui', token });
     const partition = appSessionPartition(pending.appEntry?.id || pending.appEntry?.name);
     configureAppSession(session.fromPartition(partition));
-    webPreferences.preload = path.join(__dirname, 'apps', 'app-preload.mjs');
+    webPreferences.preload = appUiPreloadPath(pending.appEntry?.id || pending.appEntry?.name);
     webPreferences.partition = partition;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
@@ -11200,22 +11342,15 @@ function toFeishuSessionOption(sessionRecord) {
 }
 
 function getWritableFeishuSessionOption(sessionId) {
-  return toFeishuSessionOption(typeof sessionId === 'string' ? sessions.get(sessionId) : null);
+  const sessionRecord = typeof sessionId === 'string' ? sessions.get(sessionId) : null;
+  return sessionRecord?.originChannel === 'feishu'
+    ? toFeishuSessionOption(sessionRecord)
+    : null;
 }
 
-function listWritableFeishuSessions(query = '') {
-  const normalizedQuery = String(query || '').trim().toLowerCase();
-  return [...sessions.values()]
-    .map(toFeishuSessionOption)
-    .filter(Boolean)
-    .filter((session) => !normalizedQuery || [session.title, session.preview, session.projectName]
-      .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
-    .sort((left, right) => right.updatedAt - left.updatedAt);
-}
-
-async function createSessionFromFeishu(title) {
+async function createSessionFromFeishu() {
   const sessionRecord = createSessionRecord({
-    title: String(title || '').trim().slice(0, 120) || '飞书会话',
+    title: '飞书会话',
     agentMode: 'local',
     originChannel: 'feishu',
   });
@@ -11238,124 +11373,6 @@ async function sendPromptFromFeishu(sessionId, prompt) {
   return { ...result, title: sessionRecord.title };
 }
 
-async function abortSessionFromFeishu(sessionId) {
-  const sessionRecord = sessions.get(sessionId);
-  if (!toFeishuSessionOption(sessionRecord)) throw new Error('The selected Moss session is not writable.');
-  await Promise.resolve(sessionRecord.runtime?.abort?.());
-  await rejectPendingQuestionRequestsForSession(
-    sessionRecord.id,
-    'Question canceled because the session was aborted from Feishu.',
-  );
-  schedulePersistSession(sessionRecord, true);
-  return { ok: true };
-}
-
-function sendFeishuNotificationDelivery(delivery, payload, { retry = false } = {}) {
-  const conversation = feishuAdapterStore.getConversation(delivery.conversationId);
-  if (!conversation) return false;
-  try {
-    const identity = resolveFeishuAdapterIdentity(conversation.pairedOpenId);
-    if (identity.adapterInstanceId !== conversation.adapterInstanceId) return false;
-  } catch {
-    return false;
-  }
-  if (delivery.status === 'delivered') {
-    clearFeishuNotificationRetry(delivery.id);
-    return true;
-  }
-  if (!retry && delivery.status === 'pending' && delivery.attempts > 0) return false;
-  let decision = null;
-  let actionToken = null;
-  if (payload.decisionRequestId) {
-    decision = appDecisionBroker?.get(payload.decisionRequestId) || null;
-    actionToken = appDecisionBroker?.getActionToken(payload.decisionRequestId) || null;
-    if (!decision || !actionToken) return false;
-  }
-  const sent = sendFeishuTransportEvent('notification.deliver', {
-    deliveryId: delivery.id,
-    chatId: conversation.chatId,
-    ...(decision ? {
-      decisionRequestId: decision.id,
-      decisionKind: decision.kind,
-      actionToken,
-    } : {}),
-    ...payload,
-  });
-  if (sent) {
-    feishuAdapterStore.updateNotificationDelivery(delivery.id, {
-      status: 'pending',
-      incrementAttempts: true,
-    });
-    scheduleFeishuNotificationRetry(delivery.id);
-  }
-  return Boolean(sent);
-}
-
-function clearFeishuNotificationRetry(deliveryId) {
-  const timer = feishuNotificationRetryTimers.get(deliveryId);
-  if (timer) clearTimeout(timer);
-  feishuNotificationRetryTimers.delete(deliveryId);
-}
-
-function scheduleFeishuNotificationRetry(deliveryId) {
-  if (feishuNotificationRetryTimers.has(deliveryId)) return;
-  const delivery = feishuAdapterStore.getNotificationDelivery(deliveryId);
-  if (!delivery || delivery.status === 'delivered') return;
-  const delay = Math.min(
-    2_000 * (2 ** Math.min(Math.max(0, delivery.attempts - 1), 8)),
-    FEISHU_NOTIFICATION_RETRY_MAX_MS,
-  );
-  const timer = setTimeout(() => {
-    feishuNotificationRetryTimers.delete(deliveryId);
-    const current = feishuAdapterStore.getNotificationDelivery(deliveryId);
-    if (!current || current.status === 'delivered') return;
-    const payload = appNotificationBroker.getMobilePayload(current.notificationId);
-    if (!payload) return;
-    if (!sendFeishuNotificationDelivery(current, payload, { retry: true })) {
-      scheduleFeishuNotificationRetry(deliveryId);
-    }
-  }, delay);
-  timer.unref?.();
-  feishuNotificationRetryTimers.set(deliveryId, timer);
-}
-
-function queueFeishuNotificationDelivery(payload) {
-  for (const conversation of feishuAdapterStore.listConversations()) {
-    const delivery = feishuAdapterStore.ensureNotificationDelivery(
-      payload.notificationId,
-      conversation.id,
-    );
-    sendFeishuNotificationDelivery(delivery, payload);
-  }
-}
-
-function flushFeishuNotificationDeliveries() {
-  for (const delivery of feishuAdapterStore.listPendingNotificationDeliveries()) {
-    const payload = appNotificationBroker.getMobilePayload(delivery.notificationId);
-    if (!payload) continue;
-    sendFeishuNotificationDelivery(delivery, payload, { retry: true });
-  }
-}
-
-function flushFeishuDecisionResolutions() {
-  for (const decision of feishuAdapterStore.listTerminalDecisions()) {
-    if (!decision.notificationId) continue;
-    const deliveries = feishuAdapterStore.listNotificationDeliveries(decision.notificationId)
-      .filter((delivery) => delivery.externalMessageId)
-      .map((delivery) => ({
-        externalMessageId: delivery.externalMessageId,
-        chatId: feishuAdapterStore.getConversation(delivery.conversationId)?.chatId || null,
-      }));
-    if (deliveries.length > 0) {
-      sendFeishuTransportEvent('decision.resolved', {
-        decision: toFeishuDecisionCardState(decision),
-        reason: 'replayed',
-        deliveries,
-      });
-    }
-  }
-}
-
 function refreshFeishuAppBackendReadiness() {
   const ready = Boolean(
     feishuAppMode
@@ -11365,32 +11382,17 @@ function refreshFeishuAppBackendReadiness() {
   feishuAppBackendReady = ready;
   if (becameReady) {
     feishuAdapterController?.onReady();
-    queueMicrotask(() => {
-      flushFeishuNotificationDeliveries();
-      flushFeishuDecisionResolutions();
-    });
   }
   return ready;
 }
 
-function toFeishuDecisionCardState(decision) {
-  return {
-    id: decision.id,
-    status: decision.status,
-    mobileTitle: sanitizeMobileNotificationText(decision.mobileTitle, 160),
-    mobileSummary: sanitizeMobileNotificationText(decision.mobileSummary, 1_000),
-  };
-}
-
 function sendFeishuTransportEvent(type, payload) {
+  if (!['turn.completed', 'turn.failed'].includes(type)) return false;
   if (feishuAppMode && desktopAppRuntime) {
     void publishFeishuAppEvent(desktopAppRuntime, type, payload).catch((error) => {
       mossLog('warn', 'feishu-app', `Unable to publish ${type}`, {
         error: error instanceof Error ? error.message : String(error),
       });
-      if (type === 'notification.deliver' && typeof payload?.deliveryId === 'string') {
-        scheduleFeishuNotificationRetry(payload.deliveryId);
-      }
     });
     return true;
   }
@@ -11424,21 +11426,6 @@ async function handleFeishuProcessRequest(request, channelContext = null) {
     const status = emitFeishuAdapterStatus();
     return status;
   }
-  if (request.type === 'delivery.ack') {
-    const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    const deliveryId = typeof payload.deliveryId === 'string' ? payload.deliveryId.trim() : '';
-    const delivery = feishuAdapterStore.getNotificationDelivery(deliveryId);
-    if (!delivery) throw new Error('Notification delivery not found.');
-    const updated = feishuAdapterStore.updateNotificationDelivery(deliveryId, {
-      status: payload.ok === false ? 'failed' : 'delivered',
-      externalMessageId: payload.messageId,
-      externalCardId: payload.cardId,
-      error: payload.ok === false ? String(payload.error || 'Feishu delivery failed.') : null,
-    });
-    if (updated.status === 'delivered') clearFeishuNotificationRetry(deliveryId);
-    else scheduleFeishuNotificationRetry(deliveryId);
-    return updated;
-  }
   if (request.type === 'turn.delivery.ack') {
     const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
     const turnId = typeof payload.turnId === 'string' ? payload.turnId.trim() : '';
@@ -11455,32 +11442,7 @@ async function handleFeishuProcessRequest(request, channelContext = null) {
     }
     return feishuAdapterStore.markTurnDelivered(turn.id);
   }
-  if (request.type === 'decision.respond') {
-    const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    const openId = typeof payload.openId === 'string' ? payload.openId.trim() : '';
-    const chatId = typeof payload.chatId === 'string' ? payload.chatId.trim() : '';
-    const identity = resolveFeishuAdapterIdentity(openId, channelContext);
-    if (!chatId) throw new Error('Feishu decision chat is missing.');
-    const decision = appDecisionBroker.get(payload.decisionId);
-    authorizeFeishuDecisionResponse({
-      store: feishuAdapterStore,
-      identity,
-      chatId,
-      openId,
-      decision,
-    });
-    return appDecisionBroker.respond({
-      decisionId: payload.decisionId,
-      allowed: Boolean(payload.allowed),
-      source: 'feishu',
-      actionToken: payload.actionToken,
-    });
-  }
-  const result = await feishuAdapterController.handleRequest(request, channelContext);
-  for (const payload of appNotificationBroker.listMobilePayloads()) {
-    queueFeishuNotificationDelivery(payload);
-  }
-  return result;
+  return feishuAdapterController.handleRequest(request, channelContext);
 }
 
 function getFeishuRunLocation(adapters = readPersistedAdapterSettings()) {
@@ -11494,6 +11456,7 @@ function getRemoteFeishuConfig(adapters) {
   const {
     runLocation: _runLocation,
     serverDeployment: _serverDeployment,
+    streamingCard: _streamingCard,
     ...runtimeConfig
   } = feishu;
   return {
@@ -11531,7 +11494,6 @@ function getFeishuServerConfigFingerprint(adapters) {
     allowedUsers: Array.isArray(config.allowedUsers) ? config.allowedUsers.map(String) : [],
     pairedUsers: Array.isArray(config.pairedUsers) ? config.pairedUsers : [],
     defaultWorkDir: typeof config.defaultWorkDir === 'string' ? config.defaultWorkDir.trim() : '',
-    streamingCard: config.streamingCard === true,
     autoMemory: config.autoMemory,
     sessionMemory: config.sessionMemory,
     pairing: config.pairing && typeof config.pairing === 'object' ? config.pairing : {},
@@ -11933,23 +11895,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     notificationBroker: appNotificationBroker,
     getSigningSecret: () => decisionSigningSecret,
     resolveDurableDecision: resolveDurableAppDecision,
-    onChanged: ({ decision, reason }) => {
-      emitToRenderer('decision:changed', { decision, reason });
-      if (reason !== 'created') {
-        const deliveries = decision.notificationId
-          ? feishuAdapterStore.listNotificationDeliveries(decision.notificationId)
-            .map((delivery) => ({
-              externalMessageId: delivery.externalMessageId,
-              chatId: feishuAdapterStore.getConversation(delivery.conversationId)?.chatId || null,
-            }))
-          : [];
-        sendFeishuTransportEvent('decision.resolved', {
-          decision: toFeishuDecisionCardState(decision),
-          reason,
-          deliveries,
-        });
-      }
-    },
+    onChanged: ({ decision, reason }) => emitToRenderer('decision:changed', { decision, reason }),
   });
   await appDecisionBroker.restorePending();
   for (const decision of feishuAdapterStore.listPendingDecisions()) {
@@ -11970,11 +11916,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   feishuAdapterController = createFeishuAdapterController({
     store: feishuAdapterStore,
     resolveIdentity: resolveFeishuAdapterIdentity,
-    listWritableSessions: listWritableFeishuSessions,
     getWritableSession: getWritableFeishuSessionOption,
     createSession: createSessionFromFeishu,
     sendPrompt: sendPromptFromFeishu,
-    abortSession: abortSessionFromFeishu,
     sendAdapterEvent: sendFeishuTransportEvent,
     log: (level, message) => mossLog(level, 'feishu-adapter', message),
   });
@@ -11988,12 +11932,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     log: (level, message) => mossLog(level, 'feishu-adapter', message),
     onRequest: handleFeishuProcessRequest,
     onReady: () => {
-      const result = feishuAdapterController.onReady();
-      queueMicrotask(() => {
-        flushFeishuNotificationDeliveries();
-        flushFeishuDecisionResolutions();
-      });
-      return result;
+      return feishuAdapterController.onReady();
     },
     onStatusChange: (status) => {
       if (status.status !== 'running') {
@@ -12039,6 +11978,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     sendPrompt: sendPromptFromAgentChannel,
     abortSession: abortSessionFromAgentChannel,
     defaultsFor: agentChannelDefaults,
+    defaultBindingIdFor: (externalConversationId, context) => (
+      context?.appId === OPENIM_APP_ID
+        ? openIMDefaultConversationIdFor(externalConversationId) || '*'
+        : '*'
+    ),
     publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId }) => {
       if (!desktopAppRuntime) throw new Error('Desktop App Runtime is not ready.');
       return desktopAppRuntime.publishHostEvent(
@@ -12066,6 +12010,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     hostProtocols: [
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
+      createOpenIMProtocolDefinition(),
     ],
     hostHandlers: {
       [MOSS_ACCOUNT_PROTOCOL]: {
@@ -12075,14 +12020,28 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
       [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map((method) => [
         method,
-        (input, context) => agentChannelController.handleAgentRequest(method, input, context),
+        (input, context) => {
+          authorizeOpenIMAgentRequest(method, input, context);
+          return agentChannelController.handleAgentRequest(method, input, context);
+        },
       ])),
+      [MOSS_OPENIM_PROTOCOL]: {
+        'session.ensure': (_input, context) => {
+          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
+          return openIMIntegration.ensureSession();
+        },
+        'message.send': (input, context) => {
+          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
+          return openIMIntegration.sendText(input);
+        },
+      },
     },
     onEvent: (event) => {
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
-        agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
+        const readyScope = currentOpenIMReadyScope(event.appId, event.instanceId);
+        if (readyScope) agentChannelController?.onReady(readyScope);
       }
       if (event.appId === FEISHU_APP_ID && event.type === 'status') {
         if (
@@ -12135,7 +12094,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   for (const installation of desktopAppRuntime.installations.list().filter((entry) => entry.enabled)) {
     for (const instance of desktopAppRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
-      agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
+      const readyScope = currentOpenIMReadyScope(installation.appId, instance.id);
+      if (readyScope) agentChannelController.onReady(readyScope);
     }
   }
   await enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(
@@ -12556,6 +12516,9 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   if (remoteDirectOAuthInFlight) {
     throw new Error('远端 Server 认证正在进行中。');
   }
+  if (remoteDirectTlsRestartRequired) {
+    throw new Error(REMOTE_DIRECT_TLS_RESTART_MESSAGE);
+  }
   const rawServerUrl = typeof payload.serverUrl === 'string' ? payload.serverUrl.trim() : '';
   if (!rawServerUrl) throw new Error('请先填写 Moss Server 地址。');
   const parsed = parseRemoteDirectServerInput(rawServerUrl);
@@ -12568,6 +12531,14 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
       confirmCertificateChange: confirmRemoteDirectCertificateChange,
     });
     await reloadRemoteDirectRuntimeTlsTrust();
+    if (trust.trustUpdated) {
+      // Chromium caches certificate verification results in the network
+      // service. After rejecting an old pinned certificate, the same process
+      // cannot reliably re-verify that origin with its replacement.
+      remoteDirectTlsRestartRequired = true;
+      mossLog('info', 'remote-auth', 'Moss Server certificate trust updated; restart required before authentication');
+      throw new Error(REMOTE_DIRECT_TLS_RESTART_MESSAGE);
+    }
     mossLog('info', 'remote-auth', trust.pinned
       ? 'Moss Server self-signed certificate accepted from the local trust store'
       : 'Moss Server certificate accepted by the system trust store');
@@ -13277,6 +13248,7 @@ ipcMain.handle('project:get-task', async (_event, { projectId, taskId } = {}) =>
 });
 
 async function synchronizeRemoteSessionsBestEffort() {
+  if (remoteDirectTlsRestartRequired) return;
   if (desktopSettings.remoteEnabled ?? false) {
     await syncRemoteDirectSessionsFromServer().catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -14315,7 +14287,7 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
       ok: true,
       embedId,
       url: entryUrl,
-      preload: path.join(__dirname, 'apps', 'app-preload.mjs'),
+      preload: appUiPreloadPath(appEntry.id || appEntry.name),
       app: {
         id: appEntry.id || appEntry.name,
         name: appEntry.name || appEntry.id,

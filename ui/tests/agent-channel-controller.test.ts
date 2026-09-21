@@ -20,24 +20,26 @@ function runControllerScenario(source: string) {
       const deadline = Date.now() + 1000;
       while (!predicate()) { if (Date.now() > deadline) throw new Error('Timed out'); await new Promise(resolve => setTimeout(resolve, 1)); }
     };
-    const setup = (defaultReplyMode = 'human_only') => {
+    const setup = (defaultReplyMode = 'human_only', overrides = {}) => {
       const db = new DatabaseSync(':memory:');
       const store = createAgentChannelStore(db);
       const sessions = new Map();
       const events = [];
+      const prompts = [];
       let created = 0;
       const controller = createAgentChannelController({
         store,
         catalog: async () => ({ agents: [{ id: 'support' }], tools: [{ id: 'Read' }] }),
         defaultsFor: () => ({ replyMode: defaultReplyMode }),
+        defaultBindingIdFor: overrides.defaultBindingIdFor,
         listWritableSessions: () => [...sessions.values()],
         getWritableSession: (id) => sessions.get(id) || null,
         createSession: async () => { created += 1; const session = { id: \`session-\${created}\`, title: 'Channel', updatedAt: Date.now(), busy: false, messageCount: 0 }; sessions.set(session.id, session); return session; },
-        sendPrompt: async (_sessionId, prompt) => ({ assistantText: prompt.includes('hello') ? 'draft answer' : 'answer' }),
+        sendPrompt: overrides.sendPrompt || (async (_sessionId, prompt) => { prompts.push(prompt); return { assistantText: prompt.includes('hello') ? 'draft answer' : 'answer' }; }),
         abortSession: async () => {},
         publishEvent: async (event) => { events.push(event); return { ok: true }; },
       });
-      return { db, store, sessions, events, controller, context: { appId: 'moss.openim', instanceId: 'moss.openim--default' }, get created() { return created; } };
+      return { db, store, sessions, events, prompts, controller, context: { appId: 'moss.openim', instanceId: 'moss.openim--default' }, get created() { return created; } };
     };
     ${source}
   `
@@ -198,6 +200,56 @@ describe('Agent Channel controller', () => {
     expect(result.created).toBe(0)
   })
 
+  it('adds locally sent replies to the next Agent turn without starting a turn itself', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto');
+      const observed = await fixture.controller.handleAgentRequest('context.observe', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1',
+        externalEventId: 'outgoing-1', text: 'I already sent this manually',
+      }, fixture.context);
+      const accepted = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1',
+        externalEventId: 'incoming-1', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'completed');
+      console.log(JSON.stringify({
+        observed,
+        prompts: fixture.prompts,
+        pending: fixture.store.listPendingObservations({ ...fixture.context, externalConversationId: 'chat-1' }),
+      }));
+      fixture.db.close();
+    `)
+    expect(result.observed).toEqual({ observed: true, duplicate: false })
+    expect(result.prompts).toHaveLength(1)
+    expect(result.prompts[0]).toContain('"source":"local-user","text":"I already sent this manually"')
+    expect(result.pending).toEqual([])
+  })
+
+  it('resolves an account-scoped OpenIM default without affecting another account', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('human_only', {
+        defaultBindingIdFor: (conversationId) => conversationId.replace(/\\/(?:direct:[^/]+|\\*)$/, '/*'),
+      });
+      await fixture.controller.handleAgentRequest('binding.update', {
+        externalConversationId: 'openim-user:alice/*',
+        patch: { replyMode: 'ai_auto' },
+      }, fixture.context);
+      const alice = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'leader', externalConversationId: 'openim-user:alice/direct:leader',
+        externalEventId: 'alice-event', text: 'hello',
+      }, fixture.context);
+      const bob = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'leader', externalConversationId: 'openim-user:bob/direct:leader',
+        externalEventId: 'bob-event', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(alice.turnId)?.status === 'completed');
+      console.log(JSON.stringify({ alice, bob }));
+      fixture.db.close();
+    `)
+    expect(result.alice).toMatchObject({ routing: 'ai_auto' })
+    expect(result.bob).toMatchObject({ routing: 'human', status: 'human' })
+  })
+
   it('creates reviewable drafts and only emits a send event after approval', () => {
     const result = runControllerScenario(`
       const fixture = setup();
@@ -280,6 +332,40 @@ describe('Agent Channel controller', () => {
     expect(result.first.sessionId).toBe(result.second.sessionId)
   })
 
+  it('serializes a conversation even when every turn creates a new session', () => {
+    const result = runControllerScenario(`
+      let active = 0;
+      let maxActive = 0;
+      const order = [];
+      const releases = [];
+      const fixture = setup('ai_auto', {
+        sendPrompt: (sessionId, prompt) => new Promise((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          order.push(prompt.includes('first') ? 'first' : 'second');
+          releases.push(() => { active -= 1; resolve({ assistantText: sessionId }); });
+        }),
+      });
+      fixture.store.updateBinding({ ...fixture.context, externalConversationId: 'chat-1', patch: {
+        replyMode: 'ai_auto', session: { mode: 'new_each_turn' },
+      }});
+      const first = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'first',
+      }, fixture.context);
+      const second = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-2', text: 'second',
+      }, fixture.context);
+      await waitFor(() => releases.length === 1);
+      releases.shift()();
+      await waitFor(() => releases.length === 1 && fixture.store.getTurn(first.turnId)?.status === 'completed');
+      releases.shift()();
+      await waitFor(() => fixture.store.getTurn(second.turnId)?.status === 'completed');
+      console.log(JSON.stringify({ maxActive, order, created: fixture.created }));
+      fixture.db.close();
+    `)
+    expect(result).toEqual({ maxActive: 1, order: ['first', 'second'], created: 2 })
+  })
+
   it('never sends an unapproved draft and replays pending delivery after restart', () => {
     const result = runControllerScenario(`
       const fixture = setup();
@@ -310,5 +396,86 @@ describe('Agent Channel controller', () => {
     expect(result.afterRestart.filter((name: string) => name === 'turn.review_requested')).toHaveLength(2)
     expect(result.afterApproval).toMatchObject({ status: 'completed', deliveredAt: null })
     expect(result.events.filter((name: string) => name === 'turn.completed')).toHaveLength(2)
+  })
+
+  it('recovers queued work and pending delivery only for the active external account', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_draft_review');
+      const first = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'peer-1', externalConversationId: 'openim-user:account-a/direct:peer-1', externalEventId: 'event-a', text: 'hello',
+      }, fixture.context);
+      const second = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'peer-2', externalConversationId: 'openim-user:account-b/direct:peer-2', externalEventId: 'event-b', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(first.turnId)?.status === 'awaiting_review' && fixture.store.getTurn(second.turnId)?.status === 'awaiting_review');
+      fixture.events.length = 0;
+      fixture.controller.onReady({ ...fixture.context, externalConversationPrefix: 'openim-user:account-b/' });
+      await waitFor(() => fixture.events.length === 1);
+      console.log(JSON.stringify(fixture.events.map(event => ({ name: event.name, conversationId: event.data.externalConversationId }))));
+      fixture.db.close();
+    `)
+    expect(result).toEqual([{
+      name: 'turn.review_requested',
+      conversationId: 'openim-user:account-b/direct:peer-2',
+    }])
+  })
+
+  it('lets manual takeover discard a draft through turn.abort', () => {
+    const result = runControllerScenario(`
+      const fixture = setup();
+      fixture.store.updateBinding({ ...fixture.context, externalConversationId: 'chat-1', patch: {
+        replyMode: 'ai_draft_review', session: { mode: 'fixed' },
+      }});
+      const accepted = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'awaiting_review');
+      const aborted = await fixture.controller.handleAgentRequest('turn.abort', {
+        turnId: accepted.turnId,
+      }, fixture.context);
+      console.log(JSON.stringify(aborted));
+      fixture.db.close();
+    `)
+    expect(result).toMatchObject({ aborted: true, turn: { status: 'rejected' } })
+  })
+
+  it('lets manual takeover suppress a completed reply before delivery', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto');
+      const accepted = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'completed');
+      const aborted = await fixture.controller.handleAgentRequest('turn.abort', {
+        turnId: accepted.turnId,
+      }, fixture.context);
+      console.log(JSON.stringify(aborted));
+      fixture.db.close();
+    `)
+    expect(result).toMatchObject({ aborted: true, turn: { status: 'cancelled', deliveredAt: null } })
+  })
+
+  it('acknowledges App-managed delivery without crossing the conversation scope', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto');
+      const accepted = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'completed');
+      let mismatched = false;
+      try {
+        await fixture.controller.handleAgentRequest('turn.delivery.ack', {
+          turnId: accepted.turnId, externalConversationId: 'chat-2', ok: true,
+        }, fixture.context);
+      } catch (error) { mismatched = /does not match/.test(error.message); }
+      const acknowledged = await fixture.controller.handleAgentRequest('turn.delivery.ack', {
+        turnId: accepted.turnId, externalConversationId: 'chat-1', ok: true,
+      }, fixture.context);
+      console.log(JSON.stringify({ mismatched, acknowledged, turn: fixture.store.getTurn(accepted.turnId) }));
+      fixture.db.close();
+    `)
+    expect(result.mismatched).toBe(true)
+    expect(result.acknowledged).toMatchObject({ acknowledged: true, status: 'completed' })
+    expect(result.turn.deliveredAt).toBeNumber()
   })
 })

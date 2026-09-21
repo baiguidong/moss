@@ -19,7 +19,7 @@ const TURN_TRANSITIONS = Object.freeze({
   running: new Set(['awaiting_review', 'completed', 'failed', 'cancelled']),
   awaiting_review: new Set(['completed', 'rejected', 'cancelled']),
   human: new Set(['completed', 'rejected']),
-  completed: new Set(),
+  completed: new Set(['cancelled']),
   rejected: new Set(),
   failed: new Set(),
   cancelled: new Set(),
@@ -69,6 +69,10 @@ function boundedInteger(value, field, minimum, maximum) {
 function normalizeBindingPatch(value, { member = false } = {}) {
   if (!isRecord(value)) throw new Error('Agent Channel binding patch must be an object.');
   const result = {};
+  if (Object.hasOwn(value, 'inheritDefault')) {
+    if (typeof value.inheritDefault !== 'boolean') throw new Error('Invalid Agent Channel inheritance mode.');
+    result.inheritDefault = value.inheritDefault;
+  }
   if (Object.hasOwn(value, 'replyMode')) {
     if (!REPLY_MODES.has(value.replyMode) || (!member && value.replyMode === 'inherit')) {
       throw new Error('Invalid Agent Channel reply mode.');
@@ -296,6 +300,21 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_channel_turns_queue
       ON agent_channel_turns(status, session_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS agent_channel_observations (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
+      external_conversation_id TEXT NOT NULL,
+      external_user_id TEXT NOT NULL,
+      external_event_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      consumed_at INTEGER,
+      UNIQUE(app_id, instance_id, external_event_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_channel_observations_pending
+      ON agent_channel_observations(app_id, instance_id, external_conversation_id, consumed_at, created_at);
   `);
 
   db.prepare(`
@@ -318,6 +337,10 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
     UPDATE agent_channel_bindings
     SET policy_json = ?, revision = revision + 1, updated_at = ?
     WHERE id = ? AND revision = ?
+  `);
+  const deleteBinding = db.prepare(`
+    DELETE FROM agent_channel_bindings
+    WHERE app_id = ? AND instance_id = ? AND external_conversation_id = ? AND external_member_id = ?
   `);
   const listBindings = db.prepare(`
     SELECT * FROM agent_channel_bindings
@@ -383,6 +406,36 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
     SET status = 'cancelled', error = ?, updated_at = ?
     WHERE session_id = ? AND status = 'queued'
   `);
+  const selectObservationByEvent = db.prepare(`
+    SELECT * FROM agent_channel_observations
+    WHERE app_id = ? AND instance_id = ? AND external_event_id = ?
+  `);
+  const insertObservation = db.prepare(`
+    INSERT OR IGNORE INTO agent_channel_observations (
+      id, app_id, instance_id, external_conversation_id, external_user_id,
+      external_event_id, text, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const listPendingObservations = db.prepare(`
+    SELECT * FROM agent_channel_observations
+    WHERE app_id = ? AND instance_id = ? AND external_conversation_id = ? AND consumed_at IS NULL
+    ORDER BY created_at ASC
+    LIMIT ?
+  `);
+  const consumeObservation = db.prepare(`
+    UPDATE agent_channel_observations SET consumed_at = ?
+    WHERE id = ? AND consumed_at IS NULL
+  `);
+  const pruneObservations = db.prepare(`
+    DELETE FROM agent_channel_observations
+    WHERE app_id = ? AND instance_id = ? AND external_conversation_id = ?
+      AND id NOT IN (
+        SELECT id FROM agent_channel_observations
+        WHERE app_id = ? AND instance_id = ? AND external_conversation_id = ?
+        ORDER BY created_at DESC
+        LIMIT 200
+      )
+  `);
 
   function normalizeBinding(row) {
     if (!row) return null;
@@ -441,12 +494,32 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
     };
   }
 
+  function normalizeObservation(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      appId: row.app_id,
+      instanceId: row.instance_id,
+      externalConversationId: row.external_conversation_id,
+      externalUserId: row.external_user_id,
+      externalEventId: row.external_event_id,
+      text: row.text,
+      createdAt: row.created_at,
+      consumedAt: row.consumed_at || null,
+    };
+  }
+
   function scope(input) {
     return {
       appId: text(input.appId, 'appId', { maxLength: 80 }),
       instanceId: text(input.instanceId, 'instanceId', { maxLength: 160 }),
       externalConversationId: text(input.externalConversationId, 'externalConversationId'),
       externalMemberId: text(input.externalMemberId, 'externalMemberId', { optional: true }),
+      defaultConversationId: text(
+        input.defaultConversationId,
+        'defaultConversationId',
+        { optional: true },
+      ) || '*',
     };
   }
 
@@ -462,20 +535,25 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
 
   function resolveBinding(input, defaults = DEFAULT_AGENT_CHANNEL_POLICY) {
     const key = scope(input);
-    const instanceDefault = key.externalConversationId === '*'
+    const instanceDefault = key.externalConversationId === key.defaultConversationId
       ? null
-      : normalizeBinding(selectBinding.get(key.appId, key.instanceId, '*', ''));
+      : normalizeBinding(selectBinding.get(
+          key.appId,
+          key.instanceId,
+          key.defaultConversationId,
+          '',
+        ));
     const conversation = normalizeBinding(selectBinding.get(
       key.appId,
       key.instanceId,
       key.externalConversationId,
       '',
     ));
-    const instanceMember = key.externalMemberId && key.externalConversationId !== '*'
+    const instanceMember = key.externalMemberId && key.externalConversationId !== key.defaultConversationId
       ? normalizeBinding(selectBinding.get(
           key.appId,
           key.instanceId,
-          '*',
+          key.defaultConversationId,
           key.externalMemberId,
         ))
       : null;
@@ -487,13 +565,18 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
           key.externalMemberId,
         ))
       : null;
-    let policy = mergePolicy(defaults, instanceDefault?.policy, null);
+    const inheritsDefault = conversation?.policy?.inheritDefault !== false;
+    let policy = mergePolicy(defaults, inheritsDefault ? instanceDefault?.policy : null, null);
     policy = mergePolicy(policy, conversation?.policy, null);
     policy = mergePolicy(policy, null, instanceMember?.policy);
     policy = mergePolicy(policy, null, member?.policy);
     return {
-      ...key,
+      appId: key.appId,
+      instanceId: key.instanceId,
+      externalConversationId: key.externalConversationId,
+      externalMemberId: key.externalMemberId,
       ...policy,
+      inheritDefault: inheritsDefault,
       revision: member?.revision || conversation?.revision || 0,
       sourceRevisions: {
         instance: instanceDefault?.revision || 0,
@@ -563,7 +646,107 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
         }
       }
       const binding = getBinding(key);
-      return { binding, effective: resolveBinding(key, input.defaults) };
+      return {
+        binding,
+        effective: resolveBinding({ ...key, defaultConversationId: input.defaultConversationId }, input.defaults),
+      };
+    },
+
+    resetBinding(input) {
+      const key = scope(input);
+      const current = getBinding(key);
+      const expectedRevision = input.expectedRevision;
+      if (expectedRevision !== undefined && expectedRevision !== (current?.revision || 0)) {
+        throw new AppServiceError(
+          APP_ERROR_CODES.staleGeneration,
+          'Agent Channel binding was changed by another operation.',
+          { expectedRevision, actualRevision: current?.revision || 0 },
+        );
+      }
+      if (current) deleteBinding.run(
+        key.appId,
+        key.instanceId,
+        key.externalConversationId,
+        key.externalMemberId,
+      );
+      return {
+        reset: Boolean(current),
+        binding: null,
+        effective: resolveBinding({ ...key, defaultConversationId: input.defaultConversationId }, input.defaults),
+      };
+    },
+
+    observeMessage(input) {
+      const key = scope(input);
+      const externalUserId = text(input.externalUserId, 'externalUserId');
+      const externalEventId = text(input.externalEventId, 'externalEventId');
+      const body = text(input.text, 'observation text', { maxLength: 100_000 });
+      const existing = normalizeObservation(selectObservationByEvent.get(
+        key.appId,
+        key.instanceId,
+        externalEventId,
+      ));
+      if (existing) {
+        if (
+          existing.externalConversationId !== key.externalConversationId
+          || existing.externalUserId !== externalUserId
+          || existing.text !== body
+        ) {
+          throw new AppServiceError(
+            APP_ERROR_CODES.hostProtocol,
+            'Agent Channel observation id was reused with different content.',
+          );
+        }
+        return { observed: false, duplicate: true, observation: existing };
+      }
+      const timestamp = now();
+      insertObservation.run(
+        randomUUID(),
+        key.appId,
+        key.instanceId,
+        key.externalConversationId,
+        externalUserId,
+        externalEventId,
+        body,
+        timestamp,
+      );
+      pruneObservations.run(
+        key.appId,
+        key.instanceId,
+        key.externalConversationId,
+        key.appId,
+        key.instanceId,
+        key.externalConversationId,
+      );
+      return {
+        observed: true,
+        duplicate: false,
+        observation: normalizeObservation(selectObservationByEvent.get(
+          key.appId,
+          key.instanceId,
+          externalEventId,
+        )),
+      };
+    },
+
+    listPendingObservations(input) {
+      const key = scope(input);
+      const limit = Math.min(100, Math.max(1, Number(input.limit) || 50));
+      return listPendingObservations.all(
+        key.appId,
+        key.instanceId,
+        key.externalConversationId,
+        limit,
+      ).map(normalizeObservation);
+    },
+
+    consumeObservations(ids) {
+      const timestamp = now();
+      let consumed = 0;
+      for (const id of [...new Set(Array.isArray(ids) ? ids : [])]) {
+        consumed += consumeObservation.run(timestamp, text(id, 'observation id')).changes;
+      }
+      return consumed;
     },
 
     getOrCreateConversation(input) {
@@ -666,7 +849,8 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
       const current = normalizeTurn(selectTurn.get(text(turnId, 'turnId')));
       if (!current) throw new Error('Agent Channel turn not found.');
       const patchFields = Object.keys(isRecord(patch) ? patch : {});
-      if (TURN_TRANSITIONS[current.status]?.size === 0) {
+      if (TURN_TRANSITIONS[current.status]?.size === 0
+        || (current.status === 'completed' && patch.status !== 'cancelled')) {
         if (patchFields.some((field) => field !== 'delivered')) {
           throw new AppServiceError(
             APP_ERROR_CODES.hostProtocol,
@@ -709,7 +893,14 @@ export function createAgentChannelStore(db, { now = () => Date.now() } = {}) {
       if (!scopeInput) return turns;
       const appId = text(scopeInput.appId, 'appId', { maxLength: 80 });
       const instanceId = text(scopeInput.instanceId, 'instanceId', { maxLength: 160 });
-      return turns.filter((turn) => turn.appId === appId && turn.instanceId === instanceId);
+      const externalConversationId = text(
+        scopeInput.externalConversationId,
+        'externalConversationId',
+        { optional: true },
+      );
+      return turns.filter((turn) => turn.appId === appId
+        && turn.instanceId === instanceId
+        && (!externalConversationId || turn.externalConversationId === externalConversationId));
     },
 
     listPendingTurnDeliveries(scopeInput = null) {

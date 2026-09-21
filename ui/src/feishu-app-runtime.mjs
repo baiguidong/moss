@@ -1,11 +1,8 @@
-import {
-  CHANNEL_HOST_METHODS,
-} from '../../packages/app-sdk/src/index.mjs';
 import { defaultInstanceId } from '../../packages/app-runtime/src/index.mjs';
 
 export const FEISHU_APP_ID = 'moss.feishu';
 export const FEISHU_APP_INSTANCE_ID = defaultInstanceId(FEISHU_APP_ID);
-export const FEISHU_APP_MIGRATION_VERSION = 1;
+export const FEISHU_APP_MIGRATION_VERSION = 2;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -37,6 +34,17 @@ function normalizePairedUsers(value) {
 
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function constrainFeishuAgentPolicy(policy = {}) {
+  const source = isRecord(policy) ? policy : {};
+  return {
+    ...source,
+    replyMode: 'ai_auto',
+    agentId: null,
+    session: { mode: 'fixed', rotateAfterTurns: 24 },
+    proactive: { enabled: false, maxConsecutiveReplies: 1, cooldownMs: 30_000 },
+  };
 }
 
 export function isFeishuLegacyFallbackEnabled(env = process.env) {
@@ -126,7 +134,6 @@ export function splitLegacyFeishuAppConfiguration(adapters) {
   const feishu = isRecord(source.feishu) ? source.feishu : {};
   const config = {
     appId: text(feishu.appId),
-    streamingCard: Boolean(feishu.streamingCard),
     allowedUsers: normalizeStringList(feishu.allowedUsers),
     pairedUsers: normalizePairedUsers(feishu.pairedUsers),
     pairing: isRecord(source.pairing) ? {
@@ -171,111 +178,21 @@ export function mapChannelRequestToLegacy(method, input = {}) {
           ...(text(input.displayName) ? { displayName: text(input.displayName) } : {}),
         },
       };
-    case 'conversation.list':
-    case 'conversation.current':
-    case 'conversation.select':
-    case 'session.abort':
-      return {
-        type: method,
-        payload: {
-          ...identity,
-          ...(input.category !== undefined ? { category: input.category } : {}),
-          ...(input.page !== undefined ? { page: input.page } : {}),
-          ...(input.pageSize !== undefined ? { pageSize: input.pageSize } : {}),
-          ...(input.query !== undefined ? { query: input.query } : {}),
-          ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
-        },
-      };
-    case 'conversation.create':
-      return {
-        type: 'conversation.new',
-        payload: { ...identity, ...(input.title !== undefined ? { title: input.title } : {}) },
-      };
-    case 'message.receive':
-      return {
-        type: 'chat.message.received',
-        payload: {
-          ...identity,
-          ...(typeof input.text === 'string' ? { text: input.text } : {}),
-          ...(Array.isArray(input.attachments) ? { attachments: input.attachments } : {}),
-        },
-      };
-    case 'delivery.ack':
-      if (input.kind === 'turn') {
-        return {
-          type: 'turn.delivery.ack',
-          payload: {
-            turnId: text(input.deliveryId),
-            chatId: text(input.externalConversationId),
-            ok: input.ok !== false,
-            ...(typeof input.error === 'string' ? { error: input.error } : {}),
-          },
-        };
-      }
-      return {
-        type: 'delivery.ack',
-        payload: {
-          deliveryId: text(input.deliveryId),
-          ok: input.ok !== false,
-          ...(text(input.externalMessageId) ? { messageId: text(input.externalMessageId) } : {}),
-          ...(text(input.externalCardId) ? { cardId: text(input.externalCardId) } : {}),
-          ...(typeof input.error === 'string' ? { error: input.error } : {}),
-        },
-      };
-    case 'decision.respond':
-      return {
-        type: 'decision.respond',
-        payload: {
-          ...identity,
-          decisionId: text(input.decisionId),
-          actionToken: text(input.actionToken),
-          allowed: Boolean(input.allowed),
-        },
-      };
     default:
       throw new Error(`Unsupported Feishu Channel method: ${method}`);
   }
 }
 
-export function createFeishuChannelHandlers({ handleRequest, allowRequest = () => true }) {
-  if (typeof handleRequest !== 'function') throw new TypeError('handleRequest is required');
-  return Object.fromEntries(CHANNEL_HOST_METHODS.map((method) => [method, async (input, context) => {
-    if (
-      context.appId !== FEISHU_APP_ID
-      || context.instanceId !== FEISHU_APP_INSTANCE_ID
-      || !allowRequest(method, input, context)
-    ) {
-      throw new Error('This Channel Host handler is reserved for the moss.feishu App.');
-    }
-    return handleRequest(mapChannelRequestToLegacy(method, input), context);
-  }]));
-}
-
 export function mapLegacyFeishuEventToChannel(type, payload = {}) {
-  if (!['turn.accepted', 'turn.output', 'turn.completed', 'turn.failed', 'notification.deliver', 'decision.resolved'].includes(type)) {
+  if (!['turn.completed', 'turn.failed'].includes(type)) {
     throw new Error(`Unsupported Feishu Adapter event: ${type}`);
   }
   const source = isRecord(payload) ? payload : {};
   const { chatId, ...data } = source;
-  if (type.startsWith('turn.')) {
-    return {
-      name: type,
-      data: { ...data, externalConversationId: text(chatId) },
-      eventId: `${type}:${text(source.turnId)}`,
-    };
-  }
-  if (type === 'notification.deliver') {
-    return {
-      name: type,
-      data: { ...data, externalConversationId: text(chatId) },
-      eventId: `notification:${text(source.deliveryId)}`,
-    };
-  }
-  const decisionId = text(source.decisionId || source.decision?.id);
   return {
     name: type,
-    data: { ...data, decisionId },
-    eventId: `decision:${decisionId}:${text(source.reason || source.decision?.status) || 'resolved'}`,
+    data: { ...data, externalConversationId: text(chatId) },
+    eventId: `${type}:${text(source.turnId)}`,
   };
 }
 
@@ -373,7 +290,8 @@ export async function persistFeishuAppAuthorization(runtime, adapters) {
     if (!instance || instance.appId !== FEISHU_APP_ID) return false;
     const desired = splitLegacyFeishuAppConfiguration(adapters).config;
     const config = {
-      ...(instance.config || {}),
+      ...Object.fromEntries(Object.entries(instance.config || {})
+        .filter(([key]) => key !== 'streamingCard')),
       allowedUsers: desired.allowedUsers,
       pairedUsers: desired.pairedUsers,
       pairing: desired.pairing,

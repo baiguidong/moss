@@ -4,32 +4,12 @@ function normalizeText(value) {
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Moss 会话处理失败，请在桌面端查看详情后重试。';
 
-export function authorizeFeishuDecisionResponse({ store, identity, chatId, openId, decision }) {
-  const conversation = store.findConversation({
-    adapterInstanceId: identity.adapterInstanceId,
-    tenantKey: identity.tenantKey,
-    chatId,
-  });
-  if (!conversation || conversation.pairedOpenId !== openId) {
-    throw new Error('This Feishu conversation is not authorized for the decision.');
-  }
-  if (!decision?.notificationId) throw new Error('Decision notification is unavailable.');
-  const delivery = store.listNotificationDeliveries(decision.notificationId)
-    .find((entry) => entry.conversationId === conversation.id);
-  if (!delivery || delivery.status !== 'delivered' || !delivery.externalMessageId) {
-    throw new Error('The decision was not delivered to this Feishu conversation.');
-  }
-  return { conversation, delivery };
-}
-
 export function createFeishuAdapterController({
   store,
   resolveIdentity,
-  listWritableSessions,
   getWritableSession,
   createSession,
   sendPrompt,
-  abortSession,
   sendAdapterEvent,
   log = () => {},
 }) {
@@ -39,16 +19,8 @@ export function createFeishuAdapterController({
     const chatId = normalizeText(payload.chatId);
     const openId = normalizeText(payload.openId);
     if (!openId) throw new Error('Feishu user identity is incomplete.');
+    if (!chatId) throw new Error('Feishu private-chat identity is incomplete.');
     const identity = resolveIdentity(openId, requestContext);
-    if (!chatId) {
-      const conversation = store.listConversations?.()
-        .filter((entry) => entry.adapterInstanceId === identity.adapterInstanceId
-          && entry.tenantKey === identity.tenantKey
-          && entry.pairedOpenId === openId)
-        .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0];
-      if (!conversation) throw new Error('Send a message to Moss before using the Feishu bot menu.');
-      return { ...identity, conversation };
-    }
     return {
       ...identity,
       conversation: store.getOrCreateConversation({
@@ -122,122 +94,51 @@ export function createFeishuAdapterController({
   }
 
   async function handleRequest(request, requestContext = null) {
+    if (request?.type !== 'chat.message.received') {
+      throw new Error(`Unsupported Feishu Adapter request: ${request?.type}`);
+    }
     const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
     const { adapterInstanceId, conversation } = getConversation(payload, requestContext);
 
-    if (request.type === 'conversation.list') {
-      const category = ['feishu', 'project'].includes(payload.category) ? payload.category : 'recent';
-      const requestedPage = Number.parseInt(payload.page, 10);
-      const page = Number.isFinite(requestedPage) ? Math.max(0, requestedPage) : 0;
-      const requestedPageSize = Number.parseInt(payload.pageSize, 10);
-      const pageSize = Number.isFinite(requestedPageSize)
-        ? Math.min(8, Math.max(1, requestedPageSize))
-        : 5;
-      const matchingSessions = listWritableSessions(normalizeText(payload.query))
-        .filter((session) => category === 'recent'
-          || (category === 'feishu' && session.originChannel === 'feishu')
-          || (category === 'project' && Boolean(session.projectName)));
-      const total = matchingSessions.length;
-      const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
-      const effectivePage = Math.min(page, lastPage);
-      const offset = effectivePage * pageSize;
+    const eventId = normalizeText(payload.eventId);
+    const text = normalizeText(payload.text);
+    if (!eventId || !text) throw new Error('Feishu message id and text are required.');
+    const claimed = store.claimEvent({
+      adapterInstanceId,
+      eventId,
+      conversationId: conversation.id,
+      eventType: 'message',
+    });
+    if (!claimed.claimed) {
       return {
-        conversationId: conversation.id,
-        chatId: conversation.chatId,
-        activeSessionId: conversation.activeSessionId,
-        currentSession: getWritableSession(conversation.activeSessionId),
-        sessions: matchingSessions.slice(offset, offset + pageSize),
-        category,
-        query: normalizeText(payload.query),
-        page: effectivePage,
-        pageSize,
-        total,
-        hasPrevious: effectivePage > 0,
-        hasNext: offset + pageSize < total,
+        duplicate: true,
+        sessionId: claimed.event?.sessionId || null,
+        turnId: claimed.event?.turnId || null,
+        status: claimed.event?.status || 'received',
       };
     }
 
-    if (request.type === 'conversation.current') {
-      return { chatId: conversation.chatId, session: getWritableSession(conversation.activeSessionId) };
-    }
-
-    if (request.type === 'conversation.select') {
-      const session = getWritableSession(normalizeText(payload.sessionId));
-      if (!session) throw new Error('The selected Moss session is not writable.');
+    // The first message creates the private chat's one fixed Moss session.
+    // Later messages can only reuse that persisted mapping; the transport has
+    // no API for listing, selecting, replacing or stopping it.
+    let session = getWritableSession(conversation.activeSessionId);
+    if (!session) {
+      session = await createSession();
       store.setActiveSession(conversation.id, session.id);
-      return { session };
     }
-
-    if (request.type === 'conversation.new') {
-      const eventId = normalizeText(payload.eventId);
-      if (eventId) {
-        const claimed = store.claimEvent({
-          adapterInstanceId,
-          eventId,
-          conversationId: conversation.id,
-          eventType: 'conversation.new',
-        });
-        if (!claimed.claimed && claimed.event?.sessionId) {
-          const existing = getWritableSession(claimed.event.sessionId);
-          if (existing) return { duplicate: true, session: existing };
-        }
-      }
-      const session = await createSession(normalizeText(payload.title));
-      store.setActiveSession(conversation.id, session.id);
-      if (eventId) {
-        store.updateEvent(adapterInstanceId, eventId, { status: 'completed', sessionId: session.id });
-      }
-      return { session };
-    }
-
-    if (request.type === 'session.abort') {
-      const session = getWritableSession(conversation.activeSessionId);
-      if (!session) throw new Error('No writable Moss session is selected.');
-      const cancelled = store.cancelQueuedTurns(session.id);
-      await abortSession(session.id);
-      return { session: getWritableSession(session.id) || session, cancelled };
-    }
-
-    if (request.type === 'chat.message.received') {
-      const eventId = normalizeText(payload.eventId);
-      const text = normalizeText(payload.text);
-      if (!eventId || !text) throw new Error('Feishu message id and text are required.');
-      const claimed = store.claimEvent({
-        adapterInstanceId,
-        eventId,
-        conversationId: conversation.id,
-        eventType: 'message',
-      });
-      if (!claimed.claimed) {
-        return {
-          duplicate: true,
-          sessionId: claimed.event?.sessionId || null,
-          turnId: claimed.event?.turnId || null,
-          status: claimed.event?.status || 'received',
-        };
-      }
-
-      let session = getWritableSession(conversation.activeSessionId);
-      if (!session) {
-        session = await createSession('');
-        store.setActiveSession(conversation.id, session.id);
-      }
-      const turn = store.enqueueTurn({
-        sessionId: session.id,
-        conversationId: conversation.id,
-        sourceChannel: 'feishu',
-        sourceEventId: eventId,
-        prompt: text,
-        payload: { adapterInstanceId },
-      });
-      store.updateEvent(adapterInstanceId, eventId, {
-        status: 'accepted', sessionId: session.id, turnId: turn.id,
-      });
-      void drainSession(session.id);
-      return { accepted: true, queued: true, turnId: turn.id, session };
-    }
-
-    throw new Error(`Unsupported Feishu Adapter request: ${request.type}`);
+    const turn = store.enqueueTurn({
+      sessionId: session.id,
+      conversationId: conversation.id,
+      sourceChannel: 'feishu',
+      sourceEventId: eventId,
+      prompt: text,
+      payload: { adapterInstanceId },
+    });
+    store.updateEvent(adapterInstanceId, eventId, {
+      status: 'accepted', sessionId: session.id, turnId: turn.id,
+    });
+    void drainSession(session.id);
+    return { accepted: true, queued: true, turnId: turn.id, session };
   }
 
   function onReady() {

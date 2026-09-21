@@ -56,6 +56,76 @@ describe('Agent Channel store', () => {
     expect(result.other).toBe('human_only')
   })
 
+  it('lets a direct conversation fully replace and then restore its default policy', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const scope = { appId: 'moss.openim', instanceId: 'default' };
+      store.updateBinding({ ...scope, externalConversationId: '*', patch: {
+        replyMode: 'ai_auto', permissionMode: 'acceptEdits',
+        resources: { tools: ['Read'], skills: ['summary'], connectors: ['crm'] },
+        session: { mode: 'fixed' },
+      }});
+      const custom = store.updateBinding({ ...scope, externalConversationId: 'direct:leader', patch: {
+        inheritDefault: false,
+        replyMode: 'ai_draft_review', permissionMode: 'default',
+        resources: { tools: [], skills: [], connectors: [] },
+        session: { mode: 'new_each_turn' },
+      }});
+      const reset = store.resetBinding({
+        ...scope, externalConversationId: 'direct:leader', expectedRevision: custom.binding.revision,
+      });
+      console.log(JSON.stringify({ custom: custom.effective, reset }));
+    `)
+    expect(result.custom).toMatchObject({
+      inheritDefault: false,
+      replyMode: 'ai_draft_review',
+      permissionMode: 'default',
+      resources: { tools: [], skills: [], connectors: [] },
+      session: { mode: 'new_each_turn' },
+    })
+    expect(result.reset).toMatchObject({
+      reset: true,
+      binding: null,
+      effective: {
+        inheritDefault: true,
+        replyMode: 'ai_auto',
+        resources: { tools: ['Read'], skills: ['summary'], connectors: ['crm'] },
+      },
+    })
+  })
+
+  it('isolates account-scoped OpenIM defaults and conversations', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const scope = { appId: 'moss.openim', instanceId: 'default' };
+      store.updateBinding({
+        ...scope,
+        externalConversationId: 'openim-user:alice/*',
+        defaultConversationId: 'openim-user:alice/*',
+        patch: { replyMode: 'ai_auto' },
+      });
+      store.updateBinding({
+        ...scope,
+        externalConversationId: 'openim-user:bob/*',
+        defaultConversationId: 'openim-user:bob/*',
+        patch: { replyMode: 'ai_draft_review' },
+      });
+      console.log(JSON.stringify({
+        alice: store.resolveBinding({
+          ...scope,
+          externalConversationId: 'openim-user:alice/direct:leader',
+          defaultConversationId: 'openim-user:alice/*',
+        }).replyMode,
+        bob: store.resolveBinding({
+          ...scope,
+          externalConversationId: 'openim-user:bob/direct:leader',
+          defaultConversationId: 'openim-user:bob/*',
+        }).replyMode,
+      }));
+    `)
+    expect(result).toEqual({ alice: 'ai_auto', bob: 'ai_draft_review' })
+  })
+
   it('applies instance-wide defaults and member overrides before conversation-specific rules', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
@@ -119,6 +189,30 @@ describe('Agent Channel store', () => {
       console.log(JSON.stringify({ first, duplicate, collision }));
     `)
     expect(result).toEqual({ first: true, duplicate: false, collision: true })
+  })
+
+  it('persists manual conversation observations once and consumes them explicitly', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const input = {
+        appId: 'moss.openim', instanceId: 'default', externalConversationId: 'direct:peer-1',
+        externalUserId: 'peer-1', externalEventId: 'outgoing:message-1', text: 'manual reply',
+      };
+      const first = store.observeMessage(input);
+      const duplicate = store.observeMessage(input);
+      let collision = false;
+      try { store.observeMessage({ ...input, text: 'changed' }); } catch (error) { collision = /different content/.test(error.message); }
+      const pending = store.listPendingObservations(input);
+      const consumed = store.consumeObservations(pending.map((entry) => entry.id));
+      console.log(JSON.stringify({ first, duplicate, collision, pending, consumed, after: store.listPendingObservations(input) }));
+    `)
+    expect(result.first).toMatchObject({ observed: true, duplicate: false })
+    expect(result.duplicate).toMatchObject({ observed: false, duplicate: true })
+    expect(result.collision).toBe(true)
+    expect(result.pending).toHaveLength(1)
+    expect(result.pending[0]).toMatchObject({ text: 'manual reply', consumedAt: null })
+    expect(result.consumed).toBe(1)
+    expect(result.after).toEqual([])
   })
 
   it('enforces terminal turn transitions', () => {

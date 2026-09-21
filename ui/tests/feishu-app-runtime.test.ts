@@ -4,7 +4,7 @@ import {
   FEISHU_APP_INSTANCE_ID,
   claimFeishuPairingEvent,
   configureFeishuAppFromLegacy,
-  createFeishuChannelHandlers,
+  constrainFeishuAgentPolicy,
   getFeishuAppProcessStatus,
   hasFeishuAppMigrationMarker,
   isFeishuAppReady,
@@ -19,6 +19,24 @@ import {
 } from '../src/feishu-app-runtime.mjs'
 
 describe('Feishu App runtime integration', () => {
+  it('forces automatic fixed-session behavior while preserving execution limits', () => {
+    expect(constrainFeishuAgentPolicy({
+      replyMode: 'human_only',
+      agentId: 'custom-agent',
+      permissionMode: 'dontAsk',
+      resources: { tools: ['Read'], skills: [], connectors: ['github'] },
+      session: { mode: 'new_each_turn', rotateAfterTurns: 1 },
+      proactive: { enabled: true, maxConsecutiveReplies: 9, cooldownMs: 0 },
+    })).toEqual({
+      replyMode: 'ai_auto',
+      agentId: null,
+      permissionMode: 'dontAsk',
+      resources: { tools: ['Read'], skills: [], connectors: ['github'] },
+      session: { mode: 'fixed', rotateAfterTurns: 24 },
+      proactive: { enabled: false, maxConsecutiveReplies: 1, cooldownMs: 30_000 },
+    })
+  })
+
   it('keeps migration and emergency fallback decisions explicit', () => {
     const migrated = withFeishuAppMigrationMarker({ feishu: { appId: 'cli_app' } })
     expect(hasFeishuAppMigrationMarker(migrated)).toBe(true)
@@ -41,7 +59,6 @@ describe('Feishu App runtime integration', () => {
       configured: true,
       config: {
         appId: 'cli_app',
-        streamingCard: true,
         allowedUsers: [],
         pairedUsers: [{ userId: '42', displayName: 'User', pairedAt: 12 }],
         pairing: { code: 'ABC234', expiresAt: 20, createdAt: 10 },
@@ -113,58 +130,19 @@ describe('Feishu App runtime integration', () => {
     expect(events.has('feishu:cli_app:om_known')).toBe(false)
   })
 
-  it('maps every Channel request to the existing Core controller contract', () => {
-    expect(mapChannelRequestToLegacy('conversation.create', {
-      externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'event', title: 'Title',
+  it('maps only connection and pairing requests to the legacy host bridge', () => {
+    expect(mapChannelRequestToLegacy('connection.update', { connected: true })).toEqual({
+      type: 'adapter.connection',
+      payload: { connected: true },
+    })
+    expect(mapChannelRequestToLegacy('pairing.attempt', {
+      externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'event', code: 'ABC234',
     })).toEqual({
-      type: 'conversation.new',
-      payload: { openId: 'user', chatId: 'chat', eventId: 'event', title: 'Title' },
+      type: 'pairing.attempt',
+      payload: { openId: 'user', chatId: 'chat', eventId: 'event', code: 'ABC234' },
     })
-    expect(mapChannelRequestToLegacy('delivery.ack', {
-      deliveryId: 'turn-1', externalConversationId: 'chat', kind: 'turn', ok: true,
-    })).toEqual({
-      type: 'turn.delivery.ack',
-      payload: { turnId: 'turn-1', chatId: 'chat', ok: true },
-    })
-    expect(mapChannelRequestToLegacy('decision.respond', {
-      externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'event',
-      decisionId: 'decision', actionToken: 'token', allowed: false,
-    })).toMatchObject({
-      type: 'decision.respond',
-      payload: { openId: 'user', chatId: 'chat', eventId: 'event', allowed: false },
-    })
-  })
-
-  it('restricts the concrete handlers to the bundled Feishu App identity', async () => {
-    const requests: any[] = []
-    const handlers = createFeishuChannelHandlers({
-      handleRequest: async (request: any, context: any) => {
-        requests.push({ request, context })
-        return { accepted: true }
-      },
-    })
-    const context = { appId: FEISHU_APP_ID, instanceId: FEISHU_APP_INSTANCE_ID }
-    await expect(handlers['message.receive']({
-      externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'event', text: 'hello',
-    }, context)).resolves.toEqual({ accepted: true })
-    expect(requests[0].request).toMatchObject({
-      type: 'chat.message.received',
-      payload: { openId: 'user', chatId: 'chat', eventId: 'event', text: 'hello' },
-    })
-    await expect(handlers['message.receive']({
-      externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'event', text: 'hello',
-    }, { ...context, appId: 'other.channel' })).rejects.toThrow('reserved')
-  })
-
-  it('lets the Host disable Channel requests while another deployment owns Feishu', async () => {
-    const handlers = createFeishuChannelHandlers({
-      handleRequest: async () => ({ accepted: true }),
-      allowRequest: () => false,
-    })
-    await expect(handlers['connection.update'](
-      { connected: true },
-      { appId: FEISHU_APP_ID, instanceId: FEISHU_APP_INSTANCE_ID },
-    )).rejects.toThrow('reserved')
+    expect(() => mapChannelRequestToLegacy('conversation.list', {})).toThrow('Unsupported')
+    expect(() => mapChannelRequestToLegacy('decision.respond', {})).toThrow('Unsupported')
   })
 
   it('maps durable outbound events with stable ids', () => {
@@ -175,13 +153,7 @@ describe('Feishu App runtime integration', () => {
       eventId: 'turn.completed:turn-1',
       data: { turnId: 'turn-1', externalConversationId: 'chat-1', text: 'done' },
     })
-    expect(mapLegacyFeishuEventToChannel('decision.resolved', {
-      decision: { id: 'decision-1', status: 'approved' }, reason: 'responded', deliveries: [],
-    })).toMatchObject({
-      name: 'decision.resolved',
-      eventId: 'decision:decision-1:responded',
-      data: { decisionId: 'decision-1' },
-    })
+    expect(() => mapLegacyFeishuEventToChannel('decision.resolved', {})).toThrow('Unsupported')
   })
 
   it('migrates legacy settings once and enables the persistent App instance', async () => {

@@ -26,7 +26,7 @@ function auth(config: Record<string, unknown>) {
     orgId: 'org-1',
     userId: 'user-1',
     role: 'user',
-    scopes: ['sessions:create', 'sessions:list', 'sessions:attach'],
+    scopes: ['sessions:create', 'sessions:attach'],
     config,
   }
 }
@@ -125,7 +125,7 @@ describe('server Feishu adapter manager', () => {
     ])
   })
 
-  test('keeps idle-ended Feishu sessions writable for transcript resume', () => {
+  test('keeps only tracked idle-ended Feishu sessions writable for transcript resume', () => {
     const db = createDb()
     const endedSession = {
       sessionId: 'ended-session',
@@ -135,9 +135,11 @@ describe('server Feishu adapter manager', () => {
       deletedAt: null,
     }
     const runtime = {
-      getSession: (sessionId: string) => sessionId === endedSession.sessionId
-        ? endedSession
-        : { ...endedSession, sessionId, desiredState: 'terminated' },
+      getSession: (sessionId: string) => ({
+        ...endedSession,
+        sessionId,
+        desiredState: sessionId === 'terminated-session' ? 'terminated' : 'ended',
+      }),
     }
     const manager = new AdapterProcessManager(
       db as unknown as DatabaseSync,
@@ -147,7 +149,13 @@ describe('server Feishu adapter manager', () => {
       auth: { orgId: 'org-1', userId: 'user-1' },
     }
 
-    expect((manager as any).getWritableSession(hosted, 'ended-session')).toBe(endedSession)
+    db.prepare(`
+      INSERT INTO feishu_adapter_sessions (org_id, user_id, session_id, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run('org-1', 'user-1', 'ended-session', Date.now())
+
+    expect((manager as any).getWritableSession(hosted, 'ended-session')).toEqual(endedSession)
+    expect((manager as any).getWritableSession(hosted, 'desktop-session')).toBeNull()
     expect((manager as any).getWritableSession(hosted, 'terminated-session')).toBeNull()
   })
 
@@ -176,7 +184,7 @@ describe('server Feishu adapter manager', () => {
     const restarted = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
     const duplicate = (restarted as any).handlePairing(hosted, payload)
     expect(duplicate).toMatchObject({ paired: true, alreadyPaired: true, duplicate: true })
-    await expect((restarted as any).handleConversationRequest(hosted, {
+    await expect((restarted as any).handleMessageRequest(hosted, {
       type: 'chat.message.received',
       payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'om_pairing', text: 'ABC234' },
     })).resolves.toMatchObject({ duplicate: true, status: 'completed' })
@@ -186,53 +194,61 @@ describe('server Feishu adapter manager', () => {
     db.close()
   })
 
-  test('preserves the origin of an existing Server session selected from Feishu', async () => {
+  test('rejects legacy Feishu session-management requests', async () => {
     const db = createDb()
-    const session = {
-      sessionId: 'desktop-session',
-      transcriptSessionId: 'desktop-session',
-      orgId: 'org-1',
-      userId: 'user-1',
-      role: 'user',
-      scopes: ['sessions:create'],
-      cwd: '/tmp/workspace',
-      runtime: { backend: 'docker', profileDir: '', transcriptDir: '', workspaceDir: '' },
-      status: 'ended',
-      desiredState: 'ended',
-      currentAttemptId: null,
-      transcriptPath: '',
-      title: 'Desktop session',
-      summary: null,
-      assistantName: null,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-      endedAt: Date.now(),
-      deletedAt: null,
-    } satisfies SessionRecord
-    const runtime = {
-      getSession: (sessionId: string) => sessionId === session.sessionId ? session : null,
-    }
     const manager = new AdapterProcessManager(
       db as unknown as DatabaseSync,
-      runtime as unknown as RuntimeService,
+      {} as RuntimeService,
     )
     const hosted = {
       config: { appId: 'cli_test', allowedUsers: ['ou_user'] },
       auth: { orgId: 'org-1', userId: 'user-1' },
     }
-    const now = Date.now()
-    db.prepare(`
-      INSERT INTO feishu_adapter_conversations (
-        org_id, user_id, app_id, chat_id, open_id, active_session_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('org-1', 'user-1', 'cli_test', 'chat-1', 'ou_user', session.sessionId, now, now)
 
-    const current = await (manager as any).handleConversationRequest(hosted, {
-      type: 'conversation.current',
-      payload: { openId: 'ou_user', chatId: 'chat-1' },
+    for (const type of [
+      'conversation.list',
+      'conversation.current',
+      'conversation.select',
+      'conversation.new',
+      'session.abort',
+      'decision.respond',
+    ]) {
+      await expect((manager as any).handleMessageRequest(hosted, {
+        type,
+        payload: { openId: 'ou_user', chatId: 'chat-1' },
+      })).rejects.toThrow('Unsupported Feishu Adapter request')
+    }
+
+    await manager.dispose()
+    db.close()
+  })
+
+  test('denies interactive tool prompts instead of sending approval cards to Feishu', async () => {
+    const db = createDb()
+    const writes: string[] = []
+    const manager = new AdapterProcessManager(db as unknown as DatabaseSync, {} as RuntimeService)
+    const socket = {
+      write(value: string) { writes.push(value) },
+    }
+
+    ;(manager as any).denyInteractiveToolRequest(socket, {
+      request_id: 'permission-1',
+      request: { tool_name: 'Bash' },
     })
-    expect(current.session.id).toBe(session.sessionId)
-    expect(current.session.originChannel).toBeUndefined()
+
+    const envelope = JSON.parse(writes[0].trim())
+    const response = JSON.parse(envelope.data.trim())
+    expect(response).toMatchObject({
+      type: 'control_response',
+      response: {
+        request_id: 'permission-1',
+        response: { behavior: 'deny' },
+      },
+    })
+    expect(response.response.response.message).toContain('unavailable')
+
+    await manager.dispose()
+    db.close()
   })
 
   test('starts stopped and rejects incomplete client snapshots', async () => {
@@ -398,9 +414,10 @@ describe('server Feishu adapter manager', () => {
     }
   })
 
-  test('queues consecutive messages for the same server session', async () => {
+  test('queues slash-like messages as text in the same fixed server session', async () => {
     const db = createDb()
     const prompts: string[] = []
+    let created = 0
     const session: SessionRecord = {
       sessionId: 'session-1',
       transcriptSessionId: 'session-1',
@@ -423,7 +440,10 @@ describe('server Feishu adapter manager', () => {
       deletedAt: null,
     }
     const runtime = {
-      createSession: async () => session,
+      createSession: async () => {
+        created += 1
+        return session
+      },
       getSession: (sessionId: string) => sessionId === session.sessionId ? session : null,
       acquireSessionTurn: async () => () => {},
       ensureSessionReady: async () => {
@@ -474,24 +494,27 @@ describe('server Feishu adapter manager', () => {
     })
 
     try {
-      const first = await (manager as any).handleConversationRequest(hosted, {
+      const first = await (manager as any).handleMessageRequest(hosted, {
         version: 1,
         id: 'request-1',
         type: 'chat.message.received',
         timestamp: Date.now(),
-        payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'event-1', text: 'first' },
+        payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'event-1', text: '/new' },
       })
-      const second = await (manager as any).handleConversationRequest(hosted, {
+      const second = await (manager as any).handleMessageRequest(hosted, {
         version: 1,
         id: 'request-2',
         type: 'chat.message.received',
         timestamp: Date.now(),
-        payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'event-2', text: 'second' },
+        payload: { openId: 'ou_user', chatId: 'chat-1', eventId: 'event-2', text: '/stop' },
       })
       expect(first.queued).toBe(false)
       expect(second.queued).toBe(true)
+      expect(first.sessionId).toBe('session-1')
+      expect(second.sessionId).toBe('session-1')
+      expect(created).toBe(1)
       await waitFor(() => prompts.length === 2)
-      expect(prompts).toEqual(['first', 'second'])
+      expect(prompts).toEqual(['/new', '/stop'])
       await waitFor(() => {
         const row = db.query("SELECT COUNT(*) AS count FROM feishu_adapter_events WHERE status = 'completed'").get() as { count: number }
         return row.count === 2

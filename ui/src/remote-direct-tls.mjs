@@ -288,6 +288,7 @@ export function createRemoteDirectTrustStore({
       ...observed,
       pinned: true,
       caBundlePath,
+      trustUpdated: true,
     };
   };
 

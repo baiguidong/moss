@@ -42,6 +42,7 @@ export function mergeAdapterSettings(current, patch) {
       incoming.feishu,
       SECRET_FIELDS.feishu,
     );
+    delete merged.feishu.streamingCard;
   }
   if (incoming.pairing !== undefined) {
     merged.pairing = {
@@ -112,7 +113,6 @@ export function getFeishuAdapterFingerprint(config) {
     appSecret: feishu.appSecret || '',
     encryptKey: feishu.encryptKey || '',
     verificationToken: feishu.verificationToken || '',
-    streamingCard: Boolean(feishu.streamingCard),
   });
 }
 

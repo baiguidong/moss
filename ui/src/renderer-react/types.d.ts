@@ -894,7 +894,6 @@ export type AdapterFileConfig = {
     allowedUsers?: string[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
-    streamingCard?: boolean
     runLocation?: 'desktop' | 'server'
     serverDeployment?: {
       serverUrl: string

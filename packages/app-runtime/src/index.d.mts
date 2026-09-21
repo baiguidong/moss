@@ -201,6 +201,7 @@ export class AppHostCapabilityRegistry {
 export function createChannelProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createOpenIMProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const APP_CONTRIBUTION_KINDS: readonly string[]
 export function contributionId(appId: string, localId: string): string
 export function appToolName(appId: string, localId: string): string

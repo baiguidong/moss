@@ -18,6 +18,7 @@ export const MEDIA_SCHEME = 'moss-media';
 
 // 运行期登记的根目录白名单
 const allowedRoots = new Set();
+const allowedFiles = new Set();
 
 /** 登记一个允许通过协议访问的根目录 */
 export function allowMediaRoot(dir) {
@@ -25,8 +26,17 @@ export function allowMediaRoot(dir) {
   allowedRoots.add(path.resolve(dir));
 }
 
+/** 登记一个允许通过协议读取的具体文件，不同时开放其所在目录。 */
+export function allowMediaFile(filePath) {
+  if (!filePath) return;
+  const resolved = path.resolve(filePath);
+  allowedFiles.add(resolved);
+  try { allowedFiles.add(fs.realpathSync(resolved)); } catch {}
+}
+
 function isPathAllowed(target) {
   const resolved = path.resolve(target);
+  if (allowedFiles.has(resolved)) return true;
   for (const root of allowedRoots) {
     if (resolved === root || resolved.startsWith(root + path.sep)) return true;
   }

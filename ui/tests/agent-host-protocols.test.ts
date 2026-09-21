@@ -3,14 +3,22 @@ import {
   APP_ERROR_CODES,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
+  MOSS_OPENIM_PROTOCOL,
+  openIMDefaultConversationId,
+  openIMDefaultConversationIdFor,
+  openIMDirectConversationId,
+  parseOpenIMDirectConversationId,
   validateAccountHostInput,
   validateAgentHostInput,
   validateChannelHostInput,
+  validateOpenIMBackendEventData,
+  validateOpenIMHostInput,
 } from '../../packages/app-sdk/src/index.mjs'
 import {
   AppHostCapabilityRegistry,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
+  createOpenIMProtocolDefinition,
 } from '../../packages/app-runtime/src/index.mjs'
 
 function request(protocol: string, method: string, input: Record<string, unknown>, permission: string) {
@@ -50,8 +58,18 @@ describe('Account and Agent Host protocols', () => {
     })).toThrow(/unknown field/)
     expect(validateAgentHostInput('binding.update', {
       externalConversationId: 'chat-1',
-      patch: { resources: { tools: ['Read'] } },
-    })).toMatchObject({ patch: { resources: { tools: ['Read'] } } })
+      patch: { inheritDefault: false, resources: { tools: ['Read'] } },
+    })).toMatchObject({ patch: { inheritDefault: false, resources: { tools: ['Read'] } } })
+    expect(validateAgentHostInput('binding.reset', {
+      externalConversationId: 'chat-1', expectedRevision: 2,
+    })).toMatchObject({ externalConversationId: 'chat-1', expectedRevision: 2 })
+    expect(validateAgentHostInput('turn.delivery.ack', {
+      turnId: 'turn-1', externalConversationId: 'chat-1', ok: false, error: 'offline',
+    })).toMatchObject({ turnId: 'turn-1', ok: false })
+    expect(validateAgentHostInput('context.observe', {
+      externalUserId: 'user-1', externalConversationId: 'chat-1',
+      externalEventId: 'outgoing-1', text: 'manual reply',
+    })).toMatchObject({ externalEventId: 'outgoing-1', text: 'manual reply' })
     expect(validateAgentHostInput('turn.start', {
       externalUserId: 'user-1',
       externalConversationId: 'chat-1',
@@ -128,6 +146,51 @@ describe('Account and Agent Host protocols', () => {
 
     await expect(registry.dispatch({
       ...request(MOSS_AGENT_PROTOCOL, 'catalog.list', {}, 'agent:catalog:read'),
+      grants: [],
+    })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
+  })
+
+  it('validates and permission-gates the OpenIM host protocol', async () => {
+    expect(validateOpenIMHostInput('session.ensure', {})).toEqual({})
+    expect(validateOpenIMHostInput('message.send', {
+      recipientId: 'user-1',
+      conversationId: 'openim-user:self/direct:user-1',
+      text: 'hello',
+      idempotencyKey: 'turn-1',
+    })).toMatchObject({ recipientId: 'user-1', conversationId: 'openim-user:self/direct:user-1' })
+    expect(() => validateOpenIMHostInput('message.send', {
+      recipientId: 'user-2',
+      conversationId: 'openim-user:self/direct:user-1',
+      text: 'hello',
+      idempotencyKey: 'turn-1',
+    })).toThrow(/does not match/)
+    expect(openIMDefaultConversationId('self')).toBe('openim-user:self/*')
+    expect(openIMDirectConversationId('self', 'user:1')).toBe('openim-user:self/direct:user%3A1')
+    expect(parseOpenIMDirectConversationId('openim-user:self/direct:user%3A1')).toEqual({
+      userId: 'self', peerUserId: 'user:1',
+    })
+    expect(openIMDefaultConversationIdFor('openim-user:self/direct:user%3A1')).toBe('openim-user:self/*')
+    expect(validateOpenIMBackendEventData('message.received', {
+      externalUserId: 'user-1',
+      externalConversationId: 'direct:user-1',
+      externalEventId: 'message-1',
+      text: 'hello',
+      sentAt: 100,
+      contentType: 101,
+      sessionType: 1,
+    })).toMatchObject({ externalEventId: 'message-1', text: 'hello' })
+
+    const registry = new AppHostCapabilityRegistry()
+    registry.registerProtocol(createOpenIMProtocolDefinition())
+    registry.registerHandler(MOSS_OPENIM_PROTOCOL, 'session.ensure', () => ({ connected: true }))
+    await expect(registry.dispatch(request(
+      MOSS_OPENIM_PROTOCOL,
+      'session.ensure',
+      {},
+      'openim:client',
+    ))).resolves.toEqual({ connected: true })
+    await expect(registry.dispatch({
+      ...request(MOSS_OPENIM_PROTOCOL, 'session.ensure', {}, 'openim:client'),
       grants: [],
     })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
   })
