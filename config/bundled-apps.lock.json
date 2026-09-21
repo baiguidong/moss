@@ -3,10 +3,10 @@
   "apps": [
     {
       "id": "moss.feishu",
-      "version": "0.1.2",
-      "fileName": "moss.feishu-0.1.2.zip",
-      "url": "https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.2/moss.feishu-0.1.2.zip",
-      "sha256": "aaffabfee337b768a65fb352247bb514d2560ee84a523c8c464f6e26739f29fe",
+      "version": "0.1.3",
+      "fileName": "moss.feishu-0.1.3.zip",
+      "url": "https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.3/moss.feishu-0.1.3.zip",
+      "sha256": "b4d2460dc0304bde5c878dd9417b77ced7497cb0471c6e3baec424bd11df1f94",
       "publisherId": "moss",
       "keyId": "release-1"
     }

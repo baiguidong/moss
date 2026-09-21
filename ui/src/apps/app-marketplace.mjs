@@ -154,6 +154,31 @@ export function normalizeMarketplaceDetail(raw, detailUrl, expectedAppId) {
   }
 }
 
+function detailMatchesSummary(detail, summary) {
+  return Boolean(
+    detail
+    && summary
+    && detail.id === summary.id
+    && detail.latestVersion === summary.latestVersion
+    && Array.isArray(detail.versions)
+    && detail.versions.some((version) => version.version === summary.latestVersion),
+  )
+}
+
+function retainCurrentDetails(index, details = {}) {
+  const summaries = new Map(index.apps.map((summary) => [summary.id, summary]))
+  return Object.fromEntries(Object.entries(details).filter(([appId, detail]) => (
+    detailMatchesSummary(detail, summaries.get(appId))
+  )))
+}
+
+function versionedDetailUrl(detailUrl, version, generatedAt) {
+  const url = new URL(detailUrl)
+  url.searchParams.set('_moss_version', version)
+  if (generatedAt) url.searchParams.set('_moss_catalog', generatedAt)
+  return url.toString()
+}
+
 function readCache(cachePath, indexUrl) {
   try {
     const value = JSON.parse(fs.readFileSync(cachePath, 'utf8'))
@@ -218,7 +243,7 @@ export function createAppMarketplaceService(options = {}) {
     }
     try {
       const index = normalizeMarketplaceIndex(await downloadJson(indexUrl), indexUrl)
-      await persist(index)
+      await persist(index, retainCurrentDetails(index, memoryCache?.details))
       return { index, cached: false, warning: '' }
     } catch (error) {
       if (!memoryCache?.index) throw error
@@ -245,13 +270,23 @@ export function createAppMarketplaceService(options = {}) {
     const { index } = await loadIndex({ forceRefresh: input.forceRefresh === true })
     const summary = index.apps.find((entry) => entry.id === appId)
     if (!summary) throw new Error(`App is not present in the marketplace: ${appId}`)
-    if (!input.forceRefresh && memoryCache?.details?.[appId]) return enrichDetail(memoryCache.details[appId])
+    const cachedDetail = memoryCache?.details?.[appId]
+    if (!input.forceRefresh && detailMatchesSummary(cachedDetail, summary)) return enrichDetail(cachedDetail)
     try {
-      const normalized = normalizeMarketplaceDetail(await downloadJson(summary.detailUrl), summary.detailUrl, appId)
+      let normalized = normalizeMarketplaceDetail(await downloadJson(summary.detailUrl), summary.detailUrl, appId)
+      if (!detailMatchesSummary(normalized, summary)) {
+        const freshUrl = versionedDetailUrl(summary.detailUrl, summary.latestVersion, index.generatedAt)
+        normalized = normalizeMarketplaceDetail(await downloadJson(freshUrl), summary.detailUrl, appId)
+      }
+      if (!detailMatchesSummary(normalized, summary)) {
+        throw new Error(`Marketplace detail version mismatch: ${appId}@${summary.latestVersion}`)
+      }
       await persist(index, { ...(memoryCache?.details || {}), [appId]: normalized })
       return enrichDetail(normalized)
     } catch (error) {
-      if (memoryCache?.details?.[appId]) return { ...enrichDetail(memoryCache.details[appId]), warning: `详情更新失败，正在显示缓存：${error.message}` }
+      if (detailMatchesSummary(cachedDetail, summary)) {
+        return { ...enrichDetail(cachedDetail), warning: `详情更新失败，正在显示缓存：${error.message}` }
+      }
       throw error
     }
   }
