@@ -229,8 +229,8 @@ describe('desktop package contract', () => {
       schemaVersion: 1,
       apps: [{
         id: 'moss.feishu',
-        version: '0.1.2',
-        url: 'https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.2/moss.feishu-0.1.2.zip',
+        version: '0.1.3',
+        url: 'https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.3/moss.feishu-0.1.3.zip',
         publisherId: 'moss',
         keyId: 'release-1',
       }],

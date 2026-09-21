@@ -11,17 +11,17 @@ import {
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
 
-function version(archive: Buffer) {
+function version(archive: Buffer, versionNumber = '1.2.0') {
   return {
-    version: '1.2.0',
+    version: versionNumber,
     hostApi: '^1.1.0',
     platforms: ['darwin-arm64', 'win32-x64'],
     permissions: ['channel:messages'],
     publishedAt: '2026-09-21T00:00:00.000Z',
     releaseNotes: 'First marketplace release.',
     artifact: {
-      fileName: 'example.app-1.2.0.zip',
-      downloadUrl: 'https://github.com/example/apps/releases/download/example.app-v1.2.0/example.app-1.2.0.zip',
+      fileName: `example.app-${versionNumber}.zip`,
+      downloadUrl: `https://github.com/example/apps/releases/download/example.app-v${versionNumber}/example.app-${versionNumber}.zip`,
       sha256: createHash('sha256').update(archive).digest('hex'),
       size: archive.length,
       signed: true,
@@ -185,6 +185,60 @@ describe('App marketplace', () => {
     })
     expect(await service.install({ appId: 'example.app', acceptPermissions: true })).toMatchObject({ ok: true, version: '1.2.0' })
     expect(calls).toEqual([{ version: '1.2.0', grants: ['channel:messages'] }])
+  })
+
+  it('refreshes stale App details when the catalog advertises a newer version', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-version-sync-'))
+    roots.push(root)
+    const oldArchive = Buffer.from('old signed zip bytes')
+    const newArchive = Buffer.from('new signed zip bytes')
+    const oldVersion = version(oldArchive, '1.2.0')
+    const newVersion = version(newArchive, '1.3.0')
+    let activeVersion = oldVersion
+    let plainDetailIsStale = false
+    const detailRequests: string[] = []
+    const registered: string[] = []
+    const runtime = {
+      getApp: async () => ({ installation: { activeVersion: '1.2.0', grants: ['channel:messages'] } }),
+      registerInstalled: async (_appId: string, installedVersion: string) => { registered.push(installedVersion) },
+    }
+    const service = createAppMarketplaceService({
+      indexUrl: 'https://example.com/index.json',
+      cachePath: path.join(root, 'catalog.json'),
+      platform: 'darwin-arm64',
+      trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.2.0' }],
+      getRuntime: () => runtime,
+      download: async (url: string) => {
+        if (url === 'https://example.com/index.json') return Buffer.from(JSON.stringify(catalog(activeVersion)))
+        if (url.startsWith('https://example.com/example.app.json')) {
+          detailRequests.push(url)
+          const requestedFreshVersion = new URL(url).searchParams.get('_moss_version')
+          const responseVersion = plainDetailIsStale && !requestedFreshVersion ? oldVersion : activeVersion
+          return Buffer.from(JSON.stringify(detail(responseVersion)))
+        }
+        if (url === newVersion.artifact.downloadUrl) return newArchive
+        throw new Error(`Unexpected URL: ${url}`)
+      },
+      installArchive: async (_runtime: unknown, _archivePath: string, options: { installPackage: (root: string) => Promise<unknown> }) => {
+        return options.installPackage('/verified-package')
+      },
+      validatePackage: async () => ({
+        manifest: { id: 'example.app', version: '1.3.0' },
+        trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+      }),
+      installPackage: async () => ({ id: 'example.app', currentVersion: '1.3.0' }),
+    })
+
+    await service.list({ forceRefresh: true })
+    expect((await service.getDetails('example.app')).latestVersion).toBe('1.2.0')
+
+    activeVersion = newVersion
+    plainDetailIsStale = true
+    await service.list({ forceRefresh: true })
+    expect(await service.install({ appId: 'example.app', version: '1.3.0' })).toMatchObject({ ok: true, version: '1.3.0' })
+    expect(registered).toEqual(['1.3.0'])
+    expect(detailRequests.at(-1)).toContain('_moss_version=1.3.0')
   })
 
   it('falls back to a previously cached catalog when refresh fails', async () => {
