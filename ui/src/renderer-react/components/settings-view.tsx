@@ -1,9 +1,9 @@
 import * as React from 'react';
 import {
   Blocks,
+  Bot,
   Check,
   LogIn,
-  MessageSquare,
   Monitor,
   MoonStar,
   Palette,
@@ -19,12 +19,12 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BuddySummary } from '@/components/buddy';
+import { AgentManager } from '@/components/agent-manager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { useAdapterConfig } from '@/lib/adapter-config';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { PRESET_THEMES } from '@/theme/presets';
 import { PermissionModeSelector } from '@/components/permission-mode-selector';
@@ -33,11 +33,11 @@ import {
   MOSS_TOOL_GROUPS,
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
-import type { DesktopSettings, FeishuAdapterStatus, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
+import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'tools' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'tools' | 'library' | 'workflows' | 'mcp' | 'feishu' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'library' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -54,6 +54,8 @@ type SettingsViewProps = {
   onAppearanceCommit: (patch: Partial<DesktopSettings['appearance']>) => void;
   buddyEnabled: boolean;
   onBuddyEnabledChange: (enabled: boolean) => void;
+  workspace?: string;
+  initialSection?: SectionId;
 };
 
 type SettingsSectionDefinition = {
@@ -219,6 +221,20 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
+    id: 'agents',
+    title: 'Agents',
+    icon: Bot,
+    iconGradientClassName: 'from-indigo-400 to-violet-600',
+    keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证'],
+    sections: [
+      {
+        id: 'agents',
+        title: 'Agents',
+        keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用'],
+      },
+    ],
+  },
+  {
     id: 'tools',
     title: '工具',
     icon: Wrench,
@@ -253,11 +269,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         id: 'mcp',
         title: 'MCP',
         keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
-      },
-      {
-        id: 'feishu',
-        title: '飞书',
-        keywords: ['飞书', 'feishu', '机器人', 'bot', '配对'],
       },
     ],
   },
@@ -300,7 +311,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'agent-execution',
         title: 'Agent 与执行',
-        keywords: ['agent', 'verification', '验证', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
+        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
       },
       {
         id: 'tool-performance',
@@ -1278,6 +1289,8 @@ export function SettingsView({
   onAppearanceCommit,
   buddyEnabled,
   onBuddyEnabledChange,
+  workspace,
+  initialSection = 'basic-info',
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
@@ -1288,18 +1301,18 @@ export function SettingsView({
   const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
   const [webSearchError, setWebSearchError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
-  const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>('basic');
-  const [activeSection, setActiveSection] = React.useState<SectionId>('basic-info');
+  const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSection]);
+  const [activeSection, setActiveSection] = React.useState<SectionId>(initialSection);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
     'basic-info': null,
     model: null,
     'web-search': null,
+    agents: null,
     tools: null,
     library: null,
     workflows: null,
     mcp: null,
-    feishu: null,
     appearance: null,
     buddy: null,
     permission: null,
@@ -1355,6 +1368,12 @@ export function SettingsView({
     ...DEFAULT_MOSS_TOOL_LOADING,
     ...(settingsDraft?.toolLoading || {}),
   };
+
+  React.useEffect(() => {
+    setActiveSection(initialSection);
+    setActiveGroupId(SECTION_GROUP_IDS[initialSection]);
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [initialSection]);
 
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
@@ -2099,20 +2118,6 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
-                        title="独立验证 Agent"
-                        description="让新会话在完成非简单实现前调用后台验证 Agent；会增加验证时间和模型调用成本。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(advancedDraft.moss_hive_evidence)}
-                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_hive_evidence: checked })}
-                            label="独立验证 Agent"
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
                         title="会话临时工作区"
                         description="为 Agent 和 Coordinator Worker 提供隔离的临时文件目录。"
                         controlClassName="sm:w-[56px]"
@@ -2155,6 +2160,18 @@ export function SettingsView({
                       </SettingsRow>
 
                     </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'agents') ? (
+                  <SettingsSection
+                    id="agents"
+                    title="Agents"
+                    sectionRef={(element) => {
+                      sectionRefs.current.agents = element;
+                    }}
+                  >
+                    <AgentManager workspace={workspace} />
                   </SettingsSection>
                 ) : null}
 
@@ -3073,18 +3090,6 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'feishu') ? (
-                  <SettingsSection
-                    id="feishu"
-                    title="飞书"
-                    sectionRef={(element) => {
-                      sectionRefs.current.feishu = element;
-                    }}
-                  >
-                    <FeishuSettings />
-                  </SettingsSection>
-                ) : null}
-
                 {visibleSections.some((section) => section.id === 'buddy') ? (
                   <SettingsSection
                     id="buddy"
@@ -3277,334 +3282,4 @@ export function SettingsView({
       </div>
     </div>
   );
-}
-
-function FeishuSettings() {
-  const { config, isLoading, fetchConfig, updateConfig, applyRunLocation, generatePairingCode, removePairedUser } = useAdapterConfig()
-
-  const [fsAppId, setFsAppId] = React.useState('')
-  const [fsAppSecret, setFsAppSecret] = React.useState('')
-  const [fsEncryptKey, setFsEncryptKey] = React.useState('')
-  const [fsVerificationToken, setFsVerificationToken] = React.useState('')
-  const [fsAllowedUsers, setFsAllowedUsers] = React.useState('')
-  const [fsStreamingCard, setFsStreamingCard] = React.useState(false)
-  const [fsRunLocation, setFsRunLocation] = React.useState<'desktop' | 'server'>('desktop')
-  const [isSaving, setIsSaving] = React.useState(false)
-  const [isApplyingLocation, setIsApplyingLocation] = React.useState(false)
-  const [applyLocationError, setApplyLocationError] = React.useState('')
-  const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saved' | 'error'>('idle')
-  const [saveError, setSaveError] = React.useState('')
-  const [pairingCode, setPairingCode] = React.useState<string | null>(null)
-  const [isGenerating, setIsGenerating] = React.useState(false)
-  const [pendingUnbind, setPendingUnbind] = React.useState<{ userId: string | number } | null>(null)
-  const [isUnbinding, setIsUnbinding] = React.useState(false)
-  const hasHydratedForm = React.useRef(false)
-  const [feishuStatus, setFeishuStatus] = React.useState<FeishuAdapterStatus>({
-    status: 'stopped',
-    pid: null,
-    bridgeReady: false,
-    transportConnected: false,
-    location: 'desktop',
-  })
-
-  React.useEffect(() => {
-    fetchConfig()
-  }, [fetchConfig])
-
-  React.useEffect(() => {
-    const unsubscribe = window.agentDesktop.onAdapterStatus(setFeishuStatus)
-    const refresh = () => {
-      void window.agentDesktop.getAdapterStatus()
-        .then((status) => {
-          setFeishuStatus(status)
-        })
-        .catch(() => {})
-    }
-    refresh()
-    const timer = window.setInterval(refresh, 5_000)
-    return () => {
-      window.clearInterval(timer)
-      unsubscribe()
-    }
-  }, [])
-
-  React.useEffect(() => {
-    if (feishuStatus.pairing && !feishuStatus.pairing.code) setPairingCode(null)
-  }, [feishuStatus.pairing])
-
-  React.useEffect(() => {
-    if (isLoading || hasHydratedForm.current) return
-    setFsAppId(config.feishu?.appId ?? '')
-    setFsAppSecret(config.feishu?.appSecret ?? '')
-    setFsEncryptKey(config.feishu?.encryptKey ?? '')
-    setFsVerificationToken(config.feishu?.verificationToken ?? '')
-    setFsAllowedUsers(config.feishu?.allowedUsers?.join(', ') ?? '')
-    setFsStreamingCard(config.feishu?.streamingCard ?? false)
-    setFsRunLocation(config.feishu?.runLocation === 'server' ? 'server' : 'desktop')
-    hasHydratedForm.current = true
-  }, [config, isLoading])
-
-  async function handleSave() {
-    setIsSaving(true)
-    setSaveStatus('idle')
-    setSaveError('')
-    try {
-      const fsUsers = fsAllowedUsers
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      await updateConfig({
-        feishu: {
-          appId: fsAppId || undefined,
-          appSecret: fsAppSecret || undefined,
-          encryptKey: fsEncryptKey || undefined,
-          verificationToken: fsVerificationToken || undefined,
-          allowedUsers: fsUsers.length ? fsUsers : [],
-          streamingCard: fsStreamingCard,
-        },
-      })
-      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus('idle'), 2000)
-    } catch (err) {
-      setSaveStatus('error')
-      setSaveError(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleApplyRunLocation = async (nextLocation: 'desktop' | 'server') => {
-    const previousLocation = config.feishu?.runLocation === 'server' ? 'server' : 'desktop'
-    setFsRunLocation(nextLocation)
-    setIsApplyingLocation(true)
-    setApplyLocationError('')
-    try {
-      const result = await applyRunLocation(nextLocation)
-      setFeishuStatus(result.status)
-    } catch (err) {
-      setFsRunLocation(previousLocation)
-      setApplyLocationError(err instanceof Error ? err.message : '切换运行位置失败')
-      void window.agentDesktop.getAdapterStatus().then(setFeishuStatus).catch(() => {})
-    } finally {
-      setIsApplyingLocation(false)
-    }
-  }
-
-  const handleGenerateCode = async () => {
-    setIsGenerating(true)
-    try {
-      const code = await generatePairingCode()
-      setPairingCode(code)
-      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
-    } catch (err) {
-      console.error('Failed to generate pairing code:', err)
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  const handleUnbind = async () => {
-    if (!pendingUnbind) return
-    setIsUnbinding(true)
-    try {
-      await removePairedUser(pendingUnbind.userId)
-      setFeishuStatus(await window.agentDesktop.getAdapterStatus())
-      setPendingUnbind(null)
-    } finally {
-      setIsUnbinding(false)
-    }
-  }
-
-  const allPairedUsers = feishuStatus.enabled === false
-    ? config.feishu?.pairedUsers ?? []
-    : feishuStatus.pairedUsers ?? config.feishu?.pairedUsers ?? []
-
-  const pairingState = feishuStatus.enabled === false
-    ? config.pairing
-    : feishuStatus.pairing ?? config.pairing
-  const pairingExpiry = pairingState?.expiresAt
-  const isPairingActive = pairingExpiry ? Date.now() < pairingExpiry : false
-  const minutesLeft = pairingExpiry ? Math.max(0, Math.ceil((pairingExpiry - Date.now()) / 60000)) : 0
-
-  if (isLoading) {
-    return (
-      <Surface className="p-6">
-        <p className="text-sm font-medium text-foreground">正在加载飞书配置…</p>
-      </Surface>
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      <Surface>
-        <div className="border-b border-sidebar-border bg-sidebar-accent/58 px-4 py-2.5 text-[13px] font-medium text-foreground">
-          飞书
-        </div>
-
-        <div className="space-y-3 p-4">
-          <div className="flex flex-col gap-2 border-b border-sidebar-border pb-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[13px] font-medium text-foreground">运行位置</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">同一时间只运行一个飞书实例</p>
-            </div>
-            <div className="flex items-center gap-2 sm:justify-end">
-              <select
-                className={cn(SELECT_CLASS_NAME, 'w-[148px]')}
-                value={fsRunLocation}
-                disabled={isApplyingLocation || isSaving}
-                aria-label="飞书运行位置"
-                onChange={(event) => void handleApplyRunLocation(
-                  event.target.value === 'server' ? 'server' : 'desktop',
-                )}
-              >
-                <option value="desktop">本机</option>
-                <option value="server">Moss Server</option>
-              </select>
-              {isApplyingLocation ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
-            </div>
-          </div>
-          {applyLocationError ? (
-            <p className="border-b border-sidebar-border pb-3 text-right text-xs text-destructive">{applyLocationError}</p>
-          ) : null}
-          <div className="flex items-center gap-2 border-b border-sidebar-border pb-3 text-xs text-muted-foreground">
-            <span className={cn(
-              'h-2 w-2 rounded-full',
-              feishuStatus.transportConnected
-                ? 'bg-emerald-500'
-                : feishuStatus.status === 'running' ? 'bg-amber-500' : 'bg-muted-foreground/45',
-            )} />
-            <span className="min-w-0 break-words">
-              {feishuStatus.transportConnected
-                ? `${feishuStatus.location === 'server' ? 'Moss Server' : '本机'}飞书长连接已就绪`
-                : feishuStatus.bridgeReady
-                  ? `${feishuStatus.location === 'server' ? 'Server' : '客户端'}桥接已连接，正在等待飞书长连接`
-                  : feishuStatus.status === 'error'
-                    ? `Adapter 启动失败：${feishuStatus.error || '未知错误'}`
-                  : feishuStatus.status === 'running'
-                    ? 'Adapter 正在启动'
-                    : feishuStatus.status === 'disabled'
-                      ? 'Adapter 未配置'
-                      : 'Adapter 未启动'}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">App ID</label>
-              <Input className={FIELD_CLASS_NAME} value={fsAppId} onChange={(e) => setFsAppId(e.target.value)} placeholder="cli_xxxxxxxx" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">App Secret</label>
-              <Input type="password" className={FIELD_CLASS_NAME} value={fsAppSecret} onChange={(e) => setFsAppSecret(e.target.value)} placeholder="****" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">Encrypt Key</label>
-              <Input type="password" className={FIELD_CLASS_NAME} value={fsEncryptKey} onChange={(e) => setFsEncryptKey(e.target.value)} placeholder="****" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[13px] font-medium text-foreground">Verification Token</label>
-              <Input type="password" className={FIELD_CLASS_NAME} value={fsVerificationToken} onChange={(e) => setFsVerificationToken(e.target.value)} placeholder="****" />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-[13px] font-medium text-foreground">允许的用户 ID</label>
-            <Input className={FIELD_CLASS_NAME} value={fsAllowedUsers} onChange={(e) => setFsAllowedUsers(e.target.value)} placeholder="ou_xxx, ou_yyy（可选白名单，逗号分隔）" />
-          </div>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={fsStreamingCard}
-              onChange={(e) => setFsStreamingCard(e.target.checked)}
-              className="h-4 w-4 rounded border-sidebar-border accent-primary"
-            />
-            <div>
-              <span className="text-[13px] font-medium text-foreground">流式卡片</span>
-              <p className="text-xs text-muted-foreground">开启后，飞书消息流式更新（需要应用支持）</p>
-            </div>
-          </label>
-        </div>
-
-        <div className="border-t border-sidebar-border">
-          <div className="flex items-center gap-2 bg-sidebar-accent/35 px-4 py-3">
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            <span className="text-[13px] font-medium text-foreground">配对管理</span>
-          </div>
-          <div className="space-y-4 px-4 pb-4">
-            <p className="text-xs leading-6 text-muted-foreground">生成配对码后，在飞书机器人中输入该码即可绑定账号。</p>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button variant="outline" size="sm" className="rounded-xl" onClick={handleGenerateCode} disabled={isGenerating}>
-                {pairingCode || isPairingActive ? '重新生成' : '生成配对码'}
-              </Button>
-              {pairingCode && isPairingActive && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{pairingCode}</span>
-                  <span className="text-xs text-muted-foreground">60 分钟内有效</span>
-                </div>
-              )}
-              {!pairingCode && isPairingActive && (
-                <span className="text-xs text-muted-foreground">{minutesLeft} 分钟后过期</span>
-              )}
-            </div>
-
-            <div>
-              <p className="mb-2 text-[13px] font-medium text-foreground">已配对用户</p>
-              {allPairedUsers.length === 0 ? (
-                <p className="text-xs text-muted-foreground">暂无已配对用户</p>
-              ) : (
-                <div className="space-y-2">
-                  {allPairedUsers.map((user) => (
-                    <div
-                      key={String(user.userId)}
-                      className="flex items-center justify-between gap-3 rounded-md border border-sidebar-border bg-sidebar-accent/70 px-3 py-2"
-                    >
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="rounded bg-sidebar px-1.5 py-0.5 text-[11px] text-muted-foreground">飞书</span>
-                        <span className="min-w-0 break-all text-[13px] text-foreground">{user.displayName}</span>
-                        <span className="text-xs text-muted-foreground">{new Date(user.pairedAt).toLocaleDateString()}</span>
-                      </div>
-                      <button
-                        onClick={() => setPendingUnbind({ userId: user.userId })}
-                        className="shrink-0 text-xs text-destructive hover:underline"
-                      >
-                        解绑
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </Surface>
-
-      {/* Save */}
-      <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={isSaving || isApplyingLocation} className="rounded-xl">
-          {isSaving ? '保存中…' : saveStatus === 'saved' ? '已保存 ✓' : '保存配置'}
-        </Button>
-        {saveStatus === 'error' && (
-          <span className="text-sm text-destructive">{saveError}</span>
-        )}
-      </div>
-
-      {/* Unbind confirm */}
-      {pendingUnbind && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { if (!isUnbinding) setPendingUnbind(null) }}>
-          <div className="w-[360px] rounded-[20px] bg-background p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <p className="text-[13px] font-medium text-foreground">确认解绑</p>
-            <p className="mt-2 text-xs text-muted-foreground">确定要解绑该用户吗？解绑后该用户将无法再通过飞书与 Agent 对话。</p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setPendingUnbind(null)} disabled={isUnbinding}>取消</Button>
-              <Button size="sm" className="rounded-xl bg-destructive text-white hover:bg-destructive/90" onClick={handleUnbind} disabled={isUnbinding}>
-                {isUnbinding ? '解绑中…' : '解绑'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }

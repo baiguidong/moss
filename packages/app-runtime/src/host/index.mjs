@@ -809,6 +809,36 @@ export class AppRuntimeHost {
     return this.hostCapabilities.registerHandler(protocol, method, handler)
   }
 
+  async requestHostCapability(appId, instanceId, protocol, method, input = {}, options = {}) {
+    const installation = this.installations.get(appId)
+    if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
+    const instance = this.requireInstance(appId, instanceId)
+    if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+    const deployment = this.localDeployment(appId, instanceId)
+    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance is not deployed on this Host')
+    this.authorizeInvocation(deployment)
+    const packageInfo = await this.getActivePackage(appId)
+    const backend = packageInfo.manifest.backend
+    if (!backend) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App has no Backend')
+    return this.hostCapabilities.dispatch({
+      appId,
+      instanceId,
+      version: packageInfo.manifest.version,
+      generation: deployment.generation,
+      target: { type: deployment.targetType, id: deployment.targetId },
+      owner: this.currentOwner(),
+      principal: this.currentOwner(),
+      requestId: String(options.requestId || randomUUID()),
+      protocol,
+      method,
+      input,
+      protocols: backend.protocols || [],
+      permissions: packageInfo.manifest.permissions || [],
+      grants: installation.grants || [],
+      signal: options.signal,
+    })
+  }
+
   dispatchChannelRequest(request) {
     return this.dispatchHostRequest({ ...request, protocol: MOSS_CHANNEL_PROTOCOL })
   }

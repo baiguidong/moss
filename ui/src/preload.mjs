@@ -166,6 +166,19 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('agent-teams:changed', handler);
     },
   },
+  agents: {
+    list: (payload) => ipcRenderer.invoke('agent:agents-list', payload),
+    read: (payload) => ipcRenderer.invoke('agent:agents-read', payload),
+    create: (payload) => ipcRenderer.invoke('agent:agents-create', payload),
+    update: (payload) => ipcRenderer.invoke('agent:agents-update', payload),
+    delete: (payload) => ipcRenderer.invoke('agent:agents-delete', payload),
+    setEnabled: (payload) => ipcRenderer.invoke('agent:agents-set-enabled', payload),
+    onChanged: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('agent:agents-changed', handler);
+      return () => ipcRenderer.off('agent:agents-changed', handler);
+    },
+  },
   setConnectorAuthStatus: (payload) => ipcRenderer.invoke('agent:set-connector-auth-status', payload),
   listConnectors: () => ipcRenderer.invoke('connector-hub:list'),
   getInstalledConnectors: () => ipcRenderer.invoke('connector-hub:get-installed'),

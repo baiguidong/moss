@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Bot, Cable, Check, Hammer, ListFilter } from 'lucide-react';
+import { Bot, Cable, Check, GitFork, Hammer, ListFilter } from 'lucide-react';
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
@@ -22,7 +22,7 @@ import {
   type ComposerResourceTab,
 } from '@/lib/composer-mentions';
 import { cn } from '@/lib/utils';
-import type { InstalledConnector } from '@/types';
+import type { DesktopAgentDefinition, InstalledConnector } from '@/types';
 
 type ComposerResourceSelectionAreaProps = {
   assistants?: InstalledAssistant[];
@@ -30,6 +30,11 @@ type ComposerResourceSelectionAreaProps = {
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
+  agents?: DesktopAgentDefinition[];
+  selectedAgent?: DesktopAgentDefinition | null;
+  onSelectAgent?: (agent: DesktopAgentDefinition) => void;
+  onClearAgent?: () => void;
+  onOpenAgentManager?: () => void;
   skills?: InstalledSkillOption[];
   selectedSkills?: InstalledSkillOption[];
   onToggleSkill?: (skill: InstalledSkillOption) => void;
@@ -55,6 +60,12 @@ const RESOURCE_TAB_META: Record<ComposerResourceTab, {
     managerLabel: '管理专家',
     searchPlaceholder: '搜索专家',
     icon: <Bot className="h-4 w-4" />,
+  },
+  agents: {
+    label: 'Agents',
+    managerLabel: '管理 Agents',
+    searchPlaceholder: '搜索可用 Agents',
+    icon: <GitFork className="h-4 w-4" />,
   },
   skills: {
     label: '技能',
@@ -130,6 +141,11 @@ export function ComposerResourceSelectionArea({
   onSelectAssistant,
   onClearAssistant,
   onOpenExpertHub,
+  agents = [],
+  selectedAgent = null,
+  onSelectAgent,
+  onClearAgent,
+  onOpenAgentManager,
   skills = [],
   selectedSkills = [],
   onToggleSkill,
@@ -145,9 +161,10 @@ export function ComposerResourceSelectionArea({
 }: ComposerResourceSelectionAreaProps) {
   const tabs = React.useMemo(() => getComposerResourceTabs({
     includeAssistants: Boolean(onSelectAssistant),
+    includeAgents: Boolean(onSelectAgent),
     includeSkills: Boolean(onToggleSkill),
     includeConnectors: Boolean(onToggleConnector),
-  }), [onSelectAssistant, onToggleConnector, onToggleSkill]);
+  }), [onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
@@ -163,6 +180,7 @@ export function ComposerResourceSelectionArea({
     [assistants],
   );
   const installedSkills = React.useMemo(() => getSelectableInstalledSkills(skills), [skills]);
+  const activeAgents = React.useMemo(() => agents.filter((agent) => agent.active), [agents]);
   const installedConnectors = React.useMemo(
     () => getSelectableInstalledConnectors(connectors),
     [connectors],
@@ -179,6 +197,11 @@ export function ComposerResourceSelectionArea({
     skill.name,
     skill.description,
   ], query)), [installedSkills, query]);
+  const filteredAgents = React.useMemo(() => activeAgents.filter((agent) => matchesQuery([
+    agent.agentType,
+    agent.description,
+    agent.source,
+  ], query)), [activeAgents, query]);
   const filteredConnectors = React.useMemo(() => installedConnectors.filter((connector) => matchesQuery([
     connector.name,
     connector.description,
@@ -190,6 +213,7 @@ export function ComposerResourceSelectionArea({
   const selectedSkillNames = new Set(selectedSkills.map((skill) => skill.name));
   const selectedConnectors = new Set(selectedConnectorIds);
   const selectedCount = (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
+    + (tabs.includes('agents') && selectedAgent ? 1 : 0)
     + (tabs.includes('skills')
       ? installedSkills.filter((skill) => selectedSkillNames.has(skill.name)).length
       : 0)
@@ -198,11 +222,15 @@ export function ComposerResourceSelectionArea({
       : 0);
   const activeItems = displayedTab === 'assistants'
     ? filteredAssistants
+    : displayedTab === 'agents'
+      ? filteredAgents
     : displayedTab === 'skills'
       ? filteredSkills
       : filteredConnectors;
   const activeTotal = displayedTab === 'assistants'
     ? installedAssistants.length
+    : displayedTab === 'agents'
+      ? activeAgents.length
     : displayedTab === 'skills'
       ? installedSkills.length
       : installedConnectors.length;
@@ -214,11 +242,15 @@ export function ComposerResourceSelectionArea({
   };
   const openManager = displayedTab === 'assistants'
     ? onOpenExpertHub
+    : displayedTab === 'agents'
+      ? onOpenAgentManager
     : displayedTab === 'skills'
       ? onOpenSkillHub
       : onOpenConnectorHub;
   const emptyLabel = displayedTab === 'assistants'
     ? '没有匹配的已安装专家'
+    : displayedTab === 'agents'
+      ? '没有匹配的已启用 Agent'
     : displayedTab === 'skills'
       ? skillsLoading ? '正在加载已安装技能...' : '没有匹配的已安装技能'
       : '没有匹配的已认证连接器';
@@ -304,6 +336,19 @@ export function ComposerResourceSelectionArea({
               onSelect={() => {
                 if (selectedAssistant?.name === assistant.name) onClearAssistant?.();
                 else onSelectAssistant?.(assistant);
+              }}
+            />
+          )) : displayedTab === 'agents' ? filteredAgents.map((agent) => (
+            <ResourceRow
+              key={agent.id}
+              selected={selectedAgent?.agentType === agent.agentType}
+              icon={<GitFork className="h-4 w-4" />}
+              title={agent.agentType}
+              description={agent.description || agent.source}
+              singleSelect
+              onSelect={() => {
+                if (selectedAgent?.agentType === agent.agentType) onClearAgent?.();
+                else onSelectAgent?.(agent);
               }}
             />
           )) : displayedTab === 'skills' ? filteredSkills.map((skill) => (

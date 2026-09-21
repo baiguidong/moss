@@ -45,10 +45,15 @@ export class ServerAppRuntime {
   static async create(
     config: ServerConfig,
     serverInstanceId: string,
-    options: { channelHost?: unknown; channelOptions?: Record<string, unknown> } = {},
+    options: {
+      channelHost?: unknown
+      channelOptions?: Record<string, unknown>
+      hostProtocols?: Array<Record<string, unknown>>
+      hostHandlers?: Record<string, Record<string, (input: Record<string, unknown>, context: Record<string, unknown>) => unknown>>
+    } = {},
   ): Promise<ServerAppRuntime> {
     const state = await new SqliteAppStateStore(config.dbPath).initialize()
-    const runtime = await new AppRuntimeHost({
+    const runtime = new AppRuntimeHost({
       rootDir: config.rootDir,
       appsDir: join(config.rootDir, 'apps'),
       dataDir: join(config.dataDir, 'apps-data'),
@@ -61,7 +66,14 @@ export class ServerAppRuntime {
       credentialAdapter: new ServerAppCredentialAdapter(config.rootDir),
       channelHost: options.channelHost,
       channelOptions: options.channelOptions,
-    }).initialize()
+      hostCapabilityOptions: { protocols: options.hostProtocols || [] },
+    })
+    for (const [protocol, handlers] of Object.entries(options.hostHandlers || {})) {
+      for (const [method, handler] of Object.entries(handlers)) {
+        runtime.registerHostHandler(protocol, method, handler)
+      }
+    }
+    await runtime.initialize()
     return new ServerAppRuntime(runtime, state, config.appSourceDir)
   }
 

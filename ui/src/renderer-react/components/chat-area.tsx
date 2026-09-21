@@ -77,6 +77,7 @@ import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
   BackgroundTaskInfo,
+  DesktopAgentDefinition,
   InstalledConnector,
   PermissionMode,
   SessionSummary,
@@ -500,6 +501,7 @@ function ComposerPanel({
   hasActiveSession,
   remoteEnabled = false,
   newSessionMode = 'local',
+  sessionAgentMode = 'local',
   onNewSessionModeChange,
   sessionId,
   attachments: externalAttachments,
@@ -518,6 +520,7 @@ function ComposerPanel({
   onSelectAssistant,
   onClearAssistant,
   onOpenExpertHub,
+  onOpenAgentManager,
   onOpenSkillHub,
   allowSkillSelection = true,
   installedConnectors,
@@ -535,6 +538,7 @@ function ComposerPanel({
   hasActiveSession: boolean;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
+  sessionAgentMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   sessionId?: string;
   attachments?: Array<{ name: string; path: string }>;
@@ -551,13 +555,14 @@ function ComposerPanel({
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
+  onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
   allowSkillSelection?: boolean;
   installedConnectors?: InstalledConnector[];
   selectedConnectorIds?: string[];
   onToggleConnector?: (connector: InstalledConnector) => void;
   onOpenConnectorHub?: () => void;
-  onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[]) => void;
+  onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop?: () => void;
   className?: string;
   contextUsage?: ContextUsageInfo | null;
@@ -599,23 +604,29 @@ function ComposerPanel({
   );
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
   const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
+  const [agentItems, setAgentItems] = React.useState<DesktopAgentDefinition[]>([]);
+  const [selectedAgent, setSelectedAgent] = React.useState<DesktopAgentDefinition | null>(null);
   const [skillsLoading, setSkillsLoading] = React.useState(false);
   const [addMenuOpen, setAddMenuOpen] = React.useState(false);
   const [resourcePickerTab, setResourcePickerTab] = React.useState<ComposerResourceTab | null>(null);
   const skillsLoadedRef = React.useRef(false);
   const workspaceRootRef = React.useRef<string | null>(null);
+  const canSelectAgents = composerIntent === 'boss'
+    && (hasActiveSession ? sessionAgentMode === 'local' : newSessionMode === 'local');
   const mentionTabs = React.useMemo(() => getComposerMentionTabs({
     includeFiles: hasActiveSession,
+    includeAgents: canSelectAgents,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
-  }), [allowSkillSelection, hasActiveSession, onSelectAssistant, onToggleConnector]);
+  }), [allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
   const defaultPlaceholder = React.useMemo(() => getDefaultComposerPlaceholder({
     hasActiveSession,
+    includeAgents: canSelectAgents,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
-  }), [allowSkillSelection, hasActiveSession, onSelectAssistant, onToggleConnector]);
+  }), [allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
 
   React.useEffect(() => {
     if (!mentionTabs.includes(mentionTab)) setMentionTab(mentionTabs[0]);
@@ -645,6 +656,35 @@ function ComposerPanel({
   React.useEffect(() => {
     if (!allowSkillSelection) setSelectedSkills([]);
   }, [allowSkillSelection]);
+
+  const loadAgents = React.useCallback(async () => {
+    if (!canSelectAgents) {
+      setAgentItems([]);
+      setSelectedAgent(null);
+      return;
+    }
+    try {
+      const agentsApi = window.agentDesktop.agents;
+      if (!agentsApi) return;
+      const catalog = await agentsApi.list({
+        sessionId,
+        workspace,
+      });
+      const activeAgents = catalog.agents.filter((agent) => agent.active);
+      setAgentItems(activeAgents);
+      setSelectedAgent((current) => current
+        ? activeAgents.find((agent) => agent.agentType === current.agentType) || null
+        : null);
+    } catch {
+      setAgentItems([]);
+      setSelectedAgent(null);
+    }
+  }, [canSelectAgents, sessionId, workspace]);
+
+  React.useEffect(() => {
+    void loadAgents();
+    return window.agentDesktop.agents?.onChanged?.(() => { void loadAgents(); });
+  }, [loadAgents]);
 
   const mentionDirPart = React.useMemo(() => {
     if (mentionFilter === null) return null;
@@ -736,6 +776,15 @@ function ComposerPanel({
       .slice(0, 8);
   }, [allowSkillSelection, mentionFilter, skillItems]);
 
+  const visibleAgentItems = React.useMemo(() => {
+    if (mentionFilter === null || !canSelectAgents) return [];
+    const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
+    return agentItems
+      .filter((agent) => !query || [agent.agentType, agent.description, agent.source]
+        .some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(query)))
+      .slice(0, 8);
+  }, [agentItems, canSelectAgents, mentionFilter]);
+
   const visibleAssistantItems = React.useMemo(() => {
     if (mentionFilter === null || hasActiveSession) return [];
     const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
@@ -763,6 +812,8 @@ function ComposerPanel({
 
   const activeMentionItemCount = mentionTab === 'files'
     ? visibleMentionItems.length
+    : mentionTab === 'agents'
+      ? visibleAgentItems.length
     : mentionTab === 'skills'
       ? visibleSkillItems.length
       : mentionTab === 'assistants'
@@ -785,6 +836,14 @@ function ComposerPanel({
     setMentionFilter(null);
     setMentionIndex(0);
     setMentionTab("files");
+  }, [onChange, value]);
+
+  const applyAgentMention = React.useCallback((agent: DesktopAgentDefinition) => {
+    setSelectedAgent((current) => current?.agentType === agent.agentType ? null : agent);
+    onChange(value.replace(/(^|\s)@[^\s@]*$/, "$1"));
+    setMentionFilter(null);
+    setMentionIndex(0);
+    setMentionTab('files');
   }, [onChange, value]);
 
   const applyAssistantMention = React.useCallback((assistant: InstalledAssistant) => {
@@ -937,9 +996,14 @@ function ComposerPanel({
 
   const handleSendClick = () => {
     const files = attachments.length > 0 ? attachments : undefined;
-    onSend(files, allowSkillSelection && selectedSkills.length > 0 ? [...selectedSkills] : undefined);
+    onSend(
+      files,
+      allowSkillSelection && selectedSkills.length > 0 ? [...selectedSkills] : undefined,
+      canSelectAgents ? selectedAgent || undefined : undefined,
+    );
     setAttachments([]);
     setSelectedSkills([]);
+    setSelectedAgent(null);
   };
 
   const selectedConnectorItems = React.useMemo(() => {
@@ -948,10 +1012,24 @@ function ComposerPanel({
       .filter((connector) => selected.has(connector.id));
   }, [installedConnectors, selectedConnectorIds]);
   const hasSelectedResources = Boolean(selectedAssistant)
+    || Boolean(canSelectAgents && selectedAgent)
     || (allowSkillSelection && selectedSkills.length > 0)
     || selectedConnectorItems.length > 0;
   const selectedResourceIcons = hasSelectedResources ? (
     <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
+      {canSelectAgents && selectedAgent ? (
+        <button
+          type="button"
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-500/15 dark:text-violet-300"
+          onClick={() => setSelectedAgent(null)}
+          aria-label={`移除 Agent：${selectedAgent.agentType}`}
+          title="点击移除显式调度"
+        >
+          <GitFork className="h-3.5 w-3.5" />
+          <span>Agent · {selectedAgent.agentType}</span>
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
       {selectedAssistant ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -1064,6 +1142,12 @@ function ComposerPanel({
           <Bot className="h-4 w-4" />
           <span className="flex-1">专家</span>
         </DropdownMenuItem>
+        {canSelectAgents ? (
+          <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('agents')}>
+            <GitFork className="h-4 w-4" />
+            <span className="flex-1">Agents</span>
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('skills')}>
           <Hammer className="h-4 w-4" />
           <span className="flex-1">技能</span>
@@ -1119,6 +1203,7 @@ function ComposerPanel({
             }}
             fileItems={visibleMentionItems}
             skillItems={visibleSkillItems}
+            agentItems={visibleAgentItems}
             assistantItems={visibleAssistantItems}
             connectorItems={visibleConnectorItems}
             notice={visibleMentionItems.length === 0
@@ -1126,10 +1211,12 @@ function ComposerPanel({
               : null}
             selectedIndex={Math.min(mentionIndex, Math.max(0, activeMentionItemCount - 1))}
             selectedSkillNames={selectedSkills.map((skill) => skill.name)}
+            selectedAgentType={selectedAgent?.agentType}
             selectedAssistantName={selectedAssistant?.name}
             selectedConnectorIds={selectedConnectorIds ?? []}
             onSelectFile={applyMention}
             onSelectSkill={applySkillMention}
+            onSelectAgent={applyAgentMention}
             onSelectAssistant={applyAssistantMention}
             onSelectConnector={applyConnectorMention}
           />
@@ -1215,6 +1302,9 @@ function ComposerPanel({
                   if (mentionTab === "files") {
                     const item = visibleMentionItems[clamped];
                     if (item) applyMention(item);
+                  } else if (mentionTab === "agents") {
+                    const agent = visibleAgentItems[clamped];
+                    if (agent) applyAgentMention(agent);
                   } else if (mentionTab === "skills") {
                     const skill = visibleSkillItems[clamped];
                     if (skill) applySkillMention(skill);
@@ -1406,6 +1496,11 @@ function ComposerPanel({
               </button>
 
               <ComposerResourceSelectionArea
+                agents={agentItems}
+                selectedAgent={selectedAgent}
+                onSelectAgent={canSelectAgents ? setSelectedAgent : undefined}
+                onClearAgent={() => setSelectedAgent(null)}
+                onOpenAgentManager={onOpenAgentManager}
                 skills={skillItems}
                 selectedSkills={selectedSkills}
                 onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
@@ -1519,6 +1614,11 @@ function ComposerPanel({
                 onSelectAssistant={onSelectAssistant}
                 onClearAssistant={onClearAssistant}
                 onOpenExpertHub={onOpenExpertHub}
+                agents={agentItems}
+                selectedAgent={selectedAgent}
+                onSelectAgent={canSelectAgents ? setSelectedAgent : undefined}
+                onClearAgent={() => setSelectedAgent(null)}
+                onOpenAgentManager={onOpenAgentManager}
                 skills={skillItems}
                 selectedSkills={selectedSkills}
                 onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
@@ -1617,6 +1717,7 @@ function HomeLanding({
   remoteEnabled,
   newSessionMode,
   onNewSessionModeChange,
+  onOpenAgentManager,
 }: {
   value: string;
   selectedAppName: string;
@@ -1632,7 +1733,7 @@ function HomeLanding({
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
   permissionModeChanging?: boolean;
-  onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[]) => void;
+  onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
@@ -1646,6 +1747,7 @@ function HomeLanding({
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
+  onOpenAgentManager?: () => void;
 }) {
   return (
       <div className="flex h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
@@ -1666,6 +1768,7 @@ function HomeLanding({
         hasActiveSession={false}
         remoteEnabled={remoteEnabled}
         newSessionMode={newSessionMode}
+        sessionAgentMode={newSessionMode}
         onNewSessionModeChange={onNewSessionModeChange}
         sessionId={sessionId}
         attachments={attachments}
@@ -1683,6 +1786,7 @@ function HomeLanding({
         onSelectAssistant={onSelectAssistant}
         onClearAssistant={onClearAssistant}
         onOpenExpertHub={onOpenExpertHub}
+        onOpenAgentManager={onOpenAgentManager}
         onOpenSkillHub={onOpenSkillHub}
         installedConnectors={installedConnectors}
         selectedConnectorIds={selectedConnectorIds}
@@ -1735,6 +1839,7 @@ function getFileMentionFilter(text: string, cursorPos: number): string | null {
 
 const MENTION_TAB_LABELS: Record<ComposerMentionTab, string> = {
   files: '文件',
+  agents: 'Agents',
   skills: '技能',
   assistants: '专家',
   connectors: '连接器',
@@ -1793,15 +1898,18 @@ function MentionMenu({
   tab,
   onTabChange,
   fileItems,
+  agentItems,
   skillItems,
   assistantItems,
   connectorItems,
   notice,
   selectedIndex,
   selectedSkillNames,
+  selectedAgentType,
   selectedAssistantName,
   selectedConnectorIds,
   onSelectFile,
+  onSelectAgent,
   onSelectSkill,
   onSelectAssistant,
   onSelectConnector,
@@ -1810,15 +1918,18 @@ function MentionMenu({
   tab: ComposerMentionTab;
   onTabChange: (tab: ComposerMentionTab) => void;
   fileItems: WorkspaceMentionItem[];
+  agentItems: DesktopAgentDefinition[];
   skillItems: SkillMentionItem[];
   assistantItems: InstalledAssistant[];
   connectorItems: InstalledConnector[];
   notice?: string | null;
   selectedIndex: number;
   selectedSkillNames: string[];
+  selectedAgentType?: string;
   selectedAssistantName?: string;
   selectedConnectorIds: string[];
   onSelectFile: (item: WorkspaceMentionItem) => void;
+  onSelectAgent: (agent: DesktopAgentDefinition) => void;
   onSelectSkill: (item: SkillMentionItem) => void;
   onSelectAssistant: (assistant: InstalledAssistant) => void;
   onSelectConnector: (connector: InstalledConnector) => void;
@@ -1878,6 +1989,21 @@ function MentionMenu({
               </button>
             ))
           )
+        ) : tab === 'agents' ? (
+          agentItems.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已启用 Agent</div>
+          ) : agentItems.map((agent, i) => (
+            <MentionResourceRow
+              key={agent.id}
+              active={i === selectedIndex}
+              selected={selectedAgentType === agent.agentType}
+              icon={<GitFork className="h-4 w-4" />}
+              title={agent.agentType}
+              description={agent.description || agent.source}
+              selectionStyle="check"
+              onSelect={() => onSelectAgent(agent)}
+            />
+          ))
         ) : tab === 'skills' ? (
           skillItems.length === 0 ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已安装技能</div>
@@ -2213,6 +2339,7 @@ export function ChatArea({
   sessionTitle,
   sessionId,
   sessionWorkspace,
+  sessionAgentMode = 'local',
   homeWorkspace,
   focusedToolUseId,
   focusedToolRequestId,
@@ -2247,6 +2374,7 @@ export function ChatArea({
   onToggleConnector,
   onOpenConnectorHub,
   onOpenExpertHub,
+  onOpenAgentManager,
   onOpenSkillHub,
   remoteEnabled,
   newSessionMode,
@@ -2284,6 +2412,7 @@ export function ChatArea({
   sessionTitle: string;
   sessionId?: string;
   sessionWorkspace?: string;
+  sessionAgentMode?: 'local' | 'remote-direct';
   homeWorkspace?: string;
   focusedToolUseId?: string;
   focusedToolRequestId?: number;
@@ -2306,7 +2435,7 @@ export function ChatArea({
   onToggleRightSidebar: () => void;
   onApprovePlan: () => void;
   onRejectPlan: () => void;
-  onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[]) => void;
+  onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop: () => void;
   onOpenChildSession?: (sessionId: string) => void;
   installedAssistants?: InstalledAssistant[];
@@ -2318,11 +2447,12 @@ export function ChatArea({
   onToggleConnector?: (connector: InstalledConnector) => void;
   onOpenConnectorHub?: () => void;
   onOpenExpertHub?: () => void;
+  onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
-  queuedMessages?: Array<{ id: string; prompt: string; files?: Array<{ name: string; path: string }> }>;
+  queuedMessages?: Array<{ id: string; prompt: string; agentType?: string; files?: Array<{ name: string; path: string }> }>;
   onRemoveQueuedMessage?: (id: string) => void;
   backgroundTasks?: BackgroundTaskInfo[];
   composerAttachments?: Array<{ name: string; path: string }>;
@@ -2518,8 +2648,9 @@ export function ChatArea({
   const handleHomeLandingSend = (
     files: Array<{ name: string; path: string }> | undefined,
     skills?: SkillMentionItem[],
+    agent?: DesktopAgentDefinition,
   ) => {
-    onSend(files, workspace, skills);
+    onSend(files, workspace, skills, agent);
   };
 
   if (!hasActiveSession) {
@@ -2553,6 +2684,7 @@ export function ChatArea({
           onToggleConnector={onToggleConnector}
           onOpenConnectorHub={onOpenConnectorHub}
           onOpenExpertHub={onOpenExpertHub}
+          onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
           remoteEnabled={remoteEnabled}
           newSessionMode={newSessionMode}
@@ -2726,6 +2858,11 @@ export function ChatArea({
                 >
                   <Clock className="h-3 w-3 shrink-0" />
                   <span className="shrink-0 text-muted-foreground/70">#{index + 1} 排队中</span>
+                  {q.agentType ? (
+                    <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 font-medium text-violet-700 dark:text-violet-300">
+                      Agent · {q.agentType}
+                    </span>
+                  ) : null}
                   <span className="min-w-0 flex-1 truncate">
                     {q.prompt || `[${q.files?.length ?? 0} 个附件]`}
                     {q.prompt && q.files && q.files.length > 0 ? `（含 ${q.files.length} 个附件）` : ''}
@@ -2750,6 +2887,8 @@ export function ChatArea({
             composerIntent={composerIntent}
             hasActiveSession
             sessionId={sessionId}
+            workspace={sessionWorkspace}
+            sessionAgentMode={sessionAgentMode}
             attachments={composerAttachments}
             onAttachmentsChange={onComposerAttachmentsChange}
             contextUsage={contextUsage}
@@ -2758,13 +2897,14 @@ export function ChatArea({
             permissionMode={permissionMode}
             onPermissionModeChange={onPermissionModeChange}
             permissionModeChanging={permissionModeChanging}
-            onSend={(files, skills) => onSend(files, undefined, skills)}
+            onSend={(files, skills, agent) => onSend(files, undefined, skills, agent)}
             onStop={onStop}
             installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
             onSelectAssistant={onSelectAssistant}
             onClearAssistant={onClearAssistant}
             onOpenExpertHub={onOpenExpertHub}
+            onOpenAgentManager={onOpenAgentManager}
             onOpenSkillHub={onOpenSkillHub}
             allowSkillSelection={!isProjectSession}
             installedConnectors={installedConnectors}

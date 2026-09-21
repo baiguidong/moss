@@ -948,6 +948,52 @@ export type McpSettingsPayload = {
   skippedBusySessionCount?: number;
 };
 
+export type DesktopAgentSource = 'built-in' | 'user' | 'project' | 'managed' | 'flag';
+
+export type DesktopAgentDefinition = {
+  id: string;
+  agentType: string;
+  description: string;
+  source: DesktopAgentSource;
+  location?: string;
+  fileName?: string;
+  effective: boolean;
+  enabled: boolean;
+  active: boolean;
+  overriddenBy?: DesktopAgentSource;
+  model?: string;
+  tools?: string[];
+  background?: boolean;
+  color?: string;
+  canEdit?: boolean;
+  canDelete?: boolean;
+};
+
+export type DesktopAgentCatalog = {
+  agents: DesktopAgentDefinition[];
+  workspace: string;
+  userAgentsDir: string;
+  projectAgentsDir: string;
+  totals: {
+    all: number;
+    active: number;
+    sources: number;
+    builtIn: number;
+  };
+  resetSessionCount?: number;
+  skippedBusySessionCount?: number;
+};
+
+export type DesktopAgentDraft = {
+  scope: 'user' | 'project';
+  name: string;
+  description: string;
+  prompt: string;
+  model?: string;
+  tools?: string[];
+  background?: boolean;
+};
+
 export type DesktopSettings = {
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
@@ -987,6 +1033,9 @@ export type DesktopSettings = {
     model: string;
   };
   toolLoading: Record<string, 'always' | 'deferred'>;
+  agentSettings?: {
+    disabled?: string[];
+  };
   sessionMemory?: {
     enabled?: boolean;
     compactEnabled?: boolean;
@@ -2010,6 +2059,20 @@ declare global {
         refresh: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
         onChanged: (callback: (payload: AgentTeamsSessionState) => void) => () => void;
       };
+      agents: {
+        list: (payload?: { sessionId?: string; workspace?: string }) => Promise<DesktopAgentCatalog>;
+        read: (payload: { scope: 'user' | 'project'; fileName: string; sessionId?: string; workspace?: string }) => Promise<DesktopAgentDraft & { fileName: string }>;
+        create: (payload: DesktopAgentDraft & { sessionId?: string; workspace?: string }) => Promise<DesktopAgentCatalog>;
+        update: (payload: DesktopAgentDraft & {
+          previousScope: 'user' | 'project';
+          previousFileName: string;
+          sessionId?: string;
+          workspace?: string;
+        }) => Promise<DesktopAgentCatalog>;
+        delete: (payload: { scope: 'user' | 'project'; fileName: string; sessionId?: string; workspace?: string }) => Promise<DesktopAgentCatalog>;
+        setEnabled: (payload: { agentType: string; enabled: boolean; sessionId?: string; workspace?: string }) => Promise<DesktopAgentCatalog>;
+        onChanged: (callback: (payload: { reason?: string; agentType?: string }) => void) => () => void;
+      };
       setConnectorAuthStatus: (payload: { sessionId: string; connectorId: string; connectorName?: string; status: 'pending' | 'success' | 'failed'; message?: string }) => Promise<SessionDetail>;
       listConnectors: () => Promise<{ success?: boolean; data?: { connectors: ConnectorCatalogItem[]; installed: InstalledConnector[]; catalogPath: string; installedDir: string; updatedAt: number }; error?: string }>;
       getInstalledConnectors: () => Promise<{ success?: boolean; data?: InstalledConnector[]; error?: string }>;
@@ -2028,6 +2091,7 @@ declare global {
         sessionId: string;
         prompt: string;
         skills?: Array<{ name: string; displayName?: string; source?: string }>;
+        agentType?: string;
         mode?: 'chat' | 'boss';
         appName?: string;
         files?: string[];

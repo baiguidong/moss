@@ -11,7 +11,7 @@ import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
 import { stopTask as stopBackgroundTask } from './tasks/stopTask.js'
 import { QueryEngine } from './QueryEngine.js'
-import { assembleToolPool } from './tools.js'
+import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TASK_TYPE_TAG, TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
@@ -59,6 +59,13 @@ import {
   getWorktreeSessionForSessionId,
 } from './utils/worktree.js'
 import type { Message } from './types/message.js'
+import {
+  clearAgentDefinitionsCache,
+  getActiveAgentsFromList,
+  getAgentDefinitionsWithOverrides,
+  type AgentDefinition,
+} from './tools/AgentTool/loadAgentsDir.js'
+import { getBuiltInAgentCatalog } from './tools/AgentTool/builtInAgents.js'
 import {
   fileHistoryCanRestore,
   fileHistoryGetDiffStats,
@@ -229,6 +236,118 @@ export function resetEmbeddedSettingsCache(): void {
   resetSettingsCache()
 }
 
+export type DesktopAgentCatalogEntry = {
+  id: string
+  agentType: string
+  description: string
+  source: 'built-in' | 'user' | 'project' | 'managed' | 'flag'
+  location?: string
+  fileName?: string
+  effective: boolean
+  enabled: boolean
+  active: boolean
+  overriddenBy?: string
+  model?: string
+  tools?: string[]
+  background?: boolean
+  color?: string
+}
+
+function getDesktopAgentSource(
+  source: AgentDefinition['source'],
+): DesktopAgentCatalogEntry['source'] {
+  switch (source) {
+    case 'userSettings':
+      return 'user'
+    case 'projectSettings':
+    case 'localSettings':
+      return 'project'
+    case 'policySettings':
+      return 'managed'
+    case 'flagSettings':
+      return 'flag'
+    default:
+      return 'built-in'
+  }
+}
+
+function getDesktopAgentIdentity(agent: AgentDefinition): string {
+  return [
+    agent.source,
+    agent.filePath ?? agent.baseDir ?? '',
+    agent.filename ?? '',
+    agent.agentType,
+  ].join(':')
+}
+
+/** A serializable catalog used by the Desktop settings and Boss composer. */
+export async function listDesktopAgents(
+  cwd: string,
+  disabledAgentTypes: string[] = [],
+): Promise<DesktopAgentCatalogEntry[]> {
+  initLocalAgentRuntimeOnce()
+  const loaded = await getAgentDefinitionsWithOverrides(cwd)
+  const allAgents = [
+    ...getBuiltInAgentCatalog(),
+    ...loaded.allAgents.filter(agent => agent.source !== 'built-in'),
+  ]
+  const effectiveAgents = getActiveAgentsFromList(allAgents)
+  const effectiveByType = new Map(
+    effectiveAgents.map(agent => [agent.agentType, agent]),
+  )
+  const disabled = new Set(disabledAgentTypes)
+
+  return allAgents.map(agent => {
+    const effectiveAgent = effectiveByType.get(agent.agentType)
+    const effective = effectiveAgent === agent
+    const enabled = !disabled.has(agent.agentType)
+    return {
+      id: getDesktopAgentIdentity(agent),
+      agentType: agent.agentType,
+      description: agent.whenToUse,
+      source: getDesktopAgentSource(agent.source),
+      ...(agent.filePath ? { location: agent.filePath } : {}),
+      ...(agent.filename ? { fileName: `${agent.filename}.md` } : {}),
+      effective,
+      enabled,
+      active: effective && enabled,
+      ...(!effective && effectiveAgent
+        ? { overriddenBy: getDesktopAgentSource(effectiveAgent.source) }
+        : {}),
+      ...(agent.model ? { model: agent.model } : {}),
+      ...(agent.tools ? { tools: agent.tools } : {}),
+      ...(agent.background !== undefined
+        ? { background: agent.background }
+        : {}),
+      ...(agent.color ? { color: agent.color } : {}),
+    }
+  })
+}
+
+export function clearDesktopAgentDefinitionsCache(): void {
+  clearAgentDefinitionsCache()
+}
+
+export type DesktopToolCatalogEntry = {
+  id: string
+  aliases: string[]
+  searchHint: string
+  enabled: boolean
+  source: 'built-in'
+}
+
+/** A credential-free catalog suitable for App configuration screens. */
+export function listDesktopTools(): DesktopToolCatalogEntry[] {
+  initLocalAgentRuntimeOnce()
+  return getAllBaseTools().map(tool => ({
+    id: tool.name,
+    aliases: [...(tool.aliases ?? [])],
+    searchHint: tool.searchHint ?? '',
+    enabled: tool.isEnabled(),
+    source: 'built-in' as const,
+  }))
+}
+
 export function reloadRemoteTlsTrust(): void {
   clearCACertsCache()
   clearMTLSCache()
@@ -390,6 +509,10 @@ export interface ClaudeSessionOptions {
   mcpServers?: Record<string, McpServerConfig>
   /** Additional directories to load .moss/agents and .moss/skills from for this embedded session. */
   addDirs?: string[]
+  /** Agent types disabled from the Desktop Agents manager. */
+  disabledAgentTypes?: string[]
+  /** Optional allowlist applied after all built-in, MCP, and App tools are assembled. */
+  allowedTools?: string[] | null
   /** Desktop-managed writable workspaces, explicitly supplied by the session owner. */
   workspaceDirectories?: string[]
   /** Environment variables scoped to this embedded session and its subprocesses. */
@@ -431,6 +554,8 @@ type ResolvedClaudeSessionOptions = {
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
   addDirs: string[]
+  disabledAgentTypes: string[]
+  allowedTools: string[] | null
   workspaceDirectories: string[]
   environment: Record<string, string>
   taskScope: TaskScope
@@ -725,6 +850,12 @@ export class ClaudeSession {
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
+      disabledAgentTypes: Array.isArray(opts.disabledAgentTypes)
+        ? [...new Set(opts.disabledAgentTypes.filter(Boolean))]
+        : [],
+      allowedTools: Array.isArray(opts.allowedTools)
+        ? [...new Set(opts.allowedTools.map(String).map(value => value.trim()).filter(Boolean))]
+        : null,
       workspaceDirectories: Array.isArray(opts.workspaceDirectories)
         ? opts.workspaceDirectories.filter(Boolean)
         : [],
@@ -826,8 +957,12 @@ export class ClaudeSession {
       agent_count: bootstrapResult.agents.length,
       initial_message_count: bootstrapResult.initialMessages.length,
     })
-    const { initialMessages: bootstrapMessages, mcp, agents: customAgents } =
+    const { initialMessages: bootstrapMessages, mcp, agents: loadedAgents } =
       bootstrapResult
+    const disabledAgentTypes = new Set(this.#opts.disabledAgentTypes)
+    const customAgents = loadedAgents.filter(
+      agent => !disabledAgentTypes.has(agent.agentType),
+    )
     // send() already resolved #projectRoot from the session's base cwd;
     // keep it stable (project identity must not move to a worktree root).
     this.#projectRoot = this.#projectRoot ?? bootstrapResult.projectRoot
@@ -1003,7 +1138,14 @@ export class ClaudeSession {
         ...(this.#opts.libraryEnabled ? LibraryTools : []),
         ...appTools,
       ]
-      return mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
+      const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
+      const selectors = this.#opts.allowedTools
+      if (selectors === null || selectors.includes('*')) return merged
+      const allowed = new Set(selectors)
+      const matches = (name: string) => allowed.has(name) || selectors.some(
+        selector => selector.endsWith('*') && name.startsWith(selector.slice(0, -1)),
+      )
+      return merged.filter(tool => matches(tool.name) || tool.aliases?.some(matches))
     }
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {

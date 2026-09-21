@@ -31,6 +31,14 @@ contextBridge.exposeInMainWorld('mossApp', {
     removeItem: (key) => ipcRenderer.invoke('app-ui:storage:remove', { key }),
     list: () => ipcRenderer.invoke('app-ui:storage:list'),
   },
+  host: {
+    request: (instanceId, protocol, method, input) => ipcRenderer.invoke('app-ui:host:request', {
+      instanceId,
+      protocol,
+      method,
+      input,
+    }),
+  },
   feishu: {
     getConfig: () => ipcRenderer.invoke('app-ui:feishu:get-config'),
     updateConfig: (payload) => ipcRenderer.invoke('app-ui:feishu:update-config', payload),

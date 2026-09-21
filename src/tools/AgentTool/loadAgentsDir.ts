@@ -114,6 +114,7 @@ export type BaseAgentDefinition = {
   readOnlyWorkspace?: boolean
   maxTurns?: number // Maximum number of agentic turns before stopping
   filename?: string // Original filename without .md extension (for user/project/managed agents)
+  filePath?: string // Absolute source path for desktop catalog/editing surfaces
   baseDir?: string
   criticalSystemReminder_EXPERIMENTAL?: string // Short message re-injected at every user turn
   requiredMcpServers?: string[] // MCP server name patterns that must be configured for agent to be available
@@ -320,6 +321,7 @@ export const getAgentDefinitionsWithOverrides = memoize(
 
 export function clearAgentDefinitionsCache(): void {
   getAgentDefinitionsWithOverrides.cache.clear?.()
+  loadMarkdownFilesForSubdir.cache?.clear?.()
 }
 
 /**
@@ -636,6 +638,7 @@ export function parseAgentFromMarkdown(
     const systemPrompt = content.trim()
     const agentDef: CustomAgentDefinition = {
       baseDir,
+      filePath,
       agentType: agentType,
       whenToUse: whenToUse,
       ...(tools !== undefined ? { tools } : {}),

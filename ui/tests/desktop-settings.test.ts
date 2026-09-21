@@ -82,6 +82,29 @@ describe('desktop settings', () => {
     ).agentTeamsEnabled).toBe(true);
   });
 
+  it('keeps verification disabled by default and migrates the legacy switch', () => {
+    expect(normalizeDesktopSettings({}).agentSettings).toEqual({
+      disabled: ['verification'],
+    });
+    expect(normalizeDesktopSettings({
+      advanced: { moss_hive_evidence: true },
+    })).toMatchObject({
+      agentSettings: { disabled: [] },
+      advanced: { moss_hive_evidence: true },
+    });
+    expect(normalizeDesktopSettings({
+      agentSettings: { disabled: ['verification', 'Explore', 'Explore', 42] },
+      advanced: { moss_hive_evidence: true },
+    })).toMatchObject({
+      agentSettings: { disabled: ['verification', 'Explore'] },
+      advanced: { moss_hive_evidence: false },
+    });
+    expect(normalizeDesktopSettings(
+      { advanced: { moss_scratchpad: true, moss_hive_evidence: false } },
+      { agentSettings: { disabled: ['verification', 'Explore'] } },
+    ).agentSettings).toEqual({ disabled: ['verification', 'Explore'] });
+  });
+
   it('keeps Library Agent tools opt-in and normalizes the persisted switch', () => {
     expect(normalizeDesktopSettings({}).library).toEqual({
       enabled: false,

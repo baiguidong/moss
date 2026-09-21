@@ -51,6 +51,9 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   toolLoading: {
     ...DEFAULT_MOSS_TOOL_LOADING,
   },
+  agentSettings: {
+    disabled: ['verification'],
+  },
   sessionMemory: {
     enabled: true,
     compactEnabled: true,
@@ -169,6 +172,19 @@ function boundedInt(value, min, max) {
   if (value === undefined) return undefined;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed >= min ? Math.min(parsed, max) : undefined;
+}
+
+function normalizeAgentTypeList(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const item of value) {
+    const name = typeof item === 'string' ? item.trim() : '';
+    if (!name || name.length > 128 || seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
 }
 
 function isModelEndpointEnvKey(key) {
@@ -639,6 +655,41 @@ export function normalizeDesktopSettings(input, existing = {}) {
       ];
     }),
   );
+
+  const sourceAgentSettings = isPlainObject(source.agentSettings)
+    ? source.agentSettings
+    : {};
+  const existingAgentSettings = isPlainObject(result.agentSettings)
+    ? result.agentSettings
+    : {};
+  const sourceHasDisabledAgents = Object.prototype.hasOwnProperty.call(
+    sourceAgentSettings,
+    'disabled',
+  );
+  const existingHasDisabledAgents = Object.prototype.hasOwnProperty.call(
+    existingAgentSettings,
+    'disabled',
+  );
+  const legacyVerificationEnabled = typeof sourceAdvanced.moss_hive_evidence === 'boolean'
+    ? sourceAdvanced.moss_hive_evidence
+    : typeof existingAdvanced.moss_hive_evidence === 'boolean'
+      ? existingAdvanced.moss_hive_evidence
+      : false;
+  const disabledAgents = normalizeAgentTypeList(
+    sourceHasDisabledAgents
+      ? sourceAgentSettings.disabled
+      : existingHasDisabledAgents
+        ? existingAgentSettings.disabled
+        : typeof sourceAdvanced.moss_hive_evidence === 'boolean'
+          ? (sourceAdvanced.moss_hive_evidence ? [] : ['verification'])
+          : legacyVerificationEnabled
+            ? []
+            : DEFAULT_DESKTOP_SETTINGS.agentSettings.disabled,
+  );
+  result.agentSettings = { disabled: disabledAgents };
+  // Keep the legacy runtime gate synchronized while the Desktop UI exposes
+  // verification only through Settings → Agents.
+  result.advanced.moss_hive_evidence = !disabledAgents.includes('verification');
 
   const sourceManagedRuntimes = source.managedRuntimes && typeof source.managedRuntimes === 'object'
     ? source.managedRuntimes

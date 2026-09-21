@@ -177,7 +177,16 @@ export async function createDesktopAppRuntime(options) {
     credentialAdapter: new DesktopAppCredentialAdapter(options.mossHome),
     channelHost: options.channelHost,
     channelOptions: options.channelOptions,
+    hostCapabilityOptions: {
+      ...(options.hostCapabilityOptions || {}),
+      protocols: options.hostProtocols || options.hostCapabilityOptions?.protocols || [],
+    },
   })
+  for (const [protocol, handlers] of Object.entries(options.hostHandlers || {})) {
+    for (const [method, handler] of Object.entries(handlers || {})) {
+      runtime.registerHostHandler(protocol, method, handler)
+    }
+  }
   runtime.events.on('event', (event) => options.onEvent?.(event))
   await runtime.initialize()
   return runtime

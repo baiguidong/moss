@@ -19,6 +19,28 @@ export function areExplorePlanAgentsEnabled(): boolean {
   return false
 }
 
+/**
+ * Return every built-in agent shipped in this build, including agents that
+ * are currently disabled by a setting. Desktop management surfaces use this
+ * catalog so an opt-in agent such as `verification` remains discoverable.
+ */
+export function getBuiltInAgentCatalog(): AgentDefinition[] {
+  const agents: AgentDefinition[] = [
+    GENERAL_PURPOSE_AGENT,
+    STATUSLINE_SETUP_AGENT,
+  ]
+
+  if (areExplorePlanAgentsEnabled()) {
+    agents.push(EXPLORE_AGENT, PLAN_AGENT)
+  }
+
+  if (feature('VERIFICATION_AGENT')) {
+    agents.push(VERIFICATION_AGENT)
+  }
+
+  return agents
+}
+
 export function getBuiltInAgents(): AgentDefinition[] {
   // Allow disabling all built-in agents via env var (useful for SDK users who want a blank slate)
   // Only applies in noninteractive mode (SDK/API usage)
@@ -29,21 +51,9 @@ export function getBuiltInAgents(): AgentDefinition[] {
     return []
   }
 
-  const agents: AgentDefinition[] = [
-    GENERAL_PURPOSE_AGENT,
-    STATUSLINE_SETUP_AGENT,
-  ]
-
-  if (areExplorePlanAgentsEnabled()) {
-    agents.push(EXPLORE_AGENT, PLAN_AGENT)
-  }
-
-  if (
-    feature('VERIFICATION_AGENT') &&
-    getAdvancedSetting('moss_hive_evidence')
-  ) {
-    agents.push(VERIFICATION_AGENT)
-  }
-
-  return agents
+  return getBuiltInAgentCatalog().filter(
+    agent =>
+      agent.agentType !== 'verification' ||
+      getAdvancedSetting('moss_hive_evidence'),
+  )
 }

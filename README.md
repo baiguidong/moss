@@ -7,6 +7,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 - [Moss Server API](server/API.md)
 - [Moss Server Docker Compose 部署](deps/server/README.md)
 - [Moss Server 旧版宿主机部署](deploy/README.md)
+- [Agent Channel 与独立 IM App 改造计划](docs/agent-channel-app-migration-plan.md)
 - [飞书 App 配置与完整权限清单](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
@@ -64,7 +65,9 @@ Moss Desktop 可以配置企业自建应用机器人连接飞书手机端，并�
 
 飞书最多配置 3 个机器人自定义菜单。“当前会话”已经显示在会话中心卡片顶部，不再单独占用菜单项；Adapter 仍兼容 `moss.current` 事件键。菜单入口位于 `应用能力 -> 机器人 -> 机器人配置 -> 机器人自定义菜单`，不在权限管理页面。看不到该入口时，先添加机器人能力，并检查应用类型及当前账号的开发者权限。
 
-Moss 客户端的 `设置 -> IM 接入 -> 飞书` 中只有 `App ID` 和 `App Secret` 是长连接必填项。`Encrypt Key`、`Verification Token` 和公网回调地址不用于当前长连接模式；允许的用户 ID 可留空并通过一次性配对码绑定手机端用户。保存后应看到“飞书长连接已就绪”，再生成配对码并在飞书私聊机器人发送该配对码。
+飞书业务配置统一放在 `Apps -> 飞书 -> 打开`；App 管理页只保留启停、刷新、重启和日志。只有 `App ID` 和 `App Secret` 是长连接必填项，已保存密钥以掩码展示。`Encrypt Key`、`Verification Token` 和公网回调地址不用于当前长连接模式；允许的用户 ID 可留空并通过一次性配对码绑定手机端用户。保存后应看到“飞书长连接已就绪”，再生成配对码并在飞书私聊机器人发送该配对码。
+
+`AI 回复` 页可按成员选择仅人工、AI 自动、AI 起草后人工确认或仅 @ 回复，并限制 Agent、工具、技能、连接器和会话上下文策略。未经批准的草稿不会投递到飞书。
 
 ### 配置与功能验收
 

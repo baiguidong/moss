@@ -99,4 +99,6 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
   expect(html).toContain('type="password"');
   expect(html).not.toContain('固定会话按邮件线程继承纯文本结论');
   expect(html).not.toContain('通过浏览器登录 Moss Server');
+  expect(html).not.toContain('飞书');
+  expect(html).not.toContain('App Secret');
 });

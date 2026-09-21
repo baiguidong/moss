@@ -355,6 +355,19 @@ export class AuthService {
     }
   }
 
+  getAccountIdentity(orgId: string, userId: string | null): {
+    user: UserWithRoles | null
+    organization: { id: string; name: string; createdAt: number } | null
+    scopes: string[]
+  } {
+    const user = userId ? this.getUserOrNull(userId, orgId) : null
+    return {
+      user,
+      organization: this.db.getOrganization(orgId),
+      scopes: user?.effectiveScopes ?? [],
+    }
+  }
+
   listUsers(
     orgId: string,
     auth?: AuthContext,

@@ -60,6 +60,10 @@ import {
 } from './mcp-runtime-reload.mjs';
 import { registerAgentIpcHandlers } from './agent-ipc.mjs';
 import {
+  buildExplicitAgentDispatchInstruction,
+  createDesktopAgentStore,
+} from './desktop-agents.mjs';
+import {
   createAgentTeamsService,
   isAgentTeamContinuationPrompt,
 } from './agent-teams/agent-teams-service.mjs';
@@ -87,6 +91,16 @@ import {
   toAppUiUrl,
 } from './apps/app-ui-protocol.mjs';
 import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
+import {
+  createAccountProtocolDefinition,
+  createAgentProtocolDefinition,
+} from '../../packages/app-runtime/src/index.mjs';
+import {
+  AGENT_HOST_METHODS,
+  CHANNEL_HOST_METHODS,
+  MOSS_ACCOUNT_PROTOCOL,
+  MOSS_AGENT_PROTOCOL,
+} from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
 import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
@@ -253,6 +267,16 @@ import {
 } from './adapter-process-manager.mjs';
 import { createFeishuAdapterStore } from './feishu-adapter-store.mjs';
 import {
+  createAgentChannelStore,
+  DEFAULT_AGENT_CHANNEL_POLICY,
+} from './agent-channel-store.mjs';
+import {
+  createAgentChannelController,
+  resolveAgentChannelConnectorIds,
+  validateAgentChannelConnectorTool,
+  validateAgentChannelDelegation,
+} from './agent-channel-controller.mjs';
+import {
   authorizeFeishuDecisionResponse,
   createFeishuAdapterController,
 } from './feishu-adapter-controller.mjs';
@@ -261,13 +285,13 @@ import {
   FEISHU_APP_INSTANCE_ID,
   claimFeishuPairingEvent,
   configureFeishuAppFromLegacy,
-  createFeishuChannelHandlers,
   getFeishuAppProcessStatus,
   hasFeishuAppMigrationMarker,
   isFeishuAppReady,
   isFeishuLegacyFallbackEnabled,
   persistFeishuAppAuthorization,
   publishFeishuAppEvent,
+  mapChannelRequestToLegacy,
   resolveFeishuChannelIdentity,
   shouldUseFeishuAppStatus,
   splitLegacyFeishuAppConfiguration,
@@ -403,6 +427,9 @@ const RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb']);
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
 const MOSS_REPO_APP_MARKET_DIR = path.join(uiRoot, 'resources', 'app-market');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
+const desktopAgentStore = createDesktopAgentStore({
+  userAgentsDir: path.join(MOSS_HOME, 'agents'),
+});
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
@@ -696,6 +723,7 @@ let libraryExtensionManager = null;
 let localAuditScanTimer = null;
 let feishuAdapterProcessManager = null;
 let feishuAdapterController = null;
+let agentChannelController = null;
 let feishuAppMode = false;
 let feishuAppBackendReady = false;
 let appDecisionBroker = null;
@@ -825,6 +853,7 @@ const memoryCatalog = createMemoryCatalog({
   readRemoteSessionMemory: (sessionId) => readRemoteSessionMemoryForDesktop(sessionId),
 });
 const feishuAdapterStore = createFeishuAdapterStore(sessionDb);
+const agentChannelStore = createAgentChannelStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
   onChanged: (payload) => emitToRenderer('notification:changed', payload),
@@ -896,6 +925,21 @@ const persistSessionStmt = (() => {
   }
   try {
     sessionDb.exec(`ALTER TABLE sessions ADD COLUMN origin_channel TEXT NOT NULL DEFAULT 'desktop'`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_app_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_instance_id TEXT`);
+  } catch {
+    // Column may already exist or table doesn't exist yet
+  }
+  try {
+    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_runtime_policy_json TEXT`);
   } catch {
     // Column may already exist or table doesn't exist yet
   }
@@ -998,7 +1042,10 @@ const persistSessionStmt = (() => {
       auto_collapse_tool_calls INTEGER,
       tool_display_mode TEXT,
       rewind_message_id TEXT,
-      rewind_created_at INTEGER
+      rewind_created_at INTEGER,
+      channel_app_id TEXT,
+      channel_instance_id TEXT,
+      channel_runtime_policy_json TEXT
     )
   `);
   sessionDb.exec(`
@@ -1008,9 +1055,9 @@ const persistSessionStmt = (() => {
   `);
   return sessionDb.prepare(`
     INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at
+      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
@@ -1044,7 +1091,10 @@ const persistSessionStmt = (() => {
       auto_collapse_tool_calls = excluded.auto_collapse_tool_calls,
       tool_display_mode = excluded.tool_display_mode,
       rewind_message_id = excluded.rewind_message_id,
-      rewind_created_at = excluded.rewind_created_at
+      rewind_created_at = excluded.rewind_created_at,
+      channel_app_id = excluded.channel_app_id,
+      channel_instance_id = excluded.channel_instance_id,
+      channel_runtime_policy_json = excluded.channel_runtime_policy_json
   `);
 })();
 const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
@@ -1082,7 +1132,10 @@ const loadSessionsStmt = sessionDb.prepare(`
     auto_collapse_tool_calls,
     tool_display_mode,
     rewind_message_id,
-    rewind_created_at
+    rewind_created_at,
+    channel_app_id,
+    channel_instance_id,
+    channel_runtime_policy_json
   FROM sessions
   WHERE is_sub_agent = 0
   ORDER BY updated_at DESC
@@ -1121,7 +1174,10 @@ const loadSubAgentSessionsStmt = sessionDb.prepare(`
     auto_collapse_tool_calls,
     tool_display_mode,
     rewind_message_id,
-    rewind_created_at
+    rewind_created_at,
+    channel_app_id,
+    channel_instance_id,
+    channel_runtime_policy_json
   FROM sessions
   WHERE is_sub_agent = 1
   ORDER BY created_at ASC
@@ -3129,6 +3185,482 @@ function resetLocalRuntimesForMcpReload() {
   );
 }
 
+function resolveDesktopAgentWorkspace(payload = {}) {
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+  if (sessionId) return getSessionRecord(sessionId).workspace;
+  const workspace = typeof payload.workspace === 'string' ? payload.workspace.trim() : '';
+  return path.resolve(workspace || MOSS_SESSIONS_DIR);
+}
+
+async function getDesktopAgentCatalog(payload = {}, extra = {}) {
+  const workspace = resolveDesktopAgentWorkspace(payload);
+  const runtime = await getClaudeRuntimeModule();
+  if (typeof runtime.listDesktopAgents !== 'function') {
+    throw new Error('当前本地运行时不支持 Agents 管理，请重新构建桌面运行时。');
+  }
+  const disabled = desktopSettings.agentSettings?.disabled || ['verification'];
+  const rawAgents = await runtime.listDesktopAgents(workspace, disabled);
+  const agents = await Promise.all(rawAgents.map(async (agent) => {
+    const canManage = await desktopAgentStore.canManage(agent, workspace);
+    return {
+      ...agent,
+      canEdit: canManage,
+      canDelete: canManage,
+    };
+  }));
+  const roots = desktopAgentStore.getRoots(workspace);
+  return {
+    agents,
+    workspace,
+    userAgentsDir: roots.user,
+    projectAgentsDir: roots.project,
+    totals: {
+      all: agents.length,
+      active: agents.filter((agent) => agent.active).length,
+      sources: new Set(agents.map((agent) => agent.source)).size,
+      builtIn: agents.filter((agent) => agent.source === 'built-in').length,
+    },
+    ...extra,
+  };
+}
+
+async function getAgentChannelCatalog() {
+  const runtime = await getClaudeRuntimeModule();
+  const [agentCatalog, skills, connectors, contributions] = await Promise.all([
+    getDesktopAgentCatalog({ workspace: MOSS_SESSIONS_DIR }),
+    getInstalledSkills(),
+    listInstalledConnectors(),
+    desktopAppRuntime
+      ? desktopAppRuntime.listContributions({ kinds: ['tools'], loadSchemas: false }).catch(() => ({ tools: [] }))
+      : Promise.resolve({ tools: [] }),
+  ]);
+  const builtInTools = typeof runtime.listDesktopTools === 'function'
+    ? runtime.listDesktopTools()
+    : [];
+  const appTools = Array.isArray(contributions?.tools)
+    ? contributions.tools.map((tool) => ({
+        id: String(tool.name || tool.id || ''),
+        name: String(tool.name || tool.id || ''),
+        title: String(tool.title || tool.id || tool.name || ''),
+        description: String(tool.description || ''),
+        source: 'app',
+        effect: tool.effect || 'write',
+      })).filter((tool) => tool.id)
+    : [];
+  return {
+    agents: agentCatalog.agents
+      .filter((agent) => agent.active)
+      .map((agent) => ({
+        id: agent.agentType,
+        name: agent.agentType,
+        description: agent.description || '',
+        source: agent.source,
+        model: agent.model || null,
+        tools: Array.isArray(agent.tools) ? agent.tools : null,
+        background: Boolean(agent.background),
+      })),
+    tools: [
+      ...builtInTools.filter((tool) => tool.enabled).map((tool) => ({
+        id: tool.id,
+        name: tool.id,
+        description: tool.searchHint || '',
+        aliases: tool.aliases || [],
+        source: tool.source || 'built-in',
+      })),
+      ...appTools,
+    ],
+    skills: skills.filter((skill) => skill.enabled !== false).map((skill) => ({
+      id: String(skill.id || skill.name),
+      name: String(skill.name || skill.id),
+      displayName: String(skill.displayName || skill.name || skill.id),
+      description: String(skill.description || ''),
+      source: skill.isBuiltin ? 'built-in' : 'installed',
+    })),
+    connectors: connectors.filter((connector) => connector.enabled !== false).map((connector) => ({
+      id: String(connector.id),
+      name: String(connector.name || connector.id),
+      description: String(connector.description || ''),
+      type: String(connector.type || ''),
+      connected: Boolean(connector.connected),
+      mcpServerNames: normalizeStringList(connector.mcpServerNames),
+    })),
+  };
+}
+
+function filterAgentChannelResourceSelection(requested, available, aliases = new Map()) {
+  if (requested === null) return { selected: null, unavailable: [] };
+  const availableSet = new Set(available);
+  const selected = [];
+  const unavailable = [];
+  for (const value of normalizeStringList(requested)) {
+    const resolved = aliases.get(value) || value;
+    if (availableSet.has(resolved)) selected.push(resolved);
+    else unavailable.push(value);
+  }
+  return { selected: [...new Set(selected)], unavailable };
+}
+
+async function authorizeAgentChannelPolicy(policy) {
+  const catalog = await getAgentChannelCatalog();
+  const agent = policy.agentId
+    ? catalog.agents.find((entry) => entry.id === policy.agentId)
+    : null;
+  const toolAliases = new Map(catalog.tools.flatMap((tool) => [
+    [tool.id, tool.id],
+    ...(tool.aliases || []).map((alias) => [alias, tool.id]),
+  ]));
+  const skillAliases = new Map(catalog.skills.flatMap((skill) => [
+    [skill.id, skill.name],
+    [skill.name, skill.name],
+  ]));
+  const tools = filterAgentChannelResourceSelection(
+    policy.resources?.tools,
+    catalog.tools.map((tool) => tool.id),
+    toolAliases,
+  );
+  const skills = filterAgentChannelResourceSelection(
+    policy.resources?.skills,
+    catalog.skills.map((skill) => skill.name),
+    skillAliases,
+  );
+  const connectors = filterAgentChannelResourceSelection(
+    policy.resources?.connectors,
+    catalog.connectors.map((connector) => connector.id),
+  );
+  let effectiveTools = tools.selected;
+  if (agent && Array.isArray(agent.tools) && !agent.tools.includes('*')) {
+    const agentTools = new Set(agent.tools);
+    effectiveTools = effectiveTools === null
+      ? [...agentTools]
+      : effectiveTools.filter((tool) => agentTools.has(tool));
+  }
+  return {
+    ...policy,
+    agentAvailable: !policy.agentId || Boolean(agent),
+    resources: {
+      tools: effectiveTools,
+      skills: skills.selected,
+      connectors: connectors.selected,
+    },
+    unavailableResources: {
+      agents: policy.agentId && !agent ? [policy.agentId] : [],
+      tools: tools.unavailable,
+      skills: skills.unavailable,
+      connectors: connectors.unavailable,
+    },
+  };
+}
+
+function agentChannelToolSelectors(policy) {
+  if (policy?.resources?.tools === null) return null;
+  const selectors = [...(policy?.resources?.tools || [])];
+  if (policy?.agentId) selectors.push('Agent', 'TaskOutput', 'TaskStop');
+  if ((policy?.resources?.skills || []).length > 0) selectors.push('Skill');
+  const connectorServers = Object.keys(getConnectorMcpServers(policy?.resources?.connectors || []));
+  selectors.push(...connectorServers.map((name) => `mcp__${name.replaceAll('-', '_')}__*`));
+  return [...new Set(selectors)];
+}
+
+function matchesAgentChannelTool(toolName, selectors) {
+  if (selectors === null || selectors.includes('*')) return true;
+  return selectors.some((selector) => (
+    selector === toolName
+    || (selector.endsWith('*') && toolName.startsWith(selector.slice(0, -1)))
+  ));
+}
+
+async function applyAgentChannelSessionPolicy(session, policy) {
+  const next = {
+    ...policy,
+    resources: {
+      tools: Object.hasOwn(policy?.resources || {}, 'tools') ? policy.resources.tools : null,
+      skills: Object.hasOwn(policy?.resources || {}, 'skills') ? policy.resources.skills : [],
+      connectors: Object.hasOwn(policy?.resources || {}, 'connectors') ? policy.resources.connectors : [],
+    },
+  };
+  const previousFingerprint = session.channelRuntimePolicy
+    ? JSON.stringify(session.channelRuntimePolicy)
+    : '';
+  const nextFingerprint = JSON.stringify(next);
+  session.channelRuntimePolicy = next;
+  session.permissionMode = ['default', 'acceptEdits', 'dontAsk'].includes(next.permissionMode)
+    ? next.permissionMode
+    : 'default';
+  if (session.runtime && previousFingerprint !== nextFingerprint) {
+    if (session.busy || hasActiveAgentTeam(session)) session.pendingMcpRuntimeReload = true;
+    else disposeRuntime(session);
+  }
+  schedulePersistSession(session, true);
+}
+
+function toAgentChannelSessionOption(sessionRecord, context) {
+  const session = toFeishuSessionOption(sessionRecord);
+  if (!session) return null;
+  if (context?.appId === FEISHU_APP_ID) return { ...session, messageCount: sessionRecord.messageCount };
+  return sessionRecord.channelAppId === context?.appId
+    && sessionRecord.channelInstanceId === context?.instanceId
+    ? { ...session, messageCount: sessionRecord.messageCount }
+    : null;
+}
+
+function getWritableAgentChannelSession(sessionId, context) {
+  return toAgentChannelSessionOption(
+    typeof sessionId === 'string' ? sessions.get(sessionId) : null,
+    context,
+  );
+}
+
+function listWritableAgentChannelSessions(query = '', context = null, input = {}) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const category = context?.appId === FEISHU_APP_ID && ['feishu', 'project'].includes(input.category)
+    ? input.category
+    : 'recent';
+  return [...sessions.values()]
+    .map((sessionRecord) => toAgentChannelSessionOption(sessionRecord, context))
+    .filter(Boolean)
+    .filter((entry) => category === 'recent'
+      || (category === 'feishu' && entry.originChannel === 'feishu')
+      || (category === 'project' && Boolean(entry.projectName)))
+    .filter((entry) => !normalizedQuery || [entry.title, entry.preview, entry.projectName]
+      .some((value) => String(value || '').toLowerCase().includes(normalizedQuery)))
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+async function createSessionFromAgentChannel(input = {}) {
+  const appId = String(input.appId || '').trim();
+  const isFeishu = appId === FEISHU_APP_ID;
+  const sessionRecord = createSessionRecord({
+    title: String(input.title || '').trim().slice(0, 120)
+      || (isFeishu ? '飞书会话' : 'Agent Channel 会话'),
+    agentMode: 'local',
+    originChannel: isFeishu ? 'feishu' : `app:${appId}`,
+  });
+  sessionRecord.channelAppId = appId;
+  sessionRecord.channelInstanceId = String(input.instanceId || '').trim();
+  await applyAgentChannelSessionPolicy(sessionRecord, input.binding || {});
+  await prepareAssistantContextForSessionStart(sessionRecord);
+  return toAgentChannelSessionOption(sessionRecord, {
+    appId,
+    instanceId: sessionRecord.channelInstanceId,
+  });
+}
+
+async function sendPromptFromAgentChannel(sessionId, prompt, options = {}) {
+  const sessionRecord = sessions.get(sessionId);
+  const context = { appId: options.appId || options.sourceChannel, instanceId: options.instanceId };
+  if (!toAgentChannelSessionOption(sessionRecord, context)) {
+    throw new Error('The selected Moss session is not writable by this Channel App.');
+  }
+  const installedSkills = await getInstalledSkills();
+  const skillsById = new Map(installedSkills.flatMap((skill) => [
+    [String(skill.id || skill.name), skill],
+    [String(skill.name || skill.id), skill],
+  ]));
+  const selectedSkills = normalizeStringList(options.skills).flatMap((id) => {
+    const skill = skillsById.get(id);
+    return skill ? [{ name: skill.name, displayName: skill.displayName || skill.name }] : [];
+  });
+  const selectedAgent = typeof options.agentId === 'string' ? options.agentId.trim() : '';
+  const result = await sendAgentPrompt(null, {
+    sessionId,
+    prompt,
+    mode: selectedAgent ? 'boss' : 'chat',
+    coordinatorMode: Boolean(selectedAgent),
+    ...(selectedAgent ? { agentType: selectedAgent } : {}),
+    skills: selectedSkills,
+  }, {
+    allowBusyQueue: true,
+    sourceChannel: options.sourceChannel || 'channel',
+  });
+  return { ...result, title: sessionRecord.title };
+}
+
+async function abortSessionFromAgentChannel(sessionId) {
+  const sessionRecord = sessions.get(sessionId);
+  if (!sessionRecord) throw new Error('The selected Moss session is unavailable.');
+  await Promise.resolve(sessionRecord.runtime?.abort?.());
+  await rejectPendingQuestionRequestsForSession(
+    sessionRecord.id,
+    'Question canceled because the Agent Channel turn was aborted.',
+  );
+  schedulePersistSession(sessionRecord, true);
+  return { ok: true };
+}
+
+function summarizeAgentChannelSession(session) {
+  const sessionRecord = sessions.get(session?.id);
+  if (!sessionRecord) return '';
+  return buildProjectConversationExcerpt(sessionRecord.history, 12_000);
+}
+
+async function requestDesktopAccount(pathname) {
+  const remote = getRemoteDirectSettings();
+  if (!remote.serverUrl) return null;
+  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+  const response = await remoteDirectNetFetch(`${serverUrl}${pathname}`, {
+    method: 'GET',
+    signal: AbortSignal.timeout(20_000),
+    headers: { authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) throw new Error(await parseRemoteDirectError('Moss Account request failed', response));
+  return response.json();
+}
+
+function localDesktopAccountIdentity() {
+  let name = 'Local user';
+  try { name = os.userInfo().username || name; } catch {}
+  const id = `local-${createHash('sha256').update(name).digest('hex').slice(0, 16)}`;
+  return {
+    source: 'local',
+    user: { id, name, email: null, departmentId: null, status: 'active' },
+    organization: null,
+    scopes: [],
+  };
+}
+
+async function getDesktopAccountIdentity() {
+  const remote = await requestDesktopAccount('/api/v1/auth/me').catch(() => null);
+  return remote ? { ...remote, source: 'server' } : localDesktopAccountIdentity();
+}
+
+async function getDesktopAccountDirectory(input = {}) {
+  const remote = await requestDesktopAccount('/api/v1/directory').catch(() => null);
+  const local = localDesktopAccountIdentity();
+  const source = remote || { users: [local.user], departments: [] };
+  const query = String(input.query || '').trim().toLowerCase();
+  const departmentId = String(input.departmentId || '').trim();
+  const limit = Math.min(200, Math.max(1, Number(input.limit) || 100));
+  const users = (Array.isArray(source.users) ? source.users : [])
+    .filter((user) => !departmentId || user.departmentId === departmentId)
+    .filter((user) => !query || [user.name, user.email, user.id]
+      .some((value) => String(value || '').toLowerCase().includes(query)))
+    .slice(0, limit)
+    .map((user) => ({
+      id: String(user.id),
+      name: String(user.name || user.id),
+      email: user.email || null,
+      departmentId: user.departmentId || null,
+      status: user.status || 'active',
+    }));
+  return {
+    users,
+    departments: Array.isArray(source.departments) ? source.departments : [],
+    nextCursor: null,
+    revision: createHash('sha256').update(JSON.stringify({ users, departments: source.departments || [] }))
+      .digest('hex').slice(0, 24),
+  };
+}
+
+const FEISHU_AGENT_CHANNEL_DEFAULTS = Object.freeze({
+  ...DEFAULT_AGENT_CHANNEL_POLICY,
+  replyMode: 'ai_auto',
+  resources: Object.freeze({ tools: null, skills: null, connectors: null }),
+  session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
+});
+
+function agentChannelDefaults(context) {
+  return context?.appId === FEISHU_APP_ID
+    ? FEISHU_AGENT_CHANNEL_DEFAULTS
+    : DEFAULT_AGENT_CHANNEL_POLICY;
+}
+
+function assertDesktopChannelAvailable(context) {
+  if (context?.appId !== FEISHU_APP_ID) return;
+  if (
+    context.instanceId !== FEISHU_APP_INSTANCE_ID
+    || isFeishuLegacyFallbackEnabled()
+    || getFeishuRunLocation() !== 'desktop'
+  ) {
+    throw new Error('The moss.feishu Channel is not active on this Desktop Host.');
+  }
+}
+
+function resolveFeishuChannelConversation(input, context) {
+  const openId = String(input.externalUserId || '').trim();
+  const requestedChatId = String(input.externalConversationId || '').trim();
+  const identity = resolveFeishuAdapterIdentity(openId, context);
+  const legacyConversation = requestedChatId
+    ? feishuAdapterStore.getOrCreateConversation({
+        ...identity,
+        chatId: requestedChatId,
+        pairedOpenId: openId,
+      })
+    : feishuAdapterStore.listConversations()
+      .filter((entry) => entry.adapterInstanceId === identity.adapterInstanceId
+        && entry.tenantKey === identity.tenantKey
+        && entry.pairedOpenId === openId)
+      .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0];
+  if (!legacyConversation) {
+    throw new Error('Send a message to Moss before using the Feishu bot menu.');
+  }
+
+  const normalizedInput = {
+    ...input,
+    externalConversationId: legacyConversation.chatId,
+  };
+  const conversation = agentChannelStore.getOrCreateConversation({
+    appId: context.appId,
+    instanceId: context.instanceId,
+    externalConversationId: legacyConversation.chatId,
+  });
+  if (
+    !conversation.activeSessionId
+    && legacyConversation.activeSessionId
+    && getWritableAgentChannelSession(legacyConversation.activeSessionId, context)
+  ) {
+    agentChannelStore.setConversationSession(conversation.id, legacyConversation.activeSessionId);
+  }
+  return { input: normalizedInput, legacyConversation, conversation };
+}
+
+async function handleDesktopChannelRequest(method, input, context) {
+  assertDesktopChannelAvailable(context);
+  if (context.appId === FEISHU_APP_ID) {
+    if (method === 'connection.update' || method === 'pairing.attempt' || method === 'decision.respond') {
+      return handleFeishuProcessRequest(mapChannelRequestToLegacy(method, input), context);
+    }
+    if (method === 'delivery.ack' && input.kind !== 'turn') {
+      return handleFeishuProcessRequest(mapChannelRequestToLegacy(method, input), context);
+    }
+    if (method !== 'delivery.ack') {
+      const resolved = resolveFeishuChannelConversation(input, context);
+      const result = await agentChannelController.handleChannelRequest(method, resolved.input, context);
+      const selectedSession = result?.session || result?.currentSession || null;
+      if (selectedSession?.id) {
+        feishuAdapterStore.setActiveSession(resolved.legacyConversation.id, selectedSession.id);
+      }
+      if (method === 'conversation.list') {
+        return {
+          ...result,
+          conversationId: resolved.conversation.id,
+          chatId: resolved.legacyConversation.chatId,
+          activeSessionId: result.currentSession?.id || null,
+          category: ['feishu', 'project'].includes(input.category) ? input.category : 'recent',
+          query: String(input.query || '').trim(),
+        };
+      }
+      return result;
+    }
+  }
+  return agentChannelController.handleChannelRequest(method, input, context);
+}
+
+async function handleDesktopAccountRequest(method, input) {
+  if (method === 'identity.current') return getDesktopAccountIdentity();
+  if (method === 'directory.list' || method === 'directory.search') {
+    return getDesktopAccountDirectory(input);
+  }
+  throw new Error(`Unsupported Account request: ${method}`);
+}
+
+async function invalidateDesktopAgentCatalog() {
+  const runtime = await getClaudeRuntimeModule();
+  runtime.clearDesktopAgentDefinitionsCache?.();
+  const reload = resetLocalRuntimesForMcpReload();
+  emitToRenderer('agent:agents-changed', { reason: 'catalog-changed', ...reload });
+  return reload;
+}
+
 function getDesktopMcpPayload(extra = {}) {
   const store = readDesktopMcpStore();
   return {
@@ -3343,11 +3875,27 @@ function getSessionConnectorIds(sessionRecord) {
   );
 }
 
+function getRuntimeSessionConnectorIds(sessionRecord) {
+  return resolveAgentChannelConnectorIds(
+    sessionRecord?.channelRuntimePolicy,
+    getSessionConnectorIds(sessionRecord),
+  );
+}
+
 function getSessionMcpServers(sessionRecord, runtimeCredentialValues = {}) {
+  const connectorIds = getRuntimeSessionConnectorIds(sessionRecord);
+  if (sessionRecord?.channelRuntimePolicy && Array.isArray(
+    sessionRecord.channelRuntimePolicy.resources?.connectors,
+  )) {
+    return getConnectorMcpServers(
+      connectorIds,
+      runtimeCredentialValues,
+    );
+  }
   return {
     ...getEnabledDesktopMcpServers(),
     ...getConnectorMcpServers(
-      getSessionConnectorIds(sessionRecord),
+      connectorIds,
       runtimeCredentialValues,
     ),
   };
@@ -3367,7 +3915,7 @@ async function resolveCurrentMossServerAuthToken() {
 }
 
 async function resolveSessionConnectorRuntimeCredentials(sessionRecord) {
-  const connectorIds = getSessionConnectorIds(sessionRecord);
+  const connectorIds = getRuntimeSessionConnectorIds(sessionRecord);
   const unresolvedServers = getConnectorMcpServers(connectorIds);
   const runtimeCredentialKeys = getCredentialReferenceKeys(unresolvedServers);
   if (!runtimeCredentialKeys.includes('MOSS_SERVER_AUTH_TOKEN')) return {};
@@ -3377,7 +3925,7 @@ async function resolveSessionConnectorRuntimeCredentials(sessionRecord) {
 function getSessionAddDirs(sessionRecord) {
   const dirs = [
     ...(Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : []),
-    ...getConnectorAddDirs(getSessionConnectorIds(sessionRecord)),
+    ...getConnectorAddDirs(getRuntimeSessionConnectorIds(sessionRecord)),
   ];
   const seen = new Set();
   return dirs.filter((dir) => {
@@ -3457,7 +4005,7 @@ function buildBoundAppSystemPrompt(appName) {
 }
 
 function buildConnectorSystemPrompt(sessionRecord) {
-  const connectorIds = getSessionConnectorIds(sessionRecord);
+  const connectorIds = getRuntimeSessionConnectorIds(sessionRecord);
   if (connectorIds.length === 0) return '';
   const serverNames = Object.keys(getConnectorMcpServers(connectorIds));
   const lines = [
@@ -3580,11 +4128,15 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     appTools,
     addDirs: getSessionAddDirs(sessionRecord),
+    disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
+    allowedTools: sessionRecord?.channelRuntimePolicy
+      ? agentChannelToolSelectors(sessionRecord.channelRuntimePolicy)
+      : null,
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
     environment: {
-      ...getConnectorCredentialEnv(getSessionConnectorIds(sessionRecord)),
+      ...getConnectorCredentialEnv(getRuntimeSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
         ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' }
@@ -4222,6 +4774,7 @@ function normalizeOriginChannel(value, sessionKind) {
   if (value === 'feishu') return 'feishu';
   if (value === 'agent-mail' || sessionKind === 'agent-mail') return 'agent-mail';
   if (value === 'cron' || sessionKind === 'cron') return 'cron';
+  if (typeof value === 'string' && /^app:[a-z0-9][a-z0-9._-]{0,79}$/.test(value)) return value;
   return 'desktop';
 }
 
@@ -4270,6 +4823,11 @@ function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     normalizeToolDisplayMode(sessionRecord.toolDisplayMode),
     sessionRecord.rewindMessageId || null,
     Number.isFinite(sessionRecord.rewindCreatedAt) ? sessionRecord.rewindCreatedAt : null,
+    sessionRecord.channelAppId || null,
+    sessionRecord.channelInstanceId || null,
+    sessionRecord.channelRuntimePolicy && typeof sessionRecord.channelRuntimePolicy === 'object'
+      ? JSON.stringify(sessionRecord.channelRuntimePolicy)
+      : null,
   ];
 }
 
@@ -4301,6 +4859,16 @@ function parsePersistedStringList(value) {
   }
 }
 
+function parsePersistedObject(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function toSessionManifest(sessionRecord, isSubAgent = false) {
   return {
     kind: DESKTOP_SESSION_KIND,
@@ -4325,6 +4893,9 @@ function toSessionManifest(sessionRecord, isSubAgent = false) {
     connectorIds: normalizeStringList(sessionRecord.connectorIds),
     sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
     originChannel: normalizeOriginChannel(sessionRecord.originChannel, sessionRecord.sessionKind),
+    channelAppId: sessionRecord.channelAppId || null,
+    channelInstanceId: sessionRecord.channelInstanceId || null,
+    channelRuntimePolicy: sessionRecord.channelRuntimePolicy || null,
     sourceSessionId: sessionRecord.sourceSessionId || null,
     sourceSessionTitle: sessionRecord.sourceSessionId
       ? sessions.get(sessionRecord.sourceSessionId)?.title || null
@@ -4506,6 +5077,9 @@ function hydratePersistedSessions() {
       ),
       rewindMessageId: row.rewind_message_id || null,
       rewindCreatedAt: Number.isFinite(row.rewind_created_at) ? row.rewind_created_at : null,
+      channelAppId: row.channel_app_id || null,
+      channelInstanceId: row.channel_instance_id || null,
+      channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -4573,6 +5147,9 @@ function hydratePersistedSessions() {
       ),
       rewindMessageId: null,
       rewindCreatedAt: null,
+      channelAppId: row.channel_app_id || null,
+      channelInstanceId: row.channel_instance_id || null,
+      channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -6262,7 +6839,39 @@ function validateProjectToolUse(sessionRecord, input) {
   };
 }
 
-function validateSessionToolUse(sessionRecord, _toolName, input) {
+function validateSessionToolUse(sessionRecord, toolName, input) {
+  const channelPolicy = sessionRecord?.channelRuntimePolicy;
+  if (channelPolicy) {
+    const delegationViolation = validateAgentChannelDelegation(channelPolicy, toolName, input);
+    if (delegationViolation) {
+      return { behavior: 'deny', message: delegationViolation };
+    }
+    const connectorViolation = validateAgentChannelConnectorTool(
+      channelPolicy,
+      toolName,
+      input,
+      (serverName) => findConnectorMcpServer(serverName)?.connectorId || '',
+    );
+    if (connectorViolation) {
+      return { behavior: 'deny', message: connectorViolation };
+    }
+    const selectors = agentChannelToolSelectors(channelPolicy);
+    if (!matchesAgentChannelTool(toolName, selectors)) {
+      return {
+        behavior: 'deny',
+        message: `Tool ${toolName} is not enabled for this Agent Channel conversation.`,
+      };
+    }
+    if (toolName === 'Skill' && Array.isArray(channelPolicy.resources?.skills)) {
+      const skill = String(input?.skill || '').trim().replace(/^\//, '');
+      if (!channelPolicy.resources.skills.includes(skill)) {
+        return {
+          behavior: 'deny',
+          message: `Skill ${skill || '<empty>'} is not enabled for this Agent Channel conversation.`,
+        };
+      }
+    }
+  }
   return validateProjectToolUse(sessionRecord, input);
 }
 
@@ -8138,6 +8747,9 @@ function createSessionRecord({
     toolDisplayMode: null,
     rewindMessageId: null,
     rewindCreatedAt: null,
+    channelAppId: null,
+    channelInstanceId: null,
+    channelRuntimePolicy: null,
   };
   if (!isSubAgent) {
     sessions.set(sessionRecord.id, sessionRecord);
@@ -11412,23 +12024,63 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
   await startManagedRuntimeInstall();
   const managedNode = getManagedRuntimeStatus().node;
+  agentChannelController = createAgentChannelController({
+    store: agentChannelStore,
+    catalog: getAgentChannelCatalog,
+    authorizePolicy: authorizeAgentChannelPolicy,
+    listWritableSessions: listWritableAgentChannelSessions,
+    getWritableSession: getWritableAgentChannelSession,
+    createSession: createSessionFromAgentChannel,
+    applySessionPolicy: applyAgentChannelSessionPolicy,
+    summarizeSession: summarizeAgentChannelSession,
+    sendPrompt: sendPromptFromAgentChannel,
+    abortSession: abortSessionFromAgentChannel,
+    defaultsFor: agentChannelDefaults,
+    publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId }) => {
+      if (!desktopAppRuntime) throw new Error('Desktop App Runtime is not ready.');
+      return desktopAppRuntime.publishHostEvent(
+        appId,
+        instanceId,
+        eventProtocol,
+        name,
+        data,
+        { eventId },
+      );
+    },
+    log: (level, message, details) => mossLog(level, 'agent-channel', message, details),
+  });
   desktopAppRuntime = await createDesktopAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
     channelOptions: {
-      handlers: createFeishuChannelHandlers({
-        handleRequest: handleFeishuProcessRequest,
-        allowRequest: () => (
-          !isFeishuLegacyFallbackEnabled()
-          && getFeishuRunLocation() === 'desktop'
-        ),
-      }),
+      handlers: Object.fromEntries(CHANNEL_HOST_METHODS.map((method) => [
+        method,
+        (input, context) => handleDesktopChannelRequest(method, input, context),
+      ])),
+    },
+    hostProtocols: [
+      createAccountProtocolDefinition(),
+      createAgentProtocolDefinition(),
+    ],
+    hostHandlers: {
+      [MOSS_ACCOUNT_PROTOCOL]: {
+        'identity.current': (input) => handleDesktopAccountRequest('identity.current', input),
+        'directory.list': (input) => handleDesktopAccountRequest('directory.list', input),
+        'directory.search': (input) => handleDesktopAccountRequest('directory.search', input),
+      },
+      [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map((method) => [
+        method,
+        (input, context) => agentChannelController.handleAgentRequest(method, input, context),
+      ])),
     },
     onEvent: (event) => {
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
+        agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
+      }
       if (event.appId === FEISHU_APP_ID && event.type === 'status') {
         if (
           !isFeishuLegacyFallbackEnabled()
@@ -11477,6 +12129,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         error: error.message || String(error),
       });
     });
+  }
+  for (const installation of desktopAppRuntime.installations.list().filter((entry) => entry.enabled)) {
+    for (const instance of desktopAppRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
+      agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
+    }
   }
   await enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(
     readPersistedAdapterSettings(),
@@ -11789,6 +12446,50 @@ ipcMain.handle('agent:get-remote-identity', async () => {
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:agents-list', (_event, payload = {}) => getDesktopAgentCatalog(payload));
+ipcMain.handle('agent:agents-read', (_event, payload = {}) => desktopAgentStore.read({
+  ...payload,
+  workspace: resolveDesktopAgentWorkspace(payload),
+}));
+ipcMain.handle('agent:agents-create', async (_event, payload = {}) => {
+  const workspace = resolveDesktopAgentWorkspace(payload);
+  await desktopAgentStore.create({ ...payload, workspace });
+  const reload = await invalidateDesktopAgentCatalog();
+  return getDesktopAgentCatalog({ workspace }, reload);
+});
+ipcMain.handle('agent:agents-update', async (_event, payload = {}) => {
+  const workspace = resolveDesktopAgentWorkspace(payload);
+  await desktopAgentStore.update({ ...payload, workspace });
+  const reload = await invalidateDesktopAgentCatalog();
+  return getDesktopAgentCatalog({ workspace }, reload);
+});
+ipcMain.handle('agent:agents-delete', async (_event, payload = {}) => {
+  const workspace = resolveDesktopAgentWorkspace(payload);
+  await desktopAgentStore.remove({ ...payload, workspace });
+  const reload = await invalidateDesktopAgentCatalog();
+  return getDesktopAgentCatalog({ workspace }, reload);
+});
+ipcMain.handle('agent:agents-set-enabled', async (_event, payload = {}) => {
+  const workspace = resolveDesktopAgentWorkspace(payload);
+  const agentType = typeof payload.agentType === 'string' ? payload.agentType.trim() : '';
+  if (!agentType) throw new Error('缺少 Agent 名称。');
+  const current = await getDesktopAgentCatalog({ workspace });
+  if (!current.agents.some((agent) => agent.agentType === agentType && agent.effective)) {
+    throw new Error(`找不到 Agent：${agentType}`);
+  }
+  const disabled = new Set(desktopSettings.agentSettings?.disabled || ['verification']);
+  if (payload.enabled === true) disabled.delete(agentType);
+  else disabled.add(agentType);
+  const settings = refreshDesktopSettings({
+    agentSettings: { disabled: [...disabled] },
+  });
+  const runtime = await getClaudeRuntimeModule();
+  runtime.clearDesktopAgentDefinitionsCache?.();
+  emitToRenderer('agent:agents-changed', { reason: 'enabled-changed', agentType });
+  return getDesktopAgentCatalog({ workspace }, {
+    skippedBusySessionCount: settings.skippedSessionCount || 0,
+  });
+});
 ipcMain.handle('agent:probe-web-search', async () => {
   await detectNativeWebSearchCapability({ force: true });
   return getDesktopSettingsPayload();
@@ -13830,6 +14531,22 @@ ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId })
   return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
 });
 
+ipcMain.handle('app-ui:host:request', async (event, {
+  instanceId,
+  protocol: hostProtocol,
+  method,
+  input,
+} = {}) => {
+  const state = getAppWindowStateBySender(event.sender);
+  return state.runtime.requestHostCapability(
+    state.id,
+    String(instanceId || ''),
+    String(hostProtocol || ''),
+    String(method || ''),
+    input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+  );
+});
+
 ipcMain.handle('app-ui:storage:get', async (event, { key }) => {
   const state = getAppWindowStateBySender(event.sender);
   const normalizedKey = normalizeAppStorageKey(key);
@@ -14180,6 +14897,7 @@ async function sendAgentPromptNow(event, {
   files,
   resources,
   skills,
+  agentType,
   coordinatorMode,
 }, {
   allowBusyQueue = false,
@@ -14269,6 +14987,24 @@ async function sendAgentPromptNow(event, {
     || mode === 'coordinator'
     || coordinatorMode;
 
+  let explicitAgent = null;
+  const requestedAgentType = typeof agentType === 'string' ? agentType.trim() : '';
+  if (requestedAgentType) {
+    if (!isCoordinatorMode) {
+      throw new Error('只有 Boss 模式可以显式调度 Agent。');
+    }
+    if (sessionRecord.agentMode === 'remote-direct') {
+      throw new Error('云端会话暂不支持桌面 Agents 显式调度。');
+    }
+    const catalog = await getDesktopAgentCatalog({ workspace: sessionRecord.workspace });
+    explicitAgent = catalog.agents.find((agent) => (
+      agent.agentType === requestedAgentType && agent.active
+    )) || null;
+    if (!explicitAgent) {
+      throw new Error(`Agent “${requestedAgentType}”不存在、已停用或被其他来源覆盖。`);
+    }
+  }
+
   if (isPlanOnly && sessionRecord.pendingPlanApproval) {
     throw new Error('There is already a pending plan awaiting approval.');
   }
@@ -14353,12 +15089,16 @@ async function sendAgentPromptNow(event, {
     : sessionRecord.projectId
       ? buildProjectCoordinatorSelectedSkillsInstruction(effectiveSkills)
       : buildSelectedSkillsInstruction(effectiveSkills);
+  const explicitAgentInstruction = explicitAgent
+    ? buildExplicitAgentDispatchInstruction(explicitAgent.agentType)
+    : '';
 
   const promptText = isPlanOnly
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
     : [
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
+      explicitAgentInstruction,
       agentTeamRecovery?.instruction || '',
       effectivePrompt + attachmentSuffix + libraryContextSuffix,
     ].filter(Boolean).join('\n\n');

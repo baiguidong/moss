@@ -53,6 +53,7 @@ export class AppRuntimeHost {
   registerChannelHandler(method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
   registerHostProtocol(definition: Record<string, any>): () => void
   registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
+  requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; signal?: AbortSignal }): Promise<unknown>
   dispatchHostRequest(request: Record<string, any>): Promise<unknown>
   publishHostEvent(appId: string, instanceId: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
   cancelHostEvent(appId: string, instanceId: string, protocol: string, eventId: string): boolean
@@ -198,6 +199,8 @@ export class AppHostCapabilityRegistry {
   readonly activeTotal: number
 }
 export function createChannelProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const APP_CONTRIBUTION_KINDS: readonly string[]
 export function contributionId(appId: string, localId: string): string
 export function appToolName(appId: string, localId: string): string

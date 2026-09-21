@@ -1126,8 +1126,15 @@ export function startServer(
         return
       }
 
-      if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/directory') {
-        writeJson(res, 200, openIMIntegration.listDirectory(auth))
+      if (req.method === 'GET' && pathname === '/api/v1/directory') {
+        authService.requireScope(auth, 'directory:read')
+        writeJson(
+          res,
+          200,
+          openIMIntegration
+            ? openIMIntegration.listDirectory(auth)
+            : authService.listDirectory(auth.orgId),
+        )
         return
       }
 

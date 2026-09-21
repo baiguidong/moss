@@ -59,6 +59,7 @@ import type {
   AuditAlert,
   BackgroundTaskInfo,
   ComposerResourceRef,
+  DesktopAgentDefinition,
   DesktopSettings,
   FileTreeNode,
   InstalledConnector,
@@ -155,6 +156,7 @@ type QueuedMessage = {
   skills?: Array<{ name: string; displayName?: string; source?: string }>;
   files?: ComposerAttachment[];
   intent: ComposerIntent;
+  agentType?: string;
 };
 type LayoutState = {
   leftWidth: number;
@@ -361,6 +363,7 @@ export default function App() {
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
+  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
@@ -1803,11 +1806,13 @@ export default function App() {
     intent: ComposerIntent,
     files?: ComposerAttachment[],
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
+    agentType?: string,
   ) => {
     await window.agentDesktop.send({
       sessionId,
       prompt,
       skills,
+      agentType,
       mode: intent,
       appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
       files: files?.filter((file) => !file.resource).map((file) => file.path),
@@ -1920,7 +1925,7 @@ export default function App() {
       if (queue.length === 0) return;
       const [next, ...rest] = queue;
       updateQueue(sessionId, () => rest);
-      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills).catch((err) => {
+      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType).catch((err) => {
         console.error('[queued message] send failed:', err);
         updateQueue(sessionId, (prev) => [next, ...prev]);
       });
@@ -1932,6 +1937,7 @@ export default function App() {
     files?: ComposerAttachment[],
     workspace?: string,
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
+    agent?: DesktopAgentDefinition,
   ) => {
     const hasText = input.trim().length > 0;
     const hasFiles = files && files.length > 0;
@@ -1949,6 +1955,7 @@ export default function App() {
         skills,
         files,
         intent,
+        agentType: agent?.agentType,
       };
       updateQueue(activeSessionId, (prev) => [...prev, queued]);
       setInput('');
@@ -2005,15 +2012,16 @@ export default function App() {
       filesToSend = newFiles;
     }
 
-    await dispatchToSession(sessionId, prompt, intent, filesToSend, skills);
+    await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType);
   }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
     workspace?: string,
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
+    agent?: DesktopAgentDefinition,
   ) => {
-    await submitPrompt(composerIntent, files, workspace, skills);
+    await submitPrompt(composerIntent, files, workspace, skills, agent);
   }, [composerIntent, submitPrompt]);
 
   const handleCreateWorkflowInChat = React.useCallback(() => {
@@ -2555,6 +2563,10 @@ export default function App() {
         setBuddyEnabled(enabled);
         setForceBuddyUpdate((n) => n + 1);
       }}
+      workspace={activeDetail && activeDetail.agentMode !== 'remote-direct'
+        ? activeDetail.workspace
+        : pendingNewSessionContext?.workspace}
+      initialSection={settingsInitialSection}
     />
   );
 
@@ -2627,7 +2639,10 @@ export default function App() {
             libraryEnabled={libraryEnabled}
             workflowsEnabled={workflowsEnabled}
             agentMailEnabled={agentMailEnabled}
-            onChangeView={setActiveView}
+            onChangeView={(view) => {
+              if (view === 'settings') setSettingsInitialSection('basic-info');
+              setActiveView(view);
+            }}
             onChangeTheme={handleThemeModeChange}
             onSelectSession={handleSelectSession}
             onLaunchApp={handleOpenEmbeddedApp}
@@ -2685,6 +2700,7 @@ export default function App() {
                 sessionTitle={activeDetail ? displaySessionTitle(activeDetail) : 'New Session'}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
+                sessionAgentMode={activeDetail?.agentMode || sessionAgentModes.get(activeSessionId) || 'local'}
                 focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
                 focusedToolRequestId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.requestId : undefined}
                 focusedMessageId={messageFocusTarget?.sessionId === activeSessionId ? messageFocusTarget.messageId : undefined}
@@ -2724,6 +2740,10 @@ export default function App() {
                 onToggleConnector={activeDetail?.projectId ? undefined : handleToggleConnector}
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
+                onOpenAgentManager={() => {
+                  setSettingsInitialSection('agents');
+                  setActiveView('settings');
+                }}
                 onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
@@ -2778,6 +2798,10 @@ export default function App() {
                 onToggleConnector={handleToggleConnector}
                 onOpenConnectorHub={() => setActiveView('connectors')}
                 onOpenExpertHub={() => setActiveView('experts')}
+                onOpenAgentManager={() => {
+                  setSettingsInitialSection('agents');
+                  setActiveView('settings');
+                }}
                 onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={pendingNewSessionContext ? false : (desktopSettings?.remoteEnabled ?? false)}
                 newSessionMode={pendingNewSessionContext ? 'local' : newSessionAgentMode}

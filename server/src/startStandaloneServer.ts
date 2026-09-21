@@ -7,6 +7,7 @@ import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
 import { ServerAppRuntime } from './apps/serverAppRuntime.js'
+import { createServerAccountHostHandlers } from './apps/serverAccountHost.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { OpenIMIntegrationService } from './openim/service.js'
 import {
@@ -14,6 +15,8 @@ import {
   toOpenIMServerConfig,
   updateSystemSettings,
 } from './systemSettings.js'
+import { createAccountProtocolDefinition } from '../../packages/app-runtime/src/index.mjs'
+import { MOSS_ACCOUNT_PROTOCOL } from '../../packages/app-sdk/src/index.mjs'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -44,7 +47,12 @@ export async function startStandaloneDirectConnectServer(
     serverInstanceId: instance.instanceId,
   })
   await runtime.reconcileOnStartup()
-  const appRuntime = await ServerAppRuntime.create(config, instance.instanceId)
+  const appRuntime = await ServerAppRuntime.create(config, instance.instanceId, {
+    hostProtocols: [createAccountProtocolDefinition()],
+    hostHandlers: {
+      [MOSS_ACCOUNT_PROTOCOL]: createServerAccountHostHandlers(authService),
+    },
+  })
   const ragflowIntegration = new RagflowIntegrationService({
     db: store.db,
     rootDir: config.rootDir,

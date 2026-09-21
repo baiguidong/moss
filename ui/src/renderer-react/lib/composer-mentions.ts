@@ -1,17 +1,20 @@
-export type ComposerMentionTab = 'files' | 'skills' | 'assistants' | 'connectors';
+export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'connectors';
 export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'>;
 
 export function getComposerResourceTabs({
   includeAssistants,
+  includeAgents,
   includeSkills,
   includeConnectors,
 }: {
   includeAssistants: boolean;
+  includeAgents: boolean;
   includeSkills: boolean;
   includeConnectors: boolean;
 }): ComposerResourceTab[] {
   const tabs: ComposerResourceTab[] = [];
   if (includeAssistants) tabs.push('assistants');
+  if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
   if (includeConnectors) tabs.push('connectors');
   return tabs;
@@ -21,15 +24,18 @@ export function getComposerMentionTabs({
   includeFiles,
   includeSkills,
   includeAssistants,
+  includeAgents,
   includeConnectors,
 }: {
   includeFiles: boolean;
   includeSkills: boolean;
   includeAssistants: boolean;
+  includeAgents: boolean;
   includeConnectors: boolean;
 }): ComposerMentionTab[] {
   const tabs: ComposerMentionTab[] = [];
   if (includeFiles) tabs.push('files');
+  if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
   if (includeAssistants) tabs.push('assistants');
   if (includeConnectors) tabs.push('connectors');
@@ -40,14 +46,17 @@ export function getDefaultComposerPlaceholder({
   hasActiveSession,
   includeSkills,
   includeAssistants,
+  includeAgents,
   includeConnectors,
 }: {
   hasActiveSession: boolean;
   includeSkills: boolean;
   includeAssistants: boolean;
+  includeAgents: boolean;
   includeConnectors: boolean;
 }) {
   const additions = [
+    includeAgents ? 'Agent' : null,
     includeSkills ? '技能' : null,
     includeAssistants ? '专家' : null,
     includeConnectors ? '连接器' : null,

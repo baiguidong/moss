@@ -219,6 +219,13 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       .resolves.toEqual({ echoed: 'tool' })
     await expect(runtime.invoke(appId, instanceId, 'host.request', { text: 'hello' }))
       .resolves.toEqual({ echoed: 'hello' })
+    await expect(runtime.requestHostCapability(
+      appId,
+      instanceId,
+      'moss.test/v1',
+      'echo',
+      { text: 'from-ui' },
+    )).resolves.toEqual({ echoed: 'from-ui' })
     expect(contexts[0]).toMatchObject({ appId, instanceId, protocol: 'moss.test/v1', method: 'echo' })
     await expect(runtime.publishHostEvent(appId, instanceId, 'moss.test/v1', 'notice', { value: 9 }))
       .resolves.toEqual({ received: 'notice', data: { value: 9 } })
@@ -229,8 +236,33 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       .rejects.toMatchObject({ code: APP_ERROR_CODES.actionNotFound })
     await expect(runtime.invoke(appId, instanceId, 'host.request', { text: 'denied' }))
       .rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
+    await expect(runtime.requestHostCapability(
+      appId,
+      instanceId,
+      'moss.test/v1',
+      'echo',
+      { text: 'denied' },
+    )).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
     await expect(runtime.setAppGrants(appId, ['not:requested']))
       .rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
+    await runtime.setAppGrants(appId, ['test:echo', 'test:notice'])
+    await runtime.setInstanceEnabled(appId, instanceId, false)
+    await expect(runtime.requestHostCapability(
+      appId,
+      instanceId,
+      'moss.test/v1',
+      'echo',
+      { text: 'disabled-instance' },
+    )).rejects.toMatchObject({ code: APP_ERROR_CODES.instanceDisabled })
+    await runtime.setInstanceEnabled(appId, instanceId, true)
+    await runtime.setAppEnabled(appId, false)
+    await expect(runtime.requestHostCapability(
+      appId,
+      instanceId,
+      'moss.test/v1',
+      'echo',
+      { text: 'disabled-app' },
+    )).rejects.toMatchObject({ code: APP_ERROR_CODES.disabled })
     await runtime.shutdown()
   })
 })
