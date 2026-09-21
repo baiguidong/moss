@@ -709,6 +709,7 @@ let remoteFeishuStatus = {
   enabled: false,
 };
 let remoteSessionSyncPromise = null;
+let localSessionReconciliationPromise = null;
 let lastRemoteSessionSyncErrorMessage = '';
 let feishuRuntimeTransition = Promise.resolve();
 let remoteFeishuMemorySyncTimer = null;
@@ -5571,7 +5572,7 @@ async function runSessionPromptNow({
         }
       } catch {}
     }
-    if (error?.isRecordedRuntimeError !== true) {
+    if (!sessionRecord.deleted && error?.isRecordedRuntimeError !== true) {
       const errorEvent = {
         type: 'error',
         message,
@@ -5589,34 +5590,40 @@ async function runSessionPromptNow({
     sessionRecord.busy = false;
     if (!isSessionBusyForRenderer(sessionRecord)) clearSessionBusyTiming(sessionRecord);
     sessionRecord.updatedAt = Date.now();
-    await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
-    await syncSubAgentSessionsBestEffort(sessionRecord);
-    schedulePersistSession(sessionRecord, true);
-    emitSessionMeta(sessionRecord);
-    emitToRenderer('agent:state', {
-      sessionId: sessionRecord.id,
-      busy: isSessionBusyForRenderer(sessionRecord),
-      summary: getSessionSummary(sessionRecord),
-      history: sessionRecord.history,
-      tasks: snapshotSessionTasks(sessionRecord),
-    });
-    emitSessionHistory(sessionRecord);
-    if (sessionRecord.agentMode === 'remote-direct') {
-      emitWorkspaceChanged(sessionRecord, 'remote-turn-completed', sessionRecord.remoteWorkspace);
+    if (!sessionRecord.deleted) {
+      await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
     }
-    if (applyPendingMcpRuntimeReload(
-      sessionRecord,
-      disposeRuntime,
-      (record) => Boolean(
-        hasActiveAgentTeam(record)
-        || (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
-      ),
-    )) {
-      mossLog('info', 'mcp', 'Reloaded session runtime after deferred MCP update', {
+    if (!sessionRecord.deleted) {
+      await syncSubAgentSessionsBestEffort(sessionRecord);
+    }
+    if (!sessionRecord.deleted) {
+      schedulePersistSession(sessionRecord, true);
+      emitSessionMeta(sessionRecord);
+      emitToRenderer('agent:state', {
         sessionId: sessionRecord.id,
+        busy: isSessionBusyForRenderer(sessionRecord),
+        summary: getSessionSummary(sessionRecord),
+        history: sessionRecord.history,
+        tasks: snapshotSessionTasks(sessionRecord),
       });
+      emitSessionHistory(sessionRecord);
+      if (sessionRecord.agentMode === 'remote-direct') {
+        emitWorkspaceChanged(sessionRecord, 'remote-turn-completed', sessionRecord.remoteWorkspace);
+      }
+      if (applyPendingMcpRuntimeReload(
+        sessionRecord,
+        disposeRuntime,
+        (record) => Boolean(
+          hasActiveAgentTeam(record)
+          || (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
+        ),
+      )) {
+        mossLog('info', 'mcp', 'Reloaded session runtime after deferred MCP update', {
+          sessionId: sessionRecord.id,
+        });
+      }
+      void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
     }
-    void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
   }
 }
 
@@ -5627,6 +5634,9 @@ async function runSessionPrompt(options) {
     sessionPromptQueues,
     sessionId,
     async () => {
+      if (options.sessionRecord.deleted) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
       const project = getSessionProject(options.sessionRecord);
       if (options.sessionRecord.projectId && (!project || project.archivedAt)) {
         throw new Error('项目已删除，不能再发起新的会话工作。');
@@ -6185,10 +6195,12 @@ function emitToRenderer(channel, payload) {
 }
 
 function emitSessionMeta(sessionRecord) {
+  if (!sessionRecord || sessionRecord.deleted) return;
   emitToRenderer('agent:session-meta', getSessionSummary(sessionRecord));
 }
 
 function emitSessionHistory(sessionRecord) {
+  if (!sessionRecord || sessionRecord.deleted) return;
   emitToRenderer('agent:session-history', {
     sessionId: sessionRecord.id,
     summary: getSessionSummary(sessionRecord),
@@ -11629,16 +11641,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     log: mossLog,
   });
   agentTeamsService.start();
-  // Older builds mirrored each Team member turn as a coordinator child session.
-  const mirroredTeamParents = new Set(
-    Array.from(subAgentSessions.values())
-      .map((record) => record.parentSessionId)
-      .filter(Boolean),
-  );
-  void Promise.allSettled(Array.from(mirroredTeamParents).map((parentSessionId) => {
-    const parent = sessions.get(parentSessionId);
-    return parent ? syncSubAgentSessionsBestEffort(parent) : Promise.resolve();
-  }));
 
   // Initialize custom protocols used by workspace media and plugin apps.
   try {
@@ -12548,29 +12550,48 @@ async function synchronizeRemoteSessionsBestEffort() {
   }
 }
 
+function reconcileLocalSessionSourcesBestEffort() {
+  if (localSessionReconciliationPromise) return localSessionReconciliationPromise;
+  localSessionReconciliationPromise = interruptedSessionRecoveryPromise
+    .then(() => Promise.allSettled(Array.from(sessions.values()).map((record) => (
+      syncSubAgentSessionsBestEffort(record)
+    ))))
+    .finally(() => {
+      localSessionReconciliationPromise = null;
+    });
+  return localSessionReconciliationPromise;
+}
+
 function listVisibleSessionSummaries() {
   const currentMode = getDesktopAgentMode();
   const localEnabled = desktopSettings.localEnabled ?? true;
   const remoteEnabled = desktopSettings.remoteEnabled ?? false;
   const showAll = localEnabled && remoteEnabled;
   return [...sessions.values(), ...subAgentSessions.values()]
+    .filter(s => !s.deleted)
     .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-ipcMain.handle('agent:list-sessions', async () => {
-  await interruptedSessionRecoveryPromise;
-  await synchronizeRemoteSessionsBestEffort();
-  await Promise.allSettled(Array.from(sessions.values()).map((record) => (
-    syncSubAgentSessionsBestEffort(record)
-  )));
-  return listVisibleSessionSummaries();
+ipcMain.handle('agent:list-sessions', () => {
+  // Return the hydrated database snapshot immediately. Both refresh paths emit
+  // session-meta/history events, so the renderer can merge later updates
+  // without an unreachable remote server blocking local session visibility.
+  const summaries = listVisibleSessionSummaries();
+  // Defer incremental events until after Electron has sent the complete
+  // snapshot reply. Otherwise an eager sub-agent scan can briefly render child
+  // sessions on their own before their cached parents reach the renderer.
+  setImmediate(() => {
+    void reconcileLocalSessionSourcesBestEffort();
+    void synchronizeRemoteSessionsBestEffort();
+  });
+  return summaries;
 });
 
 ipcMain.handle('agent:search-sessions', async (_event, { query, limit } = {}) => {
   await interruptedSessionRecoveryPromise;
-  await synchronizeRemoteSessionsBestEffort();
+  void synchronizeRemoteSessionsBestEffort();
   const visibleSummaries = listVisibleSessionSummaries();
   const summariesById = new Map(visibleSummaries.map((summary) => [summary.id, summary]));
   return sessionSearchIndex.search(query, {
@@ -13111,7 +13132,17 @@ async function removeSubAgentSessionRecords(parentSessionId) {
 }
 
 async function deleteSessionRecordById(sessionId) {
-  const sessionRecord = getSessionRecord(sessionId);
+  const sessionRecord = sessions.get(sessionId) || subAgentSessions.get(sessionId);
+  if (!sessionRecord || sessionRecord.deleted) {
+    emitToRenderer('agent:session-removed', { sessionId });
+    return {
+      ok: true,
+      alreadyRemoved: true,
+      removedSubAgentSessions: 0,
+      removedCronTasks: 0,
+      removedCronTaskPrompts: [],
+    };
+  }
   const activeProjectTaskRun = projectCoordinatorTaskRuns.get(sessionRecord.id) || null;
   if (sessionRecord.isSubAgent) {
     throw new Error('子会话由主会话管理，不能单独删除。');
@@ -13119,10 +13150,12 @@ async function deleteSessionRecordById(sessionId) {
   if (isProjectTaskRootSession(sessionRecord)) {
     projectTaskCancellationRequests.add(sessionRecord.id);
   }
+  // Mark the record before aborting. Runtime abort completion runs asynchronous
+  // cleanup that must not publish a final state for a session being deleted.
+  sessionRecord.deleted = true;
   try {
     await Promise.resolve(sessionRecord.runtime?.abort?.());
   } catch {}
-  sessionRecord.deleted = true;
   const subAgentSyncTimer = subAgentSyncTimers.get(sessionRecord.id);
   if (subAgentSyncTimer) {
     clearTimeout(subAgentSyncTimer);
@@ -14364,6 +14397,16 @@ async function sendAgentPromptNow(event, {
       }).catch(() => {});
     }
     throw error;
+  }
+
+  // Deletion can race with a runtime that finishes successfully. Do not run
+  // plan, Agent Team, or project completion side effects for a removed session.
+  if (sessionRecord.deleted) {
+    return {
+      ok: false,
+      deleted: true,
+      sessionId,
+    };
   }
 
   const turnConclusion = String(turn.latestAssistantText || turn.streamedAssistantText || '').trim();

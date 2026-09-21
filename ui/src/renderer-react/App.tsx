@@ -43,6 +43,10 @@ import {
 import { isAuthorizedConnector, selectConnectorForNewChat } from '@/lib/connector-selection';
 import { workflowEditPrompt, workflowUsePrompt } from '@/lib/workflow-library';
 import {
+  excludeRemovedSessions,
+  isSessionAlreadyRemovedError,
+} from '@/lib/session-removal';
+import {
   attachAuthorizedConnectorToSession,
   runMcpConnectorAuthorization,
 } from '@/lib/connector-auth-flow';
@@ -474,6 +478,8 @@ export default function App() {
   }, []);
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
+  const removedSessionIdsRef = React.useRef<Set<string>>(new Set());
+  const deletingSessionIdsRef = React.useRef<Set<string>>(new Set());
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
@@ -608,8 +614,9 @@ export default function App() {
 
   const refreshSummaries = React.useCallback(async () => {
     const list = await window.agentDesktop.listSessions();
-    setSummaries(list);
-    return list;
+    const visible = excludeRemovedSessions(list, removedSessionIdsRef.current);
+    setSummaries(visible);
+    return visible;
   }, []);
 
   const refreshProjects = React.useCallback(async () => {
@@ -797,6 +804,8 @@ export default function App() {
 
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
     setActiveView('chat');
+    activeSessionIdRef.current = null;
+    activeDetailRef.current = null;
     setActiveSessionId(null);
     setActiveDetail(null);
     setPendingNewSessionContext(null);
@@ -1170,9 +1179,6 @@ export default function App() {
           refreshAssistants('local'),
         ]);
         void refreshConnectors().catch(() => {});
-        if (cancelled) return;
-        setActiveSessionId(null);
-        setActiveDetail(null);
       } catch (error: any) {
         if (!cancelled) {
           setBootError(error?.message || String(error));
@@ -1196,6 +1202,7 @@ export default function App() {
   React.useEffect(() => {
 
     const offEvent = window.agentDesktop.onEvent((payload) => {
+      if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       if (payload.sessionId !== activeSessionIdRef.current) return;
       setActiveDetail((prev) => {
         if (!prev) return prev;
@@ -1206,6 +1213,8 @@ export default function App() {
     });
 
     const offState = window.agentDesktop.onState((payload) => {
+      const eventSessionId = payload?.sessionId || payload?.summary?.id;
+      if (eventSessionId && removedSessionIdsRef.current.has(eventSessionId)) return;
       const hasSessionTasksPayload = Array.isArray(payload?.tasks);
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
@@ -1243,16 +1252,19 @@ export default function App() {
 
     const offBackgroundTasks = window.agentDesktop.onBackgroundTasks((payload) => {
       if (!payload?.sessionId) return;
+      if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       setBackgroundTasks((prev) => ({ ...prev, [payload.sessionId]: payload.tasks ?? [] }));
     });
 
     const offAgentTeamsChanged = window.agentDesktop.agentTeams.onChanged((payload) => {
       if (!payload?.sessionId) return;
+      if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       setAgentTeamsBySession((previous) => ({ ...previous, [payload.sessionId]: payload }));
     });
 
     const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
       if (!payload?.requestId || !payload?.sessionId) return;
+      if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       updateQuestionRequests((prev) => [
         ...prev.filter((entry) => entry.requestId !== payload.requestId),
         payload,
@@ -1274,6 +1286,7 @@ export default function App() {
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
+      if (removedSessionIdsRef.current.has(summary.id)) return;
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
         setComposerIntent(restoreComposerIntent(summary));
@@ -1288,6 +1301,7 @@ export default function App() {
 
     const offSessionHistory = window.agentDesktop.onSessionHistory((payload) => {
       if (!payload?.sessionId || !Array.isArray(payload.history)) return;
+      if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       if (payload.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary!));
       }
@@ -1308,6 +1322,7 @@ export default function App() {
     });
 
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
+      removedSessionIdsRef.current.add(sessionId);
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       setAgentTeamsBySession((previous) => {
         const next = { ...previous };
@@ -1718,24 +1733,38 @@ export default function App() {
   }, [showPermissionNotice]);
 
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
+    if (deletingSessionIdsRef.current.has(sessionId)) return;
+    deletingSessionIdsRef.current.add(sessionId);
+    removedSessionIdsRef.current.add(sessionId);
+    setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
+
+    let result: { ok?: boolean; removedCronTasks?: number } | undefined;
     try {
-      const result = await window.agentDesktop.deleteSession({ sessionId }) as
-        { ok?: boolean; removedCronTasks?: number } | undefined;
-      if (result?.removedCronTasks) {
-        const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
-        showPermissionNotice(notice, 'info', 5000);
-      }
-      if (activeSessionId === sessionId) {
-        navigateToHome({ forceDiscardDirty: true });
-      }
-      const nextModes = new Map(sessionAgentModes);
-      nextModes.delete(sessionId);
-      persistSessionAgentModes(nextModes);
-      await refreshSummaries();
+      result = await window.agentDesktop.deleteSession({ sessionId }) as
+        typeof result;
     } catch (err) {
-      showPermissionNotice(err instanceof Error ? err.message : String(err), 'error', 6000);
+      if (!isSessionAlreadyRemovedError(err)) {
+        removedSessionIdsRef.current.delete(sessionId);
+        await refreshSummaries().catch(() => undefined);
+        showPermissionNotice(err instanceof Error ? err.message : String(err), 'error', 6000);
+        return;
+      }
+    } finally {
+      deletingSessionIdsRef.current.delete(sessionId);
     }
-  }, [activeSessionId, navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes, showPermissionNotice]);
+
+    if (result?.removedCronTasks) {
+      const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
+      showPermissionNotice(notice, 'info', 5000);
+    }
+    if (activeSessionIdRef.current === sessionId) {
+      navigateToHome({ forceDiscardDirty: true });
+    }
+    const nextModes = new Map(sessionAgentModes);
+    nextModes.delete(sessionId);
+    persistSessionAgentModes(nextModes);
+    await refreshSummaries().catch(() => undefined);
+  }, [navigateToHome, refreshSummaries, sessionAgentModes, persistSessionAgentModes, showPermissionNotice]);
 
   const handleRenameSession = React.useCallback(async (sessionId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
