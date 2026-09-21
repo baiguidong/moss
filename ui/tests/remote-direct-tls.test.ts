@@ -5,7 +5,11 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { describe, expect, it } from 'bun:test';
 
-import { createRemoteDirectTrustStore } from '../src/remote-direct-tls.mjs';
+import {
+  createRemoteDirectTrustStore,
+  ensureRemoteDirectTrustWithConfirmation,
+  RemoteCertificateChangedError,
+} from '../src/remote-direct-tls.mjs';
 
 const TEST_SELF_SIGNED_CERTIFICATE = `-----BEGIN CERTIFICATE-----
 MIIDNjCCAh6gAwIBAgIUJiSQO43ohydDjDsHwniKCbjA+GwwDQYJKoZIhvcNAQEL
@@ -45,7 +49,7 @@ function observedCertificate(pem: string, trustedBySystem = false, selfSigned = 
 }
 
 describe('remote direct TLS trust store', () => {
-  it('pins the first certificate, reloads it, and rejects a changed certificate', async () => {
+  it('pins the first certificate and replaces it only after explicit confirmation', async () => {
     const trustDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-remote-tls-'));
     const originalExtraCa = process.env.NODE_EXTRA_CA_CERTS;
     let observed = observedCertificate(TEST_SELF_SIGNED_CERTIFICATE, true);
@@ -89,9 +93,19 @@ describe('remote direct TLS trust store', () => {
       expect(reloaded.getRecords()).toHaveLength(1);
 
       observed = observedCertificate(tls.rootCertificates[1]);
-      await expect(reloaded.ensureTrusted('https://moss.example.com')).rejects.toThrow(
-        '证书已发生变化',
-      );
+      let changedError: unknown;
+      try {
+        await reloaded.ensureTrusted('https://moss.example.com');
+      } catch (error) {
+        changedError = error;
+      }
+      expect(changedError).toBeInstanceOf(RemoteCertificateChangedError);
+      expect(changedError).toMatchObject({
+        code: 'REMOTE_CERTIFICATE_CHANGED',
+        origin: 'https://moss.example.com',
+        oldFingerprint: trusted.fingerprint256,
+        newFingerprint: observed.fingerprint256,
+      });
 
       reloaded.verifyCertificate({
         hostname: 'moss.example.com',
@@ -105,6 +119,54 @@ describe('remote direct TLS trust store', () => {
         certificate: { fingerprint: observed.fingerprint256 },
       }, (result: number) => { verificationResult = result; });
       expect(verificationResult).toBe(-3);
+
+      await expect(reloaded.acceptChangedCertificate(
+        'https://moss.example.com',
+        trusted.fingerprint256,
+      )).rejects.toBeInstanceOf(RemoteCertificateChangedError);
+      expect(reloaded.getRecords()[0]?.fingerprint256).toBe(trusted.fingerprint256);
+
+      await expect(ensureRemoteDirectTrustWithConfirmation({
+        trustStore: reloaded,
+        serverUrl: 'https://moss.example.com',
+        confirmCertificateChange: async () => false,
+      })).rejects.toThrow('认证已取消');
+      expect(reloaded.getRecords()[0]?.fingerprint256).toBe(trusted.fingerprint256);
+
+      let confirmation: Record<string, string> | undefined;
+      const replaced = await ensureRemoteDirectTrustWithConfirmation({
+        trustStore: reloaded,
+        serverUrl: 'https://moss.example.com',
+        confirmCertificateChange: async (details: Record<string, string>) => {
+          confirmation = details;
+          return true;
+        },
+      });
+      expect(confirmation).toEqual({
+        origin: 'https://moss.example.com',
+        oldFingerprint: trusted.fingerprint256,
+        newFingerprint: observed.fingerprint256,
+      });
+      expect(replaced).toMatchObject({
+        pinned: true,
+        fingerprint256: observed.fingerprint256,
+      });
+      expect(reloaded.getRecords()[0]?.fingerprint256).toBe(observed.fingerprint256);
+
+      reloaded.verifyCertificate({
+        hostname: 'moss.example.com',
+        verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID',
+        certificate: { fingerprint: observed.fingerprint256 },
+      }, (result: number) => { verificationResult = result; });
+      expect(verificationResult).toBe(0);
+
+      await expect(ensureRemoteDirectTrustWithConfirmation({
+        trustStore: reloaded,
+        serverUrl: 'https://moss.example.com',
+        confirmCertificateChange: async () => {
+          throw new Error('不应再次要求确认');
+        },
+      })).resolves.toMatchObject({ pinned: true });
     } finally {
       if (originalExtraCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS;
       else process.env.NODE_EXTRA_CA_CERTS = originalExtraCa;

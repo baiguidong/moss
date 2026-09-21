@@ -290,7 +290,10 @@ import {
 } from './remote-session-reconcile.mjs';
 import { performRemoteDirectOAuth } from './remote-direct-oauth.mjs';
 import { openRemoteDirectAuthorizationWindow } from './remote-direct-auth-window.mjs';
-import { createRemoteDirectTrustStore } from './remote-direct-tls.mjs';
+import {
+  createRemoteDirectTrustStore,
+  ensureRemoteDirectTrustWithConfirmation,
+} from './remote-direct-tls.mjs';
 import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
 import {
   deleteAgentMail,
@@ -11816,6 +11819,35 @@ ipcMain.handle('agent-mail:delete', async (_event, payload = {}) => {
   return { messageIds: deleted };
 });
 let remoteDirectOAuthInFlight = null;
+
+async function confirmRemoteDirectCertificateChange({
+  origin,
+  oldFingerprint,
+  newFingerprint,
+}) {
+  const options = {
+    type: 'warning',
+    title: 'Moss Server 证书已更换',
+    message: '服务器证书与此前接受的证书不一致。',
+    detail: [
+      origin,
+      '',
+      `旧指纹：${oldFingerprint}`,
+      `新指纹：${newFingerprint}`,
+      '',
+      '仅当你确认该服务器刚刚由可信管理员重新部署，并已核对新指纹时，才接受新证书。否则可能存在中间人攻击。',
+    ].join('\n'),
+    buttons: ['取消', '接受新证书并继续'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const result = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
+  return result.response === 1;
+}
+
 ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   if (remoteDirectOAuthInFlight) {
     throw new Error('远端 Server 认证正在进行中。');
@@ -11826,7 +11858,11 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   const controller = new AbortController();
   mossLog('info', 'remote-auth', 'Moss Server authentication started');
   const promise = (async () => {
-    const trust = await remoteDirectTrustStore.ensureTrusted(parsed.serverUrl);
+    const trust = await ensureRemoteDirectTrustWithConfirmation({
+      trustStore: remoteDirectTrustStore,
+      serverUrl: parsed.serverUrl,
+      confirmCertificateChange: confirmRemoteDirectCertificateChange,
+    });
     await reloadRemoteDirectRuntimeTlsTrust();
     mossLog('info', 'remote-auth', trust.pinned
       ? 'Moss Server self-signed certificate accepted from the local trust store'

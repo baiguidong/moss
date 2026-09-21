@@ -6,6 +6,31 @@ import tls from 'node:tls';
 
 const TRUST_RECORD_VERSION = 1;
 const SELF_SIGNED_ERROR = 'DEPTH_ZERO_SELF_SIGNED_CERT';
+const CERTIFICATE_CHANGED_CODE = 'REMOTE_CERTIFICATE_CHANGED';
+
+export class RemoteCertificateChangedError extends Error {
+  constructor({ origin, oldFingerprint, newFingerprint }) {
+    super(
+      `Moss Server ${origin} 的证书已发生变化，已拒绝连接。旧指纹：${oldFingerprint}；新指纹：${newFingerprint}。`,
+    );
+    this.name = 'RemoteCertificateChangedError';
+    this.code = CERTIFICATE_CHANGED_CODE;
+    this.origin = origin;
+    this.oldFingerprint = oldFingerprint;
+    this.newFingerprint = newFingerprint;
+  }
+}
+
+export function isRemoteCertificateChangedError(error) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && error.code === CERTIFICATE_CHANGED_CODE
+    && typeof error.origin === 'string'
+    && typeof error.oldFingerprint === 'string'
+    && typeof error.newFingerprint === 'string',
+  );
+}
 
 function normalizeFingerprint(value) {
   const text = String(value || '').trim();
@@ -220,35 +245,69 @@ export function createRemoteDirectTrustStore({
     return rebuildBundle();
   };
 
+  const removeRecord = async (origin) => {
+    const existing = records.get(origin);
+    if (!existing) return;
+    records.delete(origin);
+    await Promise.all([
+      fsp.rm(path.join(trustDir, existing.certificateFile), { force: true }),
+      fsp.rm(path.join(trustDir, `${recordId(origin)}.json`), { force: true }),
+    ]);
+  };
+
+  const persistObservedCertificate = async (target, observed) => {
+    // A certificate accepted by the operating system should follow the normal
+    // CA trust and renewal rules instead of remaining pinned to an old TOFU
+    // record. This also supports migrating a Server from self-signed TLS to a
+    // certificate issued by a trusted CA.
+    if (observed.trustedBySystem && !observed.selfSigned) {
+      await removeRecord(target.origin);
+      const caBundlePath = await rebuildBundle();
+      return { ...observed, pinned: false, caBundlePath };
+    }
+
+    const id = recordId(target.origin);
+    const certificateFile = `${id}.pem`;
+    const metadata = {
+      version: TRUST_RECORD_VERSION,
+      origin: target.origin,
+      hostname: target.hostname,
+      fingerprint256: formatFingerprint(observed.fingerprint256),
+      certificateFile,
+      trustedAt: new Date().toISOString(),
+      validFrom: observed.validFrom,
+      validTo: observed.validTo,
+    };
+    await fsp.mkdir(trustDir, { recursive: true, mode: 0o700 });
+    await fsp.chmod(trustDir, 0o700);
+    await atomicWrite(path.join(trustDir, certificateFile), observed.pem);
+    await atomicWrite(path.join(trustDir, `${id}.json`), `${JSON.stringify(metadata, null, 2)}\n`);
+    records.set(target.origin, { ...metadata, pem: observed.pem });
+    const caBundlePath = await rebuildBundle();
+    return {
+      ...observed,
+      pinned: true,
+      caBundlePath,
+    };
+  };
+
   const ensureTrusted = async (serverUrl) => {
     const target = parseServerOrigin(serverUrl);
     if (!target.secure) return { ...target, pinned: false, caBundlePath: null };
     const observed = await probeCertificate(target.origin);
     const existing = records.get(target.origin);
     if (existing && normalizeFingerprint(existing.fingerprint256) !== normalizeFingerprint(observed.fingerprint256)) {
-      throw new Error(
-        `Moss Server ${target.origin} 的证书已发生变化，已拒绝连接。旧指纹：${existing.fingerprint256}；新指纹：${observed.fingerprint256}。`,
-      );
+      throw new RemoteCertificateChangedError({
+        origin: target.origin,
+        oldFingerprint: formatFingerprint(existing.fingerprint256),
+        newFingerprint: formatFingerprint(observed.fingerprint256),
+      });
     }
     if (observed.trustedBySystem && !observed.selfSigned && !existing) {
       return { ...observed, pinned: false, caBundlePath: process.env.NODE_EXTRA_CA_CERTS || null };
     }
     if (!existing) {
-      const id = recordId(target.origin);
-      const certificateFile = `${id}.pem`;
-      const metadata = {
-        version: TRUST_RECORD_VERSION,
-        origin: target.origin,
-        hostname: target.hostname,
-        fingerprint256: formatFingerprint(observed.fingerprint256),
-        certificateFile,
-        trustedAt: new Date().toISOString(),
-        validFrom: observed.validFrom,
-        validTo: observed.validTo,
-      };
-      await atomicWrite(path.join(trustDir, certificateFile), observed.pem);
-      await atomicWrite(path.join(trustDir, `${id}.json`), `${JSON.stringify(metadata, null, 2)}\n`);
-      records.set(target.origin, { ...metadata, pem: observed.pem });
+      return persistObservedCertificate(target, observed);
     }
     const caBundlePath = await rebuildBundle();
     return {
@@ -256,6 +315,38 @@ export function createRemoteDirectTrustStore({
       pinned: true,
       caBundlePath,
     };
+  };
+
+  const acceptChangedCertificate = async (serverUrl, expectedFingerprint) => {
+    const target = parseServerOrigin(serverUrl);
+    if (!target.secure) return { ...target, pinned: false, caBundlePath: null };
+
+    const existing = records.get(target.origin);
+    if (!existing) {
+      throw new Error(`Moss Server ${target.origin} 没有需要替换的已固定证书。`);
+    }
+
+    const expected = normalizeFingerprint(expectedFingerprint);
+    if (!expected) throw new Error('缺少待接受的新证书指纹。');
+
+    // Probe again after the user confirms. Never accept a certificate that is
+    // different from the exact fingerprint shown in the confirmation dialog.
+    const observed = await probeCertificate(target.origin);
+    const current = normalizeFingerprint(observed.fingerprint256);
+    if (current !== expected) {
+      throw new RemoteCertificateChangedError({
+        origin: target.origin,
+        oldFingerprint: formatFingerprint(existing.fingerprint256),
+        newFingerprint: formatFingerprint(observed.fingerprint256),
+      });
+    }
+
+    if (normalizeFingerprint(existing.fingerprint256) === current) {
+      const caBundlePath = await rebuildBundle();
+      return { ...observed, pinned: true, caBundlePath };
+    }
+
+    return persistObservedCertificate(target, observed);
   };
 
   const verifyCertificate = (request, callback) => {
@@ -276,9 +367,29 @@ export function createRemoteDirectTrustStore({
 
   return {
     bundlePath,
+    acceptChangedCertificate,
     ensureTrusted,
     load,
     verifyCertificate,
     getRecords: () => [...records.values()].map(({ pem: _pem, ...record }) => ({ ...record })),
   };
+}
+
+export async function ensureRemoteDirectTrustWithConfirmation({
+  trustStore,
+  serverUrl,
+  confirmCertificateChange,
+}) {
+  try {
+    return await trustStore.ensureTrusted(serverUrl);
+  } catch (error) {
+    if (!isRemoteCertificateChangedError(error)) throw error;
+    const accepted = await confirmCertificateChange({
+      origin: error.origin,
+      oldFingerprint: error.oldFingerprint,
+      newFingerprint: error.newFingerprint,
+    });
+    if (!accepted) throw new Error('认证已取消。');
+    return trustStore.acceptChangedCertificate(serverUrl, error.newFingerprint);
+  }
 }
