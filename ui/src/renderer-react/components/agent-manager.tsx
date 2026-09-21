@@ -73,13 +73,13 @@ function AgentToggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+        'relative inline-flex h-6 w-11 shrink-0 items-center overflow-hidden rounded-full p-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-45',
         checked ? 'bg-primary' : 'bg-muted-foreground/25',
       )}
     >
       <span className={cn(
-        'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
-        checked ? 'translate-x-5' : 'translate-x-0.5',
+        'block h-5 w-5 shrink-0 rounded-full bg-white shadow-sm transition-transform',
+        checked ? 'translate-x-5' : 'translate-x-0',
       )} />
     </button>
   );

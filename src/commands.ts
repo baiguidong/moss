@@ -60,7 +60,6 @@ import { isFirstPartyModelBaseUrl } from './utils/model/providers.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
-import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
 import { getSettingSourceName } from './utils/settings/constants.js'
@@ -113,7 +112,6 @@ const COMMANDS = memoize((): Command[] => [
   skills,
   stats,
   status,
-  statusline,
   theme,
   review,
   rewind,

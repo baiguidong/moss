@@ -7,7 +7,6 @@ import {
   setOriginalCwd,
   switchSession,
 } from '../../bootstrap/state.js'
-import statusline from '../../commands/statusline.js'
 import {
   getEmptyToolPermissionContext,
   type ToolUseContext,
@@ -19,7 +18,6 @@ import {
 } from '../../tools/FileEditTool/constants.js'
 import { asSessionId } from '../../types/ids.js'
 import { runWithSessionIdContext } from '../sessionIdContext.js'
-import { getMossConfigHomeDir } from '../envUtils.js'
 import {
   discardSessionWorkspaceDirectories,
   registerSessionWorkspaceDirectories,
@@ -369,14 +367,6 @@ describe('Moss project paths', () => {
     discardSessionWorkspaceDirectories(sessionId)
   })
 
-  test('allows statusline to edit only the Moss global config', () => {
-    expect(statusline.allowedTools).toContain(
-      `Edit(${join(getMossConfigHomeDir(), 'moss.json')})`,
-    )
-    expect(statusline.allowedTools).not.toContain(
-      'Edit(~/.moss/settings.json)',
-    )
-  })
 })
 
 function restoreEnv(name: string, value: string | undefined): void {
