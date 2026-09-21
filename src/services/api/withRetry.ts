@@ -585,6 +585,12 @@ function shouldRetry(error: APIError): boolean {
   }
 
   if (error instanceof APIConnectionError) {
+    // This is a local request-construction/dispatcher error, not a transient
+    // network failure. Retrying only leaves the UI spinning through the full
+    // exponential-backoff window before surfacing the same error.
+    if (extractConnectionErrorDetails(error)?.code === 'UND_ERR_INVALID_ARG') {
+      return false
+    }
     return true
   }
 

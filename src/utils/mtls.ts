@@ -18,6 +18,22 @@ export type TLSConfig = MTLSConfig & {
 }
 
 /**
+ * Undici 8 uses a newer dispatcher-handler contract than the fetch bundled
+ * with Node 22 / Electron 40. Explicitly passing an Undici 8 dispatcher to
+ * that built-in fetch otherwise fails before making a request with
+ * `UND_ERR_INVALID_ARG: invalid onRequestStart method`.
+ */
+export function makeUndiciDispatcherFetchCompatible(
+  undiciModule: typeof undici,
+  dispatcher: undici.Dispatcher,
+): undici.Dispatcher {
+  const Dispatcher1Wrapper = undiciModule.Dispatcher1Wrapper
+  return typeof Dispatcher1Wrapper === 'function'
+    ? new Dispatcher1Wrapper(dispatcher)
+    : dispatcher
+}
+
+/**
  * Get mTLS configuration from environment variables
  */
 export const getMTLSConfig = memoize((): MTLSConfig | undefined => {
@@ -148,7 +164,9 @@ export function getTLSFetchOptions(): {
     pipelining: 1,
   })
 
-  return { dispatcher: agent }
+  return {
+    dispatcher: makeUndiciDispatcherFetchCompatible(undiciMod, agent),
+  }
 }
 
 /**

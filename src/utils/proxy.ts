@@ -15,6 +15,7 @@ import {
   getMTLSAgent,
   getMTLSConfig,
   getTLSFetchOptions,
+  makeUndiciDispatcherFetchCompatible,
   type TLSConfig,
 } from './mtls.js'
 
@@ -233,7 +234,10 @@ export const getProxyAgent = memoize((uri: string): undici.Dispatcher => {
     proxyOptions.requestTls = tlsOpts
   }
 
-  return new undiciMod.EnvHttpProxyAgent(proxyOptions)
+  return makeUndiciDispatcherFetchCompatible(
+    undiciMod,
+    new undiciMod.EnvHttpProxyAgent(proxyOptions),
+  )
 })
 
 /**
