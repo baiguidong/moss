@@ -46,8 +46,6 @@ export class ServerAppRuntime {
     config: ServerConfig,
     serverInstanceId: string,
     options: {
-      channelHost?: unknown
-      channelOptions?: Record<string, unknown>
       hostProtocols?: Array<Record<string, unknown>>
       hostHandlers?: Record<string, Record<string, (input: Record<string, unknown>, context: Record<string, unknown>) => unknown>>
       onEvent?: (event: Record<string, unknown>) => void
@@ -66,8 +64,6 @@ export class ServerAppRuntime {
       nodeExecutable: process.env.MOSS_NODE_PATH || process.execPath,
       stateStore: state,
       credentialAdapter: new ServerAppCredentialAdapter(config.rootDir),
-      channelHost: options.channelHost,
-      channelOptions: options.channelOptions,
       hostCapabilityOptions: { protocols: options.hostProtocols || [] },
     })
     for (const [protocol, handlers] of Object.entries(options.hostHandlers || {})) {

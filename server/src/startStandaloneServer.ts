@@ -10,19 +10,12 @@ import { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { createServerAccountHostHandlers } from './apps/serverAccountHost.js'
 import { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
-import { OpenIMIntegrationService } from './openim/service.js'
-import {
-  getSystemSettings,
-  toOpenIMServerConfig,
-  updateSystemSettings,
-} from './systemSettings.js'
 import {
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
 } from '../../packages/app-runtime/src/index.mjs'
 import {
   AGENT_HOST_METHODS,
-  CHANNEL_HOST_METHODS,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
 } from '../../packages/app-sdk/src/index.mjs'
@@ -65,14 +58,6 @@ export async function startStandaloneDirectConnectServer(
     logger,
   )
   const appRuntime = await ServerAppRuntime.create(config, instance.instanceId, {
-    channelOptions: {
-      handlers: Object.fromEntries(CHANNEL_HOST_METHODS.map(method => [
-        method,
-        (input: Record<string, unknown>, context: Record<string, unknown>) => (
-          agentChannelHost.handleChannelRequest(method, input, context)
-        ),
-      ])),
-    },
     hostProtocols: [createAccountProtocolDefinition(), createAgentProtocolDefinition()],
     hostHandlers: {
       [MOSS_ACCOUNT_PROTOCOL]: createServerAccountHostHandlers(authService),
@@ -91,40 +76,6 @@ export async function startStandaloneDirectConnectServer(
     rootDir: config.rootDir,
     config: config.ragflow,
   })
-  let systemSettings = getSystemSettings()
-  const legacyOpenIM = config.openim
-  if (
-    !systemSettings.openIM.configured &&
-    legacyOpenIM &&
-    Boolean(
-      legacyOpenIM.enabled ||
-      legacyOpenIM.apiUrl ||
-      legacyOpenIM.wsUrl ||
-      legacyOpenIM.chatUrl ||
-      legacyOpenIM.secret ||
-      legacyOpenIM.webhookSecret
-    )
-  ) {
-    systemSettings = updateSystemSettings({
-      openIM: {
-        enabled: legacyOpenIM.enabled,
-        instanceId: legacyOpenIM.instanceId,
-        apiUrl: legacyOpenIM.apiUrl || '',
-        wsUrl: legacyOpenIM.wsUrl || '',
-        chatUrl: legacyOpenIM.chatUrl || '',
-        adminUserId: legacyOpenIM.adminUserId,
-        secret: legacyOpenIM.secret || '',
-        webhookSecret: legacyOpenIM.webhookSecret || '',
-        requestTimeoutMs: legacyOpenIM.requestTimeoutMs,
-      },
-    })
-  }
-  const openIMIntegration = new OpenIMIntegrationService({
-    db: store.db,
-    config: toOpenIMServerConfig(systemSettings.openIM),
-    authService,
-  })
-
   const server = startServer(
     config,
     runtime,
@@ -132,7 +83,6 @@ export async function startStandaloneDirectConnectServer(
     logger,
     appRuntime,
     ragflowIntegration,
-    openIMIntegration,
     agentChannelHost,
   )
   const actualPort = (await server.ready) ?? config.port

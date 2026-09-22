@@ -68,19 +68,9 @@ describe('app sidebar more menu', () => {
 
   test('builds menu entries from feature availability', () => {
     expect(getSidebarMoreViews({ libraryEnabled: false, workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
-      .toEqual(['overview', 'openim', 'audit', 'cron']);
+      .toEqual(['overview', 'audit', 'cron']);
     expect(getSidebarMoreViews({ libraryEnabled: true, workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['overview', 'library', 'workflows', 'mail', 'openim', 'audit', 'cron']);
-  });
-
-  test('replaces the built-in OpenIM entry when the App contributes its view', () => {
-    expect(getSidebarMoreViews({
-      libraryEnabled: false,
-      workflowsEnabled: false,
-      remoteEnabled: false,
-      agentMailEnabled: false,
-      openIMAppEnabled: true,
-    })).toEqual(['overview', 'audit', 'cron']);
+      .toEqual(['overview', 'library', 'workflows', 'mail', 'audit', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {

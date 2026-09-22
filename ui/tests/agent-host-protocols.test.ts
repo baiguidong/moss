@@ -3,22 +3,19 @@ import {
   APP_ERROR_CODES,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
-  MOSS_OPENIM_PROTOCOL,
-  openIMDefaultConversationId,
-  openIMDefaultConversationIdFor,
-  openIMDirectConversationId,
-  parseOpenIMDirectConversationId,
+  MOSS_DESKTOP_PROTOCOL,
+  MOSS_REMOTE_PROTOCOL,
   validateAccountHostInput,
   validateAgentHostInput,
-  validateChannelHostInput,
-  validateOpenIMBackendEventData,
-  validateOpenIMHostInput,
+  validateDesktopHostInput,
+  validateRemoteHostInput,
 } from '../../packages/app-sdk/src/index.mjs'
 import {
   AppHostCapabilityRegistry,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
-  createOpenIMProtocolDefinition,
+  createDesktopProtocolDefinition,
+  createRemoteProtocolDefinition,
 } from '../../packages/app-runtime/src/index.mjs'
 
 function request(protocol: string, method: string, input: Record<string, unknown>, permission: string) {
@@ -47,7 +44,7 @@ describe('Account and Agent Host protocols', () => {
       .toThrow(/cannot override Runtime identity/)
   })
 
-  it('rejects unsafe Channel permission modes and malformed binding policies', () => {
+  it('rejects unsafe Agent permission modes and malformed binding policies', () => {
     expect(() => validateAgentHostInput('binding.update', {
       externalConversationId: 'chat-1',
       patch: { permissionMode: 'bypassPermissions' },
@@ -98,22 +95,17 @@ describe('Account and Agent Host protocols', () => {
       externalConversationId: 'chat-1',
       externalEventId: 'event-1',
     }
-    expect(validateChannelHostInput('message.receive', {
+    expect(validateAgentHostInput('turn.start', {
       ...identity,
       text: 'hello',
       attachments: [{ type: 'file', name: 'note.txt', mimeType: 'text/plain' }],
     })).toMatchObject({ text: 'hello' })
-    expect(() => validateChannelHostInput('message.receive', {
-      ...identity,
-      text: 'hello',
-      externalMemberId: 'another-user',
-    })).toThrow(/unknown field: externalMemberId/)
     expect(() => validateAgentHostInput('turn.start', {
       ...identity,
       text: 'hello',
       externalMemberId: 'another-user',
     })).toThrow(/unknown field: externalMemberId/)
-    expect(() => validateChannelHostInput('message.receive', {
+    expect(() => validateAgentHostInput('turn.start', {
       ...identity,
       text: 'x'.repeat(100_001),
     })).toThrow(/text is invalid/)
@@ -121,7 +113,7 @@ describe('Account and Agent Host protocols', () => {
       ...identity,
       attachments: Array.from({ length: 33 }, () => ({ type: 'file' })),
     })).toThrow(/at most 32/)
-    expect(() => validateChannelHostInput('message.receive', {
+    expect(() => validateAgentHostInput('turn.start', {
       ...identity,
       attachments: [{ type: 'file', secret: 'value' }],
     })).toThrow(/unknown field: secret/)
@@ -155,57 +147,36 @@ describe('Account and Agent Host protocols', () => {
     })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
   })
 
-  it('validates and permission-gates the OpenIM host protocol', async () => {
-    expect(validateOpenIMHostInput('session.ensure', {})).toEqual({})
-    expect(validateOpenIMHostInput('message.send', {
-      recipientId: 'user-1',
-      conversationId: 'openim-user:self/direct:user-1',
-      text: 'hello',
-      idempotencyKey: 'turn-1',
-      extension: 'app-defined-message-kind',
-    })).toMatchObject({
-      recipientId: 'user-1', conversationId: 'openim-user:self/direct:user-1', extension: 'app-defined-message-kind',
-    })
-    expect(validateOpenIMHostInput('conversation.mark-read', {
-      conversationId: 'openim-user:self/direct:user-1',
-    })).toEqual({ conversationId: 'openim-user:self/direct:user-1' })
-    expect(() => validateOpenIMHostInput('conversation.mark-read', {
-      conversationId: 'not-an-openim-conversation',
-    })).toThrow(/invalid conversationId/)
-    expect(() => validateOpenIMHostInput('message.send', {
-      recipientId: 'user-2',
-      conversationId: 'openim-user:self/direct:user-1',
-      text: 'hello',
-      idempotencyKey: 'turn-1',
-    })).toThrow(/does not match/)
-    expect(openIMDefaultConversationId('self')).toBe('openim-user:self/*')
-    expect(openIMDirectConversationId('self', 'user:1')).toBe('openim-user:self/direct:user%3A1')
-    expect(parseOpenIMDirectConversationId('openim-user:self/direct:user%3A1')).toEqual({
-      userId: 'self', peerUserId: 'user:1',
-    })
-    expect(openIMDefaultConversationIdFor('openim-user:self/direct:user%3A1')).toBe('openim-user:self/*')
-    expect(validateOpenIMBackendEventData('message.received', {
-      externalUserId: 'user-1',
-      externalConversationId: 'direct:user-1',
-      externalEventId: 'message-1',
-      text: 'hello',
-      sentAt: 100,
-      contentType: 101,
-      sessionType: 1,
-      extension: 'app-defined-message-kind',
-    })).toMatchObject({ externalEventId: 'message-1', text: 'hello', extension: 'app-defined-message-kind' })
+  it('validates and permission-gates Desktop and same-App remote protocols', async () => {
+    expect(validateDesktopHostInput('file.pick', { kind: 'image', multiple: true }))
+      .toEqual({ kind: 'image', multiple: true })
+    expect(() => validateDesktopHostInput('shell.open-external', { url: 'file:///tmp/secret' }))
+      .toThrow(/HTTP or HTTPS/)
+    expect(validateRemoteHostInput('action.invoke', {
+      action: 'directory.list', input: {}, timeoutMs: 30_000,
+    })).toEqual({ action: 'directory.list', input: {}, timeoutMs: 30_000 })
+    expect(() => validateRemoteHostInput('action.invoke', { action: '../other-app' }))
+      .toThrow(/invalid action/)
 
     const registry = new AppHostCapabilityRegistry()
-    registry.registerProtocol(createOpenIMProtocolDefinition())
-    registry.registerHandler(MOSS_OPENIM_PROTOCOL, 'session.ensure', () => ({ connected: true }))
+    registry.registerProtocol(createDesktopProtocolDefinition())
+    registry.registerProtocol(createRemoteProtocolDefinition())
+    registry.registerHandler(MOSS_DESKTOP_PROTOCOL, 'file.pick', () => ({ files: [] }))
+    registry.registerHandler(MOSS_REMOTE_PROTOCOL, 'action.invoke', input => ({ action: input.action }))
     await expect(registry.dispatch(request(
-      MOSS_OPENIM_PROTOCOL,
-      'session.ensure',
-      {},
-      'openim:client',
-    ))).resolves.toEqual({ connected: true })
+      MOSS_DESKTOP_PROTOCOL,
+      'file.pick',
+      { kind: 'file' },
+      'desktop:files',
+    ))).resolves.toEqual({ files: [] })
+    await expect(registry.dispatch(request(
+      MOSS_REMOTE_PROTOCOL,
+      'action.invoke',
+      { action: 'directory.list' },
+      'remote:actions',
+    ))).resolves.toEqual({ action: 'directory.list' })
     await expect(registry.dispatch({
-      ...request(MOSS_OPENIM_PROTOCOL, 'session.ensure', {}, 'openim:client'),
+      ...request(MOSS_REMOTE_PROTOCOL, 'action.invoke', { action: 'directory.list' }, 'remote:actions'),
       grants: [],
     })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
   })

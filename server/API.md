@@ -13,6 +13,7 @@
 - auth API
 - 内置窗口登录授权与永久 API Key 交换
 - users / api keys 管理 API
+- user / org / host 隔离的 App Runtime API
 - `/admin` 静态 SPA
 
 仓库开发环境的默认启动入口：
@@ -251,70 +252,34 @@ MOSS_RAGFLOW_PASSWORD_LENGTH=6
 
 仓库中的 `deploy/rag` 提供 RAGFlow、Native MCP、Extended MCP 和 Moss RAG MCP 的打包、安装及启停脚本。执行 `deploy/rag/install.sh` 会拉取运行镜像、在目标机编译 Extended MCP 并启动服务。
 
-## OpenIM 即时消息
+## App Runtime
 
-OpenIM 由 Moss Server 统一管理账号和登录 token。Desktop 继续使用 Moss 浏览器认证，不需要单独注册或输入 OpenIM 密码。
+Server 只托管通用 App 包、实例、Action 和 Host API，不包含任何具体平台的连接、账号供应或消息逻辑。已知 App 包来自 `server.json` 的 `apps.sourceDir`，客户端不能上传任意可执行包。
 
-OpenIM 连接信息在管理端“系统设置 / OpenIM”中维护，保存后立即生效，不需要通过 Moss Server 启动环境变量注入。必填项包括 API URL、WebSocket URL、管理员用户 ID、OpenIM 管理密钥和 Webhook 密钥。例如：
+默认 owner 为当前认证用户。管理员可用 `owner_scope=org|host` 或 JSON 字段 `ownerScope` 管理组织级、主机级实例；普通用户不能越过自己的 user owner。相同 App ID 与实例 ID 在不同 owner 下完全隔离。
 
-```json
-{
-  "openIM": {
-    "enabled": true,
-    "instanceId": "default",
-    "apiUrl": "http://10.0.1.180:10002",
-    "wsUrl": "ws://10.0.1.180:10001",
-    "chatUrl": "http://10.0.1.180:10008",
-    "adminUserId": "imAdmin",
-    "secret": "<OpenIM OPENIM_SECRET>",
-    "webhookSecret": "<至少 16 位随机字符串>",
-    "requestTimeoutMs": 15000
-  }
-}
-```
+主要接口：
 
-配置保存在 Moss Server 的 `settings.json`，只有拥有 `admin:settings` 权限的管理员可以读取或修改。旧版 `server.json.openim` 配置会在首次启动时自动迁移。
+- `GET /api/v1/apps`、`GET /api/v1/apps/:appId`：查看当前 owner 的 App。
+- `POST /api/v1/apps/availability`：检查已知包源是否包含指定版本。
+- `POST /api/v1/apps/install`：按 App ID 和版本安装已知包。
+- `PATCH|DELETE /api/v1/apps/:appId`：启停、授权、切换版本或卸载。
+- `GET|POST /api/v1/apps/:appId/instances`：列出或创建实例。
+- `PATCH|DELETE /api/v1/apps/:appId/instances/:instanceId`：配置、启停或删除实例。
+- `POST /api/v1/apps/:appId/instances/:instanceId/actions/:action`：调用 Action。
+- `POST /api/v1/apps/:appId/instances/:instanceId/host`：以该实例身份调用已声明的 Host API。
+- `POST /api/v1/apps/:appId/instances/:instanceId/restart`：重启实例。
+- `GET /api/v1/apps/:appId/instances/:instanceId/status|logs`：查看状态或日志。
 
-- `POST /api/v1/im/session`：为当前 Moss 用户按需创建或同步 OpenIM 账号，并签发当前平台的 IM token；需要 `im:use`。Desktop 会按返回的过期时间提前轮换 token。
-- `GET /api/v1/directory`：返回当前组织的部门树和启用用户，不返回角色、权限或凭据；需要 `directory:read`。
-- `POST /api/v1/im/direct-session`：验证目标用户属于当前组织并完成目标 OpenIM 账号开户；需要 `im:use`。
-- `POST /api/v1/im/group-session`：验证群成员属于当前组织并完成开户；需要 `im:use` 和 `im:group:create`。
-- `GET /api/v1/im/health`：检查当前用户是否能够访问已配置的 OpenIM 服务；需要 `im:use`。
+权限拆分如下：
 
-Moss 用户 ID 与 OpenIM 用户 ID 的映射保存在 `openim_bindings`。用户改名会同步到 OpenIM，用户停用时会撤销其各平台 OpenIM 在线会话；任一平台撤销失败时用户管理接口会返回错误，便于管理员重试。OpenIM 管理 secret 只存在于 Moss Server，不会下发到 Desktop。
+- `apps:read`：查看 App、实例和可用版本。
+- `apps:manage`：安装、配置、授权、启停和卸载。
+- 内置普通用户和部门管理员默认拥有上述 App 权限，但只能操作自己的 user owner；`org` 和 `host` owner 仍只允许管理员。
+- `apps:deploy`：重启和部署运行实例。
+- `apps:logs`：读取实例日志。
 
-仓库中的 `deploy/im` 提供完整的一键安装和交互配置脚本。执行 `deploy/im/install.sh` 会生成宿主机 `config/webhooks.yml`、拉取镜像并启动 OpenIM 核心服务。
-
-OpenIM 开源服务端内置权限回调，但默认关闭。要在服务端强制执行组织隔离和群聊权限，将 OpenIM `config/webhooks.yml` 中的 `url` 配置为：
-
-```text
-http://<Moss Server 地址>:<端口>/api/v1/im/openim-callback/<系统设置中的 Webhook 密钥>
-```
-
-并启用以下回调后重启 OpenIM：
-
-```yaml
-beforeSendSingleMsg:
-  enable: true
-  failedContinue: false
-beforeSendGroupMsg:
-  enable: true
-  failedContinue: false
-beforeCreateGroup:
-  enable: true
-  failedContinue: false
-beforeMemberJoinGroup:
-  enable: true
-  failedContinue: false
-beforeApplyJoinGroup:
-  enable: true
-  failedContinue: false
-beforeInviteUserToGroup:
-  enable: true
-  failedContinue: false
-```
-
-未启用回调时，Moss API 和官方 Desktop UI 仍会检查权限与组织范围，但无法阻止经过修改的 OpenIM 客户端直接调用 SDK。
+App 通过 `moss.account/v1` 获取当前 owner 的身份和受权限约束的组织目录，通过 `moss.agent/v1` 使用 Session、Turn 和策略能力。平台专属配置、Secret、用户 ID 映射、SDK 和部署脚本均由对应 App 仓库维护。
 
 ## Roles and permissions
 
@@ -870,7 +835,8 @@ installation、instance、deployment、密钥、数据和日志都按 owner 隔�
 
 - `apps:read`：查看 App、实例和状态。
 - `apps:manage`：安装、启停、配置、创建/删除实例和卸载。
-- `apps:deploy`：调用 Action 和重启实例。
+- `apps:invoke`：调用已启用实例的 Action 和 Host API。
+- `apps:deploy`：重启和部署实例。
 - `apps:logs`：读取实例日志。
 - `*`：包含以上全部权限。
 
@@ -920,7 +886,7 @@ Server 从可信包源获取并完整校验指定身份的包。新安装默认 
 
 ### POST `/api/v1/apps/:appId/instances/:instanceId/actions/:action`
 
-请求体为 `{ "input": ..., "timeoutMs": 30000 }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:deploy`。
+请求体为 `{ "input": ..., "timeoutMs": 30000 }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:invoke`。
 
 ### GET `/api/v1/apps/:appId/instances/:instanceId/status`
 
@@ -930,7 +896,7 @@ Server 从可信包源获取并完整校验指定身份的包。新安装默认 
 
 请求体为 `{ "protocol": "moss.agent/v1", "method": "binding.get", "input": {} }`。
 供受信任的 Desktop App UI 调用该 Server 实例已声明并获授权的 Host API；仍执行 App
-Manifest、grant、owner 和实例边界校验。需要 `apps:deploy`。
+Manifest、grant、owner 和实例边界校验。需要 `apps:invoke`。
 
 ### GET `/api/v1/apps/:appId/instances/:instanceId/logs?limit=500`
 

@@ -421,7 +421,7 @@ export function createDefaultAppManifest({ id, displayName, description = '' }) 
     version: '0.1.0',
     displayName: displayName || appId,
     description,
-    hostApi: '^1.0.0',
+    hostApi: '^2.0.0',
     ui: { entry: 'dist/ui/index.html', window: { width: 1100, height: 760, resizable: true } },
     permissions: [],
   }

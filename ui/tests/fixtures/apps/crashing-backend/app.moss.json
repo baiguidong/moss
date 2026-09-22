@@ -3,7 +3,7 @@
   "id": "fixture.crashing-backend",
   "version": "1.0.0",
   "displayName": "Crashing Backend",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",

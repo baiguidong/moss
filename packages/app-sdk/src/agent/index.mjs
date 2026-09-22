@@ -1,5 +1,4 @@
 import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
-import { validateChannelMessageContent } from '../channel/index.mjs'
 
 export const MOSS_AGENT_PROTOCOL = 'moss.agent/v1'
 
@@ -7,6 +6,8 @@ export const AGENT_PERMISSIONS = Object.freeze({
   catalogRead: 'agent:catalog:read',
   bindingsRead: 'agent:bindings:read',
   bindingsWrite: 'agent:bindings:write',
+  sessionsRead: 'agent:sessions:read',
+  sessionsWrite: 'agent:sessions:write',
   turnsRead: 'agent:turns:read',
   turnsWrite: 'agent:turns:write',
 })
@@ -27,7 +28,7 @@ export const AGENT_SESSION_MODES = Object.freeze([
 
 // Channel Apps may narrow permissions, but may never request the unsafe
 // bypassPermissions mode used by an explicitly controlled local session.
-export const AGENT_CHANNEL_PERMISSION_MODES = Object.freeze([
+export const AGENT_PERMISSION_MODES = Object.freeze([
   'default',
   'acceptEdits',
   'dontAsk',
@@ -45,6 +46,11 @@ export const AGENT_HOST_METHOD_PERMISSIONS = Object.freeze({
   'binding.get': AGENT_PERMISSIONS.bindingsRead,
   'binding.update': AGENT_PERMISSIONS.bindingsWrite,
   'binding.reset': AGENT_PERMISSIONS.bindingsWrite,
+  'session.list': AGENT_PERMISSIONS.sessionsRead,
+  'session.current': AGENT_PERMISSIONS.sessionsRead,
+  'session.create': AGENT_PERMISSIONS.sessionsWrite,
+  'session.select': AGENT_PERMISSIONS.sessionsWrite,
+  'session.abort': AGENT_PERMISSIONS.sessionsWrite,
   'context.observe': AGENT_PERMISSIONS.turnsWrite,
   'turn.start': AGENT_PERMISSIONS.turnsWrite,
   'turn.list': AGENT_PERMISSIONS.turnsRead,
@@ -58,7 +64,6 @@ export const AGENT_HOST_METHOD_PERMISSIONS = Object.freeze({
 export const AGENT_BACKEND_EVENT_PERMISSIONS = Object.freeze({
   'binding.changed': AGENT_PERMISSIONS.bindingsRead,
   'turn.accepted': AGENT_PERMISSIONS.turnsRead,
-  'turn.output': AGENT_PERMISSIONS.turnsRead,
   'turn.review_requested': AGENT_PERMISSIONS.turnsRead,
   'turn.completed': AGENT_PERMISSIONS.turnsRead,
   'turn.failed': AGENT_PERMISSIONS.turnsRead,
@@ -105,6 +110,52 @@ function validateStringList(value, label, { nullable = true, maxItems = 256 } = 
   }
 }
 
+const MAX_MESSAGE_TEXT_LENGTH = 100_000
+const MAX_ATTACHMENTS = 32
+const MAX_ATTACHMENT_DATA_LENGTH = 512 * 1024
+
+function optionalText(input, field, method, { nullable = false, maxLength = 512 } = {}) {
+  const value = input[field]
+  if (value === undefined || (nullable && value === null)) return
+  if (typeof value !== 'string' || value.length > maxLength) fail(`${method} has an invalid ${field}`)
+}
+
+function optionalInteger(input, field, method, minimum, maximum) {
+  const value = input[field]
+  if (value === undefined) return
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    fail(`${method} ${field} must be between ${minimum} and ${maximum}`)
+  }
+}
+
+export function validateAgentAttachments(value, method) {
+  if (value === undefined) return
+  if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS) {
+    fail(`${method} attachments must contain at most ${MAX_ATTACHMENTS} items`)
+  }
+  for (const [index, attachmentValue] of value.entries()) {
+    const label = `${method} attachments[${index}]`
+    const attachment = record(attachmentValue, label)
+    rejectUnknownFields(attachment, ['type', 'name', 'mimeType', 'data', 'path'], label)
+    if (!['file', 'image'].includes(attachment.type)) fail(`${label} has an invalid type`)
+    optionalText(attachment, 'name', label, { maxLength: 300 })
+    optionalText(attachment, 'mimeType', label, { maxLength: 200 })
+    optionalText(attachment, 'path', label, { maxLength: 4096 })
+    optionalText(attachment, 'data', label, { maxLength: MAX_ATTACHMENT_DATA_LENGTH })
+  }
+}
+
+export function validateAgentMessageContent(input, method) {
+  if (input.text !== undefined
+    && (typeof input.text !== 'string' || input.text.length > MAX_MESSAGE_TEXT_LENGTH)) {
+    fail(`${method} text is invalid`)
+  }
+  validateAgentAttachments(input.attachments, method)
+  if ((!input.text || !input.text.trim()) && (!input.attachments || input.attachments.length === 0)) {
+    fail(`${method} requires text or attachments`)
+  }
+}
+
 function validateBindingTarget(input, method) {
   requireText(input, 'externalConversationId', method)
   requireText(input, 'externalMemberId', method, { optional: true })
@@ -135,7 +186,7 @@ function validateBindingPatch(value) {
     }
   }
   if (patch.permissionMode !== undefined && patch.permissionMode !== null
-    && !AGENT_CHANNEL_PERMISSION_MODES.includes(patch.permissionMode)) {
+    && !AGENT_PERMISSION_MODES.includes(patch.permissionMode)) {
     fail('binding.update patch has an invalid permissionMode')
   }
   if (patch.resources !== undefined && patch.resources !== null) {
@@ -243,6 +294,45 @@ export function validateAgentHostInput(method, value) {
         fail('binding.reset expectedRevision must be a non-negative integer')
       }
       break
+    case 'session.list':
+      rejectUnknownFields(input, [
+        'externalUserId', 'externalConversationId', 'externalEventId',
+        'category', 'page', 'pageSize', 'query',
+      ], normalizedMethod)
+      requireText(input, 'externalUserId', normalizedMethod)
+      requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
+      requireText(input, 'externalEventId', normalizedMethod, { optional: true })
+      optionalText(input, 'category', normalizedMethod, { maxLength: 64 })
+      optionalText(input, 'query', normalizedMethod, { maxLength: 500 })
+      optionalInteger(input, 'page', normalizedMethod, 0, 1_000_000)
+      optionalInteger(input, 'pageSize', normalizedMethod, 1, 100)
+      break
+    case 'session.current':
+      rejectUnknownFields(input, ['externalUserId', 'externalConversationId', 'externalEventId'], normalizedMethod)
+      requireText(input, 'externalUserId', normalizedMethod)
+      requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
+      requireText(input, 'externalEventId', normalizedMethod, { optional: true })
+      break
+    case 'session.abort':
+      rejectUnknownFields(input, ['externalUserId', 'externalConversationId', 'externalEventId'], normalizedMethod)
+      requireText(input, 'externalUserId', normalizedMethod)
+      requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
+      requireText(input, 'externalEventId', normalizedMethod)
+      break
+    case 'session.create':
+      rejectUnknownFields(input, ['externalUserId', 'externalConversationId', 'externalEventId', 'title'], normalizedMethod)
+      requireText(input, 'externalUserId', normalizedMethod)
+      requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
+      requireText(input, 'externalEventId', normalizedMethod)
+      optionalText(input, 'title', normalizedMethod, { maxLength: 300 })
+      break
+    case 'session.select':
+      rejectUnknownFields(input, ['externalUserId', 'externalConversationId', 'externalEventId', 'sessionId'], normalizedMethod)
+      requireText(input, 'externalUserId', normalizedMethod)
+      requireText(input, 'externalConversationId', normalizedMethod, { optional: true })
+      requireText(input, 'externalEventId', normalizedMethod)
+      requireText(input, 'sessionId', normalizedMethod)
+      break
     case 'context.observe':
       rejectUnknownFields(input, [
         'externalUserId', 'externalConversationId', 'externalEventId', 'text',
@@ -261,7 +351,7 @@ export function validateAgentHostInput(method, value) {
       requireText(input, 'externalConversationId', normalizedMethod)
       requireText(input, 'externalEventId', normalizedMethod)
       requireText(input, 'defaultConversationId', normalizedMethod, { optional: true })
-      validateChannelMessageContent(input, normalizedMethod)
+      validateAgentMessageContent(input, normalizedMethod)
       if (input.mentioned !== undefined && typeof input.mentioned !== 'boolean') {
         fail('turn.start mentioned must be a boolean')
       }

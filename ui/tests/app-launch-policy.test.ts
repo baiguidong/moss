@@ -4,7 +4,7 @@ import { requireEnabledAppForLaunch } from '../src/apps/app-launch-policy.mjs'
 function runtimeWith(enabled?: boolean) {
   return {
     installations: {
-      get: (appId: string) => appId === 'moss.openim' && enabled !== undefined
+      get: (appId: string) => appId === 'example.app' && enabled !== undefined
         ? { appId, enabled }
         : null,
     },
@@ -15,8 +15,8 @@ describe('App launch policy', () => {
   it('allows an enabled App to open', () => {
     expect(requireEnabledAppForLaunch({
       runtime: runtimeWith(true),
-      appId: 'moss.openim',
-      displayName: '即时消息',
+      appId: 'example.app',
+      displayName: '示例 App',
     })).toMatchObject({ enabled: true })
   })
 
@@ -24,9 +24,9 @@ describe('App launch policy', () => {
     for (const enabled of [false, undefined]) {
       expect(() => requireEnabledAppForLaunch({
         runtime: runtimeWith(enabled),
-        appId: 'moss.openim',
-        displayName: '即时消息',
-      })).toThrow('“即时消息”未启用，请先启用后再打开。')
+        appId: 'example.app',
+        displayName: '示例 App',
+      })).toThrow('“示例 App”未启用，请先启用后再打开。')
     }
   })
 })

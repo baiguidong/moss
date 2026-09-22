@@ -132,7 +132,7 @@ export async function handleAppRoute(input: {
     }
     const instanceAction = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/actions\/([^/]+)$/)
     if (instanceAction && req.method === 'POST') {
-      requireAppScope(authService, auth, 'apps:deploy')
+      requireAppScope(authService, auth, 'apps:invoke')
       const body = await readJson(req)
       const result = await runAsOwner(body, () => runtime.invoke(
         decode(instanceAction[1]!),
@@ -146,7 +146,7 @@ export async function handleAppRoute(input: {
     }
     const instanceHost = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/host$/)
     if (instanceHost && req.method === 'POST') {
-      requireAppScope(authService, auth, 'apps:deploy')
+      requireAppScope(authService, auth, 'apps:invoke')
       const body = await readJson(req)
       const protocol = text(body.protocol)
       const method = text(body.method)

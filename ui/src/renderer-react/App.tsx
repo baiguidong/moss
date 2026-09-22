@@ -15,7 +15,6 @@ import {
   type ToolDisplayMode,
 } from '@/components/chat/tool-display-settings';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
-import { OpenIMView } from '@/components/openim-view';
 import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -2849,8 +2848,6 @@ export default function App() {
               enabled={agentMailEnabled}
               onOpenSettings={() => setActiveView('settings')}
             />
-          ) : activeView === 'openim' ? (
-            <OpenIMView />
           ) : activeView === 'skills' || activeView === 'connectors' || activeView === 'experts' ? (
             <ResourceHubView
               activeTab={activeView}

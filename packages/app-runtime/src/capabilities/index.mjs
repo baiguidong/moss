@@ -238,6 +238,8 @@ export class AppHostCapabilityRegistry {
       generation: request.generation,
       target: request.target,
       principal: request.principal || null,
+      dataDir: request.dataDir || null,
+      runtimeDir: request.runtimeDir || null,
       requestId: request.requestId,
       protocol: definition.protocol,
       method: name,

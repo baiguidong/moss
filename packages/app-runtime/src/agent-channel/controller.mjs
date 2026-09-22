@@ -1,7 +1,4 @@
-import {
-  MOSS_AGENT_PROTOCOL,
-  MOSS_CHANNEL_PROTOCOL,
-} from '../../../app-sdk/src/index.mjs';
+import { MOSS_AGENT_PROTOCOL } from '../../../app-sdk/src/index.mjs';
 import { DEFAULT_AGENT_CHANNEL_POLICY } from './store.mjs';
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Moss 会话处理失败，请在 Moss 中查看详情后重试。';
@@ -245,10 +242,6 @@ export function createAgentChannelController({
   sendPrompt,
   abortSession,
   publishEvent = async () => {},
-  authorizeChannelRequest = async () => {},
-  onConnectionUpdate = async (input) => ({ connected: input.connected }),
-  onPairingAttempt = null,
-  onDecisionResponse = null,
   defaultsFor = () => DEFAULT_AGENT_CHANNEL_POLICY,
   defaultBindingIdFor = () => '*',
   log = () => {},
@@ -302,14 +295,11 @@ export function createAgentChannelController({
   }
 
   async function emitForTurn(turn, name, data = {}) {
-    const protocol = turn.input?.requestProtocol === MOSS_AGENT_PROTOCOL
-      ? MOSS_AGENT_PROTOCOL
-      : MOSS_CHANNEL_PROTOCOL;
     try {
       await publishEvent({
         appId: turn.appId,
         instanceId: turn.instanceId,
-        protocol,
+        protocol: MOSS_AGENT_PROTOCOL,
         name,
         eventId: `${name}:${turn.id}:${turn.updatedAt}`,
         data: {
@@ -452,7 +442,7 @@ export function createAgentChannelController({
     return { session: created, continuitySummary };
   }
 
-  async function startTurn(input, context, requestProtocol) {
+  async function startTurn(input, context) {
     const scope = contextScope(context);
     const message = sanitizeExternalMessage(input);
     const defaultConversationId = normalizeText(input.defaultConversationId)
@@ -481,7 +471,7 @@ export function createAgentChannelController({
         hop: message.hop,
         replyMode: binding.replyMode,
         policy: binding,
-        input: { message, requestProtocol, conversationId: conversation.id, defaultConversationId },
+        input: { message, conversationId: conversation.id, defaultConversationId },
       });
       if (!claim.claimed) return turnResult(claim.turn, { duplicate: true });
 
@@ -550,82 +540,6 @@ export function createAgentChannelController({
         throw Object.assign(error instanceof Error ? error : new Error(String(error)), { turn: failed });
       }
     });
-  }
-
-  async function handleChannelRequest(method, input, context) {
-    const scope = contextScope(context);
-    if (method === 'connection.update') return onConnectionUpdate(input, context);
-    if (method === 'pairing.attempt') {
-      if (!onPairingAttempt) throw new Error('This Channel App does not support Core-managed pairing.');
-      return onPairingAttempt(input, context);
-    }
-    await authorizeChannelRequest(method, input, context);
-    if (method === 'message.receive') return startTurn(input, context, MOSS_CHANNEL_PROTOCOL);
-    if (method === 'delivery.ack') {
-      if (input.kind !== 'turn') return { acknowledged: true };
-      const turn = store.getTurn(input.deliveryId, scope);
-      if (!turn || turn.externalConversationId !== input.externalConversationId) {
-        throw new Error('Agent Channel turn delivery not found.');
-      }
-      const acknowledged = store.updateTurn(turn.id, { delivered: input.ok === true });
-      return { acknowledged: input.ok === true, turnId: acknowledged.id, status: acknowledged.status };
-    }
-    if (method === 'decision.respond') {
-      if (!onDecisionResponse) throw new Error('Agent Channel decisions are not available.');
-      return onDecisionResponse(input, context);
-    }
-
-    const externalConversationId = normalizeText(input.externalConversationId)
-      || `user:${normalizeText(input.externalUserId)}`;
-    const conversation = store.getOrCreateConversation({ ...scope, externalConversationId });
-    if (method === 'conversation.list') {
-      const sessions = listWritableSessions(normalizeText(input.query), context, input);
-      const requestedPage = Number.parseInt(input.page, 10);
-      const page = Number.isFinite(requestedPage) ? Math.max(0, requestedPage) : 0;
-      const requestedPageSize = Number.parseInt(input.pageSize, 10);
-      const pageSize = Number.isFinite(requestedPageSize) ? Math.min(20, Math.max(1, requestedPageSize)) : 10;
-      const offset = page * pageSize;
-      return {
-        sessions: sessions.slice(offset, offset + pageSize).map(sessionSummary),
-        currentSession: sessionSummary(getWritableSession(conversation.activeSessionId, context)),
-        page,
-        pageSize,
-        total: sessions.length,
-        hasPrevious: page > 0,
-        hasNext: offset + pageSize < sessions.length,
-      };
-    }
-    if (method === 'conversation.current') {
-      return { session: sessionSummary(getWritableSession(conversation.activeSessionId, context)) };
-    }
-    if (method === 'conversation.create') {
-      const binding = await effectiveBinding(input, context);
-      const created = await createSession({
-        title: normalizeText(input.title),
-        ...scope,
-        externalConversationId,
-        binding,
-        continuitySummary: '',
-        rotatedFromSessionId: null,
-      });
-      store.setConversationSession(conversation.id, created.id);
-      await applySessionPolicy(created.id, binding, context);
-      return { session: sessionSummary(created) };
-    }
-    if (method === 'conversation.select') {
-      const selected = getWritableSession(normalizeText(input.sessionId), context);
-      if (!selected) throw new Error('The selected Moss session is not writable.');
-      store.setConversationSession(conversation.id, selected.id);
-      return { session: sessionSummary(selected) };
-    }
-    if (method === 'session.abort') {
-      const session = getWritableSession(conversation.activeSessionId, context);
-      if (!session) throw new Error('No writable Moss session is selected.');
-      const cancelled = store.cancelQueuedTurns(session.id);
-      await abortSession(session.id);
-      return { cancelled, session: sessionSummary(getWritableSession(session.id, context) || session) };
-    }
-    throw new Error(`Unsupported Channel request: ${method}`);
   }
 
   async function handleAgentRequest(method, input, context) {
@@ -709,7 +623,57 @@ export function createAgentChannelController({
       const result = store.observeMessage({ ...input, ...scope });
       return { observed: result.observed, duplicate: result.duplicate };
     }
-    if (method === 'turn.start') return startTurn(input, context, MOSS_AGENT_PROTOCOL);
+    if (method.startsWith('session.')) {
+      const externalConversationId = normalizeText(input.externalConversationId)
+        || `user:${normalizeText(input.externalUserId)}`;
+      const conversation = store.getOrCreateConversation({ ...scope, externalConversationId });
+      if (method === 'session.list') {
+        const sessions = listWritableSessions(normalizeText(input.query), context, input);
+        const page = Number.isInteger(input.page) ? input.page : 0;
+        const pageSize = Number.isInteger(input.pageSize) ? Math.min(100, input.pageSize) : 10;
+        const offset = page * pageSize;
+        return {
+          sessions: sessions.slice(offset, offset + pageSize).map(sessionSummary),
+          currentSession: sessionSummary(getWritableSession(conversation.activeSessionId, context)),
+          page,
+          pageSize,
+          total: sessions.length,
+          hasPrevious: page > 0,
+          hasNext: offset + pageSize < sessions.length,
+        };
+      }
+      if (method === 'session.current') {
+        return { session: sessionSummary(getWritableSession(conversation.activeSessionId, context)) };
+      }
+      if (method === 'session.create') {
+        const binding = await effectiveBinding(input, context);
+        const created = await createSession({
+          title: normalizeText(input.title),
+          ...scope,
+          externalConversationId,
+          binding,
+          continuitySummary: '',
+          rotatedFromSessionId: null,
+        });
+        store.setConversationSession(conversation.id, created.id);
+        await applySessionPolicy(created.id, binding, context);
+        return { session: sessionSummary(created) };
+      }
+      if (method === 'session.select') {
+        const selected = getWritableSession(normalizeText(input.sessionId), context);
+        if (!selected) throw new Error('The selected Moss session is not writable.');
+        store.setConversationSession(conversation.id, selected.id);
+        return { session: sessionSummary(selected) };
+      }
+      if (method === 'session.abort') {
+        const session = getWritableSession(conversation.activeSessionId, context);
+        if (!session) throw new Error('No writable Moss session is selected.');
+        const cancelled = store.cancelQueuedTurns(session.id);
+        await abortSession(session.id);
+        return { cancelled, session: sessionSummary(getWritableSession(session.id, context) || session) };
+      }
+    }
+    if (method === 'turn.start') return startTurn(input, context);
     if (method === 'turn.list') return {
       turns: store.listTurns({ ...input, ...scope }).map(toPublicAgentChannelTurn),
     };
@@ -829,7 +793,6 @@ export function createAgentChannelController({
   }
 
   return {
-    handleChannelRequest,
     handleAgentRequest,
     startTurn,
     onReady,

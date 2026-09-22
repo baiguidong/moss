@@ -41,7 +41,7 @@ example-app/
   "id": "example.app",
   "version": "1.0.0",
   "displayName": "Example",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "ui": { "entry": "dist/ui/index.html" },
   "backend": {
     "entry": "dist/backend/main.mjs",
@@ -86,7 +86,7 @@ example-app/
 
 App repo 的运行时代码只依赖 `@moss/app-sdk`，不能导入 `ui/`、`server/`、Session 或 Connector 内部源码。Backend 通过 `defineAppBackend()` 注册 Manifest 已声明的 Action；UI 通过受 App ID 约束的 `window.mossApp.actions` 调用。SDK 的协议、Manifest schema 和测试辅助 API 位于根仓库 `packages/app-sdk`。
 
-需要接入外部 IM 的常驻 App 使用 `moss.channel/v1`。该协议提供 Backend 到 Host 的受权限控制请求，以及 Host 到 Backend 的可确认事件；具体契约见 [Channel Host API](./channel-host-api.md)。其他领域使用通用 [Host Capability API](./app-host-capability-api.md)。
+Host API 2 提供 `moss.account/v1`、`moss.agent/v1`、`moss.desktop/v1` 和 `moss.remote/v1`。外部集成 App 使用通用 [Agent Host API](./agent-host-api.md) 创建 Turn 和接收结果，平台连接、消息格式、用户映射与 SDK 全部留在 App。完整边界见 [Host Capability API](./app-host-capability-api.md)。
 
 ## Desktop 数据与进程
 
@@ -121,7 +121,7 @@ Server 不接收客户端上传的任意可执行包。管理员在 `server.json
 
 客户端 App Center 通过认证 API 按 App ID 和版本要求 Server 获取包，然后完成安装、启停、实例管理、日志和 Desktop/Server 移动。移动先在目标创建停用实例，再停止来源并启动目标；目标失败时恢复来源。Server 使用持久化 deployment generation 和租约，多个节点不能同时拥有同一 deployment。
 
-所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；管理员的 `*` scope 包含这些权限，也可将它们授予自定义角色。默认 owner scope 为当前用户；`org` 和 `host` scope 只允许管理员选择。
+管理所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；调用 Action 或 Host API 使用独立的 `apps:invoke`。管理员的 `*` scope 包含全部权限，也可将它们授予自定义角色。内置普通用户和部门管理员拥有这些权限，但只能操作自己的 user owner；`org` 和 `host` scope 只允许管理员选择。
 
 ## 安全边界
 

@@ -7,7 +7,7 @@ const valid = {
   id: 'example.app',
   version: '1.2.3',
   displayName: 'Example',
-  hostApi: '^1.0.0',
+  hostApi: '^2.0.0',
   ui: { entry: 'dist/ui/index.html' },
   permissions: [],
 }
@@ -24,7 +24,7 @@ describe('App manifest V2', () => {
     expect(() => validateAppManifest({ ...valid, ui: { entry: '..\\escape.html' } })).toThrow()
     expect(() => validateAppManifest({ ...valid, ui: { entry: 'C:\\escape.html' } })).toThrow()
     expect(() => validateAppManifest({ ...valid, displayName: '   ' })).toThrow()
-    expect(() => validateAppManifest({ ...valid, hostApi: '^2.0.0' })).toThrow()
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.0.0' })).toThrow()
     expect(() => validateAppManifest({ ...valid, permissions: ['Invalid Permission'] })).toThrow(/permissions/)
     expect(() => validateAppManifest({
       ...valid,
@@ -51,36 +51,24 @@ describe('App manifest V2', () => {
     expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
   })
 
-  it('supports versioned Host protocols and applies Channel-specific requirements', () => {
+  it('supports versioned Host protocols without coupling manifests to a product integration', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
       lifecycle: 'persistent', instanceMode: 'multiple', targets: ['desktop'],
-      protocols: ['moss.channel/v1'], actions: [],
+      protocols: ['moss.agent/v1'], actions: [],
     }
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
       backend,
-      permissions: ['channel:messages'],
-    }).backend?.protocols).toEqual(['moss.channel/v1'])
-    expect(() => validateAppManifest({
+      permissions: ['agent:turns:write'],
+    }).backend?.protocols).toEqual(['moss.agent/v1'])
+    expect(validateAppManifest({
       ...valid,
       ui: undefined,
       backend: { ...backend, lifecycle: 'on-demand' },
-      permissions: ['channel:messages'],
-    })).toThrow(/persistent Backend/)
-    expect(() => validateAppManifest({
-      ...valid,
-      ui: undefined,
-      backend,
-      permissions: [],
-    })).toThrow(/channel permission/)
-    expect(() => validateAppManifest({
-      ...valid,
-      ui: undefined,
-      backend,
-      permissions: ['channel:not-real'],
-    })).toThrow(/channel permission/)
+      permissions: ['agent:turns:write'],
+    }).backend?.lifecycle).toBe('on-demand')
     expect(validateAppManifest({
       ...valid,
       ui: undefined,

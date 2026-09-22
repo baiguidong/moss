@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-runtime",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -11,9 +11,10 @@
     "./process": { "types": "./src/index.d.mts", "import": "./src/process/index.mjs" },
     "./actions": { "types": "./src/index.d.mts", "import": "./src/actions/index.mjs" },
     "./events": { "types": "./src/index.d.mts", "import": "./src/events/index.mjs" },
-    "./channel": { "types": "./src/index.d.mts", "import": "./src/channel/index.mjs" },
     "./account": { "types": "./src/index.d.mts", "import": "./src/account/index.mjs" },
     "./agent": { "types": "./src/index.d.mts", "import": "./src/agent/index.mjs" },
+    "./desktop": { "types": "./src/index.d.mts", "import": "./src/desktop/index.mjs" },
+    "./remote": { "types": "./src/index.d.mts", "import": "./src/remote/index.mjs" },
     "./capabilities": { "types": "./src/index.d.mts", "import": "./src/capabilities/index.mjs" },
     "./contributions": { "types": "./src/index.d.mts", "import": "./src/contributions/index.mjs" },
     "./catalog": { "types": "./src/index.d.mts", "import": "./src/catalog/index.mjs" },
@@ -21,7 +22,7 @@
     "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" }
   },
   "dependencies": {
-    "@moss/app-sdk": "1.3.0",
+    "@moss/app-sdk": "2.0.0",
     "ajv": "^8.18.0",
     "semver": "^7.7.4"
   }

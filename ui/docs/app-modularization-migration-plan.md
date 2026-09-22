@@ -34,13 +34,13 @@
 - on-demand 和 persistent 子进程。
 - Desktop / Server target。
 - 配置、密钥、实例、日志、启停、升级、回滚和卸载。
-- 隔离 WebView、Backend Action、事件和 `moss.channel/v1` 双向协议。
+- 隔离 WebView、Backend Action、事件和版本化 Host Capability 双向协议。
 
 距离完整插件平台仍有四类缺口：
 
 1. App UI 只有 App 自身的 instance/action/storage/event API，没有 Agent、Project、资源、通知等宿主能力。
 2. Manifest 没有 View、Settings、Command、Tool、Resource Provider、Widget 等贡献点，顶层导航仍由 Moss 硬编码。
-3. Channel 协议尚未接入真实 Session/Agent 服务，其他业务域也没有统一的 Host Protocol 注册机制。
+3. Host API 2 已接入真实 Session/Agent 服务；资源、通知等后续领域仍需复用同一注册机制。
 4. Server installation、instance 和 deployment 没有 org/user owner，无法安全替代当前按用户隔离的服务。
 
 ## 核心边界
@@ -102,16 +102,17 @@ Host Capability Broker
 ├── cancellation, idempotency and redaction
 └── per-domain handler registry
         |
-        +-- moss.channel/v1
-        +-- moss.agent/v1
         +-- moss.account/v1
+        +-- moss.agent/v1
+        +-- moss.desktop/v1
+        +-- moss.remote/v1
         +-- moss.resources/v1
         +-- moss.files/v1
         +-- moss.audit/v1
         +-- moss.notifications/v1
 ```
 
-`moss.channel/v1` 保持兼容的领域包装，但底层传输、授权、取消和 handler 生命周期统一进入 Host Capability Broker。业务协议不能直接导入宿主内部模块。
+Host API 2 不保留旧 Channel 兼容层。会话与 Turn 收口到 `moss.agent/v1`，操作系统和跨 Host 能力分别由 Desktop、Remote 协议承载；业务协议不能直接导入宿主内部模块。
 
 ## Host Capability API
 
@@ -136,9 +137,10 @@ Host Capability Broker
 
 | 协议 | 首批能力 |
 | --- | --- |
-| `moss.channel/v1` | 配对、会话绑定、收消息、回复和决策投递 |
-| `moss.agent/v1` | 创建/查询 Session，提交/取消 Turn，订阅脱敏事件 |
+| `moss.agent/v1` | Binding、Session、Turn、投递确认和脱敏事件 |
 | `moss.account/v1` | 当前主体、组织目录、受限 Server API 代理；永不返回 JWT |
+| `moss.desktop/v1` | App 私有文件、截图、外链和媒体权限 |
+| `moss.remote/v1` | Desktop 调用同一 App 的 Server Action |
 | `moss.resources/v1` | 授权资源句柄、读取元数据、本地化、Provider 注册 |
 | `moss.files/v1` | 文件/目录选择、临时文件、open/reveal、Blob/Stream handle |
 | `moss.audit/v1` | 脱敏实时事件和显式授权的历史查询 |
@@ -247,7 +249,7 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 范围：
 
 - 将飞书平台 SDK、连接、配对、配置和投递移动至 `moss.feishu` App。
-- Desktop 与 Server 注册通用 Channel/Agent handlers，接入 Session/Turn 与授权策略。
+- Desktop 与 Server 注册通用 Agent handlers，接入 Session/Turn 与授权策略。
 - 产品配置、配对、连接状态和投递全部由 App 自身持久化与处理。
 
 验收：
@@ -262,9 +264,9 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 - 飞书源码已迁移至独立的 [`baiguidong/moss-apps`](https://github.com/baiguidong/moss-apps) 仓库，Manifest ID 固定为 `moss.feishu`。
 - Moss 构建通过 `config/bundled-apps.lock.json` 下载、校验并预装固定版本，不再从主仓库编译飞书源码。
 - 飞书 SDK、长连接、消息转换、配置 schema、设置页、配对状态和测试均归 App；Moss 不再生成或启动独立 Adapter 产物。
-- Desktop 与 Server 共用 `moss.channel/v1` 和 `moss.agent/v1`，Core 只持有 Session/Turn、授权和幂等账本。
+- Desktop 与 Server 共用 `moss.agent/v1`；Core 只持有 Session/Turn、授权和幂等账本。
 - App UI 通过统一 instance/action/host API 管理 Desktop 或 Server 实例，不再调用产品专用 IPC。
-- 自动验证覆盖 Channel 映射、权限、取消、事件 ACK/去重、持久进程生命周期和通用构建入口；真实账号连通性仍属于发布前人工验收。
+- 自动验证覆盖 Agent 映射、权限、取消、事件 ACK/去重、持久进程生命周期和通用构建入口；真实账号连通性仍属于发布前人工验收。
 
 ### Phase 3：轻量 UI App
 

@@ -96,9 +96,9 @@ import {
   createAgentChannelStore,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
-  createOpenIMProtocolDefinition,
+  createDesktopProtocolDefinition,
+  createRemoteProtocolDefinition,
   DEFAULT_AGENT_CHANNEL_POLICY,
-  defaultInstanceId,
   resolveAgentChannelConnectorIds,
   resolveAgentChannelToolSelectors,
   validateAgentChannelConnectorTool,
@@ -106,12 +106,17 @@ import {
 } from '../../packages/app-runtime/src/index.mjs';
 import {
   AGENT_HOST_METHODS,
-  CHANNEL_HOST_METHODS,
+  DESKTOP_HOST_METHODS,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
-  MOSS_OPENIM_PROTOCOL,
+  MOSS_DESKTOP_PROTOCOL,
+  MOSS_REMOTE_PROTOCOL,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
+import {
+  createDesktopPlatformHandlers,
+  isAllowedAppMediaPermission,
+} from './apps/desktop-platform-host.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
 import { requireEnabledAppForLaunch } from './apps/app-launch-policy.mjs';
 import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
@@ -153,17 +158,6 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
-import { createOpenIMIntegration } from './openim/openim-integration.mjs';
-import {
-  isOpenIMConversationOwnedBy,
-  normalizeOpenIMReceivedMessages,
-  normalizeOpenIMSessionEvent,
-} from './openim/openim-app-bridge.mjs';
-import {
-  OPENIM_APP_ID,
-  isAllowedOpenIMMediaPermission,
-  isAuthorizedOpenIMAppState as hasAuthorizedOpenIMAppState,
-} from './openim/openim-app-permissions.mjs';
 import {
   BROWSER_PARTITION,
   createBrowserViewManager,
@@ -732,20 +726,9 @@ const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
 const appWindows = new Map();
 const appWindowStates = new Map();
-const OPENIM_APP_INSTANCE_ID = defaultInstanceId(OPENIM_APP_ID);
 const pendingEmbeddedApps = new Map();
 const pendingEmbeddedAppsByToken = new Map();
 const configuredAppSessions = new WeakSet();
-
-function isAuthorizedOpenIMAppState(state, permission = 'openim:client') {
-  const installation = desktopAppRuntime?.installations?.get?.(OPENIM_APP_ID);
-  return hasAuthorizedOpenIMAppState({
-    state,
-    runtime: desktopAppRuntime,
-    installation,
-    permission,
-  });
-}
 const pendingWebviewAttachments = [];
 const configuredRightBrowserContents = new WeakSet();
 const MAX_APP_STORAGE_BYTES = 1024 * 1024;
@@ -757,70 +740,6 @@ fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_PROJECTS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_LIBRARY_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
-const openIMIntegration = createOpenIMIntegration({
-  app,
-  ipcMain,
-  desktopCapturer,
-  dialog,
-  nativeImage,
-  screen,
-  shell,
-  systemPreferences,
-  mossHome: MOSS_HOME,
-  allowMediaRoot,
-  resolveMossServerConnection: () => resolveRemoteDirectConnection(),
-  authorizeClient: (event, permission = 'openim:client') => {
-    if (mainWindow?.webContents === event.sender) return;
-    const state = appWindowStates.get(event.sender.id);
-    if (!isAuthorizedOpenIMAppState(state, permission)) {
-      throw new Error('OpenIM native capabilities are only available to the enabled moss.openim App.');
-    }
-  },
-  isTrustedClient: (event) => mainWindow?.webContents === event.sender,
-  allowMediaFile,
-  log: mossLog,
-  fetchImpl: remoteDirectNetFetch,
-});
-openIMIntegration.onEvent((eventName, payload) => {
-  if (!desktopAppRuntime?.installations?.get(OPENIM_APP_ID)?.enabled) return;
-  if (!desktopAppRuntime.instances.get(OPENIM_APP_INSTANCE_ID)?.enabled) return;
-  const sessionEvent = normalizeOpenIMSessionEvent(
-    eventName,
-    payload,
-    openIMIntegration.getCurrentUserId(),
-  );
-  if (sessionEvent) {
-    if (sessionEvent.connected) {
-      const readyScope = currentOpenIMReadyScope(OPENIM_APP_ID, OPENIM_APP_INSTANCE_ID);
-      if (readyScope) agentChannelController?.onReady(readyScope);
-    }
-    void desktopAppRuntime.publishHostEvent(
-      OPENIM_APP_ID,
-      OPENIM_APP_INSTANCE_ID,
-      MOSS_OPENIM_PROTOCOL,
-      'session.changed',
-      sessionEvent,
-      { eventId: `openim-session:${eventName}:${Date.now()}` },
-    ).catch((error) => mossLog('warn', 'openim-app', 'Unable to publish OpenIM session event', {
-      error: error instanceof Error ? error.message : String(error),
-    }));
-  }
-  for (const message of normalizeOpenIMReceivedMessages(eventName, payload, {
-    currentUserId: openIMIntegration.getCurrentUserId(),
-  })) {
-    void desktopAppRuntime.publishHostEvent(
-      OPENIM_APP_ID,
-      OPENIM_APP_INSTANCE_ID,
-      MOSS_OPENIM_PROTOCOL,
-      'message.received',
-      message,
-      { eventId: `openim-message:${message.externalEventId}` },
-    ).catch((error) => mossLog('warn', 'openim-app', 'Unable to publish OpenIM message event', {
-      externalEventId: message.externalEventId,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-  }
-});
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
 allowMediaRoot(REMOTE_PREVIEW_CACHE_DIR);
@@ -3583,61 +3502,8 @@ async function getDesktopAccountDirectory(input = {}) {
   };
 }
 
-function currentOpenIMReadyScope(appId, instanceId) {
-  if (appId !== OPENIM_APP_ID) return { appId, instanceId };
-  const currentUserId = openIMIntegration.getCurrentUserId();
-  return currentUserId
-    ? { appId, instanceId, externalConversationPrefix: `openim-user:${encodeURIComponent(currentUserId)}/` }
-    : null;
-}
-
-function requireCurrentOpenIMConversation(externalConversationId, externalUserId = '', options = {}) {
-  const currentUserId = openIMIntegration.getCurrentUserId();
-  if (!isOpenIMConversationOwnedBy(externalConversationId, currentUserId, {
-    allowDefault: options.allowDefault === true,
-    peerUserId: externalUserId,
-  })) {
-    throw new Error('OpenIM conversation does not belong to the active account.');
-  }
-}
-
-function authorizeOpenIMAgentRequest(method, input, context) {
-  if (context?.appId !== OPENIM_APP_ID || method === 'catalog.list') return;
-  if (['binding.get', 'binding.update', 'binding.reset'].includes(method)) {
-    requireCurrentOpenIMConversation(input.externalConversationId, '', { allowDefault: true });
-    return;
-  }
-  if (['context.observe', 'turn.start'].includes(method)) {
-    requireCurrentOpenIMConversation(input.externalConversationId, input.externalUserId);
-    return;
-  }
-  if (method === 'turn.list') {
-    requireCurrentOpenIMConversation(input.externalConversationId);
-    return;
-  }
-  const turn = agentChannelStore.getTurn(input.turnId, {
-    appId: context.appId,
-    instanceId: context.instanceId,
-  });
-  if (turn) requireCurrentOpenIMConversation(turn.externalConversationId, turn.externalUserId);
-  if (input.externalConversationId) requireCurrentOpenIMConversation(input.externalConversationId);
-}
-
-function authorizeOpenIMChannelRequest(method, input, context) {
-  if (context?.appId !== OPENIM_APP_ID) return;
-  if (!['conversation.list', 'conversation.current', 'conversation.create', 'conversation.select', 'session.abort'].includes(method)) {
-    throw new Error(`Unsupported OpenIM Channel request: ${method}`);
-  }
-  requireCurrentOpenIMConversation(input.externalConversationId, input.externalUserId);
-}
-
 function agentChannelDefaults(context) {
   return DEFAULT_AGENT_CHANNEL_POLICY;
-}
-
-async function handleDesktopChannelRequest(method, input, context) {
-  authorizeOpenIMChannelRequest(method, input, context);
-  return agentChannelController.handleChannelRequest(method, input, context);
 }
 
 async function handleDesktopAccountRequest(method, input) {
@@ -7730,12 +7596,8 @@ function createAppWindowState(appEntry, appWindow, source) {
   return createAppWebContentsState(appEntry, appWindow.webContents, source, appWindow);
 }
 
-function appUiPreloadPath(appId) {
-  return path.join(
-    __dirname,
-    'apps',
-    appId === OPENIM_APP_ID ? 'openim-app-preload.mjs' : 'app-preload.mjs',
-  );
+function appUiPreloadPath() {
+  return path.join(__dirname, 'apps', 'app-preload.mjs');
 }
 
 function getAppWindowStateBySender(sender) {
@@ -7771,7 +7633,6 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
     mode: 'embedded',
     embedId,
   });
-  if (isAuthorizedOpenIMAppState(state)) openIMIntegration.attach(targetWebContents);
   configureAppWebContents(targetWebContents, pending.bundleToken);
   targetWebContents.once('destroyed', () => {
     disposeAppWebContentsState(targetWebContents.id);
@@ -7908,10 +7769,9 @@ function configureAppSession(appSession) {
   if (configuredAppSessions.has(appSession)) return;
   configuredAppSessions.add(appSession);
   installAppUiProtocol(appSession.protocol);
-  const allowed = (webContents, permission, details = {}) => isAllowedOpenIMMediaPermission({
+  const allowed = (webContents, permission, details = {}) => isAllowedAppMediaPermission({
     state: appWindowStates.get(webContents?.id),
     runtime: desktopAppRuntime,
-    installation: desktopAppRuntime?.installations?.get?.(OPENIM_APP_ID),
     permission,
     mediaTypes: details?.mediaTypes,
   });
@@ -8066,7 +7926,6 @@ function launchAppWindow(appEntry, source = {}) {
 
     appWindows.set(windowKey, appWindow);
     const state = createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
-    if (isAuthorizedOpenIMAppState(state)) openIMIntegration.attach(appWindow.webContents);
     configureAppWebContents(appWindow.webContents, bundleToken);
     appWindow.on('closed', () => {
       disposeAppWebContentsState(appWindow.webContents.id);
@@ -10490,8 +10349,6 @@ function createWindow() {
     },
   });
   mainWindow.maximize();
-  openIMIntegration.attach(mainWindow.webContents);
-
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getAppTokenFromUrl(params?.src || '');
     if (!token) {
@@ -11117,21 +10974,26 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
     log: (level, message, details) => mossLog(level, 'agent-channel', message, details),
   });
+  const desktopPlatformHandlers = createDesktopPlatformHandlers({
+    desktopCapturer,
+    dialog,
+    nativeImage,
+    screen,
+    shell,
+    systemPreferences,
+    allowMediaFile,
+    fetchImpl: remoteDirectNetFetch,
+  });
   desktopAppRuntime = await createDesktopAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
-    channelOptions: {
-      handlers: Object.fromEntries(CHANNEL_HOST_METHODS.map((method) => [
-        method,
-        (input, context) => handleDesktopChannelRequest(method, input, context),
-      ])),
-    },
     hostProtocols: [
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
-      createOpenIMProtocolDefinition(),
+      createDesktopProtocolDefinition(),
+      createRemoteProtocolDefinition(),
     ],
     hostHandlers: {
       [MOSS_ACCOUNT_PROTOCOL]: {
@@ -11141,32 +11003,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
       [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map((method) => [
         method,
-        (input, context) => {
-          authorizeOpenIMAgentRequest(method, input, context);
-          return agentChannelController.handleAgentRequest(method, input, context);
-        },
+        (input, context) => agentChannelController.handleAgentRequest(method, input, context),
       ])),
-      [MOSS_OPENIM_PROTOCOL]: {
-        'session.ensure': (_input, context) => {
-          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
-          return openIMIntegration.ensureSession();
-        },
-        'message.send': (input, context) => {
-          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
-          return openIMIntegration.sendText(input);
-        },
-        'conversation.mark-read': (input, context) => {
-          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
-          return openIMIntegration.markConversationRead(input);
-        },
+      [MOSS_DESKTOP_PROTOCOL]: Object.fromEntries(DESKTOP_HOST_METHODS.map((method) => [
+        method,
+        (input, context) => desktopPlatformHandlers[method](input, context),
+      ])),
+      [MOSS_REMOTE_PROTOCOL]: {
+        'action.invoke': (input, context) => invokeRemoteAppAction(
+          context.appId,
+          context.instanceId,
+          input.action,
+          input.input || {},
+          { requestId: context.requestId, timeoutMs: input.timeoutMs },
+        ),
       },
     },
     onEvent: (event) => {
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
-        const readyScope = currentOpenIMReadyScope(event.appId, event.instanceId);
-        if (readyScope) agentChannelController?.onReady(readyScope);
+        agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
         resetLocalRuntimesForMcpReload();
@@ -11191,8 +11048,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
   for (const installation of desktopAppRuntime.installations.list().filter((entry) => entry.enabled)) {
     for (const instance of desktopAppRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
-      const readyScope = currentOpenIMReadyScope(installation.appId, instance.id);
-      if (readyScope) agentChannelController.onReady(readyScope);
+      agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
     }
   }
   const installAppPackage = (packageRoot, options = {}) => publishAppFromBuild(packageRoot, {

@@ -6,14 +6,8 @@ import {
   APP_ERROR_CODES,
   AppServiceError,
   BACKEND_MESSAGE_TYPES,
-  MOSS_CHANNEL_PROTOCOL,
   createEnvelope,
   serializeError,
-  validateChannelBackendEvent,
-  validateChannelBackendEventData,
-  validateChannelHostMethod,
-  validateChannelHostInput,
-  validateChannelProtocol,
   validateEnvelope,
   validateHostData,
   validateHostMember,
@@ -22,7 +16,7 @@ import {
 import { redactAppValue } from '../logging/index.mjs'
 
 const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
-const MAX_CHANNEL_REPLY_CACHE_ENTRIES = 128
+const MAX_HOST_REPLY_CACHE_ENTRIES = 128
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 
@@ -55,24 +49,17 @@ function stableJson(value) {
   return JSON.stringify(value) ?? 'null'
 }
 
-function channelFingerprint(...parts) {
+function hostFingerprint(...parts) {
   return createHash('sha256').update(stableJson(parts)).digest('hex')
 }
 
-function hostTransportCodes(transport) {
-  return transport === 'channel'
-    ? {
-        unavailable: APP_ERROR_CODES.channelUnavailable,
-        timeout: APP_ERROR_CODES.channelTimeout,
-        protocol: APP_ERROR_CODES.channelProtocol,
-        label: 'Channel Host',
-      }
-    : {
-        unavailable: APP_ERROR_CODES.hostUnavailable,
-        timeout: APP_ERROR_CODES.hostTimeout,
-        protocol: APP_ERROR_CODES.hostProtocol,
-        label: 'Host protocol',
-      }
+function hostTransportCodes() {
+  return {
+    unavailable: APP_ERROR_CODES.hostUnavailable,
+    timeout: APP_ERROR_CODES.hostTimeout,
+    protocol: APP_ERROR_CODES.hostProtocol,
+    label: 'Host protocol',
+  }
 }
 
 export class AppProcessSupervisor {
@@ -83,11 +70,11 @@ export class AppProcessSupervisor {
     this.killTimeoutMs = options.killTimeoutMs || 2_000
     this.actionTimeoutMs = options.actionTimeoutMs || 30_000
     this.maxActionTimeoutMs = options.maxActionTimeoutMs || 300_000
-    this.channelRequestTimeoutMs = Math.max(100, Number(options.channelRequestTimeoutMs) || 30_000)
-    this.channelEventTimeoutMs = Math.max(100, Number(options.channelEventTimeoutMs) || 30_000)
-    this.maxChannelTimeoutMs = Math.max(100, Number(options.maxChannelTimeoutMs) || 300_000)
-    this.maxPendingChannelRequests = Math.max(1, Number(options.maxPendingChannelRequests) || 32)
-    this.maxPendingChannelEvents = Math.max(1, Number(options.maxPendingChannelEvents) || 32)
+    this.hostRequestTimeoutMs = Math.max(100, Number(options.hostRequestTimeoutMs) || 30_000)
+    this.hostEventTimeoutMs = Math.max(100, Number(options.hostEventTimeoutMs) || 30_000)
+    this.maxHostTimeoutMs = Math.max(100, Number(options.maxHostTimeoutMs) || 300_000)
+    this.maxPendingHostRequests = Math.max(1, Number(options.maxPendingHostRequests) || 32)
+    this.maxPendingHostEvents = Math.max(1, Number(options.maxPendingHostEvents) || 32)
     this.idleTimeoutMs = options.idleTimeoutMs || 60_000
     this.healthCheckIntervalMs = options.healthCheckIntervalMs || 30_000
     this.healthCheckTimeoutMs = options.healthCheckTimeoutMs || 65_000
@@ -100,10 +87,9 @@ export class AppProcessSupervisor {
     this.onStatus = options.onStatus || (() => {})
     this.onEvent = options.onEvent || (() => {})
     this.onLog = options.onLog || (() => {})
-    this.onHostRequest = options.onHostRequest || options.onChannelRequest || (() => {
+    this.onHostRequest = options.onHostRequest || (() => {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker is not configured')
     })
-    this.onChannelRequest = this.onHostRequest
     this.processes = new Map()
     this.definitions = new Map()
     this.transitions = new Map()
@@ -135,8 +121,8 @@ export class AppProcessSupervisor {
       startedAt: hosted?.startedAt || null,
       lastError: hosted?.lastError || null,
       pendingActions: hosted?.pending?.size || 0,
-      pendingChannelEvents: hosted?.pendingChannelEvents?.size || 0,
-      pendingChannelRequests: hosted?.channelRequests?.size || 0,
+      pendingHostEvents: hosted?.pendingHostEvents?.size || 0,
+      pendingHostRequests: hosted?.hostRequests?.size || 0,
     }
   }
 
@@ -186,10 +172,10 @@ export class AppProcessSupervisor {
       child: null,
       pending: new Map(),
       seenReplies: new Set(),
-      pendingChannelEvents: new Map(),
-      seenChannelEventReplies: new Set(),
-      channelRequests: new Map(),
-      channelRequestReplies: new Map(),
+      pendingHostEvents: new Map(),
+      seenHostEventReplies: new Set(),
+      hostRequests: new Map(),
+      hostRequestReplies: new Map(),
       startedAt: Date.now(),
       ready: null,
       readyResolve: null,
@@ -336,20 +322,19 @@ export class AppProcessSupervisor {
       return
     }
     const hostRequestDuringInitialization = hosted.handshakeState === 'waiting-ready'
-      && ['host.request', 'host.cancel', 'channel.request', 'channel.cancel'].includes(message.type)
+      && ['host.request', 'host.cancel'].includes(message.type)
     if (hosted.handshakeState !== 'ready' && !hostRequestDuringInitialization) {
       hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend sent ${message.type} before initialization`))
       hosted.child?.kill('SIGTERM')
       return
     }
-    if (message.type === 'channel.request' || message.type === 'host.request') {
-      this.handleHostRequest(key, hosted, message, message.type.startsWith('channel.') ? 'channel' : 'host')
+    if (message.type === 'host.request') {
+      this.handleHostRequest(key, hosted, message)
       return
     }
-    if (message.type === 'channel.cancel' || message.type === 'host.cancel') {
+    if (message.type === 'host.cancel') {
       try {
-        if (message.type.startsWith('channel.')) validateChannelProtocol(payload.protocol)
-        else validateHostProtocol(payload.protocol)
+        validateHostProtocol(payload.protocol)
       } catch (error) {
         this.log(hosted, 'error', error.message)
         return
@@ -357,8 +342,8 @@ export class AppProcessSupervisor {
       this.cancelHostRequest(hosted, payload.requestId, payload.protocol)
       return
     }
-    if (message.type === 'channel.event.response' || message.type === 'host.event.response') {
-      this.handleHostEventResponse(key, hosted, message, message.type.startsWith('channel.') ? 'channel' : 'host')
+    if (message.type === 'host.event.response') {
+      this.handleHostEventResponse(key, hosted, message)
       return
     }
     if (message.type === 'log.write') {
@@ -402,36 +387,32 @@ export class AppProcessSupervisor {
     this.scheduleIdleStop(key, hosted)
   }
 
-  handleChannelRequest(key, hosted, message) {
-    return this.handleHostRequest(key, hosted, message, 'channel')
-  }
-
-  handleHostRequest(key, hosted, message, transport = 'host') {
+  handleHostRequest(key, hosted, message) {
     const payload = message.payload || {}
-    const codes = hostTransportCodes(transport)
+    const codes = hostTransportCodes()
     const requestId = String(message.id || '')
-    const fingerprint = channelFingerprint(transport, payload.protocol, payload.method, payload.input)
-    const cached = hosted.channelRequestReplies.get(requestId)
+    const fingerprint = hostFingerprint(payload.protocol, payload.method, payload.input)
+    const cached = hosted.hostRequestReplies.get(requestId)
     if (cached) {
       if (cached.fingerprint === fingerprint) this.send(hosted, cached.response)
-      else this.sendHostResponse(hosted, message, transport, false, undefined, new AppServiceError(
+      else this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
         codes.protocol,
         `Host request id was reused with a different payload: ${requestId}`,
       ), { cache: false, fingerprint })
       return
     }
-    const existing = hosted.channelRequests.get(requestId)
+    const existing = hosted.hostRequests.get(requestId)
     if (existing) {
       if (existing.fingerprint !== fingerprint) {
-        this.sendHostResponse(hosted, message, transport, false, undefined, new AppServiceError(
+        this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
           codes.protocol,
           `Host request id was reused with a different payload: ${requestId}`,
         ), { cache: false, fingerprint })
       }
       return
     }
-    if (hosted.channelRequests.size >= this.maxPendingChannelRequests) {
-      this.sendHostResponse(hosted, message, transport, false, undefined, new AppServiceError(
+    if (hosted.hostRequests.size >= this.maxPendingHostRequests) {
+      this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
         codes.unavailable,
         `${codes.label} request limit reached`,
       ), { cache: false, fingerprint })
@@ -441,29 +422,23 @@ export class AppProcessSupervisor {
     let method
     let input
     try {
-      if (transport === 'channel') {
-        protocol = validateChannelProtocol(payload.protocol)
-        method = validateChannelHostMethod(payload.method)
-        input = validateChannelHostInput(method, payload.input)
-      } else {
-        protocol = validateHostProtocol(payload.protocol)
-        method = validateHostMember(payload.method, `${protocol} method`)
-        input = validateHostData(payload.input, `${protocol} ${method} input`)
-      }
+      protocol = validateHostProtocol(payload.protocol)
+      method = validateHostMember(payload.method, `${protocol} method`)
+      input = validateHostData(payload.input, `${protocol} ${method} input`)
     } catch (error) {
-      this.sendHostResponse(hosted, message, transport, false, undefined, error, { fingerprint })
+      this.sendHostResponse(hosted, message, false, undefined, error, { fingerprint })
       return
     }
     const controller = new AbortController()
-    const active = { controller, fingerprint, protocol, transport, timer: null, finish: null }
+    const active = { controller, fingerprint, protocol, timer: null, finish: null }
     const finish = (ok, result, error) => {
-      if (hosted.channelRequests.get(requestId) !== active) return
+      if (hosted.hostRequests.get(requestId) !== active) return
       clearTimeout(active.timer)
-      hosted.channelRequests.delete(requestId)
-      const response = this.createHostResponse(hosted, message, transport, ok, result, error)
-      hosted.channelRequestReplies.set(requestId, { fingerprint, response })
-      if (hosted.channelRequestReplies.size > MAX_CHANNEL_REPLY_CACHE_ENTRIES) {
-        hosted.channelRequestReplies.delete(hosted.channelRequestReplies.keys().next().value)
+      hosted.hostRequests.delete(requestId)
+      const response = this.createHostResponse(hosted, message, ok, result, error)
+      hosted.hostRequestReplies.set(requestId, { fingerprint, response })
+      if (hosted.hostRequestReplies.size > MAX_HOST_REPLY_CACHE_ENTRIES) {
+        hosted.hostRequestReplies.delete(hosted.hostRequestReplies.keys().next().value)
       }
       if (this.processes.get(key) === hosted && !hosted.stopping) this.send(hosted, response)
     }
@@ -472,11 +447,11 @@ export class AppProcessSupervisor {
       controller.abort(new AppServiceError(codes.timeout, `${codes.label} request timed out`))
       finish(false, undefined, new AppServiceError(
         codes.timeout,
-        `${codes.label} request timed out after ${this.channelRequestTimeoutMs}ms`,
+        `${codes.label} request timed out after ${this.hostRequestTimeoutMs}ms`,
       ))
-    }, this.channelRequestTimeoutMs)
+    }, this.hostRequestTimeoutMs)
     active.timer.unref?.()
-    hosted.channelRequests.set(requestId, active)
+    hosted.hostRequests.set(requestId, active)
     Promise.resolve().then(() => {
       if (controller.signal.aborted) {
         throw controller.signal.reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, `${codes.label} request canceled`)
@@ -501,16 +476,12 @@ export class AppProcessSupervisor {
     )
   }
 
-  createChannelResponse(hosted, message, ok, result, error) {
-    return this.createHostResponse(hosted, message, 'channel', ok, result, error)
-  }
-
-  createHostResponse(hosted, message, transport, ok, result, error) {
+  createHostResponse(hosted, message, ok, result, error) {
     const requestId = String(message.id || '')
     const protocol = String(message.payload?.protocol || '')
-    const codes = hostTransportCodes(transport)
+    const codes = hostTransportCodes()
     const secretValues = Object.values(hosted.definition.secrets || {})
-    let response = createEnvelope(`${transport}.response`, {
+    let response = createEnvelope('host.response', {
       protocol,
       requestId,
       ok,
@@ -521,9 +492,9 @@ export class AppProcessSupervisor {
       launchToken: hosted.launchToken,
     }, { id: requestId })
     try {
-      validateEnvelope(response, { allowedTypes: [`${transport}.response`] })
+      validateEnvelope(response, { allowedTypes: ['host.response'] })
     } catch (serializationError) {
-      response = createEnvelope(`${transport}.response`, {
+      response = createEnvelope('host.response', {
         protocol,
         requestId,
         ok: false,
@@ -535,58 +506,44 @@ export class AppProcessSupervisor {
     return response
   }
 
-  sendChannelResponse(hosted, message, ok, result, error, options = {}) {
-    return this.sendHostResponse(hosted, message, 'channel', ok, result, error, options)
-  }
-
-  sendHostResponse(hosted, message, transport, ok, result, error, options = {}) {
+  sendHostResponse(hosted, message, ok, result, error, options = {}) {
     const payload = message.payload || {}
     const requestId = String(message.id || '')
-    const fingerprint = options.fingerprint || channelFingerprint(transport, payload.protocol, payload.method, payload.input)
-    const response = this.createHostResponse(hosted, message, transport, ok, result, error)
+    const fingerprint = options.fingerprint || hostFingerprint(payload.protocol, payload.method, payload.input)
+    const response = this.createHostResponse(hosted, message, ok, result, error)
     if (options.cache !== false) {
-      hosted.channelRequestReplies.set(requestId, { fingerprint, response })
-      if (hosted.channelRequestReplies.size > MAX_CHANNEL_REPLY_CACHE_ENTRIES) {
-        hosted.channelRequestReplies.delete(hosted.channelRequestReplies.keys().next().value)
+      hosted.hostRequestReplies.set(requestId, { fingerprint, response })
+      if (hosted.hostRequestReplies.size > MAX_HOST_REPLY_CACHE_ENTRIES) {
+        hosted.hostRequestReplies.delete(hosted.hostRequestReplies.keys().next().value)
       }
     }
     this.send(hosted, response)
   }
 
-  cancelChannelRequest(hosted, requestId) {
-    return this.cancelHostRequest(hosted, requestId, MOSS_CHANNEL_PROTOCOL)
-  }
-
   cancelHostRequest(hosted, requestId, protocol) {
-    const active = hosted.channelRequests.get(String(requestId || ''))
+    const active = hosted.hostRequests.get(String(requestId || ''))
     if (!active || active.protocol !== protocol) return false
     active.controller.abort(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request canceled'))
     active.finish(false, undefined, new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request canceled'))
     return true
   }
 
-  handleChannelEventResponse(key, hosted, message) {
-    return this.handleHostEventResponse(key, hosted, message, 'channel')
-  }
-
-  handleHostEventResponse(key, hosted, message, transport = 'host') {
+  handleHostEventResponse(key, hosted, message) {
     const payload = message.payload || {}
     let protocol
     try {
-      protocol = transport === 'channel'
-        ? validateChannelProtocol(payload.protocol)
-        : validateHostProtocol(payload.protocol)
+      protocol = validateHostProtocol(payload.protocol)
     } catch (error) {
       this.log(hosted, 'error', error.message)
       return
     }
     const eventId = String(payload.eventId || message.id || '')
-    if (hosted.seenChannelEventReplies.has(eventId)) return
-    const pending = hosted.pendingChannelEvents.get(eventId)
-    if (!pending || pending.protocol !== protocol || pending.transport !== transport) return
-    hosted.seenChannelEventReplies.add(eventId)
-    if (hosted.seenChannelEventReplies.size > 1000) {
-      hosted.seenChannelEventReplies.delete(hosted.seenChannelEventReplies.values().next().value)
+    if (hosted.seenHostEventReplies.has(eventId)) return
+    const pending = hosted.pendingHostEvents.get(eventId)
+    if (!pending || pending.protocol !== protocol) return
+    hosted.seenHostEventReplies.add(eventId)
+    if (hosted.seenHostEventReplies.size > 1000) {
+      hosted.seenHostEventReplies.delete(hosted.seenHostEventReplies.values().next().value)
     }
     pending.finish(
       payload.ok === true ? null : errorFromPayload(payload, Object.values(hosted.definition.secrets || {})),
@@ -694,31 +651,14 @@ export class AppProcessSupervisor {
     return true
   }
 
-  async publishChannelEvent(key, name, data = {}, options = {}) {
-    const protocol = validateChannelProtocol(options.protocol || MOSS_CHANNEL_PROTOCOL)
-    const normalizedName = validateChannelBackendEvent(name)
-    const normalizedData = validateChannelBackendEventData(normalizedName, data)
-    return this.publishHostEvent(key, protocol, normalizedName, normalizedData, {
-      ...options,
-      transport: 'channel',
-    })
-  }
-
   async publishHostEvent(key, protocol, name, data = {}, options = {}) {
-    const transport = options.transport === 'channel' ? 'channel' : 'host'
-    const codes = hostTransportCodes(transport)
+    const codes = hostTransportCodes()
     if (options.signal?.aborted) {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled')
     }
-    const normalizedProtocol = transport === 'channel'
-      ? validateChannelProtocol(protocol)
-      : validateHostProtocol(protocol)
-    const normalizedName = transport === 'channel'
-      ? validateChannelBackendEvent(name)
-      : validateHostMember(name, `${normalizedProtocol} event`)
-    const normalizedData = transport === 'channel'
-      ? validateChannelBackendEventData(normalizedName, data)
-      : validateHostData(data, `${normalizedProtocol} ${normalizedName} data`)
+    const normalizedProtocol = validateHostProtocol(protocol)
+    const normalizedName = validateHostMember(name, `${normalizedProtocol} event`)
+    const normalizedData = validateHostData(data, `${normalizedProtocol} ${normalizedName} data`)
     await this.start(key)
     if (options.signal?.aborted) {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled')
@@ -727,25 +667,25 @@ export class AppProcessSupervisor {
     if (!hosted || hosted.state !== 'running') {
       throw new AppServiceError(codes.unavailable, 'App Backend is not running')
     }
-    if (hosted.pendingChannelEvents.size >= this.maxPendingChannelEvents) {
+    if (hosted.pendingHostEvents.size >= this.maxPendingHostEvents) {
       throw new AppServiceError(codes.unavailable, 'Host event limit reached')
     }
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
     const eventId = String(options.eventId || randomUUID())
-    if (!eventId || eventId.length > 128 || hosted.pendingChannelEvents.has(eventId)) {
+    if (!eventId || eventId.length > 128 || hosted.pendingHostEvents.has(eventId)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Host event id is invalid or duplicated')
     }
     // A durable Host retry intentionally reuses the event id. Accept the
     // Backend's cached ACK instead of treating it as a duplicate reply.
-    hosted.seenChannelEventReplies.delete(eventId)
-    const requestedTimeoutMs = Number(options.timeoutMs ?? this.channelEventTimeoutMs)
+    hosted.seenHostEventReplies.delete(eventId)
+    const requestedTimeoutMs = Number(options.timeoutMs ?? this.hostEventTimeoutMs)
     const timeoutMs = Math.max(
       100,
-      Math.min(Number.isFinite(requestedTimeoutMs) ? requestedTimeoutMs : this.channelEventTimeoutMs, this.maxChannelTimeoutMs),
+      Math.min(Number.isFinite(requestedTimeoutMs) ? requestedTimeoutMs : this.hostEventTimeoutMs, this.maxHostTimeoutMs),
     )
     let event
     try {
-      event = createEnvelope(`${transport}.event`, {
+      event = createEnvelope('host.event', {
         protocol: normalizedProtocol,
         eventId,
         name: normalizedName,
@@ -753,22 +693,22 @@ export class AppProcessSupervisor {
         generation: hosted.definition.generation,
         launchToken: hosted.launchToken,
       }, { id: eventId })
-      validateEnvelope(event, { allowedTypes: [`${transport}.event`] })
+      validateEnvelope(event, { allowedTypes: ['host.event'] })
     } catch (error) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Host event cannot be serialized: ${error.message}`)
     }
     const promise = new Promise((resolve, reject) => {
       const finish = (error, result) => {
-        const pending = hosted.pendingChannelEvents.get(eventId)
+        const pending = hosted.pendingHostEvents.get(eventId)
         if (!pending) return
         clearTimeout(pending.timer)
         pending.signal?.removeEventListener('abort', pending.abortHandler)
-        hosted.pendingChannelEvents.delete(eventId)
+        hosted.pendingHostEvents.delete(eventId)
         if (error) reject(error)
         else resolve(result)
       }
       const timer = setTimeout(() => {
-        this.send(hosted, createEnvelope(`${transport}.event.cancel`, {
+        this.send(hosted, createEnvelope('host.event.cancel', {
           protocol: normalizedProtocol,
           eventId,
           generation: hosted.definition.generation,
@@ -779,7 +719,7 @@ export class AppProcessSupervisor {
       }, timeoutMs)
       timer.unref?.()
       const abortHandler = () => {
-        this.send(hosted, createEnvelope(`${transport}.event.cancel`, {
+        this.send(hosted, createEnvelope('host.event.cancel', {
           protocol: normalizedProtocol,
           eventId,
           generation: hosted.definition.generation,
@@ -788,7 +728,7 @@ export class AppProcessSupervisor {
         finish(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled'))
         this.scheduleIdleStop(key, hosted)
       }
-      hosted.pendingChannelEvents.set(eventId, {
+      hosted.pendingHostEvents.set(eventId, {
         resolve,
         reject,
         timer,
@@ -796,27 +736,22 @@ export class AppProcessSupervisor {
         abortHandler,
         finish,
         protocol: normalizedProtocol,
-        transport,
       })
       options.signal?.addEventListener('abort', abortHandler, { once: true })
     })
     this.send(hosted, event, (error) => {
-      const pending = hosted.pendingChannelEvents.get(eventId)
+      const pending = hosted.pendingHostEvents.get(eventId)
       if (!pending) return
       pending.finish(new AppServiceError(codes.unavailable, `Cannot publish Host event: ${error.message}`))
     })
     return promise
   }
 
-  cancelChannelEvent(key, eventId) {
-    return this.cancelHostEvent(key, MOSS_CHANNEL_PROTOCOL, eventId)
-  }
-
   cancelHostEvent(key, protocol, eventId) {
     const hosted = this.processes.get(key)
-    const pending = hosted?.pendingChannelEvents.get(String(eventId || ''))
+    const pending = hosted?.pendingHostEvents.get(String(eventId || ''))
     if (!hosted || !pending || pending.protocol !== protocol) return false
-    this.send(hosted, createEnvelope(`${pending.transport}.event.cancel`, {
+    this.send(hosted, createEnvelope('host.event.cancel', {
       protocol,
       eventId,
       generation: hosted.definition.generation,
@@ -832,8 +767,8 @@ export class AppProcessSupervisor {
     if (
       hosted.definition.lifecycle !== 'on-demand'
       || hosted.pending.size > 0
-      || hosted.pendingChannelEvents.size > 0
-      || hosted.channelRequests.size > 0
+      || hosted.pendingHostEvents.size > 0
+      || hosted.hostRequests.size > 0
       || hosted.state !== 'running'
     ) return
     hosted.idleTimer = setTimeout(() => this.stop(key).catch(() => {}), hosted.definition.idleTimeoutMs || this.idleTimeoutMs)
@@ -871,7 +806,7 @@ export class AppProcessSupervisor {
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
-    this.clearChannelWork(hosted)
+    this.clearHostWork(hosted)
     if (!isChildRunning(hosted.child)) return
     hosted.child.kill('SIGTERM')
     await Promise.race([
@@ -896,7 +831,7 @@ export class AppProcessSupervisor {
     }
     if (hosted.stopping || this.shuttingDown) {
       this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
-      this.clearChannelWork(hosted)
+      this.clearHostWork(hosted)
       this.processes.delete(key)
       this.emitStatus(key)
       return
@@ -907,7 +842,7 @@ export class AppProcessSupervisor {
     hosted.lastError = `Backend exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`
     hosted.state = hosted.failures.length >= this.crashLoopThreshold ? 'crash-loop' : 'error'
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, hosted.lastError))
-    this.clearChannelWork(hosted, hosted.lastError)
+    this.clearHostWork(hosted, hosted.lastError)
     this.emitStatus(key)
     if (hosted.state === 'crash-loop' || hosted.definition.lifecycle !== 'persistent') return
     const delay = Math.min(this.maxRestartDelayMs, this.restartBaseDelayMs * (2 ** Math.max(0, hosted.failures.length - 1)))
@@ -920,18 +855,18 @@ export class AppProcessSupervisor {
     hosted.restartTimer.unref?.()
   }
 
-  clearChannelWork(hosted, message = 'App Backend stopped') {
-    for (const pending of [...hosted.pendingChannelEvents.values()]) {
-      const codes = hostTransportCodes(pending.transport || 'channel')
+  clearHostWork(hosted, message = 'App Backend stopped') {
+    for (const pending of [...hosted.pendingHostEvents.values()]) {
+      const codes = hostTransportCodes()
       pending.finish(new AppServiceError(codes.unavailable, message))
     }
-    hosted.pendingChannelEvents.clear()
-    for (const active of hosted.channelRequests.values()) {
+    hosted.pendingHostEvents.clear()
+    for (const active of hosted.hostRequests.values()) {
       clearTimeout(active.timer)
-      const codes = hostTransportCodes(active.transport || 'channel')
+      const codes = hostTransportCodes()
       active.controller.abort(new AppServiceError(codes.unavailable, message))
     }
-    hosted.channelRequests.clear()
+    hosted.hostRequests.clear()
   }
 
   clearActionWork(hosted, error) {

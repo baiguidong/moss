@@ -8,7 +8,7 @@ function createFixture({ response = 1, currentGrants = [] as string[] } = {}) {
   let packageInstallCount = 0
   const runtime = {
     installations: {
-      list: () => currentGrants.length ? [{ appId: 'moss.openim', grants: currentGrants }] : [],
+      list: () => currentGrants.length ? [{ appId: 'example.app', grants: currentGrants }] : [],
     },
     registerInstalled: async (appId: string, version: string, options: { grants: string[] }) => {
       registrations.push({ appId, version, options })
@@ -17,7 +17,7 @@ function createFixture({ response = 1, currentGrants = [] as string[] } = {}) {
   registerAppRuntimeIpc({
     ipcMain: { handle: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler) },
     dialog: {
-      showOpenDialog: async () => ({ canceled: false, filePaths: ['/tmp/moss.openim.zip'] }),
+      showOpenDialog: async () => ({ canceled: false, filePaths: ['/tmp/example.app.zip'] }),
       showMessageBox: async (options: any) => {
         prompts.push(options)
         return { response }
@@ -27,17 +27,17 @@ function createFixture({ response = 1, currentGrants = [] as string[] } = {}) {
     emitChanged: async () => {},
     installArchivePackage: async () => {
       packageInstallCount += 1
-      return { id: 'moss.openim', currentVersion: '0.1.0' }
+      return { id: 'example.app', currentVersion: '1.0.0' }
     },
     installArchive: async (_runtime: unknown, _archivePath: string, options: any) => (
-      options.installPackage('/tmp/openim-package')
+      options.installPackage('/tmp/example-package')
     ),
     validatePackage: async () => ({
       manifest: {
-        id: 'moss.openim',
-        version: '0.1.0',
-        displayName: '即时消息',
-        permissions: ['openim:client', 'openim:messages'],
+        id: 'example.app',
+        version: '1.0.0',
+        displayName: '示例 App',
+        permissions: ['desktop:files', 'agent:turns:write'],
       },
     }),
     remote: {},
@@ -58,23 +58,23 @@ describe('local App archive installation', () => {
 
     expect(result.ok).toBe(true)
     expect(fixture.prompts).toHaveLength(1)
-    expect(fixture.prompts[0].detail).toContain('openim:client')
+    expect(fixture.prompts[0].detail).toContain('desktop:files')
     expect(fixture.registrations).toEqual([{
-      appId: 'moss.openim',
-      version: '0.1.0',
-      options: { grants: ['openim:client', 'openim:messages'] },
+      appId: 'example.app',
+      version: '1.0.0',
+      options: { grants: ['desktop:files', 'agent:turns:write'] },
     }])
     expect(fixture.packageInstallCount()).toBe(1)
   })
 
   it('requests only newly added permissions when reinstalling an App', async () => {
-    const fixture = createFixture({ currentGrants: ['openim:client', 'channel:decisions'] })
+    const fixture = createFixture({ currentGrants: ['desktop:files', 'agent:catalog:read'] })
 
     await fixture.install()
 
-    expect(fixture.prompts[0].detail).not.toContain('openim:client')
-    expect(fixture.prompts[0].detail).toContain('openim:messages')
-    expect(fixture.registrations[0].options.grants).toEqual(['openim:client', 'openim:messages'])
+    expect(fixture.prompts[0].detail).not.toContain('desktop:files')
+    expect(fixture.prompts[0].detail).toContain('agent:turns:write')
+    expect(fixture.registrations[0].options.grants).toEqual(['desktop:files', 'agent:turns:write'])
   })
 
   it('does not install or grant permissions when approval is canceled', async () => {

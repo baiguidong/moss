@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppInstanceRow, AppsPanel } from '../src/renderer-react/components/apps-panel';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
@@ -6,8 +7,8 @@ import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
 function renderInstance(hasSettings: boolean, enabled = true) {
   const app = {
-    id: 'moss.feishu',
-    name: 'feishu',
+    id: 'example.settings',
+    name: 'example.settings',
     hasSettings,
     enabled,
     backend: {
@@ -18,19 +19,19 @@ function renderInstance(hasSettings: boolean, enabled = true) {
         schema: {
           type: 'object',
           properties: {
-            appId: { type: 'string', title: '飞书 App ID' },
+            appId: { type: 'string', title: 'Example App ID' },
             allowedUsers: { type: 'array', title: 'allowedUsers' },
           },
         },
       },
     },
     deployments: [{
-      deployment: { instanceId: 'moss.feishu--default', targetType: 'desktop' },
+      deployment: { instanceId: 'example.settings--default', targetType: 'desktop' },
       runtime: { state: 'running' },
     }],
   } as StoredApp;
   const instance = {
-    id: 'moss.feishu--default',
+    id: 'example.settings--default',
     displayName: 'Default',
     target: 'desktop',
     enabled,
@@ -62,7 +63,7 @@ describe('Apps management', () => {
     expect(markup).toContain('title="重启"');
     expect(markup).toContain('title="日志"');
     expect(markup).not.toContain('配置实例');
-    expect(markup).not.toContain('飞书 App ID');
+    expect(markup).not.toContain('Example App ID');
     expect(markup).not.toContain('allowedUsers');
     expect(markup).not.toContain('保存配置');
   });

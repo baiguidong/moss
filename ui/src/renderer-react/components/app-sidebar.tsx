@@ -71,29 +71,26 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "workflows" | "overview" | "library" | "mail" | "openim" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "workflows" | "overview" | "library" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "library" | "workflows" | "mail" | "openim" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "overview" | "library" | "workflows" | "mail" | "cron" | "audit">;
 
 export function getSidebarMoreViews({
   libraryEnabled,
   workflowsEnabled,
   remoteEnabled,
   agentMailEnabled,
-  openIMAppEnabled = false,
 }: {
   libraryEnabled: boolean;
   workflowsEnabled: boolean;
   remoteEnabled: boolean;
   agentMailEnabled: boolean;
-  openIMAppEnabled?: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
     ...(libraryEnabled ? ["library" as const] : []),
     ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
-    ...(!openIMAppEnabled ? ["openim" as const] : []),
     "audit",
     "cron",
   ];
@@ -104,7 +101,6 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
   library: { label: "资料库", icon: BookOpen },
   workflows: { label: "工作流", icon: GitFork },
   mail: { label: "协作邮箱", icon: Mail },
-  openim: { label: "即时消息", icon: MessageSquareText },
   audit: { label: "审计中心", icon: ShieldCheck },
   cron: { label: "定时任务", icon: AlarmClock },
 };
@@ -391,13 +387,11 @@ export function AppSidebar({
     )
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
-  const openIMAppEnabled = appViews.some((view) => view.appId === 'moss.openim');
   const moreViews = getSidebarMoreViews({
     libraryEnabled,
     workflowsEnabled,
     remoteEnabled,
     agentMailEnabled,
-    openIMAppEnabled,
   });
   const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {

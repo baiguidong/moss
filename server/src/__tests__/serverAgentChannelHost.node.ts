@@ -77,7 +77,7 @@ function userContext(appId: string, instanceId = `${appId}--default`, userId = '
 const fixture = createFixture()
 try {
   const alpha = userContext('chat.alpha')
-  const created = await fixture.host.handleChannelRequest('conversation.create', {
+  const created = await fixture.host.handleAgentRequest('session.create', {
     externalConversationId: 'external-1',
     title: 'Alpha conversation',
   }, alpha) as { session: { id: string; originChannel: string } }
@@ -102,22 +102,22 @@ try {
     },
   )
 
-  const sameApp = await fixture.host.handleChannelRequest('conversation.list', {
+  const sameApp = await fixture.host.handleAgentRequest('session.list', {
     externalConversationId: 'external-1',
   }, alpha) as { sessions: Array<{ id: string }> }
   assert.deepEqual(sameApp.sessions.map(session => session.id), [created.session.id])
 
-  const otherInstance = await fixture.host.handleChannelRequest('conversation.list', {
+  const otherInstance = await fixture.host.handleAgentRequest('session.list', {
     externalConversationId: 'external-1',
   }, userContext('chat.alpha', 'chat.alpha--secondary')) as { sessions: unknown[] }
-  const otherApp = await fixture.host.handleChannelRequest('conversation.list', {
+  const otherApp = await fixture.host.handleAgentRequest('session.list', {
     externalConversationId: 'external-1',
   }, userContext('chat.beta')) as { sessions: unknown[] }
   assert.deepEqual(otherInstance.sessions, [])
   assert.deepEqual(otherApp.sessions, [])
   assert.equal(fixture.host.originForSession(created.session.id, 'org-1', 'user-2'), 'desktop')
 
-  assert.throws(() => fixture.host.handleChannelRequest('conversation.list', {}, {
+  assert.throws(() => fixture.host.handleAgentRequest('session.list', {}, {
     appId: 'chat.alpha',
     instanceId: 'chat.alpha--default',
     principal: { scope: 'org', key: 'org:org-1', orgId: 'org-1' },

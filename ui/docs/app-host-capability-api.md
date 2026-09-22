@@ -1,152 +1,102 @@
-# Moss App Host Capability API
+# Moss App Host Capability API 2
 
-Host Capability API 是 Moss App Backend 访问宿主能力的唯一通用入口。App 不能导入 Desktop、Server、Session 或 Project 内部模块；它只能声明协议和权限，再通过 `@moss/app-sdk` 发起受控请求。
+Host Capability API 是 App Backend 使用 Moss 能力的唯一入口。App 不能导入 Desktop、Server、Session 或数据库内部模块；它只能在 Manifest 中声明版本化协议和权限，再通过 `@moss/app-sdk` 发起受控请求。
 
-`moss.channel/v1` 继续提供原有 Channel SDK，但底层已复用同一套 Registry、授权、超时、取消和进程协议。
+Host API 当前版本为 `2.0.0`，不兼容 1.x。Backend 进程协议仍为 App Service v1；两者含义不同：前者描述公开能力集合，后者描述 Node 子进程的传输 envelope。
 
-## Manifest 声明与授权
+## 内置协议
 
-Backend 在 `protocols` 中声明它会使用的版本化协议，App 在 `permissions` 中声明所需权限。声明只是权限申请，实际可用权限来自 installation grants；Host 在每一次请求和事件发送前同时检查两者。
+| 协议 | 运行位置 | 职责 | 主要权限 |
+| --- | --- | --- | --- |
+| `moss.account/v1` | Desktop、Server | 当前 owner 身份、组织通讯录 | `account:identity:read`、`account:directory:read` |
+| `moss.agent/v1` | Desktop、Server | Agent 目录、Binding、Session、Turn、投递确认 | `agent:*` 的细分读写权限 |
+| `moss.desktop/v1` | Desktop | 文件选择与私有缓存、截图、下载、外链、媒体授权 | `desktop:*` |
+| `moss.remote/v1` | Desktop | 使用当前登录用户身份调用同一 App 的 Server Action | `remote:actions` |
+
+这四组协议不继续合并：Account 和 Agent 是跨 Host 的领域契约；Desktop 是操作系统能力边界；Remote 是跨 Host 传输边界。合并后会扩大授权面，并使 Server 被迫暴露不存在的桌面能力。平台事件、平台用户 ID、SDK 方法、Token 签发和部署参数不属于 Core 协议。
+
+## Manifest 与授权
 
 ```json
 {
   "schemaVersion": 2,
-  "id": "example.catalog",
+  "id": "example.integration",
   "version": "1.0.0",
-  "displayName": "Example Catalog",
-  "hostApi": "^1.1.0",
+  "displayName": "Example Integration",
+  "hostApi": "^2.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",
     "apiVersion": 1,
-    "lifecycle": "on-demand",
+    "lifecycle": "persistent",
     "instanceMode": "single",
-    "targets": ["desktop"],
-    "protocols": ["moss.resources/v1"],
-    "actions": [
-      {
-        "name": "catalog.search",
-        "inputSchema": "schemas/search-input.json",
-        "outputSchema": "schemas/search-output.json"
-      }
-    ]
+    "targets": ["desktop", "server"],
+    "protocols": ["moss.account/v1", "moss.agent/v1"],
+    "actions": [{ "name": "status.get" }]
   },
-  "permissions": ["resources:read"],
-  "contributes": {
-    "tools": [
-      {
-        "id": "search",
-        "title": "Search Catalog",
-        "description": "Search the installed catalog.",
-        "action": "catalog.search",
-        "inputSchema": "schemas/search-input.json",
-        "outputSchema": "schemas/search-output.json",
-        "effect": "read",
-        "permission": "resources:read"
-      }
-    ]
-  }
+  "permissions": [
+    "account:identity:read",
+    "agent:turns:read",
+    "agent:turns:write"
+  ]
 }
 ```
 
-本地 ZIP 和 Catalog 安装默认不授予权限。用户可在 App Center 按项授权；撤销 grant 会停止并以新 generation 重启相关 Backend，旧进程不能继续使用已撤销能力。
+`protocols` 和 `permissions` 是包声明，installation grants 是实际授权。每次请求和事件都必须同时通过：
 
-## Backend 调用 Host
+1. App/实例已启用且部署 generation 有效。
+2. Backend 声明了目标协议。
+3. Manifest 请求了方法所需权限。
+4. installation grants 实际授予该权限。
+5. owner、App ID 和实例 ID 与运行进程一致。
+
+App 不能在输入中覆盖这些运行时身份。撤销 grant 会停止并以新 generation 重启 Backend，旧进程不能继续使用已撤销能力。
+
+## Backend 调用
+
+SDK 为内置协议提供类型化入口：
 
 ```js
 import { defineAppBackend } from '@moss/app-sdk'
 
 const backend = defineAppBackend({
-  'catalog.search': async (input, context) => {
-    const resource = await context.host.request(
-      'moss.resources/v1',
-      'resolve',
-      { uri: input.uri },
-      { signal: context.signal },
-    )
-    return { resource }
+  'message.accept': async (input, context) => {
+    const identity = await context.account.request('identity.current', {})
+    const turn = await context.agent.request('turn.start', {
+      externalUserId: input.senderId,
+      externalConversationId: input.conversationId,
+      externalEventId: input.messageId,
+      text: input.text,
+    })
+    return { identity: identity.user?.id, turn }
   },
 })
 
-backend.host.on('moss.resources/v1', 'changed', async (event, context) => {
-  await refreshIndex(event.uri, context.signal)
-  return { refreshed: true }
+backend.agent.on('turn.completed', async (event) => {
+  await deliverToPlatform(event)
+  return { handled: true }
 })
 ```
 
-Host 注册协议定义和实现：
+也可用 `context.host.request(protocol, method, input)` 调用 Manifest 已声明的自定义协议。Host 通过 `registerHostProtocol()` 注册 schema、权限和事件，再用 `registerHostHandler()` 提供实现；自定义协议同样经过统一授权、限流、超时和取消。
 
-```js
-const unregisterProtocol = runtime.registerHostProtocol({
-  protocol: 'moss.resources/v1',
-  methods: {
-    resolve: {
-      permission: 'resources:read',
-      validateInput(input) {
-        if (typeof input?.uri !== 'string') throw new TypeError('uri is required')
-        return { uri: input.uri }
-      },
-    },
-  },
-  events: {
-    changed: { permission: 'resources:read' },
-  },
-})
+## Desktop 与 Remote 边界
 
-const unregisterHandler = runtime.registerHostHandler(
-  'moss.resources/v1',
-  'resolve',
-  (input, context) => resourceService.resolve(input.uri, context),
-)
-```
+`moss.desktop/v1` 返回的文件路径只位于调用 App 的实例数据目录。文件型平台 SDK 必须再次校验路径属于该目录，不能读取用户未选择的任意文件。摄像头和麦克风授权还要求 `desktop:media` grant，预览或停用实例不会获得授权。
 
-Handler context 中的 `appId`、`version`、`instanceId`、generation、target 和 owner principal 都由 Host 注入，不能由 App 自报。注销协议会同时注销该协议的 handler。
-
-## Contributions
-
-Manifest 可声明以下静态贡献点：
-
-| 类型 | 当前 Phase 1 行为 |
-| --- | --- |
-| `views` | 已启用 App 可向 Desktop 侧栏或“更多”菜单添加带 `#/route` 的页面入口 |
-| `settings` | 可发现的 App 设置入口，引用同一 Manifest 中的 View |
-| `commands` | 可发现并通过统一 contribution broker 调用的 Backend Action |
-| `tools` | 注入本地 Desktop Agent Tool Pool；输入/输出继续由 Action schema 校验 |
-| `resourceProviders` | 按 URI scheme 查找并调用唯一 Provider |
-| `widgets` | 已验证和可发现；具体 Overlay/Status 容器在后续阶段接入 |
-
-完整 contribution ID 为 `<app-id>/<local-id>`。Tool 对外名称由 Host 生成，限制在 64 字符内并包含稳定摘要，避免不同 App 或标点归一化后的名称冲突。
-
-Tool 的 `effect` 映射到 Core 策略：
-
-- `read`：只读且可并发。
-- `write`：非只读，默认进入用户确认和规则管线。
-- `destructive`：标记为破坏性并默认确认，不提供永久授权建议。
-
-Tool 调用仍经过 Moss 的通用 Tool 校验、权限 hook、审计、Action schema、队列、超时和取消链路。App、grant 或实例在调用前被停用时，Runtime 会在 Backend handler 之前拒绝请求。Phase 1 只把 App Tool 注入本地 Desktop Session；Remote Direct 的 Server Tool 注入在后续阶段实现。
+`moss.remote/v1 action.invoke` 只能调用同一 App ID、同一默认实例 ID 的 Server Action；App 不能指定目标 App 或 owner。Server HTTP 层再检查当前用户的 `apps:invoke`，并以该用户 owner 查找已安装、已启用的 Server 实例。
 
 ## Server owner
 
-Server 上的 installation、instance、deployment、密钥、数据目录和日志均绑定到以下 owner 之一：
-
-- `user`：默认值，绑定当前认证用户和组织。
-- `org`：绑定当前组织，只允许管理员选择。
-- `host`：绑定整台 Server，只允许管理员选择。
-
-HTTP API 使用查询参数 `owner_scope=user|org|host`；带 JSON body 的变更请求也可使用 `ownerScope`。路由从认证上下文生成 owner，忽略 App 自报身份。相同 App ID 和实例 ID 可在不同 owner 下并存，查询、Action、日志、密钥、事件和 deployment lease 均隔离。
-
-## 包签名与 Catalog
-
-可选的 `app-signature.json` 使用 Ed25519 签署由 App ID、版本、publisher/key ID 和规范化 `checksums.json` 组成的载荷。Runtime 将包标记为 `trusted`、`untrusted` 或 `unsigned`；要求可信发布者的 Catalog source 会拒绝未签名、未知密钥或验签失败的包。
-
-`checksums.json` 覆盖除自身和 `app-signature.json` 之外的所有包文件，因此 Manifest 和运行代码都进入签名载荷。App Center 会展示 trust 状态；当前 Backend 进程不是 OS sandbox，只有第一方或明确可信来源的 Backend App 才应被启用。
+Server installation、instance、deployment、Secret、数据和日志绑定到 `user`、`org` 或 `host` owner。HTTP 路由只从认证上下文生成 owner；`org` 和 `host` 仅管理员可选。相同 App/实例 ID 可在不同 owner 下并存，Action、Host 请求、事件和 deployment lease 均隔离。
 
 ## 传输保证
 
-- 消息使用 App Service v1 envelope，并校验 generation 与每次启动随机生成的 launch token。
-- 普通 payload 必须是可序列化 JSON 对象，默认消息上限为 1 MiB；大文件和流应使用后续资源 handle API。
-- Host 请求及事件均有限流、超时、取消和重复 ID 防护。
-- 处理器在 schema、Manifest protocol、permission、installation grant、owner 和运行状态校验通过后才会执行。
-- Backend 退出、App 停用、grant 撤销或 deployment generation 改变时，等待中的工作会失败，旧进程消息会被拒绝。
+- Backend 必须是 Node 运行时；构建器可以使用 Bun，但产物目标必须为 Node。
+- 消息校验 generation 与每次启动随机生成的 launch token。
+- Backend IPC 的普通 JSON envelope 上限为 1 MiB；大文件走 Desktop 文件能力或 App 私有存储。
+- Host 请求与事件具有并发限制、超时、取消、重复 ID 和载荷指纹校验。
+- Host 事件要求 Backend ACK；稳定 `eventId` 可安全重试。
+- 错误和日志在离开 Runtime 前进行 Secret 脱敏。
 
-Channel 专用方法、事件及幂等要求见 [Channel Host API](./channel-host-api.md)。整体拆分顺序和模块边界见 [App 模块化迁移计划](./app-modularization-migration-plan.md)。
+Agent 的方法、事件和幂等约束见 [Agent Host API](./agent-host-api.md)，安装、进程和 Server owner 模型见 [Unified App Runtime](./app-runtime.md)。

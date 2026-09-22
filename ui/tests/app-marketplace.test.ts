@@ -14,9 +14,9 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { re
 function version(archive: Buffer, versionNumber = '1.2.0') {
   return {
     version: versionNumber,
-    hostApi: '^1.1.0',
+    hostApi: '^2.0.0',
     platforms: ['darwin-arm64', 'win32-x64'],
-    permissions: ['channel:messages'],
+    permissions: ['agent:turns:write'],
     publishedAt: '2026-09-21T00:00:00.000Z',
     releaseNotes: 'First marketplace release.',
     artifact: {
@@ -103,7 +103,7 @@ describe('App marketplace', () => {
     ])
     const rollbacks: unknown[] = []
     const runtime = {
-      getApp: async () => ({ installation: { activeVersion: '1.1.0', grants: ['channel:messages'] } }),
+      getApp: async () => ({ installation: { activeVersion: '1.1.0', grants: ['agent:turns:write'] } }),
       registerInstalled: async () => { throw new Error('backend did not start') },
     }
     const service = createAppMarketplaceService({
@@ -181,10 +181,10 @@ describe('App marketplace', () => {
     expect(await service.install({ appId: 'example.app' })).toMatchObject({
       ok: false,
       requiresPermissionApproval: true,
-      permissions: ['channel:messages'],
+      permissions: ['agent:turns:write'],
     })
     expect(await service.install({ appId: 'example.app', acceptPermissions: true })).toMatchObject({ ok: true, version: '1.2.0' })
-    expect(calls).toEqual([{ version: '1.2.0', grants: ['channel:messages'] }])
+    expect(calls).toEqual([{ version: '1.2.0', grants: ['agent:turns:write'] }])
   })
 
   it('drops permissions removed by a newer marketplace version', async () => {
@@ -193,7 +193,7 @@ describe('App marketplace', () => {
     const archive = Buffer.from('signed permission update')
     const latest = {
       ...version(archive),
-      permissions: ['channel:messages', 'channel:pairing'],
+      permissions: ['agent:turns:write', 'account:identity:read'],
     }
     const responses = new Map([
       ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
@@ -205,7 +205,7 @@ describe('App marketplace', () => {
       getApp: async () => ({
         installation: {
           activeVersion: '1.1.0',
-          grants: ['channel:messages', 'channel:decisions'],
+          grants: ['agent:turns:write', 'desktop:files'],
         },
       }),
       registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
@@ -236,13 +236,13 @@ describe('App marketplace', () => {
 
     expect(await service.install({ appId: 'example.app' })).toMatchObject({
       requiresPermissionApproval: true,
-      permissions: ['channel:pairing'],
+      permissions: ['account:identity:read'],
     })
     await service.install({ appId: 'example.app', acceptPermissions: true })
 
     expect(calls).toEqual([{
       version: '1.2.0',
-      grants: ['channel:messages', 'channel:pairing'],
+      grants: ['agent:turns:write', 'account:identity:read'],
     }])
   })
 
@@ -258,7 +258,7 @@ describe('App marketplace', () => {
     const detailRequests: string[] = []
     const registered: string[] = []
     const runtime = {
-      getApp: async () => ({ installation: { activeVersion: '1.2.0', grants: ['channel:messages'] } }),
+      getApp: async () => ({ installation: { activeVersion: '1.2.0', grants: ['agent:turns:write'] } }),
       registerInstalled: async (_appId: string, installedVersion: string) => { registered.push(installedVersion) },
     }
     const service = createAppMarketplaceService({

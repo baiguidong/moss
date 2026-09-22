@@ -445,10 +445,6 @@ export class ServerAgentChannelHost {
     return created
   }
 
-  handleChannelRequest(method: string, input: Record<string, unknown>, context: HostContext): unknown {
-    return this.controllerFor(context).controller.handleChannelRequest(method, input, context)
-  }
-
   handleAgentRequest(method: string, input: Record<string, unknown>, context: HostContext): unknown {
     return this.controllerFor(context).controller.handleAgentRequest(method, input, context)
   }

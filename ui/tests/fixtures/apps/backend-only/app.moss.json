@@ -3,7 +3,7 @@
   "id": "fixture.backend-only",
   "version": "1.0.0",
   "displayName": "Backend Only",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",

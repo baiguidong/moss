@@ -19,7 +19,7 @@ describe('Agent Channel store', () => {
   it('resolves conversation defaults and member overrides without widening unrelated fields', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db, { now: () => 100 });
-      const scope = { appId: 'moss.openim', instanceId: 'moss.openim--default', externalConversationId: 'group-1' };
+      const scope = { appId: 'example.integration', instanceId: 'example.integration--default', externalConversationId: 'group-1' };
       const conversation = store.updateBinding({ ...scope, expectedRevision: 0, patch: {
         replyMode: 'mention_only', permissionMode: 'dontAsk',
         resources: { tools: ['Read'], skills: ['summarize'], connectors: ['crm'] },
@@ -46,7 +46,7 @@ describe('Agent Channel store', () => {
   it('uses optimistic revisions and scopes bindings by App instance', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const input = { appId: 'moss.openim', instanceId: 'one', externalConversationId: 'chat-1', expectedRevision: 0, patch: { replyMode: 'ai_auto' } };
+      const input = { appId: 'example.integration', instanceId: 'one', externalConversationId: 'chat-1', expectedRevision: 0, patch: { replyMode: 'ai_auto' } };
       store.updateBinding(input);
       let conflict = null;
       try { store.updateBinding({ ...input, patch: { replyMode: 'human_only' } }); } catch (error) { conflict = error.code; }
@@ -75,7 +75,7 @@ describe('Agent Channel store', () => {
   it('lets a direct conversation fully replace and then restore its default policy', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const scope = { appId: 'moss.openim', instanceId: 'default' };
+      const scope = { appId: 'example.integration', instanceId: 'default' };
       store.updateBinding({ ...scope, externalConversationId: '*', patch: {
         replyMode: 'ai_auto', permissionMode: 'acceptEdits',
         resources: { tools: ['Read'], skills: ['summary'], connectors: ['crm'] },
@@ -110,32 +110,32 @@ describe('Agent Channel store', () => {
     })
   })
 
-  it('isolates account-scoped OpenIM defaults and conversations', () => {
+  it('isolates App-defined account defaults and conversations', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const scope = { appId: 'moss.openim', instanceId: 'default' };
+      const scope = { appId: 'example.integration', instanceId: 'default' };
       store.updateBinding({
         ...scope,
-        externalConversationId: 'openim-user:alice/*',
-        defaultConversationId: 'openim-user:alice/*',
+        externalConversationId: 'account:alice/*',
+        defaultConversationId: 'account:alice/*',
         patch: { replyMode: 'ai_auto' },
       });
       store.updateBinding({
         ...scope,
-        externalConversationId: 'openim-user:bob/*',
-        defaultConversationId: 'openim-user:bob/*',
+        externalConversationId: 'account:bob/*',
+        defaultConversationId: 'account:bob/*',
         patch: { replyMode: 'ai_draft_review' },
       });
       console.log(JSON.stringify({
         alice: store.resolveBinding({
           ...scope,
-          externalConversationId: 'openim-user:alice/direct:leader',
-          defaultConversationId: 'openim-user:alice/*',
+          externalConversationId: 'account:alice/direct:leader',
+          defaultConversationId: 'account:alice/*',
         }).replyMode,
         bob: store.resolveBinding({
           ...scope,
-          externalConversationId: 'openim-user:bob/direct:leader',
-          defaultConversationId: 'openim-user:bob/*',
+          externalConversationId: 'account:bob/direct:leader',
+          defaultConversationId: 'account:bob/*',
         }).replyMode,
       }));
     `)
@@ -145,7 +145,7 @@ describe('Agent Channel store', () => {
   it('applies instance-wide defaults and member overrides before conversation-specific rules', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const scope = { appId: 'moss.feishu', instanceId: 'moss.feishu--default' };
+      const scope = { appId: 'example.integration', instanceId: 'example.integration--default' };
       store.updateBinding({ ...scope, externalConversationId: '*', patch: {
         replyMode: 'ai_draft_review', resources: { tools: ['Read'], skills: [], connectors: [] },
       }});
@@ -171,7 +171,7 @@ describe('Agent Channel store', () => {
   it('treats member inherit as inheritance and prevents member policies from widening resources', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const scope = { appId: 'moss.feishu', instanceId: 'moss.feishu--default' };
+      const scope = { appId: 'example.integration', instanceId: 'example.integration--default' };
       store.updateBinding({ ...scope, externalConversationId: '*', patch: {
         replyMode: 'ai_auto', permissionMode: 'dontAsk',
         resources: { tools: ['Read'], skills: ['summarize'], connectors: ['crm'] },
@@ -197,7 +197,7 @@ describe('Agent Channel store', () => {
   it('deduplicates source events and rejects payload collisions', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const input = { appId: 'moss.openim', instanceId: 'default', externalConversationId: 'chat-1', externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'ai_auto', policy: {}, input: { text: 'hello' } };
+      const input = { appId: 'example.integration', instanceId: 'default', externalConversationId: 'chat-1', externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'ai_auto', policy: {}, input: { text: 'hello' } };
       const first = store.claimTurn(input).claimed;
       const duplicate = store.claimTurn(input).claimed;
       let collision = false;
@@ -211,7 +211,7 @@ describe('Agent Channel store', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
       const input = {
-        appId: 'moss.openim', instanceId: 'default', externalConversationId: 'direct:peer-1',
+        appId: 'example.integration', instanceId: 'default', externalConversationId: 'direct:peer-1',
         externalUserId: 'peer-1', externalEventId: 'outgoing:message-1', text: 'manual reply',
       };
       const first = store.observeMessage(input);
@@ -234,7 +234,7 @@ describe('Agent Channel store', () => {
   it('enforces terminal turn transitions', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const claimed = store.claimTurn({ appId: 'moss.openim', instanceId: 'default', externalConversationId: 'chat-1', externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'human_only', policy: {}, input: {} });
+      const claimed = store.claimTurn({ appId: 'example.integration', instanceId: 'default', externalConversationId: 'chat-1', externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'human_only', policy: {}, input: {} });
       const human = store.updateTurn(claimed.turn.id, { status: 'human' });
       let rejected = false;
       try { store.updateTurn(human.id, { status: 'queued' }); } catch (error) { rejected = /transition/.test(error.message); }
@@ -248,7 +248,7 @@ describe('Agent Channel store', () => {
       let timestamp = 100;
       const store = createAgentChannelStore(db, { now: () => ++timestamp });
       const turn = store.claimTurn({
-        appId: 'moss.openim', instanceId: 'default', externalConversationId: 'chat-1',
+        appId: 'example.integration', instanceId: 'default', externalConversationId: 'chat-1',
         externalUserId: 'member-1', externalEventId: 'message-1', replyMode: 'human_only',
         policy: {}, input: {},
       }).turn;
@@ -272,13 +272,13 @@ describe('Agent Channel store', () => {
   it('lists scoped review turns without leaking another App instance', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);
-      const base = { appId: 'moss.openim', externalConversationId: 'chat-1', externalUserId: 'member-1', replyMode: 'ai_draft_review', policy: {}, input: {} };
+      const base = { appId: 'example.integration', externalConversationId: 'chat-1', externalUserId: 'member-1', replyMode: 'ai_draft_review', policy: {}, input: {} };
       const first = store.claimTurn({ ...base, instanceId: 'one', externalEventId: 'message-1' }).turn;
       store.updateTurn(first.id, { status: 'queued' });
       store.updateTurn(first.id, { status: 'running' });
       store.updateTurn(first.id, { status: 'awaiting_review', resultText: 'draft' });
       store.claimTurn({ ...base, instanceId: 'two', externalEventId: 'message-2' });
-      console.log(JSON.stringify(store.listTurns({ appId: 'moss.openim', instanceId: 'one', statuses: ['awaiting_review'] })));
+      console.log(JSON.stringify(store.listTurns({ appId: 'example.integration', instanceId: 'one', statuses: ['awaiting_review'] })));
     `)
     expect(result).toHaveLength(1)
     expect(result[0]).toMatchObject({ status: 'awaiting_review', resultText: 'draft' })
@@ -289,7 +289,7 @@ describe('Agent Channel store', () => {
       let timestamp = 100;
       const store = createAgentChannelStore(db, { now: () => ++timestamp });
       const turn = store.claimTurn({
-        appId: 'moss.openim', instanceId: 'default', externalConversationId: 'chat-1',
+        appId: 'example.integration', instanceId: 'default', externalConversationId: 'chat-1',
         externalUserId: 'member-1', externalEventId: 'message-1',
         replyMode: 'ai_draft_review', policy: {}, input: {},
       }).turn;

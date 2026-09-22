@@ -195,7 +195,7 @@ describe('Agent Channel controller', () => {
   it('routes human-only messages without invoking the model', () => {
     const result = runControllerScenario(`
       const fixture = setup();
-      const turn = await fixture.controller.handleChannelRequest('message.receive', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello' }, fixture.context);
+      const turn = await fixture.controller.handleAgentRequest('turn.start', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello' }, fixture.context);
       console.log(JSON.stringify({ turn, created: fixture.created }));
       fixture.db.close();
     `)
@@ -291,28 +291,28 @@ describe('Agent Channel controller', () => {
   it('supports mention-only and prevents non-human reply loops by default', () => {
     const result = runControllerScenario(`
       const fixture = setup('mention_only');
-      const unmentioned = await fixture.controller.handleChannelRequest('message.receive', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello' }, fixture.context);
-      const mentioned = await fixture.controller.handleChannelRequest('message.receive', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-2', text: 'hello', mentioned: true }, fixture.context);
+      const unmentioned = await fixture.controller.handleAgentRequest('turn.start', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello' }, fixture.context);
+      const mentioned = await fixture.controller.handleAgentRequest('turn.start', { externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-2', text: 'hello', mentioned: true }, fixture.context);
       await waitFor(() => fixture.store.getTurn(mentioned.turnId)?.status === 'completed');
-      const loop = await fixture.controller.handleChannelRequest('message.receive', { externalUserId: 'bot-2', externalConversationId: 'chat-1', externalEventId: 'event-3', text: 'loop', source: 'agent', mentioned: true, hop: 1 }, fixture.context);
+      const loop = await fixture.controller.handleAgentRequest('turn.start', { externalUserId: 'bot-2', externalConversationId: 'chat-1', externalEventId: 'event-3', text: 'loop', source: 'agent', mentioned: true, hop: 1 }, fixture.context);
       console.log(JSON.stringify({ unmentioned, loop, events: fixture.events.map(event => ({ protocol: event.protocol, name: event.name })) }));
       fixture.db.close();
     `)
     expect(result.unmentioned.status).toBe('human')
-    expect(result.events).toContainEqual({ protocol: 'moss.channel/v1', name: 'turn.completed' })
+    expect(result.events).toContainEqual({ protocol: 'moss.agent/v1', name: 'turn.completed' })
     expect(result.loop).toMatchObject({ status: 'human', reason: 'proactive_policy' })
   })
 
   it('supports sending or dismissing messages routed to a human', () => {
     const result = runControllerScenario(`
       const fixture = setup();
-      const first = await fixture.controller.handleChannelRequest('message.receive', {
+      const first = await fixture.controller.handleAgentRequest('turn.start', {
         externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'hello',
       }, fixture.context);
       const replied = await fixture.controller.handleAgentRequest('turn.reply', {
         turnId: first.turnId, action: 'send', text: 'human answer',
       }, fixture.context);
-      const second = await fixture.controller.handleChannelRequest('message.receive', {
+      const second = await fixture.controller.handleAgentRequest('turn.start', {
         externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-2', text: 'ignore me',
       }, fixture.context);
       const dismissed = await fixture.controller.handleAgentRequest('turn.reply', {
@@ -337,10 +337,10 @@ describe('Agent Channel controller', () => {
         replyMode: 'ai_auto', session: { mode: 'fixed' },
       }});
       const [first, second] = await Promise.all([
-        fixture.controller.handleChannelRequest('message.receive', {
+        fixture.controller.handleAgentRequest('turn.start', {
           externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-1', text: 'first',
         }, fixture.context),
-        fixture.controller.handleChannelRequest('message.receive', {
+        fixture.controller.handleAgentRequest('turn.start', {
           externalUserId: 'user-1', externalConversationId: 'chat-1', externalEventId: 'event-2', text: 'second',
         }, fixture.context),
       ]);
@@ -412,8 +412,8 @@ describe('Agent Channel controller', () => {
       fixture.controller.onReady(fixture.context);
       await waitFor(() => fixture.events.filter(event => event.name === 'turn.review_requested').length === 2);
       const afterRestart = fixture.events.map(event => event.name);
-      await fixture.controller.handleChannelRequest('delivery.ack', {
-        kind: 'turn', deliveryId: accepted.turnId, externalConversationId: 'chat-1', ok: true,
+      await fixture.controller.handleAgentRequest('turn.delivery.ack', {
+        turnId: accepted.turnId, externalConversationId: 'chat-1', ok: true,
       }, fixture.context);
       await fixture.controller.handleAgentRequest('turn.review', {
         turnId: accepted.turnId, action: 'approve', text: 'approved answer',

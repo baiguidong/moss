@@ -456,7 +456,7 @@ export class AuthCenterDb {
   private ensureRoleData(): void {
     for (const organization of this.listOrganizations()) {
       this.ensureBuiltinRoles(organization.id)
-      this.ensureBuiltinCommunicationPermissions(organization.id)
+      this.ensureBuiltinUserPermissions(organization.id)
     }
     for (const user of this.db.prepare('SELECT * FROM users ORDER BY created_at ASC').all() as SqlRow[]) {
       const mapped = mapUser(user)
@@ -545,16 +545,23 @@ export class AuthCenterDb {
     }
   }
 
-  private ensureBuiltinCommunicationPermissions(orgId: string): void {
-    const migrationKey = `migration:builtin-communication-permissions:v1:${orgId}`
+  private ensureBuiltinUserPermissions(orgId: string): void {
+    const migrationKey = `migration:builtin-user-permissions:v2:${orgId}`
     if (this.getConfig(migrationKey)) return
 
-    const communicationPermissions = ['im:use', 'directory:read', 'im:group:create']
+    const userPermissions = [
+      'directory:read',
+      'apps:read',
+      'apps:manage',
+      'apps:invoke',
+      'apps:deploy',
+      'apps:logs',
+    ]
     for (const systemKey of ['dept_admin', 'user'] as const) {
       const role = this.getRoleBySystemKey(orgId, systemKey)
       if (!role) continue
       const permissions = new Set(this.listRolePermissions(role.id))
-      for (const permission of communicationPermissions) permissions.add(permission)
+      for (const permission of userPermissions) permissions.add(permission)
       this.setRolePermissions(role.id, [...permissions])
     }
     this.setConfig(migrationKey, String(Date.now()))

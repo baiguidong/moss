@@ -91,7 +91,7 @@ App 创建或迭代时，维护：
   "version": "0.1.0",
   "displayName": "中文标题",
   "description": "简短描述",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "ui": {
     "entry": "dist/ui/index.html",
     "window": {

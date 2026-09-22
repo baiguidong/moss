@@ -3,7 +3,7 @@
   "id": "fixture.on-demand-single",
   "version": "1.0.0",
   "displayName": "On-demand Single",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "ui": { "entry": "dist/ui/index.html" },
   "backend": {
     "entry": "dist/backend/main.mjs",

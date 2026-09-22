@@ -22,7 +22,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
 import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import type {
   SystemSettings,
@@ -31,7 +30,6 @@ import type {
 import {
   Copy,
   Image as ImageIcon,
-  MessageSquare,
   Server,
   Sparkles,
   TriangleAlert,
@@ -40,7 +38,7 @@ import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
+  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime'
 >
 
 type SettingsSectionProps = {
@@ -81,7 +79,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     serverRuntime: {
       dockerImage: settings.serverRuntime.dockerImage,
     },
-    openIM: { ...settings.openIM },
   }
 }
 
@@ -143,33 +140,7 @@ function buildSystemSettingsPatch(
     patch.serverRuntime = serverRuntimePatch
   }
 
-  const openIMPatch: NonNullable<UpdateSystemSettingsRequest['openIM']> = {}
-  const openIMFields = [
-    'enabled',
-    'instanceId',
-    'apiUrl',
-    'wsUrl',
-    'chatUrl',
-    'adminUserId',
-    'secret',
-    'webhookSecret',
-    'requestTimeoutMs',
-  ] as const
-  for (const field of openIMFields) {
-    if (draft.openIM[field] !== settings.openIM[field]) {
-      Object.assign(openIMPatch, { [field]: draft.openIM[field] })
-    }
-  }
-  if (Object.keys(openIMPatch).length > 0) {
-    patch.openIM = openIMPatch
-  }
-
   return patch
-}
-
-function generateSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32))
-  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
 }
 
 function SettingSection({
@@ -615,148 +586,6 @@ export default function SystemSettingsPage() {
                 )
               }
               placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[draft.image.provider] ?? 'gpt-image-1'}
-            />
-          </SettingField>
-        </SettingSection>
-
-        <SettingSection
-          icon={MessageSquare}
-          title="OpenIM"
-          description="配置即时消息服务连接和服务端权限回调。"
-        >
-          <SettingField label="启用 OpenIM">
-            <div className="flex h-10 items-center">
-              <Switch
-                checked={draft.openIM.enabled}
-                onCheckedChange={(checked) =>
-                  setDraft(current => current ? {
-                    ...current,
-                    openIM: { ...current.openIM, enabled: checked },
-                  } : current)
-                }
-                aria-label="启用 OpenIM"
-              />
-            </div>
-          </SettingField>
-
-          <SettingField label="实例 ID" description="同一套 OpenIM 服务使用固定实例标识。">
-            <Input
-              value={draft.openIM.instanceId}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, instanceId: event.target.value },
-              } : current)}
-              placeholder="default"
-            />
-          </SettingField>
-
-          <SettingField label="API URL">
-            <Input
-              value={draft.openIM.apiUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, apiUrl: event.target.value },
-              } : current)}
-              placeholder="http://10.0.1.180:10002"
-            />
-          </SettingField>
-
-          <SettingField label="WebSocket URL">
-            <Input
-              value={draft.openIM.wsUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, wsUrl: event.target.value },
-              } : current)}
-              placeholder="ws://10.0.1.180:10001"
-            />
-          </SettingField>
-
-          <SettingField label="Chat URL">
-            <Input
-              value={draft.openIM.chatUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, chatUrl: event.target.value },
-              } : current)}
-              placeholder="http://10.0.1.180:10008"
-            />
-          </SettingField>
-
-          <SettingField label="管理员用户 ID">
-            <Input
-              value={draft.openIM.adminUserId}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, adminUserId: event.target.value },
-              } : current)}
-              placeholder="imAdmin"
-            />
-          </SettingField>
-
-          <SettingField label="OpenIM 管理密钥">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.openIM.secret}
-                className="font-mono text-xs"
-                onChange={(event) => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, secret: event.target.value },
-                } : current)}
-              />
-              {draft.openIM.secret ? (
-                <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.secret, 'OpenIM 管理密钥')}>
-                  <Copy className="mr-2 size-4" />复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
-
-          <SettingField label="Webhook 密钥" description="必须与 OpenIM 回调 URL 中的密钥一致。">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.openIM.webhookSecret}
-                className="font-mono text-xs"
-                onChange={(event) => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, webhookSecret: event.target.value },
-                } : current)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, webhookSecret: generateSecret() },
-                } : current)}
-              >
-                生成
-              </Button>
-              {draft.openIM.webhookSecret ? (
-                <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.webhookSecret, 'Webhook 密钥')}>
-                  <Copy className="mr-2 size-4" />复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
-
-          <SettingField label="请求超时" description="单位：毫秒。">
-            <Input
-              type="number"
-              min={1000}
-              max={120000}
-              step={1000}
-              value={draft.openIM.requestTimeoutMs}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: {
-                  ...current.openIM,
-                  requestTimeoutMs: Number(event.target.value) || 15000,
-                },
-              } : current)}
             />
           </SettingField>
         </SettingSection>

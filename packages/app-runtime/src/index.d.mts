@@ -50,16 +50,12 @@ export class AppRuntimeHost {
   restartInstance(appId: string, instanceId: string): Promise<any>
   invoke(appId: string, instanceId: string, action: string, input: unknown, options?: Record<string, any>): Promise<any>
   cancel(appId: string, instanceId: string, requestId: string): boolean
-  registerChannelHandler(method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
   registerHostProtocol(definition: Record<string, any>): () => void
   registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
   requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; signal?: AbortSignal }): Promise<unknown>
   dispatchHostRequest(request: Record<string, any>): Promise<unknown>
   publishHostEvent(appId: string, instanceId: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
   cancelHostEvent(appId: string, instanceId: string, protocol: string, eventId: string): boolean
-  dispatchChannelRequest(request: Record<string, any>): Promise<unknown>
-  publishChannelEvent(appId: string, instanceId: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
-  cancelChannelEvent(appId: string, instanceId: string, eventId: string): boolean
   getLogs(appId: string, instanceId: string, options?: Record<string, any>): Promise<any[]>
   activateVersion(appId: string, version: string, options?: { grants?: string[] }): Promise<any>
   moveDeployment(appId: string, instanceId: string, targetType: string, targetId: string, options?: Record<string, any>): Promise<any>
@@ -70,7 +66,6 @@ export class AppRuntimeHost {
   readonly deployments: DeploymentStore
   readonly packages: AppPackageStore
   readonly actions: AppActionBroker
-  readonly channelHost: AppChannelHost
   readonly hostCapabilities: AppHostCapabilityRegistry
   readonly events: AppEventBroker
   readonly logs: AppLogStore
@@ -162,10 +157,8 @@ export class AppProcessSupervisor {
   restart(key: string): Promise<any>
   invoke(key: string, actionName: string, input: unknown, options?: Record<string, any>): Promise<any>
   cancel(key: string, requestId: string): boolean
-  publishChannelEvent(key: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
   publishHostEvent(key: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
   cancelHostEvent(key: string, protocol: string, eventId: string): boolean
-  cancelChannelEvent(key: string, eventId: string): boolean
   shutdown(): Promise<void>
 }
 
@@ -175,17 +168,6 @@ export class AppActionBroker {
   cancel(deploymentKey: string, requestId: string): boolean
   readonly pendingTotal: number
   readonly requests: Map<string, unknown>
-}
-export class AppChannelHost {
-  constructor(options?: {
-    handlers?: Record<string, (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>>
-    handleRequest?: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>
-    maxConcurrentPerInstance?: number
-    maxConcurrentTotal?: number
-  })
-  register(method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
-  listMethods(): string[]
-  dispatch(request: Record<string, any>): Promise<unknown>
 }
 export class AppHostCapabilityRegistry {
   constructor(options?: Record<string, any>)
@@ -198,9 +180,10 @@ export class AppHostCapabilityRegistry {
   readonly activeByInstance: Map<string, number>
   readonly activeTotal: number
 }
-export function createChannelProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createDesktopProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createRemoteProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const DEFAULT_AGENT_CHANNEL_POLICY: Readonly<Record<string, any>>
 export const AGENT_CHANNEL_SYSTEM_PROMPT: string
 export function createAgentChannelStore(db: any, options?: { now?: () => number }): any
@@ -210,7 +193,6 @@ export function validateAgentChannelDelegation(policy: any, toolName: string, in
 export function resolveAgentChannelConnectorIds(policy: any, baseConnectorIds: string[]): string[]
 export function resolveAgentChannelToolSelectors(policy: any, mcpServerNames?: string[]): string[] | null
 export function validateAgentChannelConnectorTool(policy: any, toolName: string, input: any, resolveServerConnectorId?: (name: string) => string): string | null
-export function createOpenIMProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const APP_CONTRIBUTION_KINDS: readonly string[]
 export function contributionId(appId: string, localId: string): string
 export function appToolName(appId: string, localId: string): string

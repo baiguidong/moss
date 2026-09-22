@@ -92,7 +92,7 @@ try {
     const appUserRole = authService.createRole({
       orgId: login.user.orgId,
       name: 'App user',
-      permissions: ['apps:read', 'apps:manage', 'apps:deploy', 'apps:logs'],
+      permissions: ['apps:read', 'apps:manage', 'apps:invoke', 'apps:deploy', 'apps:logs'],
     }).role
     authService.createUser({
       orgId: login.user.orgId,

@@ -3,7 +3,7 @@
   "id": "fixture.persistent-multiple",
   "version": "1.0.0",
   "displayName": "Persistent Multiple",
-  "hostApi": "^1.0.0",
+  "hostApi": "^2.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",

@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import '@openim/electron-client-sdk/lib/preload.js';
 
 contextBridge.exposeInMainWorld('agentDesktop', {
   // 通用 IPC 调用方法
@@ -45,19 +44,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       ipcRenderer.on('workflow:changed', handler);
       return () => ipcRenderer.off('workflow:changed', handler);
     },
-  },
-  openIM: {
-    getConfig: () => ipcRenderer.invoke('openim:get-config'),
-    createSession: () => ipcRenderer.invoke('openim:create-session'),
-    listDirectory: () => ipcRenderer.invoke('openim:list-directory'),
-    prepareDirectConversation: (payload) => ipcRenderer.invoke('openim:prepare-direct-session', payload),
-    prepareGroupConversation: (payload) => ipcRenderer.invoke('openim:prepare-group-session', payload),
-    pickFiles: (payload) => ipcRenderer.invoke('openim:pick-files', payload),
-    prepareLocalFiles: (payload) => ipcRenderer.invoke('openim:prepare-local-files', payload),
-    createVideoThumbnail: (payload) => ipcRenderer.invoke('openim:create-video-thumbnail', payload),
-    captureScreen: () => ipcRenderer.invoke('openim:capture-screen'),
-    download: (payload) => ipcRenderer.invoke('openim:download', payload),
-    getRtcToken: (payload) => ipcRenderer.invoke('openim:get-rtc-token', payload),
   },
   agentMail: {
     getStatus: () => ipcRenderer.invoke('agent-mail:get-status'),

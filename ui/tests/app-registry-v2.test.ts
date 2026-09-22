@@ -23,7 +23,7 @@ describe('App V2 registry hydration', () => {
       id: 'fixture.registry-v2',
       version: '1.0.0',
       displayName: 'Registry V2',
-      hostApi: '^1.0.0',
+      hostApi: '^2.0.0',
       ui: { entry: 'dist/ui/index.html' },
       permissions: [],
     }, null, 2)}\n`)
