@@ -236,10 +236,16 @@ describe('desktop package contract', () => {
     ));
     expect(lock).toEqual({
       schemaVersion: 1,
-      apps: [{
-        id: 'moss.feishu',
-        version: '0.1.3',
-      }],
+      apps: [
+        {
+          id: 'moss.feishu',
+          version: '0.4.1',
+        },
+        {
+          id: 'moss.openim',
+          version: '0.2.1',
+        },
+      ],
     });
     expect(trustedPublishers.publishers.moss.keys['release-1']).toBe('publishers/moss/release-1.pem');
     expect(existsSync(path.join(uiRoot, 'resources', 'app-market', 'publishers', 'moss', 'release-1.pem'))).toBe(true);
