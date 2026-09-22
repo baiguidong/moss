@@ -37,6 +37,14 @@ describe('desktop package contract', () => {
     const buildSource = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
     expect(buildSource).not.toContain('MACRO.VERSION="2.1.88"');
     expect(buildSource).toContain('JSON.stringify(buildVersion)');
+    expect(buildSource).toContain("const buildNodeCli = target === 'all' || target === 'node'");
+    const cliBuild = buildSource.slice(
+      buildSource.indexOf("build('bin/cli.js'"),
+      buildSource.indexOf('if (buildElectronDirect)'),
+    );
+    expect(cliBuild).toContain("'--target=node'");
+    expect(cliBuild).toContain("'--banner=#!/usr/bin/env node'");
+    expect(cliBuild).not.toContain("'--target=bun'");
   });
 
   test('packages native image processing and physical ripgrep resources', () => {

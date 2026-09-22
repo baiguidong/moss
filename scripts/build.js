@@ -29,7 +29,7 @@ function sanitizePaths(outfile) {
 
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
 const target = targetArg ? targetArg.slice('--target='.length) : 'all'
-const buildBunCli = target === 'all'
+const buildNodeCli = target === 'all' || target === 'node'
 const buildElectronDirect = target !== 'server'
 const buildServer = target !== 'electron-direct'
 
@@ -97,16 +97,19 @@ function ensureAdminBuildDependencies() {
 
 console.log(`Enabled features (${enabledFeatures.length}): ${enabledFeatures.join(', ') || '(none)'}`)
 
-if (buildBunCli) {
-  // bin/cli.js（bun target，生产用）
+if (buildNodeCli) {
+  // bin/cli.js（Node.js target，生产用）
   build('bin/cli.js', [
     'build', 'src/entrypoints/cli.tsx',
     '--outfile=bin/cli.js',
-    '--target=bun',
+    '--target=node',
+    '--format=esm',
+    '--banner=#!/usr/bin/env node',
     ...aliases,
     ...featureArgs,
     ...defines,
   ])
+  sanitizePaths('bin/cli.js')
 }
 
 if (buildElectronDirect) {
