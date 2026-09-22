@@ -13,6 +13,7 @@ import {
   fetchRemoteSessionMemory,
   forkRemoteDirectSession,
   getRemoteDirectSettings,
+  invokeRemoteAppAction,
   parseRemoteDirectServerInput,
   requestRemoteDirectAuthentication,
   requestRemoteDirectAccessToken,
@@ -96,6 +97,31 @@ describe('remote direct client settings', () => {
       method: 'binding.get',
       input: { externalConversationId: '*' },
     });
+  });
+
+  it('routes shared Server App actions to the organization owner', async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      if (String(input).endsWith('/api/v1/auth/token')) {
+        return new Response(JSON.stringify({ access_token: 'access-token' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ result: { ok: true } }), { status: 200 });
+    };
+
+    await expect(invokeRemoteAppAction({
+      remoteDirect: {
+        serverUrl: 'https://moss.example.com',
+        credentialMode: 'api-key',
+        apiKey: 'server-key',
+      },
+    }, 'example.chat', 'example.chat--default', 'session.issue', {}, {
+      ownerScope: 'org',
+    })).resolves.toEqual({ ok: true });
+
+    expect(requests[1].url).toBe(
+      'https://moss.example.com/api/v1/apps/example.chat/instances/example.chat--default/actions/session.issue?owner_scope=org',
+    );
   });
 
   it('reports the Moss Server address when the authentication endpoint is unreachable', async () => {

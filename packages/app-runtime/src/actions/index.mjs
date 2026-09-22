@@ -102,6 +102,7 @@ export class AppActionBroker {
         requestId: requestId || undefined,
         timeoutMs: options.timeoutMs ?? activeAction.timeoutMs,
         signal: controller.signal,
+        principal: options.principal,
       })
       if (activeAction.outputSchema) {
         const validate = this.validator(activePackage, actionName, 'output', activeAction.outputSchema)

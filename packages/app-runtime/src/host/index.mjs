@@ -772,7 +772,10 @@ export class AppRuntimeHost {
     const deployment = this.localDeployment(appId, instanceId)
     if (!deployment) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance is not deployed on this Host')
     await this.prepareDeployment(deployment)
-    return this.actions.invoke(deployment, actionName, input, options)
+    return this.actions.invoke(deployment, actionName, input, {
+      ...options,
+      principal: normalizeAppOwner(options.principal || this.currentOwner()),
+    })
   }
 
   registerHostProtocol(definition) {
@@ -806,7 +809,7 @@ export class AppRuntimeHost {
       dataDir: this.appDataPath(this.dataDir, appId, 'instances', instanceId),
       runtimeDir: this.appDataPath(this.runtimeDir, appId, instanceId),
       owner: this.currentOwner(),
-      principal: this.currentOwner(),
+      principal: normalizeAppOwner(options.principal || this.currentOwner()),
       requestId: String(options.requestId || randomUUID()),
       protocol,
       method,
@@ -864,7 +867,7 @@ export class AppRuntimeHost {
       dataDir: this.appDataPath(this.dataDir, deployment.appId, 'instances', deployment.instanceId),
       runtimeDir: this.appDataPath(this.runtimeDir, deployment.appId, deployment.instanceId),
       owner: this.currentOwner(),
-      principal: this.currentOwner(),
+      principal: request.principal || this.currentOwner(),
       protocols: backend?.protocols || [],
       permissions: packageInfo.manifest.permissions || [],
       grants: this.installations.get(request.appId)?.grants || packageInfo.manifest.permissions || [],

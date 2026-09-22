@@ -4622,6 +4622,48 @@ function refreshDesktopSettings(payload = {}) {
   });
 }
 
+function remoteAppConnectionFingerprint(settings) {
+  return JSON.stringify([
+    settings.remoteEnabled === true,
+    getRemoteCredentialServerUrl(settings.remoteDirectServerUrl),
+    settings.remoteDirectCredentialMode || '',
+    settings.remoteDirectUserName || '',
+    settings.remoteDirectUserEmail || '',
+    settings.remoteDirectUserPassword || '',
+    settings.remoteDirectApiKey || '',
+  ]);
+}
+
+async function restartRemoteDependentAppBackends() {
+  if (!desktopAppRuntime) return;
+  const restarts = [];
+  for (const appEntry of await desktopAppRuntime.listApps()) {
+    if (!appEntry.installation?.enabled
+      || !appEntry.manifest?.backend?.protocols?.includes(MOSS_REMOTE_PROTOCOL)) continue;
+    for (const instance of appEntry.instances || []) {
+      if (!instance.enabled) continue;
+      restarts.push(desktopAppRuntime.restartInstance(appEntry.manifest.id, instance.id));
+    }
+  }
+  const results = await Promise.allSettled(restarts);
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      mossLog('error', 'apps', 'Unable to restart a remote-dependent App Backend', {
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
+    }
+  }
+}
+
+async function refreshDesktopSettingsWithAppRestart(payload = {}) {
+  const previousFingerprint = remoteAppConnectionFingerprint(desktopSettings);
+  const result = refreshDesktopSettings(payload);
+  if (previousFingerprint !== remoteAppConnectionFingerprint(desktopSettings)) {
+    await restartRemoteDependentAppBackends();
+  }
+  return result;
+}
+
 function normalizeSessionKind(value) {
   if (value === 'cron') return 'cron';
   if (value === 'agent-mail') return 'agent-mail';
@@ -11015,7 +11057,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           context.instanceId,
           input.action,
           input.input || {},
-          { requestId: context.requestId, timeoutMs: input.timeoutMs },
+          {
+            requestId: context.requestId,
+            timeoutMs: input.timeoutMs,
+            ownerScope: input.ownerScope,
+          },
         ),
       },
     },
@@ -11065,7 +11111,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     installArchivePackage: installAppPackage,
     remote: {
       listApps: fetchRemoteApps,
-      installApp: (appId, version, grants) => installRemoteApp(appId, version, grants),
+      installApp: installRemoteApp,
       updateApp: updateRemoteApp,
       uninstallApp: uninstallRemoteApp,
       createInstance: createRemoteAppInstance,
@@ -11351,7 +11397,7 @@ ipcMain.handle('agent:get-remote-identity', async () => {
   }
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
-ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettingsWithAppRestart(payload));
 ipcMain.handle('agent:agents-list', (_event, payload = {}) => getDesktopAgentCatalog(payload));
 ipcMain.handle('agent:agents-read', (_event, payload = {}) => desktopAgentStore.read({
   ...payload,
@@ -11509,7 +11555,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   remoteDirectOAuthInFlight = authentication;
   try {
     const authenticated = await promise;
-    const settings = refreshDesktopSettings({
+    const settings = await refreshDesktopSettingsWithAppRestart({
       remoteDirectServerUrl: rawServerUrl,
       remoteDirectCredentialMode: 'api-key',
       remoteDirectUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
@@ -12986,7 +13032,13 @@ ipcMain.handle('app:list', async () => {
   let serverAvailable = false;
   if (serverConfigured) {
     try {
-      remoteApps = await fetchRemoteApps();
+      const remoteScopes = [...new Set([
+        'user',
+        ...storedApps
+          .filter((stored) => stored.manifest?.backend?.targets?.includes('server'))
+          .map((stored) => stored.manifest?.backend?.serverOwnerScope || 'user'),
+      ])];
+      remoteApps = (await Promise.all(remoteScopes.map((ownerScope) => fetchRemoteApps({ ownerScope })))).flat();
       serverAvailable = true;
       const requestedPackages = storedApps
         .filter((stored) => stored.currentVersion && stored.manifest?.backend?.targets?.includes('server'))
@@ -12999,16 +13051,21 @@ ipcMain.handle('app:list', async () => {
     catch (error) { remoteError = error.message || String(error); }
   }
   const availabilityByPackage = new Map(remoteAvailability.map((entry) => [`${entry.appId}@${entry.version}`, entry]));
-  const remoteById = new Map(remoteApps.map((entry) => [entry.installation?.appId || entry.manifest?.id, entry]));
+  const remoteById = new Map(remoteApps.map((entry) => [
+    `${entry.installation?.owner?.scope || 'user'}:${entry.installation?.appId || entry.manifest?.id}`,
+    entry,
+  ]));
   for (const stored of storedApps) {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
     try { runtimeState = await desktopAppRuntime?.getApp(stored.id); } catch (error) {
       runtimeState = { error: error.message || String(error), installation: null, instances: [], deployments: [] };
     }
-    const remoteState = remoteById.get(stored.id) || null;
+    const serverOwnerScope = manifest?.backend?.serverOwnerScope || 'user';
+    const remoteKey = `${serverOwnerScope}:${stored.id}`;
+    const remoteState = remoteById.get(remoteKey) || null;
     const packageAvailability = availabilityByPackage.get(`${stored.id}@${stored.currentVersion}`) || null;
-    remoteById.delete(stored.id);
+    remoteById.delete(remoteKey);
     const deployments = [...(runtimeState?.deployments || []), ...(remoteState?.deployments || [])];
     const observedStates = deployments.map((item) => item.runtime?.state).filter(Boolean);
     const observedError = deployments.map((item) => item.runtime?.lastError).find(Boolean) || null;
@@ -13046,12 +13103,14 @@ ipcMain.handle('app:list', async () => {
       serverPackageError: packageAvailability?.reason
         || (manifest?.backend?.targets?.includes('server') ? remoteAvailabilityError : null),
       serverEnabled: remoteState?.installation?.enabled || false,
+      serverOwnerScope,
       remoteError: remoteState ? remoteError : null,
       runtimeStatus: { state, error: runtimeState?.error || observedError },
     });
   }
-  for (const [appId, remoteState] of remoteById) {
+  for (const [, remoteState] of remoteById) {
     const manifest = remoteState.manifest;
+    const appId = remoteState.installation?.appId || manifest?.id;
     results.push({
       id: appId, name: appId, kind: 'app',
       displayName: manifest?.displayName || appId,
@@ -13076,6 +13135,7 @@ ipcMain.handle('app:list', async () => {
       contributes: null,
       serverConfiguration: remoteState.configuration || null,
       enabled: false, serverEnabled: remoteState.installation?.enabled || false,
+      serverOwnerScope: remoteState.installation?.owner?.scope || manifest?.backend?.serverOwnerScope || 'user',
       remoteInstalled: true, remoteOnly: true,
       serverConfigured,
       serverAvailable,
@@ -13283,9 +13343,13 @@ function appUiTarget(input = {}) {
   return target;
 }
 
+function appUiRemoteOptions(state) {
+  return { ownerScope: state.manifest?.backend?.serverOwnerScope || 'user' };
+}
+
 async function listAppUiInstances(state, target) {
   return target === 'server'
-    ? listRemoteAppInstances(state.id)
+    ? listRemoteAppInstances(state.id, appUiRemoteOptions(state))
     : state.runtime.listInstances(state.id);
 }
 
@@ -13319,7 +13383,7 @@ ipcMain.handle('app-ui:list-versions', async (event) => {
 ipcMain.handle('app-ui:get-installation-state', async (event, options = {}) => {
   const state = getAppWindowStateBySender(event.sender);
   return appUiTarget(options) === 'server'
-    ? fetchRemoteApp(state.id)
+    ? fetchRemoteApp(state.id, appUiRemoteOptions(state))
     : state.runtime?.getApp(state.id);
 });
 
@@ -13333,7 +13397,7 @@ ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
   const { target: requestedTarget, ...instanceInput } = input;
   const target = appUiTarget({ target: requestedTarget });
   if (target === 'server') {
-    const result = await createRemoteAppInstance(state.id, instanceInput);
+    const result = await createRemoteAppInstance(state.id, instanceInput, appUiRemoteOptions(state));
     return result?.instance || getAppUiInstance(state, instanceInput.id, target);
   }
   await state.runtime.createInstance(state.id, instanceInput);
@@ -13343,7 +13407,7 @@ ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
 ipcMain.handle('app-ui:instances:update', async (event, { instanceId, target: requestedTarget, ...patch }) => {
   const state = getAppWindowStateBySender(event.sender);
   const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, patch);
+  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, patch, appUiRemoteOptions(state));
   else await state.runtime.updateInstance(state.id, instanceId, patch);
   return getAppUiInstance(state, instanceId, target);
 });
@@ -13352,14 +13416,19 @@ ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabl
   const state = getAppWindowStateBySender(event.sender);
   const target = appUiTarget({ target: requestedTarget });
   return target === 'server'
-    ? updateRemoteAppInstance(state.id, instanceId, { enabled })
+    ? updateRemoteAppInstance(state.id, instanceId, { enabled }, appUiRemoteOptions(state))
     : state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
 });
 
 ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
   const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, { clearCredentials: true });
+  if (target === 'server') await updateRemoteAppInstance(
+    state.id,
+    instanceId,
+    { clearCredentials: true },
+    appUiRemoteOptions(state),
+  );
   else await state.runtime.clearInstanceCredentials(state.id, instanceId);
   return getAppUiInstance(state, instanceId, target);
 });
@@ -13367,7 +13436,11 @@ ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId,
 ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, target: requestedTarget, ...options }) => {
   const state = getAppWindowStateBySender(event.sender);
   const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await removeRemoteAppInstance(state.id, instanceId, options);
+  if (target === 'server') await removeRemoteAppInstance(
+    state.id,
+    instanceId,
+    { ...options, ...appUiRemoteOptions(state) },
+  );
   else await state.runtime.removeInstance(state.id, instanceId, options);
   return { ok: true };
 });
@@ -13375,7 +13448,7 @@ ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, target: re
 ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
   return appUiTarget({ target: requestedTarget }) === 'server'
-    ? fetchRemoteAppInstanceStatus(state.id, instanceId)
+    ? fetchRemoteAppInstanceStatus(state.id, instanceId, appUiRemoteOptions(state))
     : state.runtime.getInstanceStatus(state.id, instanceId);
 });
 
@@ -13385,7 +13458,11 @@ ipcMain.handle('app-ui:actions:invoke', async (event, {
   const state = getAppWindowStateBySender(event.sender);
   const target = appUiTarget({ target: requestedTarget });
   return target === 'server'
-    ? invokeRemoteAppAction(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs })
+    ? invokeRemoteAppAction(state.id, instanceId, String(name || ''), input, {
+      requestId,
+      timeoutMs,
+      ...appUiRemoteOptions(state),
+    })
     : state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
 });
 
@@ -13415,7 +13492,7 @@ ipcMain.handle('app-ui:host:request', async (event, {
       String(hostProtocol || ''),
       String(method || ''),
       normalizedInput,
-      { requestId },
+      { requestId, ...appUiRemoteOptions(state) },
     )
     : state.runtime.requestHostCapability(
       state.id,

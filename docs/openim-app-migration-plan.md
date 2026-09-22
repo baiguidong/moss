@@ -46,7 +46,7 @@ OpenIM incoming event
   -> moss.agent/v1 turn.delivery.ack
 ```
 
-Desktop 与 Server 使用相同的 App ID 和默认实例 ID。Remote Host 固定调用同一 App，不能由 Backend 指定其他 App 或 owner；Server HTTP 层按当前认证用户和 `apps:invoke` 再次授权。
+Desktop 与 Server 使用相同的 App ID 和默认实例 ID。Server Backend 通过 `serverOwnerScope: "org"` 按组织共享配置和管理 Secret；Remote Host 只能在同一 App 内选择当前用户或当前组织 owner。Server HTTP 层按 `apps:invoke` 授权，并把认证用户作为 Action principal 传给 Account Host。
 
 ## 数据与安全
 
@@ -54,7 +54,9 @@ Desktop 与 Server 使用相同的 App ID 和默认实例 ID。Remote Host 固�
 - 平台文件方法只接受 Desktop Host 选择或物化到私有缓存的路径。
 - App 不获得 Moss Bearer Token、模型密钥或 Connector 凭据。
 - 联系人 Binding 与 Turn 由 Core 按 owner、App、实例和外部会话隔离。
-- OpenIM 管理 Secret 只进入 Server App Backend 的 Secret 配置。
+- OpenIM 管理 Secret 只进入组织级 Server App Backend 的 Secret 配置，每个组织只配置一份。
+- Moss 用户停用通过通用 `directory.user-changed` Account 事件通知 App，由 OpenIM App 撤销外部会话。
+- 通讯录按页返回；文件内容通过 Desktop Host 分块写入，单个 Backend IPC envelope 保持在 1 MiB 内。
 - 外部消息按不可信用户输入处理，稳定平台消息 ID 用于 Turn 幂等。
 
 ## 当前能力

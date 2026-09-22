@@ -30,6 +30,7 @@ Host API 当前版本为 `2.0.0`，不兼容 1.x。Backend 进程协议仍为 Ap
     "apiVersion": 1,
     "lifecycle": "persistent",
     "instanceMode": "single",
+    "serverOwnerScope": "org",
     "targets": ["desktop", "server"],
     "protocols": ["moss.account/v1", "moss.agent/v1"],
     "actions": [{ "name": "status.get" }]
@@ -78,24 +79,27 @@ backend.agent.on('turn.completed', async (event) => {
 })
 ```
 
+Account 协议提供 `directory.changed` 和 `directory.user-changed` 事件。后者携带发生变化的目录用户；依赖外部账号或会话的 Server App 应在用户变为 `disabled` 时撤销对应外部会话。
+
 也可用 `context.host.request(protocol, method, input)` 调用 Manifest 已声明的自定义协议。Host 通过 `registerHostProtocol()` 注册 schema、权限和事件，再用 `registerHostHandler()` 提供实现；自定义协议同样经过统一授权、限流、超时和取消。
 
 ## Desktop 与 Remote 边界
 
-`moss.desktop/v1` 返回的文件路径只位于调用 App 的实例数据目录。文件型平台 SDK 必须再次校验路径属于该目录，不能读取用户未选择的任意文件。摄像头和麦克风授权还要求 `desktop:media` grant，预览或停用实例不会获得授权。
+`moss.desktop/v1` 返回的文件路径只位于调用 App 的实例数据目录。文件型平台 SDK 必须再次校验路径属于该目录，不能读取用户未选择的任意文件。`file.materialize` 使用不超过 512 KiB Base64 的分块请求，通过 `transferId`、`offset` 和 `complete` 组装最大 100 MiB 文件，不能把大文件塞进单个 IPC envelope。摄像头和麦克风授权还要求 `desktop:media` grant，预览或停用实例不会获得授权。
 
-`moss.remote/v1 action.invoke` 只能调用同一 App ID、同一默认实例 ID 的 Server Action；App 不能指定目标 App 或 owner。Server HTTP 层再检查当前用户的 `apps:invoke`，并以该用户 owner 查找已安装、已启用的 Server 实例。
+`moss.remote/v1 action.invoke` 只能调用同一 App ID、同一实例 ID 的 Server Action。默认使用当前用户 owner；声明 `ownerScope: "org"` 时路由到当前组织的共享实例，不能指定其他组织或 `host`。Server HTTP 层仍检查当前用户的 `apps:invoke`，并把 installation owner 与实际调用 principal 分开传递。
 
 ## Server owner
 
-Server installation、instance、deployment、Secret、数据和日志绑定到 `user`、`org` 或 `host` owner。HTTP 路由只从认证上下文生成 owner；`org` 和 `host` 仅管理员可选。相同 App/实例 ID 可在不同 owner 下并存，Action、Host 请求、事件和 deployment lease 均隔离。
+Server installation、instance、deployment、Secret、数据和日志绑定到 `user`、`org` 或 `host` owner。需要一套组织共享配置的 App 在 Manifest 中声明 `backend.serverOwnerScope: "org"`。只有管理员能安装、配置或启停 org/host App；具有 `apps:read` 的组织成员可查看 org App，具有 `apps:invoke` 的成员可调用本组织 org App。Action 内发起的 Account/Agent Host 请求使用已认证调用者 principal，而配置、Secret 和数据仍归 installation owner。相同 App/实例 ID 可在不同 owner 下并存。
 
 ## 传输保证
 
 - Backend 必须是 Node 运行时；构建器可以使用 Bun，但产物目标必须为 Node。
 - 消息校验 generation 与每次启动随机生成的 launch token。
 - Backend IPC 的普通 JSON envelope 上限为 1 MiB；大文件走 Desktop 文件能力或 App 私有存储。
-- Host 请求与事件具有并发限制、超时、取消、重复 ID 和载荷指纹校验。
+- Backend 初始化期间可以调用 Host、写日志、上报状态和确认 Host 事件；完成 `onInitialize` 后再发送 `service.ready`。
+- Host 请求与事件具有并发限制、超时、取消、重复 ID 和载荷指纹校验；Backend 请求的超时会被 Host 接收，并限制在 100 ms 至 300 s。
 - Host 事件要求 Backend ACK；稳定 `eventId` 可安全重试。
 - 错误和日志在离开 Runtime 前进行 Secret 脱敏。
 

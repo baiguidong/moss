@@ -71,8 +71,7 @@ function missingRequiredConfiguration(app: StoredApp, instance: AppInstance, tar
 function requireInstanceConfiguration(app: StoredApp, instance: AppInstance, target: "desktop" | "server") {
   const missing = missingRequiredConfiguration(app, instance, target);
   if (!missing.length) return;
-  const entry = app.hasSettings ? "打开 App 配置页" : "展开实例设置";
-  throw new Error(`请先${entry}并保存必填项：${missing.join("、")}`);
+  throw new Error(`请先展开实例设置并保存必填项：${missing.join("、")}`);
 }
 
 async function setAppHostEnabled(app: StoredApp, target: "desktop" | "server", enabled: boolean) {
@@ -279,13 +278,9 @@ export function AppInstanceRow({ app, instance, onChanged }: {
   return (
     <div className="border-t border-border/70 py-3 first:border-t-0">
       <div className="flex flex-wrap items-center gap-3">
-        {app.hasSettings
-          ? <span className="h-7 w-7" aria-hidden="true" />
-          : (
-            <Button variant="ghost" size="icon" className="h-7 w-7" title="配置实例" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </Button>
-          )}
+        <Button variant="ghost" size="icon" className="h-7 w-7" title="配置实例" onClick={() => setExpanded(!expanded)}>
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </Button>
         <div className="min-w-[140px] flex-1">
           <div className="truncate text-sm font-medium">{instanceName}</div>
           <div className="flex items-center gap-1 text-[11px] text-muted-foreground"><Activity className="h-3 w-3" />{target === "server" ? "Server" : "Desktop"} · {statusLabel(state)}</div>
@@ -312,7 +307,7 @@ export function AppInstanceRow({ app, instance, onChanged }: {
           }}><Trash2 className="h-4 w-4" /></Button>
         )}
       </div>
-      {expanded && !app.hasSettings && (
+      {expanded && (
         <div className="ml-10 mt-3 grid gap-3 border-l border-border pl-4">
           <label className="grid max-w-sm gap-1 text-xs text-muted-foreground"><span>实例名称</span><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
           <SchemaFields schema={configuration?.schema} value={config} onChange={setConfig} />

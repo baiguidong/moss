@@ -51,6 +51,18 @@ describe('App manifest V2', () => {
     expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
   })
 
+  it('preserves the declared Server owner scope', () => {
+    const manifest = validateAppManifest({
+      ...valid,
+      backend: {
+        entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+        lifecycle: 'persistent', instanceMode: 'single', serverOwnerScope: 'org',
+        targets: ['desktop', 'server'], actions: [],
+      },
+    })
+    expect(manifest.backend?.serverOwnerScope).toBe('org')
+  })
+
   it('supports versioned Host protocols without coupling manifests to a product integration', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,

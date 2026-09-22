@@ -1389,6 +1389,21 @@ export function startServer(
             status:
               typeof body.status === 'string' ? body.status : undefined,
           }, auth)
+        if (appRuntime) {
+          const publishAccountChange = appRuntime.publishAccountEvent(auth.orgId, 'directory.user-changed', {
+            user: {
+              id: result.user.id,
+              name: result.user.name,
+              email: result.user.email || null,
+              departmentId: result.user.departmentId || null,
+              status: result.user.status,
+            },
+          })
+          if (result.user.status === 'disabled') await publishAccountChange
+          else await publishAccountChange.catch(error => {
+            logger.warn(`Unable to publish account directory change: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        }
         writeJson(res, 200, result)
         return
       }

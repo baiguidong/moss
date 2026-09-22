@@ -47,6 +47,47 @@ afterEach(async () => {
 })
 
 describe('App Runtime lifecycle', () => {
+  it('supports status and reentrant Host events while a Backend is initializing', async () => {
+    const runtime = await createRuntime('persistent-single', { hostRequestTimeoutMs: 10, maxHostTimeoutMs: 1_000 }, async (source) => {
+      const manifestPath = path.join(source, 'app.moss.json')
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+      manifest.backend.protocols = ['moss.test/v1']
+      manifest.permissions = ['test:request', 'test:event']
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+      await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), `
+const identity = { generation: Number(process.env.MOSS_APP_GENERATION), launchToken: process.env.MOSS_APP_LAUNCH_TOKEN }
+const send = (type, payload = {}, id = crypto.randomUUID()) => process.send?.({ version: 1, id, type, timestamp: Date.now(), payload: { ...payload, ...identity } })
+process.on('message', (message) => {
+  if (message.type === 'service.init') {
+    send('service.status', { state: 'starting' })
+    send('host.request', { protocol: 'moss.test/v1', method: 'configure', input: {}, timeoutMs: 1000 }, 'configure')
+  }
+  if (message.type === 'host.event') send('host.event.response', { protocol: message.payload.protocol, eventId: message.payload.eventId, ok: true, result: {} }, message.id)
+  if (message.type === 'host.response' && message.payload.requestId === 'configure') send('service.ready', {}, 'ready')
+  if (message.type === 'service.ping') send('service.pong', {}, message.id)
+  if (message.type === 'service.shutdown') process.exit(0)
+})
+send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOSS_APP_VERSION, apiVersion: 1, instanceId: process.env.MOSS_APP_INSTANCE_ID })
+`)
+    })
+    const appId = 'fixture.persistent-single'
+    const instanceId = defaultInstanceId(appId)
+    runtime.registerHostProtocol({
+      protocol: 'moss.test/v1',
+      methods: { configure: { permission: 'test:request' } },
+      events: { changed: { permission: 'test:event' } },
+    })
+    runtime.registerHostHandler('moss.test/v1', 'configure', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      await runtime.publishHostEvent(appId, instanceId, 'moss.test/v1', 'changed', {})
+      return { configured: true }
+    })
+    await runtime.setInstanceEnabled(appId, instanceId, true)
+    await runtime.setAppEnabled(appId, true)
+    expect(runtime.supervisor.listStatuses()).toContainEqual(expect.objectContaining({ state: 'running' }))
+    await runtime.shutdown()
+  })
+
   it('does not create a process or Backend instance for UI-only Apps', async () => {
     const runtime = await createRuntime('ui-only', {}, async (source) => {
       const manifestPath = path.join(source, 'app.moss.json')

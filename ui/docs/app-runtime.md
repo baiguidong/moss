@@ -64,6 +64,8 @@ example-app/
 
 `backend.targets` 是部署能力声明，不是运行时偏好。默认只声明 `desktop`；只有 Backend 明确支持无桌面环境运行时才加入 `server`。App 管理界面仅在 `targets` 包含 `server` 且 Server 包源存在相同版本时提供部署入口，Server 未连接不影响同时支持 Desktop 的 App 在本机运行。当前 App UI Bridge 只操作 Desktop Runtime，因此带 `ui` 的 App Backend 必须包含 `desktop`；`["server"]` 仅用于 Backend-only App。
 
+Server Backend 默认使用 `user` owner。需要为整个组织共享一份实例、配置和 Secret 时，声明 `backend.serverOwnerScope: "org"`。org App 只能由管理员部署和管理，但组织成员可以在拥有 `apps:invoke` 时调用；Runtime 会分别记录 installation owner 和当前调用 principal，使 Account Host 返回调用用户身份而不是管理员身份。
+
 ## 独立 App Repository
 
 推荐的最终 App repo 结构：
@@ -121,7 +123,7 @@ Server 不接收客户端上传的任意可执行包。管理员在 `server.json
 
 客户端 App Center 通过认证 API 按 App ID 和版本要求 Server 获取包，然后完成安装、启停、实例管理、日志和 Desktop/Server 移动。移动先在目标创建停用实例，再停止来源并启动目标；目标失败时恢复来源。Server 使用持久化 deployment generation 和租约，多个节点不能同时拥有同一 deployment。
 
-管理所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；调用 Action 或 Host API 使用独立的 `apps:invoke`。管理员的 `*` scope 包含全部权限，也可将它们授予自定义角色。内置普通用户和部门管理员拥有这些权限，但只能操作自己的 user owner；`org` 和 `host` scope 只允许管理员选择。
+管理所需 API scope 为 `apps:read`、`apps:manage`、`apps:deploy` 和 `apps:logs`；调用 Action 或 Host API 使用独立的 `apps:invoke`。管理员的 `*` scope 包含全部权限，也可将它们授予自定义角色。普通成员不能管理 org/host App，但可以查看和调用本组织的 org App；host scope 始终仅管理员可选。
 
 ## 安全边界
 

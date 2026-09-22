@@ -150,6 +150,28 @@ export class ServerAppRuntime {
     return installed
   }
 
+  async publishAccountEvent(orgId: string, name: string, data: Record<string, unknown>): Promise<void> {
+    const owners = this.runtime.installations.listOwners()
+      .filter(owner => owner.orgId === orgId)
+    await Promise.all(owners.map(owner => this.runtime.withOwner(owner, async () => {
+      const apps = await this.runtime.listApps()
+      await Promise.all(apps.flatMap(app => {
+        if (!app.installation?.enabled
+          || !app.manifest?.backend?.protocols?.includes('moss.account/v1')
+          || !app.installation?.grants?.includes('account:directory:read')) return []
+        return (app.instances || [])
+          .filter((instance: { enabled?: boolean }) => instance.enabled)
+          .map((instance: { id: string }) => this.runtime.publishHostEvent(
+            app.manifest.id,
+            instance.id,
+            'moss.account/v1',
+            name,
+            data,
+          ))
+      }))
+    })))
+  }
+
   async shutdown(): Promise<void> {
     await this.runtime.shutdown()
     this.state.close()

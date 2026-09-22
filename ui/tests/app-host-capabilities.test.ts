@@ -97,10 +97,13 @@ describe('App Host Capability API', () => {
     }, { id: 'init' }))
     await tick()
 
-    const pending = client.requestHost('moss.test/v1', 'echo', { text: 'hello' }, { requestId: 'host-1' })
+    const pending = client.requestHost('moss.test/v1', 'echo', { text: 'hello' }, {
+      requestId: 'host-1',
+      timeoutMs: 120_000,
+    })
     expect(sent.at(-1)).toMatchObject({
       type: 'host.request',
-      payload: { protocol: 'moss.test/v1', method: 'echo', input: { text: 'hello' } },
+      payload: { protocol: 'moss.test/v1', method: 'echo', input: { text: 'hello' }, timeoutMs: 120_000 },
     })
     receive?.(createEnvelope('host.response', {
       protocol: 'moss.test/v1', requestId: 'host-1', ok: true, result: { text: 'hello' },
@@ -164,7 +167,7 @@ process.on('message', (message) => {
   if (message.type === 'action.invoke') {
     const hostRequestId = 'host-' + message.id
     pending.set(hostRequestId, message.id)
-    send('host.request', { protocol: 'moss.test/v1', method: 'echo', input: message.payload.input }, hostRequestId)
+    send('host.request', { protocol: 'moss.test/v1', method: 'echo', input: message.payload.input, actionRequestId: message.id }, hostRequestId)
   }
   if (message.type === 'host.response') {
     const actionId = pending.get(message.payload.requestId)
@@ -217,7 +220,8 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     expect(tools[0].name.length).toBeLessThanOrEqual(64)
     await expect(runtime.invokeToolContribution(`${appId}/echo`, { text: 'tool' }))
       .resolves.toEqual({ echoed: 'tool' })
-    await expect(runtime.invoke(appId, instanceId, 'host.request', { text: 'hello' }))
+    const principal = { scope: 'user', orgId: 'org-1', userId: 'user-1', key: 'user:org-1:user-1' }
+    await expect(runtime.invoke(appId, instanceId, 'host.request', { text: 'hello' }, { principal }))
       .resolves.toEqual({ echoed: 'hello' })
     await expect(runtime.requestHostCapability(
       appId,
@@ -226,7 +230,13 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       'echo',
       { text: 'from-ui' },
     )).resolves.toEqual({ echoed: 'from-ui' })
-    expect(contexts[0]).toMatchObject({ appId, instanceId, protocol: 'moss.test/v1', method: 'echo' })
+    expect(contexts[1]).toMatchObject({
+      appId,
+      instanceId,
+      protocol: 'moss.test/v1',
+      method: 'echo',
+      principal,
+    })
     await expect(runtime.publishHostEvent(appId, instanceId, 'moss.test/v1', 'notice', { value: 9 }))
       .resolves.toEqual({ received: 'notice', data: { value: 9 } })
     await runtime.setAppGrants(appId, ['test:notice'])

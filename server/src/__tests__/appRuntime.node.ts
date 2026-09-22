@@ -22,6 +22,12 @@ try {
   const source = path.join(root, 'source', appId, 'versions', version)
   await fs.mkdir(path.dirname(source), { recursive: true })
   await fs.cp(path.join(fixtureRoot, 'persistent-single'), source, { recursive: true })
+  const backendPath = path.join(source, 'dist/backend/main.mjs')
+  const backendSource = await fs.readFile(backendPath, 'utf8')
+  await fs.writeFile(backendPath, backendSource.replace(
+    'instanceId: process.env.MOSS_APP_INSTANCE_ID }',
+    'instanceId: process.env.MOSS_APP_INSTANCE_ID, principal: message.payload.principal }',
+  ))
   await writePackageChecksums(source)
   const prereleaseVersion = '1.1.0-beta.1+build.7'
   const prereleaseSource = path.join(root, 'source', appId, 'versions', prereleaseVersion)
@@ -137,7 +143,37 @@ try {
     assert.equal(adminUserApps.apps.length, 1)
     assert.equal(adminUserApps.apps[0]?.installation.owner.userId, login.user.id)
     assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=host`, { headers: appUserHeaders })).status, 403)
-    assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=org`, { headers: appUserHeaders })).status, 403)
+    assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=org`, { headers: appUserHeaders })).status, 200)
+    const orgInstall = await fetch(`${baseUrl}/api/v1/apps/install?owner_scope=org`, {
+      method: 'POST', headers, body: JSON.stringify({ appId, version, grants: [] }),
+    })
+    assert.equal(orgInstall.status, 200)
+    await fetch(`${baseUrl}/api/v1/apps/${encodeURIComponent(appId)}?owner_scope=org`, {
+      method: 'PATCH', headers, body: JSON.stringify({ enabled: true }),
+    })
+    await fetch(`${baseUrl}/api/v1/apps/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}?owner_scope=org`, {
+      method: 'PATCH', headers, body: JSON.stringify({ enabled: true }),
+    })
+    const orgInvoke = await fetch(
+      `${baseUrl}/api/v1/apps/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/actions/echo`,
+      {
+        method: 'POST',
+        headers: appUserHeaders,
+        body: JSON.stringify({ ownerScope: 'org', input: { shared: true } }),
+      },
+    )
+    assert.equal(orgInvoke.status, 200)
+    assert.deepEqual((await orgInvoke.json() as { result: unknown }).result, {
+      input: { shared: true },
+      instanceId,
+      principal: {
+        scope: 'user',
+        orgId: appUserLogin.user.orgId,
+        userId: appUserLogin.user.id,
+        key: `user:${encodeURIComponent(appUserLogin.user.orgId)}:${encodeURIComponent(appUserLogin.user.id)}`,
+      },
+    })
+    assert.equal((await fetch(`${baseUrl}/api/v1/apps?owner_scope=org`, { headers: appUserHeaders })).status, 200)
     const listResponse = await fetch(`${baseUrl}/api/v1/apps?owner_scope=host`, { headers })
     assert.equal(listResponse.status, 200)
     assert.equal(((await listResponse.json()) as { apps: unknown[] }).apps.length, 1)

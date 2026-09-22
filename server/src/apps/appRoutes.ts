@@ -42,7 +42,12 @@ function decode(value: string): string {
   }
 }
 
-function appOwner(auth: AuthContext, url: URL, body?: JsonBody): AppOwner {
+function appOwner(
+  auth: AuthContext,
+  url: URL,
+  body?: JsonBody,
+  options: { allowOrganizationMember?: boolean } = {},
+): AppOwner {
   const requestedScope = text(body?.ownerScope) || text(url.searchParams.get('owner_scope')) || 'user'
   if (requestedScope === 'host') {
     if (!(auth.role === 'admin' || auth.systemRoles?.includes('admin'))) {
@@ -51,7 +56,7 @@ function appOwner(auth: AuthContext, url: URL, body?: JsonBody): AppOwner {
     return { scope: 'host', orgId: null, userId: null, key: 'host' }
   }
   if (requestedScope === 'org') {
-    if (!(auth.role === 'admin' || auth.systemRoles?.includes('admin'))) {
+    if (!options.allowOrganizationMember && !(auth.role === 'admin' || auth.systemRoles?.includes('admin'))) {
       throw Object.assign(new Error('Organization-scoped Apps require an administrator'), { statusCode: 403 })
     }
     return { scope: 'org', orgId: auth.orgId, userId: null, key: `org:${encodeURIComponent(auth.orgId)}` }
@@ -59,6 +64,15 @@ function appOwner(auth: AuthContext, url: URL, body?: JsonBody): AppOwner {
   if (requestedScope !== 'user') {
     throw Object.assign(new Error('ownerScope must be host, org, or user'), { statusCode: 400 })
   }
+  return {
+    scope: 'user',
+    orgId: auth.orgId,
+    userId: auth.userId,
+    key: `user:${encodeURIComponent(auth.orgId)}:${encodeURIComponent(auth.userId)}`,
+  }
+}
+
+function appPrincipal(auth: AuthContext): AppOwner {
   return {
     scope: 'user',
     orgId: auth.orgId,
@@ -79,13 +93,18 @@ export async function handleAppRoute(input: {
   const pathname = url.pathname
   if (!pathname.startsWith('/api/v1/apps')) return false
   const runtime = apps.runtime
-  const runAsOwner = <T>(body: JsonBody | undefined, operation: () => Promise<T> | T): Promise<T> | T =>
-    runtime.withOwner(appOwner(auth, url, body), operation)
+  const runAsOwner = <T>(
+    body: JsonBody | undefined,
+    operation: () => Promise<T> | T,
+    ownerOptions?: { allowOrganizationMember?: boolean },
+  ): Promise<T> | T => runtime.withOwner(appOwner(auth, url, body, ownerOptions), operation)
 
   try {
     if (pathname === '/api/v1/apps' && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      writeJson(res, 200, { apps: await runAsOwner(undefined, () => runtime.listApps()) })
+      writeJson(res, 200, {
+        apps: await runAsOwner(undefined, () => runtime.listApps(), { allowOrganizationMember: true }),
+      })
       return true
     }
     if (pathname === '/api/v1/apps/install' && req.method === 'POST') {
@@ -127,19 +146,30 @@ export async function handleAppRoute(input: {
     const instanceLogs = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/logs$/)
     if (instanceLogs && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:logs')
-      writeJson(res, 200, { logs: await runAsOwner(undefined, () => runtime.getLogs(decode(instanceLogs[1]!), decode(instanceLogs[2]!), { limit: Number(url.searchParams.get('limit')) || 500 })) })
+      writeJson(res, 200, {
+        logs: await runAsOwner(
+          undefined,
+          () => runtime.getLogs(decode(instanceLogs[1]!), decode(instanceLogs[2]!), { limit: Number(url.searchParams.get('limit')) || 500 }),
+          { allowOrganizationMember: true },
+        ),
+      })
       return true
     }
     const instanceAction = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/actions\/([^/]+)$/)
     if (instanceAction && req.method === 'POST') {
       requireAppScope(authService, auth, 'apps:invoke')
       const body = await readJson(req)
-      const result = await runAsOwner(body, () => runtime.invoke(
+      const owner = appOwner(auth, url, body, { allowOrganizationMember: true })
+      const result = await runtime.withOwner(owner, () => runtime.invoke(
         decode(instanceAction[1]!),
         decode(instanceAction[2]!),
         decode(instanceAction[3]!),
         body.input,
-        { requestId: text(body.requestId) || undefined, timeoutMs: Number(body.timeoutMs) || undefined },
+        {
+          requestId: text(body.requestId) || undefined,
+          timeoutMs: Number(body.timeoutMs) || undefined,
+          principal: appPrincipal(auth),
+        },
       ))
       writeJson(res, 200, { result })
       return true
@@ -153,7 +183,8 @@ export async function handleAppRoute(input: {
       if (!protocol || !method) {
         throw Object.assign(new Error('protocol and method are required'), { statusCode: 400 })
       }
-      const result = await runAsOwner(body, () => runtime.requestHostCapability(
+      const owner = appOwner(auth, url, body, { allowOrganizationMember: true })
+      const result = await runtime.withOwner(owner, () => runtime.requestHostCapability(
         decode(instanceHost[1]!),
         decode(instanceHost[2]!),
         protocol,
@@ -161,7 +192,7 @@ export async function handleAppRoute(input: {
         body.input && typeof body.input === 'object' && !Array.isArray(body.input)
           ? body.input as Record<string, unknown>
           : {},
-        { requestId: text(body.requestId) || undefined },
+        { requestId: text(body.requestId) || undefined, principal: appPrincipal(auth) },
       ))
       writeJson(res, 200, { result })
       return true
@@ -179,10 +210,11 @@ export async function handleAppRoute(input: {
     const instanceStatus = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/status$/)
     if (instanceStatus && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      const status = await runAsOwner(undefined, () => runtime.getInstanceStatus(
-        decode(instanceStatus[1]!),
-        decode(instanceStatus[2]!),
-      ))
+      const status = await runAsOwner(
+        undefined,
+        () => runtime.getInstanceStatus(decode(instanceStatus[1]!), decode(instanceStatus[2]!)),
+        { allowOrganizationMember: true },
+      )
       writeJson(res, 200, { status })
       return true
     }
@@ -215,7 +247,13 @@ export async function handleAppRoute(input: {
     const instancesMatch = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances$/)
     if (instancesMatch && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      writeJson(res, 200, { instances: await runAsOwner(undefined, () => runtime.listInstances(decode(instancesMatch[1]!))) })
+      writeJson(res, 200, {
+        instances: await runAsOwner(
+          undefined,
+          () => runtime.listInstances(decode(instancesMatch[1]!)),
+          { allowOrganizationMember: true },
+        ),
+      })
       return true
     }
     if (instancesMatch && req.method === 'POST') {
@@ -227,7 +265,11 @@ export async function handleAppRoute(input: {
     const appMatch = pathname.match(/^\/api\/v1\/apps\/([^/]+)$/)
     if (appMatch && req.method === 'GET') {
       requireAppScope(authService, auth, 'apps:read')
-      const app = await runAsOwner(undefined, () => runtime.getApp(decode(appMatch[1]!)))
+      const app = await runAsOwner(
+        undefined,
+        () => runtime.getApp(decode(appMatch[1]!)),
+        { allowOrganizationMember: true },
+      )
       if (!app) throw Object.assign(new Error('App not found'), { statusCode: 404 })
       writeJson(res, 200, { app })
       return true

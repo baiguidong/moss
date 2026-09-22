@@ -56,13 +56,13 @@ describe('Apps management', () => {
     expect(markup).toContain('正在加载应用市场');
   });
 
-  test('keeps runtime controls but removes duplicate settings for Apps with their own settings page', () => {
+  test('keeps instance configuration available for Apps with their own settings page', () => {
     const markup = renderInstance(true);
 
     expect(markup).toContain('默认实例');
     expect(markup).toContain('title="重启"');
     expect(markup).toContain('title="日志"');
-    expect(markup).not.toContain('配置实例');
+    expect(markup).toContain('title="配置实例"');
     expect(markup).not.toContain('Example App ID');
     expect(markup).not.toContain('allowedUsers');
     expect(markup).not.toContain('保存配置');

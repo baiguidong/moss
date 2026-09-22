@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024
+const TRANSFER_FILE_PREFIX = '.moss-transfer-'
 const FILE_FILTERS = {
   image: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'] }],
   video: [{ name: '视频', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] }],
@@ -72,11 +73,24 @@ export function createDesktopPlatformHandlers({
     'file.materialize'(input, context) {
       let buffer
       try { buffer = Buffer.from(input.dataBase64, 'base64') } catch { throw new Error('File data is invalid') }
-      if (!buffer.length || buffer.length > MAX_FILE_BYTES) throw new Error('File size must be between 1 B and 100 MB')
+      if (!buffer.length) throw new Error('File data cannot be empty')
       const name = safeName(input.fileName, `file-${Date.now()}`)
-      const target = path.join(cacheRoot(context), `${randomUUID()}-${name}`)
-      fs.writeFileSync(target, buffer, { mode: 0o600 })
-      return authorize({ name, path: target, size: buffer.length, mediaUrl: mediaUrl(target) })
+      const root = cacheRoot(context)
+      const transferId = String(input.transferId || randomUUID())
+      const transferPath = path.join(root, `${TRANSFER_FILE_PREFIX}${transferId}`)
+      const offset = Number(input.offset || 0)
+      const currentSize = fs.existsSync(transferPath) ? fs.statSync(transferPath).size : 0
+      if (currentSize !== offset) throw new Error(`File transfer offset mismatch: expected ${currentSize}, received ${offset}`)
+      if (currentSize + buffer.length > MAX_FILE_BYTES) {
+        fs.rmSync(transferPath, { force: true })
+        throw new Error('File cannot exceed 100 MB')
+      }
+      fs.appendFileSync(transferPath, buffer, { mode: 0o600 })
+      const size = currentSize + buffer.length
+      if (input.complete === false) return { transferId, complete: false, size }
+      const target = path.join(root, `${randomUUID()}-${name}`)
+      fs.renameSync(transferPath, target)
+      return authorize({ name, path: target, size, mediaUrl: mediaUrl(target) })
     },
 
     async 'file.thumbnail'(input, context) {
@@ -156,8 +170,11 @@ export function isAllowedAppMediaPermission({ state, runtime, permission, mediaT
   const requested = Array.isArray(mediaTypes) ? mediaTypes : []
   if (requested.some((type) => !['audio', 'video'].includes(type))) return false
   const installation = runtime?.installations?.get?.(state.id)
+  const hasEnabledInstance = runtime?.instances?.list?.(state.id)
+    ?.some((instance) => instance.enabled === true) === true
   return Boolean(
     installation?.enabled
+    && hasEnabledInstance
     && state.manifest?.permissions?.includes('desktop:media')
     && installation.grants?.includes('desktop:media')
   )

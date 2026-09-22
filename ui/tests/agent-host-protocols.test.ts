@@ -5,6 +5,7 @@ import {
   MOSS_AGENT_PROTOCOL,
   MOSS_DESKTOP_PROTOCOL,
   MOSS_REMOTE_PROTOCOL,
+  validateAccountBackendEventData,
   validateAccountHostInput,
   validateAgentHostInput,
   validateDesktopHostInput,
@@ -42,6 +43,15 @@ describe('Account and Agent Host protocols', () => {
       .toThrow(/between 1 and 200/)
     expect(() => validateAccountHostInput('directory.list', { orgId: 'other-org' }))
       .toThrow(/cannot override Runtime identity/)
+  })
+
+  it('validates directory user lifecycle events', () => {
+    expect(validateAccountBackendEventData('directory.user-changed', {
+      user: { id: 'user-1', name: 'User', status: 'disabled' },
+    })).toEqual({ user: { id: 'user-1', name: 'User', status: 'disabled' } })
+    expect(() => validateAccountBackendEventData('directory.user-changed', {
+      user: { id: 'user-1', status: 'unknown' },
+    })).toThrow(/user status/)
   })
 
   it('rejects unsafe Agent permission modes and malformed binding policies', () => {
@@ -153,8 +163,10 @@ describe('Account and Agent Host protocols', () => {
     expect(() => validateDesktopHostInput('shell.open-external', { url: 'file:///tmp/secret' }))
       .toThrow(/HTTP or HTTPS/)
     expect(validateRemoteHostInput('action.invoke', {
-      action: 'directory.list', input: {}, timeoutMs: 30_000,
-    })).toEqual({ action: 'directory.list', input: {}, timeoutMs: 30_000 })
+      action: 'directory.list', input: {}, timeoutMs: 30_000, ownerScope: 'org',
+    })).toEqual({ action: 'directory.list', input: {}, timeoutMs: 30_000, ownerScope: 'org' })
+    expect(() => validateRemoteHostInput('action.invoke', { action: 'directory.list', ownerScope: 'host' }))
+      .toThrow(/ownerScope/)
     expect(() => validateRemoteHostInput('action.invoke', { action: '../other-app' }))
       .toThrow(/invalid action/)
 

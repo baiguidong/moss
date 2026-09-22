@@ -302,6 +302,7 @@ export class AppProcessSupervisor {
         dataDir: expected.dataDir,
         runtimeDir: expected.runtimeDir,
         target: expected.target,
+        owner: expected.owner || null,
         protocols: expected.protocols || [],
         permissions: expected.permissions || [],
         grants: expected.grants || expected.permissions || [],
@@ -321,9 +322,9 @@ export class AppProcessSupervisor {
       hosted.readyResolve()
       return
     }
-    const hostRequestDuringInitialization = hosted.handshakeState === 'waiting-ready'
-      && ['host.request', 'host.cancel'].includes(message.type)
-    if (hosted.handshakeState !== 'ready' && !hostRequestDuringInitialization) {
+    const messageAllowedDuringInitialization = hosted.handshakeState === 'waiting-ready'
+      && ['host.request', 'host.cancel', 'host.event.response', 'service.status', 'log.write'].includes(message.type)
+    if (hosted.handshakeState !== 'ready' && !messageAllowedDuringInitialization) {
       hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend sent ${message.type} before initialization`))
       hosted.child?.kill('SIGTERM')
       return
@@ -429,6 +430,8 @@ export class AppProcessSupervisor {
       this.sendHostResponse(hosted, message, false, undefined, error, { fingerprint })
       return
     }
+    const actionRequestId = String(payload.actionRequestId || '')
+    const actionRequest = actionRequestId ? hosted.pending.get(actionRequestId) : null
     const controller = new AbortController()
     const active = { controller, fingerprint, protocol, timer: null, finish: null }
     const finish = (ok, result, error) => {
@@ -443,13 +446,18 @@ export class AppProcessSupervisor {
       if (this.processes.get(key) === hosted && !hosted.stopping) this.send(hosted, response)
     }
     active.finish = finish
+    const requestedTimeoutMs = Number(payload.timeoutMs ?? this.hostRequestTimeoutMs)
+    const timeoutMs = Math.max(
+      100,
+      Math.min(Number.isFinite(requestedTimeoutMs) ? requestedTimeoutMs : this.hostRequestTimeoutMs, this.maxHostTimeoutMs),
+    )
     active.timer = setTimeout(() => {
       controller.abort(new AppServiceError(codes.timeout, `${codes.label} request timed out`))
       finish(false, undefined, new AppServiceError(
         codes.timeout,
-        `${codes.label} request timed out after ${this.hostRequestTimeoutMs}ms`,
+        `${codes.label} request timed out after ${timeoutMs}ms`,
       ))
-    }, this.hostRequestTimeoutMs)
+    }, timeoutMs)
     active.timer.unref?.()
     hosted.hostRequests.set(requestId, active)
     Promise.resolve().then(() => {
@@ -464,6 +472,7 @@ export class AppProcessSupervisor {
         generation: hosted.definition.generation,
         target: hosted.definition.target,
         owner: hosted.definition.owner || null,
+        principal: actionRequest?.principal || hosted.definition.owner || null,
         requestId,
         protocol,
         method,
@@ -607,6 +616,7 @@ export class AppProcessSupervisor {
       invocation = createEnvelope('action.invoke', {
         name: actionName,
         input,
+        principal: options.principal || hosted.definition.owner || null,
         generation: hosted.definition.generation,
         launchToken: hosted.launchToken,
       }, { id: requestId })
@@ -623,7 +633,14 @@ export class AppProcessSupervisor {
         this.scheduleIdleStop(key, hosted)
       }, timeoutMs)
       const abortHandler = () => this.cancel(key, requestId)
-      hosted.pending.set(requestId, { resolve, reject, timeout, signal: options.signal, abortHandler })
+      hosted.pending.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        signal: options.signal,
+        abortHandler,
+        principal: options.principal || hosted.definition.owner || null,
+      })
       options.signal?.addEventListener('abort', abortHandler, { once: true })
     })
     if (!hosted.pending.has(requestId)) return promise
@@ -659,12 +676,13 @@ export class AppProcessSupervisor {
     const normalizedProtocol = validateHostProtocol(protocol)
     const normalizedName = validateHostMember(name, `${normalizedProtocol} event`)
     const normalizedData = validateHostData(data, `${normalizedProtocol} ${normalizedName} data`)
-    await this.start(key)
+    const existing = this.processes.get(key)
+    if (!(existing?.state === 'starting' && existing.handshakeState === 'waiting-ready')) await this.start(key)
     if (options.signal?.aborted) {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled')
     }
     const hosted = this.processes.get(key)
-    if (!hosted || hosted.state !== 'running') {
+    if (!hosted || !['starting', 'running'].includes(hosted.state)) {
       throw new AppServiceError(codes.unavailable, 'App Backend is not running')
     }
     if (hosted.pendingHostEvents.size >= this.maxPendingHostEvents) {

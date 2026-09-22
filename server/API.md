@@ -256,7 +256,7 @@ MOSS_RAGFLOW_PASSWORD_LENGTH=6
 
 Server 只托管通用 App 包、实例、Action 和 Host API，不包含任何具体平台的连接、账号供应或消息逻辑。已知 App 包来自 `server.json` 的 `apps.sourceDir`，客户端不能上传任意可执行包。
 
-默认 owner 为当前认证用户。管理员可用 `owner_scope=org|host` 或 JSON 字段 `ownerScope` 管理组织级、主机级实例；普通用户不能越过自己的 user owner。相同 App ID 与实例 ID 在不同 owner 下完全隔离。
+默认 owner 为当前认证用户。管理员可用 `owner_scope=org|host` 或 JSON 字段 `ownerScope` 管理组织级、主机级实例；具有相应读取或调用权限的组织成员可以查看和调用本组织的 org App，但不能管理它。org App 的 installation owner 与 Action 调用 principal 分离，相同 App ID 与实例 ID 在不同 owner 下完全隔离。
 
 主要接口：
 
@@ -275,11 +275,11 @@ Server 只托管通用 App 包、实例、Action 和 Host API，不包含任何�
 
 - `apps:read`：查看 App、实例和可用版本。
 - `apps:manage`：安装、配置、授权、启停和卸载。
-- 内置普通用户和部门管理员默认拥有上述 App 权限，但只能操作自己的 user owner；`org` 和 `host` owner 仍只允许管理员。
+- 内置普通用户和部门管理员默认拥有上述 App 权限；他们只能管理自己的 user owner，但可查看和调用本组织的 org App。`host` owner 始终仅管理员可选。
 - `apps:deploy`：重启和部署运行实例。
 - `apps:logs`：读取实例日志。
 
-App 通过 `moss.account/v1` 获取当前 owner 的身份和受权限约束的组织目录，通过 `moss.agent/v1` 使用 Session、Turn 和策略能力。平台专属配置、Secret、用户 ID 映射、SDK 和部署脚本均由对应 App 仓库维护。
+App 通过 `moss.account/v1` 获取当前调用 principal 的身份和受权限约束的组织目录，并接收目录用户变化事件；通过 `moss.agent/v1` 使用 Session、Turn 和策略能力。平台专属配置、Secret、用户 ID 映射、SDK 和部署脚本均由对应 App 仓库维护。
 
 ## Roles and permissions
 
@@ -829,7 +829,7 @@ GET 返回当前用户由 Desktop 同步的技能版本；PUT 接收 ZIP，请�
 
 App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用这些接口，不需要使用 Moss 命令行。Server 只从 `server.json` 的 `apps.sourceDir` 获取管理员预先放置的已知 App 版本，不接受任意代码上传。
 
-installation、instance、deployment、密钥、数据和日志都按 owner 隔离。默认是当前认证用户的 `user` scope；请求可用 `owner_scope=org|host` 查询参数，带 JSON body 的请求也可用 `ownerScope`。`org` 和 `host` 只允许管理员选择。
+installation、instance、deployment、密钥、数据和日志都按 owner 隔离。默认是当前认证用户的 `user` scope；请求可用 `owner_scope=org|host` 查询参数，带 JSON body 的请求也可用 `ownerScope`。只有管理员可以管理 `org` 和 `host`；组织成员可以读取和调用 `org`，调用时 Backend Host API 使用认证用户 principal。
 
 权限：
 
@@ -886,7 +886,7 @@ Server 从可信包源获取并完整校验指定身份的包。新安装默认 
 
 ### POST `/api/v1/apps/:appId/instances/:instanceId/actions/:action`
 
-请求体为 `{ "input": ..., "timeoutMs": 30000 }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:invoke`。
+请求体为 `{ "input": ..., "timeoutMs": 30000, "ownerScope": "user|org" }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:invoke`；`org` 只能指向认证用户当前组织。
 
 ### GET `/api/v1/apps/:appId/instances/:instanceId/status`
 
