@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import electron from 'electron';
 import { mossLog } from '../log-ipc.mjs';
+import { MOSS_HOME } from '../moss-home.mjs';
 import { MANAGED_RUNTIME_VERSIONS } from './runtime-manifest.mjs';
 
 const { app } = electron;
 
 export { MANAGED_RUNTIME_VERSIONS };
 
-const RUNTIME_HOME = path.join(os.homedir(), '.moss', 'runtimes');
+const RUNTIME_HOME = path.join(MOSS_HOME, 'runtimes');
 const REGISTRY_PATH = path.join(RUNTIME_HOME, 'registry.json');
 
 function platformId() {

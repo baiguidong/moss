@@ -16,6 +16,7 @@ describe('OpenIM App bridge', () => {
         recvID: 'self',
         serverMsgID: 'server-message-1',
         sendTime: 1_700_000_000,
+        ex: 'moss.openim/automation-v1',
         textElem: { content: 'hello' },
       },
       {
@@ -36,6 +37,7 @@ describe('OpenIM App bridge', () => {
         sentAt: 1_700_000_000_000,
         contentType: 101,
         sessionType: 1,
+        extension: 'moss.openim/automation-v1',
       },
       {
         externalUserId: 'peer-2',

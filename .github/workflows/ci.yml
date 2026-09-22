@@ -160,10 +160,8 @@ jobs:
 
       - name: Validate deployment scripts
         run: |
-          bash -n deploy/package-server.sh
-          bash -n deploy/install-server.sh
-          bash deploy/install-server.test.sh
-          bash deps/server/scripts/validate.sh
+          bash -n deploy/server/prepare-image-context.sh
+          bash deploy/server/scripts/validate.sh
           node --check scripts/docker-build-runtime.mjs
 
       - name: Build and verify Server images
@@ -171,14 +169,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          OUTPUT_DIR=dist/server-ci
           RUNTIME_IMAGE="moss-runtime:$VERSION-amd64"
           SERVER_IMAGE="moss-server:$VERSION-amd64"
-          deploy/package-server.sh "$VERSION" amd64 "$OUTPUT_DIR"
-          rm -rf dist/server-image
-          mkdir -p dist/server-image
-          tar -xzf "$OUTPUT_DIR/moss-server-$VERSION-linux-amd64.tar.gz" \
-            -C dist/server-image
+          deploy/server/prepare-image-context.sh "$VERSION" amd64 dist/server-image
           docker buildx build \
             --platform linux/amd64 \
             --build-arg "MOSS_VERSION=$VERSION" \

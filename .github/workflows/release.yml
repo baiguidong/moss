@@ -244,15 +244,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash -n deploy/package-server.sh
-          bash -n deploy/install-server.sh
-          bash deploy/install-server.test.sh
-          bash deps/server/scripts/validate.sh
+          bash -n deploy/server/prepare-image-context.sh
+          bash deploy/server/scripts/validate.sh
           node --check scripts/docker-build-runtime.mjs
-          help_output="$(deploy/install-server.sh --help)"
-          grep -Fq -- '--offline' <<< "$help_output"
-          grep -Fq -- '--upgrade' <<< "$help_output"
-          grep -Fq -- '--service-name NAME' <<< "$help_output"
 
       - name: Build Server and runtime images
         shell: bash
@@ -262,15 +256,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          OUTPUT_DIR=dist/server-release
           RUNTIME_TAG_VERSION="${VERSION//+/_}"
           RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-amd64"
           SERVER_IMAGE="moss-server:$RUNTIME_TAG_VERSION-amd64"
-          deploy/package-server.sh "$VERSION" amd64 "$OUTPUT_DIR"
-          rm -rf dist/server-image
-          mkdir -p dist/server-image
-          tar -xzf "$OUTPUT_DIR/moss-server-$VERSION-linux-amd64.tar.gz" \
-            -C dist/server-image
+          deploy/server/prepare-image-context.sh "$VERSION" amd64 dist/server-image
           docker buildx build \
             --platform linux/amd64 \
             --build-arg "MOSS_VERSION=$VERSION" \
@@ -329,7 +318,7 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           OUTPUT_DIR=dist/server-compose
-          deps/server/package.sh "$VERSION" "$OUTPUT_DIR"
+          deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz.sha256" \

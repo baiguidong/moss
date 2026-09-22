@@ -93,7 +93,7 @@ Desktop 使用现有 `sessions.db` 新增：
 
 ## 5. 安全与可靠性约束
 
-- 外部文本始终按不可信用户输入封装，不能成为 system/developer 指令。
+- 外部文本始终作为普通、非特权用户消息进入绑定 Session；不可信输入约束在 Session Runtime 的通用系统提示中建立，协议 envelope 不写入可见会话历史。
 - `source=agent/system` 默认不触发 AI；主动回复需单独授权。
 - 每个会话串行执行；来源事件 ID 幂等；更新 Binding 使用 revision 乐观锁。
 - 限制主动回复冷却时间、连续次数和链路 hop，防止两个 Agent 相互触发。

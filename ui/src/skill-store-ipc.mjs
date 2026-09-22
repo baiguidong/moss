@@ -13,8 +13,8 @@ import {
   SKILL_HUB_BASE_URL,
   SKILL_HUB_CURSOR_URL,
 } from './hub-config.mjs';
+import { MOSS_HOME } from './moss-home.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 export const SKILL_SEARCH_DIRS = [
   MOSS_SKILLS_DIR,

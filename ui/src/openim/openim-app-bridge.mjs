@@ -96,6 +96,7 @@ export function normalizeOpenIMReceivedMessages(eventName, value, { currentUserI
       sentAt: timestamp(message.sendTime || message.createTime),
       contentType: Number(message.contentType),
       sessionType: Number(message.sessionType),
+      ...(text(message.ex) ? { extension: text(message.ex).slice(0, 1_024) } : {}),
     }]
   })
 }

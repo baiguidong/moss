@@ -68,7 +68,7 @@ describe('local App archive installation', () => {
   })
 
   it('requests only newly added permissions when reinstalling an App', async () => {
-    const fixture = createFixture({ currentGrants: ['openim:client'] })
+    const fixture = createFixture({ currentGrants: ['openim:client', 'channel:decisions'] })
 
     await fixture.install()
 

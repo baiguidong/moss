@@ -78,26 +78,6 @@ function buildElectronDirect() {
   });
 }
 
-function buildAdapters() {
-  console.log('Building IM adapters');
-  const result = spawn(process.execPath, [path.join(uiRoot, 'scripts', 'build-adapters.mjs')], {
-    cwd: uiRoot,
-    stdio: 'inherit',
-    env: process.env,
-  });
-
-  return new Promise((resolve, reject) => {
-    result.on('error', reject);
-    result.on('exit', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`adapter build exited with code ${code}`));
-    });
-  });
-}
-
 function findAvailablePort(preferred, maxAttempts = 20) {
   for (let index = 0; index < maxAttempts; index += 1) {
     const port = preferred + index;
@@ -223,7 +203,7 @@ async function shutdown(viteProcess) {
 }
 
 async function main() {
-  await Promise.all([buildElectronDirect(), buildAdapters()]);
+  await buildElectronDirect();
 
   let vitePort;
   try {

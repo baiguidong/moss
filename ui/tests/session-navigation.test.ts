@@ -17,4 +17,11 @@ describe('new session navigation', () => {
     expect(initialLoadSource).not.toContain('setActiveSessionId(null)');
     expect(initialLoadSource).not.toContain('setActiveDetail(null)');
   });
+
+  test('keeps an embedded App mounted while navigating and ignores runtime-only refreshes', () => {
+    expect(appSource).toContain("className={activeView === 'embedded-app' ? 'h-full min-h-0' : 'hidden'}");
+    expect(appSource).toContain("activeView === 'embedded-app' ? null : activeView === 'chat'");
+    expect(appSource).toContain("payload?.action !== 'runtime'");
+    expect(appSource).not.toContain("activeView === 'embedded-app' && embeddedAppName ? (");
+  });
 });

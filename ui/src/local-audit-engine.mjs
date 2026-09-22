@@ -1,6 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { resolveMossHome } from './moss-home.mjs';
 
 const MAX_TEXT_LENGTH = 16_000;
 
@@ -280,7 +281,7 @@ function isInsideWorkspace(workspace, candidate) {
 }
 
 function expandAuditPath(value) {
-  const mossHome = process.env.MOSS_HOME || path.join(os.homedir(), '.moss');
+  const mossHome = resolveMossHome();
   const expanded = String(value || '')
     .replace(/^\$\{MOSS_HOME\}(?=$|[/\\])/, mossHome)
     .replace(/^\$MOSS_HOME(?=$|[/\\])/, mossHome)

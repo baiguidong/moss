@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AppInstanceRow } from '../src/renderer-react/components/apps-panel';
+import { AppInstanceRow, AppsPanel } from '../src/renderer-react/components/apps-panel';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
@@ -75,5 +75,37 @@ describe('Apps management', () => {
     const markup = renderInstance(true, false);
     expect(markup).toContain('Desktop · 已停止');
     expect(markup).not.toContain('Desktop · 运行中');
+  });
+
+  test('prevents opening a disabled App and tells the user to enable it', () => {
+    const app = {
+      id: 'example.app',
+      name: 'example.app',
+      displayName: 'Example',
+      currentVersion: '1.0.0',
+      hasUi: true,
+      hasBackend: false,
+      enabled: false,
+      permissions: [],
+      instances: [],
+      deployments: [],
+    } as StoredApp;
+    const markup = renderToStaticMarkup(
+      <AppsPanel
+        apps={[app]}
+        versionsByApp={{}}
+        onLaunch={() => {}}
+        onDelete={() => {}}
+        onIterate={() => {}}
+        onLoadVersions={() => {}}
+        onRollback={() => {}}
+        onRefresh={async () => {}}
+      />,
+    );
+    const openButton = markup.match(/<button[^>]*data-app-open="example\.app"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
+
+    expect(openButton).toContain('disabled=""');
+    expect(openButton).toContain('title="请先启用 App"');
+    expect(openButton).toContain('请先启用');
   });
 });

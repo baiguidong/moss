@@ -1344,7 +1344,7 @@ export default function App() {
         setSelectedAppName(changedName);
         void loadAppVersions(changedName);
       }
-      if (changedName && changedName === embeddedAppName) {
+      if (changedName && changedName === embeddedAppName && payload?.action !== 'runtime') {
         setEmbeddedAppRevision((value) => value + 1);
       }
       void refreshApps();
@@ -2686,7 +2686,19 @@ export default function App() {
               ) : null}
             </div>
           )}
-          {activeView === 'chat' ? (
+          {embeddedAppName ? (
+            <div
+              className={activeView === 'embedded-app' ? 'h-full min-h-0' : 'hidden'}
+              aria-hidden={activeView === 'embedded-app' ? undefined : true}
+            >
+              <EmbeddedAppView
+                key={`${embeddedAppName}:${embeddedAppRoute}:${embeddedAppRevision}`}
+                appName={embeddedAppName}
+                route={embeddedAppRoute}
+              />
+            </div>
+          ) : null}
+          {activeView === 'embedded-app' ? null : activeView === 'chat' ? (
             activeSessionId ? (
               <ChatArea
                 messages={chatMessages}
@@ -2858,12 +2870,6 @@ export default function App() {
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
               onUseLibraryResource={handleUseLibraryResource}
-            />
-          ) : activeView === 'embedded-app' && embeddedAppName ? (
-            <EmbeddedAppView
-              key={`${embeddedAppName}:${embeddedAppRoute}:${embeddedAppRevision}`}
-              appName={embeddedAppName}
-              route={embeddedAppRoute}
             />
           ) : activeView === 'apps' ? (
             <AppsPanel

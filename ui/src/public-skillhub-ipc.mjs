@@ -7,8 +7,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { downloadFileBuffer } from './download-utils.mjs';
+import { MOSS_HOME } from './moss-home.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 const SKILL_META_FILE = '_moss_meta.json';
 const DEFAULT_SKILL_HUB_API_BASE_URL = 'https://api.skillhub.cn';

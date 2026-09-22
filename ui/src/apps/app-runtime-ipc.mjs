@@ -74,7 +74,9 @@ export function registerAppRuntimeIpc(options) {
               })
             }
           }
-          approvedGrants = [...new Set([...currentGrants, ...addedPermissions])]
+          const declaredPermissions = new Set(packageInfo.manifest.permissions || [])
+          const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
+          approvedGrants = [...new Set([...retainedGrants, ...addedPermissions])]
           return installArchivePackage(packageRoot)
         },
       })

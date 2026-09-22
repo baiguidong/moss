@@ -56,6 +56,22 @@ describe('Agent Channel store', () => {
     expect(result.other).toBe('human_only')
   })
 
+  it('preserves an unrestricted resource selection on a conversation policy', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const scope = { appId: 'example.channel', instanceId: 'default' };
+      store.updateBinding({ ...scope, externalConversationId: 'account-1/*', patch: {
+        resources: { tools: null, skills: [], connectors: [] },
+      }});
+      console.log(JSON.stringify(store.resolveBinding({
+        ...scope,
+        externalConversationId: 'account-1/chat-1',
+        defaultConversationId: 'account-1/*',
+      })));
+    `)
+    expect(result.resources).toEqual({ tools: null, skills: [], connectors: [] })
+  })
+
   it('lets a direct conversation fully replace and then restore its default policy', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);

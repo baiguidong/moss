@@ -14,8 +14,13 @@ afterEach(() => {
 
 function fixture(root: string, shared: {
   sendCalls: any[];
+  markReadCalls?: any[];
   initCalls?: any[];
   loginCalls?: any[];
+  logoutCalls?: any[];
+  fetchCalls?: any[];
+  sessionProfiles?: any[];
+  connection?: { serverUrl: string; authToken: string; userId?: string; orgId?: string };
   loginError?: unknown;
 }) {
   const handlers = new Map<string, (...args: any[]) => any>()
@@ -31,8 +36,10 @@ function fixture(root: string, shared: {
       if (shared.loginError) throw shared.loginError
       loginStatus = 3
     },
-    logout: async () => { loginStatus = 1 },
+    logout: async () => { shared.logoutCalls?.push({}); loginStatus = 1 },
     getAllConversationList: async () => ({ data: [] }),
+    getOneConversation: async ({ sourceID }: any) => ({ data: { conversationID: `si_${sourceID}_self` } }),
+    markConversationMessageAsRead: async (conversationID: string) => { shared.markReadCalls?.push(conversationID) },
     createTextMessage: async (text: string) => ({ data: { clientMsgID: 'generated', textElem: { content: text } } }),
     sendMessage: async (input: any) => {
       shared.sendCalls.push(input)
@@ -50,16 +57,19 @@ function fixture(root: string, shared: {
     systemPreferences: { getMediaAccessStatus: () => 'granted' },
     mossHome: root,
     allowMediaRoot: () => {},
-    resolveMossServerConnection: async () => ({ serverUrl: 'https://moss.test', authToken: 'token' }),
+    resolveMossServerConnection: async () => shared.connection || ({
+      serverUrl: 'https://moss.test', authToken: 'token', userId: 'user-self', orgId: 'org-one',
+    }),
     authorizeClient: (_event: unknown, permission: string, channel: string) => permissions.push({ permission, channel }),
     log: () => {},
-    fetchImpl: async () => ({
-      ok: true,
-      json: async () => ({
+    fetchImpl: async (url: string, options: unknown) => {
+      shared.fetchCalls?.push({ url, options })
+      const profile = shared.sessionProfiles?.shift() || {
         userID: 'self', imToken: 'im-token', expiresIn: 3600,
         apiAddr: 'https://im.test', wsAddr: 'wss://im.test',
-      }),
-    }),
+      }
+      return { ok: true, json: async () => profile }
+    },
     createSdkMain: () => ({
       sdk,
       webContents: [],
@@ -91,6 +101,7 @@ describe('OpenIM native integration', () => {
       conversationId: 'openim-user:self/direct:peer-1',
       text: 'hello',
       idempotencyKey: 'turn-1',
+      extension: 'app-defined-message-kind',
     }
     const [left, right] = await Promise.all([
       first.integration.sendText(input),
@@ -99,6 +110,7 @@ describe('OpenIM native integration', () => {
     expect(left).toEqual(right)
     expect(shared.sendCalls).toHaveLength(1)
     expect(shared.sendCalls[0].message.clientMsgID).not.toBe('generated')
+    expect(shared.sendCalls[0].message.ex).toBe('app-defined-message-kind')
 
     const restarted = fixture(root, shared)
     await expect(restarted.integration.sendText(input)).resolves.toMatchObject({ duplicate: true })
@@ -111,22 +123,134 @@ describe('OpenIM native integration', () => {
     expect(shared.sendCalls).toHaveLength(1)
   })
 
+  it('marks only a conversation owned by the active OpenIM account as read', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const shared = { sendCalls: [] as any[], markReadCalls: [] as any[] }
+    const built = fixture(root, shared)
+
+    await expect(built.integration.markConversationRead({
+      conversationId: 'openim-user:self/direct:peer-1',
+    })).resolves.toEqual({
+      read: true,
+      conversationId: 'openim-user:self/direct:peer-1',
+    })
+    expect(shared.markReadCalls).toEqual(['si_peer-1_self'])
+    await expect(built.integration.markConversationRead({
+      conversationId: 'openim-user:other/direct:peer-1',
+    })).rejects.toThrow(/active account/)
+  })
+
   it('coalesces UI and Backend session setup through the Host-owned SDK login', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
     temporaryDirectories.push(root)
-    const shared = { sendCalls: [] as any[], initCalls: [] as any[], loginCalls: [] as any[] }
+    const shared = {
+      sendCalls: [] as any[], initCalls: [] as any[], loginCalls: [] as any[], fetchCalls: [] as any[],
+    }
     const built = fixture(root, shared)
     const createSession = built.handlers.get('openim:create-session')!
+    const sdkCall = built.handlers.get('openim:sdk-call')!
 
-    await expect(Promise.all([
+    const profiles = await Promise.all([
       createSession({ sender: { id: 1 } }),
       createSession({ sender: { id: 2 } }),
-    ])).resolves.toEqual([
+    ])
+    expect(profiles).toEqual([
       expect.objectContaining({ userID: 'self', imToken: 'im-token' }),
       expect.objectContaining({ userID: 'self', imToken: 'im-token' }),
     ])
     expect(shared.initCalls).toHaveLength(1)
     expect(shared.loginCalls).toEqual([{ userID: 'self', token: 'im-token' }])
+    // The renderer initializes its proxy after the Host and performs a
+    // logout/login cycle with the already-issued credentials.
+    await sdkCall({ sender: { id: 1 } }, 'logout')
+    await sdkCall({ sender: { id: 1 } }, 'login', {
+      userID: profiles[0].userID,
+      token: profiles[0].imToken,
+    })
+    await expect(createSession({ sender: { id: 3 } })).resolves.toMatchObject({
+      userID: 'self', imToken: 'im-token',
+    })
+    expect(shared.fetchCalls).toHaveLength(1)
+    expect(shared.loginCalls).toHaveLength(2)
+  })
+
+  it('reuses the OpenIM token when the access token rotates for the same Moss identity', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const shared = {
+      sendCalls: [] as any[],
+      loginCalls: [] as any[],
+      logoutCalls: [] as any[],
+      fetchCalls: [] as any[],
+      connection: {
+        serverUrl: 'https://moss.test', authToken: 'token-one', userId: 'user-self', orgId: 'org-one',
+      },
+      sessionProfiles: [
+        { userID: 'self', imToken: 'im-token-one', expiresIn: 3600, apiAddr: 'https://im.test', wsAddr: 'wss://im.test' },
+      ],
+    }
+    const built = fixture(root, shared)
+    const createSession = built.handlers.get('openim:create-session')!
+
+    await createSession({ sender: {} })
+    shared.connection.authToken = 'token-two'
+    await expect(createSession({ sender: {} })).resolves.toMatchObject({ imToken: 'im-token-one' })
+
+    expect(shared.fetchCalls).toHaveLength(1)
+    expect(shared.logoutCalls).toHaveLength(0)
+    expect(shared.loginCalls).toEqual([{ userID: 'self', token: 'im-token-one' }])
+  })
+
+  it('issues a new OpenIM token when the Moss Server identity changes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const shared = {
+      sendCalls: [] as any[], loginCalls: [] as any[], logoutCalls: [] as any[], fetchCalls: [] as any[],
+      connection: {
+        serverUrl: 'https://moss.test', authToken: 'token-one', userId: 'user-one', orgId: 'org-one',
+      },
+      sessionProfiles: [
+        { userID: 'self', imToken: 'im-token-one', expiresIn: 3600, apiAddr: 'https://im.test', wsAddr: 'wss://im.test' },
+        { userID: 'self', imToken: 'im-token-two', expiresIn: 3600, apiAddr: 'https://im.test', wsAddr: 'wss://im.test' },
+      ],
+    }
+    const built = fixture(root, shared)
+    const createSession = built.handlers.get('openim:create-session')!
+
+    await createSession({ sender: {} })
+    shared.connection.userId = 'user-two'
+    shared.connection.authToken = 'token-two'
+    await expect(createSession({ sender: {} })).resolves.toMatchObject({ imToken: 'im-token-two' })
+
+    expect(shared.fetchCalls).toHaveLength(2)
+    expect(shared.logoutCalls).toHaveLength(1)
+    expect(shared.loginCalls).toHaveLength(2)
+  })
+
+  it('issues a new OpenIM token after an explicit SDK logout', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-openim-test-'))
+    temporaryDirectories.push(root)
+    const shared = {
+      sendCalls: [] as any[], loginCalls: [] as any[], fetchCalls: [] as any[],
+      sessionProfiles: [
+        { userID: 'self', imToken: 'im-token-one', expiresIn: 3600, apiAddr: 'https://im.test', wsAddr: 'wss://im.test' },
+        { userID: 'self', imToken: 'im-token-two', expiresIn: 3600, apiAddr: 'https://im.test', wsAddr: 'wss://im.test' },
+      ],
+    }
+    const built = fixture(root, shared)
+    const createSession = built.handlers.get('openim:create-session')!
+    const sdkCall = built.handlers.get('openim:sdk-call')!
+
+    await createSession({ sender: {} })
+    await sdkCall({ sender: {} }, 'logout')
+    await expect(createSession({ sender: {} })).resolves.toMatchObject({ imToken: 'im-token-two' })
+
+    expect(shared.fetchCalls).toHaveLength(2)
+    expect(shared.loginCalls).toEqual([
+      { userID: 'self', token: 'im-token-one' },
+      { userID: 'self', token: 'im-token-two' },
+    ])
   })
 
   it('recreates native SDK directories deleted while the Host is still running', async () => {

@@ -465,7 +465,14 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   {app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
                   <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                    {app.hasUi && <Button size="sm" className="h-8" onClick={() => onLaunch(app.name)}><ExternalLink className="h-4 w-4" />打开</Button>}
+                    {app.hasUi && <Button
+                      size="sm"
+                      className="h-8"
+                      data-app-open={appId}
+                      disabled={!app.enabled}
+                      title={app.enabled ? "打开 App" : "请先启用 App"}
+                      onClick={() => onLaunch(app.name)}
+                    ><ExternalLink className="h-4 w-4" />{app.enabled ? "打开" : "请先启用"}</Button>}
                     {canDeployToServer && app.serverAvailable && app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />{app.remoteInstalled ? "同步到 Server" : "部署到 Server"}</Button>}
                     {canDeployToServer && app.serverAvailable && !app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled title={app.serverPackageError || "Server 包源没有此版本"}><ServerOff className="h-4 w-4" />Server 无此版本</Button>}
                     {canDeployToServer && app.serverConfigured && !app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled title="请先连接 Moss Server"><ServerOff className="h-4 w-4" />Server 未连接</Button>}
@@ -473,7 +480,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />{app.hasBackend && !app.hasUi ? "管理 Backend" : "管理"}</Button>
                     {!app.remoteOnly && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     {!app.remoteOnly && <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title={hasShortcut ? "移出侧栏" : "加入侧栏"} disabled={!app.hasUi} onClick={() => hasShortcut ? onRemoveShortcut?.(app.name) : onAddShortcut?.(app.name)}>{hasShortcut ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}</Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title={hasShortcut ? "移出侧栏" : !app.enabled ? "请先启用 App" : "加入侧栏"} disabled={!app.hasUi || (!app.enabled && !hasShortcut)} onClick={() => hasShortcut ? onRemoveShortcut?.(app.name) : onAddShortcut?.(app.name)}>{hasShortcut ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}</Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {
                       if (!window.confirm(`卸载“${app.displayName || app.name}”？`)) return;
                       const deleteData = window.confirm("同时删除 App 数据？");

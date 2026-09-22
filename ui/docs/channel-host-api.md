@@ -57,6 +57,10 @@ Channel App 必须使用 persistent Backend，显式声明协议及实际需要�
 `delivery.ack` 可用 `kind: "turn" | "notification"` 区分回合与通知；回合确认还必须携带 `externalConversationId`，防止跨会话确认。
 `pairing.attempt` 的响应除 `paired` 外还可包含 `alreadyPaired` 和 `duplicate`；Backend 遇到 `duplicate` 时不得再把同一条配对消息转交给 Agent。
 
+`moss.agent/v1` 的 `binding.get`、`binding.update`、`binding.reset` 和 `turn.start` 可携带可选的 `defaultConversationId`。它是 App 定义的、不透明的默认策略作用域；Core 只负责在同一 App/实例内解析继承关系，不解析任何渠道自己的 ID 格式。
+
+固定外部会话只保存并复用一个 Moss `sessionId`。Core 在 Session Runtime 初始化时增加通用的外部渠道安全与执行约束，之后每条外部文本都作为普通用户消息追加，历史不会重复嵌入协议 envelope。轮换摘要和人工发送记录仅作为隐藏运行上下文传递，不污染用户可见的会话记录。
+
 Host 会拒绝协议未声明的顶层字段、超过 100,000 字符的正文、超过 32 个附件以及异常附件字段。附件中的 `path` 和 `data` 只属于有界传输输入，不会写入 Agent Channel Turn；当前持久化内容仅保留类型、名称和 MIME 类型。成员策略始终按 `externalUserId` 解析，Backend 不能通过额外字段替换消息发送者。
 
 ```js

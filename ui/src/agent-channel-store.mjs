@@ -162,6 +162,14 @@ function mergeNested(base, override, keys) {
   ]));
 }
 
+function mergeResources(base, override) {
+  if (override === null || override === undefined) return { ...base };
+  return Object.fromEntries(['tools', 'skills', 'connectors'].map((key) => [
+    key,
+    Object.hasOwn(override, key) ? override[key] : base[key],
+  ]));
+}
+
 function narrowResources(base, override) {
   if (override === null || override === undefined) return { ...base };
   return Object.fromEntries(['tools', 'skills', 'connectors'].map((key) => {
@@ -220,7 +228,7 @@ function mergePolicy(defaults, conversation, member) {
     }
     next.resources = isMember
       ? narrowResources(target.resources, source.resources)
-      : mergeNested(target.resources, source.resources, ['tools', 'skills', 'connectors']);
+      : mergeResources(target.resources, source.resources);
     next.session = mergeNested(target.session, source.session, ['mode', 'rotateAfterTurns']);
     next.proactive = isMember
       ? narrowProactive(target.proactive, source.proactive)

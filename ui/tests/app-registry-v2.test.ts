@@ -58,7 +58,7 @@ describe('App V2 registry hydration', () => {
       id: 'fixture.registry-v2',
       hasManifest: true,
       hasUi: true,
-      filePath: path.join(packageRoot, 'dist', 'ui', 'index.html'),
+      filePath: await fs.realpath(path.join(packageRoot, 'dist', 'ui', 'index.html')),
       currentVersion: '1.0.0',
     }])
   })

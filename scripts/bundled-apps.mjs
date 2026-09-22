@@ -12,6 +12,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 export const BUNDLED_APPS_LOCK_PATH = path.join(repoRoot, 'config', 'bundled-apps.lock.json')
 export const BUNDLED_APPS_OUTPUT_DIR = path.join(repoRoot, 'ui', 'dist', 'bundled-apps')
 export const APP_MARKET_RESOURCES_DIR = path.join(repoRoot, 'ui', 'resources', 'app-market')
+const MAX_MARKETPLACE_BYTES = 5 * 1024 * 1024
+const MAX_APP_BYTES = 250 * 1024 * 1024
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'))
@@ -32,23 +34,11 @@ export function readBundledAppsLock(lockPath = BUNDLED_APPS_LOCK_PATH) {
     apps: raw.apps.map((entry) => {
       const id = String(entry?.id || '').trim()
       const version = String(entry?.version || '').trim()
-      const fileName = String(entry?.fileName || '').trim()
-      const url = new URL(String(entry?.url || ''))
       if (!/^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$/.test(id)) throw new Error(`Invalid bundled App id: ${id}`)
       if (ids.has(id)) throw new Error(`Duplicate bundled App id: ${id}`)
       ids.add(id)
       if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Invalid bundled App version: ${version}`)
-      if (url.protocol !== 'https:') throw new Error(`Bundled App URL must use HTTPS: ${url}`)
-      if (!fileName.endsWith('.zip') || path.basename(fileName) !== fileName) throw new Error(`Invalid bundled App filename: ${fileName}`)
-      return {
-        id,
-        version,
-        fileName,
-        url: url.toString(),
-        sha256: normalizeSha256(entry.sha256, `${id}.sha256`),
-        publisherId: String(entry.publisherId || '').trim(),
-        keyId: String(entry.keyId || '').trim(),
-      }
+      return { id, version }
     }),
   }
 }
@@ -68,6 +58,74 @@ export function loadTrustedAppPublishers(resourceDir = APP_MARKET_RESOURCES_DIR)
       return [keyId, fs.readFileSync(keyPath, 'utf8')]
     })),
   }]))
+}
+
+function normalizeHttpsUrl(value, baseUrl, fieldName) {
+  let url
+  try { url = new URL(String(value || ''), baseUrl) }
+  catch { throw new Error(`Invalid bundled App marketplace URL: ${fieldName}`) }
+  if (url.protocol !== 'https:') throw new Error(`Bundled App marketplace URL must use HTTPS: ${fieldName}`)
+  return url.toString()
+}
+
+async function downloadJson(url, download) {
+  const buffer = await download(url, {
+    userAgent: 'Moss-BundledApps/1.0',
+    maxBytes: MAX_MARKETPLACE_BYTES,
+  })
+  try { return JSON.parse(Buffer.from(buffer).toString('utf8')) }
+  catch (error) { throw new Error(`Invalid bundled App marketplace JSON at ${url}: ${error.message}`) }
+}
+
+export async function resolveBundledApps(lock, options = {}) {
+  const resourceDir = path.resolve(options.resourceDir || APP_MARKET_RESOURCES_DIR)
+  const catalog = readJson(path.join(resourceDir, 'catalog.json'))
+  if (catalog?.schemaVersion !== 1 || typeof catalog.indexUrl !== 'string') {
+    throw new Error(`Invalid bundled App marketplace configuration: ${path.join(resourceDir, 'catalog.json')}`)
+  }
+  const indexUrl = normalizeHttpsUrl(options.indexUrl || catalog.indexUrl, undefined, 'indexUrl')
+  const download = options.download || downloadFileBuffer
+  const index = await downloadJson(indexUrl, download)
+  if (index?.schemaVersion !== 1 || !Array.isArray(index.apps)) {
+    throw new Error(`Invalid bundled App marketplace index: ${indexUrl}`)
+  }
+
+  return Promise.all(lock.apps.map(async (pin) => {
+    const summary = index.apps.find((entry) => entry?.id === pin.id)
+    if (!summary) throw new Error(`Bundled App is not published: ${pin.id}`)
+    const detailUrl = normalizeHttpsUrl(summary.detailUrl, indexUrl, `${pin.id}.detailUrl`)
+    const detail = await downloadJson(detailUrl, download)
+    if (detail?.schemaVersion !== 1 || detail.id !== pin.id || !Array.isArray(detail.versions)) {
+      throw new Error(`Invalid bundled App marketplace detail: ${pin.id}`)
+    }
+    const release = detail.versions.find((entry) => entry?.version === pin.version)
+    if (!release) throw new Error(`Bundled App version is not published: ${pin.id}@${pin.version}`)
+    const artifact = release.artifact
+    if (!artifact || typeof artifact !== 'object') throw new Error(`Missing bundled App artifact: ${pin.id}@${pin.version}`)
+    const fileName = String(artifact.fileName || '').trim()
+    if (!fileName.endsWith('.zip') || path.basename(fileName) !== fileName) {
+      throw new Error(`Invalid bundled App filename: ${fileName}`)
+    }
+    const size = Number(artifact.size)
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_APP_BYTES) {
+      throw new Error(`Invalid bundled App size: ${pin.id}@${pin.version}`)
+    }
+    if (artifact.signed !== true) throw new Error(`Bundled App release is not signed: ${pin.id}@${pin.version}`)
+    const publisherId = String(artifact.publisherId || '').trim()
+    const keyId = String(artifact.keyId || '').trim()
+    if (!publisherId || !keyId || String(detail.publisher?.id || '').trim() !== publisherId) {
+      throw new Error(`Invalid bundled App publisher metadata: ${pin.id}@${pin.version}`)
+    }
+    return {
+      ...pin,
+      fileName,
+      url: normalizeHttpsUrl(artifact.downloadUrl, detailUrl, `${pin.id}@${pin.version}.downloadUrl`),
+      sha256: normalizeSha256(artifact.sha256, `${pin.id}@${pin.version}.sha256`),
+      size,
+      publisherId,
+      keyId,
+    }
+  }))
 }
 
 function safeArchivePath(value) {
@@ -116,7 +174,7 @@ async function readArtifact(entry, options) {
   }
   return (options.download || downloadFileBuffer)(entry.url, {
     userAgent: 'Moss-BundledApps/1.0',
-    maxBytes: 250 * 1024 * 1024,
+    maxBytes: MAX_APP_BYTES,
   })
 }
 
@@ -129,12 +187,19 @@ export async function prepareBundledApps(options = {}) {
     || ''
   const lock = readBundledAppsLock(lockPath)
   const trustedPublishers = loadTrustedAppPublishers(resourceDir)
-  const lockHash = createHash('sha256').update(JSON.stringify({ lock, trustedPublishers })).digest('hex')
+  const resolvedApps = await resolveBundledApps(lock, {
+    resourceDir,
+    indexUrl: options.indexUrl,
+    download: options.download,
+  })
+  const lockHash = createHash('sha256')
+    .update(JSON.stringify({ lock, resolvedApps, trustedPublishers }))
+    .digest('hex')
   const markerPath = path.join(outputDir, '.prepared.json')
   const marker = fs.existsSync(markerPath) ? readJson(markerPath) : null
   if (!options.force && marker?.lockHash === lockHash) {
     try {
-      for (const entry of lock.apps) {
+      for (const entry of resolvedApps) {
         const packageInfo = await validateAppPackage(path.join(outputDir, entry.id), {
           trustedPublishers,
           requireTrustedPublisher: true,
@@ -156,8 +221,9 @@ export async function prepareBundledApps(options = {}) {
   await fsp.rm(stagingRoot, { recursive: true, force: true })
   await fsp.mkdir(stagingRoot, { recursive: true })
   try {
-    for (const entry of lock.apps) {
+    for (const entry of resolvedApps) {
       const archive = await readArtifact(entry, { ...options, localArtifactsDir })
+      if (archive.length !== entry.size) throw new Error(`Bundled App size mismatch: ${entry.id}@${entry.version}`)
       const actualHash = createHash('sha256').update(archive).digest('hex')
       if (actualHash !== entry.sha256) throw new Error(`Bundled App checksum mismatch: ${entry.id}@${entry.version}`)
       const extracted = path.join(stagingRoot, `.extract-${entry.id}`)

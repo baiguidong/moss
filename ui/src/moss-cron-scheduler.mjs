@@ -71,7 +71,7 @@ export function createMossCronScheduler({
   // Moss cron scheduler
   //
   // The embedded runtime's CronCreate tool mirrors every job into
-  // ~/.moss/cron_tasks.json, but its own firing loop only runs in the CLI REPL
+  // <MOSS_HOME>/cron_tasks.json, but its own firing loop only runs in the CLI REPL
   // (idle-loop injection). In SDK mode nothing consumes the file, so scheduled
   // prompts silently never fire. This scheduler reads the file, matches cron
   // expressions each tick, and injects the prompt into the session that created

@@ -3,7 +3,6 @@ const { ipcMain } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import {
@@ -23,8 +22,8 @@ import {
   SKILL_HUB_BASE_URL,
 } from './hub-config.mjs';
 import { getInstalledSkills, installSkillFromZip } from './skill-store-ipc.mjs';
+import { MOSS_HOME } from './moss-home.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const LEGACY_ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
 const LEGACY_ASSISTANT_SYSTEM_DIR = path.join(MOSS_ASSISTANTS_DIR, 'system');

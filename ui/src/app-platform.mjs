@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -13,9 +12,9 @@ import {
   writePackageChecksums,
 } from '../../packages/app-runtime/src/index.mjs'
 import { validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
+import { MOSS_HOME } from './moss-home.mjs'
 
 const execFileAsync = promisify(execFile)
-const MOSS_HOME = path.join(os.homedir(), '.moss')
 export const APPS_DIR = path.join(MOSS_HOME, 'apps')
 export const APP_REGISTRY_PATH = path.join(MOSS_HOME, 'app-registry.json')
 const WORKSPACE_APPS_SUBDIR = 'apps'

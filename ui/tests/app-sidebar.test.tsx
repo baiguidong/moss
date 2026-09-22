@@ -10,6 +10,7 @@ function renderSidebar({
   remoteEnabled = false,
   agentMailEnabled = false,
   sessions = [],
+  apps = [],
   activeView = 'chat',
   collapsed = false,
   appViews = [],
@@ -19,6 +20,7 @@ function renderSidebar({
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
+  apps?: any[];
   activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
   collapsed?: boolean;
   appViews?: any[];
@@ -26,7 +28,7 @@ function renderSidebar({
   return renderToStaticMarkup(
     <AppSidebar
       sessions={sessions}
-      apps={[]}
+      apps={apps}
       appViews={appViews}
       activeSessionId={null}
       activeView={activeView}
@@ -114,6 +116,14 @@ describe('app sidebar more menu', () => {
 });
 
 describe('app sidebar resource navigation', () => {
+  test('keeps a disabled App shortcut visible but non-interactive with enable guidance', () => {
+    const html = renderSidebar({
+      apps: [{ id: 'example.app', name: 'example.app', displayName: 'Example', enabled: false }],
+    });
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('title="Example：请先启用 App"');
+  });
+
   test('renders enabled App view contributions as navigation entries', () => {
     const html = renderSidebar({
       appViews: [{ id: 'moss.example/home', appId: 'moss.example', appName: 'moss.example', title: '示例 App', route: '#/home', location: 'sidebar' }],

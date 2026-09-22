@@ -12,7 +12,7 @@
 ## 打包
 
 ```bash
-cd deps/im
+cd deploy/im
 ./package.sh
 ```
 

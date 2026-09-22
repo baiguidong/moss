@@ -16,7 +16,7 @@
 在 Moss 仓库中直接安装：
 
 ```bash
-cd deps/rag && sudo ./install.sh
+cd deploy/rag && sudo ./install.sh
 ```
 
 ## 打包迁移

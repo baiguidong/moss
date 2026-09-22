@@ -214,36 +214,56 @@ describe('desktop package contract', () => {
     expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
-  test('prepares bundled Apps from immutable release artifacts instead of App source', () => {
+  test('resolves pinned bundled App versions from published release metadata', () => {
     const ciSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     const lock = JSON.parse(readFileSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'), 'utf8'));
     const bundledAppsSource = readFileSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'), 'utf8');
     const desktopBuild = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'), 'utf8');
+    const desktopDev = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'dev.mjs'), 'utf8');
+    const desktopMain = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
     const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
     const trustedPublishers = JSON.parse(readFileSync(
       path.join(uiRoot, 'resources', 'app-market', 'trusted-publishers.json'),
       'utf8',
     ));
-    expect(lock).toMatchObject({
+    expect(lock).toEqual({
       schemaVersion: 1,
       apps: [{
         id: 'moss.feishu',
         version: '0.1.3',
-        url: 'https://github.com/baiguidong/moss-apps/releases/download/moss.feishu-v0.1.3/moss.feishu-0.1.3.zip',
-        publisherId: 'moss',
-        keyId: 'release-1',
       }],
     });
-    expect(lock.apps[0].sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(trustedPublishers.publishers.moss.keys['release-1']).toBe('publishers/moss/release-1.pem');
     expect(existsSync(path.join(uiRoot, 'resources', 'app-market', 'publishers', 'moss', 'release-1.pem'))).toBe(true);
+    expect(bundledAppsSource).toContain("readJson(path.join(resourceDir, 'catalog.json'))");
+    expect(bundledAppsSource).toContain('detail.versions.find');
     expect(bundledAppsSource).toContain('requireTrustedPublisher: true');
     expect(desktopBuild).toContain('prepareBundledApps');
     expect(serverBuild).toContain('prepareBundledApps');
+    expect(desktopPackage.scripts.start).not.toContain('build-adapters.mjs');
+    expect(desktopPackage.scripts['dist:win']).toContain('build-adapters.mjs');
+    expect(desktopPackage.scripts['dist:mac']).toContain('build-adapters.mjs');
+    expect(desktopDev).not.toContain('build-adapters.mjs');
+    expect(desktopMain).toContain('if (app.isPackaged) {\n    await initializeBundledApps({ trustedPublishers });');
     expect(`${ciSource}\n${releaseSource}`).not.toContain('apps/feishu');
     expect(existsSync(path.join(repoRoot, 'apps', 'feishu'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'adapters', 'feishu', 'index.ts'))).toBe(false);
+  });
+
+  test('keeps deployable components under one deploy directory', () => {
+    for (const component of ['docker', 'im', 'rag', 'server']) {
+      expect(existsSync(path.join(repoRoot, 'deploy', component))).toBe(true);
+    }
+    expect(existsSync(path.join(repoRoot, 'deps'))).toBe(false);
+    expect(existsSync(path.join(repoRoot, 'deploy', 'install-server.sh'))).toBe(false);
+
+    const workflows = [
+      readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+      readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    ].join('\n');
+    expect(workflows).toContain('deploy/server/prepare-image-context.sh');
+    expect(workflows).not.toContain('deps/server');
   });
 });
 

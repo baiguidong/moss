@@ -21,6 +21,7 @@ import {
   publishAppFromBuild,
   readAppManifestFromDir,
 } from './app-platform.mjs'
+import { MOSS_HOME } from './moss-home.mjs'
 
 // ============================================================================
 // Image generation by provider
@@ -323,7 +324,6 @@ export function registerJsonFileIpc(name, filePath, options = {}) {
   }));
 }
 
-const MOSS_HOME = path.join(os.homedir(), '.moss')
 export function listAllStoredApps() {
   const apps = listAppsFromRegistry()
   return apps.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))

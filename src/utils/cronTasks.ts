@@ -9,13 +9,12 @@
 // File format:
 //   { "tasks": [{ id, cron, prompt, createdAt, recurring? }] }
 //
-// Global cron file (~/.moss/cron_tasks.json) mirrors all tasks for app access.
+// Global cron file (<MOSS_CONFIG_DIR>/cron_tasks.json) mirrors all tasks for app access.
 
 import { randomUUID } from 'crypto'
 import { readFileSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
-import { join } from 'path'
-import os from 'os'
+import { dirname, join } from 'path'
 import {
   addSessionCronTask,
   getProjectRoot,
@@ -25,6 +24,7 @@ import {
 import { computeNextCronRun, parseCronExpression } from './cron.js'
 import { logForDebugging } from './debug.js'
 import { isFsInaccessible } from './errors.js'
+import { getMossConfigHomeDir } from './envUtils.js'
 import { getFsImplementation } from './fsOperations.js'
 import { safeParseJSON } from './json.js'
 import { logError } from './log.js'
@@ -448,14 +448,14 @@ export function findMissedTasks(tasks: CronTask[], nowMs: number): CronTask[] {
 }
 
 // ============================================================================
-// Global cron file for app access (~/.moss/cron_tasks.json)
+// Global cron file for app access (<MOSS_CONFIG_DIR>/cron_tasks.json)
 // All cron tasks are mirrored here (not just durable ones) so apps can read them.
 // ============================================================================
 
-const GLOBAL_CRON_FILE = '.moss/cron_tasks.json'
+const GLOBAL_CRON_FILE = 'cron_tasks.json'
 
 function getGlobalCronFilePath(): string {
-  return join(process.env.HOME ?? os.homedir(), GLOBAL_CRON_FILE)
+  return join(getMossConfigHomeDir(), GLOBAL_CRON_FILE)
 }
 
 async function readGlobalCronTasks(): Promise<CronTask[]> {
@@ -483,7 +483,7 @@ async function readGlobalCronTasks(): Promise<CronTask[]> {
 async function writeGlobalCronTasks(tasks: CronTask[]): Promise<void> {
   const fs = getFsImplementation()
   const filePath = getGlobalCronFilePath()
-  const dir = filePath.substring(0, filePath.lastIndexOf('/'))
+  const dir = dirname(filePath)
   await mkdir(dir, { recursive: true })
   await writeFile(filePath, jsonStringify({ tasks }, null, 2) + '\n', 'utf-8')
 }

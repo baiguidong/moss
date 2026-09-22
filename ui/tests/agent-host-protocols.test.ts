@@ -58,8 +58,12 @@ describe('Account and Agent Host protocols', () => {
     })).toThrow(/unknown field/)
     expect(validateAgentHostInput('binding.update', {
       externalConversationId: 'chat-1',
+      defaultConversationId: 'account-1/*',
       patch: { inheritDefault: false, resources: { tools: ['Read'] } },
-    })).toMatchObject({ patch: { inheritDefault: false, resources: { tools: ['Read'] } } })
+    })).toMatchObject({
+      defaultConversationId: 'account-1/*',
+      patch: { inheritDefault: false, resources: { tools: ['Read'] } },
+    })
     expect(validateAgentHostInput('binding.reset', {
       externalConversationId: 'chat-1', expectedRevision: 2,
     })).toMatchObject({ externalConversationId: 'chat-1', expectedRevision: 2 })
@@ -74,9 +78,10 @@ describe('Account and Agent Host protocols', () => {
       externalUserId: 'user-1',
       externalConversationId: 'chat-1',
       externalEventId: 'event-1',
+      defaultConversationId: 'account-1/*',
       text: 'hello',
       source: 'human',
-    })).toMatchObject({ text: 'hello' })
+    })).toMatchObject({ defaultConversationId: 'account-1/*', text: 'hello' })
     expect(validateAgentHostInput('turn.list', {
       statuses: ['awaiting_review'], limit: 20,
     })).toMatchObject({ statuses: ['awaiting_review'], limit: 20 })
@@ -157,7 +162,16 @@ describe('Account and Agent Host protocols', () => {
       conversationId: 'openim-user:self/direct:user-1',
       text: 'hello',
       idempotencyKey: 'turn-1',
-    })).toMatchObject({ recipientId: 'user-1', conversationId: 'openim-user:self/direct:user-1' })
+      extension: 'app-defined-message-kind',
+    })).toMatchObject({
+      recipientId: 'user-1', conversationId: 'openim-user:self/direct:user-1', extension: 'app-defined-message-kind',
+    })
+    expect(validateOpenIMHostInput('conversation.mark-read', {
+      conversationId: 'openim-user:self/direct:user-1',
+    })).toEqual({ conversationId: 'openim-user:self/direct:user-1' })
+    expect(() => validateOpenIMHostInput('conversation.mark-read', {
+      conversationId: 'not-an-openim-conversation',
+    })).toThrow(/invalid conversationId/)
     expect(() => validateOpenIMHostInput('message.send', {
       recipientId: 'user-2',
       conversationId: 'openim-user:self/direct:user-1',
@@ -178,7 +192,8 @@ describe('Account and Agent Host protocols', () => {
       sentAt: 100,
       contentType: 101,
       sessionType: 1,
-    })).toMatchObject({ externalEventId: 'message-1', text: 'hello' })
+      extension: 'app-defined-message-kind',
+    })).toMatchObject({ externalEventId: 'message-1', text: 'hello', extension: 'app-defined-message-kind' })
 
     const registry = new AppHostCapabilityRegistry()
     registry.registerProtocol(createOpenIMProtocolDefinition())

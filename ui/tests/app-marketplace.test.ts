@@ -187,6 +187,65 @@ describe('App marketplace', () => {
     expect(calls).toEqual([{ version: '1.2.0', grants: ['channel:messages'] }])
   })
 
+  it('drops permissions removed by a newer marketplace version', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-permissions-'))
+    roots.push(root)
+    const archive = Buffer.from('signed permission update')
+    const latest = {
+      ...version(archive),
+      permissions: ['channel:messages', 'channel:pairing'],
+    }
+    const responses = new Map([
+      ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
+      ['https://example.com/example.app.json', Buffer.from(JSON.stringify(detail(latest)))],
+      [latest.artifact.downloadUrl, archive],
+    ])
+    const calls: Array<{ version: string; grants: string[] }> = []
+    const runtime = {
+      getApp: async () => ({
+        installation: {
+          activeVersion: '1.1.0',
+          grants: ['channel:messages', 'channel:decisions'],
+        },
+      }),
+      registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
+        calls.push({ version: installedVersion, grants: options.grants })
+      },
+    }
+    const service = createAppMarketplaceService({
+      indexUrl: 'https://example.com/index.json',
+      cachePath: path.join(root, 'catalog.json'),
+      platform: 'darwin-arm64',
+      trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.1.0' }],
+      getRuntime: () => runtime,
+      download: async (url: string) => {
+        const response = responses.get(url)
+        if (!response) throw new Error(`Unexpected URL: ${url}`)
+        return response
+      },
+      installArchive: async (_runtime: unknown, _archivePath: string, options: { installPackage: (root: string) => Promise<unknown> }) => {
+        return options.installPackage('/verified-package')
+      },
+      validatePackage: async () => ({
+        manifest: { id: 'example.app', version: '1.2.0' },
+        trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+      }),
+      installPackage: async () => ({ id: 'example.app', currentVersion: '1.2.0' }),
+    })
+
+    expect(await service.install({ appId: 'example.app' })).toMatchObject({
+      requiresPermissionApproval: true,
+      permissions: ['channel:pairing'],
+    })
+    await service.install({ appId: 'example.app', acceptPermissions: true })
+
+    expect(calls).toEqual([{
+      version: '1.2.0',
+      grants: ['channel:messages', 'channel:pairing'],
+    }])
+  })
+
   it('refreshes stale App details when the catalog advertises a newer version', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-version-sync-'))
     roots.push(root)

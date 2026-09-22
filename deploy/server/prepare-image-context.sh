@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:?usage: package-server.sh VERSION ARCH OUTPUT_DIR}"
-ARCH="${2:?usage: package-server.sh VERSION ARCH OUTPUT_DIR}"
-OUTPUT_DIR="${3:?usage: package-server.sh VERSION ARCH OUTPUT_DIR}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VERSION="${1:?usage: prepare-image-context.sh VERSION ARCH OUTPUT_DIR}"
+ARCH="${2:?usage: prepare-image-context.sh VERSION ARCH OUTPUT_DIR}"
+OUTPUT_DIR="${3:?usage: prepare-image-context.sh VERSION ARCH OUTPUT_DIR}"
 
 NODE_VERSION="${MOSS_SERVER_NODE_VERSION:-22.23.1}"
 SHARP_VERSION="${SHARP_VERSION:-0.34.5}"
@@ -32,8 +32,13 @@ for command_name in bun curl npm tar; do
   }
 done
 
-mkdir -p "$OUTPUT_DIR" "$BUILD_CACHE"
-OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+OUTPUT_NAME="$(basename "$OUTPUT_DIR")"
+[[ -n "$OUTPUT_NAME" && "$OUTPUT_NAME" != . && "$OUTPUT_NAME" != .. && "$OUTPUT_NAME" != / ]] || {
+  echo "Invalid output directory: $OUTPUT_DIR" >&2
+  exit 1
+}
+mkdir -p "$(dirname "$OUTPUT_DIR")" "$BUILD_CACHE"
+OUTPUT_DIR="$(cd "$(dirname "$OUTPUT_DIR")" && pwd)/$OUTPUT_NAME"
 STAGE_ROOT="$(mktemp -d)"
 PACK_ROOT="$(mktemp -d)"
 trap 'rm -rf "$STAGE_ROOT" "$PACK_ROOT"' EXIT
@@ -127,7 +132,7 @@ extract_npm_package \
   "@img/sharp-libvips-linux-x64@$SHARP_LIBVIPS_VERSION" \
   "$APP_ROOT/node_modules/@img/sharp-libvips-linux-x64"
 # Runtime code loads these packages directly; npm's command shims are unused
-# and would introduce symbolic links into the root-extracted server archive.
+# and would introduce symbolic links into the Server image.
 rm -rf "$APP_ROOT/node_modules/.bin"
 
 printf '%s\n' "$VERSION" > "$PACKAGE_ROOT/VERSION"
@@ -148,22 +153,12 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
   )
 fi
 
-ARCHIVE_NAME="moss-server-$VERSION-linux-$ARCH.tar.gz"
-ARCHIVE_PATH="$OUTPUT_DIR/$ARCHIVE_NAME"
-if command -v xattr >/dev/null 2>&1; then
-  xattr -cr "$PACKAGE_ROOT"
-fi
-COPYFILE_DISABLE=1 tar --no-xattrs -C "$STAGE_ROOT" -czf "$ARCHIVE_PATH" moss-server
-if tar -tvzf "$ARCHIVE_PATH" \
-  | awk 'substr($0, 1, 1) == "l" || substr($0, 1, 1) == "h" { found=1 } END { exit found ? 0 : 1 }'; then
-  echo "Server archive must not contain symbolic or hard links" >&2
+if find "$PACKAGE_ROOT" -type l -print -quit | grep -q .; then
+  echo "Server image context must not contain symbolic links" >&2
   exit 1
 fi
 
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$OUTPUT_DIR" && sha256sum "$ARCHIVE_NAME" > SHA256SUMS-server)
-else
-  (cd "$OUTPUT_DIR" && shasum -a 256 "$ARCHIVE_NAME" > SHA256SUMS-server)
-fi
-
-echo "$ARCHIVE_PATH"
+rm -rf "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
+mv "$PACKAGE_ROOT" "$OUTPUT_DIR/moss-server"
+echo "$OUTPUT_DIR/moss-server"

@@ -9,9 +9,9 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import semver from 'semver';
 import { createConnectorCredentialStore } from './connector-credential-store.mjs';
+import { MOSS_HOME } from './moss-home.mjs';
 import { getMossCredentialMasterKeyPaths } from '../../shared/security/credential-crypto.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_CONNECTORS_DIR = path.join(MOSS_HOME, 'connectors');
 const CONNECTOR_CATALOG_DIR = path.join(MOSS_CONNECTORS_DIR, 'catalog');
 const CONNECTOR_INSTALLED_DIR = path.join(MOSS_CONNECTORS_DIR, 'installed');

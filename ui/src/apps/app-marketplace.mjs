@@ -7,6 +7,7 @@ import semver from 'semver'
 import { APP_HOST_API_VERSION } from '../../../packages/app-sdk/src/index.mjs'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
+import { MOSS_HOME } from '../moss-home.mjs'
 import { installAppArchive } from './desktop-app-runtime.mjs'
 
 const MARKET_CACHE_VERSION = 1
@@ -213,7 +214,7 @@ function enrichSummary(summary, installedApps, platform) {
 
 export function createAppMarketplaceService(options = {}) {
   const indexUrl = safeHttpsUrl(options.indexUrl, undefined, 'indexUrl')
-  const cachePath = path.resolve(options.cachePath || path.join(os.homedir(), '.moss', 'app-market', 'catalog-v1.json'))
+  const cachePath = path.resolve(options.cachePath || path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'))
   const platform = options.platform || `${process.platform}-${process.arch}`
   const download = options.download || downloadFileBuffer
   const archiveInstaller = options.installArchive || installAppArchive
@@ -309,6 +310,8 @@ export function createAppMarketplaceService(options = {}) {
         return { ok: true, alreadyInstalled: true, appId, version: version.version }
       }
       const currentGrants = installed?.installation?.grants || []
+      const declaredPermissions = new Set(version.permissions)
+      const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
       const addedPermissions = version.permissions.filter((permission) => !currentGrants.includes(permission))
       if (addedPermissions.length && !acceptPermissions) {
         return { ok: false, requiresPermissionApproval: true, appId, version: version.version, permissions: addedPermissions }
@@ -353,7 +356,7 @@ export function createAppMarketplaceService(options = {}) {
             })
           },
         })
-        const grants = [...new Set([...currentGrants, ...addedPermissions])]
+        const grants = [...new Set([...retainedGrants, ...addedPermissions])]
         await runtime.registerInstalled(appId, version.version, { grants })
         activationCompleted = true
         await options.emitChanged?.({ action: installed ? 'marketplace-updated' : 'marketplace-installed', appId })

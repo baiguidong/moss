@@ -4,10 +4,10 @@
 
 ## 安装
 
-把整个 `deps/docker` 目录复制到目标服务器后执行：
+把整个 `deploy/docker` 目录复制到目标服务器后执行：
 
 ```bash
-cd deps/docker
+cd deploy/docker
 sudo ./install.sh
 ```
 

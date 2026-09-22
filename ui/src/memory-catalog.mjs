@@ -322,8 +322,8 @@ export function createMemoryCatalog({
       generatedAt: Date.now(),
       global: {
         rootLabel: remoteCatalog
-          ? '~/.moss/memory + Moss Server / memory'
-          : '~/.moss/memory',
+          ? `${globalMemoryRoot} + Moss Server / memory`
+          : globalMemoryRoot,
         files: globalFiles,
       },
       projects: projectEntries.sort((a, b) => (b.memoryUpdatedAt || b.updatedAt) - (a.memoryUpdatedAt || a.updatedAt)),

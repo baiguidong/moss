@@ -48,6 +48,8 @@ const FILE_FILTERS = {
   audio: [{ name: '音频', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'opus', 'flac', 'amr'] }],
 };
 const MAX_RENDERER_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+const OPENIM_SESSION_REFRESH_MIN_LEAD_MS = 10_000;
+const OPENIM_SESSION_REFRESH_MAX_LEAD_MS = 60_000;
 const OPENIM_SDK_METHOD_PERMISSIONS = Object.freeze({
   initSDK: 'openim:client',
   getLoginStatus: 'openim:client',
@@ -94,6 +96,18 @@ function localMediaUrl(filePath) {
 function deterministicMessageId(idempotencyKey) {
   const hash = createHash('sha256').update(String(idempotencyKey)).digest('hex');
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+function serverConnectionFingerprint(connection) {
+  const userId = String(connection?.userId || '');
+  const orgId = String(connection?.orgId || '');
+  return createHash('sha256')
+    .update(JSON.stringify([
+      String(connection?.serverUrl || ''),
+      orgId || '<unknown-org>',
+      userId || String(connection?.authToken || ''),
+    ]))
+    .digest('hex');
 }
 
 function directorySnapshot(root) {
@@ -185,7 +199,11 @@ export function createOpenIMIntegration({
   let sdkError = '';
   let sdkInitialized = false;
   let activeSession = null;
+  let activeSessionExpiresAt = 0;
+  let activeConnectionFingerprint = '';
   let issuedSession = null;
+  let issuedSessionExpiresAt = 0;
+  let issuedConnectionFingerprint = '';
   let sessionPromise = null;
   const attachedWebContents = new Map();
   const nativeEventListeners = new Set();
@@ -299,8 +317,8 @@ export function createOpenIMIntegration({
     });
   }
 
-  async function requestMossServer(pathname, { method = 'GET', body } = {}) {
-    const connection = await resolveMossServerConnection();
+  async function requestMossServer(pathname, { method = 'GET', body, connection: resolvedConnection } = {}) {
+    const connection = resolvedConnection || await resolveMossServerConnection();
     const response = await fetchImpl(`${connection.serverUrl}${pathname}`, {
       method,
       signal: AbortSignal.timeout(20_000),
@@ -321,6 +339,36 @@ export function createOpenIMIntegration({
     return response.json();
   }
 
+  function clearActiveSession() {
+    activeSession = null;
+    activeSessionExpiresAt = 0;
+    activeConnectionFingerprint = '';
+  }
+
+  function activeSessionRefreshLeadMs() {
+    const lifetimeMs = Math.max(0, Number(activeSession?.expiresIn) || 0) * 1_000;
+    return Math.min(
+      OPENIM_SESSION_REFRESH_MAX_LEAD_MS,
+      Math.max(OPENIM_SESSION_REFRESH_MIN_LEAD_MS, lifetimeMs * 0.1),
+    );
+  }
+
+  function activeSessionProfile() {
+    if (!activeSession) return null;
+    return {
+      ...activeSession,
+      expiresIn: Math.max(0, Math.ceil((activeSessionExpiresAt - Date.now()) / 1_000)),
+    };
+  }
+
+  function sessionStatus(profile = activeSession) {
+    return {
+      connected: true,
+      userId: String(profile?.userID || ''),
+      expiresIn: Math.max(0, Math.ceil((activeSessionExpiresAt - Date.now()) / 1_000)),
+    };
+  }
+
   async function ensureSession() {
     if (sessionPromise) return sessionPromise;
     sessionPromise = (async () => {
@@ -329,12 +377,31 @@ export function createOpenIMIntegration({
       // example, uninstall with deleteData followed by reinstall). The native
       // SDK does not recreate dataDir before opening its SQLite database.
       ensureRuntimeDirectories();
+      const connection = await resolveMossServerConnection();
+      const connectionFingerprint = serverConnectionFingerprint(connection);
+      const sdk = ensureSdk().sdk;
+      if (
+        activeSession
+        && activeConnectionFingerprint === connectionFingerprint
+        && activeSessionExpiresAt > Date.now() + activeSessionRefreshLeadMs()
+      ) {
+        const status = await sdk.getLoginStatus();
+        if (Number(status?.data) === 3) {
+          const currentUserId = String((await sdk.getSelfUserInfo())?.data?.userID || '');
+          if (currentUserId === String(activeSession.userID || '')) {
+            return sessionStatus();
+          }
+        }
+      }
+
       const profile = await requestMossServer('/api/v1/im/session', {
         method: 'POST',
         body: { platform_id: platformID() },
+        connection,
       });
       issuedSession = profile;
-      const sdk = ensureSdk().sdk;
+      issuedSessionExpiresAt = Date.now() + Math.max(0, Number(profile.expiresIn) || 0) * 1_000;
+      issuedConnectionFingerprint = connectionFingerprint;
       if (!sdkInitialized) {
         ensureRuntimeDirectories();
         const initialized = await sdk.initSDK({
@@ -369,13 +436,11 @@ export function createOpenIMIntegration({
         await sdk.login({ userID: profile.userID, token: profile.imToken });
       }
       activeSession = profile;
-      return {
-        connected: true,
-        userId: String(profile.userID || ''),
-        expiresIn: Math.max(0, Number(profile.expiresIn) || 0),
-      };
+      activeSessionExpiresAt = issuedSessionExpiresAt;
+      activeConnectionFingerprint = issuedConnectionFingerprint;
+      return sessionStatus(profile);
     })().catch((error) => {
-      activeSession = null;
+      clearActiveSession();
       const normalized = normalizeError(error);
       log('error', 'openim', 'OpenIM session setup failed', { error: normalized.message });
       throw normalized;
@@ -385,7 +450,7 @@ export function createOpenIMIntegration({
     return sessionPromise;
   }
 
-  async function sendText({ recipientId, conversationId, text, idempotencyKey }) {
+  async function sendText({ recipientId, conversationId, text, idempotencyKey, extension = '' }) {
     const existing = sentMessages.get(idempotencyKey);
     if (existing) return { ...existing, duplicate: true };
     if (pendingSends.has(idempotencyKey)) return pendingSends.get(idempotencyKey);
@@ -400,6 +465,7 @@ export function createOpenIMIntegration({
       const message = {
         ...created.data,
         clientMsgID: deterministicMessageId(idempotencyKey),
+        ...(extension ? { ex: extension } : {}),
       };
       const sent = await sdk.sendMessage({
         recvID: recipientId,
@@ -421,6 +487,23 @@ export function createOpenIMIntegration({
     })().finally(() => pendingSends.delete(idempotencyKey));
     pendingSends.set(idempotencyKey, operation);
     return operation;
+  }
+
+  async function markConversationRead({ conversationId }) {
+    const session = await ensureSession();
+    const conversation = parseOpenIMDirectConversationId(conversationId);
+    if (!conversation || conversation.userId !== session.userId) {
+      throw new Error('OpenIM conversation does not belong to the active account');
+    }
+    const sdk = ensureSdk().sdk;
+    const resolved = await sdk.getOneConversation({
+      sourceID: conversation.peerUserId,
+      sessionType: 1,
+    });
+    const sdkConversationId = String(resolved?.data?.conversationID || '').trim();
+    if (!sdkConversationId) throw new Error('OpenIM conversation is unavailable');
+    await sdk.markConversationMessageAsRead(sdkConversationId);
+    return { read: true, conversationId };
   }
 
   handle('openim:sdk-call', (method) => {
@@ -462,11 +545,13 @@ export function createOpenIMIntegration({
       }
       const result = await sdk.login({ userID: profile.userID, token: profile.imToken });
       activeSession = profile;
+      activeSessionExpiresAt = issuedSessionExpiresAt;
+      activeConnectionFingerprint = issuedConnectionFingerprint;
       return result;
     }
     if (normalized === 'logout') {
       const result = await sdk.logout();
-      activeSession = null;
+      clearActiveSession();
       return result;
     }
     return sdk[normalized](...safeSdkArguments(normalized, args));
@@ -483,7 +568,7 @@ export function createOpenIMIntegration({
 
   handle('openim:create-session', 'openim:client', async () => {
     await ensureSession();
-    return activeSession;
+    return activeSessionProfile();
   });
 
   handle('openim:list-directory', 'openim:client', () => requestMossServer('/api/v1/directory'));
@@ -664,6 +749,7 @@ export function createOpenIMIntegration({
   return {
     ensureSession,
     sendText,
+    markConversationRead,
     getCurrentUserId() {
       return String(activeSession?.userID || '');
     },

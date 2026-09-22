@@ -17,7 +17,7 @@ dependencies can use stable container DNS names instead of host IP addresses.
 Build a deployment package from the repository:
 
 ```bash
-cd deps/server
+cd deploy/server
 ./package.sh
 ```
 
@@ -43,7 +43,7 @@ exists.
 From a repository checkout, use the same installer directly:
 
 ```bash
-cd deps/server
+cd deploy/server
 sudo MOSS_PUBLIC_HOST=10.0.1.181 ./install.sh
 ```
 
@@ -125,7 +125,7 @@ their originally recorded runtime image.
 
 Docker image layers and Docker-managed named volumes are stored under the Docker
 daemon's data root, not under `/data/moss-server`. The bundled
-`deps/docker/install.sh` uses `/data/docker` by default; Docker installed by
+`deploy/docker/install.sh` uses `/data/docker` by default; Docker installed by
 other means commonly uses `/var/lib/docker`. Changing the Moss application
 directory alone does not move Docker-managed data.
 

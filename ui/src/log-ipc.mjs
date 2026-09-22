@@ -2,10 +2,9 @@ import electron from 'electron';
 const { ipcMain, dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
+import { MOSS_HOME } from './moss-home.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_LOGS_DIR = path.join(MOSS_HOME, 'logs');
 const MOSS_LOG_FILE = 'moss.log';
 const MOSS_LOG_PATH = path.join(MOSS_LOGS_DIR, MOSS_LOG_FILE);

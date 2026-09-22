@@ -21,8 +21,8 @@
 
 `server:start` 会先执行 prepare，再从 `MOSS_SERVER_HOME` 启动 server。
 
-Linux 远端部署使用仓库中的 `deps/server` Docker Compose 配置，由 Nginx 提供
-HTTPS；参见 [`deps/server/README.md`](../deps/server/README.md)。
+Linux 远端部署使用仓库中的 `deploy/server` Docker Compose 配置，由 Nginx 提供
+HTTPS；参见 [`deploy/server/README.md`](../deploy/server/README.md)。
 
 默认 server root：
 
@@ -249,7 +249,7 @@ MOSS_RAGFLOW_PASSWORD_LENGTH=6
 
 每个 Moss 用户对应一个 RAGFlow 个人账号，默认用户名为 `<Moss用户名>@ragflow.com`，域名可配置。密码和 RAGFlow API Key 使用 Moss 凭据主密钥加密保存。第三方客户端不应直接调用 `resolve`；它是 Moss RAG MCP 的内部凭据交换接口。
 
-仓库中的 `deps/rag` 提供 RAGFlow、Native MCP、Extended MCP 和 Moss RAG MCP 的打包、安装及启停脚本。执行 `deps/rag/install.sh` 会拉取运行镜像、在目标机编译 Extended MCP 并启动服务。
+仓库中的 `deploy/rag` 提供 RAGFlow、Native MCP、Extended MCP 和 Moss RAG MCP 的打包、安装及启停脚本。执行 `deploy/rag/install.sh` 会拉取运行镜像、在目标机编译 Extended MCP 并启动服务。
 
 ## OpenIM 即时消息
 
@@ -283,7 +283,7 @@ OpenIM 连接信息在管理端“系统设置 / OpenIM”中维护，保存后�
 
 Moss 用户 ID 与 OpenIM 用户 ID 的映射保存在 `openim_bindings`。用户改名会同步到 OpenIM，用户停用时会撤销其各平台 OpenIM 在线会话；任一平台撤销失败时用户管理接口会返回错误，便于管理员重试。OpenIM 管理 secret 只存在于 Moss Server，不会下发到 Desktop。
 
-仓库中的 `deps/im` 提供完整的一键安装和交互配置脚本。执行 `deps/im/install.sh` 会生成宿主机 `config/webhooks.yml`、拉取镜像并启动 OpenIM 核心服务。
+仓库中的 `deploy/im` 提供完整的一键安装和交互配置脚本。执行 `deploy/im/install.sh` 会生成宿主机 `config/webhooks.yml`、拉取镜像并启动 OpenIM 核心服务。
 
 OpenIM 开源服务端内置权限回调，但默认关闭。要在服务端强制执行组织隔离和群聊权限，将 OpenIM `config/webhooks.yml` 中的 `url` 配置为：
 

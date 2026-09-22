@@ -26,6 +26,8 @@ function runControllerScenario(source: string) {
       const sessions = new Map();
       const events = [];
       const prompts = [];
+      const promptOptions = [];
+      const policySessionIds = [];
       let created = 0;
       const controller = createAgentChannelController({
         store,
@@ -35,11 +37,12 @@ function runControllerScenario(source: string) {
         listWritableSessions: () => [...sessions.values()],
         getWritableSession: (id) => sessions.get(id) || null,
         createSession: async () => { created += 1; const session = { id: \`session-\${created}\`, title: 'Channel', updatedAt: Date.now(), busy: false, messageCount: 0 }; sessions.set(session.id, session); return session; },
-        sendPrompt: overrides.sendPrompt || (async (_sessionId, prompt) => { prompts.push(prompt); return { assistantText: prompt.includes('hello') ? 'draft answer' : 'answer' }; }),
+        applySessionPolicy: overrides.applySessionPolicy || (async (sessionId) => { policySessionIds.push(sessionId); }),
+        sendPrompt: overrides.sendPrompt || (async (_sessionId, prompt, options) => { prompts.push(prompt); promptOptions.push(options); return { assistantText: prompt.includes('hello') ? 'draft answer' : 'answer' }; }),
         abortSession: async () => {},
         publishEvent: async (event) => { events.push(event); return { ok: true }; },
       });
-      return { db, store, sessions, events, prompts, controller, context: { appId: 'moss.openim', instanceId: 'moss.openim--default' }, get created() { return created; } };
+      return { db, store, sessions, events, prompts, promptOptions, policySessionIds, controller, context: { appId: 'example.channel', instanceId: 'example.channel--default' }, get created() { return created; } };
     };
     ${source}
   `
@@ -155,7 +158,7 @@ describe('Agent Channel controller', () => {
     expect(result.foreign.policy.replyMode).toBe('ai_auto')
     expect(result.own.policy.replyMode).toBe('mention_only')
     expect(result.updated.binding).toMatchObject({
-      appId: 'moss.openim', instanceId: 'moss.openim--default',
+      appId: 'example.channel', instanceId: 'example.channel--default',
     })
   })
 
@@ -200,6 +203,21 @@ describe('Agent Channel controller', () => {
     expect(result.created).toBe(0)
   })
 
+  it('applies runtime policy through the stable session id boundary', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto');
+      const accepted = await fixture.controller.handleAgentRequest('turn.start', {
+        externalUserId: 'user-1', externalConversationId: 'chat-1',
+        externalEventId: 'event-policy-session', text: 'hello',
+      }, fixture.context);
+      await waitFor(() => fixture.store.getTurn(accepted.turnId)?.status === 'completed');
+      console.log(JSON.stringify({ sessionId: accepted.sessionId, policySessionIds: fixture.policySessionIds }));
+      fixture.db.close();
+    `)
+    expect(result.policySessionIds).toEqual([result.sessionId])
+    expect(result.policySessionIds[0]).toBeString()
+  })
+
   it('adds locally sent replies to the next Agent turn without starting a turn itself', () => {
     const result = runControllerScenario(`
       const fixture = setup('ai_auto');
@@ -215,31 +233,34 @@ describe('Agent Channel controller', () => {
       console.log(JSON.stringify({
         observed,
         prompts: fixture.prompts,
+        promptOptions: fixture.promptOptions,
         pending: fixture.store.listPendingObservations({ ...fixture.context, externalConversationId: 'chat-1' }),
       }));
       fixture.db.close();
     `)
     expect(result.observed).toEqual({ observed: true, duplicate: false })
-    expect(result.prompts).toHaveLength(1)
-    expect(result.prompts[0]).toContain('"source":"local-user","text":"I already sent this manually"')
+    expect(result.prompts).toEqual(['hello'])
+    expect(result.promptOptions[0].runtimeContext).toContain('I already sent this manually')
+    expect(result.promptOptions[0].runtimeSystemPrompt).toContain('persistent conversation')
     expect(result.pending).toEqual([])
   })
 
-  it('resolves an account-scoped OpenIM default without affecting another account', () => {
+  it('uses an App-provided default binding scope without coupling Core to an App id format', () => {
     const result = runControllerScenario(`
-      const fixture = setup('human_only', {
-        defaultBindingIdFor: (conversationId) => conversationId.replace(/\\/(?:direct:[^/]+|\\*)$/, '/*'),
-      });
+      const fixture = setup('human_only');
       await fixture.controller.handleAgentRequest('binding.update', {
-        externalConversationId: 'openim-user:alice/*',
+        externalConversationId: 'account:alice/*',
+        defaultConversationId: 'account:alice/*',
         patch: { replyMode: 'ai_auto' },
       }, fixture.context);
       const alice = await fixture.controller.handleAgentRequest('turn.start', {
-        externalUserId: 'leader', externalConversationId: 'openim-user:alice/direct:leader',
+        externalUserId: 'leader', externalConversationId: 'account:alice/direct:leader',
+        defaultConversationId: 'account:alice/*',
         externalEventId: 'alice-event', text: 'hello',
       }, fixture.context);
       const bob = await fixture.controller.handleAgentRequest('turn.start', {
-        externalUserId: 'leader', externalConversationId: 'openim-user:bob/direct:leader',
+        externalUserId: 'leader', externalConversationId: 'account:bob/direct:leader',
+        defaultConversationId: 'account:bob/*',
         externalEventId: 'bob-event', text: 'hello',
       }, fixture.context);
       await waitFor(() => fixture.store.getTurn(alice.turnId)?.status === 'completed');
@@ -325,11 +346,22 @@ describe('Agent Channel controller', () => {
       ]);
       await waitFor(() => fixture.store.getTurn(first.turnId)?.status === 'completed'
         && fixture.store.getTurn(second.turnId)?.status === 'completed');
-      console.log(JSON.stringify({ first, second, created: fixture.created }));
+      console.log(JSON.stringify({
+        first,
+        second,
+        created: fixture.created,
+        prompts: fixture.prompts,
+        promptOptions: fixture.promptOptions,
+      }));
       fixture.db.close();
     `)
     expect(result.created).toBe(1)
     expect(result.first.sessionId).toBe(result.second.sessionId)
+    expect(result.prompts).toEqual(['first', 'second'])
+    expect(result.promptOptions.every((options: any) => (
+      options.runtimeSystemPrompt.includes('Use the existing session history')
+      && !options.runtimeContext
+    ))).toBe(true)
   })
 
   it('serializes a conversation even when every turn creates a new session', () => {
@@ -402,21 +434,21 @@ describe('Agent Channel controller', () => {
     const result = runControllerScenario(`
       const fixture = setup('ai_draft_review');
       const first = await fixture.controller.handleAgentRequest('turn.start', {
-        externalUserId: 'peer-1', externalConversationId: 'openim-user:account-a/direct:peer-1', externalEventId: 'event-a', text: 'hello',
+        externalUserId: 'peer-1', externalConversationId: 'account-a/direct:peer-1', externalEventId: 'event-a', text: 'hello',
       }, fixture.context);
       const second = await fixture.controller.handleAgentRequest('turn.start', {
-        externalUserId: 'peer-2', externalConversationId: 'openim-user:account-b/direct:peer-2', externalEventId: 'event-b', text: 'hello',
+        externalUserId: 'peer-2', externalConversationId: 'account-b/direct:peer-2', externalEventId: 'event-b', text: 'hello',
       }, fixture.context);
       await waitFor(() => fixture.store.getTurn(first.turnId)?.status === 'awaiting_review' && fixture.store.getTurn(second.turnId)?.status === 'awaiting_review');
       fixture.events.length = 0;
-      fixture.controller.onReady({ ...fixture.context, externalConversationPrefix: 'openim-user:account-b/' });
+      fixture.controller.onReady({ ...fixture.context, externalConversationPrefix: 'account-b/' });
       await waitFor(() => fixture.events.length === 1);
       console.log(JSON.stringify(fixture.events.map(event => ({ name: event.name, conversationId: event.data.externalConversationId }))));
       fixture.db.close();
     `)
     expect(result).toEqual([{
       name: 'turn.review_requested',
-      conversationId: 'openim-user:account-b/direct:peer-2',
+      conversationId: 'account-b/direct:peer-2',
     }])
   })
 

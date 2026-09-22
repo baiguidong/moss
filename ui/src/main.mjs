@@ -103,10 +103,10 @@ import {
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
   MOSS_OPENIM_PROTOCOL,
-  openIMDefaultConversationIdFor,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
+import { requireEnabledAppForLaunch } from './apps/app-launch-policy.mjs';
 import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
 import {
   findAssistantDirByName,
@@ -261,6 +261,7 @@ import {
   isDesktopProjectRecord,
   withDesktopProjectLayout,
 } from './desktop-data-layout.mjs';
+import { configureDesktopProfile, MOSS_HOME } from './moss-home.mjs';
 import {
   ASK_USER_QUESTION_TOOL_NAME,
   buildToolPermissionDialog,
@@ -351,6 +352,10 @@ import {
 import { createAgentMailStore } from './agent-mail-store.mjs';
 import { createAgentMailPoller } from './agent-mail-poller.mjs';
 
+// Resolve the Desktop data root and isolate Electron state before taking the
+// single-instance lock. The default profile keeps Electron's historical path.
+configureDesktopProfile(app);
+
 // 注册自定义协议 (必须在 app.whenReady 之前)
 protocol.registerSchemesAsPrivileged([
   {
@@ -408,7 +413,6 @@ const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const REMOTE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), `moss-remote-preview-${process.pid}`);
 const WORKSPACE_WATCH_DIRECTORY_LIMIT = 512;
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const REMOTE_DIRECT_TRUST_DIR = path.join(MOSS_HOME, 'certificates', 'remote-direct');
 const remoteDirectTrustStore = createRemoteDirectTrustStore({
   trustDir: REMOTE_DIRECT_TRUST_DIR,
@@ -477,9 +481,6 @@ const PROJECT_TEMPLATES = Object.freeze([
     skillIds: ['@clawhub_paudyyin/summarize'],
   }),
 ]);
-
-// Desktop sessions resolve user-scoped settings/data from ~/.moss/settings.json.
-process.env.MOSS_HOME = MOSS_HOME;
 
 function normalizeSessionDirName(sessionId) {
   const id = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -3432,7 +3433,14 @@ function matchesAgentChannelTool(toolName, selectors) {
   ));
 }
 
-async function applyAgentChannelSessionPolicy(session, policy) {
+async function applyAgentChannelSessionPolicy(sessionId, policy) {
+  // Channel controllers expose sanitized summaries. Mutations cross the Core
+  // boundary by stable ID so no App can supply a partial session object for
+  // persistence.
+  const sessionRecord = typeof sessionId === 'string' ? sessions.get(sessionId) : null;
+  if (!sessionRecord || sessionRecord.isSubAgent) {
+    throw new Error('The selected Moss session is no longer writable.');
+  }
   const next = {
     ...policy,
     resources: {
@@ -3447,22 +3455,22 @@ async function applyAgentChannelSessionPolicy(session, policy) {
       .map((connector) => connector.id)
     : [];
   const nextConnectorIds = resolveAgentChannelConnectorIds(next, availableConnectorIds);
-  const previousFingerprint = session.channelRuntimePolicy
-    ? JSON.stringify(session.channelRuntimePolicy)
+  const previousFingerprint = sessionRecord.channelRuntimePolicy
+    ? JSON.stringify(sessionRecord.channelRuntimePolicy)
     : '';
   const nextFingerprint = JSON.stringify(next);
-  const connectorsChanged = JSON.stringify(normalizeStringList(session.connectorIds))
+  const connectorsChanged = JSON.stringify(normalizeStringList(sessionRecord.connectorIds))
     !== JSON.stringify(nextConnectorIds);
-  session.channelRuntimePolicy = next;
-  session.connectorIds = nextConnectorIds;
-  session.permissionMode = ['default', 'acceptEdits', 'dontAsk'].includes(next.permissionMode)
+  sessionRecord.channelRuntimePolicy = next;
+  sessionRecord.connectorIds = nextConnectorIds;
+  sessionRecord.permissionMode = ['default', 'acceptEdits', 'dontAsk'].includes(next.permissionMode)
     ? next.permissionMode
     : 'default';
-  if (session.runtime && (previousFingerprint !== nextFingerprint || connectorsChanged)) {
-    if (session.busy || hasActiveAgentTeam(session)) session.pendingMcpRuntimeReload = true;
-    else disposeRuntime(session);
+  if (sessionRecord.runtime && (previousFingerprint !== nextFingerprint || connectorsChanged)) {
+    if (sessionRecord.busy || hasActiveAgentTeam(sessionRecord)) sessionRecord.pendingMcpRuntimeReload = true;
+    else disposeRuntime(sessionRecord);
   }
-  schedulePersistSession(session, true);
+  schedulePersistSession(sessionRecord, true);
 }
 
 function toAgentChannelSessionOption(sessionRecord, context) {
@@ -3507,7 +3515,7 @@ async function createSessionFromAgentChannel(input = {}) {
   });
   sessionRecord.channelAppId = appId;
   sessionRecord.channelInstanceId = String(input.instanceId || '').trim();
-  await applyAgentChannelSessionPolicy(sessionRecord, input.binding || {});
+  await applyAgentChannelSessionPolicy(sessionRecord.id, input.binding || {});
   await prepareAssistantContextForSessionStart(sessionRecord);
   return toAgentChannelSessionOption(sessionRecord, {
     appId,
@@ -3541,6 +3549,8 @@ async function sendPromptFromAgentChannel(sessionId, prompt, options = {}) {
   }, {
     allowBusyQueue: true,
     sourceChannel: options.sourceChannel || 'channel',
+    runtimePromptPrefix: options.runtimeContext,
+    additionalSystemPrompt: options.runtimeSystemPrompt,
   });
   return { ...result, title: sessionRecord.title };
 }
@@ -3628,13 +3638,6 @@ const FEISHU_AGENT_CHANNEL_DEFAULTS = Object.freeze({
   session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
 });
 
-const OPENIM_AGENT_CHANNEL_DEFAULTS = Object.freeze({
-  ...DEFAULT_AGENT_CHANNEL_POLICY,
-  replyMode: 'human_only',
-  resources: Object.freeze({ tools: Object.freeze([]), skills: Object.freeze([]), connectors: Object.freeze([]) }),
-  session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
-});
-
 function currentOpenIMReadyScope(appId, instanceId) {
   if (appId !== OPENIM_APP_ID) return { appId, instanceId };
   const currentUserId = openIMIntegration.getCurrentUserId();
@@ -3685,7 +3688,6 @@ function authorizeOpenIMChannelRequest(method, input, context) {
 
 function agentChannelDefaults(context) {
   if (context?.appId === FEISHU_APP_ID) return FEISHU_AGENT_CHANNEL_DEFAULTS;
-  if (context?.appId === OPENIM_APP_ID) return OPENIM_AGENT_CHANNEL_DEFAULTS;
   return DEFAULT_AGENT_CHANNEL_POLICY;
 }
 
@@ -7595,7 +7597,10 @@ async function emitAppsChanged(payload = {}) {
     timestamp: Date.now(),
     ...nextPayload,
   });
-  const appId = payload.app?.id || payload.app?.name;
+  const appId = payload.appId || payload.app?.id || payload.app?.name;
+  if (appId && desktopAppRuntime?.installations?.get(appId)?.enabled === false) {
+    closePublishedAppViews(appId);
+  }
   const version = payload.app?.currentVersion || payload.app?.publishedVersion;
   if (desktopAppRuntime && appId && version) {
     const previousVersion = desktopAppRuntime.installations.get(appId)?.activeVersion || null;
@@ -8141,6 +8146,13 @@ function configureAppWebContents(targetWebContents, bundleToken) {
 
 function launchAppWindow(appEntry, source = {}) {
   const appId = appEntry.id || appEntry.name;
+  if (source.mode !== 'preview') {
+    requireEnabledAppForLaunch({
+      runtime: desktopAppRuntime,
+      appId,
+      displayName: appEntry.displayName || appEntry.title || appId,
+    });
+  }
   const windowKey = `${appId}:${source.mode || appEntry.version || 'current'}`;
   const existingWindow = appWindows.get(windowKey);
   if (existingWindow && !existingWindow.isDestroyed()) {
@@ -11961,8 +11973,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   const { trustedPublishers } = loadAppTrustConfiguration(appMarketResourceDir);
   const appMarketConfiguration = loadAppMarketConfiguration(appMarketResourceDir);
 
-  // Initialize immutable App packages downloaded from the official release catalog at build time.
-  await initializeBundledApps({ trustedPublishers });
+  // Release packages carry pinned Apps for first-run installation. Source
+  // checkouts treat them as ordinary marketplace Apps and never seed them.
+  if (app.isPackaged) {
+    await initializeBundledApps({ trustedPublishers });
+  }
 
   await startManagedRuntimeInstall();
   const managedNode = getManagedRuntimeStatus().node;
@@ -11978,11 +11993,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     sendPrompt: sendPromptFromAgentChannel,
     abortSession: abortSessionFromAgentChannel,
     defaultsFor: agentChannelDefaults,
-    defaultBindingIdFor: (externalConversationId, context) => (
-      context?.appId === OPENIM_APP_ID
-        ? openIMDefaultConversationIdFor(externalConversationId) || '*'
-        : '*'
-    ),
     publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId }) => {
       if (!desktopAppRuntime) throw new Error('Desktop App Runtime is not ready.');
       return desktopAppRuntime.publishHostEvent(
@@ -12033,6 +12043,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         'message.send': (input, context) => {
           if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
           return openIMIntegration.sendText(input);
+        },
+        'conversation.mark-read': (input, context) => {
+          if (context.appId !== OPENIM_APP_ID) throw new Error('OpenIM Host access is restricted to moss.openim.');
+          return openIMIntegration.markConversationRead(input);
         },
       },
     },
@@ -14262,7 +14276,7 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
     launchAppWindow(getPublishedApp(registryEntry.id || name), { mode: 'published' });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: err?.message || String(err) };
   }
 });
 
@@ -14271,6 +14285,11 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
     const appEntry = getPublishedApp(registryEntry.id || name);
+    requireEnabledAppForLaunch({
+      runtime: desktopAppRuntime,
+      appId: appEntry.id || appEntry.name,
+      displayName: appEntry.displayName || appEntry.title || appEntry.id || appEntry.name,
+    });
     const { bundleToken, entryUrl } = prepareAppEntry(appEntry);
     const embedId = randomUUID();
     const pending = {
@@ -14296,7 +14315,7 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
       },
     };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: err?.message || String(err) };
   }
 });
 
@@ -14877,6 +14896,8 @@ async function sendAgentPromptNow(event, {
 }, {
   allowBusyQueue = false,
   sourceChannel = 'desktop',
+  runtimePromptPrefix = '',
+  additionalSystemPrompt = '',
 } = {}) {
   const sender = event?.sender || mainWindow?.webContents || null;
   const sessionRecord = getSessionRecord(sessionId);
@@ -15014,7 +15035,10 @@ async function sendAgentPromptNow(event, {
   const visibleAttachments = promptSpill
     ? [...visibleFileAttachments, promptSpill.filePath]
     : visibleFileAttachments;
-  const runtimeSystemPrompt = buildBoundAppSystemPrompt(appName);
+  const runtimeSystemPrompt = [
+    buildBoundAppSystemPrompt(appName),
+    typeof additionalSystemPrompt === 'string' ? additionalSystemPrompt.trim() : '',
+  ].filter(Boolean).join('\n\n');
 
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
     await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
@@ -15071,6 +15095,7 @@ async function sendAgentPromptNow(event, {
   const promptText = isPlanOnly
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
     : [
+      typeof runtimePromptPrefix === 'string' ? runtimePromptPrefix.trim() : '',
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
       explicitAgentInstruction,

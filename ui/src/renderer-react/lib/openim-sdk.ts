@@ -62,8 +62,9 @@ export async function ensureOpenIMSession(profile: OpenIMProfile, config: OpenIM
   const status = await openIMSDK.getLoginStatus();
   if (status.data === LoginStatus.Logged) {
     const self = await openIMSDK.getSelfUserInfo();
-    if (self.data.userID === profile.userID && activeToken === profile.imToken) {
+    if (self.data.userID === profile.userID) {
       activeUserID = profile.userID;
+      activeToken = profile.imToken;
       return self.data;
     }
     await openIMSDK.logout();

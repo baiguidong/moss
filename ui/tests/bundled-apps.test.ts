@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { generateKeyPairSync, sign } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -44,7 +44,7 @@ async function signedArtifact(root: string) {
 }
 
 describe('bundled App preparation', () => {
-  it('verifies the pinned archive hash and publisher before materializing it', async () => {
+  it('resolves release metadata for the pinned version before materializing it', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-bundled-apps-'))
     roots.push(root)
     const { manifest, archive, publicKey } = await signedArtifact(root)
@@ -52,18 +52,12 @@ describe('bundled App preparation', () => {
     const artifactDir = path.join(artifactsRoot, manifest.id, manifest.version)
     await fs.mkdir(artifactDir, { recursive: true })
     await fs.writeFile(path.join(artifactDir, `${manifest.id}-${manifest.version}.zip`), archive)
-    const { createHash } = await import('node:crypto')
     const lockPath = path.join(root, 'lock.json')
     await fs.writeFile(lockPath, JSON.stringify({
       schemaVersion: 1,
       apps: [{
         id: manifest.id,
         version: manifest.version,
-        fileName: `${manifest.id}-${manifest.version}.zip`,
-        url: `https://example.com/${manifest.id}-${manifest.version}.zip`,
-        sha256: createHash('sha256').update(archive).digest('hex'),
-        publisherId: 'moss',
-        keyId: 'release-1',
       }],
     }))
     const resourceDir = path.join(root, 'trust')
@@ -73,20 +67,90 @@ describe('bundled App preparation', () => {
       publishers: { moss: { keys: { 'release-1': 'publishers/moss/release-1.pem' } } },
     }))
     await fs.writeFile(path.join(resourceDir, 'publishers', 'moss', 'release-1.pem'), publicKey)
+    const indexUrl = 'https://example.com/v1/index.json'
+    const detailUrl = `https://example.com/v1/apps/${manifest.id}.json`
+    const artifactUrl = `https://example.com/releases/${manifest.id}-${manifest.version}.zip`
+    await fs.writeFile(path.join(resourceDir, 'catalog.json'), JSON.stringify({
+      schemaVersion: 1,
+      indexUrl,
+    }))
+    const responses = new Map([
+      [indexUrl, {
+        schemaVersion: 1,
+        apps: [{ id: manifest.id, detailUrl }],
+      }],
+      [detailUrl, {
+        schemaVersion: 1,
+        id: manifest.id,
+        publisher: { id: 'moss', name: 'Moss' },
+        versions: [{
+          version: manifest.version,
+          artifact: {
+            fileName: `${manifest.id}-${manifest.version}.zip`,
+            downloadUrl: artifactUrl,
+            sha256: createHash('sha256').update(archive).digest('hex'),
+            size: archive.length,
+            signed: true,
+            publisherId: 'moss',
+            keyId: 'release-1',
+          },
+        }],
+      }],
+    ])
+    const downloaded: string[] = []
+    const download = async (url: string) => {
+      downloaded.push(url)
+      const response = responses.get(url)
+      if (!response) throw new Error(`Unexpected URL: ${url}`)
+      return Buffer.from(JSON.stringify(response))
+    }
 
     const outputDir = path.join(root, 'output')
-    await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot })
+    await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot, download })
+    expect(downloaded).toEqual([indexUrl, detailUrl])
     expect(JSON.parse(await fs.readFile(path.join(outputDir, manifest.id, 'app.moss.json'), 'utf8'))).toMatchObject({
       id: manifest.id,
       version: manifest.version,
     })
-    expect((await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot })).cached).toBe(true)
+    expect((await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot, download })).cached).toBe(true)
+    expect(downloaded).toEqual([indexUrl, detailUrl, indexUrl, detailUrl])
 
     await fs.writeFile(path.join(outputDir, manifest.id, 'app.moss.json'), '{}\n')
-    expect((await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot })).cached).toBe(false)
+    expect((await prepareBundledApps({ lockPath, outputDir, resourceDir, localArtifactsDir: artifactsRoot, download })).cached).toBe(false)
     expect(JSON.parse(await fs.readFile(path.join(outputDir, manifest.id, 'app.moss.json'), 'utf8'))).toMatchObject({
       id: manifest.id,
       version: manifest.version,
     })
+  })
+
+  it('fails when the pinned version is absent from the published App details', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-bundled-apps-missing-'))
+    roots.push(root)
+    const lockPath = path.join(root, 'lock.json')
+    const resourceDir = path.join(root, 'resources')
+    const indexUrl = 'https://example.com/v1/index.json'
+    const detailUrl = 'https://example.com/v1/apps/example.app.json'
+    await fs.mkdir(path.join(resourceDir, 'publishers', 'moss'), { recursive: true })
+    await fs.writeFile(lockPath, JSON.stringify({
+      schemaVersion: 1,
+      apps: [{ id: 'example.app', version: '9.9.9' }],
+    }))
+    await fs.writeFile(path.join(resourceDir, 'catalog.json'), JSON.stringify({ schemaVersion: 1, indexUrl }))
+    await fs.writeFile(path.join(resourceDir, 'trusted-publishers.json'), JSON.stringify({
+      schemaVersion: 1,
+      publishers: { moss: { keys: { 'release-1': 'publishers/moss/release-1.pem' } } },
+    }))
+    await fs.writeFile(path.join(resourceDir, 'publishers', 'moss', 'release-1.pem'), 'unused')
+    const responses = new Map([
+      [indexUrl, { schemaVersion: 1, apps: [{ id: 'example.app', detailUrl }] }],
+      [detailUrl, { schemaVersion: 1, id: 'example.app', versions: [] }],
+    ])
+
+    await expect(prepareBundledApps({
+      lockPath,
+      outputDir: path.join(root, 'output'),
+      resourceDir,
+      download: async (url: string) => Buffer.from(JSON.stringify(responses.get(url))),
+    })).rejects.toThrow('Bundled App version is not published: example.app@9.9.9')
   })
 })

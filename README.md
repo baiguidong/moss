@@ -4,9 +4,9 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 ## 文档
 
+- [部署总览](deploy/README.md)
 - [Moss Server API](server/API.md)
-- [Moss Server Docker Compose 部署](deps/server/README.md)
-- [Moss Server 旧版宿主机部署](deploy/README.md)
+- [Moss Server Docker Compose 部署](deploy/server/README.md)
 - [Agent Channel 与独立 IM App 改造计划](docs/agent-channel-app-migration-plan.md)
 - [飞书 App 配置与完整权限清单](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)
 
@@ -20,7 +20,7 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 运行。部署脚本、配置和持久化数据统一安装到 `/data/moss-server`：
 
 ```bash
-cd deps/server
+cd deploy/server
 sudo env \
   MOSS_PUBLIC_HOST=10.0.1.181 \
   MOSS_REGISTRY_USERNAME='<github-user>' \
@@ -30,7 +30,7 @@ sudo env \
 
 默认持久化目录为 `/data/moss-server`，HTTPS 端口为 `443`。首次运行生成
 匹配内网 IP 的自签证书；客户端需要信任 `/data/moss-server/tls/server.crt`。详细配置见
-[部署文档](deps/server/README.md)。
+[部署文档](deploy/server/README.md)。
 
 更新镜像时执行 `sudo /data/moss-server/upgrade.sh latest`；指定版本可将
 `latest` 换成发布标签（例如 `1.2.3`）。
@@ -76,8 +76,8 @@ Moss Desktop 可以配置企业自建应用机器人连接飞书手机端，并�
 `baiguidong/moss-apps` 的 GitHub Releases 托管。桌面端可在“Apps → 应用市场”中查看详情、
 安装、更新或选择历史版本；所有下载都会校验锁定的发布者签名与 SHA-256。
 
-预装 App 由 [`config/bundled-apps.lock.json`](config/bundled-apps.lock.json) 固定版本。
-CI 在打包 Moss 时下载对应 Release ZIP 并验证，不会在主仓库内编译 App 源码，也不会自动追随市场最新版。
+发布安装包中的预装 App 由 [`config/bundled-apps.lock.json`](config/bundled-apps.lock.json) 只记录 App ID 和固定版本。
+CI 在打包 Moss 时从 `moss-apps` 发布索引解析该版本的 Release ZIP、SHA-256 和签名信息，下载并验证后打入安装包；不会在主仓库内编译 App 源码，也不会自动追随市场最新版。本地从源码执行 `dev` 或 `start` 时不会下载或自动安装这些 App，可像普通 App 一样从应用市场安装。
 
 ## 快速启动
 
@@ -257,3 +257,25 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:latest whoami
 - **env**: 仅保留非模型运行环境变量；模型 API 地址和 key 不再写在这里。
 
 UI 的设置页面会以增量方式更新此文件，不会删除你手动添加的自定义 Key。
+
+### 多实例数据隔离
+
+Desktop 默认使用 `~/.moss`。为不同进程设置不同的 `MOSS_HOME`，可以在同一台机器上同时运行多个 Desktop：
+
+```bash
+# macOS
+MOSS_HOME="$HOME/.moss-work" /Applications/Moss.app/Contents/MacOS/Moss &
+MOSS_HOME="$HOME/.moss-test" /Applications/Moss.app/Contents/MacOS/Moss &
+```
+
+```powershell
+# Windows PowerShell
+$exe = "<Moss.exe 路径>"
+$env:MOSS_HOME = "$HOME\.moss-work"
+Start-Process $exe
+$env:MOSS_HOME = "$HOME\.moss-test"
+Start-Process $exe
+Remove-Item Env:MOSS_HOME
+```
+
+`MOSS_HOME` 会同时隔离设置、会话、项目、内存、Skill、连接器、App 数据、凭据、日志、缓存及 Electron 浏览器数据。不同目录使用独立的单实例锁；同一目录仍只允许运行一个 Desktop，避免并发写入同一份数据。

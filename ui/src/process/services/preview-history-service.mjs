@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
+import { getDesktopCacheRoot, MOSS_HOME } from '../../moss-home.mjs';
 
 const HISTORY_FOLDER_NAME = 'preview-history';
 const INDEX_FILE_NAME = 'index.json';
@@ -9,7 +10,10 @@ const MAX_VERSIONS_PER_TARGET = 50;
 
 class PreviewHistoryService {
   getBaseDir() {
-    return path.join(app.getPath('cache'), HISTORY_FOLDER_NAME);
+    return path.join(
+      getDesktopCacheRoot(MOSS_HOME, app.getPath('cache')),
+      HISTORY_FOLDER_NAME,
+    );
   }
 
   async ensureDir(targetDir) {

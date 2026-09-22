@@ -293,14 +293,15 @@ function AppShortcutItem({
   onLaunch: () => void;
 }) {
   const label = getAppShortcutLabel(app);
+  const enabled = Boolean(app.enabled);
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
+      disabled={!enabled}
+      title={enabled ? label : `${label}：请先启用 App`}
       onClick={onLaunch}
-      onKeyDown={(e) => e.key === 'Enter' && onLaunch()}
-      className="group relative w-full max-w-full overflow-hidden rounded-xl border border-transparent px-2 py-1 text-left transition-colors hover:border-sidebar-border/70 hover:bg-sidebar-accent/80"
+      className="group relative w-full max-w-full overflow-hidden rounded-xl border border-transparent px-2 py-1 text-left transition-colors hover:border-sidebar-border/70 hover:bg-sidebar-accent/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-transparent disabled:hover:bg-transparent"
     >
       <div className="flex min-w-0 items-center gap-2 overflow-hidden">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
@@ -310,7 +311,7 @@ function AppShortcutItem({
           {label}
         </span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -775,9 +776,10 @@ export function AppSidebar({
               <button
                 key={app.id || app.name}
                 type="button"
+                disabled={!app.enabled}
                 onClick={() => onLaunchApp(app.name)}
-                className="flex h-8 w-8 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-                title={getAppShortcutLabel(app)}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                title={app.enabled ? getAppShortcutLabel(app) : `${getAppShortcutLabel(app)}：请先启用 App`}
               >
                 <Monitor className="h-4 w-4" />
               </button>

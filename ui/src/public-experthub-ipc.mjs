@@ -2,10 +2,9 @@ import electron from 'electron';
 const { ipcMain } = electron;
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import zlib from 'node:zlib';
+import { MOSS_HOME } from './moss-home.mjs';
 
-const MOSS_HOME = path.join(os.homedir(), '.moss');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const LEGACY_MOSS_EXPERTS_DIR = path.join(MOSS_HOME, 'experts');
 const EXPERT_HUB_DIR = path.join(MOSS_HOME, 'expert-hub');

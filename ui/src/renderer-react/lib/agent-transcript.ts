@@ -940,22 +940,34 @@ function addToolResultMessage(
   }
 }
 
+function unwrapLegacyExternalChannelPrompt(value: string): string {
+  const normalized = value.trim();
+  const marker = "\nMessage:\n";
+  const suffix = "\n</external-channel-message>";
+  if (!normalized.startsWith("<external-channel-message>\n") || !normalized.endsWith(suffix)) {
+    return value;
+  }
+  const messageIndex = normalized.lastIndexOf(marker);
+  if (messageIndex < 0) return value;
+  return normalized.slice(messageIndex + marker.length, -suffix.length);
+}
+
 function extractRawUserText(event: AgentEvent): string {
   if (typeof event?.prompt === 'string') {
-    return event.prompt;
+    return unwrapLegacyExternalChannelPrompt(event.prompt);
   }
 
   const content = event?.message?.content;
   if (typeof content === 'string') {
-    return content;
+    return unwrapLegacyExternalChannelPrompt(content);
   }
 
   if (Array.isArray(content)) {
-    return content
+    return unwrapLegacyExternalChannelPrompt(content
       .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
       .map((block: any) => block.text)
       .join('\n')
-      .trim();
+      .trim());
   }
 
   return '';

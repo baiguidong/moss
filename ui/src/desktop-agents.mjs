@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dump, load } from 'js-yaml';
+import { MOSS_HOME } from './moss-home.mjs';
 
 const MAX_AGENT_FILE_BYTES = 1024 * 1024;
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -163,7 +163,7 @@ async function writeTextAtomic(filePath, content) {
 }
 
 export function createDesktopAgentStore({
-  userAgentsDir = path.join(process.env.MOSS_CONFIG_DIR || path.join(os.homedir(), '.moss'), 'agents'),
+  userAgentsDir = path.join(MOSS_HOME, 'agents'),
 } = {}) {
   const getRoots = (workspace) => ({
     user: path.resolve(userAgentsDir),
