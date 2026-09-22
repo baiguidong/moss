@@ -247,8 +247,8 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 范围：
 
 - 将飞书平台 SDK、连接、配对、配置和投递移动至 `moss.feishu` App。
-- Desktop 注册真实 Channel handlers，接入身份绑定、Session/Agent、通知和决策。
-- 旧飞书配置复制到 App instance，验证连接后切换；保留回退开关。
+- Desktop 与 Server 注册通用 Channel/Agent handlers，接入 Session/Turn 与授权策略。
+- 产品配置、配对、连接状态和投递全部由 App 自身持久化与处理。
 
 验收：
 
@@ -261,11 +261,10 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 
 - 飞书源码已迁移至独立的 [`baiguidong/moss-apps`](https://github.com/baiguidong/moss-apps) 仓库，Manifest ID 固定为 `moss.feishu`。
 - Moss 构建通过 `config/bundled-apps.lock.json` 下载、校验并预装固定版本，不再从主仓库编译飞书源码。
-- 飞书 SDK、长连接、卡片、消息转换、配置 schema、设置页和测试均归 App；Desktop 与旧 Server 回退包从同一入口构建。
-- Desktop 已注册真实 `moss.channel/v1` handlers，并继续持有身份授权、Session/Turn、通知、决策和幂等账本。
-- 旧配置先拆分为普通 config 与加密 secrets，等待 App Backend 建立飞书长连接并完成 Host 握手后才写入迁移标记。
-- `MOSS_FEISHU_LEGACY_ADAPTER=1` 可停用 Desktop App 实例并启用旧进程；移除开关后恢复迁移前的 App 启用状态。
-- 自动验证覆盖 Channel 映射、权限、取消、事件 ACK/去重、持久进程生命周期、配置迁移幂等和新旧构建入口；真实账号的消息、卡片和重连仍属于发布前人工验收。
+- 飞书 SDK、长连接、消息转换、配置 schema、设置页、配对状态和测试均归 App；Moss 不再生成或启动独立 Adapter 产物。
+- Desktop 与 Server 共用 `moss.channel/v1` 和 `moss.agent/v1`，Core 只持有 Session/Turn、授权和幂等账本。
+- App UI 通过统一 instance/action/host API 管理 Desktop 或 Server 实例，不再调用产品专用 IPC。
+- 自动验证覆盖 Channel 映射、权限、取消、事件 ACK/去重、持久进程生命周期和通用构建入口；真实账号连通性仍属于发布前人工验收。
 
 ### Phase 3：轻量 UI App
 

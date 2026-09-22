@@ -1,8 +1,8 @@
 import {
   MOSS_AGENT_PROTOCOL,
   MOSS_CHANNEL_PROTOCOL,
-} from '../../packages/app-sdk/src/index.mjs';
-import { DEFAULT_AGENT_CHANNEL_POLICY } from './agent-channel-store.mjs';
+} from '../../../app-sdk/src/index.mjs';
+import { DEFAULT_AGENT_CHANNEL_POLICY } from './store.mjs';
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Moss 会话处理失败，请在 Moss 中查看详情后重试。';
 

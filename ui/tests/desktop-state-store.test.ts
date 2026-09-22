@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 
-const storeUrl = new URL('../src/feishu-adapter-store.mjs', import.meta.url).href;
+const storeUrl = new URL('../src/desktop-state-store.mjs', import.meta.url).href;
 
 function runNodeStoreScenario(source: string) {
   const script = `
     import { DatabaseSync } from 'node:sqlite';
-    import { createFeishuAdapterStore } from ${JSON.stringify(storeUrl)};
+    import { createDesktopStateStore } from ${JSON.stringify(storeUrl)};
     const db = new DatabaseSync(':memory:');
     try {
       ${source}
@@ -21,26 +21,26 @@ function runNodeStoreScenario(source: string) {
   return JSON.parse(result.stdout.trim());
 }
 
-describe('Feishu adapter store', () => {
+describe('desktop state store', () => {
   it('persists conversation bindings and event idempotency', () => {
     const result = runNodeStoreScenario(`
       let timestamp = 100;
-      const store = createFeishuAdapterStore(db, { now: () => timestamp++ });
+      const store = createDesktopStateStore(db, { now: () => timestamp++ });
       const conversation = store.getOrCreateConversation({
-        adapterInstanceId: 'feishu:cli_test',
+        adapterInstanceId: 'channel:test',
         tenantKey: 'cli_test',
         chatId: 'oc_chat',
         pairedOpenId: 'ou_user',
       });
       const selected = store.setActiveSession(conversation.id, 'session-1');
       const first = store.claimEvent({
-        adapterInstanceId: 'feishu:cli_test',
+        adapterInstanceId: 'channel:test',
         eventId: 'om_message',
         conversationId: conversation.id,
         eventType: 'message',
       });
       const duplicate = store.claimEvent({
-        adapterInstanceId: 'feishu:cli_test',
+        adapterInstanceId: 'channel:test',
         eventId: 'om_message',
         conversationId: conversation.id,
         eventType: 'message',
@@ -55,11 +55,11 @@ describe('Feishu adapter store', () => {
 
   it('stores queued turns and terminal results', () => {
     const result = runNodeStoreScenario(`
-      const store = createFeishuAdapterStore(db);
+      const store = createDesktopStateStore(db);
       const turn = store.enqueueTurn({
         sessionId: 'session-1',
         conversationId: 'conversation-1',
-        sourceChannel: 'feishu',
+        sourceChannel: 'channel',
         sourceEventId: 'om_message',
         prompt: 'hello',
       });
@@ -79,7 +79,7 @@ describe('Feishu adapter store', () => {
   it('expires runtime decisions, recovers durable plan claims, and disables stale actions on restart', () => {
     const result = runNodeStoreScenario(`
       let timestamp = 100;
-      const store = createFeishuAdapterStore(db, { now: () => timestamp++ });
+      const store = createDesktopStateStore(db, { now: () => timestamp++ });
       const runtime = store.createDecision({
         id: 'runtime', sessionId: 'session-1', kind: 'tool_permission',
         mobileTitle: 'Runtime', mobileSummary: 'Runtime summary', actionTokenHash: 'hash',
@@ -90,7 +90,7 @@ describe('Feishu adapter store', () => {
         mobileTitle: 'Plan', mobileSummary: 'Plan summary', actionTokenHash: 'hash',
         notificationId: 'notification-plan', expiresAt: null,
       });
-      store.claimDecision(plan.id, 'feishu');
+      store.claimDecision(plan.id, 'channel');
       db.prepare(\`
         INSERT INTO app_notifications (
           id, severity, source, title, message, mobile_title, mobile_summary,
@@ -98,7 +98,7 @@ describe('Feishu adapter store', () => {
         ) VALUES (?, 'warning', 'test', 'title', 'message', 'mobile', 'summary', 'summary', ?, 0, 1, ?, ?)
       \`).run('notification-runtime', runtime.id, timestamp, timestamp);
 
-      const restarted = createFeishuAdapterStore(db, { now: () => 500 });
+      const restarted = createDesktopStateStore(db, { now: () => 500 });
       const notification = db.prepare('SELECT * FROM app_notifications WHERE id = ?').get('notification-runtime');
       console.log(JSON.stringify({
         runtime: restarted.getDecision(runtime.id),

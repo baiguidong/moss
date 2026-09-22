@@ -16,7 +16,7 @@ import {
   parseRemoteDirectServerInput,
   requestRemoteDirectAuthentication,
   requestRemoteDirectAccessToken,
-  startRemoteFeishuAdapter,
+  requestRemoteAppHostCapability,
   uploadRemoteDirectWorkspaceData,
   uploadRemoteProfileSkills,
   writeRemoteDirectWorkspaceFile,
@@ -62,7 +62,7 @@ describe('remote direct client settings', () => {
     );
   });
 
-  it('authenticates and pushes a Feishu runtime snapshot to Moss Server', async () => {
+  it('authenticates and requests a Server App host capability', async () => {
     const requests = [];
     globalThis.fetch = async (input, init = {}) => {
       requests.push({ url: String(input), init });
@@ -72,25 +72,29 @@ describe('remote direct client settings', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({ ok: true, status: { status: 'running' } }), {
+      return new Response(JSON.stringify({ result: { revision: 1 } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     };
 
-    const result = await startRemoteFeishuAdapter({
+    const result = await requestRemoteAppHostCapability({
       remoteDirect: {
         serverUrl: 'https://moss.example.com',
         credentialMode: 'api-key',
         apiKey: 'server-key',
       },
-    }, { appId: 'cli_test', appSecret: 'secret' });
+    }, 'example.chat', 'example.chat--default', 'moss.agent/v1', 'binding.get', {
+      externalConversationId: '*',
+    });
 
-    expect(result.ok).toBe(true);
-    expect(requests[1].url).toBe('https://moss.example.com/api/v1/adapters/feishu/start');
+    expect(result).toEqual({ revision: 1 });
+    expect(requests[1].url).toBe('https://moss.example.com/api/v1/apps/example.chat/instances/example.chat--default/host');
     expect(requests[1].init.headers.authorization).toBe('Bearer access-token');
     expect(JSON.parse(requests[1].init.body)).toEqual({
-      config: { appId: 'cli_test', appSecret: 'secret' },
+      protocol: 'moss.agent/v1',
+      method: 'binding.get',
+      input: { externalConversationId: '*' },
     });
   });
 
@@ -166,8 +170,8 @@ describe('remote direct client settings', () => {
       return new Response(JSON.stringify({
         sessions: [{
           sessionId: 'server-session-1',
-          title: '飞书会话',
-          originChannel: 'feishu',
+          title: 'App Channel 会话',
+          originChannel: 'app:example.chat',
         }],
       }), {
         status: 200,
@@ -182,8 +186,8 @@ describe('remote direct client settings', () => {
 
     expect(result.sessions).toEqual([{
       sessionId: 'server-session-1',
-      title: '飞书会话',
-      originChannel: 'feishu',
+      title: 'App Channel 会话',
+      originChannel: 'app:example.chat',
     }]);
     expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions');
     expect(requests[0].init.headers.authorization).toBe('Bearer access-token');

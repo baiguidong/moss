@@ -33,7 +33,7 @@ prepare 会把随代码变化的运行产物复制到 server root：
 
 - `~/.moss/server/bin/moss-server.mjs`
 - `~/.moss/server/bin/moss-session-runner.mjs`
-- `~/.moss/server/adapters/feishu.mjs`
+- `~/.moss/server/apps/`
 - `~/.moss/server/admin/dist/`
 
 运行期状态也只落在 server root 的子目录：
@@ -353,19 +353,6 @@ beforeInviteUserToGroup:
   "ready": true
 }
 ```
-
-飞书凭据不在 Admin UI 或 Server 配置文件中编辑。Desktop 是唯一配置入口，
-并通过以下托管接口选择让 Adapter 运行在本机或长期在线的 Moss Server。
-
-## Feishu Runtime
-
-所有接口只操作当前认证用户的飞书实例。Server 不提供读取或修改飞书密钥的配置接口。
-
-- `GET /api/v1/adapters/feishu/status`：查询 Server 托管实例状态；需要 `sessions:create` scope。
-- `POST /api/v1/adapters/feishu/start`：由 Desktop 推送完整配置快照并启动；需要 `sessions:create`、`sessions:list`、`sessions:attach` scope。
-- `POST /api/v1/adapters/feishu/stop`：停止 Server 托管实例；需要 `sessions:create` scope。
-
-Server 会记住由 Desktop 启用的托管实例并在自身重启后恢复。Desktop 切换运行位置时会先停止另一端，确保本机和 Server 不会同时连接同一个飞书应用。
 
 ## Admin UI
 
@@ -812,8 +799,8 @@ profile/Memory 目录，但不会挂载该用户的其他 session 目录。显�
 - `active_only=true`
 
 有 `sessions:list:any` 时可看当前 org 的全部 session；否则只看自己的。
-列表中的每条 session 还包含 `originChannel`：由 Server 飞书 Adapter 创建的会话为
-`feishu`，其他会话为 `desktop`。Desktop 用这个字段同步和分组 Server 飞书会话。
+列表中的每条 session 还包含 `originChannel`：App Channel 创建的会话使用
+`app:<appId>`，其他会话为 `desktop`。Desktop 用这个字段同步和分组 Server App 会话。
 
 ### GET `/api/v1/sessions/:sessionId`
 
@@ -934,6 +921,16 @@ Server 从可信包源获取并完整校验指定身份的包。新安装默认 
 ### POST `/api/v1/apps/:appId/instances/:instanceId/actions/:action`
 
 请求体为 `{ "input": ..., "timeoutMs": 30000 }`。Action 必须在 Manifest 中声明，输入和输出按声明的 JSON Schema 校验。需要 `apps:deploy`。
+
+### GET `/api/v1/apps/:appId/instances/:instanceId/status`
+
+返回指定实例的 deployment 与进程状态。需要 `apps:read`。
+
+### POST `/api/v1/apps/:appId/instances/:instanceId/host`
+
+请求体为 `{ "protocol": "moss.agent/v1", "method": "binding.get", "input": {} }`。
+供受信任的 Desktop App UI 调用该 Server 实例已声明并获授权的 Host API；仍执行 App
+Manifest、grant、owner 和实例边界校验。需要 `apps:deploy`。
 
 ### GET `/api/v1/apps/:appId/instances/:instanceId/logs?limit=500`
 

@@ -80,10 +80,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   authenticateMcpServer: (payload) => ipcRenderer.invoke('agent:mcp-authenticate', payload),
   submitMcpAuthCallback: (payload) => ipcRenderer.invoke('agent:mcp-submit-auth-callback', payload),
   clearMcpServerAuth: (payload) => ipcRenderer.invoke('agent:mcp-clear-auth', payload),
-  getAdapterConfig: () => ipcRenderer.invoke('agent:get-adapter-config'),
-  updateAdapterConfig: (payload) => ipcRenderer.invoke('agent:update-adapter-config', payload),
-  applyAdapterRuntime: (payload) => ipcRenderer.invoke('agent:apply-adapter-runtime', payload),
-  getAdapterStatus: () => ipcRenderer.invoke('agent:get-adapter-status'),
   listProjectTemplates: () => ipcRenderer.invoke('project:list-templates'),
   listProjects: (payload) => ipcRenderer.invoke('project:list', payload),
   getProject: (payload) => ipcRenderer.invoke('project:get', payload),
@@ -422,11 +418,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('agent:settings-changed', handler);
     return () => ipcRenderer.off('agent:settings-changed', handler);
-  },
-  onAdapterStatus: (callback) => {
-    const handler = (_event, payload) => callback(payload);
-    ipcRenderer.on('agent:adapter-status', handler);
-    return () => ipcRenderer.off('agent:adapter-status', handler);
   },
   onProjectsChanged: (callback) => {
     const handler = (_event, payload) => callback(payload);

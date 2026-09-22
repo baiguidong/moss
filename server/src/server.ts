@@ -36,11 +36,11 @@ import {
   toOpenIMServerConfig,
   updateSystemSettings,
 } from './systemSettings.js'
-import { AdapterProcessManager } from './adapterProcessManager.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { handleAppRoute } from './apps/appRoutes.js'
 import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
+import type { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
 import { getUserProfileDir } from './runtimePaths.js'
@@ -897,6 +897,7 @@ export function startServer(
   appRuntime?: ServerAppRuntime,
   ragflowIntegration?: RagflowIntegrationService,
   openIMIntegration?: OpenIMIntegrationService,
+  agentChannelHost?: Pick<ServerAgentChannelHost, 'originForSession'>,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -904,10 +905,8 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
-  const adapterProcessManager = new AdapterProcessManager(runtime.store.db, runtime, logger)
   const agentMailService = new AgentMailService(runtime.store.db)
   const oauthLoginService = new OAuthLoginService(authService)
-  void adapterProcessManager.restoreEnabled()
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -1674,49 +1673,6 @@ export function startServer(
         return
       }
 
-      if (pathname === '/api/v1/adapters/feishu/status' && req.method === 'GET') {
-        authService.requireScope(auth, 'sessions:create')
-        writeJson(res, 200, adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId))
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/feishu/start' && req.method === 'POST') {
-        authService.requireScope(auth, 'sessions:create')
-        authService.requireScope(auth, 'sessions:attach')
-        const body = await readJsonBody(req, 64 * 1024)
-        if (
-          !isJsonBody(body.config)
-          || typeof body.config.appId !== 'string'
-          || !body.config.appId.trim()
-          || typeof body.config.appSecret !== 'string'
-          || !body.config.appSecret.trim()
-        ) {
-          throw new HttpError(400, 'Feishu App ID and App Secret are required')
-        }
-        await adapterProcessManager.start('feishu', {
-          orgId: auth.orgId,
-          userId: auth.userId,
-          role: auth.role,
-          scopes: auth.scopes,
-          config: body.config,
-        })
-        writeJson(res, 200, {
-          ok: true,
-          status: adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId),
-        })
-        return
-      }
-
-      if (pathname === '/api/v1/adapters/feishu/stop' && req.method === 'POST') {
-        authService.requireScope(auth, 'sessions:create')
-        await adapterProcessManager.stop('feishu', auth.orgId, auth.userId)
-        writeJson(res, 200, {
-          ok: true,
-          status: adapterProcessManager.getStatus('feishu', auth.orgId, auth.userId),
-        })
-        return
-      }
-
       if (req.method === 'GET' && pathname === '/api/v1/sessions') {
         authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
         const activeOnly = url.searchParams.get('active_only') === 'true'
@@ -1725,20 +1681,14 @@ export function startServer(
           userId: hasScope(auth.scopes, 'sessions:list:any') ? undefined : auth.userId,
           activeOnly,
         })
-        const feishuSessionIdsByUser = new Map<string, Set<string>>()
-        const enrichedSessions = sessions.map(session => {
-          let feishuSessionIds = feishuSessionIdsByUser.get(session.userId)
-          if (!feishuSessionIds) {
-            feishuSessionIds = new Set(
-              adapterProcessManager.listFeishuSessionIds(session.orgId, session.userId),
-            )
-            feishuSessionIdsByUser.set(session.userId, feishuSessionIds)
-          }
-          return {
-            ...session,
-            originChannel: feishuSessionIds.has(session.sessionId) ? 'feishu' : 'desktop',
-          }
-        })
+        const enrichedSessions = sessions.map(session => ({
+          ...session,
+          originChannel: agentChannelHost?.originForSession(
+            session.sessionId,
+            session.orgId,
+            session.userId,
+          ) || 'desktop',
+        }))
         writeJson(res, 200, { sessions: enrichedSessions })
         return
       }
@@ -2223,7 +2173,6 @@ export function startServer(
     ready,
     stop: async () => {
       agentMailService.dispose()
-      await adapterProcessManager.dispose()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {

@@ -5,9 +5,8 @@
  */
 import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './features.js'
 import { spawnSync } from 'child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
-import { prepareBundledApps } from './bundled-apps.mjs'
 
 /**
  * 清理打包产物中由 bun build 内联的绝对路径。
@@ -149,14 +148,6 @@ build('bin/moss-server.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-server.mjs')
-
-// bin/adapters/feishu.mjs（来自锁定并签名的 moss.feishu 发布包，供旧 Server 托管回退）
-const bundledApps = await prepareBundledApps()
-mkdirSync(resolve('bin/adapters'), { recursive: true })
-copyFileSync(
-  resolve(bundledApps.outputDir, 'moss.feishu', 'dist/backend/main.mjs'),
-  resolve('bin/adapters/feishu.mjs'),
-)
 
 // bin/moss-session-runner.mjs（每个 server session 的独立 runner 进程）
 build('bin/moss-session-runner.mjs', [

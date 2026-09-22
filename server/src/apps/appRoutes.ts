@@ -134,7 +134,35 @@ export async function handleAppRoute(input: {
     if (instanceAction && req.method === 'POST') {
       requireAppScope(authService, auth, 'apps:deploy')
       const body = await readJson(req)
-      const result = await runAsOwner(body, () => runtime.invoke(decode(instanceAction[1]!), decode(instanceAction[2]!), decode(instanceAction[3]!), body.input, { timeoutMs: body.timeoutMs }))
+      const result = await runAsOwner(body, () => runtime.invoke(
+        decode(instanceAction[1]!),
+        decode(instanceAction[2]!),
+        decode(instanceAction[3]!),
+        body.input,
+        { requestId: text(body.requestId) || undefined, timeoutMs: Number(body.timeoutMs) || undefined },
+      ))
+      writeJson(res, 200, { result })
+      return true
+    }
+    const instanceHost = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/host$/)
+    if (instanceHost && req.method === 'POST') {
+      requireAppScope(authService, auth, 'apps:deploy')
+      const body = await readJson(req)
+      const protocol = text(body.protocol)
+      const method = text(body.method)
+      if (!protocol || !method) {
+        throw Object.assign(new Error('protocol and method are required'), { statusCode: 400 })
+      }
+      const result = await runAsOwner(body, () => runtime.requestHostCapability(
+        decode(instanceHost[1]!),
+        decode(instanceHost[2]!),
+        protocol,
+        method,
+        body.input && typeof body.input === 'object' && !Array.isArray(body.input)
+          ? body.input as Record<string, unknown>
+          : {},
+        { requestId: text(body.requestId) || undefined },
+      ))
       writeJson(res, 200, { result })
       return true
     }
@@ -144,6 +172,16 @@ export async function handleAppRoute(input: {
       const status = await runAsOwner(undefined, () => runtime.restartInstance(
         decode(instanceRestart[1]!),
         decode(instanceRestart[2]!),
+      ))
+      writeJson(res, 200, { status })
+      return true
+    }
+    const instanceStatus = pathname.match(/^\/api\/v1\/apps\/([^/]+)\/instances\/([^/]+)\/status$/)
+    if (instanceStatus && req.method === 'GET') {
+      requireAppScope(authService, auth, 'apps:read')
+      const status = await runAsOwner(undefined, () => runtime.getInstanceStatus(
+        decode(instanceStatus[1]!),
+        decode(instanceStatus[2]!),
       ))
       writeJson(res, 200, { status })
       return true

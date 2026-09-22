@@ -9,9 +9,9 @@ Channel App 必须使用 persistent Backend，显式声明协议及实际需要�
 ```json
 {
   "schemaVersion": 2,
-  "id": "moss.feishu",
+  "id": "example.channel",
   "version": "1.0.0",
-  "displayName": "飞书",
+  "displayName": "Example Channel",
   "hostApi": "^1.1.0",
   "backend": {
     "entry": "dist/backend/main.mjs",

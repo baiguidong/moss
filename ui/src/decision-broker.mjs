@@ -27,7 +27,7 @@ export function createDecisionBroker({
 
   function buildActionToken(decision) {
     const secret = String(getSigningSecret() || '');
-    if (!secret) throw new Error('Feishu decision signing secret is unavailable.');
+    if (!secret) throw new Error('Decision signing secret is unavailable.');
     const expiresAt = Number(decision.expiresAt) || 0;
     const signature = createHmac('sha256', secret)
       .update(`${decision.id}:${expiresAt}`)
@@ -118,7 +118,7 @@ export function createDecisionBroker({
   async function respond({ decisionId, allowed, source, actionToken, context = null }) {
     const decision = store.getDecision(decisionId);
     if (!decision) throw new Error('Decision request not found.');
-    if (source === 'feishu') {
+    if (source === 'external') {
       if (!actionToken || !safeEqual(hashToken(actionToken), decision.actionTokenHash)) {
         throw new Error('Decision action token is invalid.');
       }

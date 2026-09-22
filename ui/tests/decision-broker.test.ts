@@ -3,16 +3,16 @@ import { spawnSync } from 'node:child_process';
 
 const decisionUrl = new URL('../src/decision-broker.mjs', import.meta.url).href;
 const notificationUrl = new URL('../src/app-notification-broker.mjs', import.meta.url).href;
-const storeUrl = new URL('../src/feishu-adapter-store.mjs', import.meta.url).href;
+const storeUrl = new URL('../src/desktop-state-store.mjs', import.meta.url).href;
 
 function runScenario(source: string) {
   const script = `
     import { DatabaseSync } from 'node:sqlite';
-    import { createFeishuAdapterStore } from ${JSON.stringify(storeUrl)};
+    import { createDesktopStateStore } from ${JSON.stringify(storeUrl)};
     import { createAppNotificationBroker } from ${JSON.stringify(notificationUrl)};
     import { createDecisionBroker } from ${JSON.stringify(decisionUrl)};
     const db = new DatabaseSync(':memory:');
-    const store = createFeishuAdapterStore(db);
+    const store = createDesktopStateStore(db);
     const notifications = createAppNotificationBroker(db);
     try { ${source} } finally { db.close(); }
   `;
@@ -33,12 +33,12 @@ describe('decision broker', () => {
         summary: '是否允许？', handler: ({ allowed }) => { calls.push(allowed); return { allowed }; },
       });
       const resolved = await broker.respond({
-        decisionId: created.decision.id, allowed: true, source: 'feishu', actionToken: created.actionToken,
+        decisionId: created.decision.id, allowed: true, source: 'external', actionToken: created.actionToken,
       });
       let duplicateError = '';
       try {
         await broker.respond({
-          decisionId: created.decision.id, allowed: false, source: 'feishu', actionToken: created.actionToken,
+          decisionId: created.decision.id, allowed: false, source: 'external', actionToken: created.actionToken,
         });
       } catch (error) { duplicateError = error.message; }
       console.log(JSON.stringify({ calls, resolved, duplicateError, notifications: notifications.list() }));
@@ -49,7 +49,7 @@ describe('decision broker', () => {
     expect(result.notifications[0].decisionRequestId).toBeUndefined();
   });
 
-  it('allows only one concurrent desktop or Feishu response to execute', () => {
+  it('allows only one concurrent desktop or external response to execute', () => {
     const result = runScenario(`
       const calls = [];
       const broker = createDecisionBroker({
@@ -67,7 +67,7 @@ describe('decision broker', () => {
         broker.respond({
           decisionId: created.decision.id,
           allowed: true,
-          source: 'feishu',
+          source: 'external',
           actionToken: created.actionToken,
           context: { channel: 'mobile' },
         }),
@@ -86,7 +86,7 @@ describe('decision broker', () => {
     `);
     expect(result.calls).toEqual([{
       allowed: true,
-      source: 'feishu',
+      source: 'external',
       context: { channel: 'mobile' },
     }]);
     expect(result.statuses.sort()).toEqual(['fulfilled', 'rejected']);

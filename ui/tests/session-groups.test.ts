@@ -9,9 +9,9 @@ import {
 } from '../src/renderer-react/lib/session-groups';
 
 describe('sidebar session groups', () => {
-  it('separates Feishu, collaborative mail, normal, cron, and project sessions', () => {
+  it('separates App, collaborative mail, normal, cron, and project sessions', () => {
     const groups = groupSidebarSessions([
-      { id: 'feishu', originChannel: 'feishu' as const },
+      { id: 'app', originChannel: 'app:example.chat' },
       { id: 'mail', sessionKind: 'agent-mail' as const, originChannel: 'agent-mail' as const },
       { id: 'normal' },
       { id: 'project', projectId: 'project-1' },
@@ -20,7 +20,7 @@ describe('sidebar session groups', () => {
     ]);
 
     expect(groups.map((group) => [group.id, group.sessions.map((session) => session.id)])).toEqual([
-      ['feishu', ['feishu']],
+      ['apps', ['app']],
       ['agent-mail', ['mail']],
       ['chat', ['normal']],
       ['cron', ['cron', 'project-cron']],
@@ -93,12 +93,12 @@ describe('sidebar session groups', () => {
     const groups = groupSidebarSessions([
       { id: 'cron-root', sessionKind: 'cron' as const },
       { id: 'cron-child', parentSessionId: 'cron-root', isSubAgent: true },
-      { id: 'feishu-root', originChannel: 'feishu' as const },
-      { id: 'feishu-child', parentSessionId: 'feishu-root', isSubAgent: true },
+      { id: 'app-root', originChannel: 'app:example.chat' },
+      { id: 'app-child', parentSessionId: 'app-root', isSubAgent: true },
     ]);
 
     expect(groups.map((group) => [group.id, group.sessions.map((session) => session.id)])).toEqual([
-      ['feishu', ['feishu-root', 'feishu-child']],
+      ['apps', ['app-root', 'app-child']],
       ['cron', ['cron-root', 'cron-child']],
     ]);
   });
@@ -107,7 +107,7 @@ describe('sidebar session groups', () => {
     const sessions = [
       { id: 'main', title: '主会话' },
       { id: 'child', title: '汇总最近提交', parentSessionId: 'main', isSubAgent: true },
-      { id: 'other', title: '设置飞书连接器' },
+      { id: 'other', title: '设置聊天 App' },
     ];
     expect(filterSidebarSessionsByQuery(sessions, '汇总').map((session) => session.id)).toEqual([
       'main',

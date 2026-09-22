@@ -1,6 +1,6 @@
 # Agent Channel 与独立 IM App 改造计划
 
-状态：阶段 A、阶段 B 和飞书试点已完成；OpenIM 按独立的个人 AI 回复模型另行迁移，详见 [OpenIM 独立 App 与个人 AI 回复改造计划](./openim-app-migration-plan.md)
+状态：Desktop、Server 与独立飞书 App 迁移已完成；OpenIM 按独立的个人 AI 回复模型另行迁移，详见 [OpenIM 独立 App 与个人 AI 回复改造计划](./openim-app-migration-plan.md)
 
 负责人边界：Moss Core 提供账号、Agent、权限和会话能力；市场 App 负责渠道协议、消息展示以及该产品实际需要的交互。
 
@@ -114,29 +114,29 @@ Desktop 使用现有 `sessions.db` 新增：
 ### 阶段 B：Desktop Agent Channel 执行链路（已完成）
 
 - [x] 注册 Account/Agent Host handlers，并向受信 App UI 提供同一套 grant 校验入口。
-- [x] 将飞书专用消息控制器抽象为通用 Channel Controller，保留旧适配器兼容层。
+- [x] 将产品专用消息控制器抽象为通用 Channel Controller，并删除旧适配器链路。
 - [x] 将有效 Tool/Skill/Connector/Agent 策略注入 Session Runtime，并在 Tool 执行层再次拒绝越权。
 - [x] 实现 `human_only`、`ai_auto`、`ai_draft_review`、`mention_only` 与人工回复/忽略。
 - [x] 实现 `fixed`、`rotating`、`new_each_turn` 和可信摘要轮换。
 - [x] 增加主动消息限流、hop 限制、并发串行、崩溃恢复、草稿审核和投递确认测试。
 
-### 阶段 C：Server 与 OpenIM App（Desktop 已完成，Server 待后续）
+### 阶段 C：Server 与 OpenIM App
 
 OpenIM 的详细阶段、验收和个人联系人策略以 [OpenIM 独立 App 与个人 AI 回复改造计划](./openim-app-migration-plan.md) 为准；下列条目只保留总体里程碑。
 
 - [x] Server 注册 Account Host handlers，并以 App owner 的组织/用户权限读取脱敏通讯录。
-- [ ] Server 注册 Agent Host handlers，并接入 Server Session/Turn 执行链。
+- [x] Server 注册 Agent Host handlers，并接入 Server Session/Turn 执行链。
 - [x] 将 OpenIM UI、消息协议、媒体和 RTC 交互迁入 `moss.openim` App，Desktop Core 只保留受控原生桥和账号供应代理。
 - [x] OpenIM App 通过 first-party 平台 Broker 展示脱敏通讯录，并使用 `moss.agent/v1` 管理当前用户的默认策略和每个单聊联系人的完整自定义策略。
 - [x] 即时消息入口由市场 App View 接管；禁用或卸载时暂时恢复旧内置入口。
 
-### 阶段 D：迁移与发布（飞书代码已完成，待发布）
+### 阶段 D：迁移与发布
 
 - [x] 对现有飞书实例应用 `ai_auto + fixed + 不额外收窄资源` 的兼容默认值，不改变老用户行为。
 - [x] 新 Channel App 默认 `human_only + rotating + 空资源权限`。
-- [x] `moss.feishu` 升级到 `0.2.0`，要求 Host API `^1.2.0`，只开放执行权限设置，并保留旧配对与固定会话映射兼容层。
+- [x] `moss.feishu` 升级到 `0.3.0`，支持 Desktop/Server，并在 App 内管理配对、连接状态和用户授权。
 - [x] `moss-apps` CI 已具备测试、签名 ZIP、GitHub Release 和 GitHub Pages Marketplace 发布流程。
-- [ ] 创建 `moss.feishu-v0.2.0` 发布标签，发布后再把 Moss 预装锁从已发布的 `0.1.3` 更新为 `0.2.0`。
+- [ ] 发布 `moss.feishu-v0.3.0` 后再更新 Moss 预装锁；锁文件只允许引用市场中已发布的版本。
 
 ## 7. 验收标准
 
@@ -147,7 +147,7 @@ OpenIM 的详细阶段、验收和个人联系人策略以 [OpenIM 独立 App �
 - `human_only` 不调用模型；草稿未经批准不会进入可发送状态。
 - Channel 会话无法启用 `bypassPermissions`，未授权 Tool/Skill/Connector 在执行层被拒绝。
 - 固定、轮换、新会话三种策略重启后行为一致。
-- 飞书配对、固定会话和普通文本回复无回归，且不暴露会话控制或卡片交互。
+- 独立 Channel App 的配对、固定会话和普通文本回复无回归，且产品实现不回流到 Moss Core。
 
 ## 8. Moss 仍需补齐的独立 App 基础能力
 
@@ -163,12 +163,12 @@ OpenIM 的详细阶段、验收和个人联系人策略以 [OpenIM 独立 App �
 ## 9. 本轮验证记录
 
 - Moss Desktop：`643 pass, 0 fail`。
-- Moss Core：`340 pass, 0 fail`。
-- Moss Server：`64 pass, 0 fail`。
+- Moss Core：根包、Desktop 与 Server 测试均通过。
+- Moss Server：类型检查、Node 构建和通用 App Channel 隔离测试均通过。
 - `moss-apps` 飞书：`37 pass, 0 fail`。
-- `moss.feishu@0.2.0` 已通过 TypeScript 检查、构建、Manifest 校验和本地 ZIP 打包。
+- `moss.feishu@0.3.0` 已通过 TypeScript 检查、构建、Manifest 校验和本地 ZIP 打包。
 
-本轮没有把 Moss 的预装锁提前指向 `0.2.0`。只有 GitHub Release 实际存在后才能更新锁文件，否则客户端更新时会再次出现 `Marketplace version not found`。
+本轮没有把 Moss 的预装锁提前指向 `0.3.0`。只有 GitHub Release 实际存在后才能更新锁文件，否则构建会出现 `Bundled App version is not published`。
 
 ## 10. Review 加固（已完成）
 

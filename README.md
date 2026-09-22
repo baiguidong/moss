@@ -35,41 +35,6 @@ sudo env \
 更新镜像时执行 `sudo /data/moss-server/upgrade.sh latest`；指定版本可将
 `latest` 换成发布标签（例如 `1.2.3`）。
 
-## 飞书 Adapter
-
-Moss Desktop 可以配置企业自建应用机器人连接飞书手机端，并选择让 Adapter 运行在本机或长期在线的 Moss Server。飞书只作为个人私聊的文本入口：首次消息创建一条专用 Moss 会话，之后始终复用它，不会绑定或切换到普通桌面会话；Agent 完成后返回普通消息。
-
-### 必须配置的权限
-
-在飞书开发者后台只开通以下 3 项权限：
-
-| 权限名称 | Scope | 用途 |
-| --- | --- | --- |
-| 获取用户发给机器人的单聊消息 | `im:message.p2p_msg:readonly` | 接收飞书私聊消息 |
-| 以应用的身份发消息 | `im:message:send_as_bot` | 回复用户 |
-| 获取与发送单聊、群组消息 | `im:message` | 使用消息发送接口 |
-
-长连接只订阅 `im.message.receive_v1`，不需要资源权限、卡片权限、卡片回调、机器人菜单、群聊、通讯录、审批或日历权限。
-
-权限、事件、回调和菜单修改后，需要创建并发布新的飞书应用版本，并确保应用可用范围包含目标用户。个人飞书账号如果没有企业自建应用或权限发布能力，需要由所在组织的飞书管理员完成授权。
-
-飞书业务配置统一放在 `Apps -> 飞书 -> 打开`；App 管理页只保留启停、刷新、重启和日志。只有 `App ID` 和 `App Secret` 是长连接必填项，已保存密钥以掩码展示。`Encrypt Key`、`Verification Token` 和公网回调地址不用于当前长连接模式；允许的用户 ID 可留空并通过一次性配对码绑定手机端用户。保存后应看到“飞书长连接已就绪”，再生成配对码并在飞书私聊机器人发送该配对码。
-
-`执行权限` 页只配置工具确认方式以及 Tool、Skill、Connector 白名单。飞书不提供会话查看、创建、切换、停止、卡片回复、手机端审批、人工接管或草稿审核。Server 托管时，需要交互确认的工具操作直接拒绝，不会向手机发送审批卡片。
-
-### 配置与功能验收
-
-- [ ] 企业自建应用已添加机器人能力，3 项 Scope 均已开通。
-- [ ] 事件配置使用长连接，并只包含 `im.message.receive_v1`。
-- [ ] 未配置机器人菜单或卡片回调。
-- [ ] 已发布新版本，应用可用范围包含验收用户。
-- [ ] Moss 显示“飞书长连接已就绪”，手机端已通过配对码完成配对。
-- [ ] 连续消息进入同一个固定会话并收到普通文本回复。
-- [ ] 手机端不存在查看、新建、切换、停止会话或审批操作。
-- [ ] 重启 Moss 后 Adapter 自动重连，并恢复配对关系和固定会话映射。
-
-详细配置步骤、权限用途、降级行为和飞书官方文档链接见独立仓库中的[飞书 App README](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)。
-
 ## App 市场与预装
 
 官方 App 清单由 `https://baiguidong.github.io/moss-apps/v1/index.json` 提供，App ZIP 由
@@ -79,6 +44,9 @@ Moss Desktop 可以配置企业自建应用机器人连接飞书手机端，并�
 发布安装包中的预装 App 由 [`config/bundled-apps.lock.json`](config/bundled-apps.lock.json) 只记录 App ID 和固定版本。
 CI 在打包 Moss 时从 `moss-apps` 发布索引解析该版本的 Release ZIP、SHA-256 和签名信息，下载并验证后打入安装包；不会在主仓库内编译 App 源码，也不会自动追随市场最新版。本地从源码执行 `dev` 或 `start` 时不会下载或自动安装这些 App，可像普通 App 一样从应用市场安装。
 
+各 App 的业务配置、权限和验收说明由 `moss-apps` 独立维护。例如飞书配置见
+[飞书 App README](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)。
+
 ## 快速启动
 
 ### 1. 编译依赖 (重要)
@@ -86,7 +54,7 @@ CI 在打包 Moss 时从 `moss-apps` 发布索引解析该版本的 Release ZIP�
 由于程序采用了嵌入式架构，启动前需要先编译 Agent 的核心逻辑：
 
 ```bash
-# 在仓库根目录执行，生成 electron-direct.mjs 和相关依赖
+# 在仓库根目录执行，生成 Node CLI、Desktop Direct Runtime 和 Server 产物
 bun install
 bun install --cwd admin
 bun run build:node
@@ -98,7 +66,8 @@ bun run build:node
 bun run --cwd server build
 ```
 
-该命令会将 Agent 的核心逻辑打包成 Electron 可直接加载的模块。
+`bin/cli.js` 是 Node.js 目标产物，可直接用 `node bin/cli.js` 运行；不再生成
+`bin/cli-node.js`。同一命令也会生成 Electron 与 Server 所需的运行产物。
 
 ### 2. 启动 UI
 
@@ -118,7 +87,7 @@ bun run start
 ### 1. 构建核心 Agent 逻辑
 
 ```bash
-# 生成 electron-direct.mjs 和相关依赖
+# 生成 bin/cli.js、electron-direct.mjs 和 Server 运行产物
 bun run build:node
 ```
 

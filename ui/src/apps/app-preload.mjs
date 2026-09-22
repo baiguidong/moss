@@ -10,20 +10,20 @@ contextBridge.exposeInMainWorld('mossApp', {
   app: {
     getInfo: () => ipcRenderer.invoke('app-ui:get-info'),
     getVersions: () => ipcRenderer.invoke('app-ui:list-versions'),
-    getInstallationState: () => ipcRenderer.invoke('app-ui:get-installation-state'),
+    getInstallationState: (options) => ipcRenderer.invoke('app-ui:get-installation-state', options),
   },
   instances: {
-    list: () => ipcRenderer.invoke('app-ui:instances:list'),
-    create: (input) => ipcRenderer.invoke('app-ui:instances:create', input),
-    update: (instanceId, patch) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch }),
-    setEnabled: (instanceId, enabled) => ipcRenderer.invoke('app-ui:instances:set-enabled', { instanceId, enabled }),
-    clearCredentials: (instanceId) => ipcRenderer.invoke('app-ui:instances:clear-credentials', { instanceId }),
+    list: (options) => ipcRenderer.invoke('app-ui:instances:list', options),
+    create: (input, options) => ipcRenderer.invoke('app-ui:instances:create', { ...input, ...options }),
+    update: (instanceId, patch, options) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch, ...options }),
+    setEnabled: (instanceId, enabled, options) => ipcRenderer.invoke('app-ui:instances:set-enabled', { instanceId, enabled, ...options }),
+    clearCredentials: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:clear-credentials', { instanceId, ...options }),
     remove: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:remove', { instanceId, ...options }),
-    getStatus: (instanceId) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId }),
+    getStatus: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId, ...options }),
   },
   actions: {
     invoke: (instanceId, name, input, options) => ipcRenderer.invoke('app-ui:actions:invoke', { instanceId, name, input, ...options }),
-    cancel: (instanceId, requestId) => ipcRenderer.invoke('app-ui:actions:cancel', { instanceId, requestId }),
+    cancel: (instanceId, requestId, options) => ipcRenderer.invoke('app-ui:actions:cancel', { instanceId, requestId, ...options }),
   },
   storage: {
     getItem: (key) => ipcRenderer.invoke('app-ui:storage:get', { key }),
@@ -32,18 +32,13 @@ contextBridge.exposeInMainWorld('mossApp', {
     list: () => ipcRenderer.invoke('app-ui:storage:list'),
   },
   host: {
-    request: (instanceId, protocol, method, input) => ipcRenderer.invoke('app-ui:host:request', {
+    request: (instanceId, protocol, method, input, options) => ipcRenderer.invoke('app-ui:host:request', {
       instanceId,
       protocol,
       method,
       input,
+      ...options,
     }),
-  },
-  feishu: {
-    getConfig: () => ipcRenderer.invoke('app-ui:feishu:get-config'),
-    updateConfig: (payload) => ipcRenderer.invoke('app-ui:feishu:update-config', payload),
-    applyRuntime: (payload) => ipcRenderer.invoke('app-ui:feishu:apply-runtime', payload),
-    getStatus: () => ipcRenderer.invoke('app-ui:feishu:get-status'),
   },
   events: { on: (eventName, callback) => on(`app-ui:event:${String(eventName || '')}`, callback) },
 })

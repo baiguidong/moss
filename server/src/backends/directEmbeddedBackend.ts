@@ -55,6 +55,7 @@ type DirectSessionOptions = {
   webSearch?: JsonObject
   customSystemPrompt?: string
   appendSystemPrompt?: string
+  allowedTools?: string[] | null
   permissionMode?: DirectPermissionMode | 'allow-all'
   onPermissionRequest?: (
     tool: string,
@@ -817,6 +818,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
       fastModel,
       customSystemPrompt: runtimeOptions.customSystemPrompt,
       appendSystemPrompt: runtimeOptions.appendSystemPrompt,
+      allowedTools: runtimeOptions.allowedTools,
       maxTurns: runtimeOptions.maxTurns ?? settings.maxTurns,
       thinkingConfig: runtimeOptions.thinkingConfig ?? buildThinkingConfig(settings),
       coordinatorMode: runtimeOptions.coordinatorMode === true,

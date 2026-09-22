@@ -49,16 +49,18 @@ NODE_ROOT="$PACKAGE_ROOT/node"
 
 echo "Building Moss Server"
 (cd "$ROOT_DIR" && bun run build:server)
+echo "Preparing bundled Apps"
+(cd "$ROOT_DIR" && bun scripts/bundled-apps.mjs)
 
 install -d \
   "$APP_ROOT/bin" \
-  "$APP_ROOT/adapters" \
+  "$APP_ROOT/apps" \
   "$APP_ROOT/admin" \
   "$APP_ROOT/resources" \
   "$NODE_ROOT/bin"
 install -m 0644 "$ROOT_DIR/bin/moss-server.mjs" "$APP_ROOT/bin/moss-server.mjs"
 install -m 0644 "$ROOT_DIR/bin/moss-session-runner.mjs" "$APP_ROOT/bin/moss-session-runner.mjs"
-install -m 0644 "$ROOT_DIR/bin/adapters/feishu.mjs" "$APP_ROOT/adapters/feishu.mjs"
+cp -a "$ROOT_DIR/ui/dist/bundled-apps/." "$APP_ROOT/apps/"
 cp -a "$ROOT_DIR/admin/dist" "$APP_ROOT/admin/dist"
 
 for resource in skills assistants; do
@@ -141,7 +143,7 @@ printf '%s\n' "$NODE_VERSION" > "$PACKAGE_ROOT/NODE_VERSION"
 test -x "$NODE_ROOT/bin/node"
 test -f "$APP_ROOT/bin/moss-server.mjs"
 test -f "$APP_ROOT/bin/moss-session-runner.mjs"
-test -f "$APP_ROOT/adapters/feishu.mjs"
+test -f "$APP_ROOT/apps/.prepared.json"
 test -f "$APP_ROOT/admin/dist/index.html"
 test -f "$APP_ROOT/node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node"
 

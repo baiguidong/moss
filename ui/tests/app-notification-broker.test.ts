@@ -2,15 +2,15 @@ import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 
 const brokerUrl = new URL('../src/app-notification-broker.mjs', import.meta.url).href;
-const storeUrl = new URL('../src/feishu-adapter-store.mjs', import.meta.url).href;
+const storeUrl = new URL('../src/desktop-state-store.mjs', import.meta.url).href;
 
 function runScenario(source: string) {
   const script = `
     import { DatabaseSync } from 'node:sqlite';
-    import { createFeishuAdapterStore } from ${JSON.stringify(storeUrl)};
+    import { createDesktopStateStore } from ${JSON.stringify(storeUrl)};
     import { createAppNotificationBroker } from ${JSON.stringify(brokerUrl)};
     const db = new DatabaseSync(':memory:');
-    createFeishuAdapterStore(db);
+    createDesktopStateStore(db);
     try { ${source} } finally { db.close(); }
   `;
   const result = spawnSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8' });

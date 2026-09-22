@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { APP_ERROR_CODES, AppServiceError } from '../../packages/app-sdk/src/index.mjs';
+import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/index.mjs';
 
 export const DEFAULT_AGENT_CHANNEL_POLICY = Object.freeze({
   replyMode: 'human_only',

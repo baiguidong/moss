@@ -62,7 +62,7 @@ export interface SidebarSession {
   projectId?: string | null;
   projectName?: string | null;
   sessionKind?: 'chat' | 'cron' | 'agent-mail';
-  originChannel?: 'desktop' | 'feishu' | 'cron' | 'agent-mail';
+  originChannel?: string;
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
@@ -401,7 +401,7 @@ export function AppSidebar({
   });
   const isMoreViewActive = moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
-    feishu: Bot,
+    apps: Bot,
     'agent-mail': Mail,
     chat: MessageSquareText,
     cron: AlarmClock,

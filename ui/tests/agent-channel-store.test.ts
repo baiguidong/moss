@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 
-const storeUrl = new URL('../src/agent-channel-store.mjs', import.meta.url).href
+const storeUrl = new URL('../../packages/app-runtime/src/agent-channel/store.mjs', import.meta.url).href
 
 function runStoreScenario(source: string) {
   const script = `

@@ -50,6 +50,8 @@ export class ServerAppRuntime {
       channelOptions?: Record<string, unknown>
       hostProtocols?: Array<Record<string, unknown>>
       hostHandlers?: Record<string, Record<string, (input: Record<string, unknown>, context: Record<string, unknown>) => unknown>>
+      onEvent?: (event: Record<string, unknown>) => void
+      beforeInitialize?: (runtime: AppRuntimeHost) => void
     } = {},
   ): Promise<ServerAppRuntime> {
     const state = await new SqliteAppStateStore(config.dbPath).initialize()
@@ -73,6 +75,8 @@ export class ServerAppRuntime {
         runtime.registerHostHandler(protocol, method, handler)
       }
     }
+    runtime.events.on('event', (event: Record<string, unknown>) => options.onEvent?.(event))
+    options.beforeInitialize?.(runtime)
     await runtime.initialize()
     return new ServerAppRuntime(runtime, state, config.appSourceDir)
   }

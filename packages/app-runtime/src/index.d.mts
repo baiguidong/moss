@@ -201,6 +201,15 @@ export class AppHostCapabilityRegistry {
 export function createChannelProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export const DEFAULT_AGENT_CHANNEL_POLICY: Readonly<Record<string, any>>
+export const AGENT_CHANNEL_SYSTEM_PROMPT: string
+export function createAgentChannelStore(db: any, options?: { now?: () => number }): any
+export function createAgentChannelController(options: Record<string, any>): any
+export function toPublicAgentChannelTurn(turn: any): any
+export function validateAgentChannelDelegation(policy: any, toolName: string, input: any): string | null
+export function resolveAgentChannelConnectorIds(policy: any, baseConnectorIds: string[]): string[]
+export function resolveAgentChannelToolSelectors(policy: any, mcpServerNames?: string[]): string[] | null
+export function validateAgentChannelConnectorTool(policy: any, toolName: string, input: any, resolveServerConnectorId?: (name: string) => string): string | null
 export function createOpenIMProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const APP_CONTRIBUTION_KINDS: readonly string[]
 export function contributionId(appId: string, localId: string): string

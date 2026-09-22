@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 
-import { maskAdapterSettings, mergeAdapterSettings } from './adapter-settings.mjs';
 import {
   DEFAULT_APPEARANCE,
   hasPersistedAppearance,
@@ -124,7 +123,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     inboxSessionId: '',
     inboxSessionIds: {},
   },
-  adapters: { feishu: { runLocation: 'desktop' } },
   remoteDirectServerUrl: '',
   remoteDirectCredentialMode: 'password',
   remoteDirectUserName: '',
@@ -863,11 +861,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
     baseUrl: configuredExpertHubBaseUrl || DEFAULT_DESKTOP_SETTINGS.expertHub.baseUrl,
   };
 
-  if (source.adapters !== undefined) {
-    result.adapters = mergeAdapterSettings(result.adapters, source.adapters);
-  } else if (result.adapters === undefined) {
-    result.adapters = {};
-  }
+  // Adapter configuration moved into independently installed Apps.
+  delete result.adapters;
 
   deleteLegacyServerSettings(result);
   return result;
@@ -1081,7 +1076,6 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
           tavilyConfigured: Boolean(value.webSearch?.tavilyApiKey),
           braveConfigured: Boolean(value.webSearch?.braveApiKey),
         },
-        adapters: maskAdapterSettings(value.adapters),
         settingsPath: state.path,
         settingsExists: state.exists,
         settingsLoaded: state.loaded,

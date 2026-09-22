@@ -8,6 +8,7 @@ import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
 import { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { createServerAccountHostHandlers } from './apps/serverAccountHost.js'
+import { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { OpenIMIntegrationService } from './openim/service.js'
 import {
@@ -15,8 +16,16 @@ import {
   toOpenIMServerConfig,
   updateSystemSettings,
 } from './systemSettings.js'
-import { createAccountProtocolDefinition } from '../../packages/app-runtime/src/index.mjs'
-import { MOSS_ACCOUNT_PROTOCOL } from '../../packages/app-sdk/src/index.mjs'
+import {
+  createAccountProtocolDefinition,
+  createAgentProtocolDefinition,
+} from '../../packages/app-runtime/src/index.mjs'
+import {
+  AGENT_HOST_METHODS,
+  CHANNEL_HOST_METHODS,
+  MOSS_ACCOUNT_PROTOCOL,
+  MOSS_AGENT_PROTOCOL,
+} from '../../packages/app-sdk/src/index.mjs'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -47,11 +56,35 @@ export async function startStandaloneDirectConnectServer(
     serverInstanceId: instance.instanceId,
   })
   await runtime.reconcileOnStartup()
+  const logger = createServerLogger()
+  const agentChannelHost = new ServerAgentChannelHost(
+    config,
+    store.db,
+    runtime,
+    authService,
+    logger,
+  )
   const appRuntime = await ServerAppRuntime.create(config, instance.instanceId, {
-    hostProtocols: [createAccountProtocolDefinition()],
+    channelOptions: {
+      handlers: Object.fromEntries(CHANNEL_HOST_METHODS.map(method => [
+        method,
+        (input: Record<string, unknown>, context: Record<string, unknown>) => (
+          agentChannelHost.handleChannelRequest(method, input, context)
+        ),
+      ])),
+    },
+    hostProtocols: [createAccountProtocolDefinition(), createAgentProtocolDefinition()],
     hostHandlers: {
       [MOSS_ACCOUNT_PROTOCOL]: createServerAccountHostHandlers(authService),
+      [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map(method => [
+        method,
+        (input: Record<string, unknown>, context: Record<string, unknown>) => (
+          agentChannelHost.handleAgentRequest(method, input, context)
+        ),
+      ])),
     },
+    onEvent: event => agentChannelHost.onRuntimeEvent(event),
+    beforeInitialize: appHost => agentChannelHost.attachAppRuntime(appHost),
   })
   const ragflowIntegration = new RagflowIntegrationService({
     db: store.db,
@@ -92,7 +125,6 @@ export async function startStandaloneDirectConnectServer(
     authService,
   })
 
-  const logger = createServerLogger()
   const server = startServer(
     config,
     runtime,
@@ -101,6 +133,7 @@ export async function startStandaloneDirectConnectServer(
     appRuntime,
     ragflowIntegration,
     openIMIntegration,
+    agentChannelHost,
   )
   const actualPort = (await server.ready) ?? config.port
   const connectHost =
@@ -127,6 +160,7 @@ export async function startStandaloneDirectConnectServer(
     clearInterval(heartbeatTimer)
     await server.stop()
     await appRuntime.shutdown()
+    agentChannelHost.dispose()
     store.stopServerInstance(instance.instanceId)
     store.close()
   }

@@ -69,6 +69,7 @@ export type SessionRuntimeOptions = {
   apiKey?: string
   customSystemPrompt?: string
   appendSystemPrompt?: string
+  allowedTools?: string[] | null
   maxTurns?: number
   thinkingConfig?: SessionThinkingConfig
   webSearch?: SessionWebSearchSettings
@@ -219,6 +220,7 @@ export const sessionRuntimeOptionsSchema = lazySchema(() =>
     apiKey: z.string().max(16_384).optional(),
     customSystemPrompt: z.string().max(1_000_000).optional(),
     appendSystemPrompt: z.string().max(1_000_000).optional(),
+    allowedTools: z.array(z.string().trim().min(1).max(256)).max(512).nullable().optional(),
     maxTurns: z.number().int().min(1).max(10_000).optional(),
     thinkingConfig: sessionThinkingConfigSchema().optional(),
     webSearch: sessionWebSearchSettingsSchema().optional(),

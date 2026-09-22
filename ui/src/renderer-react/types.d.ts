@@ -73,7 +73,7 @@ export type SessionSummary = {
   projectMemoryVersion?: number;
   connectorIds?: string[];
   sessionKind?: 'chat' | 'cron' | 'agent-mail';
-  originChannel?: 'desktop' | 'feishu' | 'cron' | 'agent-mail';
+  originChannel?: string;
   sourceSessionId?: string | null;
   sourceSessionTitle?: string | null;
   cronTaskId?: string | null;
@@ -869,55 +869,6 @@ export type AskUserQuestionAnnotations = Record<string, {
   preview?: string;
   notes?: string;
 }>;
-
-export type PairedUser = {
-  userId: string | number
-  displayName: string
-  pairedAt: number
-}
-
-export type PairingState = {
-  code?: string | null
-  expiresAt?: number | null
-  createdAt?: number | null
-}
-
-export type AdapterFileConfig = {
-  serverUrl?: string
-  defaultProjectDir?: string
-  pairing?: PairingState
-  feishu?: {
-    appId?: string
-    appSecret?: string
-    encryptKey?: string
-    verificationToken?: string
-    allowedUsers?: string[]
-    pairedUsers?: PairedUser[]
-    defaultWorkDir?: string
-    runLocation?: 'desktop' | 'server'
-    serverDeployment?: {
-      serverUrl: string
-      credentialMode: 'password' | 'api-key'
-      userEmail: string
-      workspace: string
-      configFingerprint: string
-    }
-  }
-}
-
-export type FeishuAdapterStatus = {
-  status: 'stopped' | 'running' | 'disabled' | 'error';
-  pid: number | null;
-  bridgeReady: boolean;
-  error?: string | null;
-  transportConnected: boolean;
-  transportUpdatedAt?: number | null;
-  transportError?: string | null;
-  location: 'desktop' | 'server';
-  enabled?: boolean;
-  pairedUsers?: PairedUser[];
-  pairing?: PairingState;
-};
 
 export type McpServerConfig =
   | {
@@ -1931,13 +1882,6 @@ declare global {
       authenticateMcpServer: (payload: { name: string; sessionId?: string | null }) => Promise<McpSettingsPayload>;
       submitMcpAuthCallback: (payload: { name: string; callbackUrl: string }) => Promise<{ ok: boolean }>;
       clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;
-      getAdapterConfig: () => Promise<AdapterFileConfig>;
-      updateAdapterConfig: (patch: Partial<AdapterFileConfig>) => Promise<AdapterFileConfig>;
-      applyAdapterRuntime: (payload: { runLocation: 'desktop' | 'server' }) => Promise<{
-        config: AdapterFileConfig;
-        status: FeishuAdapterStatus;
-      }>;
-      getAdapterStatus: () => Promise<FeishuAdapterStatus>;
       listProjectTemplates: () => Promise<ProjectTemplate[]>;
       listProjects: (payload?: { includeArchived?: boolean }) => Promise<Project[]>;
       getProject: (payload: { projectId: string }) => Promise<Project>;
@@ -2329,7 +2273,6 @@ declare global {
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
       onSettingsChanged: (callback: (payload: DesktopSettings) => void) => () => void;
-      onAdapterStatus: (callback: (payload: FeishuAdapterStatus) => void) => () => void;
       onProjectsChanged: (callback: (payload: { projectId?: string; reason?: string }) => void) => () => void;
       onAssistantsChanged: (callback: (payload: { reason?: string; expertId?: string; sourcePath?: string }) => void) => () => void;
       listCoordinatorTasks: (sessionId?: string) => Promise<{ tasks: CoordinatorTask[] }>;

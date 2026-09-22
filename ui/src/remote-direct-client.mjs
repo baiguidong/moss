@@ -273,43 +273,6 @@ export async function parseRemoteDirectError(prefix, response) {
     : `${prefix}: ${response.status} ${response.statusText}`;
 }
 
-async function requestRemoteFeishuAdapter(settings, path, { method = 'GET', body } = {}) {
-  const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
-  let response;
-  try {
-    response = await remoteDirectFetch(`${serverUrl}/api/v1/adapters/feishu/${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${authToken}`,
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to connect to the Moss Server Feishu runtime: ${message}`);
-  }
-  if (!response.ok) {
-    throw new Error(await parseRemoteDirectError('Moss Server Feishu runtime request failed', response));
-  }
-  return response.json();
-}
-
-export function fetchRemoteFeishuAdapterStatus(settings) {
-  return requestRemoteFeishuAdapter(settings, 'status');
-}
-
-export function startRemoteFeishuAdapter(settings, config) {
-  return requestRemoteFeishuAdapter(settings, 'start', {
-    method: 'POST',
-    body: { config },
-  });
-}
-
-export function stopRemoteFeishuAdapter(settings) {
-  return requestRemoteFeishuAdapter(settings, 'stop', { method: 'POST' });
-}
-
 async function requestRemoteApps(settings, path = '', { method = 'GET', body } = {}) {
   const { serverUrl, authToken } = await resolveRemoteDirectConnection(settings);
   let response;
@@ -332,6 +295,11 @@ async function requestRemoteApps(settings, path = '', { method = 'GET', body } =
 export async function fetchRemoteApps(settings) {
   const result = await requestRemoteApps(settings);
   return Array.isArray(result?.apps) ? result.apps : [];
+}
+
+export async function fetchRemoteApp(settings, appId) {
+  const result = await requestRemoteApps(settings, `/${encodeURIComponent(appId)}`);
+  return result?.app || null;
 }
 
 export async function fetchRemoteAppAvailability(settings, packages) {
@@ -362,6 +330,11 @@ export function createRemoteAppInstance(settings, appId, input) {
   return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances`, { method: 'POST', body: input });
 }
 
+export async function listRemoteAppInstances(settings, appId) {
+  const result = await requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances`);
+  return Array.isArray(result?.instances) ? result.instances : [];
+}
+
 export function updateRemoteAppInstance(settings, appId, instanceId, patch) {
   return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}`, { method: 'PATCH', body: patch });
 }
@@ -376,6 +349,53 @@ export function removeRemoteAppInstance(settings, appId, instanceId, options = {
 
 export function restartRemoteAppInstance(settings, appId, instanceId) {
   return requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/restart`, { method: 'POST' });
+}
+
+export async function fetchRemoteAppInstanceStatus(settings, appId, instanceId) {
+  const result = await requestRemoteApps(settings, `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/status`);
+  return Array.isArray(result?.status) ? result.status : [];
+}
+
+export async function invokeRemoteAppAction(settings, appId, instanceId, name, input, options = {}) {
+  const result = await requestRemoteApps(
+    settings,
+    `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/actions/${encodeURIComponent(name)}`,
+    {
+      method: 'POST',
+      body: {
+        input,
+        ...(options.requestId ? { requestId: options.requestId } : {}),
+        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+      },
+    },
+  );
+  return result?.result;
+}
+
+export async function requestRemoteAppHostCapability(
+  settings,
+  appId,
+  instanceId,
+  protocol,
+  method,
+  input,
+  options = {},
+) {
+  const result = await requestRemoteApps(
+    settings,
+    `/${encodeURIComponent(appId)}/instances/${encodeURIComponent(instanceId)}/host`,
+    {
+      method: 'POST',
+      body: {
+        protocol,
+        method,
+        input,
+        ...(options.requestId ? { requestId: options.requestId } : {}),
+        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+      },
+    },
+  );
+  return result?.result;
 }
 
 export async function fetchRemoteAppLogs(settings, appId, instanceId, limit = 500) {
@@ -935,18 +955,20 @@ export function createRemoteDirectClient({ getSettings }) {
     requestRemoteDirectAccessToken,
     resolveRemoteDirectConnection: (settings) => resolveRemoteDirectConnection(currentSettings(settings)),
     parseRemoteDirectError,
-    fetchRemoteFeishuAdapterStatus: (settings) => fetchRemoteFeishuAdapterStatus(currentSettings(settings)),
-    startRemoteFeishuAdapter: (config, settings) => startRemoteFeishuAdapter(currentSettings(settings), config),
-    stopRemoteFeishuAdapter: (settings) => stopRemoteFeishuAdapter(currentSettings(settings)),
     fetchRemoteApps: (settings) => fetchRemoteApps(currentSettings(settings)),
+    fetchRemoteApp: (appId, settings) => fetchRemoteApp(currentSettings(settings), appId),
     fetchRemoteAppAvailability: (packages, settings) => fetchRemoteAppAvailability(currentSettings(settings), packages),
     installRemoteApp: (appId, version, grants = [], settings) => installRemoteApp(currentSettings(settings), appId, version, grants),
     updateRemoteApp: (appId, patch, settings) => updateRemoteApp(currentSettings(settings), appId, patch),
     uninstallRemoteApp: (appId, options, settings) => uninstallRemoteApp(currentSettings(settings), appId, options),
     createRemoteAppInstance: (appId, input, settings) => createRemoteAppInstance(currentSettings(settings), appId, input),
+    listRemoteAppInstances: (appId, settings) => listRemoteAppInstances(currentSettings(settings), appId),
     updateRemoteAppInstance: (appId, instanceId, patch, settings) => updateRemoteAppInstance(currentSettings(settings), appId, instanceId, patch),
     removeRemoteAppInstance: (appId, instanceId, options, settings) => removeRemoteAppInstance(currentSettings(settings), appId, instanceId, options),
     restartRemoteAppInstance: (appId, instanceId, settings) => restartRemoteAppInstance(currentSettings(settings), appId, instanceId),
+    fetchRemoteAppInstanceStatus: (appId, instanceId, settings) => fetchRemoteAppInstanceStatus(currentSettings(settings), appId, instanceId),
+    invokeRemoteAppAction: (appId, instanceId, name, input, options, settings) => invokeRemoteAppAction(currentSettings(settings), appId, instanceId, name, input, options),
+    requestRemoteAppHostCapability: (appId, instanceId, protocol, method, input, options, settings) => requestRemoteAppHostCapability(currentSettings(settings), appId, instanceId, protocol, method, input, options),
     fetchRemoteAppLogs: (appId, instanceId, limit, settings) => fetchRemoteAppLogs(currentSettings(settings), appId, instanceId, limit),
     fetchRemoteDirectSessions,
     fetchRemoteDirectSessionInfo,

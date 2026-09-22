@@ -12,7 +12,7 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function createFeishuAdapterStore(db, { now = () => Date.now() } = {}) {
+export function createDesktopStateStore(db, { now = () => Date.now() } = {}) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS external_conversations (
       id TEXT PRIMARY KEY,

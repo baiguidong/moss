@@ -92,10 +92,17 @@ import {
 } from './apps/app-ui-protocol.mjs';
 import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
 import {
+  createAgentChannelController,
+  createAgentChannelStore,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
   createOpenIMProtocolDefinition,
+  DEFAULT_AGENT_CHANNEL_POLICY,
   defaultInstanceId,
+  resolveAgentChannelConnectorIds,
+  resolveAgentChannelToolSelectors,
+  validateAgentChannelConnectorTool,
+  validateAgentChannelDelegation,
 } from '../../packages/app-runtime/src/index.mjs';
 import {
   AGENT_HOST_METHODS,
@@ -269,49 +276,7 @@ import {
   resolveToolPermissionQuestionAnswer,
   shouldAutoApproveToolPermission,
 } from './tool-permission-policy.mjs';
-import {
-  applyFeishuPairingAttempt,
-  getFeishuAdapterRunLocation,
-  hasFeishuAdapterCredentials,
-  maskAdapterSettings,
-  mergeAdapterSettings,
-  withoutFeishuRunLocation,
-} from './adapter-settings.mjs';
-import {
-  createFeishuAdapterProcessManager,
-  resolveFeishuAdapterEntryPath,
-} from './adapter-process-manager.mjs';
-import { createFeishuAdapterStore } from './feishu-adapter-store.mjs';
-import {
-  createAgentChannelStore,
-  DEFAULT_AGENT_CHANNEL_POLICY,
-} from './agent-channel-store.mjs';
-import {
-  createAgentChannelController,
-  resolveAgentChannelConnectorIds,
-  resolveAgentChannelToolSelectors,
-  validateAgentChannelConnectorTool,
-  validateAgentChannelDelegation,
-} from './agent-channel-controller.mjs';
-import { createFeishuAdapterController } from './feishu-adapter-controller.mjs';
-import {
-  FEISHU_APP_ID,
-  FEISHU_APP_INSTANCE_ID,
-  claimFeishuPairingEvent,
-  configureFeishuAppFromLegacy,
-  constrainFeishuAgentPolicy,
-  getFeishuAppProcessStatus,
-  hasFeishuAppMigrationMarker,
-  isFeishuAppReady,
-  isFeishuLegacyFallbackEnabled,
-  persistFeishuAppAuthorization,
-  publishFeishuAppEvent,
-  mapChannelRequestToLegacy,
-  resolveFeishuChannelIdentity,
-  shouldUseFeishuAppStatus,
-  splitLegacyFeishuAppConfiguration,
-  withFeishuAppMigrationMarker,
-} from './feishu-app-runtime.mjs';
+import { createDesktopStateStore } from './desktop-state-store.mjs';
 import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import {
@@ -733,34 +698,13 @@ let localAuditService = null;
 let libraryService = null;
 let libraryExtensionManager = null;
 let localAuditScanTimer = null;
-let feishuAdapterProcessManager = null;
-let feishuAdapterController = null;
 let agentChannelController = null;
-let feishuAppMode = false;
-let feishuAppBackendReady = false;
 let appDecisionBroker = null;
-let feishuLegacyTransportStatus = { connected: false, updatedAt: null, error: null };
-let feishuAppTransportStatus = { connected: false, updatedAt: null, error: null };
-let remoteFeishuStatus = {
-  status: 'stopped',
-  pid: null,
-  bridgeReady: false,
-  transportConnected: false,
-  transportUpdatedAt: null,
-  error: null,
-  location: 'server',
-  enabled: false,
-};
 let remoteSessionSyncPromise = null;
 let localSessionReconciliationPromise = null;
 let lastRemoteSessionSyncErrorMessage = '';
 let remoteDirectTlsRestartRequired = false;
 const REMOTE_DIRECT_TLS_RESTART_MESSAGE = '新证书已接受并保存。请完全退出并重新启动 Moss，然后再次点击“重新认证”。';
-let feishuRuntimeTransition = Promise.resolve();
-let remoteFeishuMemorySyncTimer = null;
-const feishuPairingFailures = new Map();
-const FEISHU_PAIRING_RATE_WINDOW_MS = 5 * 60_000;
-const FEISHU_PAIRING_MAX_FAILURES = 5;
 
 if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
@@ -924,7 +868,7 @@ const memoryCatalog = createMemoryCatalog({
   readRemoteGlobalMemory: (filePath) => readRemoteGlobalMemoryForDesktop(filePath),
   readRemoteSessionMemory: (sessionId) => readRemoteSessionMemoryForDesktop(sessionId),
 });
-const feishuAdapterStore = createFeishuAdapterStore(sessionDb);
+const desktopStateStore = createDesktopStateStore(sessionDb);
 const agentChannelStore = createAgentChannelStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
@@ -1355,8 +1299,8 @@ const {
   fetchRemoteProfileMemory,
   fetchRemoteProfileMemoryFile,
   fetchRemoteSessionMemory,
-  fetchRemoteFeishuAdapterStatus,
   fetchRemoteApps,
+  fetchRemoteApp,
   fetchRemoteAppAvailability,
   getDesktopAgentMode,
   getRemoteDirectSettings,
@@ -1365,15 +1309,17 @@ const {
   parseRemoteDirectError,
   resolveRemoteDirectConnection,
   resumeRemoteDirectSession,
-  startRemoteFeishuAdapter,
-  stopRemoteFeishuAdapter,
   installRemoteApp,
   updateRemoteApp,
   uninstallRemoteApp,
   createRemoteAppInstance,
+  listRemoteAppInstances,
   updateRemoteAppInstance,
   removeRemoteAppInstance,
   restartRemoteAppInstance,
+  fetchRemoteAppInstanceStatus,
+  invokeRemoteAppAction,
+  requestRemoteAppHostCapability,
   fetchRemoteAppLogs,
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
 
@@ -3372,9 +3318,7 @@ function filterAgentChannelResourceSelection(requested, available, aliases = new
 }
 
 async function authorizeAgentChannelPolicy(policy, context = null) {
-  const requestedPolicy = context?.appId === FEISHU_APP_ID
-    ? constrainFeishuAgentPolicy(policy)
-    : policy;
+  const requestedPolicy = policy;
   const catalog = await getAgentChannelCatalog();
   const agent = requestedPolicy.agentId
     ? catalog.agents.find((entry) => entry.id === requestedPolicy.agentId)
@@ -3474,17 +3418,26 @@ async function applyAgentChannelSessionPolicy(sessionId, policy) {
 }
 
 function toAgentChannelSessionOption(sessionRecord, context) {
-  const session = toFeishuSessionOption(sessionRecord);
-  if (!session) return null;
-  if (context?.appId === FEISHU_APP_ID) {
-    return sessionRecord.originChannel === 'feishu'
-      ? { ...session, messageCount: sessionRecord.messageCount }
-      : null;
-  }
-  return sessionRecord.channelAppId === context?.appId
-    && sessionRecord.channelInstanceId === context?.instanceId
-    ? { ...session, messageCount: sessionRecord.messageCount }
-    : null;
+  if (
+    !sessionRecord
+    || sessionRecord.agentMode !== 'local'
+    || sessionRecord.isSubAgent
+    || sessionRecord.sessionKind === 'cron'
+    || sessionRecord.channelAppId !== context?.appId
+    || sessionRecord.channelInstanceId !== context?.instanceId
+  ) return null;
+  const summary = getSessionSummary(sessionRecord);
+  if (summary.resumeReadOnlyReason) return null;
+  return {
+    id: summary.id,
+    title: summary.title,
+    preview: normalizePreviewText(summary.preview, 100),
+    updatedAt: summary.updatedAt,
+    busy: summary.busy,
+    projectName: summary.projectName || null,
+    originChannel: summary.originChannel,
+    messageCount: sessionRecord.messageCount,
+  };
 }
 
 function getWritableAgentChannelSession(sessionId, context) {
@@ -3506,12 +3459,11 @@ function listWritableAgentChannelSessions(query = '', context = null) {
 
 async function createSessionFromAgentChannel(input = {}) {
   const appId = String(input.appId || '').trim();
-  const isFeishu = appId === FEISHU_APP_ID;
   const sessionRecord = createSessionRecord({
     title: String(input.title || '').trim().slice(0, 120)
-      || (isFeishu ? '飞书会话' : 'Agent Channel 会话'),
+      || 'App Channel 会话',
     agentMode: 'local',
-    originChannel: isFeishu ? 'feishu' : `app:${appId}`,
+    originChannel: `app:${appId}`,
   });
   sessionRecord.channelAppId = appId;
   sessionRecord.channelInstanceId = String(input.instanceId || '').trim();
@@ -3631,13 +3583,6 @@ async function getDesktopAccountDirectory(input = {}) {
   };
 }
 
-const FEISHU_AGENT_CHANNEL_DEFAULTS = Object.freeze({
-  ...DEFAULT_AGENT_CHANNEL_POLICY,
-  replyMode: 'ai_auto',
-  resources: Object.freeze({ tools: null, skills: null, connectors: null }),
-  session: Object.freeze({ mode: 'fixed', rotateAfterTurns: 24 }),
-});
-
 function currentOpenIMReadyScope(appId, instanceId) {
   if (appId !== OPENIM_APP_ID) return { appId, instanceId };
   const currentUserId = openIMIntegration.getCurrentUserId();
@@ -3687,71 +3632,10 @@ function authorizeOpenIMChannelRequest(method, input, context) {
 }
 
 function agentChannelDefaults(context) {
-  if (context?.appId === FEISHU_APP_ID) return FEISHU_AGENT_CHANNEL_DEFAULTS;
   return DEFAULT_AGENT_CHANNEL_POLICY;
 }
 
-function assertDesktopChannelAvailable(context) {
-  if (context?.appId !== FEISHU_APP_ID) return;
-  if (
-    context.instanceId !== FEISHU_APP_INSTANCE_ID
-    || isFeishuLegacyFallbackEnabled()
-    || getFeishuRunLocation() !== 'desktop'
-  ) {
-    throw new Error('The moss.feishu Channel is not active on this Desktop Host.');
-  }
-}
-
-function resolveFeishuChannelConversation(input, context) {
-  const openId = String(input.externalUserId || '').trim();
-  const requestedChatId = String(input.externalConversationId || '').trim();
-  if (!requestedChatId) throw new Error('Feishu private-chat identity is incomplete.');
-  const identity = resolveFeishuAdapterIdentity(openId, context);
-  const legacyConversation = feishuAdapterStore.getOrCreateConversation({
-    ...identity,
-    chatId: requestedChatId,
-    pairedOpenId: openId,
-  });
-
-  const normalizedInput = {
-    ...input,
-    externalConversationId: legacyConversation.chatId,
-  };
-  const conversation = agentChannelStore.getOrCreateConversation({
-    appId: context.appId,
-    instanceId: context.instanceId,
-    externalConversationId: legacyConversation.chatId,
-  });
-  if (
-    !conversation.activeSessionId
-    && legacyConversation.activeSessionId
-    && getWritableAgentChannelSession(legacyConversation.activeSessionId, context)
-  ) {
-    agentChannelStore.setConversationSession(conversation.id, legacyConversation.activeSessionId);
-  }
-  return { input: normalizedInput, legacyConversation };
-}
-
 async function handleDesktopChannelRequest(method, input, context) {
-  assertDesktopChannelAvailable(context);
-  if (context.appId === FEISHU_APP_ID) {
-    if (method === 'connection.update' || method === 'pairing.attempt') {
-      return handleFeishuProcessRequest(mapChannelRequestToLegacy(method, input), context);
-    }
-    if (method === 'message.receive') {
-      const resolved = resolveFeishuChannelConversation(input, context);
-      const result = await agentChannelController.handleChannelRequest(method, resolved.input, context);
-      const selectedSession = result?.session || result?.currentSession || null;
-      if (selectedSession?.id) {
-        feishuAdapterStore.setActiveSession(resolved.legacyConversation.id, selectedSession.id);
-      }
-      return result;
-    }
-    if (method === 'delivery.ack' && input.kind === 'turn') {
-      return agentChannelController.handleChannelRequest(method, input, context);
-    }
-    throw new Error(`Unsupported Feishu Channel method: ${method}`);
-  }
   authorizeOpenIMChannelRequest(method, input, context);
   return agentChannelController.handleChannelRequest(method, input, context);
 }
@@ -4839,13 +4723,6 @@ function refreshDesktopSettings(payload = {}) {
   }
   invalidateEmbeddedSettingsCache();
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
-  if (
-    Object.prototype.hasOwnProperty.call(payload, 'autoMemory') ||
-    Object.prototype.hasOwnProperty.call(payload, 'sessionMemory')
-  ) {
-    scheduleRemoteFeishuMemorySync();
-  }
-
   let skippedSessionCount = 0;
   const affectsAgentRuntime = Object.keys(payload)
     .some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
@@ -4886,10 +4763,9 @@ function normalizeSessionKind(value) {
 }
 
 function normalizeOriginChannel(value, sessionKind) {
-  if (value === 'feishu') return 'feishu';
   if (value === 'agent-mail' || sessionKind === 'agent-mail') return 'agent-mail';
   if (value === 'cron' || sessionKind === 'cron') return 'cron';
-  if (typeof value === 'string' && /^app:[a-z0-9][a-z0-9._-]{0,79}$/.test(value)) return value;
+  if (typeof value === 'string' && /^(?:app:)?[a-z0-9][a-z0-9._-]{0,79}$/.test(value)) return value;
   return 'desktop';
 }
 
@@ -8975,14 +8851,6 @@ function findRemoteDirectSessionRecord(serverSessionId) {
   )) || null;
 }
 
-function enqueueFeishuRuntimeTransition(task) {
-  const transition = feishuRuntimeTransition
-    .catch(() => {})
-    .then(task);
-  feishuRuntimeTransition = transition.catch(() => {});
-  return transition;
-}
-
 async function syncRemoteDirectSessionsFromServer() {
   if (remoteSessionSyncPromise) return remoteSessionSyncPromise;
   remoteSessionSyncPromise = (async () => {
@@ -8997,7 +8865,7 @@ async function syncRemoteDirectSessionsFromServer() {
         : '';
       if (!serverSessionId) continue;
 
-      const originChannel = remoteSession.originChannel === 'feishu' ? 'feishu' : 'desktop';
+      const originChannel = normalizeOriginChannel(remoteSession.originChannel, 'chat');
       const createdAt = remoteSessionTimestamp(remoteSession.createdAt);
       const lastActiveAt = remoteSessionTimestamp(remoteSession.lastActiveAt, createdAt);
       let sessionRecord = findRemoteDirectSessionRecord(serverSessionId);
@@ -9007,7 +8875,7 @@ async function syncRemoteDirectSessionsFromServer() {
         sessionRecord = createSessionRecord({
           title: typeof remoteSession.title === 'string' && remoteSession.title.trim()
             ? remoteSession.title.trim()
-            : originChannel === 'feishu' ? '飞书会话' : 'Moss Server 会话',
+            : originChannel === 'desktop' ? 'Moss Server 会话' : 'App Channel 会话',
           assistantName: typeof remoteSession.assistantName === 'string'
             ? remoteSession.assistantName
             : null,
@@ -10110,8 +9978,8 @@ function findAgentMailDecisionForMessage(messageId, mailboxKey) {
     decision.payload?.messageId === messageId &&
     decision.payload?.mailboxKey === mailboxKey
   );
-  return feishuAdapterStore.listPendingDecisions().find(matchesMessage)
-    || feishuAdapterStore.listTerminalDecisions().find(matchesMessage)
+  return desktopStateStore.listPendingDecisions().find(matchesMessage)
+    || desktopStateStore.listTerminalDecisions().find(matchesMessage)
     || null;
 }
 
@@ -10243,7 +10111,7 @@ function createAgentMailApproval(message, context = {}) {
   if (!appDecisionBroker) return;
   const mailboxKey = String(context.mailboxKey || '').trim();
   if (!mailboxKey) throw new Error('Agent Mail mailbox identity is unavailable.');
-  const existing = feishuAdapterStore.listPendingDecisions()
+  const existing = desktopStateStore.listPendingDecisions()
     .find((decision) => (
       decision.kind === 'agent_mail_approval' &&
       decision.payload?.messageId === message.messageId &&
@@ -11169,748 +11037,20 @@ const {
   runSessionPrompt,
 });
 
-function getFeishuRequestConfiguration(channelContext = null) {
-  const adapters = readPersistedAdapterSettings();
-  const appInstanceId = channelContext?.appId === FEISHU_APP_ID
-    ? channelContext.instanceId
-    : feishuAppMode ? FEISHU_APP_INSTANCE_ID : null;
-  if (appInstanceId) {
-    const instance = desktopAppRuntime?.instances?.get(appInstanceId);
-    if (!instance || instance.appId !== FEISHU_APP_ID) return {};
-    return instance.config && typeof instance.config === 'object' ? instance.config : {};
-  }
-  return adapters?.feishu && typeof adapters.feishu === 'object' ? adapters.feishu : {};
-}
-
-function resolveFeishuAdapterIdentity(openId, channelContext = null) {
-  return resolveFeishuChannelIdentity(getFeishuRequestConfiguration(channelContext), openId);
-}
-
-function isFeishuPairingRateLimited(openId) {
-  const record = feishuPairingFailures.get(openId);
-  if (!record) return false;
-  if (Date.now() - record.startedAt > FEISHU_PAIRING_RATE_WINDOW_MS) {
-    feishuPairingFailures.delete(openId);
-    return false;
-  }
-  return record.failures >= FEISHU_PAIRING_MAX_FAILURES;
-}
-
-function recordFeishuPairingFailure(openId) {
-  const current = feishuPairingFailures.get(openId);
-  if (!current || Date.now() - current.startedAt > FEISHU_PAIRING_RATE_WINDOW_MS) {
-    feishuPairingFailures.set(openId, { failures: 1, startedAt: Date.now() });
-    return;
-  }
-  current.failures += 1;
-}
-
-function isKnownFeishuUser(adapters, openId) {
-  const feishu = adapters?.feishu && typeof adapters.feishu === 'object' ? adapters.feishu : {};
-  return (Array.isArray(feishu.pairedUsers) ? feishu.pairedUsers : [])
-    .some((entry) => String(entry?.userId || '') === openId)
-    || (Array.isArray(feishu.allowedUsers) ? feishu.allowedUsers : [])
-      .some((entry) => String(entry || '') === openId);
-}
-
-async function pairFeishuUserFromAdapter(payload, channelContext = null) {
-  const openId = typeof payload.openId === 'string' ? payload.openId.trim() : '';
-  const chatId = typeof payload.chatId === 'string' ? payload.chatId.trim() : '';
-  const eventId = typeof payload.eventId === 'string' ? payload.eventId.trim() : '';
-  const code = typeof payload.code === 'string' ? payload.code.trim() : '';
-  if (!openId || !chatId || !code) return { paired: false };
-  const persistedAdapters = readPersistedAdapterSettings();
-  const appInstance = channelContext?.appId === FEISHU_APP_ID
-    ? desktopAppRuntime?.instances?.get(channelContext.instanceId)
-    : null;
-  const appConfig = appInstance?.config && typeof appInstance.config === 'object'
-    ? appInstance.config
-    : {};
-  const pairingSource = appInstance
-    ? {
-        ...persistedAdapters,
-        feishu: {
-          ...(persistedAdapters.feishu || {}),
-          appId: appConfig.appId,
-          allowedUsers: appConfig.allowedUsers,
-          pairedUsers: appConfig.pairedUsers,
-        },
-        pairing: appConfig.pairing,
-      }
-    : persistedAdapters;
-  const pairingAppId = typeof pairingSource.feishu?.appId === 'string'
-    ? pairingSource.feishu.appId.trim()
-    : '';
-  const pairingAdapterInstanceId = pairingAppId ? `feishu:${pairingAppId}` : '';
-  const knownUser = isKnownFeishuUser(pairingSource, openId);
-  const pairingEvent = claimFeishuPairingEvent(feishuAdapterStore, {
-    adapterInstanceId: pairingAdapterInstanceId,
-    eventId,
-    knownUser,
-  });
-  if (!pairingEvent.proceed) return pairingEvent.result;
-  const { existingEvent } = pairingEvent;
-  if (knownUser) {
-    if (!isKnownFeishuUser(persistedAdapters, openId)) {
-      const synchronized = mergeAdapterSettings(persistedAdapters, {
-        feishu: {
-          appId: appConfig.appId,
-          allowedUsers: appConfig.allowedUsers,
-          pairedUsers: appConfig.pairedUsers,
-        },
-      });
-      saveDesktopSettings({ ...desktopSettings, adapters: synchronized });
-    }
-    const identity = resolveFeishuAdapterIdentity(openId, channelContext);
-    const conversation = feishuAdapterStore.getOrCreateConversation({
-      ...identity,
-      chatId,
-      pairedOpenId: openId,
-    });
-    if (existingEvent?.eventType === 'pairing') {
-      feishuAdapterStore.updateEvent(pairingAdapterInstanceId, eventId, {
-        status: 'completed', sessionId: null, turnId: null, error: null,
-      });
-    }
-    return {
-      paired: true,
-      alreadyPaired: true,
-      duplicate: existingEvent?.eventType === 'pairing',
-      conversationId: conversation.id,
-    };
-  }
-  if (isFeishuPairingRateLimited(openId)) {
-    if (eventId) {
-      feishuAdapterStore.updateEvent(pairingAdapterInstanceId, eventId, {
-        status: 'failed', sessionId: null, turnId: null, error: 'Pairing rate limit exceeded.',
-      });
-    }
-    return { paired: false };
-  }
-  const result = applyFeishuPairingAttempt(pairingSource, {
-    code,
-    openId,
-    displayName: payload.displayName,
-  });
-  if (!result.matched) {
-    recordFeishuPairingFailure(openId);
-    if (eventId) {
-      feishuAdapterStore.updateEvent(pairingAdapterInstanceId, eventId, {
-        status: 'failed', sessionId: null, turnId: null, error: 'Pairing code is invalid or expired.',
-      });
-    }
-    return { paired: false };
-  }
-  feishuPairingFailures.delete(openId);
-  const merged = mergeAdapterSettings(persistedAdapters, {
-    feishu: {
-      ...(appInstance ? {
-        appId: appConfig.appId,
-        allowedUsers: appConfig.allowedUsers,
-      } : {}),
-      pairedUsers: result.config.feishu?.pairedUsers || [],
-    },
-    pairing: result.config.pairing,
-  });
-  saveDesktopSettings({ ...desktopSettings, adapters: merged });
-  if (channelContext?.appId === FEISHU_APP_ID) {
-    await persistFeishuAppAuthorization(desktopAppRuntime, merged);
-  } else {
-    await feishuAdapterProcessManager?.sync(merged);
-  }
-  const identity = resolveFeishuAdapterIdentity(openId, channelContext);
-  const conversation = feishuAdapterStore.getOrCreateConversation({
-    ...identity,
-    chatId,
-    pairedOpenId: openId,
-  });
-  if (eventId) {
-    feishuAdapterStore.updateEvent(pairingAdapterInstanceId, eventId, {
-      status: 'completed', sessionId: null, turnId: null, error: null,
-    });
-  }
-  emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
-  return { paired: true, conversationId: conversation.id };
-}
-
-function toFeishuSessionOption(sessionRecord) {
-  if (
-    !sessionRecord
-    || sessionRecord.agentMode !== 'local'
-    || sessionRecord.isSubAgent
-    || sessionRecord.sessionKind === 'cron'
-  ) return null;
-  const summary = getSessionSummary(sessionRecord);
-  if (summary.resumeReadOnlyReason) return null;
-  return {
-    id: summary.id,
-    title: summary.title,
-    preview: normalizePreviewText(summary.preview, 100),
-    updatedAt: summary.updatedAt,
-    busy: summary.busy,
-    projectName: summary.projectName || null,
-    originChannel: summary.originChannel,
-  };
-}
-
-function getWritableFeishuSessionOption(sessionId) {
-  const sessionRecord = typeof sessionId === 'string' ? sessions.get(sessionId) : null;
-  return sessionRecord?.originChannel === 'feishu'
-    ? toFeishuSessionOption(sessionRecord)
-    : null;
-}
-
-async function createSessionFromFeishu() {
-  const sessionRecord = createSessionRecord({
-    title: '飞书会话',
-    agentMode: 'local',
-    originChannel: 'feishu',
-  });
-  await prepareAssistantContextForSessionStart(sessionRecord);
-  return toFeishuSessionOption(sessionRecord);
-}
-
-async function sendPromptFromFeishu(sessionId, prompt) {
-  const sessionRecord = sessions.get(sessionId);
-  if (!toFeishuSessionOption(sessionRecord)) throw new Error('The selected Moss session is not writable.');
-  const result = await sendAgentPrompt(null, {
-    sessionId,
-    prompt,
-    mode: sessionRecord.projectId || sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
-    coordinatorMode: Boolean(sessionRecord.projectId || sessionRecord.isCoordinatorMode),
-  }, {
-    allowBusyQueue: true,
-    sourceChannel: 'feishu',
-  });
-  return { ...result, title: sessionRecord.title };
-}
-
-function refreshFeishuAppBackendReadiness() {
-  const ready = Boolean(
-    feishuAppMode
-    && isFeishuAppReady(desktopAppRuntime, feishuAppTransportStatus)
-  );
-  const becameReady = ready && !feishuAppBackendReady;
-  feishuAppBackendReady = ready;
-  if (becameReady) {
-    feishuAdapterController?.onReady();
-  }
-  return ready;
-}
-
-function sendFeishuTransportEvent(type, payload) {
-  if (!['turn.completed', 'turn.failed'].includes(type)) return false;
-  if (feishuAppMode && desktopAppRuntime) {
-    void publishFeishuAppEvent(desktopAppRuntime, type, payload).catch((error) => {
-      mossLog('warn', 'feishu-app', `Unable to publish ${type}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-    return true;
-  }
-  return feishuAdapterProcessManager?.send(type, payload) || false;
-}
-
-async function handleFeishuProcessRequest(request, channelContext = null) {
-  if (request.type === 'pairing.attempt') {
-    const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    return enqueueFeishuRuntimeTransition(() => pairFeishuUserFromAdapter(payload, channelContext));
-  }
-  if (request.type === 'adapter.connection') {
-    const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    const nextStatus = {
-      connected: Boolean(payload.connected),
-      updatedAt: Date.now(),
-      error: typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : null,
-    };
-    if (channelContext?.appId === FEISHU_APP_ID) {
-      // App activation can also be initiated from the generic Apps UI. Make
-      // the ownership hand-off explicit before acknowledging its connection.
-      if (nextStatus.connected && feishuAdapterProcessManager?.getStatus().pid) {
-        throw new Error('The legacy Feishu Adapter is still running. Stop it before enabling the Feishu App.');
-      }
-      feishuAppTransportStatus = nextStatus;
-      refreshFeishuAppBackendReadiness();
-    } else {
-      feishuLegacyTransportStatus = nextStatus;
-      if (nextStatus.connected) feishuAdapterProcessManager?.markHealthy();
-    }
-    const status = emitFeishuAdapterStatus();
-    return status;
-  }
-  if (request.type === 'turn.delivery.ack') {
-    const payload = request?.payload && typeof request.payload === 'object' ? request.payload : {};
-    const turnId = typeof payload.turnId === 'string' ? payload.turnId.trim() : '';
-    const chatId = typeof payload.chatId === 'string' ? payload.chatId.trim() : '';
-    const turn = feishuAdapterStore.getTurn(turnId);
-    if (!turn || !['completed', 'failed'].includes(turn.status)) {
-      throw new Error('Terminal Feishu turn delivery not found.');
-    }
-    const conversation = turn.conversationId
-      ? feishuAdapterStore.getConversation(turn.conversationId)
-      : null;
-    if (!conversation || conversation.chatId !== chatId) {
-      throw new Error('Feishu turn delivery conversation does not match.');
-    }
-    return feishuAdapterStore.markTurnDelivered(turn.id);
-  }
-  return feishuAdapterController.handleRequest(request, channelContext);
-}
-
-function getFeishuRunLocation(adapters = readPersistedAdapterSettings()) {
-  return getFeishuAdapterRunLocation(adapters);
-}
-
-function getRemoteFeishuConfig(adapters) {
-  const feishu = adapters?.feishu && typeof adapters.feishu === 'object'
-    ? adapters.feishu
-    : {};
-  const {
-    runLocation: _runLocation,
-    serverDeployment: _serverDeployment,
-    streamingCard: _streamingCard,
-    ...runtimeConfig
-  } = feishu;
-  return {
-    ...runtimeConfig,
-    autoMemory: desktopSettings.autoMemory,
-    sessionMemory: desktopSettings.sessionMemory,
-    pairing: adapters?.pairing && typeof adapters.pairing === 'object'
-      ? adapters.pairing
-      : { code: null, expiresAt: null, createdAt: null },
-  };
-}
-
-function normalizeFeishuServerDeployment(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const serverUrl = typeof value.serverUrl === 'string' ? value.serverUrl.trim() : '';
-  if (!serverUrl) return null;
-  return {
-    serverUrl,
-    credentialMode: value.credentialMode === 'password' ? 'password' : 'api-key',
-    userEmail: typeof value.userEmail === 'string' ? value.userEmail.trim() : '',
-    workspace: typeof value.workspace === 'string' ? value.workspace.trim() : '',
-    configFingerprint: typeof value.configFingerprint === 'string'
-      ? value.configFingerprint.trim()
-      : '',
-  };
-}
-
-function getFeishuServerConfigFingerprint(adapters) {
-  const config = getRemoteFeishuConfig(adapters);
-  return createHash('sha256').update(JSON.stringify({
-    appId: typeof config.appId === 'string' ? config.appId.trim() : '',
-    appSecret: typeof config.appSecret === 'string' ? config.appSecret : '',
-    encryptKey: typeof config.encryptKey === 'string' ? config.encryptKey : '',
-    verificationToken: typeof config.verificationToken === 'string' ? config.verificationToken : '',
-    allowedUsers: Array.isArray(config.allowedUsers) ? config.allowedUsers.map(String) : [],
-    pairedUsers: Array.isArray(config.pairedUsers) ? config.pairedUsers : [],
-    defaultWorkDir: typeof config.defaultWorkDir === 'string' ? config.defaultWorkDir.trim() : '',
-    autoMemory: config.autoMemory,
-    sessionMemory: config.sessionMemory,
-    pairing: config.pairing && typeof config.pairing === 'object' ? config.pairing : {},
-  })).digest('hex');
-}
-
-function scheduleRemoteFeishuMemorySync() {
-  if (remoteFeishuMemorySyncTimer) {
-    clearTimeout(remoteFeishuMemorySyncTimer);
-  }
-  if (getFeishuRunLocation() !== 'server') {
-    remoteFeishuMemorySyncTimer = null;
-    return;
-  }
-  remoteFeishuMemorySyncTimer = setTimeout(() => {
-    remoteFeishuMemorySyncTimer = null;
-    const adapters = readPersistedAdapterSettings();
-    if (!hasFeishuAdapterCredentials(adapters)) return;
-    void enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(adapters))
-      .catch((error) => {
-        mossLog('error', 'feishu-adapter', 'Failed to synchronize memory settings', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }, 250);
-  remoteFeishuMemorySyncTimer.unref?.();
-}
-
-function getKnownFeishuServerDeployment(adapters = readPersistedAdapterSettings()) {
-  return normalizeFeishuServerDeployment(adapters?.feishu?.serverDeployment);
-}
-
-function getCurrentFeishuServerDeployment() {
-  const remote = getRemoteDirectSettings();
-  if (!remote.serverUrl) return null;
-  return {
-    serverUrl: remote.serverUrl,
-    credentialMode: remote.credentialMode,
-    userEmail: remote.userEmail,
-  };
-}
-
-function isSameFeishuServer(left, right) {
-  if (!left || !right) return false;
-  return getRemoteCredentialServerUrl(left.serverUrl) === getRemoteCredentialServerUrl(right.serverUrl);
-}
-
-function getFeishuDeploymentSettings(deployment) {
-  const current = getCurrentFeishuServerDeployment();
-  if (isSameFeishuServer(current, deployment)) return desktopSettings;
-  const credentialServerUrl = getRemoteCredentialServerUrl(deployment.serverUrl);
-  const credentials = getRemoteDirectCredentials(credentialServerUrl);
-  const credentialMode = credentials.apiKey ? 'api-key' : deployment.credentialMode;
-  return {
-    remoteDirect: {
-      serverUrl: deployment.serverUrl,
-      credentialMode,
-      userEmail: deployment.userEmail,
-      userPassword: credentials.userPassword,
-      apiKey: credentials.apiKey,
-    },
-  };
-}
-
-function setKnownFeishuServerDeployment(deployment) {
-  const adapters = readPersistedAdapterSettings();
-  const feishu = adapters?.feishu && typeof adapters.feishu === 'object' ? { ...adapters.feishu } : {};
-  if (deployment) feishu.serverDeployment = deployment;
-  else delete feishu.serverDeployment;
-  saveDesktopSettings({
-    ...desktopSettings,
-    adapters: { ...adapters, feishu },
-  });
-}
-
-async function stopFeishuServerDeployment(deployment) {
-  const stopped = await stopRemoteFeishuAdapter(getFeishuDeploymentSettings(deployment));
-  remoteFeishuStatus = { ...remoteFeishuStatus, ...(stopped.status || {}), location: 'server' };
-  const known = getKnownFeishuServerDeployment();
-  if (isSameFeishuServer(known, deployment)) setKnownFeishuServerDeployment(null);
-  return stopped;
-}
-
-function mergeRemoteFeishuOperationalState(status) {
-  if (!status || typeof status !== 'object' || status.enabled === false) return;
-  const current = readPersistedAdapterSettings();
-  const feishu = current?.feishu && typeof current.feishu === 'object' ? current.feishu : {};
-  const nextPairedUsers = Array.isArray(status.pairedUsers) ? status.pairedUsers : feishu.pairedUsers;
-  const nextPairing = status.pairing && typeof status.pairing === 'object'
-    ? status.pairing
-    : current.pairing;
-  if (
-    JSON.stringify(nextPairedUsers || []) === JSON.stringify(feishu.pairedUsers || [])
-    && JSON.stringify(nextPairing || {}) === JSON.stringify(current.pairing || {})
-  ) return;
-  const merged = mergeAdapterSettings(current, {
-    feishu: { ...feishu, pairedUsers: nextPairedUsers || [] },
-    pairing: nextPairing || { code: null, expiresAt: null, createdAt: null },
-  });
-  saveDesktopSettings({ ...desktopSettings, adapters: merged });
-  emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
-}
-
-function getFeishuAdapterStatus() {
-  const location = getFeishuRunLocation();
-  if (location === 'server') {
-    return { ...remoteFeishuStatus, location: 'server' };
-  }
-  const adapters = readPersistedAdapterSettings();
-  const runtimeAppStatus = getFeishuAppProcessStatus(desktopAppRuntime);
-  const appStatus = shouldUseFeishuAppStatus({
-    appMode: feishuAppMode,
-    appEnabled: runtimeAppStatus?.enabled,
-    legacyFallback: isFeishuLegacyFallbackEnabled(),
-    legacyPid: feishuAdapterProcessManager?.getStatus().pid,
-  })
-    ? runtimeAppStatus || {
-        status: 'disabled',
-        pid: null,
-        bridgeReady: false,
-        enabled: false,
-        error: '飞书 App 未安装',
-      }
-    : null;
-  const appConfig = appStatus
-    ? desktopAppRuntime?.instances?.get(FEISHU_APP_INSTANCE_ID)?.config || {}
-    : {};
-  const transportStatus = appStatus ? feishuAppTransportStatus : feishuLegacyTransportStatus;
-  const runtimeStatus = appStatus
-    || feishuAdapterProcessManager?.getStatus()
-    || { status: 'stopped', pid: null, bridgeReady: false };
-  const runtimeEnabled = appStatus ? appStatus.enabled : hasFeishuAdapterCredentials(adapters);
-  return {
-    ...runtimeStatus,
-    transportConnected: Boolean(runtimeEnabled && runtimeStatus.bridgeReady && transportStatus.connected),
-    transportUpdatedAt: transportStatus.updatedAt,
-    transportError: runtimeEnabled ? transportStatus.error : null,
-    location: 'desktop',
-    enabled: runtimeEnabled,
-    pairedUsers: Array.isArray(appConfig.pairedUsers)
-      ? appConfig.pairedUsers
-      : Array.isArray(adapters?.feishu?.pairedUsers) ? adapters.feishu.pairedUsers : [],
-    pairing: appConfig.pairing && typeof appConfig.pairing === 'object'
-      ? appConfig.pairing
-      : adapters?.pairing && typeof adapters.pairing === 'object'
-        ? adapters.pairing
-      : { code: null, expiresAt: null, createdAt: null },
-  };
-}
-
-function emitFeishuAdapterStatus(status = getFeishuAdapterStatus()) {
-  emitToRenderer('agent:adapter-status', status);
-  for (const state of appWindowStates.values()) {
-    if (state.id === FEISHU_APP_ID && !state.webContents?.isDestroyed()) {
-      state.webContents.send('app-ui:event:feishu-status', status);
-    }
-  }
-  return status;
-}
-
-async function refreshRemoteFeishuStatus() {
-  const deployment = getKnownFeishuServerDeployment() || getCurrentFeishuServerDeployment();
-  if (!deployment) {
-    remoteFeishuStatus = {
-      ...remoteFeishuStatus,
-      status: 'error',
-      pid: null,
-      bridgeReady: false,
-      transportConnected: false,
-      error: '请先在远程连接设置中配置 Moss Server。',
-    };
-    return getFeishuAdapterStatus();
-  }
-  try {
-    const status = await fetchRemoteFeishuAdapterStatus(getFeishuDeploymentSettings(deployment));
-    remoteFeishuStatus = { ...remoteFeishuStatus, ...status, location: 'server' };
-    mergeRemoteFeishuOperationalState(status);
-  } catch (error) {
-    remoteFeishuStatus = {
-      ...remoteFeishuStatus,
-      status: 'error',
-      pid: null,
-      bridgeReady: false,
-      transportConnected: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-  return getFeishuAdapterStatus();
-}
-
-async function setFeishuAppEnabled(enabled) {
-  if (!desktopAppRuntime?.installations?.get(FEISHU_APP_ID)) return;
-  const instance = desktopAppRuntime.instances.get(FEISHU_APP_INSTANCE_ID);
-  const installation = desktopAppRuntime.installations.get(FEISHU_APP_ID);
-  if (!enabled) {
-    if (instance?.enabled) {
-      await desktopAppRuntime.setInstanceEnabled(FEISHU_APP_ID, FEISHU_APP_INSTANCE_ID, false);
-    }
-    if (installation?.enabled) await desktopAppRuntime.setAppEnabled(FEISHU_APP_ID, false);
-    return;
-  }
-  if (!instance?.enabled) {
-    await desktopAppRuntime.setInstanceEnabled(FEISHU_APP_ID, FEISHU_APP_INSTANCE_ID, true);
-  }
-  if (!installation?.enabled) await desktopAppRuntime.setAppEnabled(FEISHU_APP_ID, true);
-}
-
-async function syncFeishuAdapterRuntime(adapters, {
-  pullRemoteState = false,
-  previousAdapters = adapters,
-  activateLocalApp = false,
-} = {}) {
-  const location = getFeishuRunLocation(adapters);
-  await feishuAdapterProcessManager?.stop();
-  feishuLegacyTransportStatus = { connected: false, updatedAt: Date.now(), error: null };
-
-  if (location === 'server') {
-    feishuAppMode = false;
-    refreshFeishuAppBackendReadiness();
-    await setFeishuAppEnabled(false);
-    const knownDeployment = getKnownFeishuServerDeployment();
-    const targetDeployment = getCurrentFeishuServerDeployment() || knownDeployment;
-    if (!targetDeployment) {
-      remoteFeishuStatus = {
-        ...remoteFeishuStatus,
-        status: 'error',
-        pid: null,
-        bridgeReady: false,
-        transportConnected: false,
-        error: '请先在远程连接设置中配置 Moss Server。',
-      };
-      throw new Error(remoteFeishuStatus.error);
-    }
-    if (knownDeployment && !isSameFeishuServer(knownDeployment, targetDeployment)) {
-      await stopFeishuServerDeployment(knownDeployment);
-    }
-    const targetSettings = getFeishuDeploymentSettings(targetDeployment);
-    let deploymentAdapters = adapters;
-    const localFingerprint = getFeishuServerConfigFingerprint(adapters);
-    const shouldPullRemoteState = pullRemoteState
-      && isSameFeishuServer(knownDeployment, targetDeployment)
-      && (!knownDeployment.configFingerprint || knownDeployment.configFingerprint === localFingerprint);
-    if (shouldPullRemoteState) {
-      const status = await fetchRemoteFeishuAdapterStatus(targetSettings);
-      remoteFeishuStatus = { ...remoteFeishuStatus, ...status, location: 'server' };
-      mergeRemoteFeishuOperationalState(status);
-      if (status.enabled !== false) deploymentAdapters = readPersistedAdapterSettings();
-    }
-    if (!hasFeishuAdapterCredentials(deploymentAdapters)) {
-      const stopped = await stopRemoteFeishuAdapter(targetSettings);
-      if (isSameFeishuServer(getKnownFeishuServerDeployment(), targetDeployment)) {
-        setKnownFeishuServerDeployment(null);
-      }
-      remoteFeishuStatus = {
-        ...remoteFeishuStatus,
-        ...(stopped.status || {}),
-        status: 'disabled',
-        bridgeReady: false,
-        transportConnected: false,
-        transportError: null,
-        enabled: false,
-        location: 'server',
-      };
-      return remoteFeishuStatus;
-    }
-    remoteFeishuStatus = {
-      ...remoteFeishuStatus,
-      status: 'running',
-      bridgeReady: false,
-      transportConnected: false,
-      error: null,
-      location: 'server',
-    };
-    try {
-      const started = await startRemoteFeishuAdapter(
-        getRemoteFeishuConfig(deploymentAdapters),
-        targetSettings,
-      );
-      remoteFeishuStatus = {
-        ...remoteFeishuStatus,
-        ...(started.status || {}),
-        location: 'server',
-      };
-      setKnownFeishuServerDeployment({
-        ...targetDeployment,
-        configFingerprint: getFeishuServerConfigFingerprint(deploymentAdapters),
-      });
-      mergeRemoteFeishuOperationalState(started.status);
-      return remoteFeishuStatus;
-    } catch (error) {
-      remoteFeishuStatus = {
-        ...remoteFeishuStatus,
-        status: 'error',
-        pid: null,
-        bridgeReady: false,
-        transportConnected: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-      throw error;
-    }
-  }
-
-  const knownDeployment = getKnownFeishuServerDeployment();
-  const legacyDeployment = getFeishuRunLocation(previousAdapters) === 'server'
-    ? getCurrentFeishuServerDeployment()
-    : null;
-  const deploymentToStop = knownDeployment || legacyDeployment;
-  if (deploymentToStop) {
-    try {
-      await stopFeishuServerDeployment(deploymentToStop);
-    } catch (error) {
-      remoteFeishuStatus = {
-        ...remoteFeishuStatus,
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      };
-      throw new Error(`无法确认 Moss Server 飞书实例已停止，本地实例未启动：${remoteFeishuStatus.error}`);
-    }
-  } else if (getFeishuRunLocation(previousAdapters) === 'server') {
-    throw new Error('无法确定此前运行飞书实例的 Moss Server，本地实例未启动。请恢复原 Server 连接后重试。');
-  }
-
-  const forceLegacy = isFeishuLegacyFallbackEnabled();
-  const currentAppStatus = getFeishuAppProcessStatus(desktopAppRuntime);
-  if (forceLegacy) {
-    if (currentAppStatus?.enabled) {
-      const current = readPersistedAdapterSettings();
-      saveDesktopSettings({
-        ...desktopSettings,
-        adapters: mergeAdapterSettings(current, { feishu: { resumeAppAfterLegacyFallback: true } }),
-      });
-      await setFeishuAppEnabled(false);
-    }
-    feishuAppMode = false;
-    refreshFeishuAppBackendReadiness();
-    return feishuAdapterProcessManager?.sync(adapters);
-  }
-
-  if (desktopAppRuntime) {
-    const migrationMarked = hasFeishuAppMigrationMarker(adapters);
-    const resumeAfterFallback = adapters?.feishu?.resumeAppAfterLegacyFallback === true;
-    const desired = splitLegacyFeishuAppConfiguration(adapters);
-    if (migrationMarked && !resumeAfterFallback && !activateLocalApp) {
-      feishuAppMode = true;
-      refreshFeishuAppBackendReadiness();
-      return getFeishuAdapterStatus();
-    }
-    if (activateLocalApp && !desired.configured) {
-      await setFeishuAppEnabled(false);
-      feishuAppMode = true;
-      refreshFeishuAppBackendReadiness();
-      return getFeishuAdapterStatus();
-    }
-    const shouldEnable = activateLocalApp || resumeAfterFallback || (!migrationMarked && desired.configured);
-    try {
-      const result = await configureFeishuAppFromLegacy(desktopAppRuntime, adapters, {
-        enable: shouldEnable,
-      });
-      const appStatus = getFeishuAppProcessStatus(desktopAppRuntime);
-      if (result.available && (result.configured || migrationMarked || appStatus?.enabled)) {
-        feishuAppMode = true;
-        const shouldCommitMigration = result.configured && (!migrationMarked || resumeAfterFallback);
-        const appReady = isFeishuAppReady(desktopAppRuntime, feishuAppTransportStatus);
-        if (shouldCommitMigration && !appReady) {
-          throw new Error('Feishu App did not establish its Host-confirmed transport connection.');
-        }
-        if (shouldCommitMigration) {
-          let migrated = withFeishuAppMigrationMarker(readPersistedAdapterSettings());
-          if (resumeAfterFallback && migrated.feishu) {
-            const feishu = { ...migrated.feishu };
-            delete feishu.resumeAppAfterLegacyFallback;
-            migrated = { ...migrated, feishu };
-          }
-          saveDesktopSettings({ ...desktopSettings, adapters: migrated });
-        }
-        refreshFeishuAppBackendReadiness();
-        return getFeishuAdapterStatus();
-      }
-    } catch (error) {
-      await setFeishuAppEnabled(false).catch(() => {});
-      mossLog('error', 'feishu-app', 'Unable to activate the Feishu App; using legacy fallback', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  feishuAppMode = false;
-  refreshFeishuAppBackendReadiness();
-  return feishuAdapterProcessManager?.sync(adapters);
-}
-
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await initializeRemoteDirectTlsTrust();
   void startManagedRuntimeInstall();
 
   const decisionSigningSecret = getOrCreateDecisionSigningSecret();
   appDecisionBroker = createDecisionBroker({
-    store: feishuAdapterStore,
+    store: desktopStateStore,
     notificationBroker: appNotificationBroker,
     getSigningSecret: () => decisionSigningSecret,
     resolveDurableDecision: resolveDurableAppDecision,
     onChanged: ({ decision, reason }) => emitToRenderer('decision:changed', { decision, reason }),
   });
   await appDecisionBroker.restorePending();
-  for (const decision of feishuAdapterStore.listPendingDecisions()) {
+  for (const decision of desktopStateStore.listPendingDecisions()) {
     if (decision.kind !== 'plan_approval') continue;
     const sessionRecord = sessions.get(decision.sessionId);
     const requestedAt = Number(decision.payload?.requestedAt) || null;
@@ -11925,35 +11065,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
   }
   initializeAgentMail();
-  feishuAdapterController = createFeishuAdapterController({
-    store: feishuAdapterStore,
-    resolveIdentity: resolveFeishuAdapterIdentity,
-    getWritableSession: getWritableFeishuSessionOption,
-    createSession: createSessionFromFeishu,
-    sendPrompt: sendPromptFromFeishu,
-    sendAdapterEvent: sendFeishuTransportEvent,
-    log: (level, message) => mossLog(level, 'feishu-adapter', message),
-  });
-  feishuAdapterProcessManager = createFeishuAdapterProcessManager({
-    entryPath: resolveFeishuAdapterEntryPath({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      uiRoot,
-    }),
-    configDir: MOSS_HOME,
-    log: (level, message) => mossLog(level, 'feishu-adapter', message),
-    onRequest: handleFeishuProcessRequest,
-    onReady: () => {
-      return feishuAdapterController.onReady();
-    },
-    onStatusChange: (status) => {
-      if (status.status !== 'running') {
-        feishuLegacyTransportStatus = { connected: false, updatedAt: Date.now(), error: null };
-      }
-      emitFeishuAdapterStatus();
-    },
-  });
-
   // Initialize bundled skills from repo skills to ~/.moss/skills
   await initializeBundledSkills();
 
@@ -12057,34 +11168,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         const readyScope = currentOpenIMReadyScope(event.appId, event.instanceId);
         if (readyScope) agentChannelController?.onReady(readyScope);
       }
-      if (event.appId === FEISHU_APP_ID && event.type === 'status') {
-        if (
-          !isFeishuLegacyFallbackEnabled()
-          && getFeishuRunLocation() === 'desktop'
-          && desktopAppRuntime?.installations?.get(FEISHU_APP_ID)?.enabled
-          && !feishuAdapterProcessManager?.getStatus().pid
-        ) {
-          feishuAppMode = true;
-        }
-        if (event.state !== 'running') {
-          feishuAppTransportStatus = {
-            connected: false,
-            updatedAt: Date.now(),
-            error: event.lastError || null,
-          };
-        }
-        refreshFeishuAppBackendReadiness();
-        emitFeishuAdapterStatus();
-      }
-      if (event.appId === FEISHU_APP_ID && event.type === 'app-uninstalled') {
-        feishuAppTransportStatus = {
-          connected: false,
-          updatedAt: Date.now(),
-          error: '飞书 App 未安装',
-        };
-        refreshFeishuAppBackendReadiness();
-        emitFeishuAdapterStatus();
-      }
       if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
         resetLocalRuntimesForMcpReload();
       }
@@ -12112,14 +11195,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (readyScope) agentChannelController.onReady(readyScope);
     }
   }
-  await enqueueFeishuRuntimeTransition(() => syncFeishuAdapterRuntime(
-    readPersistedAdapterSettings(),
-    { pullRemoteState: true },
-  )).catch((error) => {
-    mossLog('error', 'feishu-adapter', 'Failed to synchronize Feishu runtime', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
   const installAppPackage = (packageRoot, options = {}) => publishAppFromBuild(packageRoot, {
     reason: options.marketplaceSource ? 'marketplace' : 'installed',
     note: options.marketplaceSource ? 'Moss 应用市场' : 'archive',
@@ -12361,8 +11436,6 @@ app.on('before-quit', (event) => {
   void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true });
   void agentMailPoller?.stop();
   agentMailPoller = null;
-  feishuAdapterProcessManager?.dispose();
-  feishuAdapterProcessManager = null;
   if (localAuditScanTimer) {
     clearInterval(localAuditScanTimer);
     localAuditScanTimer = null;
@@ -13013,104 +12086,6 @@ ipcMain.handle('agent:mcp-clear-auth', async (_event, payload = {}) => {
   });
 });
 
-function readPersistedAdapterSettings() {
-  try {
-    if (!fs.existsSync(DESKTOP_SETTINGS_PATH)) return desktopSettings.adapters || {};
-    const parsed = JSON.parse(fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8'));
-    if (parsed?.adapters && typeof parsed.adapters === 'object' && !Array.isArray(parsed.adapters)) {
-      desktopSettings.adapters = parsed.adapters;
-    }
-  } catch (error) {
-    mossLog('error', 'feishu-adapter', 'Failed to refresh Adapter settings from disk', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-  return desktopSettings.adapters || {};
-}
-
-function getAdapterConfigForUi() {
-  return maskAdapterSettings(readPersistedAdapterSettings());
-}
-
-async function updateAdapterConfigFromUi(payload = {}) {
-  return enqueueFeishuRuntimeTransition(async () => {
-    const previousAdapters = readPersistedAdapterSettings();
-    const configPatch = withoutFeishuRunLocation(payload);
-    const merged = mergeAdapterSettings(previousAdapters, configPatch);
-    saveDesktopSettings({ ...desktopSettings, adapters: merged });
-    try {
-      await syncFeishuAdapterRuntime(merged, {
-        previousAdapters,
-        activateLocalApp: getFeishuRunLocation(merged) === 'desktop',
-      });
-    } finally {
-      const status = getFeishuAdapterStatus();
-      emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
-      emitFeishuAdapterStatus(status);
-      await emitAppsChanged({ action: 'feishu-configuration-updated', appId: FEISHU_APP_ID });
-    }
-    return maskAdapterSettings(readPersistedAdapterSettings());
-  });
-}
-
-async function applyAdapterRuntimeFromUi(payload = {}) {
-  if (payload.runLocation !== 'desktop' && payload.runLocation !== 'server') {
-    throw new Error('Feishu run location must be desktop or server.');
-  }
-  return enqueueFeishuRuntimeTransition(async () => {
-    const runLocation = payload.runLocation;
-    const previousAdapters = readPersistedAdapterSettings();
-    if (getFeishuRunLocation(previousAdapters) === runLocation) {
-      return {
-        config: maskAdapterSettings(previousAdapters),
-        status: getFeishuAdapterStatus(),
-      };
-    }
-    const merged = mergeAdapterSettings(previousAdapters, {
-      feishu: { runLocation },
-    });
-    saveDesktopSettings({ ...desktopSettings, adapters: merged });
-    try {
-      await syncFeishuAdapterRuntime(merged, {
-        previousAdapters,
-        activateLocalApp: runLocation === 'desktop',
-      });
-    } catch (error) {
-      const failedAdapters = readPersistedAdapterSettings();
-      saveDesktopSettings({ ...desktopSettings, adapters: previousAdapters });
-      await syncFeishuAdapterRuntime(previousAdapters, {
-        previousAdapters: failedAdapters,
-      }).catch((rollbackError) => {
-        mossLog('error', 'feishu-adapter', 'Unable to restore the previous Feishu runtime', {
-          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        });
-      });
-      emitFeishuAdapterStatus();
-      throw error;
-    }
-    const config = maskAdapterSettings(readPersistedAdapterSettings());
-    const status = getFeishuAdapterStatus();
-    emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
-    emitFeishuAdapterStatus(status);
-    await emitAppsChanged({ action: 'feishu-runtime-moved', appId: FEISHU_APP_ID });
-    return { config, status };
-  });
-}
-
-async function getAdapterStatusForUi() {
-  return getFeishuRunLocation() === 'server'
-    ? refreshRemoteFeishuStatus()
-    : getFeishuAdapterStatus();
-}
-
-ipcMain.handle('agent:get-adapter-config', getAdapterConfigForUi);
-ipcMain.handle('agent:update-adapter-config', (_event, payload = {}) => (
-  updateAdapterConfigFromUi(payload)
-));
-ipcMain.handle('agent:apply-adapter-runtime', (_event, payload = {}) => (
-  applyAdapterRuntimeFromUi(payload)
-));
-ipcMain.handle('agent:get-adapter-status', getAdapterStatusForUi);
 ipcMain.handle('usage:get-overview', () => usageLedger.getOverview());
 ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
@@ -14444,12 +13419,23 @@ ipcMain.on('debug:close', (event) => {
   }
 });
 
-function requireFeishuAppUi(event) {
-  const state = getAppWindowStateBySender(event.sender);
-  if (state.id !== FEISHU_APP_ID || state.runtime !== desktopAppRuntime) {
-    throw new Error('Feishu settings are only available to the installed moss.feishu App.');
+function appUiTarget(input = {}) {
+  const target = input?.target || 'desktop';
+  if (target !== 'desktop' && target !== 'server') {
+    throw new Error(`Unsupported App Host target: ${String(target)}`);
   }
-  return state;
+  return target;
+}
+
+async function listAppUiInstances(state, target) {
+  return target === 'server'
+    ? listRemoteAppInstances(state.id)
+    : state.runtime.listInstances(state.id);
+}
+
+async function getAppUiInstance(state, instanceId, target) {
+  const instances = await listAppUiInstances(state, target);
+  return instances.find((instance) => instance.id === instanceId) || null;
 }
 
 ipcMain.handle('app-ui:get-info', async (event) => {
@@ -14474,54 +13460,84 @@ ipcMain.handle('app-ui:list-versions', async (event) => {
   return listAppVersions(state.id);
 });
 
-ipcMain.handle('app-ui:get-installation-state', async (event) => {
+ipcMain.handle('app-ui:get-installation-state', async (event, options = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime?.getApp(state.id);
+  return appUiTarget(options) === 'server'
+    ? fetchRemoteApp(state.id)
+    : state.runtime?.getApp(state.id);
 });
 
-ipcMain.handle('app-ui:instances:list', async (event) => {
+ipcMain.handle('app-ui:instances:list', async (event, options = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime?.listInstances(state.id) || [];
+  return listAppUiInstances(state, appUiTarget(options));
 });
 
 ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.createInstance(state.id, input);
+  const { target: requestedTarget, ...instanceInput } = input;
+  const target = appUiTarget({ target: requestedTarget });
+  if (target === 'server') {
+    const result = await createRemoteAppInstance(state.id, instanceInput);
+    return result?.instance || getAppUiInstance(state, instanceInput.id, target);
+  }
+  await state.runtime.createInstance(state.id, instanceInput);
+  return getAppUiInstance(state, instanceInput.id, target);
 });
 
-ipcMain.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
+ipcMain.handle('app-ui:instances:update', async (event, { instanceId, target: requestedTarget, ...patch }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.updateInstance(state.id, instanceId, patch);
+  const target = appUiTarget({ target: requestedTarget });
+  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, patch);
+  else await state.runtime.updateInstance(state.id, instanceId, patch);
+  return getAppUiInstance(state, instanceId, target);
 });
 
-ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled }) => {
+ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
+  const target = appUiTarget({ target: requestedTarget });
+  return target === 'server'
+    ? updateRemoteAppInstance(state.id, instanceId, { enabled })
+    : state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
 });
 
-ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId }) => {
+ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.clearInstanceCredentials(state.id, instanceId);
+  const target = appUiTarget({ target: requestedTarget });
+  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, { clearCredentials: true });
+  else await state.runtime.clearInstanceCredentials(state.id, instanceId);
+  return getAppUiInstance(state, instanceId, target);
 });
 
-ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, ...options }) => {
+ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, target: requestedTarget, ...options }) => {
   const state = getAppWindowStateBySender(event.sender);
-  await state.runtime.removeInstance(state.id, instanceId, options);
+  const target = appUiTarget({ target: requestedTarget });
+  if (target === 'server') await removeRemoteAppInstance(state.id, instanceId, options);
+  else await state.runtime.removeInstance(state.id, instanceId, options);
   return { ok: true };
 });
 
-ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {
+ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.getInstanceStatus(state.id, instanceId);
+  return appUiTarget({ target: requestedTarget }) === 'server'
+    ? fetchRemoteAppInstanceStatus(state.id, instanceId)
+    : state.runtime.getInstanceStatus(state.id, instanceId);
 });
 
-ipcMain.handle('app-ui:actions:invoke', async (event, { instanceId, name, input, requestId, timeoutMs }) => {
+ipcMain.handle('app-ui:actions:invoke', async (event, {
+  instanceId, name, input, requestId, timeoutMs, target: requestedTarget,
+}) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
+  const target = appUiTarget({ target: requestedTarget });
+  return target === 'server'
+    ? invokeRemoteAppAction(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs })
+    : state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
 });
 
-ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId }) => {
+ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId, target: requestedTarget }) => {
   const state = getAppWindowStateBySender(event.sender);
+  if (appUiTarget({ target: requestedTarget }) === 'server') {
+    throw new Error('Canceling a remote App action is not supported.');
+  }
   return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
 });
 
@@ -14530,15 +13546,29 @@ ipcMain.handle('app-ui:host:request', async (event, {
   protocol: hostProtocol,
   method,
   input,
+  target: requestedTarget,
+  requestId,
 } = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.requestHostCapability(
-    state.id,
-    String(instanceId || ''),
-    String(hostProtocol || ''),
-    String(method || ''),
-    input && typeof input === 'object' && !Array.isArray(input) ? input : {},
-  );
+  const target = appUiTarget({ target: requestedTarget });
+  const normalizedInput = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return target === 'server'
+    ? requestRemoteAppHostCapability(
+      state.id,
+      String(instanceId || ''),
+      String(hostProtocol || ''),
+      String(method || ''),
+      normalizedInput,
+      { requestId },
+    )
+    : state.runtime.requestHostCapability(
+      state.id,
+      String(instanceId || ''),
+      String(hostProtocol || ''),
+      String(method || ''),
+      normalizedInput,
+      { requestId },
+    );
 });
 
 ipcMain.handle('app-ui:storage:get', async (event, { key }) => {
@@ -14570,27 +13600,6 @@ ipcMain.handle('app-ui:storage:remove', async (event, { key }) => {
 ipcMain.handle('app-ui:storage:list', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
   return Object.keys(readAppStorageSnapshot(state));
-});
-
-ipcMain.handle('app-ui:feishu:get-config', (event) => {
-  requireFeishuAppUi(event);
-  return getAdapterConfigForUi();
-});
-
-ipcMain.handle('app-ui:feishu:update-config', async (event, payload = {}) => {
-  requireFeishuAppUi(event);
-  const config = await updateAdapterConfigFromUi(payload);
-  return { config, status: await getAdapterStatusForUi() };
-});
-
-ipcMain.handle('app-ui:feishu:apply-runtime', (event, payload = {}) => {
-  requireFeishuAppUi(event);
-  return applyAdapterRuntimeFromUi(payload);
-});
-
-ipcMain.handle('app-ui:feishu:get-status', (event) => {
-  requireFeishuAppUi(event);
-  return getAdapterStatusForUi();
 });
 
 registerFileSystemIpcHandlers({
@@ -15269,7 +14278,7 @@ async function sendAgentPromptNow(event, {
       requestedAt: planRequestedAt,
     };
     setPendingPlanApproval(sessionRecord, pendingPlanApproval);
-    if (appDecisionBroker && !feishuAdapterStore.findPendingDecision(sessionRecord.id, 'plan_approval')) {
+    if (appDecisionBroker && !desktopStateStore.findPendingDecision(sessionRecord.id, 'plan_approval')) {
       appDecisionBroker.create({
         sessionId: sessionRecord.id,
         kind: 'plan_approval',
@@ -15347,7 +14356,7 @@ async function resolveDurableAppDecision(decision, { allowed, context }) {
 }
 
 async function respondToPlanDecision(event, sessionId, allowed) {
-  const decision = feishuAdapterStore.findPendingDecision(sessionId, 'plan_approval');
+  const decision = desktopStateStore.findPendingDecision(sessionId, 'plan_approval');
   if (decision && appDecisionBroker) {
     await appDecisionBroker.respond({
       decisionId: decision.id,

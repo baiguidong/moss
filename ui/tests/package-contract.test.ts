@@ -169,7 +169,7 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain('verifyUnsignedPackage(platform, paths, installerFiles)');
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
     expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
-    expect(verifierSource).toContain("path.join(paths.resourcesDir, 'apps', 'moss.feishu', 'app-signature.json')");
+    expect(verifierSource).toContain("for (const entry of bundledAppsLock.apps || [])");
     expect(verifierSource).toContain("'connectors', 'cloud-auth-providers.json'");
     expect(verifierSource).toContain("'connectors', 'connector-mcp-overrides.json'");
     expect(verifierSource).toContain("'connectors', 'connector-cli-overrides.json'");
@@ -227,7 +227,6 @@ describe('desktop package contract', () => {
     const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
     const lock = JSON.parse(readFileSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'), 'utf8'));
     const bundledAppsSource = readFileSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'), 'utf8');
-    const desktopBuild = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'), 'utf8');
     const desktopDev = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'dev.mjs'), 'utf8');
     const desktopMain = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
     const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
@@ -247,16 +246,22 @@ describe('desktop package contract', () => {
     expect(bundledAppsSource).toContain("readJson(path.join(resourceDir, 'catalog.json'))");
     expect(bundledAppsSource).toContain('detail.versions.find');
     expect(bundledAppsSource).toContain('requireTrustedPublisher: true');
-    expect(desktopBuild).toContain('prepareBundledApps');
-    expect(serverBuild).toContain('prepareBundledApps');
+    expect(desktopPackage.scripts['prepare:bundled-apps']).toContain('scripts/bundled-apps.mjs');
+    expect(serverBuild).not.toContain('prepareBundledApps');
     expect(desktopPackage.scripts.start).not.toContain('build-adapters.mjs');
-    expect(desktopPackage.scripts['dist:win']).toContain('build-adapters.mjs');
-    expect(desktopPackage.scripts['dist:mac']).toContain('build-adapters.mjs');
+    expect(desktopPackage.scripts['dist:win']).toContain('prepare:bundled-apps');
+    expect(desktopPackage.scripts['dist:mac']).toContain('prepare:bundled-apps');
+    expect(desktopPackage.scripts['dist:win']).not.toContain('build-adapters.mjs');
+    expect(desktopPackage.scripts['dist:mac']).not.toContain('build-adapters.mjs');
     expect(desktopDev).not.toContain('build-adapters.mjs');
     expect(desktopMain).toContain('if (app.isPackaged) {\n    await initializeBundledApps({ trustedPublishers });');
     expect(`${ciSource}\n${releaseSource}`).not.toContain('apps/feishu');
     expect(existsSync(path.join(repoRoot, 'apps', 'feishu'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'adapters', 'feishu', 'index.ts'))).toBe(false);
+    expect(existsSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'))).toBe(false);
+    expect(desktopPackage.build.extraResources.some(
+      (entry: { to?: string }) => entry.to === 'adapters',
+    )).toBe(false);
   });
 
   test('keeps deployable components under one deploy directory', () => {

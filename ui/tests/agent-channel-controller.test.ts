@@ -6,10 +6,10 @@ import {
   toPublicAgentChannelTurn,
   validateAgentChannelConnectorTool,
   validateAgentChannelDelegation,
-} from '../src/agent-channel-controller.mjs'
+} from '../../packages/app-runtime/src/agent-channel/controller.mjs'
 
-const storeUrl = new URL('../src/agent-channel-store.mjs', import.meta.url).href
-const controllerUrl = new URL('../src/agent-channel-controller.mjs', import.meta.url).href
+const storeUrl = new URL('../../packages/app-runtime/src/agent-channel/store.mjs', import.meta.url).href
+const controllerUrl = new URL('../../packages/app-runtime/src/agent-channel/controller.mjs', import.meta.url).href
 
 function runControllerScenario(source: string) {
   const script = `
