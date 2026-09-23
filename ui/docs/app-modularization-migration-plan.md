@@ -262,7 +262,7 @@ Desktop 使用本地 owner，迁往 Server 时必须显式选择目标 scope；�
 实现记录（2026-09-20）：
 
 - 飞书源码已迁移至独立的 [`baiguidong/moss-apps`](https://github.com/baiguidong/moss-apps) 仓库，Manifest ID 固定为 `moss.feishu`。
-- Moss 构建通过 `config/bundled-apps.lock.json` 下载、校验并预装固定版本，不再从主仓库编译飞书源码。
+- Moss 构建不下载、锁定或预装 App；用户统一从应用市场安装和更新独立发布的 App。
 - 飞书 SDK、长连接、消息转换、配置 schema、设置页、配对状态和测试均归 App；Moss 不再生成或启动独立 Adapter 产物。
 - Desktop 与 Server 共用 `moss.agent/v1`；Core 只持有 Session/Turn、授权和幂等账本。
 - App UI 通过统一 instance/action/host API 管理 Desktop 或 Server 实例，不再调用产品专用 IPC。

@@ -4,7 +4,6 @@ import { cp, mkdir, rm } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { getMossServerHome, getServerRuntimeEnv } from './server-runtime.mjs'
-import { prepareBundledApps } from './bundled-apps.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const serverHome = getMossServerHome()
@@ -29,10 +28,8 @@ async function copyFileIntoServerHome(source, target) {
 
 async function main() {
   run('Building server runtime artifacts', 'bun', ['run', 'build:server'])
-  const bundledApps = await prepareBundledApps()
 
   const binDir = join(serverHome, 'bin')
-  const appsDir = join(serverHome, 'apps')
   const adminDir = join(serverHome, 'admin')
   const adminDistDir = join(adminDir, 'dist')
 
@@ -52,8 +49,6 @@ async function main() {
     join(binDir, 'moss-session-runner.mjs'),
   )
   await rm(join(serverHome, 'adapters'), { recursive: true, force: true })
-  await rm(appsDir, { recursive: true, force: true })
-  await cp(bundledApps.outputDir, appsDir, { recursive: true, force: true })
   await rm(join(binDir, 'cli-node.js'), {
     force: true,
   })
@@ -74,7 +69,6 @@ async function main() {
   console.log(`\nPrepared Moss server runtime at ${serverHome}`)
   console.log(`  ${join(binDir, 'moss-server.mjs')}`)
   console.log(`  ${join(binDir, 'moss-session-runner.mjs')}`)
-  console.log(`  ${appsDir}`)
   console.log(`  ${adminDistDir}`)
 }
 

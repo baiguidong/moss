@@ -169,7 +169,7 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain('verifyUnsignedPackage(platform, paths, installerFiles)');
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
     expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
-    expect(verifierSource).toContain("for (const entry of bundledAppsLock.apps || [])");
+    expect(verifierSource).toContain('Packaged Moss must not include bundled Apps');
     expect(verifierSource).toContain("'connectors', 'cloud-auth-providers.json'");
     expect(verifierSource).toContain("'connectors', 'connector-mcp-overrides.json'");
     expect(verifierSource).toContain("'connectors', 'connector-cli-overrides.json'");
@@ -222,46 +222,35 @@ describe('desktop package contract', () => {
     expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
-  test('resolves pinned bundled App versions from published release metadata', () => {
-    const ciSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
-    const releaseSource = readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
-    const lock = JSON.parse(readFileSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'), 'utf8'));
-    const bundledAppsSource = readFileSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'), 'utf8');
+  test('ships marketplace access without pinning or bundling Apps', () => {
     const desktopDev = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'dev.mjs'), 'utf8');
     const desktopMain = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
-    const serverBuild = readFileSync(path.join(repoRoot, 'scripts', 'build.js'), 'utf8');
+    const serverPrepare = readFileSync(path.join(repoRoot, 'scripts', 'server-prepare.mjs'), 'utf8');
+    const serverImagePrepare = readFileSync(path.join(repoRoot, 'deploy', 'server', 'prepare-image-context.sh'), 'utf8');
     const trustedPublishers = JSON.parse(readFileSync(
       path.join(uiRoot, 'resources', 'app-market', 'trusted-publishers.json'),
       'utf8',
     ));
-    expect(lock).toEqual({
-      schemaVersion: 1,
-      apps: [
-        {
-          id: 'moss.feishu',
-          version: '0.4.1',
-        },
-        {
-          id: 'moss.openim',
-          version: '0.2.1',
-        },
-      ],
-    });
     expect(trustedPublishers.publishers.moss.keys['release-1']).toBe('publishers/moss/release-1.pem');
     expect(existsSync(path.join(uiRoot, 'resources', 'app-market', 'publishers', 'moss', 'release-1.pem'))).toBe(true);
-    expect(bundledAppsSource).toContain("readJson(path.join(resourceDir, 'catalog.json'))");
-    expect(bundledAppsSource).toContain('detail.versions.find');
-    expect(bundledAppsSource).toContain('requireTrustedPublisher: true');
-    expect(desktopPackage.scripts['prepare:bundled-apps']).toContain('scripts/bundled-apps.mjs');
-    expect(serverBuild).not.toContain('prepareBundledApps');
+    expect(existsSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'))).toBe(false);
+    expect(existsSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'))).toBe(false);
+    expect(desktopPackage.scripts['prepare:bundled-apps']).toBeUndefined();
     expect(desktopPackage.scripts.start).not.toContain('build-adapters.mjs');
-    expect(desktopPackage.scripts['dist:win']).toContain('prepare:bundled-apps');
-    expect(desktopPackage.scripts['dist:mac']).toContain('prepare:bundled-apps');
+    expect(desktopPackage.scripts['dist:win']).not.toContain('bundled-apps');
+    expect(desktopPackage.scripts['dist:mac']).not.toContain('bundled-apps');
     expect(desktopPackage.scripts['dist:win']).not.toContain('build-adapters.mjs');
     expect(desktopPackage.scripts['dist:mac']).not.toContain('build-adapters.mjs');
     expect(desktopDev).not.toContain('build-adapters.mjs');
-    expect(desktopMain).toContain('if (app.isPackaged) {\n    await initializeBundledApps({ trustedPublishers });');
-    expect(`${ciSource}\n${releaseSource}`).not.toContain('apps/feishu');
+    expect(desktopMain).not.toContain('initializeBundledApps');
+    expect(serverPrepare).not.toContain('bundled-apps');
+    expect(serverImagePrepare).not.toContain('bundled-apps');
+    expect(desktopPackage.build.extraResources.some(
+      (entry: { to?: string }) => entry.to === 'apps',
+    )).toBe(false);
+    expect(desktopPackage.build.extraResources.some(
+      (entry: { from?: string }) => entry.from?.includes('bundled-apps.lock'),
+    )).toBe(false);
     expect(existsSync(path.join(repoRoot, 'apps', 'feishu'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'adapters', 'feishu', 'index.ts'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'ui', 'scripts', 'build-adapters.mjs'))).toBe(false);

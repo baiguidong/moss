@@ -77,7 +77,6 @@ import {
   APP_KINDS,
   deleteApp,
   getPublishedApp,
-  installBuiltInAppFromBuild,
   listAppVersions,
   publishAppFromBuild,
   readAppManifestFromDir,
@@ -396,7 +395,6 @@ const LIBRARY_FEATURE_FLAGS = Object.freeze({
   composerResources: process.env.MOSS_LIBRARY_COMPOSER_RESOURCES !== '0',
   migration: process.env.MOSS_LIBRARY_MIGRATION !== '0',
 });
-const MOSS_BUNDLED_APPS_DIR = path.join(uiRoot, 'dist', 'bundled-apps');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const WEB_SEARCH_CAPABILITIES_PATH = path.join(MOSS_HOME, 'web-search-capabilities.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
@@ -6722,7 +6720,6 @@ function getBootStatus() {
     defaultWorkspaceRoot: MOSS_SESSIONS_DIR,
     appsDir: APPS_DIR,
     appRegistryPath: APP_REGISTRY_PATH,
-    bundledAppsDir: getBundledResourceDir('apps', MOSS_BUNDLED_APPS_DIR),
     skillsDir: MOSS_SKILLS_DIR,
     assistantsDir: MOSS_ASSISTANTS_DIR,
     appRuntimeReady: Boolean(desktopAppRuntime),
@@ -7619,42 +7616,6 @@ async function initializeBundledSkills() {
     logCategory: 'skill',
     logPrefix: 'skill-init',
   });
-}
-
-/**
- * Initialize every prebuilt App package under apps/<app-id>/app.moss.json to ~/.moss/apps.
- * In packaged mode, reads from process.resourcesPath/apps.
- */
-async function initializeBundledApps({ trustedPublishers } = {}) {
-  const srcDir = getBundledResourceDir('apps', MOSS_BUNDLED_APPS_DIR);
-  if (!fs.existsSync(srcDir)) return;
-
-  const entries = fs.readdirSync(srcDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .filter(entry => fs.existsSync(path.join(srcDir, entry.name, 'app.moss.json')));
-
-  for (const entry of entries) {
-    const srcPath = path.join(srcDir, entry.name);
-    try {
-      const manifest = readAppManifestFromDir(srcPath);
-      const installed = await installBuiltInAppFromBuild(srcPath, {
-        description: manifest.description,
-        trustedPublishers,
-        requireTrustedPublisher: true,
-      });
-
-      mossLog('info', 'app', installed.skipped ? 'Bundled app already current' : 'Bundled app installed', {
-        appId: manifest.id,
-        version: installed.currentVersion || installed.publishedVersion || null,
-      });
-    } catch (error) {
-      mossLog('warn', 'app', 'Failed to initialize bundled app', {
-        app: entry.name,
-        error: error.message || String(error),
-      });
-      console.warn(`[app-init] Failed to initialize bundled app ${entry.name}:`, error.message || error);
-    }
-  }
 }
 
 /**
@@ -11053,12 +11014,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   const appMarketResourceDir = getBundledResourceDir('app-market', MOSS_REPO_APP_MARKET_DIR);
   const { trustedPublishers } = loadAppTrustConfiguration(appMarketResourceDir);
   const appMarketConfiguration = loadAppMarketConfiguration(appMarketResourceDir);
-
-  // Release packages carry pinned Apps for first-run installation. Source
-  // checkouts treat them as ordinary marketplace Apps and never seed them.
-  if (app.isPackaged) {
-    await initializeBundledApps({ trustedPublishers });
-  }
 
   await startManagedRuntimeInstall();
   const managedNode = getManagedRuntimeStatus().node;

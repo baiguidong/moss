@@ -35,14 +35,13 @@ sudo env \
 更新镜像时执行 `sudo /data/moss-server/upgrade.sh latest`；指定版本可将
 `latest` 换成发布标签（例如 `1.2.3`）。
 
-## App 市场与预装
+## App 市场
 
 官方 App 清单由 `https://baiguidong.github.io/moss-apps/v1/index.json` 提供，App ZIP 由
 `baiguidong/moss-apps` 的 GitHub Releases 托管。桌面端可在“Apps → 应用市场”中查看详情、
 安装、更新或选择历史版本；所有下载都会校验锁定的发布者签名与 SHA-256。
 
-发布安装包中的预装 App 由 [`config/bundled-apps.lock.json`](config/bundled-apps.lock.json) 只记录 App ID 和固定版本。
-CI 在打包 Moss 时从 `moss-apps` 发布索引解析该版本的 Release ZIP、SHA-256 和签名信息，下载并验证后打入安装包；不会在主仓库内编译 App 源码，也不会自动追随市场最新版。本地从源码执行 `dev` 或 `start` 时不会下载或自动安装这些 App，可像普通 App 一样从应用市场安装。
+Moss 的 CI 和发布安装包不下载、锁定或预装任何 App。新安装的 Moss 默认没有业务 App，用户统一从应用市场选择版本并安装；已安装 App 的版本由本地 App 状态管理，Moss 自身升级不会替换它。
 
 各 App 的业务配置、权限和验收说明由 `moss-apps` 独立维护。例如飞书配置见
 [飞书 App README](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)。

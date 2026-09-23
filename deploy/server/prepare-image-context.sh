@@ -49,18 +49,14 @@ NODE_ROOT="$PACKAGE_ROOT/node"
 
 echo "Building Moss Server"
 (cd "$ROOT_DIR" && bun run build:server)
-echo "Preparing bundled Apps"
-(cd "$ROOT_DIR" && bun scripts/bundled-apps.mjs)
 
 install -d \
   "$APP_ROOT/bin" \
-  "$APP_ROOT/apps" \
   "$APP_ROOT/admin" \
   "$APP_ROOT/resources" \
   "$NODE_ROOT/bin"
 install -m 0644 "$ROOT_DIR/bin/moss-server.mjs" "$APP_ROOT/bin/moss-server.mjs"
 install -m 0644 "$ROOT_DIR/bin/moss-session-runner.mjs" "$APP_ROOT/bin/moss-session-runner.mjs"
-cp -a "$ROOT_DIR/ui/dist/bundled-apps/." "$APP_ROOT/apps/"
 cp -a "$ROOT_DIR/admin/dist" "$APP_ROOT/admin/dist"
 
 for resource in skills assistants; do

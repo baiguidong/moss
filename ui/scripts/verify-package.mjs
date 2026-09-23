@@ -406,19 +406,13 @@ async function main() {
 
   requireFile(path.join(paths.resourcesDir, 'app-market', 'catalog.json'), 'App marketplace configuration');
   requireFile(path.join(paths.resourcesDir, 'app-market', 'trusted-publishers.json'), 'App publisher trust configuration');
-  const bundledAppsLockPath = requireFile(
+  for (const bundledPath of [
+    path.join(paths.resourcesDir, 'apps'),
     path.join(paths.resourcesDir, 'app-market', 'bundled-apps.lock.json'),
-    'bundled App lock',
-  );
-  const bundledAppsLock = JSON.parse(await fsp.readFile(bundledAppsLockPath, 'utf8'));
-  for (const entry of bundledAppsLock.apps || []) {
-    const appId = String(entry.id || '');
-    const appRoot = path.join(paths.resourcesDir, 'apps', appId);
-    const manifestPath = requireFile(path.join(appRoot, 'app.moss.json'), `${appId} manifest`);
-    requireFile(path.join(appRoot, 'app-signature.json'), `${appId} signature`);
-    const manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
-    if (manifest.backend?.entry) requireFile(path.join(appRoot, manifest.backend.entry), `${appId} Backend`);
-    if (manifest.ui?.entry) requireFile(path.join(appRoot, manifest.ui.entry), `${appId} UI`);
+  ]) {
+    if (fs.existsSync(bundledPath)) {
+      throw new Error(`Packaged Moss must not include bundled Apps: ${bundledPath}`);
+    }
   }
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');

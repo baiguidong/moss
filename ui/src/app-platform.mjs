@@ -1,13 +1,12 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import semver from 'semver'
 import {
   AppPackageStore,
-  createPackageChecksums,
   validateAppPackage,
   writePackageChecksums,
 } from '../../packages/app-runtime/src/index.mjs'
@@ -219,11 +218,6 @@ export function listAppVersions(appId) {
     .map((entry, index) => ({ ...entry, isLatest: index === 0 }))
 }
 
-async function packageFingerprint(root) {
-  const checksums = await createPackageChecksums(root)
-  return createHash('sha256').update(JSON.stringify(checksums)).digest('hex')
-}
-
 function registryEntryFromPublished(published, previous = {}) {
   const versions = listAppVersions(published.id)
   const latest = versions[0]
@@ -284,31 +278,6 @@ export async function publishAppFromBuild(buildDir, options = {}) {
     ...registryEntry,
     ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource } : {}),
   })
-}
-
-export async function installBuiltInAppFromBuild(buildDir, options = {}) {
-  const source = await validateAppPackage(path.resolve(buildDir), {
-    trustedPublishers: options.trustedPublishers,
-    requireTrustedPublisher: options.requireTrustedPublisher,
-  })
-  const versions = listAppVersions(source.manifest.id)
-  const existing = versions.find((item) => item.version === source.manifest.version)
-  if (existing) {
-    const currentFingerprint = await packageFingerprint(getAppVersionDir(source.manifest.id, existing.version))
-    if (currentFingerprint !== await packageFingerprint(source.root)) {
-      throw new Error(`Bundled App version ${source.manifest.version} is immutable and has different contents`)
-    }
-    if (!readJsonFile(getAppCurrentPath(source.manifest.id), {})?.version) {
-      writeJsonFile(getAppCurrentPath(source.manifest.id), { version: existing.version, updatedAt: now() })
-    }
-    const published = getPublishedApp(source.manifest.id)
-    const app = upsertAppRegistryEntry(registryEntryFromPublished(
-      published,
-      readAppRegistry().apps.find((item) => item.id === source.manifest.id),
-    ))
-    return { ...app, skipped: true }
-  }
-  return publishAppFromBuild(source.root, { ...options, reason: options.reason || 'installed', note: options.note || 'bundled' })
 }
 
 export function getPublishedApp(appId, version = null) {

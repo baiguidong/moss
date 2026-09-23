@@ -31,7 +31,7 @@ example-app/
     └── backend/main.mjs
 ```
 
-`checksums.json` 必须覆盖包内除自身和 `app-signature.json` 以外的每个文件。安装包不能包含软链接、绝对路径、路径穿越或运行期安装脚本。Backend 的全部运行依赖必须在构建时打包。
+`checksums.json` 必须覆盖包内除自身和 `app-signature.json` 以外的每个文件。安装包不能包含软链接、绝对路径、路径穿越或运行期安装脚本。Backend 应优先编译为独立 JavaScript；无法内联的原生模块及其最小运行时依赖可以随产物放入 `dist/backend/node_modules`。不得复制完整开发依赖树，且所有运行依赖都必须在构建阶段准备完成，安装时不执行包管理器。
 
 最小 Manifest V2：
 
