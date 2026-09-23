@@ -61,6 +61,17 @@ describe('system settings model layout', () => {
             defaultProfileMode: 'session',
             allowedProfileModes: ['session', 'user'],
           },
+          openIM: {
+            enabled: true,
+            instanceId: 'default',
+            apiUrl: 'https://im.initial.test/api/',
+            wsUrl: 'wss://im.initial.test/msg_gateway/',
+            chatUrl: 'https://im.initial.test/chat/',
+            adminUserId: 'imAdmin',
+            secret: 'initial-secret',
+            webhookSecret: 'initial-webhook-secret',
+            requestTimeoutMs: 15000,
+          },
         },
         null,
         2,
@@ -88,6 +99,17 @@ describe('system settings model layout', () => {
     expect(mod.getSystemSettings().serverRuntime).toEqual({
       dockerImage: 'moss-runtime:latest',
     })
+    expect(mod.getSystemSettings().openIM).toEqual({
+      enabled: true,
+      instanceId: 'default',
+      apiUrl: 'https://im.initial.test/api',
+      wsUrl: 'wss://im.initial.test/msg_gateway',
+      chatUrl: 'https://im.initial.test/chat',
+      adminUserId: 'imAdmin',
+      secret: 'initial-secret',
+      webhookSecret: 'initial-webhook-secret',
+      requestTimeoutMs: 15000,
+    })
 
     const updated = mod.updateSystemSettings({
       bypassPermissions: true,
@@ -110,6 +132,10 @@ describe('system settings model layout', () => {
           model: 'image-updated',
         },
       },
+      openIM: {
+        enabled: false,
+        apiUrl: 'https://im.updated.test/api/',
+      },
     })
 
     expect(updated).toMatchObject({
@@ -126,6 +152,10 @@ describe('system settings model layout', () => {
         url: 'https://image.updated.test',
         apiKey: 'image-key-updated',
         model: 'image-updated',
+      },
+      openIM: {
+        enabled: false,
+        apiUrl: 'https://im.updated.test/api',
       },
     })
 
@@ -160,6 +190,11 @@ describe('system settings model layout', () => {
     expect(persisted.skillStore).toBeUndefined()
     expect(persisted.serverRuntime).toEqual({
       dockerImage: 'moss-runtime:latest',
+    })
+    expect(persisted.openIM).toMatchObject({
+      enabled: false,
+      apiUrl: 'https://im.updated.test/api',
+      secret: 'initial-secret',
     })
     expect(persisted.env).toEqual({
       KEEP_ME: 'yes',

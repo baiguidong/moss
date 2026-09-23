@@ -25,6 +25,7 @@ import { hasScope, type AuthContext } from './auth/token.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
+import { OpenIMIntegrationService } from './openim/service.js'
 import { RuntimeService } from './runtimeService.js'
 import {
   consumeClientControlResponse,
@@ -895,6 +896,7 @@ export function startServer(
   appRuntime?: ServerAppRuntime,
   ragflowIntegration?: RagflowIntegrationService,
   agentChannelHost?: Pick<ServerAgentChannelHost, 'originForSession'>,
+  openIMIntegration?: OpenIMIntegrationService,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -1095,14 +1097,66 @@ export function startServer(
         return
       }
 
+      const openIMWebhookMatch = pathname.match(/^\/api\/v1\/im\/openim-callback\/([^/]+)\/([^/]+)$/)
+      if (openIMIntegration && req.method === 'POST' && openIMWebhookMatch) {
+        const webhookSecret = decodeURIComponent(openIMWebhookMatch[1] || '')
+        const command = decodeURIComponent(openIMWebhookMatch[2] || '')
+        if (!openIMIntegration.webhookEnabled() || !openIMIntegration.matchesWebhookSecret(webhookSecret)) {
+          throw new HttpError(404, 'Not found')
+        }
+        const body = await readJsonBody(req, 512 * 1024)
+        writeNoStoreJson(res, 200, openIMIntegration.handleWebhook(command, body))
+        return
+      }
+
       const auth = authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
 
+      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/session') {
+        const body = await readJsonBody(req)
+        const platformID = Math.floor(Number(body.platform_id) || 0)
+        if (![1, 2, 3, 4, 5, 6, 7, 8].includes(platformID)) {
+          throw new HttpError(400, 'Invalid platform_id')
+        }
+        writeNoStoreJson(res, 200, await openIMIntegration.createSession(auth, platformID))
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/directory') {
         authService.requireScope(auth, 'directory:read')
         writeJson(res, 200, authService.listDirectory(auth.orgId))
+        return
+      }
+
+      if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/im/directory') {
+        writeJson(res, 200, openIMIntegration.listDirectory(auth, {
+          cursor: url.searchParams.get('cursor') || undefined,
+          limit: Number(url.searchParams.get('limit')) || undefined,
+        }))
+        return
+      }
+
+      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/direct-session') {
+        const body = await readJsonBody(req)
+        const targetUserId = typeof body.user_id === 'string' ? body.user_id.trim() : ''
+        if (!targetUserId) throw new HttpError(400, 'Missing user_id')
+        writeJson(res, 200, await openIMIntegration.prepareDirectConversation(auth, targetUserId))
+        return
+      }
+
+      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/group-session') {
+        const body = await readJsonBody(req)
+        const targetUserIds = Array.isArray(body.user_ids)
+          ? body.user_ids.filter((value): value is string => typeof value === 'string')
+          : []
+        writeJson(res, 200, await openIMIntegration.prepareGroupConversation(auth, targetUserIds))
+        return
+      }
+
+      if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/im/health') {
+        writeJson(res, 200, await openIMIntegration.health(auth))
         return
       }
 
@@ -1404,6 +1458,15 @@ export function startServer(
             logger.warn(`Unable to publish account directory change: ${error instanceof Error ? error.message : String(error)}`)
           })
         }
+        if (openIMIntegration) {
+          if (result.user.status === 'disabled') {
+            await openIMIntegration.syncUser(result.user)
+          } else {
+            await openIMIntegration.syncUser(result.user).catch(error => {
+              logger.warn(`Unable to synchronize OpenIM user ${result.user.id}: ${error instanceof Error ? error.message : String(error)}`)
+            })
+          }
+        }
         writeJson(res, 200, result)
         return
       }
@@ -1533,7 +1596,9 @@ export function startServer(
       if (req.method === 'PATCH' && pathname === '/api/v1/settings/system') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
-        writeJson(res, 200, updateSystemSettings(body))
+        const settings = updateSystemSettings(body)
+        openIMIntegration?.updateConfig(settings.openIM)
+        writeJson(res, 200, settings)
         return
       }
 

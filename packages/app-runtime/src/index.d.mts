@@ -201,6 +201,7 @@ export class AppHostCapabilityRegistry {
 export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createDesktopProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createOpenIMProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createRemoteProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const DEFAULT_AGENT_CHANNEL_POLICY: Readonly<Record<string, any>>
 export const AGENT_CHANNEL_SYSTEM_PROMPT: string

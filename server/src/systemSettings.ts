@@ -15,6 +15,18 @@ export type SystemSettingsServerRuntime = {
   dockerImage: string
 }
 
+export type SystemSettingsOpenIM = {
+  enabled: boolean
+  instanceId: string
+  apiUrl: string
+  wsUrl: string
+  chatUrl: string
+  adminUserId: string
+  secret: string
+  webhookSecret: string
+  requestTimeoutMs: number
+}
+
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
@@ -26,6 +38,7 @@ export type SystemSettingsPayload = {
   apiKey: string
   image: SystemSettingsImage
   serverRuntime: SystemSettingsServerRuntime
+  openIM: SystemSettingsOpenIM
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -68,6 +81,17 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   },
   serverRuntime: {
     dockerImage: 'moss-runtime:latest',
+  },
+  openIM: {
+    enabled: false,
+    instanceId: 'default',
+    apiUrl: '',
+    wsUrl: '',
+    chatUrl: '',
+    adminUserId: 'imAdmin',
+    secret: '',
+    webhookSecret: '',
+    requestTimeoutMs: 15_000,
   },
 }
 
@@ -272,6 +296,55 @@ function normalizeSystemSettings(
       ) ?? DEFAULT_SYSTEM_SETTINGS.serverRuntime.dockerImage,
   }
 
+  const sourceOpenIM = isRecord(source.openIM) ? source.openIM : {}
+  const existingOpenIM = isRecord(result.openIM) ? result.openIM : {}
+  result.openIM = {
+    enabled: typeof sourceOpenIM.enabled === 'boolean'
+      ? sourceOpenIM.enabled
+      : typeof existingOpenIM.enabled === 'boolean'
+        ? existingOpenIM.enabled
+        : DEFAULT_SYSTEM_SETTINGS.openIM.enabled,
+    instanceId: stringValue(
+      sourceOpenIM,
+      'instanceId',
+      stringValue(existingOpenIM, 'instanceId', DEFAULT_SYSTEM_SETTINGS.openIM.instanceId),
+    ) || DEFAULT_SYSTEM_SETTINGS.openIM.instanceId,
+    apiUrl: stringValue(
+      sourceOpenIM,
+      'apiUrl',
+      stringValue(existingOpenIM, 'apiUrl', DEFAULT_SYSTEM_SETTINGS.openIM.apiUrl),
+    ).replace(/\/+$/, ''),
+    wsUrl: stringValue(
+      sourceOpenIM,
+      'wsUrl',
+      stringValue(existingOpenIM, 'wsUrl', DEFAULT_SYSTEM_SETTINGS.openIM.wsUrl),
+    ).replace(/\/+$/, ''),
+    chatUrl: stringValue(
+      sourceOpenIM,
+      'chatUrl',
+      stringValue(existingOpenIM, 'chatUrl', DEFAULT_SYSTEM_SETTINGS.openIM.chatUrl),
+    ).replace(/\/+$/, ''),
+    adminUserId: stringValue(
+      sourceOpenIM,
+      'adminUserId',
+      stringValue(existingOpenIM, 'adminUserId', DEFAULT_SYSTEM_SETTINGS.openIM.adminUserId),
+    ) || DEFAULT_SYSTEM_SETTINGS.openIM.adminUserId,
+    secret: stringValue(
+      sourceOpenIM,
+      'secret',
+      stringValue(existingOpenIM, 'secret', DEFAULT_SYSTEM_SETTINGS.openIM.secret),
+    ),
+    webhookSecret: stringValue(
+      sourceOpenIM,
+      'webhookSecret',
+      stringValue(existingOpenIM, 'webhookSecret', DEFAULT_SYSTEM_SETTINGS.openIM.webhookSecret),
+    ),
+    requestTimeoutMs:
+      boundedInt(sourceOpenIM.requestTimeoutMs, 1_000, 120_000) ??
+      boundedInt(existingOpenIM.requestTimeoutMs, 1_000, 120_000) ??
+      DEFAULT_SYSTEM_SETTINGS.openIM.requestTimeoutMs,
+  }
+
   return result as PersistedSystemSettings
 }
 
@@ -300,6 +373,7 @@ function readSystemSettingsState(): SystemSettingsState {
       ...rawSettings,
       ...normalized,
       image: normalized.image || { ...DEFAULT_SYSTEM_SETTINGS.image },
+      openIM: normalized.openIM || { ...DEFAULT_SYSTEM_SETTINGS.openIM },
     }
     result.loaded = true
     return result
@@ -323,6 +397,7 @@ function toSystemSettingsPayload(
     apiKey: state.value.apiKey,
     image: state.value.image,
     serverRuntime: state.value.serverRuntime,
+    openIM: state.value.openIM,
     settingsPath: state.path,
     settingsExists: state.exists,
     settingsLoaded: state.loaded,
@@ -406,6 +481,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     bypassPermissions: nextSettings.bypassPermissions,
     models,
     serverRuntime: nextSettings.serverRuntime,
+    openIM: nextSettings.openIM,
     env,
   }
 
@@ -439,6 +515,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
     serverRuntime: nextSettings.serverRuntime,
+    openIM: nextSettings.openIM,
     settingsPath,
     settingsExists: true,
     settingsLoaded: true,

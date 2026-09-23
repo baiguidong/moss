@@ -33,9 +33,14 @@ try {
     passwordUpdatedAt: timestamp,
     lastLoginAt: null,
   })
+  authDb.ensureBuiltinRoles('org-1')
+  const userRole = authDb.getRoleBySystemKey('org-1', 'user')
+  assert.ok(userRole)
+  authDb.setRolePermissions(userRole.id, ['sessions:create', 'directory:read'])
+  authDb.setUserRoleIds('user-1', [userRole.id])
   authDb.setConfig('jwt_secret', 'existing-secret')
 
-  const { bootstrap } = await createAuthService({
+  const { service, bootstrap } = await createAuthService({
     db,
     dbPath: ':memory:',
     tokenTtlSec: 3600,
@@ -44,6 +49,9 @@ try {
 
   assert.deepEqual(bootstrap, { created: false })
   assert.equal(authDb.listUsersByName('admin').length, 1)
+  const upgradedUser = service.getUserOrNull('user-1', 'org-1')
+  assert.ok(upgradedUser?.effectiveScopes.includes('im:use'))
+  assert.ok(upgradedUser?.effectiveScopes.includes('im:group:create'))
 } finally {
   db.close()
 }

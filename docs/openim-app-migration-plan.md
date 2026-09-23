@@ -1,79 +1,60 @@
-# OpenIM 独立 App 迁移记录
+# OpenIM App 边界
 
-状态：Core 解耦与 Host API 2 适配完成，待真实环境发布验收
+状态：Desktop App 与 Moss Server integration 分层
 
-日期：2026-09-22
+日期：2026-09-23
 
-目标 App：`moss.openim@0.2.0`
+## 运行模型
 
-## 最终边界
-
-Moss Core 仅提供：
-
-- 通用 App Runtime 与 owner/实例隔离。
-- `moss.account/v1` 身份和组织目录。
-- `moss.agent/v1` Binding、Session、Turn 与安全执行。
-- `moss.desktop/v1` 文件、截图、外链和媒体权限。
-- `moss.remote/v1` 同 App 的 Desktop → Server Action。
-
-`moss.openim` App 自己提供：
-
-- OpenIM Node SDK、各平台原生库、连接和重连。
-- OpenIM 服务地址、管理 Secret、用户供应与 Token 签发。
-- OpenIM 用户 ID、会话 ID、消息事件和自动回复扩展格式。
-- 通讯录、单聊、群聊、附件、已读、撤回、RTC 和全部 UI。
-- 发送幂等、回执持久化、失败退避和自动回复环路防护。
-- OpenIM App 的 Desktop 与 Server Backend 运行逻辑。
-
-Core 不再包含 OpenIM UI、preload、IPC、SDK 依赖、Server 路由、系统设置、RBAC 权限或数据库表。`deploy/im` 仍是与 Moss Server 一起部署的服务端基础设施，不属于 App Host API 或 App 迁移范围。
-
-## 运行拓扑
+`moss.openim` 只支持 Desktop：
 
 ```text
 App UI
-  -> Desktop App Action
-  -> OpenIM Desktop Backend (Node SDK)
-       -> moss.remote/v1 action.invoke
-       -> OpenIM Server Backend
-            -> moss.account/v1
-            -> OpenIM Server API
-
-OpenIM incoming event
   -> OpenIM Desktop Backend
-  -> moss.agent/v1 turn.start
-  <- turn.completed / turn.review_requested / turn.failed
-  -> OpenIM sendMessage
-  -> moss.agent/v1 turn.delivery.ack
+       -> moss.openim/v1
+       -> Moss Server OpenIM integration
+            -> OpenIM 管理 API
+       -> OpenIM Node SDK
+            -> OpenIM API / WebSocket
 ```
 
-Desktop 与 Server 使用相同的 App ID 和默认实例 ID。Server Backend 通过 `serverOwnerScope: "org"` 按组织共享配置和管理 Secret；Remote Host 只能在同一 App 内选择当前用户或当前组织 owner。Server HTTP 层按 `apps:invoke` 授权，并把认证用户作为 Action principal 传给 Account Host。
+Moss Desktop 退出后，OpenIM SDK、消息接收和 AI 自动回复随之停止。OpenIM App 不创建 Server deployment，也不依赖同 App ID 的 Server instance。
 
-## 数据与安全
+## 职责边界
 
-- SDK 数据、日志、媒体缓存和投递回执位于 App 实例数据目录。
-- 平台文件方法只接受 Desktop Host 选择或物化到私有缓存的路径。
-- App 不获得 Moss Bearer Token、模型密钥或 Connector 凭据。
-- 联系人 Binding 与 Turn 由 Core 按 owner、App、实例和外部会话隔离。
-- OpenIM 管理 Secret 只进入组织级 Server App Backend 的 Secret 配置，每个组织只配置一份。
-- Moss 用户停用通过通用 `directory.user-changed` Account 事件通知 App，由 OpenIM App 撤销外部会话。
-- 通讯录按页返回；文件内容通过 Desktop Host 分块写入，单个 Backend IPC envelope 保持在 1 MiB 内。
-- 外部消息按不可信用户输入处理，稳定平台消息 ID 用于 Turn 幂等。
+Moss Server OpenIM integration 负责：
 
-## 当前能力
+- 保存 OpenIM 服务地址、管理密钥和 webhook 密钥。
+- 将 Moss 组织用户映射并供应为 OpenIM 用户。
+- 签发当前认证用户的短期 OpenIM Token。
+- 准备单聊和群聊所需的平台用户与群 ID。
+- 在 Moss 用户停用后撤销其 OpenIM 平台会话。
+- 通过 OpenIM webhook 强制组织边界和即时消息权限。
 
-- 单聊支持 `human_only`、`ai_draft_review` 和 `ai_auto`。
-- 默认策略可由联系人策略覆盖；每个联系人拥有独立 Session 上下文。
-- 人工消息可作为受限观察上下文，人工接管可取消未投递 Turn。
-- 自动回复使用稳定消息 ID，失败后指数退避并在重启后恢复。
-- 群聊保持人工处理；群级 Agent 策略不在本轮范围。
+`moss.openim` Desktop App 负责：
 
-## 发布验收
+- OpenIM Node SDK、平台原生库、登录、长连接和重连。
+- 通讯录、单聊、群聊、附件、已读、撤回、RTC 和全部 UI。
+- 收到消息后的 Agent Turn、审核、投递、重试和防回环。
+- SDK 数据、日志、媒体缓存和本地发送幂等记录。
 
-- macOS arm64、macOS x64、Windows x64 和 Linux 对应原生库可加载。
-- 两个真实账号完成登录、通讯录、单聊、群聊、文件、截图和已读验收。
-- 人工、草稿和自动回复模式均验证不会重复投递或跨联系人串线。
-- Desktop/Server App 实例配置、禁用、重启和重装行为符合预期。
-- 现有 `moss/deploy/im` 服务端部署保持独立，不由 App 构建或发布流程管理。
-- 签名 ZIP、Marketplace 元数据和 Core Host API 2 兼容性校验通过。
+Moss Core 的 Desktop Host 仅提供：
 
-App 的配置和运行细节由 `moss-apps/apps/openim/README.md` 维护；OpenIM Server 部署仍由 `moss/deploy/im` 维护。
+- `moss.openim/v1`：使用当前 Moss 登录身份访问服务端 OpenIM integration。
+- `moss.agent/v1`：Binding、Session、Turn 与投递确认。
+- `moss.desktop/v1`：文件、截图、下载、外链和媒体权限。
+
+OpenIM 管理密钥和 Moss 登录 Token 都不会进入 App Backend。
+
+## 配置
+
+OpenIM 只使用 Moss Server 系统设置中的 `openIM` 配置。没有 App Server instance 配置、旧字段兼容或配置迁移路径。
+
+`deploy/im` 负责部署 OpenIM 服务、生成密钥、写入 Moss Server 的 `openIM` 设置并配置 webhook。
+
+## 发布要求
+
+- Moss Server 必须包含 OpenIM integration 和相关 HTTP API。
+- Moss Desktop 必须提供 `moss.openim/v1` Host capability。
+- `moss.openim` Manifest 的 target 只能是 `desktop`。
+- Server 与 Desktop 升级完成后再发布对应的新 App 版本。

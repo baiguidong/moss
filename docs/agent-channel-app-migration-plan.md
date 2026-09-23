@@ -4,7 +4,7 @@
 
 日期：2026-09-22
 
-> 本文记录既有迁移过程，其中 OpenIM 的 Desktop → Server Remote 拆分是待迁移的过渡实现，不作为新 App 的架构示例。当前规范以 `ui/docs/app-runtime.md` 为准：每个 App instance 单 target 单活，Server 能力由 App 显式声明。
+> 本文记录 Host API 2 的迁移过程。OpenIM 的最终边界以 [OpenIM App 边界](openim-app-migration-plan.md) 为准：App 只运行在 Desktop，管理控制面是 Moss Server 内置 integration。
 
 ## 目标
 
@@ -23,6 +23,7 @@
 | `moss.agent/v1` | Agent 目录、Binding、Session、Turn 和投递确认 |
 | `moss.desktop/v1` | App 私有文件缓存、截图、下载、外链与媒体授权 |
 | `moss.remote/v1` | 现有 App 的过渡兼容；新 App 不应使用 |
+| `moss.openim/v1` | 第一方 OpenIM integration 的窄控制面，仅供 `moss.openim` Desktop App 使用 |
 
 旧 Channel 的会话和消息能力已并入 `moss.agent/v1`：
 
@@ -41,7 +42,7 @@
 - Desktop 操作系统权限与每 App 私有文件目录。
 - 过渡期保留同 App 的 Desktop → Server Action 路由，待现有调用方迁移后删除。
 
-Core 不包含平台名称、SDK、Token、用户 ID 规则、Webhook、消息格式、自动回复扩展字段或平台部署配置。
+通用 App Runtime 不包含平台 SDK、消息格式或自动回复规则。OpenIM 是第一方内置 integration：Moss Server 保留用户供应、短期 Token 签发、组织权限 webhook 和平台部署配置；Desktop App 持有 SDK、消息连接和自动回复。
 
 ## App 适配
 
@@ -54,11 +55,11 @@ Core 不包含平台名称、SDK、Token、用户 ID 规则、Webhook、消息�
 
 ### `moss.openim`
 
-- Manifest 升级到 Host API 2，声明 Account、Agent、Desktop、Remote 四个通用协议。
+- Manifest 升级到 Host API 2，只声明 Desktop target，并使用 Agent、Desktop 和 OpenIM 三个协议。
 - Desktop Backend 持有 Node OpenIM SDK、原生库、连接、事件转换和投递重试。
-- Server Backend 通过 Account API 获取身份和目录，完成 OpenIM 用户供应与 Token 签发。
-- Desktop 通过 Remote API 调用同一 App 的 Server Action；UI 只调用 App Action 和 Desktop Host API。
-- OpenIM 标识、会话归属、SDK allowlist 与自动回复扩展全部位于 App；OpenIM Server 部署仍由服务端的 `moss/deploy/im` 维护。
+- Moss Server 内置 integration 完成组织用户供应、Token 签发、会话准备、权限回调和停用撤销。
+- Desktop 通过 `moss.openim/v1` 使用当前登录身份访问 integration，不创建同 App 的 Server Backend。
+- OpenIM SDK、会话 UI 与自动回复逻辑位于 App；OpenIM Server 部署仍由服务端的 `moss/deploy/im` 维护。
 
 ## Server 权限
 
@@ -66,10 +67,10 @@ Core 不包含平台名称、SDK、Token、用户 ID 规则、Webhook、消息�
 
 ## 发布门槛
 
-- Core 搜索不到旧 Channel/OpenIM 运行时代码或平台 SDK 依赖。
+- Core 不包含 OpenIM 平台 SDK 或消息运行时；Moss Server 只保留 OpenIM 管理 integration。
 - App SDK 与 Runtime 均为 `2.0.0`，两个 App Manifest 使用 `hostApi: ^2.0.0`。
 - Core UI、Server、SDK/Runtime 测试与构建全部通过。
-- `moss-apps` 对两个 App 完成 validate、check、test、build 和 package。
+- `moss-apps` 对两个 App 完成 validate、check、test、build 和 package；`moss.openim` 不得声明 Server target 或 `moss.remote/v1`。
 - 现有 `moss/deploy/im` 属于服务端部署，本次不改动；App 不持有或发布 OpenIM Server 部署脚本。
 
 API 详情见 [Host Capability API](../ui/docs/app-host-capability-api.md) 和 [Agent Host API](../ui/docs/agent-host-api.md)。

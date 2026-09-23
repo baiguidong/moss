@@ -11,9 +11,12 @@ Host API 当前版本为 `2.0.0`，不兼容 1.x。Backend 进程协议仍为 Ap
 | `moss.account/v1` | Desktop、Server | 当前 owner 身份、组织通讯录 | `account:identity:read`、`account:directory:read` |
 | `moss.agent/v1` | Desktop、Server | Agent 目录、Binding、Session、Turn、投递确认 | `agent:*` 的细分读写权限 |
 | `moss.desktop/v1` | Desktop | 文件选择与私有缓存、截图、下载、外链、媒体授权 | `desktop:*` |
+| `moss.openim/v1` | Desktop | 使用当前 Moss 身份访问 Server OpenIM integration | `openim:client` |
 | `moss.remote/v1` | Desktop | 过渡兼容：调用同一 App 的 Server Action；新 App 不应使用 | `remote:actions` |
 
-Account 和 Agent 是跨 Host 的领域契约；Desktop 是操作系统能力边界。平台事件、平台用户 ID、SDK 方法、Token 签发和部署参数不属于 Core 协议。
+Account 和 Agent 是跨 Host 的领域契约；Desktop 是操作系统能力边界。第三方平台事件、SDK 方法和部署参数不属于通用 Core 协议。
+
+`moss.openim/v1` 是第一方 OpenIM integration 的窄控制面，只提供当前用户 Token、分页组织通讯录映射以及单聊/群聊准备。OpenIM SDK 和消息事件位于 Desktop App，管理密钥只保存在 Moss Server。
 
 ## Desktop 与 Server 部署语义
 

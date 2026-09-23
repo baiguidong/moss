@@ -825,6 +825,17 @@ GET 返回当前用户由 Desktop 同步的技能版本；PUT 接收 ZIP，请�
 `Prompt is too long` 时也可先发送一次 `/compact`，收到 `compact_boundary` 后再重试
 原消息；恢复或重连不会重放这两个请求。
 
+## OpenIM integration API
+
+OpenIM 是 Moss Server 的内置组织级 integration。管理密钥保存在 Server 系统设置中，Desktop App 只会收到当前登录用户的短期 OpenIM Token。
+
+- `POST /api/v1/im/session`：供应当前用户并签发 Token，需要 `im:use`。
+- `GET /api/v1/im/directory`：分页返回带 `openimUserID` 的组织通讯录，需要 `directory:read`。
+- `POST /api/v1/im/direct-session`：供应一个组织成员并返回 OpenIM 用户 ID，需要 `im:use`。
+- `POST /api/v1/im/group-session`：供应群成员并返回预分配群 ID，需要 `im:use` 和 `im:group:create`。
+- `GET /api/v1/im/health`：检查 OpenIM 管理连接，需要 `im:use`。
+- `POST /api/v1/im/openim-callback/:secret/:command`：OpenIM 服务端权限回调，不使用用户 Bearer Token。
+
 ## Apps API
 
 App 是唯一的可安装扩展类型。用户通过 Desktop App Center 调用这些接口，不需要使用 Moss 命令行。Server 只从 `server.json` 的 `apps.sourceDir` 获取管理员预先放置的已知 App 版本，不接受任意代码上传。

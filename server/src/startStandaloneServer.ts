@@ -10,6 +10,8 @@ import { ServerAppRuntime } from './apps/serverAppRuntime.js'
 import { createServerAccountHostHandlers } from './apps/serverAccountHost.js'
 import { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
+import { OpenIMIntegrationService } from './openim/service.js'
+import { getSystemSettings } from './systemSettings.js'
 import {
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
@@ -76,6 +78,11 @@ export async function startStandaloneDirectConnectServer(
     rootDir: config.rootDir,
     config: config.ragflow,
   })
+  const openIMIntegration = new OpenIMIntegrationService({
+    db: store.db,
+    config: getSystemSettings().openIM,
+    authService,
+  })
   const server = startServer(
     config,
     runtime,
@@ -84,6 +91,7 @@ export async function startStandaloneDirectConnectServer(
     appRuntime,
     ragflowIntegration,
     agentChannelHost,
+    openIMIntegration,
   )
   const actualPort = (await server.ready) ?? config.port
   const connectHost =

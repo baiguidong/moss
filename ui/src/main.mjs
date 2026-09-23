@@ -97,6 +97,7 @@ import {
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
   createDesktopProtocolDefinition,
+  createOpenIMProtocolDefinition,
   createRemoteProtocolDefinition,
   DEFAULT_AGENT_CHANNEL_POLICY,
   resolveAgentChannelConnectorIds,
@@ -110,7 +111,9 @@ import {
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
   MOSS_DESKTOP_PROTOCOL,
+  MOSS_OPENIM_PROTOCOL,
   MOSS_REMOTE_PROTOCOL,
+  OPENIM_HOST_METHODS,
   resolveBackendProtocols,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
@@ -3456,6 +3459,53 @@ async function requestDesktopAccount(pathname) {
   });
   if (!response.ok) throw new Error(await parseRemoteDirectError('Moss Account request failed', response));
   return response.json();
+}
+
+async function requestDesktopOpenIM(pathname, { method = 'GET', body } = {}) {
+  const remote = getRemoteDirectSettings();
+  if (!remote.serverUrl) throw new Error('请先连接 Moss Server。');
+  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+  const response = await remoteDirectNetFetch(`${serverUrl}${pathname}`, {
+    method,
+    signal: AbortSignal.timeout(35_000),
+    headers: {
+      authorization: `Bearer ${authToken}`,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok) throw new Error(await parseRemoteDirectError('OpenIM 服务请求失败', response));
+  return response.json();
+}
+
+async function handleDesktopOpenIMRequest(method, input, context) {
+  if (context.appId !== 'moss.openim') throw new Error('OpenIM Host access is restricted to moss.openim.');
+  if (method === 'session.issue') {
+    return requestDesktopOpenIM('/api/v1/im/session', {
+      method: 'POST',
+      body: { platform_id: input.platformId },
+    });
+  }
+  if (method === 'directory.list') {
+    const params = new URLSearchParams();
+    if (input.cursor) params.set('cursor', input.cursor);
+    if (input.limit) params.set('limit', String(input.limit));
+    const query = params.size ? `?${params}` : '';
+    return requestDesktopOpenIM(`/api/v1/im/directory${query}`);
+  }
+  if (method === 'conversation.direct.prepare') {
+    return requestDesktopOpenIM('/api/v1/im/direct-session', {
+      method: 'POST',
+      body: { user_id: input.userId },
+    });
+  }
+  if (method === 'conversation.group.prepare') {
+    return requestDesktopOpenIM('/api/v1/im/group-session', {
+      method: 'POST',
+      body: { user_ids: input.userIds },
+    });
+  }
+  throw new Error(`Unsupported OpenIM request: ${method}`);
 }
 
 function localDesktopAccountIdentity() {
@@ -11056,6 +11106,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
       createDesktopProtocolDefinition(),
+      createOpenIMProtocolDefinition(),
       createRemoteProtocolDefinition(),
     ],
     hostHandlers: {
@@ -11071,6 +11122,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       [MOSS_DESKTOP_PROTOCOL]: Object.fromEntries(DESKTOP_HOST_METHODS.map((method) => [
         method,
         (input, context) => desktopPlatformHandlers[method](input, context),
+      ])),
+      [MOSS_OPENIM_PROTOCOL]: Object.fromEntries(OPENIM_HOST_METHODS.map((method) => [
+        method,
+        (input, context) => handleDesktopOpenIMRequest(method, input, context),
       ])),
       [MOSS_REMOTE_PROTOCOL]: {
         'action.invoke': (input, context) => invokeRemoteAppAction(

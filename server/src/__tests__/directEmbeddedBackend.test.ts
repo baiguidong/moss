@@ -654,6 +654,17 @@ function makeSettings(
     serverRuntime: {
       dockerImage: 'moss-runtime:test',
     },
+    openIM: {
+      enabled: false,
+      instanceId: 'default',
+      apiUrl: '',
+      wsUrl: '',
+      chatUrl: '',
+      adminUserId: 'imAdmin',
+      secret: '',
+      webhookSecret: '',
+      requestTimeoutMs: 15_000,
+    },
     settingsPath: '',
     settingsExists: true,
     settingsLoaded: true,
