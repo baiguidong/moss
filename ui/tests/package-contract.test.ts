@@ -245,6 +245,7 @@ describe('desktop package contract', () => {
     expect(desktopMain).not.toContain('initializeBundledApps');
     expect(serverPrepare).not.toContain('bundled-apps');
     expect(serverImagePrepare).not.toContain('bundled-apps');
+    expect(serverImagePrepare).toContain('test ! -e "$APP_ROOT/apps"');
     expect(desktopPackage.build.extraResources.some(
       (entry: { to?: string }) => entry.to === 'apps',
     )).toBe(false);

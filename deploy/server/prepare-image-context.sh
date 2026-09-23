@@ -139,7 +139,7 @@ printf '%s\n' "$NODE_VERSION" > "$PACKAGE_ROOT/NODE_VERSION"
 test -x "$NODE_ROOT/bin/node"
 test -f "$APP_ROOT/bin/moss-server.mjs"
 test -f "$APP_ROOT/bin/moss-session-runner.mjs"
-test -f "$APP_ROOT/apps/.prepared.json"
+test ! -e "$APP_ROOT/apps"
 test -f "$APP_ROOT/admin/dist/index.html"
 test -f "$APP_ROOT/node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node"
 
