@@ -68,7 +68,7 @@
 ## 发布门槛
 
 - Core 不包含 OpenIM 平台 SDK 或消息运行时；Moss Server 只保留 OpenIM 管理 integration。
-- App SDK 与 Runtime 均为 `2.0.0`，两个 App Manifest 使用 `hostApi: ^2.0.0`。
+- App SDK 与 Runtime 均为 `2.1.0`，新 App Manifest 使用 `hostApi: ^2.1.0`；Host 继续兼容要求 `^2.0.0` 的 App。
 - Core UI、Server、SDK/Runtime 测试与构建全部通过。
 - `moss-apps` 对两个 App 完成 validate、check、test、build 和 package；`moss.openim` 不得声明 Server target 或 `moss.remote/v1`。
 - 现有 `moss/deploy/im` 属于服务端部署，本次不改动；App 不持有或发布 OpenIM Server 部署脚本。

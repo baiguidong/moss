@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import Ajv2020 from 'ajv/dist/2020.js'
 import {
+  APP_HOST_API_VERSION,
   APP_MANIFEST_SCHEMA,
   AppBackendClient,
   createEnvelope,
@@ -19,6 +20,13 @@ const valid = {
 }
 
 describe('App manifest V2', () => {
+  it('advertises Host API 2.1 while accepting Apps built for compatible 2.x hosts', () => {
+    expect(APP_HOST_API_VERSION).toBe('2.1.0')
+    expect(validateAppManifest(valid).hostApi).toBe('^2.0.0')
+    expect(validateAppManifest({ ...valid, hostApi: '^2.1.0' }).hostApi).toBe('^2.1.0')
+    expect(() => validateAppManifest({ ...valid, hostApi: '^2.2.0' })).toThrow(/Host API/)
+  })
+
   it('normalizes a UI-only manifest without inventing a Backend', () => {
     const manifest = validateAppManifest(valid)
     expect(manifest.ui?.window).toEqual({ width: 1100, height: 760, resizable: true })
@@ -109,6 +117,7 @@ describe('App manifest V2', () => {
 
     const targeted = validateAppManifest({
       ...valid,
+      hostApi: '^2.1.0',
       ui: undefined,
       backend: {
         ...backend,
@@ -123,9 +132,15 @@ describe('App manifest V2', () => {
     expect(resolveBackendProtocols(targeted.backend, 'server')).toEqual(['moss.agent/v1'])
     expect(() => validateAppManifest({
       ...valid,
+      hostApi: '^2.1.0',
       ui: undefined,
       backend: { ...backend, protocols: { server: ['moss.agent/v1'] } },
     })).toThrow(/protocols.server requires server/)
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: { ...backend, protocols: { desktop: ['moss.agent/v1'] } },
+    })).toThrow(/Host API >=2.1.0/)
   })
 
   it('normalizes contribution points and rejects dangling or ungranted references', () => {

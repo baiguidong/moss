@@ -173,7 +173,7 @@ describe('App Host Capability API', () => {
       id: 'fixture.host-capability',
       version: '1.0.0',
       displayName: 'Host Capability Fixture',
-      hostApi: '^2.0.0',
+      hostApi: '^2.1.0',
       backend: {
         entry: 'dist/backend/main.mjs',
         runtime: 'node',

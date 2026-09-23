@@ -2,7 +2,7 @@
 
 Host Capability API 是 App Backend 使用 Moss 能力的唯一受支持入口。App 不应导入 Desktop、Server、Session 或数据库内部模块；它应在 Manifest 中声明版本化协议和权限，再通过 `@moss/app-sdk` 发起受控请求。当前 Node Backend 进程不是操作系统沙箱，因此只应运行第一方或用户明确信任的 Backend 包；Host grants 约束 Moss 能力，不代表文件系统和网络隔离。
 
-Host API 当前版本为 `2.0.0`，不兼容 1.x。Backend 进程协议仍为 App Service v1；两者含义不同：前者描述公开能力集合，后者描述 Node 子进程的传输 envelope。
+Host API 当前版本为 `2.1.0`，兼容要求 `^2.0.0` 的 App，不兼容 1.x。Backend 进程协议仍为 App Service v1；两者含义不同：前者描述公开能力集合，后者描述 Node 子进程的传输 envelope。
 
 ## 内置协议
 
@@ -37,7 +37,7 @@ Account 和 Agent 是跨 Host 的领域契约；Desktop 是操作系统能力边
   "id": "example.integration",
   "version": "1.0.0",
   "displayName": "Example Integration",
-  "hostApi": "^2.0.0",
+  "hostApi": "^2.1.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",

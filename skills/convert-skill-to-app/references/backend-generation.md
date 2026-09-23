@@ -22,7 +22,7 @@ apps/<app-name>/
   "id": "example.app",
   "version": "0.1.0",
   "displayName": "Example",
-  "hostApi": "^2.0.0",
+  "hostApi": "^2.1.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",

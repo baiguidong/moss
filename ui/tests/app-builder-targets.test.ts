@@ -50,7 +50,7 @@ describe('App Builder deployment target guidance', () => {
         id: 'server-backed-ui',
         version: '1.0.0',
         displayName: 'Server-backed UI',
-        hostApi: '^2.0.0',
+        hostApi: '^2.1.0',
         ui: { entry: 'dist/ui/index.html' },
         backend: {
           entry: 'dist/backend/main.mjs',
@@ -93,7 +93,7 @@ describe('App Builder deployment target guidance', () => {
         id: 'invalid-server-app',
         version: '1.0.0',
         displayName: 'Invalid Server App',
-        hostApi: '^2.0.0',
+        hostApi: '^2.1.0',
         backend: {
           entry: 'dist/backend/main.mjs',
           runtime: 'node',

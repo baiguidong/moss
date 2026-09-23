@@ -108,7 +108,7 @@ The single manifest remains `app.moss.json`.
   "displayName": "Example",
   "description": "Example App",
   "icon": "assets/icon.png",
-  "hostApi": "^2.0.0",
+  "hostApi": "^2.1.0",
   "ui": {
     "entry": "dist/ui/index.html",
     "window": {

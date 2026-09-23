@@ -41,7 +41,7 @@ example-app/
   "id": "example.app",
   "version": "1.0.0",
   "displayName": "Example",
-  "hostApi": "^2.0.0",
+  "hostApi": "^2.1.0",
   "ui": { "entry": "dist/ui/index.html" },
   "backend": {
     "entry": "dist/backend/main.mjs",
