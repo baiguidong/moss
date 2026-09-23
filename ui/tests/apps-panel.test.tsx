@@ -1,29 +1,43 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AppInstanceRow, AppsPanel } from '../src/renderer-react/components/apps-panel';
+import { AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
-function renderInstance(hasSettings: boolean, enabled = true) {
-  const app = {
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+afterEach(() => {
+  if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+  else Reflect.deleteProperty(globalThis, 'window');
+});
+
+function settingsApp(hasSettings = true) {
+  return {
     id: 'example.settings',
     name: 'example.settings',
+    hasUi: hasSettings,
     hasSettings,
-    enabled,
-    backend: {
-      lifecycle: 'persistent',
-      instanceMode: 'single',
-      configuration: {
-        schema: {
-          type: 'object',
-          properties: {
-            appId: { type: 'string', title: 'Example App ID' },
-            allowedUsers: { type: 'array', title: 'allowedUsers' },
-          },
+    enabled: false,
+    backend: { lifecycle: 'persistent' },
+    configuration: {
+      schema: {
+        type: 'object',
+        required: ['appId'],
+        properties: {
+          appId: { type: 'string', title: 'Example App ID' },
+          allowedUsers: { type: 'array', title: 'allowedUsers' },
         },
       },
+      secrets: { required: ['appSecret'], properties: { appSecret: { title: 'App Secret' } } },
     },
+    instances: [{ id: 'example.settings--default', displayName: 'Default', enabled: false, config: {}, secretRefs: {} }],
+  } as StoredApp;
+}
+
+function renderInstance(hasSettings: boolean, enabled = true) {
+  const app = {
+    ...settingsApp(hasSettings),
+    enabled,
   } as StoredApp;
   const instance = {
     id: 'example.settings--default',
@@ -35,7 +49,7 @@ function renderInstance(hasSettings: boolean, enabled = true) {
   } as AppInstance;
 
   return renderToStaticMarkup(
-    <AppInstanceRow app={app} instance={instance} onChanged={async () => {}} />,
+    <AppRuntimeControls app={app} instance={instance} onChanged={async () => {}} onOpenSettings={() => {}} />,
   );
 }
 
@@ -51,25 +65,72 @@ describe('Apps management', () => {
     expect(markup).toContain('正在加载应用市场');
   });
 
-  test('keeps instance configuration available for Apps with their own settings page', () => {
+  test('uses the App settings page instead of duplicating single-instance configuration', () => {
     const markup = renderInstance(true);
 
-    expect(markup).toContain('默认实例');
+    expect(markup).not.toContain('默认实例');
     expect(markup).toContain('title="重启"');
     expect(markup).toContain('title="日志"');
-    expect(markup).toContain('title="配置实例"');
+    expect(markup).not.toContain('title="配置实例"');
+    expect(markup).toContain('title="打开应用设置"');
     expect(markup).not.toContain('Example App ID');
     expect(markup).not.toContain('allowedUsers');
     expect(markup).not.toContain('保存配置');
+    expect(markup).not.toContain('role="switch"');
   });
 
-  test('keeps the instance settings entry for Apps without a settings page', () => {
-    expect(renderInstance(false)).toContain('title="配置实例"');
+  test('shows App configuration directly when there is no custom settings page', () => {
+    const markup = renderInstance(false);
+    expect(markup).toContain('Example App ID');
+    expect(markup).toContain('保存配置');
+    expect(markup).not.toContain('实例名称');
+    expect(markup).not.toContain('role="switch"');
+  });
+
+  test('allows an unconfigured single-instance App to enable its own settings UI', async () => {
+    const app = settingsApp();
+    const calls: unknown[] = [];
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { agentDesktop: {
+      setAppEnabled: async (payload: unknown) => { calls.push(payload); },
+      setAppInstanceEnabled: async () => { throw new Error('Unconfigured Backend must not be started'); },
+    } } });
+
+    await setAppEnabled(app, true);
+    expect(calls).toEqual([{ appId: app.id, enabled: true }]);
+    app.enabled = true;
+    const markup = renderToStaticMarkup(<AppsPanel apps={[app]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    expect(markup).toMatch(/role="switch"[^>]*checked=""/);
+    const openButton = markup.match(/<button[^>]*data-app-open="example\.settings"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
+    expect(openButton).toContain('打开');
+    expect(openButton).not.toContain('disabled=""');
+    expect(markup).not.toContain('加入侧栏');
+    expect(markup).not.toContain('移出侧栏');
+  });
+
+  test('still enables a configured default instance and restores it when App enabling fails', async () => {
+    const app = settingsApp();
+    app.instances![0].config = { appId: 'cli_example' };
+    app.instances![0].secretRefs = { appSecret: { configured: true, masked: '****' } };
+    const calls: unknown[] = [];
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { agentDesktop: {
+      setAppEnabled: async () => { throw new Error('Unable to enable App'); },
+      setAppInstanceEnabled: async (payload: unknown) => { calls.push(payload); },
+    } } });
+
+    await expect(setAppEnabled(app, true)).rejects.toThrow('Unable to enable App');
+    expect(calls).toEqual([
+      { appId: app.id, instanceId: app.instances![0].id, enabled: true },
+      { appId: app.id, instanceId: app.instances![0].id, enabled: false },
+    ]);
+  });
+
+  test('keeps required configuration checks for Apps using the host form', async () => {
+    await expect(setAppEnabled(settingsApp(false), true)).rejects.toThrow('请先打开应用管理并保存必填项');
   });
 
   test('does not show a stale running state for a disabled host and instance', () => {
     const markup = renderInstance(true, false);
-    expect(markup).toContain('已停止');
+    expect(markup).not.toContain('运行中');
   });
 
   test('prevents opening a disabled App and tells the user to enable it', () => {

@@ -82,7 +82,6 @@ function normalizeContributes(contributes, manifest) {
     id: view.id,
     title: view.title.trim(),
     route: view.route || '#/',
-    location: view.location || 'hidden',
     icon: String(view.icon || '').trim(),
     order: Number(view.order) || 0,
     ...normalizeContributionPermission(view, requestedPermissions, `view ${view.id}`),
@@ -191,7 +190,6 @@ function normalizeBackend(backend) {
     runtime: 'node',
     apiVersion: 1,
     lifecycle: backend.lifecycle,
-    instanceMode: backend.instanceMode,
     ...(backend.protocols?.length ? { protocols: [...backend.protocols] } : {}),
     actions,
     ...(backend.configuration ? {

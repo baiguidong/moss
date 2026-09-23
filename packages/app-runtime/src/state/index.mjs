@@ -68,8 +68,11 @@ export function defaultInstanceId(appId) {
   return `${appId}--default`
 }
 
-function normalizeInstanceId(appId, value, single) {
-  const id = single ? defaultInstanceId(appId) : String(value || `${appId}--${randomUUID()}`).trim()
+function normalizeInstanceId(appId, value) {
+  const id = defaultInstanceId(appId)
+  if (value !== undefined && value !== id) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'App Backend identity is managed by the Host')
+  }
   if (
     id.length > 160 ||
     !/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(id) ||
@@ -404,16 +407,16 @@ export class InstanceStore {
     const owner = this.owner()
     return this.state.snapshot().instances[scopedRecordKey(owner, instanceId)] || null
   }
-  async create(appId, input = {}, options = {}) {
-    const id = normalizeInstanceId(appId, input.id, options.single)
+  async create(appId, input = {}) {
+    const id = normalizeInstanceId(appId, input.id)
     const owner = this.owner()
     const key = scopedRecordKey(owner, id)
     return this.state.transaction((state) => {
       const existing = state.instances[key]
       if (existing && existing.appId !== appId) throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Instance id belongs to another App')
-      if (existing && !options.single) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Instance already exists: ${id}`)
+      if (existing) return clone(existing)
       const timestamp = Date.now()
-      const displayName = String(input.displayName || (options.single ? 'Default' : 'New instance')).trim()
+      const displayName = String(input.displayName || 'Default').trim()
       if (!displayName || displayName.length > 120) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Instance display name must contain 1 to 120 characters')
       state.instances[key] = {
         id,

@@ -4,7 +4,7 @@ import fsSync from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { AppRuntimeHost, defaultInstanceId, writePackageChecksums } from '../../packages/app-runtime/src/index.mjs'
+import { AppRuntimeHost, defaultInstanceId, normalizeAppOwner, writePackageChecksums } from '../../packages/app-runtime/src/index.mjs'
 
 const roots: string[] = []
 const nodeExecutable = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
@@ -38,6 +38,14 @@ async function installVersion(runtime: AppRuntimeHost, version: string, mutate: 
   await writePackageChecksums(source)
   await runtime.installFromDirectory(source)
   return source
+}
+
+async function configureBackend(runtime: AppRuntimeHost, appId: string, input: Record<string, any>) {
+  const instanceId = defaultInstanceId(appId)
+  await runtime.setInstanceEnabled(appId, instanceId, false)
+  await runtime.updateInstance(appId, instanceId, input)
+  if (input.enabled) await runtime.setInstanceEnabled(appId, instanceId, true)
+  return runtime.instances.get(instanceId)
 }
 
 afterEach(async () => {
@@ -91,7 +99,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       const manifestPath = path.join(source, 'app.moss.json')
       const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
       manifest.contributes = {
-        views: [{ id: 'home', title: 'Home', route: '#/home', location: 'sidebar' }],
+        views: [{ id: 'home', title: 'Home', route: '#/home' }],
       }
       await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     })
@@ -126,35 +134,87 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.shutdown()
   })
 
-  it('runs exactly one persistent process per enabled multi-instance', async () => {
-    const runtime = await createRuntime('persistent-multiple')
-    const appId = 'fixture.persistent-multiple'
-    await runtime.setAppEnabled(appId, true)
-    await expect(runtime.createInstance(appId, { id: '../../escape', displayName: 'Unsafe' })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
-    await expect(runtime.createInstance(appId, { id: 'other.app--instance', displayName: 'Wrong scope' })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
-    const first = await runtime.createInstance(appId, { displayName: 'One', config: { label: 'one' }, secrets: { token: 'first-secret' }, enabled: true })
-    const second = await runtime.createInstance(appId, { displayName: 'Two', config: { label: 'two' }, secrets: { token: 'second-secret' }, enabled: true })
-    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(2)
-    await runtime.setInstanceEnabled(appId, first.id, false)
+  it('runs one Backend per App and rejects additional Backend identities', async () => {
+    const runtime = await createRuntime('persistent-configured')
+    const appId = 'fixture.persistent-configured'
+    const instanceId = defaultInstanceId(appId)
+    await expect(runtime.instances.create(appId, { id: `${appId}--extra` })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
+    await expect(runtime.instances.create(appId, { id: '../../escape' })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
+    const existing = await runtime.instances.create(appId)
+    expect(existing.id).toBe(instanceId)
+    expect(runtime.instances.list(appId)).toHaveLength(1)
     expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
-    expect(() => runtime.requireInstance('another.app', second.id)).toThrow(/outside the caller scope/)
-    expect((await runtime.invoke(appId, second.id, 'echo', 'ok')).input).toBe('ok')
-    await runtime.shutdown()
+    await runtime.setAppEnabled(appId, false)
     expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(0)
+    await runtime.setAppEnabled(appId, true)
+    expect(() => runtime.requireInstance('another.app', instanceId)).toThrow(/outside the caller scope/)
+    expect((await runtime.invoke(appId, instanceId, 'echo', 'ok')).input).toBe('ok')
+    await runtime.shutdown()
   })
 
-  it('removes instance state and runtime directories when creation cannot start the Backend', async () => {
-    const runtime = await createRuntime('persistent-multiple', { handshakeTimeoutMs: 200 }, async (source) => {
-      await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), 'process.exit(21)\n')
+  it.each([false, true])('rejects concurrent starts of a second Backend for the same App (different owner: %s)', async (differentOwner) => {
+    const runtime = await createRuntime('persistent-single')
+    try {
+      const [definition] = runtime.supervisor.definitions.values()
+      await runtime.supervisor.stop(definition.key)
+      const otherKey = `${definition.key}-other`
+      runtime.supervisor.register({
+        ...definition, key: otherKey,
+        ...(differentOwner ? { owner: normalizeAppOwner({ scope: 'user', orgId: 'org', userId: 'another-user' }) } : {}),
+      })
+      const results = await Promise.allSettled([
+        runtime.supervisor.start(definition.key), runtime.supervisor.start(otherKey),
+      ])
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      const failure = results.find((result) => result.status === 'rejected') as PromiseRejectedResult
+      expect(failure.reason.message).toContain('already running')
+      expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
+    } finally {
+      await runtime.shutdown()
+    }
+  })
+
+  it('reuses a running process and waits for its exit before starting a replacement', async () => {
+    const runtime = await createRuntime('persistent-single', { shutdownTimeoutMs: 500 }, async (source) => {
+      const entry = path.join(source, 'dist/backend/main.mjs')
+      const contents = await fs.readFile(entry, 'utf8')
+      await fs.writeFile(entry, contents.replace("if (message.type === 'service.shutdown') process.exit(0)", "if (message.type === 'service.shutdown') return"))
     })
-    const appId = 'fixture.persistent-multiple'
-    const instanceId = `${appId}--failed`
-    await runtime.setAppEnabled(appId, true)
-    await expect(runtime.createInstance(appId, { id: instanceId, displayName: 'Failed', enabled: true })).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
-    expect(runtime.instances.get(instanceId)).toBeNull()
-    expect(runtime.runtimes.list(appId)).toEqual([])
-    expect(runtime.supervisor.listStatuses()).toEqual([])
-    await expect(fs.stat(path.join(runtime.dataDir, appId, 'instances', instanceId))).rejects.toMatchObject({ code: 'ENOENT' })
+    try {
+      const [definition] = runtime.supervisor.definitions.values()
+      const originalPid = runtime.supervisor.status(definition.key).pid
+      const repeated = await Promise.all([
+        runtime.supervisor.start(definition.key), runtime.supervisor.start(definition.key),
+      ])
+      expect(repeated.map((status) => status.pid)).toEqual([originalPid, originalPid])
+      const otherKey = `${definition.key}-replacement`
+      runtime.supervisor.register({ ...definition, key: otherKey })
+      const stopped = runtime.supervisor.stop(definition.key)
+      await Promise.resolve()
+      expect(runtime.supervisor.status(definition.key).state).toBe('stopping')
+      await expect(runtime.supervisor.start(otherKey)).rejects.toThrow(/already running/)
+      await stopped
+      expect(() => process.kill(originalPid, 0)).toThrow()
+      expect((await runtime.supervisor.start(otherKey)).state).toBe('running')
+    } finally {
+      await runtime.shutdown()
+    }
+  })
+
+  it('restores the App switch when its Backend cannot start', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-start-failure-'))
+    roots.push(root)
+    const source = path.join(root, 'source')
+    await fs.cp(path.join(fixtureRoot, 'persistent-configured'), source, { recursive: true })
+    await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), 'process.exit(21)\n')
+    await writePackageChecksums(source)
+    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable, processOptions: { handshakeTimeoutMs: 200 } }).initialize()
+    const appId = 'fixture.persistent-configured'
+    await runtime.installFromDirectory(source, { enabled: false })
+    await expect(runtime.setAppEnabled(appId, true)).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
+    expect(runtime.getInstallation(appId).enabled).toBe(false)
+    expect((await runtime.getApp(appId)).instances.map((instance: any) => instance.id)).toEqual([defaultInstanceId(appId)])
+    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(0)
     await runtime.shutdown()
   })
 
@@ -222,23 +282,22 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.shutdown()
   })
 
-  it('reconciles runtimes and visible instances when a version changes runtime shape', async () => {
-    const runtime = await createRuntime('persistent-multiple')
-    const appId = 'fixture.persistent-multiple'
-    await runtime.setAppEnabled(appId, true)
-    const first = await runtime.createInstance(appId, { displayName: 'One', enabled: true })
-    const second = await runtime.createInstance(appId, { displayName: 'Two', enabled: true })
-    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(2)
-
-    await installVersion(runtime, '2.0.0', (manifest) => {
-      manifest.backend.instanceMode = 'single'
-    })
-    await runtime.activateVersion(appId, '2.0.0')
-    const singleApp = await runtime.getApp(appId)
-    expect(singleApp?.instances.map((instance: any) => instance.id)).toEqual([defaultInstanceId(appId)])
-    expect(runtime.runtimes.list(appId).map((runtimeRecord) => runtimeRecord.instanceId)).toEqual([defaultInstanceId(appId)])
-    expect(runtime.instances.get(first.id)).not.toBeNull()
-    expect(runtime.instances.get(second.id)).not.toBeNull()
+  it('retires stale Backend records without deleting their saved data', async () => {
+    const runtime = await createRuntime('persistent-configured')
+    const appId = 'fixture.persistent-configured'
+    const staleId = `${appId}--old`
+    const stale = { ...runtime.instances.get(defaultInstanceId(appId)), id: staleId, config: { label: 'saved' } }
+    await runtime.state.transaction((state) => { state.instances[staleId] = stale; return state })
+    await runtime.runtimes.upsert({ ...runtime.runtimes.list(appId)[0], key: staleId, instanceId: staleId })
+    const savedPath = path.join(runtime.dataDir, appId, 'instances', staleId, 'saved.txt')
+    await fs.mkdir(path.dirname(savedPath), { recursive: true })
+    await fs.writeFile(savedPath, 'saved')
+    await runtime.reconcileApp(appId)
+    expect((await runtime.getApp(appId))?.instances.map((instance: any) => instance.id)).toEqual([defaultInstanceId(appId)])
+    expect(runtime.runtimes.list(appId).map((record) => record.instanceId)).toEqual([defaultInstanceId(appId)])
+    expect(runtime.instances.get(staleId)?.config).toEqual({ label: 'saved' })
+    expect(await fs.readFile(savedPath, 'utf8')).toBe('saved')
+    expect(() => runtime.requireInstance(appId, staleId)).toThrow(/outside the caller scope/)
     expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
 
     await installVersion(runtime, '3.0.0', async (manifest, source) => {
@@ -329,14 +388,14 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
   })
 
   it('preserves data, credentials, and instance configuration unless deletion is requested', async () => {
-    const runtime = await createRuntime('persistent-multiple', {}, async (source) => {
+    const runtime = await createRuntime('persistent-configured', {}, async (source) => {
       const secretsPath = path.join(source, 'schemas/secrets.schema.json')
       const schema = JSON.parse(await fs.readFile(secretsPath, 'utf8'))
       schema.required = ['token']
       await fs.writeFile(secretsPath, `${JSON.stringify(schema, null, 2)}\n`)
     })
-    const appId = 'fixture.persistent-multiple'
-    const instance = await runtime.createInstance(appId, {
+    const appId = 'fixture.persistent-configured'
+    const instance = await configureBackend(runtime, appId, {
       displayName: 'Durable', config: { label: 'kept' }, secrets: { token: 'kept-secret' }, enabled: false,
     })
     const dataFile = path.join(runtime.dataDir, appId, 'instances', instance.id, 'value.txt')
@@ -351,6 +410,9 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
 
     await runtime.installFromDirectory(source)
     expect((await runtime.getApp(appId))?.instances[0]?.displayName).toBe('Durable')
+    await runtime.setInstanceEnabled(appId, instance.id, true)
+    await expect(runtime.clearInstanceCredentials(appId, instance.id)).rejects.toThrow(/Disable the App/)
+    await runtime.setAppEnabled(appId, false)
     await runtime.clearInstanceCredentials(appId, instance.id)
     expect(await runtime.credentials.get(appId, instance.id)).toEqual({})
     await runtime.setAppEnabled(appId, true)
@@ -363,9 +425,9 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
   })
 
   it('clears preserved secret markers when credentials are deleted without deleting data', async () => {
-    const runtime = await createRuntime('persistent-multiple')
-    const appId = 'fixture.persistent-multiple'
-    const instance = await runtime.createInstance(appId, {
+    const runtime = await createRuntime('persistent-configured')
+    const appId = 'fixture.persistent-configured'
+    const instance = await configureBackend(runtime, appId, {
       displayName: 'Credentials', secrets: { token: 'remove-me' }, enabled: false,
     })
     await runtime.uninstall(appId, { deleteCredentials: true })

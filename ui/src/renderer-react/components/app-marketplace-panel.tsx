@@ -8,6 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
+import { AppInstallProgressView } from "@/components/app-install-progress";
+import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
 import type {
   AppMarketplaceCatalog,
   AppMarketplaceDetail,
@@ -39,8 +41,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   const [selectedVersions, setSelectedVersions] = React.useState<Record<string, string>>({});
   const [query, setQuery] = React.useState("");
   const [loading, setLoading] = React.useState(true);
-  const [busyAppId, setBusyAppId] = React.useState<string | null>(null);
+  const [pendingAppIds, setPendingAppIds] = React.useState<Set<string>>(() => new Set());
   const [error, setError] = React.useState("");
+  const { progress, clearProgress } = useAppInstallProgress("marketplace");
 
   const loadCatalog = React.useCallback(async (forceRefresh = false) => {
     setLoading(true);
@@ -74,7 +77,8 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
 
   const install = async (entry: AppMarketplaceEntry) => {
     const version = selectedVersions[entry.id] || details[entry.id]?.latestVersion || entry.latestVersion;
-    setBusyAppId(entry.id);
+    setPendingAppIds((current) => new Set(current).add(entry.id));
+    clearProgress(entry.id);
     setError("");
     try {
       let result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, version });
@@ -96,7 +100,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
     } catch (installError) {
       setError(cleanIpcErrorMessage(installError));
     } finally {
-      setBusyAppId(null);
+      setPendingAppIds((current) => { const next = new Set(current); next.delete(entry.id); return next; });
     }
   };
 
@@ -141,14 +145,17 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
               const installedUnavailable = installed?.packageStatus === "incompatible" || installed?.packageStatus === "invalid";
               const selectedVersion = selectedVersions[entry.id] || entry.latestVersion;
               const selectedRelease = detail?.versions.find((version) => version.version === selectedVersion) || entry.latest;
-              const busy = busyAppId === entry.id;
+              const installProgress = progress[entry.id] || (pendingAppIds.has(entry.id)
+                ? { source: "marketplace" as const, appId: entry.id, version: selectedVersion, phase: "preparing" as const }
+                : undefined);
+              const busy = pendingAppIds.has(entry.id) || isAppInstallActive(installProgress);
               const compatible = Boolean(
                 (selectedRelease.platformCompatible ?? entry.platformCompatible)
                 && (selectedRelease.hostCompatible ?? entry.hostCompatible),
               );
               const sameVersion = installed?.currentVersion === selectedVersion;
               const actionLabel = busy
-                ? "处理中"
+                ? installed ? "更新中…" : "安装中…"
                 : !installed
                   ? "安装"
                   : sameVersion
@@ -184,6 +191,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                     {!compatible && <span className="text-xs text-destructive">当前系统或 Moss 版本不兼容</span>}
                     {installed?.currentVersion && <span className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
                   </div>
+                  {installProgress && <div className="mt-3"><AppInstallProgressView progress={installProgress} /></div>}
                   {expanded && (
                     <div className="mt-4 border-t border-border pt-3 text-xs">
                       {!detail ? (
@@ -193,7 +201,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                           <p className="whitespace-pre-wrap leading-5 text-muted-foreground">{detail.description || detail.summary}</p>
                           <label className="grid max-w-xs gap-1 text-muted-foreground">
                             <span>可用版本</span>
-                            <select className="h-8 rounded-md border border-input bg-background px-2" value={selectedVersion} onChange={(event) => setSelectedVersions((current) => ({ ...current, [entry.id]: event.target.value }))}>
+                            <select className="h-8 rounded-md border border-input bg-background px-2" value={selectedVersion} disabled={busy} onChange={(event) => setSelectedVersions((current) => ({ ...current, [entry.id]: event.target.value }))}>
                               {detail.versions.map((version) => <option key={version.version} value={version.version}>{version.version}</option>)}
                             </select>
                           </label>

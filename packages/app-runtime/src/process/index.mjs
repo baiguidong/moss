@@ -79,7 +79,6 @@ export class AppProcessSupervisor {
     this.healthCheckIntervalMs = options.healthCheckIntervalMs || 30_000
     this.healthCheckTimeoutMs = options.healthCheckTimeoutMs || 65_000
     this.maxProcesses = options.maxProcesses || 64
-    this.maxProcessesPerApp = options.maxProcessesPerApp || 16
     this.restartBaseDelayMs = options.restartBaseDelayMs || 1_000
     this.maxRestartDelayMs = options.maxRestartDelayMs || 30_000
     this.crashLoopThreshold = options.crashLoopThreshold || 5
@@ -151,12 +150,6 @@ export class AppProcessSupervisor {
     if (current?.state === 'crash-loop' && !options.clearCrashLoop) {
       throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App runtime is in crash-loop: ${key}`)
     }
-    const running = [...this.processes.values()].filter((item) => ['starting', 'running'].includes(item.state))
-    if (running.length >= this.maxProcesses) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'Host App process limit reached')
-    if (running.filter((item) => item.definition.appId === definition.appId).length >= this.maxProcessesPerApp) {
-      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App process limit reached: ${definition.appId}`)
-    }
-
     const launchToken = randomUUID()
     const entryPath = path.resolve(definition.packageRoot, definition.entry)
     const relative = path.relative(path.resolve(definition.packageRoot), entryPath)
@@ -165,6 +158,14 @@ export class AppProcessSupervisor {
     }
     await fsp.mkdir(definition.dataDir, { recursive: true })
     await fsp.mkdir(definition.runtimeDir, { recursive: true })
+    // Check immediately before reserving the process, after all asynchronous preparation.
+    if (this.shuttingDown) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
+    const running = [...this.processes.values()].filter((item) =>
+      item.state === 'starting' || isChildRunning(item.child))
+    if (running.length >= this.maxProcesses) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'Host App process limit reached')
+    if (running.some((item) => item.definition.appId === definition.appId)) {
+      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend is already running: ${definition.appId}`)
+    }
     const hosted = {
       definition,
       launchToken,
@@ -835,6 +836,9 @@ export class AppProcessSupervisor {
         new Promise((resolve) => hosted.child.once('exit', resolve)),
         sleep(250),
       ])
+    }
+    if (isChildRunning(hosted.child)) {
+      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend did not exit: ${hosted.definition.appId}`)
     }
   }
 

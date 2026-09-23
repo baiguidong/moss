@@ -32,7 +32,6 @@ Manifest 中的 `backend.protocols` 使用字符串数组。
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "instanceMode": "single",
     "protocols": ["moss.account/v1", "moss.agent/v1"],
     "actions": [{ "name": "status.get" }]
   },

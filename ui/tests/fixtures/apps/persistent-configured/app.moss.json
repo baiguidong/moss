@@ -1,15 +1,14 @@
 {
   "schemaVersion": 2,
-  "id": "fixture.persistent-multiple",
+  "id": "fixture.persistent-configured",
   "version": "1.0.0",
-  "displayName": "Persistent Multiple",
+  "displayName": "Persistent Configured",
   "hostApi": "^2.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "instanceMode": "multiple",
     "actions": [{ "name": "echo" }],
     "configuration": { "schema": "schemas/config.schema.json", "secrets": "schemas/secrets.schema.json" }
   },

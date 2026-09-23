@@ -10,7 +10,6 @@
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "instanceMode": "single",
     "actions": [{ "name": "echo" }]
   },
   "permissions": []

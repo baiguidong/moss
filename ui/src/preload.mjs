@@ -195,17 +195,21 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   rollbackApp: (payload) => ipcRenderer.invoke('app:rollback', payload),
   deleteApp: (payload) => ipcRenderer.invoke('app:delete', payload),
   installAppArchive: () => ipcRenderer.invoke('app:install-archive'),
+  getAppInstallProgress: () => ipcRenderer.invoke('app:get-install-progress'),
+  onAppInstallProgress: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:install-progress', handler);
+    return () => ipcRenderer.off('app:install-progress', handler);
+  },
   getAppRuntimeState: (payload) => ipcRenderer.invoke('app:get-runtime-state', payload),
   listAppContributions: (payload) => ipcRenderer.invoke('app:list-contributions', payload),
   invokeAppContribution: (payload) => ipcRenderer.invoke('app:invoke-contribution', payload),
   setAppEnabled: (payload) => ipcRenderer.invoke('app:set-enabled', payload),
   setAppGrants: (payload) => ipcRenderer.invoke('app:set-grants', payload),
   listAppInstances: (payload) => ipcRenderer.invoke('app:list-instances', payload),
-  createAppInstance: (payload) => ipcRenderer.invoke('app:create-instance', payload),
   updateAppInstance: (payload) => ipcRenderer.invoke('app:update-instance', payload),
   setAppInstanceEnabled: (payload) => ipcRenderer.invoke('app:set-instance-enabled', payload),
   clearAppInstanceCredentials: (payload) => ipcRenderer.invoke('app:clear-instance-credentials', payload),
-  removeAppInstance: (payload) => ipcRenderer.invoke('app:remove-instance', payload),
   restartAppInstance: (payload) => ipcRenderer.invoke('app:restart-instance', payload),
   getAppInstanceLogs: (payload) => ipcRenderer.invoke('app:get-instance-logs', payload),
   listWorkspaceDir: (payload) => ipcRenderer.invoke('workspace:list-dir', payload),

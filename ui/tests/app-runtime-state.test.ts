@@ -118,7 +118,7 @@ describe('App package and state stores', () => {
   it('requires generic configuration and secret schemas to use supported object shapes', async () => {
     const root = await tempRoot()
     const source = path.join(root, 'source')
-    await fs.cp(path.join(fixtureRoot, 'persistent-multiple'), source, { recursive: true })
+    await fs.cp(path.join(fixtureRoot, 'persistent-configured'), source, { recursive: true })
     await fs.writeFile(path.join(source, 'schemas/secrets.schema.json'), JSON.stringify({
       type: 'object', properties: { token: { type: 'object' } },
     }))
@@ -135,7 +135,7 @@ describe('App package and state stores', () => {
   })
 
   it('keeps only declared App configuration and secret fields', () => {
-    const packageRoot = path.join(fixtureRoot, 'persistent-multiple')
+    const packageRoot = path.join(fixtureRoot, 'persistent-configured')
     const backend = {
       configuration: {
         schema: 'schemas/config.schema.json',
@@ -158,7 +158,7 @@ describe('App package and state stores', () => {
   it('requires App Tool input schemas to describe objects', async () => {
     const root = await tempRoot()
     const source = path.join(root, 'source')
-    await fs.cp(path.join(fixtureRoot, 'persistent-multiple'), source, { recursive: true })
+    await fs.cp(path.join(fixtureRoot, 'persistent-configured'), source, { recursive: true })
     const manifestPath = path.join(source, 'app.moss.json')
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
     manifest.backend.actions[0].inputSchema = 'schemas/tool-input.schema.json'
@@ -218,7 +218,7 @@ describe('App package and state stores', () => {
     const instances = new InstanceStore(state, options)
     const runtimes = new RuntimeStore(state, options)
     await installations.upsert('example.app', { activeVersion: '1.0.0', grants: ['example:read'] })
-    const firstInstance = await instances.create('example.app', {}, { single: true })
+    const firstInstance = await instances.create('example.app')
     const firstRuntime = await runtimes.upsert({
       appId: 'example.app', instanceId: firstInstance.id,
     })
@@ -228,7 +228,7 @@ describe('App package and state stores', () => {
     expect(instances.get(firstInstance.id)).toBeNull()
     expect(runtimes.get(firstRuntime.key)).toBeNull()
     await installations.upsert('example.app', { activeVersion: '2.0.0', grants: [] })
-    const secondInstance = await instances.create('example.app', {}, { single: true })
+    const secondInstance = await instances.create('example.app')
     const secondRuntime = await runtimes.upsert({
       appId: 'example.app', instanceId: secondInstance.id,
     })

@@ -45,7 +45,7 @@ describe('App manifest V2', () => {
       ui: undefined,
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'persistent', instanceMode: 'single',
+        lifecycle: 'persistent',
         actions: [{ name: 'same' }, { name: 'same' }],
       },
     })).toThrow(/Duplicate Backend action/)
@@ -54,7 +54,7 @@ describe('App manifest V2', () => {
   it('keeps UI presence independent from a Backend', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-      lifecycle: 'persistent', instanceMode: 'single',
+      lifecycle: 'persistent',
       actions: [{ name: 'serve' }],
     }
     expect(validateAppManifest({ ...valid, ui: undefined, backend }).backend).toMatchObject(backend)
@@ -63,13 +63,25 @@ describe('App manifest V2', () => {
     expect(validateSchema({ ...valid, backend })).toBe(true)
   })
 
+  it('uses one Backend and accepts the legacy single declaration without retaining it', () => {
+    const backend = {
+      entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+      lifecycle: 'persistent', actions: [],
+    }
+    expect(validateAppManifest({ ...valid, backend }).backend).not.toHaveProperty('instanceMode')
+    expect(validateAppManifest({ ...valid, backend: { ...backend, instanceMode: 'single' } }).backend)
+      .not.toHaveProperty('instanceMode')
+    expect(() => validateAppManifest({ ...valid, backend: { ...backend, instanceMode: 'multiple' } }))
+      .toThrow(/instanceMode/)
+  })
+
   it('retains only fields defined by the current manifest schema', () => {
     const manifest = validateAppManifest({
       ...valid,
       obsoleteRootField: true,
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'persistent', instanceMode: 'single', obsoleteBackendField: true, actions: [],
+        lifecycle: 'persistent', obsoleteBackendField: true, actions: [],
       },
     })
     expect(manifest).not.toHaveProperty('obsoleteRootField')
@@ -79,7 +91,7 @@ describe('App manifest V2', () => {
   it('supports versioned Host protocols without coupling manifests to a product integration', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-      lifecycle: 'persistent', instanceMode: 'multiple',
+      lifecycle: 'persistent',
       protocols: ['moss.agent/v1'], actions: [],
     }
     expect(validateAppManifest({
@@ -115,17 +127,27 @@ describe('App manifest V2', () => {
     })).toThrow(/protocols/)
   })
 
+  it('discards legacy view placement while retaining routes and leaving source manifests intact', () => {
+    for (const location of ['more', 'sidebar', 'hidden']) {
+      const view = { id: 'home', title: 'Home', route: '#/home', location }
+      const manifest = validateAppManifest({ ...valid, contributes: { views: [view] } })
+      expect(manifest.contributes?.views[0]).not.toHaveProperty('location')
+      expect(manifest.contributes?.views[0].route).toBe('#/home')
+      expect(view.location).toBe(location)
+    }
+  })
+
   it('normalizes contribution points and rejects dangling or ungranted references', () => {
     const contributed = {
       ...valid,
       permissions: ['catalog:read'],
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'on-demand', instanceMode: 'single',
+        lifecycle: 'on-demand',
         actions: [{ name: 'catalog.search', inputSchema: 'schemas/search.json' }],
       },
       contributes: {
-        views: [{ id: 'catalog', title: 'Catalog', location: 'sidebar', route: '#/catalog' }],
+        views: [{ id: 'catalog', title: 'Catalog', route: '#/catalog' }],
         settings: [{ id: 'catalog-settings', title: 'Catalog settings', viewId: 'catalog' }],
         commands: [{ id: 'catalog-search-command', title: 'Search', action: 'catalog.search' }],
         tools: [{
@@ -137,7 +159,7 @@ describe('App manifest V2', () => {
       },
     }
     const manifest = validateAppManifest(contributed)
-    expect(manifest.contributes?.views[0]).toMatchObject({ route: '#/catalog', location: 'sidebar', order: 0 })
+    expect(manifest.contributes?.views[0]).toMatchObject({ route: '#/catalog', order: 0 })
     expect(manifest.contributes?.tools[0]).toMatchObject({ id: 'catalog-search-tool', effect: 'read', permission: 'catalog:read' })
     expect(() => validateAppManifest({
       ...contributed,

@@ -6,12 +6,14 @@ Moss 只有一种可安装扩展：App。App 可以只有 UI、只有 Backend，
 
 1. 用户在 Apps 页面选择 `.zip` 包或从应用市场安装。
 2. Moss 在执行任何代码前校验 Manifest V2、路径、文件数量、大小和校验和。
-3. App 安装后默认启用。UI contribution 立即可用。
-4. `single` Backend 会自动创建并启用默认实例；`persistent` Backend 会立即启动。
-5. 如果缺少必填配置或密钥，App 和实例仍保持启用，Backend 等待用户补齐配置后自动运行。
-6. `multiple` Backend 由用户创建独立实例，每个实例拥有自己的配置、密钥、数据和日志。
+3. App 安装后默认启用。有 UI 的 App 自动进入“更多”，每个 App 只有一个导航入口；停用后入口隐藏，纯后台 App 只在 Apps 中管理。
+4. 每个 App 只有一个由 Host 管理的 Backend；`persistent` Backend 会在配置就绪后启动。
+5. 如果缺少必填配置或密钥，App 仍保持启用，Backend 等待用户补齐配置后自动运行。有设置页的 App 在自己的页面维护配置；其他 App 使用管理页的配置表单。
+6. 管理页只保留 App 总开关、运行管理和日志。Host 沿用原有默认 Backend 标识与数据目录，已安装 App 的配置和密钥继续可用。
 
 Skill 从市场或本地包安装后同样默认启用。
+
+导航位置统一由 Moss 决定，App 不声明 `contributes.views[].location`，也不提供手动加入侧栏功能。进入 App 时优先使用已授权 view 中 `order` 最小的页面路由；未声明 view 时打开 `ui.entry`。多个页面由 App 内部导航，旧包的位置字段会被忽略。
 
 ## App 包
 
@@ -45,7 +47,6 @@ example-app/
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "instanceMode": "single",
     "protocols": ["moss.platform/v1"],
     "actions": [{ "name": "message.send" }],
     "configuration": {
@@ -61,8 +62,10 @@ example-app/
 
 ## 进程与数据
 
+同一个 App 最多运行一个 Backend 进程。重复启动会复用现有进程；重启和升级必须先结束旧进程，再启动新进程。
+
 `on-demand` Backend 在第一个 Action 时启动，无待处理 Action 后按空闲超时退出。`persistent` Backend
-在 App 和实例启用且配置有效时常驻，退出 Moss 时有界停止。关闭 App 窗口不会停止 Backend。
+在 App 启用且配置有效时常驻，退出 Moss 时有界停止。关闭 App 窗口不会停止 Backend。
 
 ```text
 ~/.moss/apps/<app-id>/versions/<version>/
@@ -77,7 +80,7 @@ example-app/
 ## 安全边界
 
 - Electron Main 不直接导入 Backend 模块，而是通过版本化 IPC 协议管理子进程。
-- Backend 只收到当前实例的配置、密钥、数据目录和 runtime 目录。
+- Backend 只收到当前 App 的配置、密钥、数据目录和 runtime 目录。
 - App UI 使用 context isolation，不能任意访问文件系统，也不能指定其他 App ID。
 - Action 输入、输出、消息大小、超时和并发均受限；日志轮转并对密钥字段和值脱敏。
 - Backend 进程不是操作系统级沙箱，只应运行第一方或用户明确信任的包。

@@ -318,7 +318,7 @@ export class AppRuntimeHost {
     const instances = !backend
       ? []
       : this.instances.list(appId).filter((instance) =>
-        backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
+        instance.id === defaultInstanceId(appId))
     const publicInstances = await Promise.all(instances.map(async (instance) => ({
       ...instance,
       secretRefs: maskedSecrets(await this.credentials.get(appId, instance.id)),
@@ -411,15 +411,7 @@ export class AppRuntimeHost {
     const backend = packageInfo?.manifest.backend
     if (!backend) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App contribution requires a Backend')
     if (requestedInstanceId) return this.requireInstance(appId, requestedInstanceId)
-    if (backend.instanceMode === 'single') return this.requireInstance(appId, defaultInstanceId(appId))
-    const enabled = this.instances.list(appId).filter((instance) => instance.enabled)
-    if (enabled.length !== 1) {
-      throw new AppServiceError(
-        APP_ERROR_CODES.invalidInput,
-        `App contribution requires an explicit instanceId; ${enabled.length} enabled instances are available`,
-      )
-    }
-    return enabled[0]
+    return this.requireInstance(appId, defaultInstanceId(appId))
   }
 
   async invokeContribution(kind, id, input = {}, options = {}) {
@@ -459,11 +451,11 @@ export class AppRuntimeHost {
   async ensureDefaultInstance(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend || backend.instanceMode !== 'single') return null
+    if (!backend) return null
     const existing = this.instances.get(defaultInstanceId(appId))
     const instance = existing || await this.instances.create(appId, {
       displayName: 'Default', config: {}, secretRefs: {}, enabled: true,
-    }, { single: true })
+    })
     await this.ensureRuntime(packageInfo, instance)
     return instance
   }
@@ -536,50 +528,12 @@ export class AppRuntimeHost {
     const instances = !backend
       ? []
       : this.instances.list(appId).filter((instance) =>
-        backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
+        instance.id === defaultInstanceId(appId))
     return Promise.all(instances.map(async (instance) => ({
       ...instance,
       secretRefs: maskedSecrets(await this.credentials.get(appId, instance.id)),
       status: await this.getInstanceStatus(appId, instance.id),
     })))
-  }
-
-  async createInstance(appId, input = {}) {
-    return this.transitionApp(appId, () => this.createInstanceNow(appId, input))
-  }
-
-  async createInstanceNow(appId, input = {}) {
-    const packageInfo = await this.getActivePackage(appId)
-    const backend = packageInfo.manifest.backend
-    if (!backend) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'UI-only Apps cannot create Backend instances')
-    if (backend.instanceMode !== 'multiple') throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'This App uses its single default instance')
-    const configuration = validateConfiguration(packageInfo.root, backend, input.config, input.secrets)
-    const instance = await this.instances.create(appId, {
-      id: input.id,
-      displayName: input.displayName,
-      config: configuration.config,
-      secretRefs: {},
-      enabled: Boolean(input.enabled),
-    })
-    try {
-      const stored = await this.instances.update(instance.id, {
-        secretRefs: Object.fromEntries(Object.keys(configuration.secrets).map((key) => [key, `vault://${appId}/${instance.id}/${key}`])),
-      })
-      await this.credentials.set(appId, instance.id, configuration.secrets)
-      await this.ensureRuntime(packageInfo, stored)
-      await this.reconcileInstance(instance.id)
-      this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId: instance.id })
-      return this.instances.get(instance.id)
-    } catch (error) {
-      for (const runtimeRecord of this.runtimes.list(appId).filter((item) => item.instanceId === instance.id)) {
-        await this.removeRuntimeRecord(runtimeRecord).catch(() => {})
-      }
-      await this.credentials.remove(appId, instance.id).catch(() => {})
-      await this.instances.remove(instance.id).catch(() => {})
-      await fsp.rm(this.appDataPath(this.dataDir, appId, 'instances', instance.id), { recursive: true, force: true }).catch(() => {})
-      await fsp.rm(this.appDataPath(this.runtimeDir, appId, instance.id), { recursive: true, force: true }).catch(() => {})
-      throw error
-    }
   }
 
   async updateInstance(appId, instanceId, patch = {}) {
@@ -677,38 +631,15 @@ export class AppRuntimeHost {
     return this.getInstanceStatus(appId, instanceId)
   }
 
-  async removeInstance(appId, instanceId, options = {}) {
-    return this.transitionApp(appId, () => this.removeInstanceNow(appId, instanceId, options))
-  }
-
-  async removeInstanceNow(appId, instanceId, options = {}) {
-    const packageInfo = await this.getActivePackage(appId)
-    if (packageInfo.manifest.backend?.instanceMode === 'single') {
-      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'The default single instance cannot be deleted')
-    }
-    this.requireInstance(appId, instanceId)
-    const runtimes = this.runtimes.list(appId).filter((item) => item.instanceId === instanceId)
-    for (const runtimeRecord of runtimes) {
-      await this.supervisor.stop(runtimeRecord.key)
-      this.supervisor.unregister(runtimeRecord.key)
-      await this.runtimes.remove(runtimeRecord.key)
-    }
-    await this.instances.remove(instanceId)
-    if (options.deleteCredentials) await this.credentials.remove(appId, instanceId)
-    if (options.deleteData) {
-      await fsp.rm(this.appDataPath(this.dataDir, appId, 'instances', instanceId), { recursive: true, force: true })
-      await fsp.rm(this.appDataPath(this.runtimeDir, appId, instanceId), { recursive: true, force: true })
-    }
-    this.publishRuntimeEvent({ type: 'instance-removed', appId, instanceId })
-  }
-
   async clearInstanceCredentials(appId, instanceId) {
     return this.transitionApp(appId, () => this.clearInstanceCredentialsNow(appId, instanceId))
   }
 
   async clearInstanceCredentialsNow(appId, instanceId) {
     const instance = this.requireInstance(appId, instanceId)
-    if (instance.enabled) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Disable the App instance before clearing its credentials')
+    if (instance.enabled && this.installations.get(appId)?.enabled) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Disable the App before clearing its credentials')
+    }
     await this.credentials.remove(appId, instanceId)
     await this.instances.update(instanceId, { secretRefs: {} })
     for (const runtimeRecord of this.runtimes.list(appId).filter((item) => item.instanceId === instanceId)) {
@@ -721,7 +652,7 @@ export class AppRuntimeHost {
 
   requireInstance(appId, instanceId) {
     const instance = this.instances.get(instanceId)
-    if (!instance || instance.appId !== appId) throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'App instance is outside the caller scope')
+    if (instanceId !== defaultInstanceId(appId) || !instance || instance.appId !== appId) throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'App instance is outside the caller scope')
     return instance
   }
 
@@ -954,13 +885,10 @@ export class AppRuntimeHost {
       return
     }
     const defaultInstance = await this.ensureDefaultInstance(appId)
-    if (backend.instanceMode === 'single') {
-      for (const runtimeRecord of this.runtimes.list(appId)) {
-        if (runtimeRecord.instanceId !== defaultInstance.id) await this.removeRuntimeRecord(runtimeRecord)
-      }
+    for (const runtimeRecord of this.runtimes.list(appId)) {
+      if (runtimeRecord.instanceId !== defaultInstance.id) await this.removeRuntimeRecord(runtimeRecord)
     }
-    const instances = backend.instanceMode === 'single' ? [defaultInstance] : this.instances.list(appId)
-    for (const instance of instances) await this.reconcileInstance(instance.id)
+    await this.reconcileInstance(defaultInstance.id)
   }
 
   async removeRuntimeRecord(runtimeRecord) {
@@ -977,7 +905,7 @@ export class AppRuntimeHost {
     const backend = packageInfo.manifest.backend
     if (!backend) return
     const runtimeRecords = this.runtimes.list(instance.appId).filter((item) => item.instanceId === instanceId)
-    if (backend.instanceMode === 'single' && instance.id !== defaultInstanceId(instance.appId)) {
+    if (instance.id !== defaultInstanceId(instance.appId)) {
       for (const runtimeRecord of runtimeRecords) await this.removeRuntimeRecord(runtimeRecord)
       return
     }

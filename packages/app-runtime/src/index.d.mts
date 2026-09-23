@@ -56,10 +56,8 @@ export class AppRuntimeHost {
   setAppEnabled(appId: string, enabled: boolean): Promise<any>
   setAppGrants(appId: string, grants: string[]): Promise<any>
   listInstances(appId: string): Promise<any[]>
-  createInstance(appId: string, input?: Record<string, any>): Promise<any>
   updateInstance(appId: string, instanceId: string, patch?: Record<string, any>): Promise<any>
   setInstanceEnabled(appId: string, instanceId: string, enabled: boolean): Promise<any>
-  removeInstance(appId: string, instanceId: string, options?: Record<string, any>): Promise<void>
   clearInstanceCredentials(appId: string, instanceId: string): Promise<any>
   requireInstance(appId: string, instanceId: string): any
   getInstanceStatus(appId: string, instanceId: string): Promise<any | null>
@@ -122,7 +120,7 @@ export class InstanceStore {
   list(appId: string): any[]
   listAll(): any[]
   get(instanceId: string): any | null
-  create(appId: string, input?: Record<string, any>, options?: Record<string, any>): Promise<any>
+  create(appId: string, input?: Record<string, any>): Promise<any>
   update(instanceId: string, patch: Record<string, any>): Promise<any>
   remove(instanceId: string): Promise<void>
   removeForApp(appId: string): Promise<void>

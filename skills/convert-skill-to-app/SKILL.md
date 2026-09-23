@@ -36,6 +36,7 @@ Classify every capability as `visual`, `ai-assisted`, `manual`, or `excluded`. E
 
 After App Builder accepts the action contract, read [backend-generation.md](references/backend-generation.md). Generate a Backend entry bundled into `dist/backend/`; do not create a second package or installation concept.
 
+- Each App runs at most one Host-managed Backend process and has one App enable switch.
 - Declare each action in `app.moss.json.backend.actions`.
 - Declare the required Host protocols as a flat `backend.protocols` array and include only fields used by the generated App.
 - Implement the child-process protocol with `@moss/app-sdk`.

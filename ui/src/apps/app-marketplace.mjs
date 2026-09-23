@@ -294,6 +294,11 @@ export function createAppMarketplaceService(options = {}) {
 
   async function install({ appId, version: requestedVersion, acceptPermissions = false } = {}) {
     if (installLocks.has(appId)) return installLocks.get(appId)
+    let progress = { source: 'marketplace', appId, version: requestedVersion || '' }
+    const report = (patch) => {
+      progress = { ...progress, ...patch }
+      options.emitProgress?.(progress)
+    }
     const operation = (async () => {
       const detail = await getDetails(appId)
       const version = detail.versions.find((entry) => entry.version === (requestedVersion || detail.latestVersion))
@@ -317,10 +322,13 @@ export function createAppMarketplaceService(options = {}) {
         return { ok: false, requiresPermissionApproval: true, appId, version: version.version, permissions: addedPermissions }
       }
 
+      report({ phase: 'downloading', version: version.version, receivedBytes: 0, totalBytes: version.artifact.size })
       const archive = await download(version.artifact.downloadUrl, {
         userAgent: 'Moss-AppMarket/1.0',
         maxBytes: MAX_APP_BYTES,
+        onProgress: ({ receivedBytes }) => report({ phase: 'downloading', receivedBytes }),
       })
+      report({ phase: 'verifying', receivedBytes: archive.length })
       if (version.artifact.size && archive.length !== version.artifact.size) {
         throw new Error(`App download size mismatch: ${appId}@${version.version}`)
       }
@@ -334,7 +342,9 @@ export function createAppMarketplaceService(options = {}) {
       try {
         await fsp.writeFile(archivePath, archive, { mode: 0o600 })
         const app = await archiveInstaller(runtime, archivePath, {
+          onProgress: report,
           installPackage: async (packageRoot) => {
+            report({ phase: 'validating' })
             const packageInfo = await packageValidator(packageRoot, { trustedPublishers, requireTrustedPublisher: true })
             if (packageInfo.manifest.id !== appId || packageInfo.manifest.version !== version.version) {
               throw new Error(`Downloaded App identity mismatch: expected ${appId}@${version.version}`)
@@ -348,6 +358,7 @@ export function createAppMarketplaceService(options = {}) {
             ) {
               throw new Error(`Downloaded App signer mismatch: ${appId}@${version.version}`)
             }
+            report({ phase: 'installing' })
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
               trustedPublishers,
@@ -357,6 +368,7 @@ export function createAppMarketplaceService(options = {}) {
           },
         })
         const grants = [...new Set([...retainedGrants, ...addedPermissions])]
+        report({ phase: 'activating' })
         await runtime.registerInstalled(appId, version.version, { grants })
         activationCompleted = true
         await options.emitChanged?.({ action: installation ? 'marketplace-updated' : 'marketplace-installed', appId })
@@ -364,6 +376,7 @@ export function createAppMarketplaceService(options = {}) {
       } catch (error) {
         if (packageInstallStarted && !activationCompleted) {
           try {
+            report({ phase: 'rolling-back' })
             await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version })
           } catch (rollbackError) {
             throw new Error(`${error.message}; package registry rollback also failed: ${rollbackError.message}`)
@@ -373,7 +386,13 @@ export function createAppMarketplaceService(options = {}) {
       } finally {
         await fsp.rm(temporaryRoot, { recursive: true, force: true })
       }
-    })().finally(() => installLocks.delete(appId))
+    })().then((result) => {
+      if (result.ok) report({ phase: 'completed', version: result.version })
+      return result
+    }).catch((error) => {
+      report({ phase: 'error', error: error.message || String(error) })
+      throw error
+    }).finally(() => installLocks.delete(appId))
     installLocks.set(appId, operation)
     return operation
   }

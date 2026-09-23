@@ -96,6 +96,23 @@ export function getSidebarMoreViews({
   ];
 }
 
+export function getSidebarMoreApps(apps: StoredApp[]) {
+  return apps
+    .filter((app) => app.enabled && app.hasUi && app.packageStatus !== 'invalid' && app.packageStatus !== 'incompatible')
+    .map((app) => {
+      const view = [...(app.contributes?.views || [])]
+        .filter((item) => !item.permission || app.grants?.includes(item.permission))
+        .sort((left, right) => (left.order || 0) - (right.order || 0))[0];
+      return {
+        id: app.id || app.name,
+        name: app.name,
+        title: app.displayName || app.title || app.name,
+        route: view?.route || '',
+      };
+    })
+    .sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'));
+}
+
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
   overview: { label: "概览", icon: ChartNoAxesCombined },
   library: { label: "资料库", icon: BookOpen },
@@ -108,7 +125,6 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
 interface AppSidebarProps {
   sessions: SidebarSession[];
   apps: StoredApp[];
-  appViews?: Array<{ id: string; appId: string; appName: string; title: string; route: string; location: 'sidebar' | 'more' | 'hidden'; icon?: string; order?: number }>;
   activeSessionId: string | null;
   activeView: MainView;
   appsCount: number;
@@ -131,10 +147,6 @@ interface AppSidebarProps {
   onTogglePin: (sessionId: string) => void;
   onSearchChange: (query: string) => void;
   onOpenGlobalSearch?: () => void;
-}
-
-function getAppShortcutLabel(app: StoredApp) {
-  return app.displayName || app.title || app.name;
 }
 
 function SessionItem({
@@ -281,36 +293,6 @@ function SessionItem({
   );
 }
 
-function AppShortcutItem({
-  app,
-  onLaunch,
-}: {
-  app: StoredApp;
-  onLaunch: () => void;
-}) {
-  const label = getAppShortcutLabel(app);
-  const enabled = Boolean(app.enabled);
-
-  return (
-    <button
-      type="button"
-      disabled={!enabled}
-      title={enabled ? label : `${label}：请先启用 App`}
-      onClick={onLaunch}
-      className="group relative w-full max-w-full overflow-hidden rounded-xl border border-transparent px-2 py-1 text-left transition-colors hover:border-sidebar-border/70 hover:bg-sidebar-accent/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-transparent disabled:hover:bg-transparent"
-    >
-      <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
-          <Monitor className="h-3.5 w-3.5" />
-        </span>
-        <span className="block w-0 min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-sidebar-foreground">
-          {label}
-        </span>
-      </div>
-    </button>
-  );
-}
-
 function ThemeButton({
   active,
   icon,
@@ -342,7 +324,6 @@ function ThemeButton({
 export function AppSidebar({
   sessions,
   apps,
-  appViews = [],
   activeSessionId,
   activeView,
   appsCount,
@@ -393,7 +374,8 @@ export function AppSidebar({
     remoteEnabled,
     agentMailEnabled,
   });
-  const isMoreViewActive = moreViews.some((view) => view === activeView);
+  const moreApps = getSidebarMoreApps(apps);
+  const isMoreViewActive = activeView === 'embedded-app' || moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
     apps: Bot,
     'agent-mail': Mail,
@@ -557,15 +539,16 @@ export function AppSidebar({
                   </DropdownMenuItem>
                 );
               })}
-              {appViews.filter((view) => view.location === 'more').map((view) => (
+              {moreApps.length > 0 && <DropdownMenuSeparator />}
+              {moreApps.map((app) => (
                 <DropdownMenuItem
-                  key={view.id}
-                  data-app-view={view.id}
-                  data-app-route={view.route}
-                  onSelect={() => onLaunchApp(view.appName, view.route)}
+                  key={app.id}
+                  data-app-id={app.id}
+                  data-app-route={app.route}
+                  onSelect={() => onLaunchApp(app.name, app.route)}
                 >
                   <Monitor className="h-4 w-4" />
-                  {view.title}
+                  {app.title}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -747,48 +730,8 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-1")}>
-          {appViews.filter((view) => view.location === 'sidebar').map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              data-app-view={view.id}
-              data-app-route={view.route}
-              onClick={() => onLaunchApp(view.appName, view.route)}
-              className={cn(
-                "flex items-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
-                collapsed ? "h-8 w-8 justify-center" : "h-9 gap-2 px-2 text-left text-sm",
-              )}
-              title={view.title}
-            >
-              <Monitor className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="min-w-0 flex-1 truncate">{view.title}</span>}
-            </button>
-          ))}
-          {apps.map((app) => (
-            collapsed ? (
-              <button
-                key={app.id || app.name}
-                type="button"
-                disabled={!app.enabled}
-                onClick={() => onLaunchApp(app.name)}
-                className="flex h-8 w-8 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                title={app.enabled ? getAppShortcutLabel(app) : `${getAppShortcutLabel(app)}：请先启用 App`}
-              >
-                <Monitor className="h-4 w-4" />
-              </button>
-            ) : (
-              <AppShortcutItem
-                key={app.id || app.name}
-                app={app}
-                onLaunch={() => onLaunchApp(app.name)}
-              />
-            )
-          ))}
-        </div>
-
         {/* Apps 和 设置 */}
-        <div className={cn("grid gap-2 mt-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
+        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
           <Button
             variant={activeView === "apps" ? "secondary" : "ghost"}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}

@@ -3,23 +3,21 @@
 import * as React from "react";
 import DOMPurify from "dompurify";
 import {
-  Activity, AlertCircle, ChevronDown, ChevronRight, Download, ExternalLink, History,
-  KeyRound, MonitorPlay, PanelLeft, PanelLeftClose, Pencil, Plus, RefreshCw, RotateCcw,
-  Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2, X,
+  AlertCircle, Download, ExternalLink, History,
+  KeyRound, MonitorPlay, Pencil, RefreshCw, RotateCcw,
+  Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
+import { AppInstallProgressView } from "@/components/app-install-progress";
+import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
 function formatTimestamp(timestamp: number) {
   return new Date(timestamp).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function backendUsesProtocol(backend: StoredApp["backend"], protocol: string) {
-  return backend?.protocols?.includes(protocol) ?? false;
 }
 
 function AppIcon({ icon }: { icon: string }) {
@@ -49,6 +47,10 @@ function isMissingRequiredValue(value: unknown) {
   return value === undefined || value === null || (typeof value === "string" && !value.trim());
 }
 
+function usesAppSettings(app: StoredApp) {
+  return Boolean(app.hasSettings);
+}
+
 function missingRequiredConfiguration(app: StoredApp, instance: AppInstance) {
   const configuration = app.configuration;
   const missing: string[] = [];
@@ -68,14 +70,19 @@ function missingRequiredConfiguration(app: StoredApp, instance: AppInstance) {
 function requireInstanceConfiguration(app: StoredApp, instance: AppInstance) {
   const missing = missingRequiredConfiguration(app, instance);
   if (!missing.length) return;
-  throw new Error(`请先展开实例设置并保存必填项：${missing.join("、")}`);
+  const location = usesAppSettings(app) ? "打开应用设置" : "打开应用管理";
+  throw new Error(`请先${location}并保存必填项：${missing.join("、")}`);
 }
 
-async function setAppEnabled(app: StoredApp, enabled: boolean) {
+export async function setAppEnabled(app: StoredApp, enabled: boolean) {
   const appId = app.id || app.name;
-  const defaultInstance = app.backend?.instanceMode === "single"
+  const defaultInstance = app.backend
     ? app.instances?.[0]
     : null;
+  // Keep the App's settings UI accessible while its Backend is waiting for configuration.
+  if (enabled && defaultInstance && usesAppSettings(app) && missingRequiredConfiguration(app, defaultInstance).length) {
+    return window.agentDesktop.setAppEnabled({ appId, enabled });
+  }
   let enabledDefaultInstance = false;
   try {
     if (enabled && defaultInstance) requireInstanceConfiguration(app, defaultInstance);
@@ -93,8 +100,9 @@ async function setAppEnabled(app: StoredApp, enabled: boolean) {
 }
 
 function isAppEnabled(app: StoredApp) {
-  if (!app.enabled || app.backend?.instanceMode !== "single") return Boolean(app.enabled);
+  if (!app.enabled || !app.backend) return Boolean(app.enabled);
   const defaultInstance = app.instances?.[0];
+  if (defaultInstance && usesAppSettings(app) && missingRequiredConfiguration(app, defaultInstance).length) return true;
   return Boolean(defaultInstance?.enabled);
 }
 
@@ -230,24 +238,22 @@ function errorMessage(error: unknown) {
   return cleanIpcErrorMessage(error);
 }
 
-export function AppInstanceRow({ app, instance, onChanged }: {
+export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }: {
   app: StoredApp;
   instance: AppInstance;
   onChanged: () => Promise<unknown>;
+  onOpenSettings?: () => void;
 }) {
   const appId = app.id || app.name;
-  const backend = app.backend;
   const configuration = app.configuration;
-  const instanceName = app.hasSettings && instance.displayName === "Default" ? "默认实例" : instance.displayName;
-  const [expanded, setExpanded] = React.useState(false);
+  const appSettings = usesAppSettings(app);
+  const hasConfiguration = Boolean(configuration?.schema || configuration?.secrets);
   const [logsOpen, setLogsOpen] = React.useState(false);
   const [logs, setLogs] = React.useState<any[]>([]);
-  const [displayName, setDisplayName] = React.useState(instance.displayName);
   const [config, setConfig] = React.useState<Record<string, any>>(() => initialSchemaValue(configuration?.schema, instance.config || {}));
   const [secrets, setSecrets] = React.useState<Record<string, any>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
-  const state = app.enabled && instance.enabled ? instance.status?.state || "stopped" : "stopped";
   const runtimeError = instance.status?.lastError || "";
 
   const run = async (operation: () => Promise<unknown>) => {
@@ -267,44 +273,26 @@ export function AppInstanceRow({ app, instance, onChanged }: {
   };
 
   return (
-    <div className="border-t border-border/70 py-3 first:border-t-0">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-7 w-7" title="配置实例" onClick={() => setExpanded(!expanded)}>
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </Button>
-        <div className="min-w-[140px] flex-1">
-          <div className="truncate text-sm font-medium">{instanceName}</div>
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground"><Activity className="h-3 w-3" />{statusLabel(state)}</div>
-        </div>
-        <Toggle checked={instance.enabled} disabled={busy} label={instance.enabled ? "已启用" : "已停用"} onChange={(enabled) => run(() => {
-          if (enabled) requireInstanceConfiguration(app, instance);
-          return window.agentDesktop.setAppInstanceEnabled({ appId, instanceId: instance.id, enabled });
-        })} />
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex-1 text-xs font-medium">运行管理</span>
+        {appSettings && onOpenSettings && <Button variant="outline" size="sm" className="h-8" disabled={!app.enabled} title={app.enabled ? "打开应用设置" : "请先启用 App"} onClick={onOpenSettings}><Settings2 className="h-4 w-4" />打开设置</Button>}
         <Button variant="ghost" size="icon" className="h-8 w-8" title="重启" disabled={busy || !instance.enabled || !app.enabled} onClick={() => run(() => window.agentDesktop.restartAppInstance({ appId, instanceId: instance.id }))}><RefreshCw className="h-4 w-4" /></Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="日志" onClick={openLogs}><SquareTerminal className="h-4 w-4" /></Button>
-        {backend?.instanceMode === "multiple" && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="删除实例" disabled={busy} onClick={() => {
-            if (!window.confirm(`删除实例“${instance.displayName}”？`)) return;
-            const deleteData = window.confirm("同时删除这个实例的数据？");
-            const deleteCredentials = window.confirm("同时删除这个实例的密钥？");
-            void run(() => window.agentDesktop.removeAppInstance({ appId, instanceId: instance.id, deleteData, deleteCredentials }));
-          }}><Trash2 className="h-4 w-4" /></Button>
-        )}
       </div>
-      {expanded && (
-        <div className="ml-10 mt-3 grid gap-3 border-l border-border pl-4">
-          <label className="grid max-w-sm gap-1 text-xs text-muted-foreground"><span>实例名称</span><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+      {!appSettings && hasConfiguration && (
+        <div className="grid gap-3">
           <SchemaFields schema={configuration?.schema} value={config} onChange={setConfig} />
           <SchemaFields schema={configuration?.secrets} value={secrets} secrets configured={instance.secretRefs} onChange={setSecrets} />
-          <div className="flex gap-2"><Button size="sm" disabled={busy || !displayName.trim()} onClick={() => run(() => window.agentDesktop.updateAppInstance({ appId, instanceId: instance.id, displayName, config, ...(Object.keys(secrets).length ? { secrets } : {}) }))}><Settings2 className="h-4 w-4" />保存配置</Button>
-            {Object.values(instance.secretRefs || {}).some((item) => item.configured) && <Button size="icon" variant="outline" className="h-8 w-8" title="清除密钥" disabled={busy || instance.enabled} onClick={() => { if (window.confirm("清除这个实例的全部密钥？")) void run(() => window.agentDesktop.clearAppInstanceCredentials({ appId, instanceId: instance.id })); }}><KeyRound className="h-4 w-4" /></Button>}
+          <div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => run(() => window.agentDesktop.updateAppInstance({ appId, instanceId: instance.id, config, ...(Object.keys(secrets).length ? { secrets } : {}) }))}><Settings2 className="h-4 w-4" />保存配置</Button>
+            {Object.values(instance.secretRefs || {}).some((item) => item.configured) && <Button size="icon" variant="outline" className="h-8 w-8" title="清除密钥" disabled={busy || (app.enabled && instance.enabled)} onClick={() => { if (window.confirm("清除这个 App 的全部密钥？")) void run(() => window.agentDesktop.clearAppInstanceCredentials({ appId, instanceId: instance.id })); }}><KeyRound className="h-4 w-4" /></Button>}
           </div>
         </div>
       )}
-      {error && <div className="ml-10 mt-2 flex items-start gap-1.5 text-xs text-destructive"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
-      {!error && runtimeError && <div className="ml-10 mt-2 flex items-start gap-1.5 text-xs text-destructive"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{runtimeError}</div>}
+      {error && <div className="flex items-start gap-1.5 text-xs text-destructive"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
+      {!error && runtimeError && <div className="flex items-start gap-1.5 text-xs text-destructive"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{runtimeError}</div>}
       {logsOpen && (
-        <div className="ml-10 mt-3 max-h-52 overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-[11px] text-zinc-200">
+        <div className="max-h-52 overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-[11px] text-zinc-200">
           {logs.length ? logs.map((entry, index) => <div key={`${entry.timestamp}-${index}`}><span className="text-zinc-500">{new Date(entry.timestamp).toLocaleTimeString()}</span> {entry.level} {entry.message}</div>) : <div className="text-zinc-500">暂无日志</div>}
         </div>
       )}
@@ -312,34 +300,7 @@ export function AppInstanceRow({ app, instance, onChanged }: {
   );
 }
 
-function NewInstanceForm({ app, onClose, onChanged }: { app: StoredApp; onClose: () => void; onChanged: () => Promise<unknown> }) {
-  const appId = app.id || app.name;
-  const configuration = app.configuration;
-  const [name, setName] = React.useState("");
-  const [config, setConfig] = React.useState<Record<string, any>>(() => initialSchemaValue(configuration?.schema));
-  const [secrets, setSecrets] = React.useState<Record<string, any>>({});
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState("");
-  return (
-    <div className="mt-3 grid gap-3 border-l-2 border-primary/40 pl-4">
-      <div className="flex items-center justify-between"><span className="text-sm font-medium">新建实例</span><Button variant="ghost" size="icon" className="h-7 w-7" title="关闭" onClick={onClose}><X className="h-4 w-4" /></Button></div>
-      <label className="grid max-w-sm gap-1 text-xs text-muted-foreground"><span>实例名称</span><Input value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <SchemaFields schema={configuration?.schema} value={config} onChange={setConfig} />
-      <SchemaFields schema={configuration?.secrets} value={secrets} secrets onChange={setSecrets} />
-      {error && <div className="flex items-start gap-1.5 text-xs text-destructive"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</div>}
-      <div><Button size="sm" disabled={busy || !name.trim()} onClick={async () => {
-        setBusy(true); setError("");
-        try {
-          await window.agentDesktop.createAppInstance({ appId, displayName: name, config, secrets, enabled: true });
-          await onChanged(); onClose();
-        } catch (operationError) { setError(errorMessage(operationError)); }
-        finally { setBusy(false); }
-      }}><Plus className="h-4 w-4" />创建实例</Button></div>
-    </div>
-  );
-}
-
-export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, sidebarShortcutIds, onAddShortcut, onRemoveShortcut }: {
+export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh }: {
   apps: StoredApp[];
   versionsByApp: Record<string, AppVersion[]>;
   onLaunch: (name: string) => void;
@@ -348,16 +309,15 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
   onLoadVersions: (name: string) => void;
   onRollback: (name: string, versionId: string) => void;
   onRefresh: () => Promise<unknown>;
-  sidebarShortcutIds?: Set<string>;
-  onAddShortcut?: (name: string) => void;
-  onRemoveShortcut?: (name: string) => void;
 }) {
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = React.useState<string | null>(null);
-  const [addingInstance, setAddingInstance] = React.useState<string | null>(null);
   const [marketOpen, setMarketOpen] = React.useState(false);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
+  const { progress, clearProgress } = useAppInstallProgress("local");
+  const localProgress = progress.local;
+  const installing = busy === "install" || isAppInstallActive(localProgress);
 
   const run = async (key: string, operation: () => Promise<unknown>) => {
     setBusy(key);
@@ -368,6 +328,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
   };
 
   const install = async () => {
+    clearProgress("local");
     await run("install", async () => {
       const result = await window.agentDesktop.installAppArchive();
       if (!result.ok && !result.canceled) throw new Error(result.error || "App 安装失败");
@@ -384,10 +345,11 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
         <div><h1 className="text-lg font-semibold">Apps</h1><div className="text-xs text-muted-foreground">{apps.length} 个已安装 App</div></div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />应用市场</Button>
-          <Button size="sm" disabled={busy === "install"} onClick={install}><Download className="h-4 w-4" />本地安装</Button>
+          <Button size="sm" disabled={installing} onClick={install}><Download className="h-4 w-4" />{installing ? "安装中…" : "本地安装"}</Button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        {localProgress && <div className="mb-4"><AppInstallProgressView progress={localProgress} /></div>}
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         {apps.length === 0 ? (
           <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">暂无 App</div>
@@ -397,7 +359,6 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const appId = app.id || app.name;
               const isExpanded = expanded === appId;
               const state = app.runtimeStatus?.state || "stopped";
-              const hasShortcut = sidebarShortcutIds?.has(appId) ?? false;
               const displayedBackend = app.backend;
               const trust = app.trust;
               const permissions = app.permissions || [];
@@ -419,10 +380,6 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <span>v{app.currentVersion || "-"}</span>
-                    <span>{app.hasUi ? "UI" : "无 UI"}</span>
-                    <span>{app.hasBackend ? `${displayedBackend?.lifecycle === "persistent" ? "常驻" : "按需"} Backend` : "无 Backend"}</span>
-                    {displayedBackend && <span>{displayedBackend.instanceMode === "multiple" ? "多实例" : "单实例"}</span>}
-                    {backendUsesProtocol(displayedBackend, "moss.agent/v1") && <span>Agent</span>}
                     <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>
@@ -439,10 +396,9 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                       onClick={() => onLaunch(app.name)}
                     ><ExternalLink className="h-4 w-4" />{packageUnavailable ? "不可用" : app.enabled ? "打开" : "请先启用"}</Button>}
                     {packageUnavailable && <Button size="sm" className="h-8" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />更新版本</Button>}
-                    {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />{app.hasBackend && !app.hasUi ? "管理 Backend" : "管理"}</Button>}
+                    {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>}
                     {!packageUnavailable && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title={hasShortcut ? "移出侧栏" : !app.enabled ? "请先启用 App" : "加入侧栏"} disabled={!app.hasUi || (!app.enabled && !hasShortcut)} onClick={() => hasShortcut ? onRemoveShortcut?.(app.name) : onAddShortcut?.(app.name)}>{hasShortcut ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}</Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {
                       if (!window.confirm(`卸载“${app.displayName || app.name}”？`)) return;
                       const deleteData = window.confirm("同时删除 App 数据？");
@@ -452,13 +408,9 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   {isExpanded && (
                     <div className="mt-4 border-t border-border pt-3">
-                      <div className="flex items-center justify-between"><div className="text-xs font-medium">Backend 实例</div>{displayedBackend?.instanceMode === "multiple" && <Button size="sm" variant="outline" className="h-7" onClick={() => setAddingInstance(addingInstance === appId ? null : appId)}><Plus className="h-3.5 w-3.5" />实例</Button>}</div>
-                      {!app.hasBackend
-                        ? <div className="py-3 text-xs text-muted-foreground">UI-only App</div>
-                        : (app.instances || []).length
-                          ? (app.instances || []).map((instance) => <AppInstanceRow key={instance.id} app={app} instance={instance} onChanged={onRefresh} />)
-                          : <div className="py-3 text-xs text-muted-foreground">暂无实例</div>}
-                      {addingInstance === appId && <NewInstanceForm app={app} onClose={() => setAddingInstance(null)} onChanged={onRefresh} />}
+                      {app.hasBackend && (app.instances?.[0]
+                        ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name)} />
+                        : <div className="py-3 text-xs text-muted-foreground">后台服务尚未就绪</div>)}
                       {permissions.length ? (
                         <div className="mt-3 border-t border-border pt-3">
                           <div className="mb-2 flex items-center gap-2 text-xs font-medium"><ShieldCheck className="h-3.5 w-3.5" />权限授权</div>
@@ -472,7 +424,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                       ) : null}
                       {displayedBackend?.actions?.length ? (
                         <div className="mt-3 border-t border-border pt-3">
-                          <div className="mb-2 text-xs font-medium">Backend 能力</div>
+                          <div className="mb-2 text-xs font-medium">应用能力</div>
                           <div className="flex flex-wrap gap-2">{displayedBackend.actions.map((action) => <code key={action.name} className="rounded bg-muted px-2 py-1 text-[11px]">{action.name}</code>)}</div>
                         </div>
                       ) : null}

@@ -40,7 +40,7 @@ describe('App Builder runtime guidance', () => {
           runtime: 'node',
           apiVersion: 1,
           lifecycle: 'persistent',
-          instanceMode: 'single',
+
           protocols: ['moss.platform/v1'],
           actions: [],
         },
@@ -81,7 +81,7 @@ describe('App Builder runtime guidance', () => {
           runtime: 'node',
           apiVersion: 1,
           lifecycle: 'persistent',
-          instanceMode: 'single',
+
           unused: true,
           actions: [],
         },

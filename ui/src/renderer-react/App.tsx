@@ -177,7 +177,6 @@ type PreviewTabMetadata = Record<string, unknown> & {
 };
 
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
-const APP_SHORTCUTS_STORAGE_KEY = 'ui.appShortcuts.v1';
 const DEFAULT_LAYOUT: LayoutState = {
   leftWidth: 224,
   rightWidth: 280,
@@ -193,10 +192,6 @@ function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): b
 
 function getPreviewTabMetadata(file: WorkspacePreviewData | null | undefined): PreviewTabMetadata {
   return ((file?.metadata as PreviewTabMetadata | undefined) || {}) as PreviewTabMetadata;
-}
-
-function getStoredAppKey(app: Pick<StoredApp, 'id' | 'name'>): string {
-  return app.id || app.name;
 }
 
 function enrichWorkspacePreviewFile(
@@ -486,15 +481,6 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
-  const [appsLoaded, setAppsLoaded] = React.useState(false);
-  const [appShortcutIds, setAppShortcutIds] = React.useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(APP_SHORTCUTS_STORAGE_KEY);
-      return new Set(raw ? JSON.parse(raw) : []);
-    } catch {
-      return new Set();
-    }
-  });
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
@@ -609,11 +595,6 @@ export default function App() {
     localStorage.setItem('ui.pinnedSessions', JSON.stringify(Array.from(next)));
   }, []);
 
-  const persistAppShortcuts = React.useCallback((next: Set<string>) => {
-    setAppShortcutIds(next);
-    localStorage.setItem(APP_SHORTCUTS_STORAGE_KEY, JSON.stringify(Array.from(next)));
-  }, []);
-
   const refreshSummaries = React.useCallback(async () => {
     const list = await window.agentDesktop.listSessions();
     const visible = excludeRemovedSessions(list, removedSessionIdsRef.current);
@@ -637,7 +618,6 @@ export default function App() {
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
-    setAppsLoaded(true);
     return nextApps;
   }, []);
 
@@ -1083,17 +1063,6 @@ export default function App() {
   }, [activeView, workflowsEnabled]);
 
   React.useEffect(() => {
-    if (!appsLoaded) return;
-    const installedIds = new Set(apps.map(getStoredAppKey));
-    const nextShortcuts = new Set(
-      Array.from(appShortcutIds).filter((id) => installedIds.has(id))
-    );
-    if (nextShortcuts.size !== appShortcutIds.size) {
-      persistAppShortcuts(nextShortcuts);
-    }
-  }, [apps, appShortcutIds, appsLoaded, persistAppShortcuts]);
-
-  React.useEffect(() => {
     if (!activeDetail?.workspace || !activeSessionId) {
       setDirectoryCache(new Map());
       return;
@@ -1411,27 +1380,6 @@ export default function App() {
       : [],
     [activeSessionId, summaries],
   );
-  const sidebarAppShortcuts = React.useMemo(
-    () => apps.filter((app) => appShortcutIds.has(getStoredAppKey(app))),
-    [apps, appShortcutIds]
-  );
-  const sidebarAppShortcutIds = React.useMemo(
-    () => new Set(sidebarAppShortcuts.map(getStoredAppKey)),
-    [sidebarAppShortcuts]
-  );
-  const contributedAppViews = React.useMemo(
-    () => apps.flatMap((app) => (app.contributes?.views || [])
-      .filter((view) => view.location !== 'hidden')
-      .map((view) => ({
-        ...view,
-        appId: app.id || app.name,
-        appName: app.name,
-        id: `${app.id || app.name}/${view.id}`,
-      })))
-      .sort((left, right) => (left.order || 0) - (right.order || 0) || left.title.localeCompare(right.title)),
-    [apps],
-  );
-
   // chatMessages is built exclusively from session history.
   // The coordinator agent produces its own formatted summary in the history;
   // the UI must not generate its own summary on top of it.
@@ -2304,22 +2252,6 @@ export default function App() {
     setActiveView('embedded-app');
   }, []);
 
-  const handleRemoveAppShortcut = React.useCallback((name: string) => {
-    const app = apps.find((entry) => entry.name === name || entry.id === name);
-    if (!app) return;
-    const next = new Set(appShortcutIds);
-    next.delete(getStoredAppKey(app));
-    persistAppShortcuts(next);
-  }, [apps, appShortcutIds, persistAppShortcuts]);
-
-  const handleAddAppShortcut = React.useCallback((name: string) => {
-    const app = apps.find((entry) => entry.name === name || entry.id === name);
-    if (!app) return;
-    const next = new Set(appShortcutIds);
-    next.add(getStoredAppKey(app));
-    persistAppShortcuts(next);
-  }, [apps, appShortcutIds, persistAppShortcuts]);
-
   const handleSelectAssistant = React.useCallback((assistant: InstalledAssistant) => {
     setSelectedAssistant(assistant);
   }, []);
@@ -2624,8 +2556,7 @@ export default function App() {
         >
           <AppSidebar
             sessions={sidebarSessions}
-            apps={sidebarAppShortcuts}
-            appViews={contributedAppViews}
+            apps={apps}
             activeSessionId={activeSessionId}
             activeView={activeView}
             appsCount={apps.length}
@@ -2878,9 +2809,6 @@ export default function App() {
               onLoadVersions={loadAppVersions}
               onRollback={handleRollbackApp}
               onRefresh={refreshApps}
-              sidebarShortcutIds={sidebarAppShortcutIds}
-              onAddShortcut={handleAddAppShortcut}
-              onRemoveShortcut={handleRemoveAppShortcut}
             />
           ) : (
             renderSettingsView()

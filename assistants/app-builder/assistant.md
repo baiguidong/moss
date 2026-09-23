@@ -360,7 +360,7 @@ App 新建时必须满足：
 - 使用 `window.mossApp` 前必须做存在性判断；在普通浏览器环境或宿主 API 未注入时，仍要显示可操作的本地演示数据。
 - 首屏必须先应用内置 Moss token，再异步读取 `appearance`；读取配置期间不得显示空白页或阻塞主界面。
 - 必须实现浅色、暗色、跟随系统和四种背景样式，并在运行时按上面的动态同步规则更新 CSS。
-- 首屏至少包含标题、主要操作区、结果/状态区。若依赖 Backend，状态区要能看到实例状态或错误。
+- 首屏至少包含标题、主要操作区、结果/状态区。若依赖 Backend，状态区要能看到运行状态或错误。
 - 游戏类 App 必须同时支持键盘和屏幕按钮；棋盘/画布必须有固定宽高或 `aspect-ratio`，不能被动态文字撑变形。
 
 Vite/React 的 `index.html` 必须类似：
@@ -410,7 +410,7 @@ if (!rootEl) {
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级
 - App 保持打开时修改 Moss 外观，检查 focus、重新可见或 appearance 事件后主题和背景动态更新
 - 检查 appearance 刷新没有并发堆积，并在卸载时清理 listener
-- 依赖 Backend 的 App 必须在 UI 中展示实例状态和调用错误
+- 依赖 Backend 的 App 必须在 UI 中展示运行状态和调用错误
 - 游戏类 App 要检查开始、暂停、重开、键盘方向、屏幕方向按钮、移动端尺寸、最高分/进度保存
 
 ### 5. 构建
@@ -442,7 +442,7 @@ app_preview({
 
 ### 7. 发布
 
-App 发布或安装后默认启用；有 Backend 的单实例 App 也默认进入启用状态。若缺少必填配置或密钥，Backend 保持等待配置，保存有效配置后自动运行。
+App 发布或安装后默认启用，每个 App 的 Backend 由 Host 管理。若缺少必填配置或密钥，Backend 保持等待配置，保存有效配置后自动运行。
 
 #### 新建 App
 
@@ -507,7 +507,7 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 当前只允许使用受控 API：
 
 - `mossApp.app.getInfo()` / `getVersions()` / `getInstallationState()`
-- `mossApp.instances.list/create/update/setEnabled/remove/getStatus()`
+- `mossApp.instances.list/update/setEnabled/clearCredentials/getStatus()`
 - `mossApp.actions.invoke(instanceId, name, input, options)` / `cancel(instanceId, requestId)`
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - `mossApp.events.on(eventName, cb)`
@@ -518,25 +518,28 @@ App 内通过全局 `window.mossApp` 访问宿主能力。所有方法都是异�
 
 - `mossApp.app.getInfo()` → App 身份、版本、UI/Backend、权限和公开 appearance
 - `mossApp.app.getVersions()` → 历史版本列表
-- `mossApp.app.getInstallationState()` → App 总开关、实例和运行状态
+- `mossApp.app.getInstallationState()` → App 总开关、配置和运行状态
 
 ### 本地存储（键值，持久化在 App 私有目录）
 
 - `mossApp.storage.getItem(key)` / `setItem(key, value)` / `removeItem(key)` / `list()`
 - 优先用它替代 `localStorage` 做持久化；`localStorage` 仅适合临时/预览态。
 
-### Backend 实例与动作
+### Backend 与动作
 
-- `mossApp.instances.list()` → 当前 App 的实例列表，不允许指定其他 App ID。
+- 已启用且有 UI 的 App 自动进入 Moss“更多”，每个 App 一个入口；停用后隐藏，纯后台 App 只在 Apps 中管理。不要声明 view 的 `location` 或实现加入侧栏控件。若声明多个 view，已授权且 `order` 最小的 view 作为默认入口，其他页面由 App 内部导航。
+- 每个 App 最多运行一个由 Host 管理的 Backend 进程，界面使用 App 总开关，不提供实例选择、新建或删除入口。
+- `mossApp.instances.list()` 是兼容接口，返回当前 App 唯一的后台记录；取其 ID 用于配置、状态和 action 调用，不允许指定其他 App ID。
+- 有独立设置页的 App 在自己的页面维护配置，管理页只提供运行控制和日志。
 - `mossApp.actions.invoke(instanceId, name, input, options)` → 调用 manifest 已声明 action。
 - action 输入/输出必须匹配声明的 JSON Schema；超时和取消必须作为明确状态处理。
 - App UI 不直接访问任意文件系统。需要文件能力时，由受限 Backend action 实现并声明权限。
 
 ### 事件
 
-- `mossApp.events.on('runtime', callback)` → 监听实例运行状态。
+- `mossApp.events.on('runtime', callback)` → 监听 App 运行状态。
 - `mossApp.events.on('appearance', callback)` → 监听公开桌面外观变化。
-- Backend App 首屏必须展示实例状态和调用错误信息。
+- Backend App 首屏必须展示运行状态和调用错误信息。
 
 ## 规范
 

@@ -102,6 +102,7 @@ describe('App marketplace', () => {
       [latest.artifact.downloadUrl, archive],
     ])
     const rollbacks: unknown[] = []
+    const progress: any[] = []
     const runtime = {
       getInstallation: () => ({ activeVersion: '1.1.0', grants: ['agent:turns:write'] }),
       registerInstalled: async () => { throw new Error('backend did not start') },
@@ -127,6 +128,7 @@ describe('App marketplace', () => {
       }),
       installPackage: async () => ({ id: 'example.app', currentVersion: '1.2.0' }),
       rollbackPackage: async (input: unknown) => { rollbacks.push(input) },
+      emitProgress: (value: unknown) => progress.push(value),
     })
 
     await expect(service.install({ appId: 'example.app' })).rejects.toThrow('backend did not start')
@@ -135,6 +137,9 @@ describe('App marketplace', () => {
       previousVersion: '1.1.0',
       failedVersion: '1.2.0',
     }])
+    expect(progress.slice(-3).map((value) => value.phase)).toEqual(['activating', 'rolling-back', 'error'])
+    expect(progress.at(-1).error).toBe('backend did not start')
+    expect(progress.some((value) => value.phase === 'completed')).toBe(false)
   })
 
   it('loads the catalog, asks for new permissions, then installs the selected signed version', async () => {
@@ -148,9 +153,11 @@ describe('App marketplace', () => {
       [latest.artifact.downloadUrl, archive],
     ])
     const calls: Array<{ version: string; grants: string[] }> = []
+    const progress: any[] = []
     const runtime = {
       getInstallation: () => null,
       registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
+        expect(progress.at(-1).phase).toBe('activating')
         calls.push({ version: installedVersion, grants: options.grants })
       },
     }
@@ -161,12 +168,15 @@ describe('App marketplace', () => {
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
       getInstalledApps: async () => [],
       getRuntime: () => runtime,
-      download: async (url: string) => {
+      emitProgress: (value: unknown) => progress.push(value),
+      download: async (url: string, options: { onProgress?: (value: unknown) => void }) => {
         const response = responses.get(url)
         if (!response) throw new Error(`Unexpected URL: ${url}`)
+        if (url === latest.artifact.downloadUrl) options.onProgress?.({ receivedBytes: 5, totalBytes: null })
         return response
       },
-      installArchive: async (_runtime: unknown, _archivePath: string, options: { installPackage: (root: string) => Promise<unknown> }) => {
+      installArchive: async (_runtime: unknown, _archivePath: string, options: { onProgress: (value: unknown) => void; installPackage: (root: string) => Promise<unknown> }) => {
+        options.onProgress({ phase: 'extracting' })
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
@@ -183,8 +193,15 @@ describe('App marketplace', () => {
       requiresPermissionApproval: true,
       permissions: ['agent:turns:write'],
     })
+    expect(progress).toHaveLength(0)
     expect(await service.install({ appId: 'example.app', acceptPermissions: true })).toMatchObject({ ok: true, version: '1.2.0' })
     expect(calls).toEqual([{ version: '1.2.0', grants: ['agent:turns:write'] }])
+    expect(progress.map((value) => value.phase)).toEqual([
+      'downloading', 'downloading', 'verifying', 'extracting', 'validating', 'installing', 'activating', 'completed',
+    ])
+    // The catalog supplies the total even when HTTP has no Content-Length.
+    expect(progress[1]).toMatchObject({ appId: 'example.app', version: '1.2.0', receivedBytes: 5, totalBytes: archive.length })
+    expect(progress.at(-1)).toMatchObject({ phase: 'completed', source: 'marketplace', receivedBytes: archive.length })
   })
 
   it('installs a compatible update without loading an incompatible active package', async () => {

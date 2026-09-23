@@ -179,7 +179,7 @@ describe('App Host Capability API', () => {
         runtime: 'node',
         apiVersion: 1,
         lifecycle: 'persistent',
-        instanceMode: 'single',
+
         protocols: ['moss.test/v1'],
         actions: [{ name: 'host.request', inputSchema: 'schemas/echo.json' }],
       },

@@ -28,7 +28,6 @@ apps/<app-name>/
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "on-demand",
-    "instanceMode": "single",
     "protocols": [],
     "actions": [{
       "name": "search",
@@ -40,7 +39,7 @@ apps/<app-name>/
 }
 ```
 
-Use `persistent` only for services that must receive events or maintain a long-lived connection. Use `multiple` only when users need isolated named configurations. Backend dependencies must be bundled into `dist`; installed Apps run no install scripts.
+Use `persistent` only for services that must receive events or maintain a long-lived connection. Each App has one Host-managed Backend. Backend dependencies must be bundled into `dist`; installed Apps run no install scripts.
 
 A `persistent` Backend starts after installation and remains alive while Moss is running. Declare required Host protocols as a flat array, for example `"protocols": ["moss.platform/v1", "moss.agent/v1"]`.
 
@@ -69,4 +68,6 @@ Resolve paths against an explicit allowed root and reject traversal and symlink 
 
 ## UI Contract
 
-App UI uses only scoped V2 methods: `app.getInfo/getVersions/getInstallationState`, `instances.*`, `actions.invoke/cancel`, `storage.*`, and `events.on`. UI calls a declared action by local name and selects an instance belonging to the same App. Backend status and instance configuration remain generic App Center responsibilities.
+Enabled Apps with a UI appear automatically in the Host's More menu, with one entry per App. Do not declare view placement or implement sidebar shortcuts. The first authorized view by `order` supplies the opening route; Apps without view declarations open their UI entry directly. Keep other page navigation inside the App.
+
+App UI uses only scoped V2 methods: `app.getInfo/getVersions/getInstallationState`, `instances.list/update/setEnabled/clearCredentials/getStatus`, `actions.invoke/cancel`, `storage.*`, and `events.on`. The compatibility method `instances.list()` returns the App's one Host-managed Backend record; use its ID to invoke a declared action by local name. There are no create or remove methods. App Center provides the App enable switch, restart and logs. Apps with their own settings page maintain configuration there; other Apps use the App Center configuration form.

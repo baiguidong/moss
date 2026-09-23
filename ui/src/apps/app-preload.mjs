@@ -14,11 +14,9 @@ contextBridge.exposeInMainWorld('mossApp', {
   },
   instances: {
     list: () => ipcRenderer.invoke('app-ui:instances:list'),
-    create: (input) => ipcRenderer.invoke('app-ui:instances:create', input),
     update: (instanceId, patch) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch }),
     setEnabled: (instanceId, enabled) => ipcRenderer.invoke('app-ui:instances:set-enabled', { instanceId, enabled }),
     clearCredentials: (instanceId) => ipcRenderer.invoke('app-ui:instances:clear-credentials', { instanceId }),
-    remove: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:remove', { instanceId, ...options }),
     getStatus: (instanceId) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId }),
   },
   actions: {

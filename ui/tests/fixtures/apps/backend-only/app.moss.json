@@ -9,7 +9,6 @@
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "on-demand",
-    "instanceMode": "single",
     "actions": [{ "name": "echo" }]
   },
   "permissions": []

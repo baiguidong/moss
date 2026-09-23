@@ -26,6 +26,14 @@ async function packageFixture(root: string, fixture: string, folder = fixture) {
   await writePackageChecksums(source)
   return source
 }
+async function configureBackend(runtime: AppRuntimeHost, appId: string, input: Record<string, any>) {
+  const instanceId = defaultInstanceId(appId)
+  await runtime.setInstanceEnabled(appId, instanceId, false)
+  await runtime.updateInstance(appId, instanceId, input)
+  if (input.enabled) await runtime.setInstanceEnabled(appId, instanceId, true)
+  return runtime.instances.get(instanceId)
+}
+
 afterEach(async () => Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))))
 
 describe('App Runtime hardening', () => {
@@ -87,7 +95,7 @@ describe('App Runtime hardening', () => {
 
   it('redacts instance secrets from Backend action errors', async () => {
     const root = await temporaryRoot()
-    const source = await packageFixture(root, 'persistent-multiple')
+    const source = await packageFixture(root, 'persistent-configured')
     await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), `
 const identity = { generation: Number(process.env.MOSS_APP_GENERATION), launchToken: process.env.MOSS_APP_LAUNCH_TOKEN }
 const send = (type, payload, id = crypto.randomUUID()) => process.send?.({ version: 1, id, type, timestamp: Date.now(), payload: { ...payload, ...identity } })
@@ -103,9 +111,9 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await writePackageChecksums(source)
     const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize()
     await runtime.installFromDirectory(source)
-    const appId = 'fixture.persistent-multiple'
+    const appId = 'fixture.persistent-configured'
     await runtime.setAppEnabled(appId, true)
-    const instance = await runtime.createInstance(appId, { displayName: 'Secret', secrets: { token: 'literal-secret' }, enabled: true })
+    const instance = await configureBackend(runtime, appId, { displayName: 'Secret', secrets: { token: 'literal-secret' }, enabled: true })
     let failure: any = null
     try { await runtime.invoke(appId, instance.id, 'echo', {}) } catch (error) { failure = error }
     expect(JSON.stringify({ message: failure?.message, details: failure?.details })).not.toContain('literal-secret')
@@ -186,7 +194,7 @@ send('service.hello', { ...identity, appId: process.env.MOSS_APP_ID, version: pr
 
   it('rolls back instance configuration when the updated Backend cannot initialize', async () => {
     const root = await temporaryRoot()
-    const source = await packageFixture(root, 'persistent-multiple')
+    const source = await packageFixture(root, 'persistent-configured')
     await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), `
 const identity = { generation: Number(process.env.MOSS_APP_GENERATION), launchToken: process.env.MOSS_APP_LAUNCH_TOKEN }
 const send = (type, payload = {}, id = crypto.randomUUID()) => process.send?.({ version: 1, id, type, timestamp: Date.now(), payload: { ...payload, ...identity } })
@@ -207,9 +215,9 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       processOptions: { handshakeTimeoutMs: 300, shutdownTimeoutMs: 100 },
     }).initialize()
     await runtime.installFromDirectory(source)
-    const appId = 'fixture.persistent-multiple'
+    const appId = 'fixture.persistent-configured'
     await runtime.setAppEnabled(appId, true)
-    const instance = await runtime.createInstance(appId, {
+    const instance = await configureBackend(runtime, appId, {
       displayName: 'Healthy', config: { label: 'good' }, secrets: { token: 'kept-secret' }, enabled: true,
     })
     await expect(runtime.updateInstance(appId, instance.id, { displayName: 'Broken', config: { label: 'bad' } })).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })

@@ -21,7 +21,7 @@
 
 - Backend entry is a bundled Node module with no runtime dependency installation.
 - Every action validates input, observes cancellation, bounds external work, and returns serializable values.
-- Persistent and multi-instance modes are justified by actual product requirements.
+- Each App has one Host-managed Backend; persistent lifecycle is justified by actual product requirements.
 - No general shell, code runner, arbitrary executable, arbitrary arguments, or arbitrary working-directory interface exists.
 - Paths, subprocess environment, network retries, output sizes, errors, and secrets are bounded and sanitized.
 
@@ -39,4 +39,4 @@
 - Package checksum coverage is complete and no symbolic links exist.
 - No package code is imported into Host internals.
 - App Center is the installation and management surface.
-- The final handoff reports App ID/version, actions, schemas, lifecycle, instance mode, permissions, tests, and remaining manual gaps.
+- The final handoff reports App ID/version, actions, schemas, lifecycle, permissions, tests, and remaining manual gaps.

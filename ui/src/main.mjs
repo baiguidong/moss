@@ -7972,10 +7972,8 @@ async function previewAppBuild(buildDir) {
     });
     await previewRuntime.installFromDirectory(resolvedBuildDir);
     if (manifest.backend) {
-      if (manifest.backend.instanceMode === 'single') {
-        const previewInstance = previewRuntime.instances.list(manifest.id)[0];
-        await previewRuntime.setInstanceEnabled(manifest.id, previewInstance.id, true);
-      }
+      const previewInstance = previewRuntime.instances.list(manifest.id)[0];
+      await previewRuntime.setInstanceEnabled(manifest.id, previewInstance.id, true);
       await previewRuntime.setAppEnabled(manifest.id, true);
     }
     return launchAppWindow({
@@ -11058,11 +11056,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     sourceRoot: packageRoot,
     ...options,
   });
+  const appInstallProgress = new Map();
+  const emitAppInstallProgress = (progress) => {
+    const key = progress.source === 'local' ? 'local' : `marketplace:${progress.appId}`;
+    if (['completed', 'error', 'canceled'].includes(progress.phase)) appInstallProgress.delete(key);
+    else appInstallProgress.set(key, progress);
+    emitToRenderer('app:install-progress', progress);
+  };
+  ipcMain.handle('app:get-install-progress', () => [...appInstallProgress.values()]);
   registerAppRuntimeIpc({
     ipcMain,
     dialog,
     getRuntime: () => appRuntime,
     emitChanged: emitAppsChanged,
+    emitProgress: emitAppInstallProgress,
     installArchivePackage: installAppPackage,
   });
   registerAppMarketplaceIpc({
@@ -11079,6 +11086,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         else await deleteApp(appId);
       },
       emitChanged: emitAppsChanged,
+      emitProgress: emitAppInstallProgress,
     }),
   });
 
@@ -13231,12 +13239,6 @@ ipcMain.handle('app-ui:instances:list', async (event) => {
   return state.runtime.listInstances(state.id);
 });
 
-ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
-  const state = getAppWindowStateBySender(event.sender);
-  await state.runtime.createInstance(state.id, input);
-  return getAppUiInstance(state, input.id);
-});
-
 ipcMain.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
   const state = getAppWindowStateBySender(event.sender);
   await state.runtime.updateInstance(state.id, instanceId, patch);
@@ -13252,12 +13254,6 @@ ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId 
   const state = getAppWindowStateBySender(event.sender);
   await state.runtime.clearInstanceCredentials(state.id, instanceId);
   return getAppUiInstance(state, instanceId);
-});
-
-ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, ...options }) => {
-  const state = getAppWindowStateBySender(event.sender);
-  await state.runtime.removeInstance(state.id, instanceId, options);
-  return { ok: true };
 });
 
 ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {

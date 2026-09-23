@@ -54,7 +54,7 @@ def validate(root, phase, report_root):
     if isinstance(backend, dict):
         if backend.get("runtime") != "node" or backend.get("apiVersion") != 1: errors.append("Backend must use node API version 1")
         if backend.get("lifecycle") not in {"on-demand", "persistent"}: errors.append("Backend lifecycle is invalid")
-        if backend.get("instanceMode") not in {"single", "multiple"}: errors.append("Backend instanceMode is invalid")
+        if "instanceMode" in backend and backend["instanceMode"] != "single": errors.append("Each App supports only one Backend")
         protocols = backend.get("protocols")
         if protocols is not None and (not isinstance(protocols, list) or any(not isinstance(name, str) for name in protocols)):
             errors.append("backend.protocols must be an array of protocol names")

@@ -11,6 +11,7 @@ export async function downloadFileBuffer(url, options = {}) {
     timeoutMs = 60000,
     maxRedirects = MAX_DOWNLOAD_REDIRECTS,
     maxBytes = MAX_DOWNLOAD_BYTES,
+    onProgress,
   } = options;
 
   let currentUrl = url;
@@ -62,6 +63,16 @@ export async function downloadFileBuffer(url, options = {}) {
 
         const chunks = [];
         let received = 0;
+        const totalBytes = Number.isFinite(declaredLength) && declaredLength > 0 ? declaredLength : null;
+        let lastProgressAt = 0;
+        const reportProgress = (force = false) => {
+          if (!onProgress) return;
+          const now = Date.now();
+          if (!force && now - lastProgressAt < 100) return;
+          lastProgressAt = now;
+          onProgress({ receivedBytes: received, totalBytes });
+        };
+        reportProgress(true);
         response.on('data', (chunk) => {
           received += chunk.length;
           if (received > maxBytes) {
@@ -70,8 +81,12 @@ export async function downloadFileBuffer(url, options = {}) {
             return;
           }
           chunks.push(chunk);
+          reportProgress();
         });
-        response.on('end', () => resolve({ buffer: Buffer.concat(chunks) }));
+        response.on('end', () => {
+          reportProgress(true);
+          resolve({ buffer: Buffer.concat(chunks) });
+        });
         response.on('error', reject);
       });
 

@@ -42,9 +42,12 @@ describe('App archive extraction', () => {
       'wrapped/dist/ui/index.html': '<main>registered</main>',
     })
     let installedRoot = ''
+    const phases: string[] = []
     const result = await installAppArchive({ installFromDirectory: () => { throw new Error('runtime-only install must not run') } }, archive, {
+      onProgress: ({ phase }: { phase: string }) => phases.push(phase),
       installPackage: async (packageRoot: string) => {
         installedRoot = packageRoot
+        expect(phases).toEqual(['extracting'])
         await new Promise((resolve) => setTimeout(resolve, 5))
         expect(await fs.readFile(path.join(packageRoot, 'dist/ui/index.html'), 'utf8')).toContain('registered')
         return { id: 'example.app', currentVersion: '1.0.0' }

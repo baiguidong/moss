@@ -148,6 +148,7 @@ export async function extractAppArchive(zipPath, destination, limits = {}) {
 export async function installAppArchive(runtime, archivePath, options = {}) {
   const staging = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-app-install-'))
   try {
+    options.onProgress?.({ phase: 'extracting' })
     await extractAppArchive(archivePath, staging)
     const entries = await fsp.readdir(staging, { withFileTypes: true })
     const packageRoot = fs.existsSync(path.join(staging, 'app.moss.json'))

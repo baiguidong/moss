@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { AppSidebar, getSidebarMoreViews } from '../src/renderer-react/components/app-sidebar';
+import { AppSidebar, getSidebarMoreApps, getSidebarMoreViews } from '../src/renderer-react/components/app-sidebar';
+import type { StoredApp } from '../src/renderer-react/types';
 
 function renderSidebar({
   libraryEnabled = false,
@@ -13,7 +14,6 @@ function renderSidebar({
   apps = [],
   activeView = 'chat',
   collapsed = false,
-  appViews = [],
 }: {
   libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
@@ -23,13 +23,11 @@ function renderSidebar({
   apps?: any[];
   activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
   collapsed?: boolean;
-  appViews?: any[];
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
       sessions={sessions}
       apps={apps}
-      appViews={appViews}
       activeSessionId={null}
       activeView={activeView}
       appsCount={0}
@@ -106,21 +104,51 @@ describe('app sidebar more menu', () => {
 });
 
 describe('app sidebar resource navigation', () => {
-  test('keeps a disabled App shortcut visible but non-interactive with enable guidance', () => {
-    const html = renderSidebar({
-      apps: [{ id: 'example.app', name: 'example.app', displayName: 'Example', enabled: false }],
-    });
-    expect(html).toContain('disabled=""');
-    expect(html).toContain('title="Example：请先启用 App"');
+  const app = { id: 'example.app', name: 'example.app', displayName: 'Example', enabled: true, hasUi: true } as StoredApp;
+
+  test('adds enabled UI Apps without requiring view declarations', () => {
+    expect(getSidebarMoreApps([app])).toEqual([
+      { id: 'example.app', name: 'example.app', title: 'Example', route: '' },
+    ]);
   });
 
-  test('renders enabled App view contributions as navigation entries', () => {
-    const html = renderSidebar({
-      appViews: [{ id: 'moss.example/home', appId: 'moss.example', appName: 'moss.example', title: '示例 App', route: '#/home', location: 'sidebar' }],
-    });
-    expect(html).toContain('data-app-view="moss.example/home"');
-    expect(html).toContain('data-app-route="#/home"');
-    expect(html).toContain('示例 App');
+  test('hides disabled, unavailable and Backend-only Apps from More', () => {
+    expect(getSidebarMoreApps([
+      { ...app, enabled: false },
+      { ...app, hasUi: false },
+      { ...app, packageStatus: 'invalid' },
+      { ...app, packageStatus: 'incompatible' },
+    ])).toEqual([]);
+    expect(getSidebarMoreApps([{ ...app, runtimeStatus: { state: 'stopped' } }])).toHaveLength(1);
+  });
+
+  test('creates one entry per App and opens its first authorized view by order', () => {
+    const configured = {
+      ...app,
+      contributes: { views: [
+        { id: 'second', title: 'Second', route: '#/second', order: 10 },
+        { id: 'restricted', title: 'Restricted', route: '#/admin', order: -10, permission: 'admin:read' },
+        { id: 'home', title: 'Home', route: '#/home', order: 0 },
+      ] },
+    };
+    expect(getSidebarMoreApps([configured])).toEqual([
+      { id: app.id, name: app.name, title: 'Example', route: '#/home' },
+    ]);
+    expect(getSidebarMoreApps([{ ...configured, grants: ['admin:read'] }])[0].route).toBe('#/admin');
+  });
+
+  test('ignores legacy view placement and never adds bottom App shortcuts', () => {
+    for (const location of ['more', 'sidebar', 'hidden']) {
+      const legacy = { ...app, contributes: { views: [{ id: 'home', title: 'Home', route: '#/home', location }] } };
+      expect(getSidebarMoreApps([legacy])[0].route).toBe('#/home');
+      for (const collapsed of [false, true]) {
+        const html = renderSidebar({ apps: [legacy], collapsed });
+        expect(html).toContain('title="更多"');
+        expect(html).not.toContain('title="Example"');
+        expect(html).not.toContain('data-app-view=');
+        expect(html).not.toContain('data-app-id=');
+      }
+    }
   });
 
   test('shows one combined resource entry instead of separate entries', () => {
