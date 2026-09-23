@@ -15,7 +15,7 @@
 1. 默认安装只包含聊天、Agent、Session、Project、安全、身份和 App 平台。
 2. 飞书、资料库、即时消息、协作邮箱、Cron、审计中心、工作流等成为可独立启停、升级、回滚和卸载的 App。
 3. App 不导入 Desktop、Server、Session 或 Project 内部模块，只通过版本化 Host Capability API 使用宿主能力。
-4. Desktop 与 Server 使用同一 App 包和协议；Server 额外强制执行组织、用户和 Host 归属。
+4. Desktop 与 Server 使用同一 App 包；App 显式声明支持 Desktop、Server 或两者，并按 target 声明协议。Server 额外强制执行组织、用户和 Host 归属。
 5. App 被禁用或卸载后，历史会话、长期引用、审计证据和通用 Tool 结果仍然可读。
 
 ## 非目标
@@ -140,7 +140,7 @@ Host API 2 不保留旧 Channel 兼容层。会话与 Turn 收口到 `moss.agent
 | `moss.agent/v1` | Binding、Session、Turn、投递确认和脱敏事件 |
 | `moss.account/v1` | 当前主体、组织目录、受限 Server API 代理；永不返回 JWT |
 | `moss.desktop/v1` | App 私有文件、截图、外链和媒体权限 |
-| `moss.remote/v1` | Desktop 调用同一 App 的 Server Action |
+| `moss.remote/v1` | 现有 App 的过渡兼容；新 App 不用于拆分 Desktop/Server Backend |
 | `moss.resources/v1` | 授权资源句柄、读取元数据、本地化、Provider 注册 |
 | `moss.files/v1` | 文件/目录选择、临时文件、open/reveal、Blob/Stream handle |
 | `moss.audit/v1` | 脱敏实时事件和显式授权的历史查询 |

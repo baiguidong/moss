@@ -98,7 +98,12 @@ export function createServerAccountHostHandlers(authService: AuthService) {
     const users = allUsers.slice(offset, offset + limit)
     return {
       users,
-      departments: source.departments,
+      departments: source.departments.map(department => ({
+        id: department.id,
+        name: department.name,
+        parentId: department.parentId || null,
+        userCount: department.userCount,
+      })),
       nextCursor: offset + users.length < allUsers.length
         ? encodeCursor(offset + users.length)
         : null,
@@ -118,7 +123,10 @@ export function createServerAccountHostHandlers(authService: AuthService) {
           departmentId: identity.user.departmentId || null,
           status: identity.user.status,
         } : null,
-        organization: identity.organization,
+        organization: identity.organization ? {
+          id: identity.organization.id,
+          name: identity.organization.name,
+        } : null,
         scopes: identity.scopes,
       }
     },

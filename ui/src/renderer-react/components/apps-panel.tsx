@@ -19,6 +19,13 @@ function formatTimestamp(timestamp: number) {
   return new Date(timestamp).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function backendUsesProtocol(backend: StoredApp["backend"], protocol: string) {
+  if (!backend?.protocols) return false;
+  return Array.isArray(backend.protocols)
+    ? backend.protocols.includes(protocol)
+    : Object.values(backend.protocols).some((protocols) => protocols?.includes(protocol));
+}
+
 function AppIcon({ icon }: { icon: string }) {
   if (!icon?.startsWith("data:image/")) {
     return <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary"><MonitorPlay className="h-5 w-5" /></div>;
@@ -459,7 +466,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     <span>{app.hasBackend ? `${displayedBackend?.lifecycle === "persistent" ? "常驻" : "按需"} Backend` : "无 Backend"}</span>
                     {displayedBackend && <span>{displayedBackend.instanceMode === "multiple" ? "多实例" : "单实例"}</span>}
                     {displayedBackend && <span>{displayedBackend.targets.map((target) => target === "desktop" ? "Desktop" : "Server").join(" / ")}</span>}
-                    {displayedBackend?.protocols?.includes("moss.agent/v1") && <span>Agent</span>}
+                    {backendUsesProtocol(displayedBackend, "moss.agent/v1") && <span>Agent</span>}
                     <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>

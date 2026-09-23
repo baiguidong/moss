@@ -45,10 +45,12 @@ Use `persistent` only for services that must receive events or maintain a long-l
 Use the smallest deployment target set that satisfies the product requirement:
 
 - Default to `["desktop"]`.
-- Add `server` only for an explicit remote, always-on, or unattended requirement and only when the Backend does not depend on Electron, a window, desktop-local paths, or other client-only resources.
-- Use `["server"]` only for an explicitly server-only Backend App that omits `ui`. App UI bridges currently address Desktop instances only, so an App with `ui` must also target `desktop`.
+- Add `server` only for an explicit always-on or unattended placement requirement. Most Apps should remain Desktop-only. Server logic may differ from Desktop logic, but it must run without Electron, a window, desktop-local paths, or another concurrently running Backend.
+- Use `["server"]` only when the Backend must always run on Server. UI presence is independent from Backend placement; UI calls a logical instance and the Host routes it to the active deployment.
 
-`targets` is a capability contract, not a preferred runtime. The Host exposes Server deployment only when `server` is present. Server unavailability must not break a Backend that also targets Desktop.
+`targets` is a set of alternative placements, not cooperating process roles. One App instance is active on Desktop or Server at a time. The Host exposes Server migration only when `server` is present. Target-specific branches may differ substantially but must operate independently.
+
+Declare `backend.protocols` per target, for example `{"desktop": ["moss.desktop/v1"], "server": ["moss.agent/v1"]}`. Each key must also be present in `targets`; do not use the legacy shared-array form for new Apps.
 
 ## Entry
 

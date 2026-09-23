@@ -1155,14 +1155,14 @@ export type StoredApp = {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
-    protocols?: string[];
+    protocols?: string[] | Partial<Record<'desktop' | 'server', string[]>>;
     actions: Array<{ name: string }>;
   } | null;
   serverBackend?: {
     lifecycle: 'on-demand' | 'persistent';
     instanceMode: 'single' | 'multiple';
     targets: Array<'desktop' | 'server'>;
-    protocols?: string[];
+    protocols?: string[] | Partial<Record<'desktop' | 'server', string[]>>;
     actions: Array<{ name: string }>;
   } | null;
   permissions?: string[];

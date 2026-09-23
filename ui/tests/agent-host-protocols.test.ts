@@ -7,8 +7,11 @@ import {
   MOSS_REMOTE_PROTOCOL,
   validateAccountBackendEventData,
   validateAccountHostInput,
+  validateAccountHostOutput,
   validateAgentHostInput,
+  validateAgentHostOutput,
   validateDesktopHostInput,
+  validateDesktopHostOutput,
   validateRemoteHostInput,
 } from '../../packages/app-sdk/src/index.mjs'
 import {
@@ -52,6 +55,32 @@ describe('Account and Agent Host protocols', () => {
     expect(() => validateAccountBackendEventData('directory.user-changed', {
       user: { id: 'user-1', status: 'unknown' },
     })).toThrow(/user status/)
+  })
+
+  it('validates fixed-shape Host protocol outputs', () => {
+    expect(validateAccountHostOutput('identity.current', {
+      source: 'local', user: null, organization: null, scopes: [],
+    })).toMatchObject({ source: 'local', user: null })
+    expect(() => validateAccountHostOutput('identity.current', {
+      source: 'server', user: null, organization: null, scopes: [], token: 'secret',
+    })).toThrow(/unknown field: token/)
+    expect(validateDesktopHostOutput('file.pick', { files: [] })).toEqual({ files: [] })
+    expect(() => validateDesktopHostOutput('shell.open-external', { opened: false }))
+      .toThrow(/opened is invalid/)
+    expect(validateAgentHostOutput('context.observe', { observed: true, duplicate: false }))
+      .toEqual({ observed: true, duplicate: false })
+    expect(validateAgentHostOutput('turn.start', {
+      accepted: false,
+      routing: 'human',
+      duplicate: false,
+      turnId: 'turn-1',
+      status: 'human',
+      sessionId: null,
+      reason: 'reply_policy',
+    })).toMatchObject({ turnId: 'turn-1', routing: 'human' })
+    expect(() => validateAgentHostOutput('context.observe', {
+      observed: true, duplicate: false, internal: true,
+    })).toThrow(/unknown field: internal/)
   })
 
   it('rejects unsafe Agent permission modes and malformed binding policies', () => {
@@ -135,7 +164,9 @@ describe('Account and Agent Host protocols', () => {
     const registry = new AppHostCapabilityRegistry()
     registry.registerProtocol(createAccountProtocolDefinition())
     registry.registerProtocol(createAgentProtocolDefinition())
-    registry.registerHandler(MOSS_ACCOUNT_PROTOCOL, 'identity.current', () => ({ source: 'local' }))
+    registry.registerHandler(MOSS_ACCOUNT_PROTOCOL, 'identity.current', () => ({
+      source: 'local', user: null, organization: null, scopes: [],
+    }))
     registry.registerHandler(MOSS_AGENT_PROTOCOL, 'catalog.list', () => ({ agents: [] }))
 
     await expect(registry.dispatch(request(
@@ -143,7 +174,7 @@ describe('Account and Agent Host protocols', () => {
       'identity.current',
       {},
       'account:identity:read',
-    ))).resolves.toEqual({ source: 'local' })
+    ))).resolves.toEqual({ source: 'local', user: null, organization: null, scopes: [] })
     await expect(registry.dispatch(request(
       MOSS_AGENT_PROTOCOL,
       'catalog.list',

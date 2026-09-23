@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import Ajv2020 from 'ajv/dist/2020.js'
-import { APP_MANIFEST_SCHEMA, AppBackendClient, createEnvelope, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
+import {
+  APP_MANIFEST_SCHEMA,
+  AppBackendClient,
+  createEnvelope,
+  resolveBackendProtocols,
+  validateAppManifest,
+} from '../../packages/app-sdk/src/index.mjs'
 
 const valid = {
   schemaVersion: 2,
@@ -37,18 +43,16 @@ describe('App manifest V2', () => {
     })).toThrow(/Duplicate Backend action/)
   })
 
-  it('allows Server-only Backend Apps but rejects a UI whose Backend cannot run on Desktop', () => {
+  it('keeps UI presence independent from Backend placement', () => {
     const serverBackend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
       lifecycle: 'persistent', instanceMode: 'single', targets: ['server'],
       actions: [{ name: 'serve' }],
     }
     expect(validateAppManifest({ ...valid, ui: undefined, backend: serverBackend }).backend?.targets).toEqual(['server'])
-    expect(() => validateAppManifest({ ...valid, backend: serverBackend })).toThrow(
-      /Apps with a UI must target desktop/,
-    )
+    expect(validateAppManifest({ ...valid, backend: serverBackend }).backend?.targets).toEqual(['server'])
     const validateSchema = new Ajv2020({ strict: false }).compile(APP_MANIFEST_SCHEMA)
-    expect(validateSchema({ ...valid, backend: serverBackend })).toBe(false)
+    expect(validateSchema({ ...valid, backend: serverBackend })).toBe(true)
   })
 
   it('preserves the declared Server owner scope', () => {
@@ -61,6 +65,14 @@ describe('App manifest V2', () => {
       },
     })
     expect(manifest.backend?.serverOwnerScope).toBe('org')
+    expect(() => validateAppManifest({
+      ...valid,
+      backend: {
+        entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
+        lifecycle: 'persistent', instanceMode: 'single', serverOwnerScope: 'org',
+        targets: ['desktop'], actions: [],
+      },
+    })).toThrow(/serverOwnerScope requires server/)
   })
 
   it('supports versioned Host protocols without coupling manifests to a product integration', () => {
@@ -75,6 +87,7 @@ describe('App manifest V2', () => {
       backend,
       permissions: ['agent:turns:write'],
     }).backend?.protocols).toEqual(['moss.agent/v1'])
+    expect(resolveBackendProtocols({ ...backend, targets: ['desktop', 'server'] }, 'server')).toEqual(['moss.agent/v1'])
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
@@ -93,6 +106,26 @@ describe('App manifest V2', () => {
       backend: { ...backend, protocols: ['Moss Unknown'] },
       permissions: [],
     })).toThrow(/protocols/)
+
+    const targeted = validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: {
+        ...backend,
+        targets: ['desktop', 'server'],
+        protocols: {
+          desktop: ['moss.agent/v1', 'moss.desktop/v1'],
+          server: ['moss.agent/v1'],
+        },
+      },
+    })
+    expect(resolveBackendProtocols(targeted.backend, 'desktop')).toEqual(['moss.agent/v1', 'moss.desktop/v1'])
+    expect(resolveBackendProtocols(targeted.backend, 'server')).toEqual(['moss.agent/v1'])
+    expect(() => validateAppManifest({
+      ...valid,
+      ui: undefined,
+      backend: { ...backend, protocols: { server: ['moss.agent/v1'] } },
+    })).toThrow(/protocols.server requires server/)
   })
 
   it('normalizes contribution points and rejects dangling or ungranted references', () => {

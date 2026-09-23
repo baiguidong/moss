@@ -62,7 +62,13 @@ example-app/
 
 `lifecycle` 为 `on-demand` 时，第一个 Action 启动共享进程，无待处理 Action 后按空闲超时退出。`persistent` 在 App 和实例开关都启用时常驻。`instanceMode: single` 使用默认实例；`multiple` 每个已启用实例拥有独立进程、配置、密钥、数据和日志。
 
-`backend.targets` 是部署能力声明，不是运行时偏好。默认只声明 `desktop`；只有 Backend 明确支持无桌面环境运行时才加入 `server`。App 管理界面仅在 `targets` 包含 `server` 且 Server 包源存在相同版本时提供部署入口，Server 未连接不影响同时支持 Desktop 的 App 在本机运行。当前 App UI Bridge 只操作 Desktop Runtime，因此带 `ui` 的 App Backend 必须包含 `desktop`；`["server"]` 仅用于 Backend-only App。
+`backend.targets` 声明同一个 Backend 支持的候选部署位置，不声明多个进程角色。一个 App instance 在任意时刻只能有一个 active deployment：位于 Desktop 或 Server。`["desktop", "server"]` 表示该实例可以在两者之间迁移，不表示两端同时运行，也不表示 Desktop Backend 可以依赖另一个 Server Backend。
+
+App 必须按实际支持范围显式选择 `targets: ["desktop"]`、`["server"]` 或 `["desktop", "server"]`。只声明 `desktop` 的 Backend 只有 Moss Desktop 正在运行时才可用；只有声明 `server` 的 Backend 才能部署到 Moss Server 并 7×24 运行。Server 支持不是默认要求，大多数普通 App 应只声明 `desktop`。Backend 可以根据 `context.target.type` 使用明显不同的实现和功能，但每种已声明模式都必须能独立运行，不能依赖另一 target 的 Backend 同时在线。迁移必须先停止源 deployment，再复制配置和密钥、递增 generation，最后启动并健康检查目标 deployment。
+
+`backend.protocols` 按 target 声明当前模式会使用的 Host 协议。推荐格式是 `{ "desktop": [...], "server": [...] }`，且只能包含 `backend.targets` 已声明的 key。Account、Agent 等协议可按实际需要出现在任一 target；Desktop 专属协议只能出现在 `desktop`。旧数组格式暂时兼容现有 App，并视为对所有 target 使用同一组协议，新 App 不应再使用。
+
+App 管理界面仅在 `targets` 包含 `server` 且 Server 包源存在相同版本时提供 Server 部署或迁移入口。UI 与 Backend placement 相互独立：UI 可以在 Desktop 打开，而 Backend 只部署在 Server。App UI 调用逻辑 instance，由 Host 解析其 active deployment；App UI 不应自行连接 Server，也不应要求调用者了解 Backend 的物理位置。
 
 Server Backend 默认使用 `user` owner。需要为整个组织共享一份实例、配置和 Secret 时，声明 `backend.serverOwnerScope: "org"`。org App 只能由管理员部署和管理，但组织成员可以在拥有 `apps:invoke` 时调用；Runtime 会分别记录 installation owner 和当前调用 principal，使 Account Host 返回调用用户身份而不是管理员身份。
 
@@ -88,7 +94,7 @@ example-app/
 
 App repo 的运行时代码只依赖 `@moss/app-sdk`，不能导入 `ui/`、`server/`、Session 或 Connector 内部源码。Backend 通过 `defineAppBackend()` 注册 Manifest 已声明的 Action；UI 通过受 App ID 约束的 `window.mossApp.actions` 调用。SDK 的协议、Manifest schema 和测试辅助 API 位于根仓库 `packages/app-sdk`。
 
-Host API 2 提供 `moss.account/v1`、`moss.agent/v1`、`moss.desktop/v1` 和 `moss.remote/v1`。外部集成 App 使用通用 [Agent Host API](./agent-host-api.md) 创建 Turn 和接收结果，平台连接、消息格式、用户映射与 SDK 全部留在 App。完整边界见 [Host Capability API](./app-host-capability-api.md)。
+Host API 2 提供 `moss.account/v1`、`moss.agent/v1` 和 Desktop 专属能力。外部集成 App 使用通用 [Agent Host API](./agent-host-api.md) 创建 Turn 和接收结果，平台连接、消息格式、用户映射与 SDK 全部留在 App。`moss.remote/v1` 只作为现有实现的过渡兼容协议，不属于新的可迁移 Backend 模型。完整边界见 [Host Capability API](./app-host-capability-api.md)。
 
 ## Desktop 数据与进程
 

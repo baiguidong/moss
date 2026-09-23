@@ -4,6 +4,8 @@
 
 日期：2026-09-22
 
+> 本文记录既有迁移过程，其中 OpenIM 的 Desktop → Server Remote 拆分是待迁移的过渡实现，不作为新 App 的架构示例。当前规范以 `ui/docs/app-runtime.md` 为准：每个 App instance 单 target 单活，Server 能力由 App 显式声明。
+
 ## 目标
 
 - Core 只提供可复用的 App Runtime、身份、目录、Agent、桌面和跨 Host 调用能力。
@@ -20,7 +22,7 @@
 | `moss.account/v1` | 当前 owner 身份和受权限约束的组织目录 |
 | `moss.agent/v1` | Agent 目录、Binding、Session、Turn 和投递确认 |
 | `moss.desktop/v1` | App 私有文件缓存、截图、下载、外链与媒体授权 |
-| `moss.remote/v1` | Desktop Backend 调用同一 App 的 Server Action |
+| `moss.remote/v1` | 现有 App 的过渡兼容；新 App 不应使用 |
 
 旧 Channel 的会话和消息能力已并入 `moss.agent/v1`：
 
@@ -37,7 +39,7 @@
 - Agent 执行安全、Session/Turn 状态机、策略继承、资源收窄、取消和最小审计。
 - Account 目录的组织边界与用户权限校验。
 - Desktop 操作系统权限与每 App 私有文件目录。
-- 同 App 的 Desktop → Server Action 路由。
+- 过渡期保留同 App 的 Desktop → Server Action 路由，待现有调用方迁移后删除。
 
 Core 不包含平台名称、SDK、Token、用户 ID 规则、Webhook、消息格式、自动回复扩展字段或平台部署配置。
 

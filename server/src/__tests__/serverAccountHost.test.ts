@@ -4,7 +4,10 @@ import { createServerAccountHostHandlers } from '../apps/serverAccountHost.js'
 function fakeAuthService() {
   const directories = {
     'org-1': {
-      departments: [{ id: 'dep-1', name: 'Support', parentId: null, userCount: 2 }],
+      departments: [{
+        id: 'dep-1', name: 'Support', parentId: null, userCount: 2,
+        orgId: 'org-1', tokenLimit: 100, createdAt: 1, updatedAt: 1,
+      }],
       users: [
         { id: 'user-1', name: 'Alice', email: 'alice@example.test', departmentId: 'dep-1', status: 'active' },
         { id: 'user-2', name: 'Bob', email: 'bob@example.test', departmentId: 'dep-1', status: 'active' },
@@ -32,9 +35,13 @@ describe('Server Account Host', () => {
     expect(handlers['identity.current']({}, context)).toMatchObject({
       source: 'server', user: { id: 'user-1', name: 'Alice' }, organization: { id: 'org-1' },
     })
+    expect(handlers['identity.current']({}, context).organization).toEqual({ id: 'org-1', name: 'One' })
     expect(handlers['directory.search']({ query: 'bob' }, context)).toMatchObject({
       users: [{ id: 'user-2', name: 'Bob' }],
     })
+    expect(handlers['directory.list']({}, context).departments).toEqual([
+      { id: 'dep-1', name: 'Support', parentId: null, userCount: 2 },
+    ])
   })
 
   it('paginates without crossing organizations and rejects host-scoped access', () => {

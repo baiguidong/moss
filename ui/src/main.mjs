@@ -111,6 +111,7 @@ import {
   MOSS_AGENT_PROTOCOL,
   MOSS_DESKTOP_PROTOCOL,
   MOSS_REMOTE_PROTOCOL,
+  resolveBackendProtocols,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import {
@@ -3471,7 +3472,22 @@ function localDesktopAccountIdentity() {
 
 async function getDesktopAccountIdentity() {
   const remote = await requestDesktopAccount('/api/v1/auth/me').catch(() => null);
-  return remote ? { ...remote, source: 'server' } : localDesktopAccountIdentity();
+  if (!remote) return localDesktopAccountIdentity();
+  return {
+    source: 'server',
+    user: remote.user ? {
+      id: String(remote.user.id),
+      name: String(remote.user.name || remote.user.id),
+      email: remote.user.email || null,
+      departmentId: remote.user.departmentId || null,
+      status: remote.user.status || 'active',
+    } : null,
+    organization: remote.organization ? {
+      id: String(remote.organization.id),
+      name: String(remote.organization.name || remote.organization.id),
+    } : null,
+    scopes: Array.isArray(remote.scopes) ? remote.scopes.map(String) : [],
+  };
 }
 
 async function getDesktopAccountDirectory(input = {}) {
@@ -3495,7 +3511,12 @@ async function getDesktopAccountDirectory(input = {}) {
     }));
   return {
     users,
-    departments: Array.isArray(source.departments) ? source.departments : [],
+    departments: (Array.isArray(source.departments) ? source.departments : []).map((department) => ({
+      id: String(department.id),
+      name: String(department.name || department.id),
+      parentId: department.parentId || null,
+      userCount: Math.max(0, Number(department.userCount) || 0),
+    })),
     nextCursor: null,
     revision: createHash('sha256').update(JSON.stringify({ users, departments: source.departments || [] }))
       .digest('hex').slice(0, 24),
@@ -4639,7 +4660,7 @@ async function restartRemoteDependentAppBackends() {
   const restarts = [];
   for (const appEntry of await desktopAppRuntime.listApps()) {
     if (!appEntry.installation?.enabled
-      || !appEntry.manifest?.backend?.protocols?.includes(MOSS_REMOTE_PROTOCOL)) continue;
+      || !resolveBackendProtocols(appEntry.manifest?.backend, 'desktop').includes(MOSS_REMOTE_PROTOCOL)) continue;
     for (const instance of appEntry.instances || []) {
       if (!instance.enabled) continue;
       restarts.push(desktopAppRuntime.restartInstance(appEntry.manifest.id, instance.id));

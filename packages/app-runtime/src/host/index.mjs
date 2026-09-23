@@ -6,6 +6,7 @@ import {
   APP_ERROR_CODES,
   AppServiceError,
   loadJsonSchema,
+  resolveBackendProtocols,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
 import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
@@ -818,7 +819,7 @@ export class AppRuntimeHost {
       protocol,
       method,
       input,
-      protocols: backend.protocols || [],
+      protocols: resolveBackendProtocols(backend, deployment.targetType),
       permissions: packageInfo.manifest.permissions || [],
       grants: installation.grants || [],
       signal: options.signal,
@@ -872,9 +873,9 @@ export class AppRuntimeHost {
       runtimeDir: this.appDataPath(this.runtimeDir, deployment.appId, deployment.instanceId),
       owner: this.currentOwner(),
       principal: request.principal || this.currentOwner(),
-      protocols: backend?.protocols || [],
+      protocols: resolveBackendProtocols(backend, deployment.targetType),
       permissions: packageInfo.manifest.permissions || [],
-      grants: this.installations.get(request.appId)?.grants || packageInfo.manifest.permissions || [],
+      grants: this.installations.get(request.appId)?.grants ?? [],
     })
   }
 
@@ -887,15 +888,15 @@ export class AppRuntimeHost {
     if (!deployment) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance is not deployed on this Host')
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    const prepared = this.hostCapabilities.prepareEvent({
+    const prepared = await this.hostCapabilities.prepareEvent({
       appId,
       instanceId,
       protocol,
       name,
       data,
-      protocols: backend?.protocols || [],
+      protocols: resolveBackendProtocols(backend, deployment.targetType),
       permissions: packageInfo.manifest.permissions || [],
-      grants: installation.grants || packageInfo.manifest.permissions || [],
+      grants: installation.grants ?? [],
     })
     await this.prepareDeployment(deployment)
     return this.supervisor.publishHostEvent(
@@ -946,9 +947,9 @@ export class AppRuntimeHost {
       generation: deployment.generation,
       entry: backend.entry,
       lifecycle: backend.lifecycle,
-      protocols: backend.protocols || [],
+      protocols: resolveBackendProtocols(backend, deployment.targetType),
       permissions: packageInfo.manifest.permissions || [],
-      grants: this.installations.get(packageInfo.manifest.id)?.grants || packageInfo.manifest.permissions || [],
+      grants: this.installations.get(packageInfo.manifest.id)?.grants ?? [],
       packageRoot: packageInfo.root,
       config: instance.config || {},
       secrets: secrets || {},

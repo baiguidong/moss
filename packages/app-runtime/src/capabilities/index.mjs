@@ -162,7 +162,7 @@ export class AppHostCapabilityRegistry {
     return { definition, member, name }
   }
 
-  authorizeMember(request, definition, member, name, kind) {
+  async authorizeMember(request, definition, member, name, kind) {
     try {
       requireHostProtocol(request.protocols, definition.protocol)
     } catch (error) {
@@ -173,7 +173,7 @@ export class AppHostCapabilityRegistry {
     }
     if (member.permission) {
       requireHostPermission(request.permissions, member.permission)
-      requireHostPermission(request.grants ?? request.permissions, member.permission, { source: 'grant' })
+      requireHostPermission(request.grants ?? [], member.permission, { source: 'grant' })
     }
     const authorization = Object.freeze({
       protocol: definition.protocol,
@@ -181,13 +181,13 @@ export class AppHostCapabilityRegistry {
       name,
       permission: member.permission,
     })
-    if (this.authorize) this.authorize(request, authorization)
+    if (this.authorize) await this.authorize(request, authorization)
     return authorization
   }
 
-  prepareEvent(request) {
+  async prepareEvent(request) {
     const { definition, member, name } = this.requireMember(request.protocol, request.name, 'event')
-    const authorization = this.authorizeMember(request, definition, member, name, 'event')
+    const authorization = await this.authorizeMember(request, definition, member, name, 'event')
     const data = member.validateInput(request.data)
     return Object.freeze({
       protocol: definition.protocol,
@@ -200,7 +200,7 @@ export class AppHostCapabilityRegistry {
 
   async dispatch(request) {
     const { definition, member, name } = this.requireMember(request.protocol, request.method, 'method')
-    const authorization = this.authorizeMember(request, definition, member, name, 'method')
+    const authorization = await this.authorizeMember(request, definition, member, name, 'method')
     const input = member.validateInput(request.input)
     if (request.signal?.aborted) throw cancellationError(request.signal)
 
@@ -237,6 +237,7 @@ export class AppHostCapabilityRegistry {
       instanceId: request.instanceId,
       generation: request.generation,
       target: request.target,
+      owner: request.owner || null,
       principal: request.principal || null,
       dataDir: request.dataDir || null,
       runtimeDir: request.runtimeDir || null,

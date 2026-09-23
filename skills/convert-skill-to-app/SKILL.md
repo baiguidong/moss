@@ -37,7 +37,7 @@ Classify every capability as `visual`, `ai-assisted`, `manual`, or `excluded`. E
 After App Builder accepts the action contract, read [backend-generation.md](references/backend-generation.md). Generate a Backend entry bundled into `dist/backend/`; do not create a second package or installation concept.
 
 - Declare each action in `app.moss.json.backend.actions`.
-- Declare the smallest valid `backend.targets` set. Default to `["desktop"]`; include `server` only when the user requires remote or unattended hosting and the Backend has no desktop-only dependency.
+- Declare the smallest valid `backend.targets` set explicitly: `["desktop"]`, `["server"]`, or both. Only a Backend that declares `server` can run 7×24 on Moss Server, and most Apps should remain Desktop-only. Both targets are alternative placements for one instance, never cooperating processes. Their implementations and applicable features may differ, but each declared mode must run independently. Declare `backend.protocols` per target and include only protocols used in that mode.
 - Implement the child-process protocol with `@moss/app-sdk`.
 - Bundle all runtime dependencies; never run a package manager or install hook at runtime.
 - Never expose a general shell, arbitrary executable, arbitrary arguments, arbitrary working directory, code runner, Skill runner, or prompt runner.

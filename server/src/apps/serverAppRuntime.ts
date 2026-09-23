@@ -6,7 +6,7 @@ import {
   SqliteAppStateStore,
   validateAppPackage,
 } from '../../../packages/app-runtime/src/index.mjs'
-import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/index.mjs'
+import { APP_ERROR_CODES, AppServiceError, resolveBackendProtocols } from '../../../packages/app-sdk/src/index.mjs'
 import { ServerAppCredentialAdapter } from './serverAppCredentialAdapter.js'
 
 function safeId(value: string, field: string): string {
@@ -157,7 +157,7 @@ export class ServerAppRuntime {
       const apps = await this.runtime.listApps()
       await Promise.all(apps.flatMap(app => {
         if (!app.installation?.enabled
-          || !app.manifest?.backend?.protocols?.includes('moss.account/v1')
+          || !resolveBackendProtocols(app.manifest?.backend, 'server').includes('moss.account/v1')
           || !app.installation?.grants?.includes('account:directory:read')) return []
         return (app.instances || [])
           .filter((instance: { enabled?: boolean }) => instance.enabled)

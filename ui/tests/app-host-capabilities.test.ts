@@ -61,6 +61,7 @@ describe('App Host Capability API', () => {
       protocols: ['moss.test/v1'],
       permissions: ['test:echo'],
       grants: ['test:echo'],
+      owner: { scope: 'org', orgId: 'org-1', userId: null, key: 'org:org-1' },
       principal: { scope: 'user', orgId: 'org-1', userId: 'user-1' },
     }
     await expect(registry.dispatch(request)).resolves.toEqual({ text: 'hello' })
@@ -68,6 +69,7 @@ describe('App Host Capability API', () => {
       protocol: 'moss.test/v1',
       method: 'echo',
       permission: 'test:echo',
+      owner: { scope: 'org', orgId: 'org-1', userId: null, key: 'org:org-1' },
       principal: { scope: 'user', orgId: 'org-1', userId: 'user-1' },
     })
     await expect(registry.dispatch({ ...request, protocols: [] })).rejects.toMatchObject({
@@ -76,7 +78,42 @@ describe('App Host Capability API', () => {
     await expect(registry.dispatch({ ...request, grants: [] })).rejects.toMatchObject({
       code: APP_ERROR_CODES.permissionDenied,
     })
+    await expect(registry.dispatch({ ...request, grants: undefined })).rejects.toMatchObject({
+      code: APP_ERROR_CODES.permissionDenied,
+    })
     expect(contexts).toHaveLength(1)
+  })
+
+  it('waits for asynchronous authorization before dispatching requests or events', async () => {
+    let handlerCalls = 0
+    const registry = new AppHostCapabilityRegistry({
+      authorize: async () => {
+        await tick()
+        throw new Error('denied asynchronously')
+      },
+      protocols: [{
+        protocol: 'moss.test/v1',
+        methods: { echo: {} },
+        events: { notice: {} },
+      }],
+    })
+    registry.registerHandler('moss.test/v1', 'echo', () => {
+      handlerCalls += 1
+      return { ok: true }
+    })
+    const request = {
+      appId: 'fixture.host',
+      instanceId: 'fixture.host--default',
+      protocol: 'moss.test/v1',
+      protocols: ['moss.test/v1'],
+      permissions: [],
+      grants: [],
+    }
+    await expect(registry.dispatch({ ...request, method: 'echo', input: {} }))
+      .rejects.toThrow('denied asynchronously')
+    await expect(registry.prepareEvent({ ...request, name: 'notice', data: {} }))
+      .rejects.toThrow('denied asynchronously')
+    expect(handlerCalls).toBe(0)
   })
 
   it('provides generic Backend request and acknowledged event transport', async () => {
@@ -144,7 +181,7 @@ describe('App Host Capability API', () => {
         lifecycle: 'persistent',
         instanceMode: 'single',
         targets: ['desktop'],
-        protocols: ['moss.test/v1'],
+        protocols: { desktop: ['moss.test/v1'] },
         actions: [{ name: 'host.request', inputSchema: 'schemas/echo.json' }],
       },
       permissions: ['test:echo', 'test:notice'],

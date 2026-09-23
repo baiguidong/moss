@@ -23,6 +23,7 @@ The platform must support:
 - App and instance enable switches.
 - Versioned install, update, rollback, and uninstall entirely through client UI.
 - The same Backend package and runtime contract on Desktop and Moss Server.
+- One active placement per App instance; Desktop and Server are alternatives, not cooperating Backend roles.
 - Future domain protocols, such as an IM channel protocol, without putting platform-specific concepts into the base App Runtime.
 
 ## Non-goals
@@ -91,6 +92,9 @@ These decisions are fixed for App Runtime V2:
 13. The same App artifact is installed independently on Desktop and Server.
 14. Desktop does not upload arbitrary executable code to Server. Server obtains a known App version from the configured App source.
 15. Dependencies required by a Backend are bundled at build time. Runtime `npm install` and package lifecycle scripts are prohibited.
+16. `backend.targets` lists alternative placements for the same Backend. One instance is active on exactly one target at a time.
+17. Every listed target must be independently runnable. Target branches may have substantially different implementations and applicable features, but they do not divide one logical Backend into cooperating Desktop and Server services.
+18. `backend.protocols` is declared per target so each mode receives only the Host protocols it needs. The legacy array form temporarily applies one list to every target.
 
 ## App manifest V2
 
@@ -148,7 +152,10 @@ The single manifest remains `app.moss.json`.
 - `lifecycle` accepts only `on-demand` or `persistent`.
 - `instanceMode` accepts only `single` or `multiple`.
 - `targets` must contain at least one of `desktop` or `server`.
-- An App with `ui` and `backend` must include `desktop`; `server`-only is limited to Backend-only Apps until a remote App UI bridge exists.
+- `targets: ["desktop", "server"]` means one instance can move between the two targets; it does not create two Backend processes.
+- Server support is opt-in rather than a requirement for every App. Only a target list containing `server` permits 7×24 Server deployment; Desktop-only Backends stop when Moss Desktop exits.
+- `serverOwnerScope` is valid only when `targets` contains `server`.
+- UI presence and Backend placement are independent. An App with UI may use a Server-only Backend; the Host routes logical instance calls to its active deployment.
 - Backend action names must be unique within the App.
 - Action input and output schemas must be valid JSON Schema.
 - Backend-only Apps must provide configuration metadata sufficient for the generic App management UI.
@@ -341,7 +348,7 @@ Protocol requirements:
 - App ID, version, Backend API version, instance ID, deployment generation, and one-time launch token in handshake.
 - Stale process messages are rejected by deployment generation and launch token.
 
-领域协议复用相同的进程和基础生命周期。后续实现的 Host API 2 使用 Account、Agent、Desktop 和 Remote 四个版本化协议；业务 Host handler 由 Desktop 或 Server 注册，不进入基础 Action 协议。
+领域协议复用相同的进程和基础生命周期。Host API 2 使用跨 Host 的 Account、Agent 协议和 Host 专属协议；业务 Host handler 由当前 Desktop 或 Server Host 注册，不进入基础 Action 协议。Manifest 按 target 声明 protocols，Runtime 只向进程下发当前 target 的列表。`moss.remote/v1` 是已有实现的过渡兼容层，不用于构造双端协作 Backend。
 
 ## Persistent data model
 
@@ -380,6 +387,7 @@ Constraints:
 - Single-instance Apps use a deterministic instance ID.
 - Instance IDs are globally unique UUIDs for multi-instance Apps.
 - An instance belongs to exactly one App ID.
+- An instance has at most one active deployment across all Desktop and Server targets.
 - An active deployment references an installed compatible App version on its Host.
 - Configuration is validated before persistence.
 - Secret values are replaced with Vault references before configuration persistence.
@@ -509,6 +517,8 @@ Moving an instance between Desktop and Server is a two-phase operation:
 6. Remove source secrets only after the target becomes healthy and the user confirms the move.
 
 If the source cannot be stopped, the target does not start by default. The UI may offer an explicit force takeover with a clear duplicate-runtime warning.
+
+The move changes placement; it does not create a peer process. The target starts the same Backend artifact with the same instance identity and assumes that target mode's declared responsibilities after health-check. Normal App code must not call back to a Backend copy on the source target.
 
 ## Version activation and rollback
 

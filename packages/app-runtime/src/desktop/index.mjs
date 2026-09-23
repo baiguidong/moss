@@ -2,6 +2,7 @@ import {
   DESKTOP_HOST_METHOD_PERMISSIONS,
   MOSS_DESKTOP_PROTOCOL,
   validateDesktopHostInput,
+  validateDesktopHostOutput,
 } from '../../../app-sdk/src/index.mjs'
 
 export function createDesktopProtocolDefinition(options = {}) {
@@ -10,6 +11,7 @@ export function createDesktopProtocolDefinition(options = {}) {
     methods: Object.fromEntries(Object.entries(DESKTOP_HOST_METHOD_PERMISSIONS).map(([name, permission]) => [name, {
       permission,
       validateInput: (input) => validateDesktopHostInput(name, input),
+      validateOutput: (output) => validateDesktopHostOutput(name, output),
     }])),
     events: {},
     handleRequest: options.handleRequest,

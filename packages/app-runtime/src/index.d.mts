@@ -6,6 +6,23 @@ export type AppOwner = {
   key: string
 }
 
+export type AppHostCapabilityContext = {
+  appId: string
+  version: string
+  instanceId: string
+  generation: number
+  target: { type: AppTarget; id: string }
+  owner: AppOwner | null
+  principal: AppOwner | null
+  dataDir: string | null
+  runtimeDir: string | null
+  requestId: string
+  protocol: string
+  method: string
+  permission: string | null
+  signal?: AbortSignal
+}
+
 export interface AppPackageInfo {
   root: string
   manifest: Record<string, any>
@@ -52,7 +69,7 @@ export class AppRuntimeHost {
   invoke(appId: string, instanceId: string, action: string, input: unknown, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal; principal?: Partial<AppOwner> }): Promise<any>
   cancel(appId: string, instanceId: string, requestId: string): boolean
   registerHostProtocol(definition: Record<string, any>): () => void
-  registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
+  registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: AppHostCapabilityContext) => unknown | Promise<unknown>): () => void
   requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; signal?: AbortSignal; principal?: Partial<AppOwner> }): Promise<unknown>
   dispatchHostRequest(request: Record<string, any>): Promise<unknown>
   publishHostEvent(appId: string, instanceId: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
@@ -173,10 +190,10 @@ export class AppActionBroker {
 export class AppHostCapabilityRegistry {
   constructor(options?: Record<string, any>)
   registerProtocol(definition: Record<string, any>): () => void
-  registerHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: Record<string, any>) => unknown | Promise<unknown>): () => void
+  registerHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: AppHostCapabilityContext) => unknown | Promise<unknown>): () => void
   listProtocols(): string[]
   listMethods(protocol: string): string[]
-  prepareEvent(request: Record<string, any>): Readonly<Record<string, any>>
+  prepareEvent(request: Record<string, any>): Promise<Readonly<Record<string, any>>>
   dispatch(request: Record<string, any>): Promise<unknown>
   readonly activeByInstance: Map<string, number>
   readonly activeTotal: number

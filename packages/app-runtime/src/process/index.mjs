@@ -305,7 +305,7 @@ export class AppProcessSupervisor {
         owner: expected.owner || null,
         protocols: expected.protocols || [],
         permissions: expected.permissions || [],
-        grants: expected.grants || expected.permissions || [],
+        grants: expected.grants ?? [],
       }, { id: message.id }), (error) => hosted.readyReject(
         new AppServiceError(APP_ERROR_CODES.handshakeFailed, `Cannot initialize App Backend: ${error.message}`),
       ))
