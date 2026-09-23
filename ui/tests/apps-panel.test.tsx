@@ -109,4 +109,49 @@ describe('Apps management', () => {
     expect(openButton).toContain('title="请先启用 App"');
     expect(openButton).toContain('请先启用');
   });
+
+  test('keeps an incompatible installed App visible and directs the user to update it', () => {
+    const app = {
+      id: 'example.legacy',
+      name: 'example.legacy',
+      displayName: 'Legacy App',
+      title: 'Legacy App',
+      description: 'Installed with an older Host API.',
+      icon: '',
+      width: 800,
+      height: 600,
+      resizable: true,
+      createdAt: 1,
+      updatedAt: 2,
+      currentVersion: '1.3.0',
+      packageStatus: 'incompatible',
+      packageError: 'App requires Host API ^1.3.0; this Host provides 2.0.0',
+      requiredHostApi: '^1.3.0',
+      hasUi: true,
+      hasBackend: false,
+      enabled: false,
+      permissions: [],
+      instances: [],
+      deployments: [],
+    } as StoredApp;
+    const markup = renderToStaticMarkup(
+      <AppsPanel
+        apps={[app]}
+        versionsByApp={{}}
+        onLaunch={() => {}}
+        onDelete={() => {}}
+        onIterate={() => {}}
+        onLoadVersions={() => {}}
+        onRollback={() => {}}
+        onRefresh={async () => {}}
+      />,
+    );
+
+    expect(markup).toContain('Legacy App');
+    expect(markup).toContain('当前安装的 v1.3.0 需要 Host API ^1.3.0，与此版本 Moss 不兼容，请更新到兼容版本。');
+    expect(markup).toContain('更新版本');
+    const openButton = markup.match(/<button[^>]*data-app-open="example\.legacy"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
+    expect(openButton).toContain('disabled=""');
+    expect(openButton).toContain('不可用');
+  });
 });

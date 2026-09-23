@@ -1126,6 +1126,9 @@ export type StoredApp = {
   currentVersionId?: string | null;
   currentVersion?: string | null;
   publishedVersion?: string | null;
+  packageStatus?: 'ready' | 'incompatible' | 'invalid';
+  packageError?: string | null;
+  requiredHostApi?: string | null;
   marketplaceSource?: {
     catalogUrl: string;
     appId: string;

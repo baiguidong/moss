@@ -28,6 +28,7 @@ export class AppRuntimeHost {
   withOwner<T>(owner: Partial<AppOwner>, operation: () => T): T
   installFromDirectory(sourceDir: string, options?: Record<string, any>): Promise<any>
   registerInstalled(appId: string, version: string, options?: Record<string, any>): Promise<any>
+  getInstallation(appId: string): any | null
   getActivePackage(appId: string): Promise<AppPackageInfo>
   getApp(appId: string): Promise<any>
   listApps(): Promise<any[]>

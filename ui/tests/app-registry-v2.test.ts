@@ -62,4 +62,66 @@ describe('App V2 registry hydration', () => {
       currentVersion: '1.0.0',
     }])
   })
+
+  it('keeps an installed App visible when its Host API is incompatible', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-registry-incompatible-'))
+    roots.push(home)
+    const packageRoot = path.join(home, '.moss', 'apps', 'fixture.incompatible', 'versions', '1.3.0')
+    await fs.mkdir(path.join(packageRoot, 'dist', 'ui'), { recursive: true })
+    await fs.writeFile(path.join(packageRoot, 'dist', 'ui', 'index.html'), '<!doctype html><title>Incompatible</title>')
+    await fs.writeFile(path.join(packageRoot, 'app.moss.json'), `${JSON.stringify({
+      schemaVersion: 2,
+      id: 'fixture.incompatible',
+      version: '1.3.0',
+      displayName: 'Incompatible App',
+      hostApi: '^1.3.0',
+      ui: { entry: 'dist/ui/index.html' },
+      permissions: [],
+    }, null, 2)}\n`)
+    await writePackageChecksums(packageRoot)
+    await fs.writeFile(path.join(home, '.moss', 'apps', 'fixture.incompatible', 'current.json'), '{"version":"1.3.0"}\n')
+    await fs.writeFile(path.join(home, '.moss', 'app-registry.json'), `${JSON.stringify({
+      version: 2,
+      apps: [{
+        id: 'fixture.incompatible',
+        name: 'fixture.incompatible',
+        kind: 'app',
+        displayName: 'Incompatible App',
+        title: 'Incompatible App',
+        description: 'An installed App from an older Host API.',
+        hasUi: true,
+        hasBackend: false,
+        currentVersion: '1.3.0',
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    })}\n`)
+
+    const modulePath = path.resolve(import.meta.dir, '../src/app-platform.mjs')
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { listAppsFromRegistry } from ${JSON.stringify(modulePath)};
+      const apps = listAppsFromRegistry();
+      console.log(JSON.stringify(apps.map((app) => ({
+        id: app.id,
+        displayName: app.displayName,
+        currentVersion: app.currentVersion,
+        packageStatus: app.packageStatus,
+        requiredHostApi: app.requiredHostApi,
+        packageError: app.packageError,
+      }))));
+    `], {
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout.trim())).toEqual([{
+      id: 'fixture.incompatible',
+      displayName: 'Incompatible App',
+      currentVersion: '1.3.0',
+      packageStatus: 'incompatible',
+      requiredHostApi: '^1.3.0',
+      packageError: 'App requires Host API ^1.3.0; this Host provides 2.0.0',
+    }])
+  })
 })

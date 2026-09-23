@@ -11,7 +11,7 @@ import {
   validateAppPackage,
   writePackageChecksums,
 } from '../../packages/app-runtime/src/index.mjs'
-import { validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
+import { APP_ERROR_CODES, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
 import { MOSS_HOME } from './moss-home.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -351,8 +351,37 @@ export function listAppsFromRegistry() {
     let published
     try {
       published = getPublishedApp(app.id, currentVersion)
-    } catch {
-      return []
+    } catch (error) {
+      const packageError = error instanceof Error ? error.message : String(error)
+      let requiredHostApi = null
+      try {
+        const rawHostApi = readJsonFile(path.join(getAppVersionDir(app.id, currentVersion), 'app.moss.json'), {})?.hostApi
+        requiredHostApi = typeof rawHostApi === 'string' ? rawHostApi : null
+      } catch {}
+      return [{
+        ...app,
+        id: app.id,
+        name: app.id,
+        kind: 'app',
+        displayName: app.displayName || app.title || app.id,
+        title: app.title || app.displayName || app.id,
+        description: app.description || '',
+        icon: app.icon || '',
+        width: Number(app.width) || 1100,
+        height: Number(app.height) || 760,
+        resizable: app.resizable !== false,
+        manifest: null,
+        filePath: null,
+        entryPath: null,
+        currentVersion,
+        currentVersionId: current?.id || currentVersion,
+        latestVersion: versions[0]?.version || app.latestVersion || currentVersion,
+        latestVersionId: versions[0]?.id || app.latestVersionId || currentVersion,
+        versionCount: versions.length || app.versionCount || 1,
+        packageStatus: error?.code === APP_ERROR_CODES.incompatibleHost ? 'incompatible' : 'invalid',
+        packageError,
+        requiredHostApi,
+      }]
     }
     return [{
       ...app,
@@ -366,6 +395,9 @@ export function listAppsFromRegistry() {
       versionCount: versions.length,
       createdAt: app.createdAt,
       updatedAt: app.updatedAt,
+      packageStatus: 'ready',
+      packageError: null,
+      requiredHostApi: published.manifest.hostApi,
     }]
   })
 }

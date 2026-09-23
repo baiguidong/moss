@@ -435,14 +435,20 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const serverPermissions = app.serverPermissions || [];
               const desktopEnabled = isAppHostEnabled(app, "desktop");
               const serverEnabled = isAppHostEnabled(app, "server");
+              const packageUnavailable = app.packageStatus === "incompatible" || app.packageStatus === "invalid";
+              const packageNotice = app.packageStatus === "incompatible"
+                ? `当前安装的 v${app.currentVersion || "-"}${app.requiredHostApi ? ` 需要 Host API ${app.requiredHostApi}` : ""}，与此版本 Moss 不兼容，请更新到兼容版本。`
+                : app.packageStatus === "invalid"
+                  ? "当前安装包不可用，请重新安装或更新版本。"
+                  : "";
               return (
                 <section key={appId} className={`flex min-w-0 flex-col rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
                   <div className="flex items-start gap-3">
                     <AppIcon icon={app.icon} />
                     <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
                     <div className="grid justify-items-end gap-2">
-                      {desktopBackend && <Toggle checked={desktopEnabled} disabled={busy === appId} label={`Desktop ${desktopEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
-                      {!desktopBackend && !app.remoteOnly && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId} label={`App ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
+                      {desktopBackend && <Toggle checked={desktopEnabled} disabled={busy === appId || packageUnavailable} label={`Desktop ${desktopEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
+                      {!desktopBackend && !app.remoteOnly && <Toggle checked={Boolean(app.enabled)} disabled={busy === appId || packageUnavailable} label={`App ${app.enabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "desktop", enabled))} />}
                       {serverBackend && <Toggle checked={serverEnabled} disabled={busy === appId} label={`Server ${serverEnabled ? "已启用" : "已停用"}`} onChange={(enabled) => void run(appId, () => setAppHostEnabled(app, "server", enabled))} />}
                     </div>
                   </div>
@@ -458,22 +464,24 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>
                   </div>
-                  {app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
+                  {packageUnavailable && <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{packageNotice}</div>}
+                  {!packageUnavailable && app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
                   <div className="mt-auto flex flex-wrap gap-2 pt-4">
                     {app.hasUi && <Button
                       size="sm"
                       className="h-8"
                       data-app-open={appId}
-                      disabled={!app.enabled}
-                      title={app.enabled ? "打开 App" : "请先启用 App"}
+                      disabled={packageUnavailable || !app.enabled}
+                      title={packageUnavailable ? packageNotice : app.enabled ? "打开 App" : "请先启用 App"}
                       onClick={() => onLaunch(app.name)}
-                    ><ExternalLink className="h-4 w-4" />{app.enabled ? "打开" : "请先启用"}</Button>}
-                    {canDeployToServer && app.serverAvailable && app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />{app.remoteInstalled ? "同步到 Server" : "部署到 Server"}</Button>}
+                    ><ExternalLink className="h-4 w-4" />{packageUnavailable ? "不可用" : app.enabled ? "打开" : "请先启用"}</Button>}
+                    {packageUnavailable && <Button size="sm" className="h-8" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />更新版本</Button>}
+                    {!packageUnavailable && canDeployToServer && app.serverAvailable && app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId} onClick={() => void run(appId, () => window.agentDesktop.installAppOnServer({ appId, version: app.currentVersion! }))}><Download className="h-4 w-4" />{app.remoteInstalled ? "同步到 Server" : "部署到 Server"}</Button>}
                     {canDeployToServer && app.serverAvailable && !app.serverPackageAvailable && <Button size="sm" variant="outline" className="h-8" disabled title={app.serverPackageError || "Server 包源没有此版本"}><ServerOff className="h-4 w-4" />Server 无此版本</Button>}
                     {canDeployToServer && app.serverConfigured && !app.serverAvailable && <Button size="sm" variant="outline" className="h-8" disabled title="请先连接 Moss Server"><ServerOff className="h-4 w-4" />Server 未连接</Button>}
                     {canDeployToServer && !app.serverConfigured && <Button size="sm" variant="outline" className="h-8" disabled title="请先在设置中配置 Moss Server"><ServerOff className="h-4 w-4" />Server 未配置</Button>}
-                    <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />{app.hasBackend && !app.hasUi ? "管理 Backend" : "管理"}</Button>
-                    {!app.remoteOnly && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
+                    {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />{app.hasBackend && !app.hasUi ? "管理 Backend" : "管理"}</Button>}
+                    {!packageUnavailable && !app.remoteOnly && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     {!app.remoteOnly && <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>}
                     <Button variant="ghost" size="icon" className="h-8 w-8" title={hasShortcut ? "移出侧栏" : !app.enabled ? "请先启用 App" : "加入侧栏"} disabled={!app.hasUi || (!app.enabled && !hasShortcut)} onClick={() => hasShortcut ? onRemoveShortcut?.(app.name) : onAddShortcut?.(app.name)}>{hasShortcut ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}</Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {

@@ -97,6 +97,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       }
       await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     })
+    expect(runtime.getInstallation('fixture.ui-only')?.activeVersion).toBe('1.0.0')
     const app = await runtime.getApp('fixture.ui-only')
     expect(app?.instances).toHaveLength(0)
     expect(runtime.supervisor.listStatuses()).toHaveLength(0)

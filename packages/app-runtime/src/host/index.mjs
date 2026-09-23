@@ -301,6 +301,10 @@ export class AppRuntimeHost {
     return this.packageCache.get(key)
   }
 
+  getInstallation(appId) {
+    return this.installations.get(appId)
+  }
+
   authorizeInvocation(deployment) {
     const installation = this.installations.get(deployment.appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')

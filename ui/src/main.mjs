@@ -13059,8 +13059,14 @@ ipcMain.handle('app:list', async () => {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
     try { runtimeState = await desktopAppRuntime?.getApp(stored.id); } catch (error) {
-      runtimeState = { error: error.message || String(error), installation: null, instances: [], deployments: [] };
+      runtimeState = {
+        error: error.message || String(error),
+        installation: desktopAppRuntime?.getInstallation(stored.id) || null,
+        instances: [],
+        deployments: [],
+      };
     }
+    const packageReady = stored.packageStatus !== 'incompatible' && stored.packageStatus !== 'invalid';
     const serverOwnerScope = manifest?.backend?.serverOwnerScope || 'user';
     const remoteKey = `${serverOwnerScope}:${stored.id}`;
     const remoteState = remoteById.get(remoteKey) || null;
@@ -13075,9 +13081,13 @@ ipcMain.handle('app:list', async () => {
           : 'stopped';
     results.push({
       ...appEntry,
-      hasUi: Boolean(manifest?.ui),
-      hasSettings: Boolean(manifest?.ui && manifest?.contributes?.settings?.length),
-      hasBackend: Boolean(manifest?.backend || remoteState?.manifest?.backend),
+      hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
+      hasSettings: manifest
+        ? Boolean(manifest.ui && manifest.contributes?.settings?.length)
+        : Boolean(appEntry.hasSettings),
+      hasBackend: manifest
+        ? Boolean(manifest.backend || remoteState?.manifest?.backend)
+        : Boolean(appEntry.hasBackend || remoteState?.manifest?.backend),
       backend: manifest?.backend || null,
       serverBackend: remoteState?.manifest?.backend || null,
       serverVersion: remoteState?.installation?.activeVersion || null,
@@ -13088,7 +13098,7 @@ ipcMain.handle('app:list', async () => {
       grants: runtimeState?.installation?.grants || [],
       serverGrants: remoteState?.installation?.grants || [],
       contributes: enabledAppContributions(manifest, runtimeState?.installation),
-      enabled: runtimeState?.installation?.enabled || false,
+      enabled: packageReady && Boolean(runtimeState?.installation?.enabled),
       configuration: runtimeState?.configuration || null,
       serverConfiguration: remoteState?.configuration || null,
       instances: [

@@ -138,6 +138,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
               const detail = details[entry.id];
               const expanded = expandedId === entry.id;
               const installed = installedById.get(entry.id);
+              const installedUnavailable = installed?.packageStatus === "incompatible" || installed?.packageStatus === "invalid";
               const selectedVersion = selectedVersions[entry.id] || entry.latestVersion;
               const selectedRelease = detail?.versions.find((version) => version.version === selectedVersion) || entry.latest;
               const busy = busyAppId === entry.id;
@@ -181,7 +182,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                       {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}详情
                     </Button>
                     {!compatible && <span className="text-xs text-destructive">当前系统或 Moss 版本不兼容</span>}
-                    {installed?.currentVersion && <span className="ml-auto flex items-center gap-1 text-[11px] text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion}</span>}
+                    {installed?.currentVersion && <span className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
                   </div>
                   {expanded && (
                     <div className="mt-4 border-t border-border pt-3 text-xs">

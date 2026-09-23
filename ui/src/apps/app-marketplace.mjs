@@ -304,12 +304,12 @@ export function createAppMarketplaceService(options = {}) {
       if (!version.artifact.signed) throw new Error(`App ${appId}@${version.version} is not signed`)
 
       const runtime = options.getRuntime()
-      const installed = await runtime.getApp(appId)
-      const previousVersion = installed?.installation?.activeVersion || null
-      if (installed?.installation?.activeVersion === version.version) {
+      const installation = runtime.getInstallation(appId)
+      const previousVersion = installation?.activeVersion || null
+      if (installation?.activeVersion === version.version) {
         return { ok: true, alreadyInstalled: true, appId, version: version.version }
       }
-      const currentGrants = installed?.installation?.grants || []
+      const currentGrants = installation?.grants || []
       const declaredPermissions = new Set(version.permissions)
       const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
       const addedPermissions = version.permissions.filter((permission) => !currentGrants.includes(permission))
@@ -359,7 +359,7 @@ export function createAppMarketplaceService(options = {}) {
         const grants = [...new Set([...retainedGrants, ...addedPermissions])]
         await runtime.registerInstalled(appId, version.version, { grants })
         activationCompleted = true
-        await options.emitChanged?.({ action: installed ? 'marketplace-updated' : 'marketplace-installed', appId })
+        await options.emitChanged?.({ action: installation ? 'marketplace-updated' : 'marketplace-installed', appId })
         return { ok: true, appId, version: version.version, app }
       } catch (error) {
         if (packageInstallStarted && !activationCompleted) {

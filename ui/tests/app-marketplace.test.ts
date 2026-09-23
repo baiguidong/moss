@@ -103,7 +103,7 @@ describe('App marketplace', () => {
     ])
     const rollbacks: unknown[] = []
     const runtime = {
-      getApp: async () => ({ installation: { activeVersion: '1.1.0', grants: ['agent:turns:write'] } }),
+      getInstallation: () => ({ activeVersion: '1.1.0', grants: ['agent:turns:write'] }),
       registerInstalled: async () => { throw new Error('backend did not start') },
     }
     const service = createAppMarketplaceService({
@@ -149,7 +149,7 @@ describe('App marketplace', () => {
     ])
     const calls: Array<{ version: string; grants: string[] }> = []
     const runtime = {
-      getApp: async () => null,
+      getInstallation: () => null,
       registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
         calls.push({ version: installedVersion, grants: options.grants })
       },
@@ -187,6 +187,52 @@ describe('App marketplace', () => {
     expect(calls).toEqual([{ version: '1.2.0', grants: ['agent:turns:write'] }])
   })
 
+  it('installs a compatible update without loading an incompatible active package', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-incompatible-update-'))
+    roots.push(root)
+    const archive = Buffer.from('host api 2 update')
+    const latest = version(archive, '2.0.0')
+    const responses = new Map([
+      ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
+      ['https://example.com/example.app.json', Buffer.from(JSON.stringify(detail(latest)))],
+      [latest.artifact.downloadUrl, archive],
+    ])
+    const registered: string[] = []
+    const runtime = {
+      getInstallation: () => ({ activeVersion: '1.3.0', grants: ['agent:turns:write'] }),
+      getApp: async () => { throw new Error('App requires Host API ^1.3.0; this Host provides 2.0.0') },
+      registerInstalled: async (_appId: string, installedVersion: string) => { registered.push(installedVersion) },
+    }
+    const service = createAppMarketplaceService({
+      indexUrl: 'https://example.com/index.json',
+      cachePath: path.join(root, 'catalog.json'),
+      platform: 'darwin-arm64',
+      trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.3.0', packageStatus: 'incompatible' }],
+      getRuntime: () => runtime,
+      download: async (url: string) => {
+        const response = responses.get(url)
+        if (!response) throw new Error(`Unexpected URL: ${url}`)
+        return response
+      },
+      installArchive: async (_runtime: unknown, _archivePath: string, options: { installPackage: (root: string) => Promise<unknown> }) => {
+        return options.installPackage('/verified-package')
+      },
+      validatePackage: async () => ({
+        manifest: { id: 'example.app', version: '2.0.0' },
+        trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+      }),
+      installPackage: async () => ({ id: 'example.app', currentVersion: '2.0.0' }),
+    })
+
+    expect((await service.list({ forceRefresh: true })).apps[0]).toMatchObject({
+      installedVersion: '1.3.0',
+      updateAvailable: true,
+    })
+    expect(await service.install({ appId: 'example.app' })).toMatchObject({ ok: true, version: '2.0.0' })
+    expect(registered).toEqual(['2.0.0'])
+  })
+
   it('drops permissions removed by a newer marketplace version', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-permissions-'))
     roots.push(root)
@@ -202,11 +248,9 @@ describe('App marketplace', () => {
     ])
     const calls: Array<{ version: string; grants: string[] }> = []
     const runtime = {
-      getApp: async () => ({
-        installation: {
-          activeVersion: '1.1.0',
-          grants: ['agent:turns:write', 'desktop:files'],
-        },
+      getInstallation: () => ({
+        activeVersion: '1.1.0',
+        grants: ['agent:turns:write', 'desktop:files'],
       }),
       registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
         calls.push({ version: installedVersion, grants: options.grants })
@@ -258,7 +302,7 @@ describe('App marketplace', () => {
     const detailRequests: string[] = []
     const registered: string[] = []
     const runtime = {
-      getApp: async () => ({ installation: { activeVersion: '1.2.0', grants: ['agent:turns:write'] } }),
+      getInstallation: () => ({ activeVersion: '1.2.0', grants: ['agent:turns:write'] }),
       registerInstalled: async (_appId: string, installedVersion: string) => { registered.push(installedVersion) },
     }
     const service = createAppMarketplaceService({
