@@ -37,7 +37,7 @@ function createFixture({ response = 1, currentGrants = [] as string[] } = {}) {
         id: 'example.app',
         version: '1.0.0',
         displayName: '示例 App',
-        permissions: ['desktop:files', 'agent:turns:write'],
+        permissions: ['platform:files', 'agent:turns:write'],
       },
     }),
     remote: {},
@@ -50,7 +50,7 @@ function createFixture({ response = 1, currentGrants = [] as string[] } = {}) {
   }
 }
 
-describe('local App archive installation', () => {
+describe('App archive installation', () => {
   it('asks for declared permissions and persists the approved grants', async () => {
     const fixture = createFixture()
 
@@ -58,23 +58,23 @@ describe('local App archive installation', () => {
 
     expect(result.ok).toBe(true)
     expect(fixture.prompts).toHaveLength(1)
-    expect(fixture.prompts[0].detail).toContain('desktop:files')
+    expect(fixture.prompts[0].detail).toContain('platform:files')
     expect(fixture.registrations).toEqual([{
       appId: 'example.app',
       version: '1.0.0',
-      options: { grants: ['desktop:files', 'agent:turns:write'] },
+      options: { grants: ['platform:files', 'agent:turns:write'] },
     }])
     expect(fixture.packageInstallCount()).toBe(1)
   })
 
   it('requests only newly added permissions when reinstalling an App', async () => {
-    const fixture = createFixture({ currentGrants: ['desktop:files', 'agent:catalog:read'] })
+    const fixture = createFixture({ currentGrants: ['platform:files', 'agent:catalog:read'] })
 
     await fixture.install()
 
-    expect(fixture.prompts[0].detail).not.toContain('desktop:files')
+    expect(fixture.prompts[0].detail).not.toContain('platform:files')
     expect(fixture.prompts[0].detail).toContain('agent:turns:write')
-    expect(fixture.registrations[0].options.grants).toEqual(['desktop:files', 'agent:turns:write'])
+    expect(fixture.registrations[0].options.grants).toEqual(['platform:files', 'agent:turns:write'])
   })
 
   it('does not install or grant permissions when approval is canceled', async () => {

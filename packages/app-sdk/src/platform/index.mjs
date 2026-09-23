@@ -1,25 +1,25 @@
 import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 
-export const MOSS_DESKTOP_PROTOCOL = 'moss.desktop/v1'
+export const MOSS_PLATFORM_PROTOCOL = 'moss.platform/v1'
 export const MAX_INLINE_FILE_BASE64_LENGTH = 512 * 1024
 
-export const DESKTOP_PERMISSIONS = Object.freeze({
-  files: 'desktop:files',
-  screenCapture: 'desktop:screen-capture',
-  externalLinks: 'desktop:external-links',
-  media: 'desktop:media',
+export const PLATFORM_PERMISSIONS = Object.freeze({
+  files: 'platform:files',
+  screenCapture: 'platform:screen-capture',
+  externalLinks: 'platform:external-links',
+  media: 'platform:media',
 })
 
-export const DESKTOP_HOST_METHOD_PERMISSIONS = Object.freeze({
-  'file.pick': DESKTOP_PERMISSIONS.files,
-  'file.materialize': DESKTOP_PERMISSIONS.files,
-  'file.thumbnail': DESKTOP_PERMISSIONS.files,
-  'file.download': DESKTOP_PERMISSIONS.files,
-  'screen.capture': DESKTOP_PERMISSIONS.screenCapture,
-  'shell.open-external': DESKTOP_PERMISSIONS.externalLinks,
+export const PLATFORM_HOST_METHOD_PERMISSIONS = Object.freeze({
+  'file.pick': PLATFORM_PERMISSIONS.files,
+  'file.materialize': PLATFORM_PERMISSIONS.files,
+  'file.thumbnail': PLATFORM_PERMISSIONS.files,
+  'file.download': PLATFORM_PERMISSIONS.files,
+  'screen.capture': PLATFORM_PERMISSIONS.screenCapture,
+  'shell.open-external': PLATFORM_PERMISSIONS.externalLinks,
 })
 
-export const DESKTOP_HOST_METHODS = Object.freeze(Object.keys(DESKTOP_HOST_METHOD_PERMISSIONS))
+export const PLATFORM_HOST_METHODS = Object.freeze(Object.keys(PLATFORM_HOST_METHOD_PERMISSIONS))
 
 function fail(message) {
   throw new AppServiceError(APP_ERROR_CODES.invalidInput, message)
@@ -43,16 +43,16 @@ function rejectUnknown(input, allowedFields, label) {
   for (const field of Object.keys(input)) if (!allowed.has(field)) fail(`${label} contains an unknown field: ${field}`)
 }
 
-export function validateDesktopHostMethod(value) {
+export function validatePlatformHostMethod(value) {
   const method = typeof value === 'string' ? value.trim() : ''
-  if (!Object.hasOwn(DESKTOP_HOST_METHOD_PERMISSIONS, method)) {
-    throw new AppServiceError(APP_ERROR_CODES.hostProtocol, `Unknown ${MOSS_DESKTOP_PROTOCOL} Host method: ${method || '<empty>'}`)
+  if (!Object.hasOwn(PLATFORM_HOST_METHOD_PERMISSIONS, method)) {
+    throw new AppServiceError(APP_ERROR_CODES.hostProtocol, `Unknown ${MOSS_PLATFORM_PROTOCOL} Host method: ${method || '<empty>'}`)
   }
   return method
 }
 
-export function validateDesktopHostInput(method, value) {
-  const normalizedMethod = validateDesktopHostMethod(method)
+export function validatePlatformHostInput(method, value) {
+  const normalizedMethod = validatePlatformHostMethod(method)
   const input = record(value, `${normalizedMethod} input`)
   for (const field of ['appId', 'instanceId', 'owner', 'principal']) {
     if (Object.hasOwn(input, field)) fail(`${normalizedMethod} cannot override Runtime identity: ${field}`)
@@ -121,7 +121,7 @@ function rejectUnknownOutputFields(output, fields, label) {
   }
 }
 
-function validateDesktopFile(value, label) {
+function validatePlatformFile(value, label) {
   const file = outputRecord(value, label)
   rejectUnknownOutputFields(file, ['name', 'path', 'size', 'mediaUrl'], label)
   outputText(file.name, `${label}.name`, 300)
@@ -132,15 +132,15 @@ function validateDesktopFile(value, label) {
   }
 }
 
-export function validateDesktopHostOutput(method, value) {
-  const normalizedMethod = validateDesktopHostMethod(method)
+export function validatePlatformHostOutput(method, value) {
+  const normalizedMethod = validatePlatformHostMethod(method)
   const output = outputRecord(value, `${normalizedMethod} output`)
   if (normalizedMethod === 'file.pick') {
     rejectUnknownOutputFields(output, ['files'], 'file.pick output')
     if (!Array.isArray(output.files) || output.files.length > 10_000) {
       throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'file.pick output files is invalid')
     }
-    output.files.forEach((file, index) => validateDesktopFile(file, `file.pick output files[${index}]`))
+    output.files.forEach((file, index) => validatePlatformFile(file, `file.pick output files[${index}]`))
   } else if (normalizedMethod === 'file.materialize') {
     if (output.complete === false) {
       rejectUnknownOutputFields(output, ['transferId', 'complete', 'size'], 'file.materialize output')
@@ -149,7 +149,7 @@ export function validateDesktopHostOutput(method, value) {
         throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'file.materialize output size is invalid')
       }
     } else {
-      validateDesktopFile(output, 'file.materialize output')
+      validatePlatformFile(output, 'file.materialize output')
     }
   } else if (normalizedMethod === 'file.thumbnail') {
     rejectUnknownOutputFields(output, ['path', 'mediaUrl'], 'file.thumbnail output')
@@ -162,7 +162,7 @@ export function validateDesktopHostOutput(method, value) {
     }
     if (!output.canceled) outputText(output.filePath, 'file.download output filePath')
   } else if (normalizedMethod === 'screen.capture') {
-    validateDesktopFile(output, 'screen.capture output')
+    validatePlatformFile(output, 'screen.capture output')
   } else {
     rejectUnknownOutputFields(output, ['opened'], 'shell.open-external output')
     if (output.opened !== true) {

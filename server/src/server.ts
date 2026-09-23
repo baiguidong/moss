@@ -37,9 +37,6 @@ import {
 } from './systemSettings.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
-import { handleAppRoute } from './apps/appRoutes.js'
-import type { ServerAppRuntime } from './apps/serverAppRuntime.js'
-import type { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
 import { getUserProfileDir } from './runtimePaths.js'
@@ -893,9 +890,7 @@ export function startServer(
   runtime: RuntimeService,
   authService: AuthService,
   logger: ServerLogger = createServerLogger(),
-  appRuntime?: ServerAppRuntime,
   ragflowIntegration?: RagflowIntegrationService,
-  agentChannelHost?: Pick<ServerAgentChannelHost, 'originForSession'>,
   openIMIntegration?: OpenIMIntegrationService,
 ): {
   port: number | null
@@ -1157,10 +1152,6 @@ export function startServer(
 
       if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/im/health') {
         writeJson(res, 200, await openIMIntegration.health(auth))
-        return
-      }
-
-      if (appRuntime && await handleAppRoute({ req, res, url, auth, authService, apps: appRuntime })) {
         return
       }
 
@@ -1443,21 +1434,6 @@ export function startServer(
             status:
               typeof body.status === 'string' ? body.status : undefined,
           }, auth)
-        if (appRuntime) {
-          const publishAccountChange = appRuntime.publishAccountEvent(auth.orgId, 'directory.user-changed', {
-            user: {
-              id: result.user.id,
-              name: result.user.name,
-              email: result.user.email || null,
-              departmentId: result.user.departmentId || null,
-              status: result.user.status,
-            },
-          })
-          if (result.user.status === 'disabled') await publishAccountChange
-          else await publishAccountChange.catch(error => {
-            logger.warn(`Unable to publish account directory change: ${error instanceof Error ? error.message : String(error)}`)
-          })
-        }
         if (openIMIntegration) {
           if (result.user.status === 'disabled') {
             await openIMIntegration.syncUser(result.user)
@@ -1689,14 +1665,7 @@ export function startServer(
           userId: hasScope(auth.scopes, 'sessions:list:any') ? undefined : auth.userId,
           activeOnly,
         })
-        const enrichedSessions = sessions.map(session => ({
-          ...session,
-          originChannel: agentChannelHost?.originForSession(
-            session.sessionId,
-            session.orgId,
-            session.userId,
-          ) || 'desktop',
-        }))
+        const enrichedSessions = sessions.map(session => ({ ...session, originChannel: 'desktop' }))
         writeJson(res, 200, { sessions: enrichedSessions })
         return
       }

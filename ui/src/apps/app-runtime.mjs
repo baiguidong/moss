@@ -19,7 +19,7 @@ const CREDENTIAL_VERSION = 1
 
 function isObject(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value) }
 
-export class DesktopAppCredentialAdapter {
+export class AppCredentialAdapter {
   constructor(mossHome) {
     this.storagePath = path.join(mossHome, 'credentials', 'app-secrets.json')
     const keyPaths = getMossCredentialMasterKeyPaths(mossHome)
@@ -118,17 +118,17 @@ export async function extractAppArchive(zipPath, destination, limits = {}) {
       if (count > maxFiles || entry.uncompressedSize > maxFileBytes || totalBytes > maxArchiveBytes) {
         fail(new Error('App archive exceeds installation limits')); return
       }
-      const target = path.resolve(destination, normalized)
-      if (!target.startsWith(`${path.resolve(destination)}${path.sep}`)) { fail(new Error(`Archive path escapes staging: ${entry.fileName}`)); return }
+      const outputPath = path.resolve(destination, normalized)
+      if (!outputPath.startsWith(`${path.resolve(destination)}${path.sep}`)) { fail(new Error(`Archive path escapes staging: ${entry.fileName}`)); return }
       if (normalized.endsWith('/')) {
-        fsp.mkdir(target, { recursive: true }).then(() => zip.readEntry(), fail)
+        fsp.mkdir(outputPath, { recursive: true }).then(() => zip.readEntry(), fail)
         return
       }
       zip.openReadStream(entry, async (error, stream) => {
         if (error) { fail(error); return }
         try {
-          await fsp.mkdir(path.dirname(target), { recursive: true })
-          const file = fs.createWriteStream(target, { flags: 'wx', mode: 0o600 })
+          await fsp.mkdir(path.dirname(outputPath), { recursive: true })
+          const file = fs.createWriteStream(outputPath, { flags: 'wx', mode: 0o600 })
           stream.on('error', (streamError) => { file.destroy(); fail(streamError) })
           stream.pipe(file)
           file.on('finish', () => zip.readEntry())
@@ -163,18 +163,16 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
   }
 }
 
-export async function createDesktopAppRuntime(options) {
+export async function createAppRuntime(options) {
   const runtime = new AppRuntimeHost({
     rootDir: options.mossHome,
     appsDir: options.appsDir,
     dataDir: path.join(options.mossHome, 'apps-data'),
     runtimeDir: path.join(options.mossHome, 'apps-runtime'),
-    target: 'desktop',
-    hostId: options.hostId || 'desktop-local',
     nodeExecutable: options.nodeExecutable,
     trustedPublishers: options.trustedPublishers,
     requireTrustedPublisher: options.requireTrustedPublisher,
-    credentialAdapter: new DesktopAppCredentialAdapter(options.mossHome),
+    credentialAdapter: new AppCredentialAdapter(options.mossHome),
     hostCapabilityOptions: {
       ...(options.hostCapabilityOptions || {}),
       protocols: options.hostProtocols || options.hostCapabilityOptions?.protocols || [],

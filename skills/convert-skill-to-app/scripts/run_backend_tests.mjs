@@ -87,7 +87,7 @@ async function startBackend(root, manifest) {
     const timeout = setTimeout(() => reject(new Error('Backend handshake timed out')), 15000)
     child.on('message', (message) => {
       if (!message || message.version !== 1 || message.payload?.generation !== generation || message.payload?.launchToken !== launchToken) return
-      if (message.type === 'service.hello') child.send(envelope('service.init', { appId: manifest.id, version: manifest.version, instanceId: `${manifest.id}--test`, generation, launchToken, config: {}, secrets: {}, dataDir: path.join(root, '.test-data'), runtimeDir: path.join(root, '.test-runtime'), target: { type: 'desktop', id: 'test' } }, message.id))
+      if (message.type === 'service.hello') child.send(envelope('service.init', { appId: manifest.id, version: manifest.version, instanceId: `${manifest.id}--test`, generation, launchToken, config: {}, secrets: {}, dataDir: path.join(root, '.test-data'), runtimeDir: path.join(root, '.test-runtime') }, message.id))
       if (message.type === 'service.ready') { clearTimeout(timeout); resolve() }
       if (message.type === 'action.result' || message.type === 'action.error') {
         const request = pending.get(message.payload.requestId || message.id)

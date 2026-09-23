@@ -6,21 +6,9 @@ import { ensureServerDirectories } from './config.js'
 import { openDirectConnectStore } from './db.js'
 import { RuntimeService } from './runtimeService.js'
 import { createAuthService } from './auth/service.js'
-import { ServerAppRuntime } from './apps/serverAppRuntime.js'
-import { createServerAccountHostHandlers } from './apps/serverAccountHost.js'
-import { ServerAgentChannelHost } from './apps/serverAgentChannelHost.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { OpenIMIntegrationService } from './openim/service.js'
 import { getSystemSettings } from './systemSettings.js'
-import {
-  createAccountProtocolDefinition,
-  createAgentProtocolDefinition,
-} from '../../packages/app-runtime/src/index.mjs'
-import {
-  AGENT_HOST_METHODS,
-  MOSS_ACCOUNT_PROTOCOL,
-  MOSS_AGENT_PROTOCOL,
-} from '../../packages/app-sdk/src/index.mjs'
 
 export type StandaloneServerOptions = ServerConfig
 
@@ -52,27 +40,6 @@ export async function startStandaloneDirectConnectServer(
   })
   await runtime.reconcileOnStartup()
   const logger = createServerLogger()
-  const agentChannelHost = new ServerAgentChannelHost(
-    config,
-    store.db,
-    runtime,
-    authService,
-    logger,
-  )
-  const appRuntime = await ServerAppRuntime.create(config, instance.instanceId, {
-    hostProtocols: [createAccountProtocolDefinition(), createAgentProtocolDefinition()],
-    hostHandlers: {
-      [MOSS_ACCOUNT_PROTOCOL]: createServerAccountHostHandlers(authService),
-      [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map(method => [
-        method,
-        (input: Record<string, unknown>, context: Record<string, unknown>) => (
-          agentChannelHost.handleAgentRequest(method, input, context)
-        ),
-      ])),
-    },
-    onEvent: event => agentChannelHost.onRuntimeEvent(event),
-    beforeInitialize: appHost => agentChannelHost.attachAppRuntime(appHost),
-  })
   const ragflowIntegration = new RagflowIntegrationService({
     db: store.db,
     rootDir: config.rootDir,
@@ -88,9 +55,7 @@ export async function startStandaloneDirectConnectServer(
     runtime,
     authService,
     logger,
-    appRuntime,
     ragflowIntegration,
-    agentChannelHost,
     openIMIntegration,
   )
   const actualPort = (await server.ready) ?? config.port
@@ -117,8 +82,6 @@ export async function startStandaloneDirectConnectServer(
     stopped = true
     clearInterval(heartbeatTimer)
     await server.stop()
-    await appRuntime.shutdown()
-    agentChannelHost.dispose()
     store.stopServerInstance(instance.instanceId)
     store.close()
   }

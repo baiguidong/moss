@@ -163,10 +163,7 @@ export function validateAccountHostOutput(method, value) {
   const normalizedMethod = validateAccountHostMethod(method)
   const output = outputRecord(value, `${normalizedMethod} output`)
   if (normalizedMethod === 'identity.current') {
-    rejectUnknownOutputFields(output, ['source', 'user', 'organization', 'scopes'], 'identity.current output')
-    if (!['local', 'server'].includes(output.source)) {
-      throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'identity.current output source is invalid')
-    }
+    rejectUnknownOutputFields(output, ['user', 'organization', 'scopes'], 'identity.current output')
     if (output.user !== null) validateDirectoryUser(output.user, 'identity.current output user')
     if (output.organization !== undefined && output.organization !== null) {
       const organization = outputRecord(output.organization, 'identity.current output organization')

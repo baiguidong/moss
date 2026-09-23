@@ -10,20 +10,20 @@ contextBridge.exposeInMainWorld('mossApp', {
   app: {
     getInfo: () => ipcRenderer.invoke('app-ui:get-info'),
     getVersions: () => ipcRenderer.invoke('app-ui:list-versions'),
-    getInstallationState: (options) => ipcRenderer.invoke('app-ui:get-installation-state', options),
+    getInstallationState: () => ipcRenderer.invoke('app-ui:get-installation-state'),
   },
   instances: {
-    list: (options) => ipcRenderer.invoke('app-ui:instances:list', options),
-    create: (input, options) => ipcRenderer.invoke('app-ui:instances:create', { ...input, ...options }),
-    update: (instanceId, patch, options) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch, ...options }),
-    setEnabled: (instanceId, enabled, options) => ipcRenderer.invoke('app-ui:instances:set-enabled', { instanceId, enabled, ...options }),
-    clearCredentials: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:clear-credentials', { instanceId, ...options }),
+    list: () => ipcRenderer.invoke('app-ui:instances:list'),
+    create: (input) => ipcRenderer.invoke('app-ui:instances:create', input),
+    update: (instanceId, patch) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch }),
+    setEnabled: (instanceId, enabled) => ipcRenderer.invoke('app-ui:instances:set-enabled', { instanceId, enabled }),
+    clearCredentials: (instanceId) => ipcRenderer.invoke('app-ui:instances:clear-credentials', { instanceId }),
     remove: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:remove', { instanceId, ...options }),
-    getStatus: (instanceId, options) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId, ...options }),
+    getStatus: (instanceId) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId }),
   },
   actions: {
     invoke: (instanceId, name, input, options) => ipcRenderer.invoke('app-ui:actions:invoke', { instanceId, name, input, ...options }),
-    cancel: (instanceId, requestId, options) => ipcRenderer.invoke('app-ui:actions:cancel', { instanceId, requestId, ...options }),
+    cancel: (instanceId, requestId) => ipcRenderer.invoke('app-ui:actions:cancel', { instanceId, requestId }),
   },
   storage: {
     getItem: (key) => ipcRenderer.invoke('app-ui:storage:get', { key }),

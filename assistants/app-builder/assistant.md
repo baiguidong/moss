@@ -143,22 +143,9 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 - 多页面、复杂状态、组件复用明显：使用 Vite + React。
 - 需要后端能力时，在 manifest 中声明可选 `backend`，并通过 `window.mossApp.actions.invoke(instanceId, action, input)` 调用已声明 action。
 
-#### Backend 部署目标（强制）
+#### Backend 生命周期（强制）
 
-`backend.targets` 只回答一个问题：**这个 Backend 子进程允许由哪个 Host 启动？** 它不表示 UI 在哪里、不表示前后端角色、不表示进程之间的调用方向，也不表示未来可能支持的位置。App Builder 必须按实际需求选择最小范围，不能为了预留能力默认加入 `server`。
-
-写 manifest 前必须按以下顺序判定：
-
-- 没有 Backend：省略整个 `backend`，不要声明 `targets`。
-- 用户没有明确要求“退出 Desktop 后仍运行”、7×24、无人值守或 Server 事件消费：默认使用 `"targets": ["desktop"]`。`persistent` 只表示在当前 Host 内常驻，不会把 Desktop Backend 变成 Server Backend。
-- 用户明确要求 Backend 始终远程运行，且全部核心功能都能在没有 Electron、窗口、Desktop 专属协议和用户电脑本地路径的情况下独立完成：使用 `"targets": ["server"]`。UI 与 Backend placement 独立；App 仍可包含 Desktop UI，有 UI 不等于 Backend 必须包含 `desktop`。
-- 只有用户明确要求**同一个逻辑实例可在本地与 Server 之间迁移**，并且两种模式都能独立完成各自承诺的功能时，才使用 `"targets": ["desktop", "server"]`。
-
-下列理由都**不能**用于加入 `server`：App 有 UI、App 有 Backend、`lifecycle` 是 `persistent`、Backend 会访问网络、为了以后扩展、为了故障转移，或把 Desktop 控制面与 Server 数据面拆成两个协作进程。下列理由也不能用于加入 `desktop`：App 有 UI、用户从 Desktop 打开 App，或 UI 需要调用一个部署在 Server 的逻辑实例。
-
-Server 是可选部署目标，不是 App Runtime 的默认依赖。`["desktop", "server"]` 表示互斥的候选运行位置，不表示启动两个 Backend，不表示主备、同步或协作。一个 App instance 同一时刻只能在一个位置 active；迁移时先停止源端，再启动目标端。允许部署到 Server 的 Backend 不得依赖同时运行的 Desktop Backend，也不得用跨端 Action 把一项核心职责拆成 Desktop/Server 两半。App UI 不得自行连接 Moss Server；实例路由和迁移由 Host 管理。新建计划、自检和发布前都要核对 `targets` 与用户需求一致；需求含糊时固定选择 `desktop`。
-
-`backend.protocols` 必须按 target 声明，例如 `{"desktop": ["moss.desktop/v1"], "server": ["moss.account/v1"]}`。只写实际会在该模式调用的协议；`moss.desktop/v1`、`moss.openim/v1` 和过渡期的 `moss.remote/v1` 都不得放入 `server`。旧的协议数组格式仅供现有 App 迁移，新 App 禁止使用。
+App 安装后自动启用。`persistent` Backend 随 Moss 启动并保持运行；`on-demand` Backend 在调用 Action 时启动并在空闲后退出。需要 Host 能力时，将实际使用的版本化协议直接写入 `backend.protocols` 数组，例如 `"protocols": ["moss.platform/v1"]`。
 
 界面和交互必须根据应用领域设计：
 
@@ -169,17 +156,17 @@ Server 是可选部署目标，不是 App Runtime 的默认依赖。`["desktop",
 - 实现首次使用、空数据、加载、长任务、成功、部分成功、校验错误、Backend 停止、环境缺失、权限拒绝和操作失败状态。
 - AI 能力只能在已有可用的 provider、model 和 credential 契约时实现；不得臆造 Moss Agent API 或 `mossApp.skills.run()`。
 
-### 桌面外观与运行时主题（强制）
+### Moss 外观与运行时主题（强制）
 
-所有新建 App 和发生界面重构的 App 都必须使用 Moss 桌面端的外观语言，并在运行时跟随桌面设置。领域信息架构和交互可以不同，但颜色、surface、边框、输入控件、状态色、焦点态和背景样式必须来自以下契约，不要另起一套主题。
+所有新建 App 和发生界面重构的 App 都必须使用 Moss 的外观语言，并在运行时跟随 Moss 设置。领域信息架构和交互可以不同，但颜色、surface、边框、输入控件、状态色、焦点态和背景样式必须来自以下契约，不要另起一套主题。
 
 这是内部实现基线，不是用户功能需求。即使用户完全没有提到主题、CSS、配置读取或动态切换，也必须自动实现；除非用户明确要求讨论技术方案，否则不要在需求确认和计划中逐条复述本节，也不要在 App 内显示“读取配置”“跟随主题”“Host API”“CSS token”等实现文案。
 
-默认行为是自动跟随 Moss 桌面端当前选择的浅色、暗色或跟随系统模式，以及当前背景样式。不要把“自动跟随 Moss 外观”列为 App 功能，不要为它增加状态卡片、诊断区、刷新按钮、主题切换器或设置入口。只有用户明确要求 App 拥有独立于 Moss 的主题控制、外观测试工具或主题诊断功能时，才提供相应可见界面；否则主题同步必须完全透明。
+默认行为是自动跟随 Moss 当前选择的浅色、暗色或跟随系统模式，以及当前背景样式。不要把“自动跟随 Moss 外观”列为 App 功能，不要为它增加状态卡片、诊断区、刷新按钮、主题切换器或设置入口。只有用户明确要求 App 拥有独立于 Moss 的主题控制、外观测试工具或主题诊断功能时，才提供相应可见界面；否则主题同步必须完全透明。
 
 #### 运行时设置来源
 
-桌面外观保存在 `~/.moss/settings.json`：
+Moss 外观保存在 `~/.moss/settings.json`：
 
 ```json
 {
@@ -416,14 +403,12 @@ if (!rootEl) {
 - App 的 `app.moss.json` 是合法 JSON
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
 - App 声明的 `ui.entry` 不为空，并且能找到脚本入口或可见静态内容
-- Backend 的 `targets` 使用满足需求的最小集合；未明确要求退出 Desktop 后仍运行、7×24、无人值守或 Server 事件消费时必须是 `["desktop"]`，不得默认加入 `server`
-- 不从 UI、Backend、`persistent`、网络访问或未来扩展推导 target；允许 Desktop UI 搭配 Server-only Backend
-- `targets` 不含 `server` 时，不实现或描述 Server 部署；包含两个 target 时，确认这是同一逻辑实例的可迁移位置而非双进程、主备、同步或跨端分工，且两种模式均可独立工作
-- `protocols` 使用按 target 的对象格式，key 必须属于 `targets`；Server 不得声明 Desktop、OpenIM 或 Remote 专属协议
+- Manifest 只包含当前 Schema 定义且实际使用的字段
+- `backend.protocols` 使用字符串数组，只声明实际需要的 Host 协议
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
-- 检查 App 使用 Moss 桌面 token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
+- 检查 App 使用 Moss token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级
-- App 保持打开时修改桌面外观，检查 focus、重新可见或 appearance 事件后主题和背景动态更新
+- App 保持打开时修改 Moss 外观，检查 focus、重新可见或 appearance 事件后主题和背景动态更新
 - 检查 appearance 刷新没有并发堆积，并在卸载时清理 listener
 - 依赖 Backend 的 App 必须在 UI 中展示实例状态和调用错误
 - 游戏类 App 要检查开始、暂停、重开、键盘方向、屏幕方向按钮、移动端尺寸、最高分/进度保存
@@ -456,6 +441,8 @@ app_preview({
 - 确认满意后再发布
 
 ### 7. 发布
+
+App 发布或安装后默认启用；有 Backend 的单实例 App 也默认进入启用状态。若缺少必填配置或密钥，Backend 保持等待配置，保存有效配置后自动运行。
 
 #### 新建 App
 

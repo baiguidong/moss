@@ -547,16 +547,11 @@ export class AuthCenterDb {
   }
 
   private ensureBuiltinUserPermissions(orgId: string): void {
-    const migrationKey = `migration:builtin-user-permissions:v2:${orgId}`
+    const migrationKey = `migration:builtin-user-permissions:v3:${orgId}`
     if (this.getConfig(migrationKey)) return
 
     const userPermissions = [
       'directory:read',
-      'apps:read',
-      'apps:manage',
-      'apps:invoke',
-      'apps:deploy',
-      'apps:logs',
     ]
     for (const systemKey of ['dept_admin', 'user'] as const) {
       const role = this.getRoleBySystemKey(orgId, systemKey)

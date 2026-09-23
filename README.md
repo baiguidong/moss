@@ -7,7 +7,6 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 - [部署总览](deploy/README.md)
 - [Moss Server API](server/API.md)
 - [Moss Server Docker Compose 部署](deploy/server/README.md)
-- [Agent Channel 与独立 IM App 改造计划](docs/agent-channel-app-migration-plan.md)
 - [飞书 App 配置与完整权限清单](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)
 
 服务端源码位于独立的 `server/` package，远程客户端位于

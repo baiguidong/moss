@@ -30,7 +30,7 @@ const watchedFiles = [
   path.join(uiRoot, 'src', 'library', 'library-ipc.mjs'),
   path.join(uiRoot, 'src', 'apps', 'app-preload.mjs'),
   path.join(uiRoot, 'src', 'apps', 'app-ui-protocol.mjs'),
-  path.join(uiRoot, 'src', 'apps', 'desktop-app-runtime.mjs'),
+  path.join(uiRoot, 'src', 'apps', 'app-runtime.mjs'),
   path.join(uiRoot, 'src', 'apps', 'app-runtime-ipc.mjs'),
 ];
 const command = process.argv[2] || 'start';

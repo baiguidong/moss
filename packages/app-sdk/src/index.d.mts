@@ -1,5 +1,3 @@
-/** A supported Backend placement. Manifest targets must explicitly contain desktop, server, or both. */
-export type AppTarget = 'desktop' | 'server'
 export type AppBackendLifecycle = 'on-demand' | 'persistent'
 export type AppInstanceMode = 'single' | 'multiple'
 export type AppOwnerScope = 'host' | 'org' | 'user'
@@ -10,7 +8,6 @@ export interface AppOwner {
   key: string
 }
 export type AppBackendProtocol = string
-export type AppTargetProtocols = Partial<Record<AppTarget, AppBackendProtocol[]>>
 
 export interface AgentSessionSummary {
   id: string
@@ -70,7 +67,6 @@ export interface AccountHostResultMap {
     user: AccountDirectoryUser | null
     organization?: { id: string; name: string } | null
     scopes?: string[]
-    source: 'local' | 'server'
   }
   'directory.list': {
     users: AccountDirectoryUser[]
@@ -294,8 +290,8 @@ export interface AppAgentApi {
   ): () => void
 }
 
-export type DesktopPermission = 'desktop:files' | 'desktop:screen-capture' | 'desktop:external-links' | 'desktop:media'
-export type DesktopHostMethod =
+export type PlatformPermission = 'platform:files' | 'platform:screen-capture' | 'platform:external-links' | 'platform:media'
+export type PlatformHostMethod =
   | 'file.pick'
   | 'file.materialize'
   | 'file.thumbnail'
@@ -303,14 +299,14 @@ export type DesktopHostMethod =
   | 'screen.capture'
   | 'shell.open-external'
 
-export interface DesktopFile {
+export interface PlatformFile {
   name: string
   path: string
   size: number
   mediaUrl: string
 }
 
-export interface DesktopHostRequestMap {
+export interface PlatformHostRequestMap {
   'file.pick': { kind?: 'image' | 'video' | 'audio' | 'file'; multiple?: boolean }
   'file.materialize': { fileName: string; dataBase64: string; transferId?: string; offset?: number; complete?: boolean }
   'file.thumbnail': { path: string; width?: number; height?: number }
@@ -319,21 +315,21 @@ export interface DesktopHostRequestMap {
   'shell.open-external': { url: string }
 }
 
-export interface DesktopHostResultMap {
-  'file.pick': { files: DesktopFile[] }
-  'file.materialize': DesktopFile | { transferId: string; complete: false; size: number }
+export interface PlatformHostResultMap {
+  'file.pick': { files: PlatformFile[] }
+  'file.materialize': PlatformFile | { transferId: string; complete: false; size: number }
   'file.thumbnail': { path: string; mediaUrl: string }
   'file.download': { canceled: boolean; filePath?: string }
-  'screen.capture': DesktopFile
+  'screen.capture': PlatformFile
   'shell.open-external': { opened: true }
 }
 
-export interface AppDesktopApi {
-  request<Method extends DesktopHostMethod>(
+export interface AppPlatformApi {
+  request<Method extends PlatformHostMethod>(
     method: Method,
-    input: DesktopHostRequestMap[Method],
+    input: PlatformHostRequestMap[Method],
     options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<DesktopHostResultMap[Method]>
+  ): Promise<PlatformHostResultMap[Method]>
 }
 
 export type OpenIMPermission = 'openim:client'
@@ -348,21 +344,6 @@ export interface OpenIMHostRequestMap {
   'directory.list': { cursor?: string; limit?: number }
   'conversation.direct.prepare': { userId: string }
   'conversation.group.prepare': { userIds: string[] }
-}
-
-export type RemotePermission = 'remote:actions'
-export type RemoteHostMethod = 'action.invoke'
-export interface RemoteHostRequestMap {
-  'action.invoke': { action: string; input?: Record<string, unknown>; timeoutMs?: number; ownerScope?: 'user' | 'org' }
-}
-export interface RemoteHostResultMap { 'action.invoke': unknown }
-/** @deprecated Transitional compatibility only. New Apps must use one active Backend placement. */
-export interface AppRemoteApi {
-  request<Output = unknown>(
-    method: 'action.invoke',
-    input: RemoteHostRequestMap['action.invoke'],
-    options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<Output>
 }
 
 export interface AppHostApi {
@@ -410,12 +391,8 @@ export interface AppManifestV2 {
     apiVersion: 1
     lifecycle: AppBackendLifecycle
     instanceMode: AppInstanceMode
-    /** Owner scope used only while this instance is placed on Server. */
-    serverOwnerScope?: 'user' | 'org'
-    /** Alternative placements for one Backend; an instance is active on only one target at a time. */
-    targets: AppTarget[]
-    /** Host protocols used at each target. The array form is transitional and applies to every target. */
-    protocols?: AppTargetProtocols | AppBackendProtocol[]
+    /** Host protocols used by the Backend. */
+    protocols?: AppBackendProtocol[]
     actions: AppActionManifest[]
     configuration?: { schema?: string; secrets?: string }
   }
@@ -448,7 +425,6 @@ export interface AppBackendContext {
   secrets: Record<string, string>
   dataDir: string
   runtimeDir: string
-  target: { type: AppTarget; id: string }
   owner: AppOwner | null
   protocols: AppBackendProtocol[]
   permissions: string[]
@@ -456,8 +432,7 @@ export interface AppBackendContext {
   host: AppHostApi
   account: AppAccountApi
   agent: AppAgentApi
-  desktop: AppDesktopApi
-  remote: AppRemoteApi
+  platform: AppPlatformApi
 }
 
 export interface AppActionContext extends AppBackendContext {
@@ -484,7 +459,7 @@ export interface AppUiApi {
     setEnabled(instanceId: string, enabled: boolean): Promise<unknown>
     clearCredentials(instanceId: string): Promise<Record<string, unknown>>
     remove(instanceId: string, options?: { deleteData?: boolean; deleteCredentials?: boolean }): Promise<{ ok: true }>
-    getStatus(instanceId: string): Promise<Array<Record<string, unknown>>>
+    getStatus(instanceId: string): Promise<Record<string, unknown> | null>
   }
   actions: {
     invoke<Output = unknown>(instanceId: string, name: string, input?: unknown, options?: { requestId?: string; timeoutMs?: number }): Promise<Output>
@@ -517,15 +492,13 @@ export class AppBackendClient {
   onAccountEvent(name: AccountBackendEvent, handler: (data: Record<string, unknown>, context: HostEventContext) => unknown | Promise<unknown>): () => void
   requestAgentHost<Method extends AgentHostMethod>(method: Method, input: AgentHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<AgentHostResultMap[Method]>
   onAgentEvent(name: AgentBackendEvent, handler: (data: Record<string, unknown>, context: HostEventContext) => unknown | Promise<unknown>): () => void
-  requestDesktopHost<Method extends DesktopHostMethod>(method: Method, input: DesktopHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<DesktopHostResultMap[Method]>
-  requestRemoteHost<Output = unknown>(method: 'action.invoke', input: RemoteHostRequestMap['action.invoke'], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<Output>
+  requestPlatformHost<Method extends PlatformHostMethod>(method: Method, input: PlatformHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<PlatformHostResultMap[Method]>
   requestHost<Output = unknown>(protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<Output>
   onHostEvent<Result = unknown>(protocol: AppBackendProtocol, name: string, handler: (data: Record<string, unknown>, context: HostEventContext) => Result | Promise<Result>): () => void
   readonly host: AppHostApi
   readonly account: AppAccountApi
   readonly agent: AppAgentApi
-  readonly desktop: AppDesktopApi
-  readonly remote: AppRemoteApi
+  readonly platform: AppPlatformApi
   emit(name: string, data?: unknown): void
   log(level: string, message: string, details?: unknown): void
   status(state: string, details?: unknown): void
@@ -537,10 +510,8 @@ export const APP_SERVICE_PROTOCOL_VERSION: 1
 export const APP_BACKEND_API_VERSION: 1
 export const MOSS_ACCOUNT_PROTOCOL: 'moss.account/v1'
 export const MOSS_AGENT_PROTOCOL: 'moss.agent/v1'
-export const MOSS_DESKTOP_PROTOCOL: 'moss.desktop/v1'
+export const MOSS_PLATFORM_PROTOCOL: 'moss.platform/v1'
 export const MOSS_OPENIM_PROTOCOL: 'moss.openim/v1'
-/** @deprecated Transitional compatibility only. New Apps must not split a Backend across targets. */
-export const MOSS_REMOTE_PROTOCOL: 'moss.remote/v1'
 export const ACCOUNT_PERMISSIONS: Readonly<Record<string, AccountPermission>>
 export const ACCOUNT_HOST_METHOD_PERMISSIONS: Readonly<Record<AccountHostMethod, AccountPermission>>
 export const ACCOUNT_BACKEND_EVENT_PERMISSIONS: Readonly<Record<AccountBackendEvent, AccountPermission>>
@@ -555,15 +526,12 @@ export const AGENT_HOST_METHOD_PERMISSIONS: Readonly<Record<AgentHostMethod, Age
 export const AGENT_BACKEND_EVENT_PERMISSIONS: Readonly<Record<AgentBackendEvent, AgentPermission>>
 export const AGENT_HOST_METHODS: readonly AgentHostMethod[]
 export const AGENT_BACKEND_EVENTS: readonly AgentBackendEvent[]
-export const DESKTOP_PERMISSIONS: Readonly<Record<string, DesktopPermission>>
-export const DESKTOP_HOST_METHOD_PERMISSIONS: Readonly<Record<DesktopHostMethod, DesktopPermission>>
-export const DESKTOP_HOST_METHODS: readonly DesktopHostMethod[]
+export const PLATFORM_PERMISSIONS: Readonly<Record<string, PlatformPermission>>
+export const PLATFORM_HOST_METHOD_PERMISSIONS: Readonly<Record<PlatformHostMethod, PlatformPermission>>
+export const PLATFORM_HOST_METHODS: readonly PlatformHostMethod[]
 export const OPENIM_PERMISSIONS: Readonly<Record<string, OpenIMPermission>>
 export const OPENIM_HOST_METHOD_PERMISSIONS: Readonly<Record<OpenIMHostMethod, OpenIMPermission>>
 export const OPENIM_HOST_METHODS: readonly OpenIMHostMethod[]
-export const REMOTE_PERMISSIONS: Readonly<Record<string, RemotePermission>>
-export const REMOTE_HOST_METHOD_PERMISSIONS: Readonly<Record<RemoteHostMethod, RemotePermission>>
-export const REMOTE_HOST_METHODS: readonly RemoteHostMethod[]
 export const DEFAULT_MAX_MESSAGE_BYTES: number
 export const APP_HOST_API_VERSION: string
 export const APP_MANIFEST_SCHEMA: Record<string, unknown>
@@ -588,14 +556,12 @@ export function validateAgentHostOutput(method: AgentHostMethod, value: unknown)
 export function validateAgentBackendEventData(name: AgentBackendEvent, value: unknown): Record<string, unknown>
 export function validateAgentAttachments(value: unknown, method: string): void
 export function validateAgentMessageContent(input: Record<string, unknown>, method: string): void
-export function validateDesktopHostMethod(value: unknown): DesktopHostMethod
-export function validateDesktopHostInput(method: DesktopHostMethod, value: unknown): Record<string, unknown>
-export function validateDesktopHostOutput(method: DesktopHostMethod, value: unknown): Record<string, unknown>
+export function validatePlatformHostMethod(value: unknown): PlatformHostMethod
+export function validatePlatformHostInput(method: PlatformHostMethod, value: unknown): Record<string, unknown>
+export function validatePlatformHostOutput(method: PlatformHostMethod, value: unknown): Record<string, unknown>
 export function validateOpenIMHostMethod(value: unknown): OpenIMHostMethod
 export function validateOpenIMHostInput(method: OpenIMHostMethod, value: unknown): Record<string, unknown>
 export function validateOpenIMHostOutput(method: OpenIMHostMethod, value: unknown): Record<string, unknown>
-export function validateRemoteHostMethod(value: unknown): RemoteHostMethod
-export function validateRemoteHostInput(method: RemoteHostMethod, value: unknown): Record<string, unknown>
 export function validateHostProtocol(value: unknown): string
 export function validateHostMember(value: unknown, label?: string): string
 export function validateHostData(value: unknown, label?: string): Record<string, unknown>
@@ -603,9 +569,9 @@ export function requireHostProtocol(protocols: string[], protocol: string): true
 export function requireHostPermission(permissions: string[], requiredPermission?: string | null, options?: { source?: 'declaration' | 'grant' }): true
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
 export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
-export function resolveBackendProtocols(backend: AppManifestV2['backend'], target: AppTarget): AppBackendProtocol[]
+export function resolveBackendProtocols(backend: AppManifestV2['backend']): AppBackendProtocol[]
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>
-export function compileJsonSchema(schema: unknown): ((value: unknown) => boolean) & { errors?: unknown[] }
+export function compileJsonSchema(schema: unknown, options?: { removeAdditional?: boolean }): ((value: unknown) => boolean) & { errors?: unknown[] }
 
 export function createBackendTestHarness(actions?: Record<string, AppActionHandler>): {
   client: AppBackendClient

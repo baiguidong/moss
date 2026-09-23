@@ -10,7 +10,6 @@
     "apiVersion": 1,
     "lifecycle": "persistent",
     "instanceMode": "multiple",
-    "targets": ["desktop", "server"],
     "actions": [{ "name": "echo" }],
     "configuration": { "schema": "schemas/config.schema.json", "secrets": "schemas/secrets.schema.json" }
   },

@@ -6,7 +6,7 @@ import {
   type ServerConfig,
   type ServerFileConfig,
 } from './types.js'
-import { getMossServerHomeDir, MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
+import { getMossServerHomeDir } from './lib/env.js'
 import { expandPath } from './lib/path.js'
 
 export function getDefaultServerConfigPath(): string {
@@ -68,7 +68,6 @@ export function getDefaultServerConfig(): ServerFileConfig {
     logging: {
       level: 'info',
     },
-    apps: {},
     ragflow: {
       enabled: false,
       instanceId: 'default',
@@ -129,9 +128,6 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     auditFile: raw.logging.auditFile
       ? normalizePath(raw.logging.auditFile)
       : undefined,
-    appSourceDir: raw.apps.sourceDir
-      ? normalizePath(raw.apps.sourceDir)
-      : join(MOSS_SERVER_ASSET_ROOT, 'apps'),
     ragflow: {
       enabled: raw.ragflow.enabled,
       instanceId: raw.ragflow.instanceId,

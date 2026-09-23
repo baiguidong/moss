@@ -28,17 +28,11 @@ import {
   validateAgentHostMethod,
 } from '../agent/index.mjs'
 import {
-  DESKTOP_HOST_METHOD_PERMISSIONS,
-  MOSS_DESKTOP_PROTOCOL,
-  validateDesktopHostInput,
-  validateDesktopHostMethod,
-} from '../desktop/index.mjs'
-import {
-  MOSS_REMOTE_PROTOCOL,
-  REMOTE_HOST_METHOD_PERMISSIONS,
-  validateRemoteHostInput,
-  validateRemoteHostMethod,
-} from '../remote/index.mjs'
+  PLATFORM_HOST_METHOD_PERMISSIONS,
+  MOSS_PLATFORM_PROTOCOL,
+  validatePlatformHostInput,
+  validatePlatformHostMethod,
+} from '../platform/index.mjs'
 import {
   requireHostPermission,
   requireHostProtocol,
@@ -110,11 +104,8 @@ export class AppBackendClient {
       request: (method, input, requestOptions) => this.requestAgentHost(method, input, requestOptions),
       on: (name, handler) => this.onAgentEvent(name, handler),
     })
-    this.desktop = Object.freeze({
-      request: (method, input, requestOptions) => this.requestDesktopHost(method, input, requestOptions),
-    })
-    this.remote = Object.freeze({
-      request: (method, input, requestOptions) => this.requestRemoteHost(method, input, requestOptions),
+    this.platform = Object.freeze({
+      request: (method, input, requestOptions) => this.requestPlatformHost(method, input, requestOptions),
     })
     this.host = Object.freeze({
       request: (protocol, method, input, requestOptions) => this.requestHost(protocol, method, input, requestOptions),
@@ -187,27 +178,15 @@ export class AppBackendClient {
     )
   }
 
-  requestDesktopHost(method, input = {}, options = {}) {
-    const normalizedMethod = validateDesktopHostMethod(method)
+  requestPlatformHost(method, input = {}, options = {}) {
+    const normalizedMethod = validatePlatformHostMethod(method)
     return this.requestTypedHost(
-      MOSS_DESKTOP_PROTOCOL,
+      MOSS_PLATFORM_PROTOCOL,
       normalizedMethod,
-      validateDesktopHostInput(normalizedMethod, input),
-      DESKTOP_HOST_METHOD_PERMISSIONS[normalizedMethod],
+      validatePlatformHostInput(normalizedMethod, input),
+      PLATFORM_HOST_METHOD_PERMISSIONS[normalizedMethod],
       options,
-      'Desktop Host',
-    )
-  }
-
-  requestRemoteHost(method, input = {}, options = {}) {
-    const normalizedMethod = validateRemoteHostMethod(method)
-    return this.requestTypedHost(
-      MOSS_REMOTE_PROTOCOL,
-      normalizedMethod,
-      validateRemoteHostInput(normalizedMethod, input),
-      REMOTE_HOST_METHOD_PERMISSIONS[normalizedMethod],
-      options,
-      'Remote Host',
+      'Platform Host',
     )
   }
 
@@ -525,8 +504,7 @@ export class AppBackendClient {
         host: this.host,
         account: this.account,
         agent: this.agent,
-        desktop: this.desktop,
-        remote: this.remote,
+        platform: this.platform,
       })
       this.hostClosed = false
       if (this.onInitialize) await this.onInitialize(this.context)
@@ -591,8 +569,7 @@ export class AppBackendClient {
           host: this.host,
           account: this.account,
           agent: this.agent,
-          desktop: this.desktop,
-          remote: this.remote,
+          platform: this.platform,
           signal: controller.signal,
           requestId: message.id,
           emit: (name, data) => this.emit(name, data),

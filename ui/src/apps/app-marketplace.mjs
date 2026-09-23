@@ -8,7 +8,7 @@ import { APP_HOST_API_VERSION } from '../../../packages/app-sdk/src/index.mjs'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
-import { installAppArchive } from './desktop-app-runtime.mjs'
+import { installAppArchive } from './app-runtime.mjs'
 
 const MARKET_CACHE_VERSION = 1
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000

@@ -35,4 +35,15 @@ describe('server package boundary', () => {
     }
     expect(violations).toEqual([])
   })
+
+  test('does not depend on the App runtime package', async () => {
+    const violations: string[] = []
+    for (const file of await collectTypeScriptFiles(serverSrc)) {
+      const source = await readFile(file, 'utf8')
+      if (/@moss\/app-runtime|packages\/app-runtime/.test(source)) {
+        violations.push(relative(serverSrc, file))
+      }
+    }
+    expect(violations).toEqual([])
+  })
 })

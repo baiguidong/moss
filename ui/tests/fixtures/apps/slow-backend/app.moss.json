@@ -10,7 +10,6 @@
     "apiVersion": 1,
     "lifecycle": "on-demand",
     "instanceMode": "single",
-    "targets": ["desktop"],
     "actions": [{ "name": "wait", "timeoutMs": 200 }]
   },
   "permissions": []

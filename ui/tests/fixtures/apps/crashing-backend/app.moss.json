@@ -10,7 +10,6 @@
     "apiVersion": 1,
     "lifecycle": "persistent",
     "instanceMode": "single",
-    "targets": ["desktop"],
     "actions": []
   },
   "permissions": []

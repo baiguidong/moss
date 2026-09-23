@@ -281,7 +281,7 @@ const appBuildSchema = z.strictObject({
 export const AppBuildTool = createMossTool({
   name: 'app_build',
   description: 'Build a Moss App from apps/{name}/app.moss.json in the current session workspace and return its build directory.',
-  searchHint: 'build compile desktop app',
+  searchHint: 'build compile Moss app',
   inputSchema: appBuildSchema,
   event: input => ({ type: 'app_build', input: { kind: 'app', name: input.name } }),
   userFacingName: 'App 构建',
@@ -293,8 +293,8 @@ const appPreviewSchema = z.strictObject({
 
 export const AppPreviewTool = createMossTool({
   name: 'app_preview',
-  description: 'Preview a built Moss App in the desktop application.',
-  searchHint: 'preview built desktop app',
+  description: 'Preview a built Moss App.',
+  searchHint: 'preview built Moss app',
   inputSchema: appPreviewSchema,
   event: input => ({ type: 'app_preview', input: { kind: 'app', buildDir: input.buildDir } }),
   readOnly: true,
@@ -311,7 +311,7 @@ const appPublishSchema = z.strictObject({
 export const AppPublishTool = createMossTool({
   name: 'app_publish',
   description: 'Publish a built Moss App to the local App list as a versioned package.',
-  searchHint: 'publish release desktop app',
+  searchHint: 'publish release Moss app',
   inputSchema: appPublishSchema,
   event: input => ({ type: 'app_publish', input: { kind: 'app', ...input } }),
   userFacingName: 'App 发布',

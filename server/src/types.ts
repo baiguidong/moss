@@ -78,9 +78,6 @@ export const serverFileConfigSchema = lazySchema(() =>
     }).default({
       level: 'info',
     }),
-    apps: z.object({
-      sourceDir: z.string().min(1).optional(),
-    }).default({}),
     ragflow: z.object({
       enabled: z.boolean().default(false),
       instanceId: z.string().min(1).default('default'),
@@ -134,7 +131,6 @@ export type ServerConfig = {
   resumeOnMissingRuntime: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   auditFile?: string
-  appSourceDir?: string
   ragflow: {
     enabled: boolean
     instanceId: string

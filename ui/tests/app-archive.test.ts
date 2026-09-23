@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import JSZip from 'jszip'
-import { extractAppArchive, installAppArchive } from '../src/apps/desktop-app-runtime.mjs'
+import { extractAppArchive, installAppArchive } from '../src/apps/app-runtime.mjs'
 
 const roots: string[] = []
 

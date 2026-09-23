@@ -20,13 +20,13 @@ import { AppLogStore } from '../logging/index.mjs'
 import { AppPackageStore, validateAppPackage } from '../packages/index.mjs'
 import { AppProcessSupervisor } from '../process/index.mjs'
 import {
-  DeploymentStore,
+  RuntimeStore,
   InstallationStore,
   InstanceStore,
   JsonAppStateStore,
   DEFAULT_APP_OWNER,
   defaultInstanceId,
-  deploymentKey,
+  runtimeKey,
   normalizeAppOwner,
   validateConfiguration,
 } from '../state/index.mjs'
@@ -79,10 +79,6 @@ export class AppRuntimeHost {
     this.appsDir = path.resolve(options.appsDir || path.join(this.rootDir, 'apps'))
     this.dataDir = path.resolve(options.dataDir || path.join(this.rootDir, 'apps-data'))
     this.runtimeDir = path.resolve(options.runtimeDir || path.join(this.rootDir, 'apps-runtime'))
-    this.target = options.target || 'desktop'
-    this.hostId = options.hostId || `${this.target}-${randomUUID()}`
-    this.deploymentTargetId = options.deploymentTargetId || this.hostId
-    this.leaseTtlMs = options.leaseTtlMs || 30_000
     this.defaultOwner = normalizeAppOwner(options.defaultOwner || DEFAULT_APP_OWNER)
     this.ownerContext = new AsyncLocalStorage()
     this.credentialAdapter = options.credentialAdapter || new MemoryCredentialAdapter()
@@ -104,7 +100,7 @@ export class AppRuntimeHost {
     const ownerResolver = () => this.currentOwner()
     this.installations = new InstallationStore(this.state, { ownerResolver })
     this.instances = new InstanceStore(this.state, { ownerResolver })
-    this.deployments = new DeploymentStore(this.state, { ownerResolver })
+    this.runtimes = new RuntimeStore(this.state, { ownerResolver })
     this.logs = new AppLogStore({
       logsDir: path.join(this.runtimeDir, 'logs'),
       secretProvider: async (appId, instanceId, owner) => this.withOwner(
@@ -131,9 +127,8 @@ export class AppRuntimeHost {
       ...(options.actionOptions || {}),
       supervisor: this.supervisor,
       packageResolver: (appId) => this.getActivePackage(appId),
-      authorize: (deployment) => this.authorizeInvocation(deployment),
+      authorize: (runtimeRecord) => this.authorizeInvocation(runtimeRecord),
     })
-    this.leaseTimer = null
     this.appTransitions = new Map()
     this.initialized = false
   }
@@ -145,10 +140,6 @@ export class AppRuntimeHost {
     const owners = this.installations.listOwners()
     if (!owners.length) owners.push(this.defaultOwner)
     for (const owner of owners) await this.withOwner(owner, () => this.restore())
-    if (this.target === 'server') {
-      this.leaseTimer = setInterval(() => this.renewAllLeases().catch(() => {}), Math.max(1000, Math.floor(this.leaseTtlMs / 3)))
-      this.leaseTimer.unref?.()
-    }
     return this
   }
 
@@ -208,7 +199,7 @@ export class AppRuntimeHost {
       || current.activeVersion === installed.manifest.version
     await this.installations.upsert(installed.manifest.id, {
       activeVersion: current?.activeVersion || installed.manifest.version,
-      enabled: current?.enabled || false,
+      enabled: current?.enabled ?? options.enabled ?? true,
       grants: current
         ? current.grants || []
         : installationGrantsForPackage(current, installed.manifest, options.grants),
@@ -219,6 +210,8 @@ export class AppRuntimeHost {
     await this.ensureDefaultInstance(installed.manifest.id)
     if (current && activatesInstalledVersion && options.grants !== undefined) {
       await this.setAppGrantsNow(installed.manifest.id, options.grants)
+    } else if (activatesInstalledVersion) {
+      await this.reconcileApp(installed.manifest.id)
     }
     this.publishRuntimeEvent({ type: 'installation-changed', appId: installed.manifest.id })
     return this.getApp(installed.manifest.id)
@@ -248,38 +241,38 @@ export class AppRuntimeHost {
       return packageInfo
     }
     const instanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
-    const deploymentSnapshots = this.deployments.list(appId)
+    const runtimeSnapshots = this.runtimes.list(appId)
     const nextGrants = installationGrantsForPackage(current, packageInfo.manifest, options.grants)
     const grantsChanged = Boolean(current)
       && JSON.stringify(current.grants || []) !== JSON.stringify(nextGrants)
     try {
       if (grantsChanged) {
-        await Promise.allSettled(deploymentSnapshots.map((item) => this.supervisor.stop(item.key)))
+        await Promise.allSettled(runtimeSnapshots.map((item) => this.supervisor.stop(item.key)))
       }
       await this.installations.upsert(appId, {
         activeVersion: version,
         grants: nextGrants,
-        ...(options.enabled !== undefined ? { enabled: options.enabled } : {}),
+        enabled: current?.enabled ?? options.enabled ?? true,
       })
       if (grantsChanged) {
-        for (const deployment of deploymentSnapshots) await this.deployments.bumpGeneration(deployment.key)
+        for (const runtimeRecord of runtimeSnapshots) await this.runtimes.bumpGeneration(runtimeRecord.key)
       }
       await this.ensureDefaultInstance(appId)
       await this.reconcileApp(appId)
       this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return packageInfo
     } catch (error) {
-      const snapshotKeys = new Set(deploymentSnapshots.map((deployment) => deployment.key))
-      for (const deployment of this.deployments.list(appId)) {
-        await this.supervisor.stop(deployment.key).catch(() => {})
-        if (!snapshotKeys.has(deployment.key)) {
-          this.supervisor.unregister(deployment.key)
-          await this.deployments.remove(deployment.key).catch(() => {})
+      const snapshotKeys = new Set(runtimeSnapshots.map((runtimeRecord) => runtimeRecord.key))
+      for (const runtimeRecord of this.runtimes.list(appId)) {
+        await this.supervisor.stop(runtimeRecord.key).catch(() => {})
+        if (!snapshotKeys.has(runtimeRecord.key)) {
+          this.supervisor.unregister(runtimeRecord.key)
+          await this.runtimes.remove(runtimeRecord.key).catch(() => {})
         }
       }
-      for (const snapshot of deploymentSnapshots) {
-        const latest = this.deployments.get(snapshot.key)
-        await this.deployments.upsert({
+      for (const snapshot of runtimeSnapshots) {
+        const latest = this.runtimes.get(snapshot.key)
+        await this.runtimes.upsert({
           ...snapshot,
           generation: Math.max(snapshot.generation, latest?.generation || 0) + 1,
         }).catch(() => {})
@@ -306,14 +299,14 @@ export class AppRuntimeHost {
     return this.installations.get(appId)
   }
 
-  authorizeInvocation(deployment) {
-    const installation = this.installations.get(deployment.appId)
+  authorizeInvocation(runtimeRecord) {
+    const installation = this.installations.get(runtimeRecord.appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
-    const instance = this.requireInstance(deployment.appId, deployment.instanceId)
+    const instance = this.requireInstance(runtimeRecord.appId, runtimeRecord.instanceId)
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
-    const current = this.localDeployment(deployment.appId, deployment.instanceId)
-    if (!current || current.key !== deployment.key) {
-      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance is no longer deployed on this Host')
+    const current = this.runtimeForInstance(runtimeRecord.appId, runtimeRecord.instanceId)
+    if (!current || current.key !== runtimeRecord.key) {
+      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
     }
   }
 
@@ -322,17 +315,14 @@ export class AppRuntimeHost {
     if (!installation) return null
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    const instances = !backend || !backend.targets.includes(this.target)
+    const instances = !backend
       ? []
       : this.instances.list(appId).filter((instance) =>
         backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
-    const statuses = this.deployments.list(appId).map((deployment) => ({
-      deployment,
-      runtime: this.supervisor.status(deployment.key),
-    }))
     const publicInstances = await Promise.all(instances.map(async (instance) => ({
       ...instance,
       secretRefs: maskedSecrets(await this.credentials.get(appId, instance.id)),
+      status: await this.getInstanceStatus(appId, instance.id),
     })))
     return {
       installation,
@@ -347,7 +337,6 @@ export class AppRuntimeHost {
           : null,
       } : null,
       instances: publicInstances,
-      deployments: statuses,
     }
   }
 
@@ -355,7 +344,7 @@ export class AppRuntimeHost {
     const results = []
     for (const installation of this.installations.list()) {
       try { results.push(await this.getApp(installation.appId)) } catch (error) {
-        results.push({ installation, manifest: null, instances: [], deployments: [], error: error.message })
+        results.push({ installation, manifest: null, instances: [], error: error.message })
       }
     }
     return results
@@ -372,11 +361,7 @@ export class AppRuntimeHost {
     for (const installation of this.installations.list()) {
       if (options.appId && installation.appId !== options.appId) continue
       const packageInfo = await this.getActivePackage(installation.appId)
-      const backend = packageInfo.manifest.backend
-      const enabled = Boolean(
-        installation.enabled
-        && (!backend || backend.targets.includes(this.target)),
-      )
+      const enabled = Boolean(installation.enabled)
       const contributions = collectManifestContributions(packageInfo.manifest, {
         grants: installation.grants || [],
         enabled,
@@ -474,25 +459,23 @@ export class AppRuntimeHost {
   async ensureDefaultInstance(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend || backend.instanceMode !== 'single' || !backend.targets.includes(this.target)) return null
+    if (!backend || backend.instanceMode !== 'single') return null
     const existing = this.instances.get(defaultInstanceId(appId))
     const instance = existing || await this.instances.create(appId, {
-      displayName: 'Default', config: {}, secretRefs: {}, enabled: false,
+      displayName: 'Default', config: {}, secretRefs: {}, enabled: true,
     }, { single: true })
-    await this.ensureDeployment(packageInfo, instance)
+    await this.ensureRuntime(packageInfo, instance)
     return instance
   }
 
-  async ensureDeployment(packageInfo, instance, target = this.target, targetId = this.deploymentTargetId) {
+  async ensureRuntime(packageInfo, instance) {
     const backend = packageInfo.manifest.backend
-    if (!backend || !backend.targets.includes(target)) return null
-    const key = deploymentKey(instance.id, target, targetId, this.currentOwner())
-    const current = this.deployments.get(key)
-    return this.deployments.upsert({
+    if (!backend) return null
+    const key = runtimeKey(instance.id, this.currentOwner())
+    const current = this.runtimes.get(key)
+    return this.runtimes.upsert({
       appId: packageInfo.manifest.id,
       instanceId: instance.id,
-      targetType: target,
-      targetId,
       desiredState: current?.desiredState || 'stopped',
       generation: current?.generation || 1,
     })
@@ -511,21 +494,19 @@ export class AppRuntimeHost {
     const installation = this.installations.get(appId)
     const nextGrants = normalizeInstallationGrants(packageInfo.manifest, grants)
     if (JSON.stringify(installation.grants || []) === JSON.stringify(nextGrants)) return this.getApp(appId)
-    const deployments = this.deployments.list(appId).filter((item) =>
-      item.targetType === this.target && item.targetId === this.deploymentTargetId)
+    const runtimes = this.runtimes.list(appId)
     await this.installations.upsert(appId, { grants: nextGrants })
     try {
-      for (const deployment of deployments) {
-        await this.supervisor.stop(deployment.key)
-        await this.deployments.bumpGeneration(deployment.key)
+      for (const runtimeRecord of runtimes) {
+        await this.supervisor.stop(runtimeRecord.key)
+        await this.runtimes.bumpGeneration(runtimeRecord.key)
       }
       await this.reconcileApp(appId)
     } catch (error) {
       await this.installations.upsert(appId, { grants: installation.grants || [] })
-      for (const deployment of this.deployments.list(appId).filter((item) =>
-        item.targetType === this.target && item.targetId === this.deploymentTargetId)) {
-        await this.supervisor.stop(deployment.key).catch(() => {})
-        await this.deployments.bumpGeneration(deployment.key).catch(() => {})
+      for (const runtimeRecord of this.runtimes.list(appId)) {
+        await this.supervisor.stop(runtimeRecord.key).catch(() => {})
+        await this.runtimes.bumpGeneration(runtimeRecord.key).catch(() => {})
       }
       await this.reconcileApp(appId).catch(() => {})
       throw error
@@ -535,10 +516,7 @@ export class AppRuntimeHost {
   }
 
   async setAppEnabledNow(appId, enabled) {
-    const packageInfo = await this.getActivePackage(appId)
-    if (enabled && packageInfo.manifest.backend && !packageInfo.manifest.backend.targets.includes(this.target)) {
-      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${this.target}`)
-    }
+    await this.getActivePackage(appId)
     const previous = this.installations.get(appId)
     await this.installations.upsert(appId, { enabled: Boolean(enabled) })
     try {
@@ -555,7 +533,7 @@ export class AppRuntimeHost {
   async listInstances(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    const instances = !backend || !backend.targets.includes(this.target)
+    const instances = !backend
       ? []
       : this.instances.list(appId).filter((instance) =>
         backend.instanceMode !== 'single' || instance.id === defaultInstanceId(appId))
@@ -574,32 +552,27 @@ export class AppRuntimeHost {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
     if (!backend) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'UI-only Apps cannot create Backend instances')
-    if (!backend.targets.includes(this.target)) {
-      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${this.target}`)
-    }
     if (backend.instanceMode !== 'multiple') throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'This App uses its single default instance')
-    if (input.target && input.target !== this.target) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Instances can only be created on the current Host')
-    if (input.targetId && input.targetId !== this.deploymentTargetId) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Instance targetId does not match the current Host')
-    validateConfiguration(packageInfo.root, backend, input.config || {}, input.secrets || {})
+    const configuration = validateConfiguration(packageInfo.root, backend, input.config, input.secrets)
     const instance = await this.instances.create(appId, {
       id: input.id,
       displayName: input.displayName,
-      config: input.config || {},
+      config: configuration.config,
       secretRefs: {},
       enabled: Boolean(input.enabled),
     })
     try {
       const stored = await this.instances.update(instance.id, {
-        secretRefs: Object.fromEntries(Object.keys(input.secrets || {}).map((key) => [key, `vault://${appId}/${instance.id}/${key}`])),
+        secretRefs: Object.fromEntries(Object.keys(configuration.secrets).map((key) => [key, `vault://${appId}/${instance.id}/${key}`])),
       })
-      await this.credentials.set(appId, instance.id, input.secrets || {})
-      await this.ensureDeployment(packageInfo, stored)
+      await this.credentials.set(appId, instance.id, configuration.secrets)
+      await this.ensureRuntime(packageInfo, stored)
       await this.reconcileInstance(instance.id)
       this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId: instance.id })
       return this.instances.get(instance.id)
     } catch (error) {
-      for (const deployment of this.deployments.list(appId).filter((item) => item.instanceId === instance.id)) {
-        await this.removeDeploymentRecord(deployment).catch(() => {})
+      for (const runtimeRecord of this.runtimes.list(appId).filter((item) => item.instanceId === instance.id)) {
+        await this.removeRuntimeRecord(runtimeRecord).catch(() => {})
       }
       await this.credentials.remove(appId, instance.id).catch(() => {})
       await this.instances.remove(instance.id).catch(() => {})
@@ -617,30 +590,35 @@ export class AppRuntimeHost {
     const instance = this.requireInstance(appId, instanceId)
     const packageInfo = await this.getActivePackage(appId)
     const currentSecrets = await this.credentials.get(appId, instanceId)
-    const secrets = patch.secrets ? { ...currentSecrets, ...patch.secrets } : currentSecrets
-    const config = patch.config ?? instance.config
-    validateConfiguration(packageInfo.root, packageInfo.manifest.backend, config, secrets)
-    const deployments = this.deployments.list(appId).filter((item) =>
-      item.instanceId === instanceId && item.targetType === this.target && item.targetId === this.deploymentTargetId)
+    const pendingSecrets = patch.secrets ? { ...currentSecrets, ...patch.secrets } : currentSecrets
+    const pendingConfig = patch.config ?? instance.config
+    const configuration = validateConfiguration(
+      packageInfo.root,
+      packageInfo.manifest.backend,
+      pendingConfig,
+      pendingSecrets,
+    )
+    const { config, secrets } = configuration
+    const runtimes = this.runtimes.list(appId).filter((item) => item.instanceId === instanceId)
     try {
       const updated = await this.instances.update(instanceId, {
         ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
-        ...(patch.config !== undefined ? { config } : {}),
+        ...((patch.config !== undefined || JSON.stringify(config) !== JSON.stringify(instance.config)) ? { config } : {}),
         ...(patch.secrets !== undefined ? {
           secretRefs: Object.fromEntries(Object.keys(secrets).map((key) => [key, `vault://${appId}/${instanceId}/${key}`])),
         } : {}),
       })
       if (patch.secrets !== undefined) await this.credentials.set(appId, instanceId, secrets)
-      for (const deployment of deployments) {
-        const bumped = await this.deployments.bumpGeneration(deployment.key)
-        await this.supervisor.stop(deployment.key)
-        this.registerDeployment(packageInfo, updated, bumped, secrets)
+      for (const runtimeRecord of runtimes) {
+        const bumped = await this.runtimes.bumpGeneration(runtimeRecord.key)
+        await this.supervisor.stop(runtimeRecord.key)
+        this.registerRuntime(packageInfo, updated, bumped, secrets)
       }
       await this.reconcileInstance(instanceId)
       this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId })
       return this.instances.get(instanceId)
     } catch (error) {
-      for (const deployment of deployments) await this.supervisor.stop(deployment.key).catch(() => {})
+      for (const runtimeRecord of runtimes) await this.supervisor.stop(runtimeRecord.key).catch(() => {})
       let rollbackError = null
       try {
         await this.instances.update(instanceId, {
@@ -650,17 +628,17 @@ export class AppRuntimeHost {
           enabled: instance.enabled,
         })
         await this.credentials.set(appId, instanceId, currentSecrets)
-        for (const deployment of deployments) {
-          const current = this.deployments.get(deployment.key)
+        for (const runtimeRecord of runtimes) {
+          const current = this.runtimes.get(runtimeRecord.key)
           const restored = current
-            ? await this.deployments.bumpGeneration(deployment.key)
-            : await this.deployments.upsert({ ...deployment, generation: deployment.generation + 1 })
-          this.registerDeployment(packageInfo, instance, restored, currentSecrets)
+            ? await this.runtimes.bumpGeneration(runtimeRecord.key)
+            : await this.runtimes.upsert({ ...runtimeRecord, generation: runtimeRecord.generation + 1 })
+          this.registerRuntime(packageInfo, instance, restored, currentSecrets)
         }
         await this.reconcileInstance(instanceId)
       } catch (recoveryError) {
         rollbackError = recoveryError
-        for (const deployment of deployments) await this.supervisor.stop(deployment.key).catch(() => {})
+        for (const runtimeRecord of runtimes) await this.supervisor.stop(runtimeRecord.key).catch(() => {})
       }
       if (rollbackError) {
         throw new AppServiceError(
@@ -678,6 +656,15 @@ export class AppRuntimeHost {
 
   async setInstanceEnabledNow(appId, instanceId, enabled) {
     const previous = this.requireInstance(appId, instanceId)
+    if (enabled) {
+      const packageInfo = await this.getActivePackage(appId)
+      validateConfiguration(
+        packageInfo.root,
+        packageInfo.manifest.backend,
+        previous.config || {},
+        await this.credentials.get(appId, instanceId),
+      )
+    }
     await this.instances.update(instanceId, { enabled: Boolean(enabled) })
     try {
       await this.reconcileInstance(instanceId)
@@ -700,11 +687,11 @@ export class AppRuntimeHost {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'The default single instance cannot be deleted')
     }
     this.requireInstance(appId, instanceId)
-    const deployments = this.deployments.list(appId).filter((item) => item.instanceId === instanceId)
-    for (const deployment of deployments) {
-      await this.supervisor.stop(deployment.key)
-      this.supervisor.unregister(deployment.key)
-      await this.deployments.remove(deployment.key)
+    const runtimes = this.runtimes.list(appId).filter((item) => item.instanceId === instanceId)
+    for (const runtimeRecord of runtimes) {
+      await this.supervisor.stop(runtimeRecord.key)
+      this.supervisor.unregister(runtimeRecord.key)
+      await this.runtimes.remove(runtimeRecord.key)
     }
     await this.instances.remove(instanceId)
     if (options.deleteCredentials) await this.credentials.remove(appId, instanceId)
@@ -724,9 +711,9 @@ export class AppRuntimeHost {
     if (instance.enabled) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Disable the App instance before clearing its credentials')
     await this.credentials.remove(appId, instanceId)
     await this.instances.update(instanceId, { secretRefs: {} })
-    for (const deployment of this.deployments.list(appId).filter((item) => item.instanceId === instanceId)) {
-      await this.supervisor.stop(deployment.key)
-      await this.deployments.bumpGeneration(deployment.key)
+    for (const runtimeRecord of this.runtimes.list(appId).filter((item) => item.instanceId === instanceId)) {
+      await this.supervisor.stop(runtimeRecord.key)
+      await this.runtimes.bumpGeneration(runtimeRecord.key)
     }
     this.publishRuntimeEvent({ type: 'instance-changed', appId, instanceId })
     return this.instances.get(instanceId)
@@ -740,8 +727,8 @@ export class AppRuntimeHost {
 
   async getInstanceStatus(appId, instanceId) {
     this.requireInstance(appId, instanceId)
-    const deployments = this.deployments.list(appId).filter((item) => item.instanceId === instanceId)
-    return deployments.map((deployment) => ({ deployment, runtime: this.supervisor.status(deployment.key) }))
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    return runtimeRecord ? this.supervisor.status(runtimeRecord.key) : null
   }
 
   async restartInstance(appId, instanceId) {
@@ -753,20 +740,19 @@ export class AppRuntimeHost {
     const installation = this.installations.get(appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
-    const deployment = this.localDeployment(appId, instanceId)
-    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'No deployment exists on this Host')
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
     const packageInfo = await this.getActivePackage(appId)
     const secrets = await this.credentials.get(appId, instanceId)
     validateConfiguration(packageInfo.root, packageInfo.manifest.backend, instance.config || {}, secrets)
-    const bumped = await this.deployments.bumpGeneration(deployment.key)
-    await this.supervisor.stop(deployment.key)
-    this.registerDeployment(packageInfo, instance, bumped, secrets)
-    return this.supervisor.start(deployment.key, { clearCrashLoop: true })
+    const bumped = await this.runtimes.bumpGeneration(runtimeRecord.key)
+    await this.supervisor.stop(runtimeRecord.key)
+    this.registerRuntime(packageInfo, instance, bumped, secrets)
+    return this.supervisor.start(runtimeRecord.key, { clearCrashLoop: true })
   }
 
-  localDeployment(appId, instanceId) {
-    return this.deployments.list(appId).find((item) =>
-      item.instanceId === instanceId && item.targetType === this.target && item.targetId === this.deploymentTargetId)
+  runtimeForInstance(appId, instanceId) {
+    return this.runtimes.list(appId).find((item) => item.instanceId === instanceId)
   }
 
   async invoke(appId, instanceId, actionName, input, options = {}) {
@@ -774,10 +760,17 @@ export class AppRuntimeHost {
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     const instance = this.requireInstance(appId, instanceId)
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
-    const deployment = this.localDeployment(appId, instanceId)
-    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance is not deployed on this Host')
-    await this.prepareDeployment(deployment)
-    return this.actions.invoke(deployment, actionName, input, {
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
+    const packageInfo = await this.getActivePackage(appId)
+    validateConfiguration(
+      packageInfo.root,
+      packageInfo.manifest.backend,
+      instance.config || {},
+      await this.credentials.get(appId, instanceId),
+    )
+    await this.prepareRuntime(runtimeRecord)
+    return this.actions.invoke(runtimeRecord, actionName, input, {
       ...options,
       principal: normalizeAppOwner(options.principal || this.currentOwner()),
     })
@@ -799,9 +792,9 @@ export class AppRuntimeHost {
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     const instance = this.requireInstance(appId, instanceId)
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
-    const deployment = this.localDeployment(appId, instanceId)
-    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance is not deployed on this Host')
-    this.authorizeInvocation(deployment)
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance runtime is unavailable')
+    this.authorizeInvocation(runtimeRecord)
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
     if (!backend) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App has no Backend')
@@ -809,8 +802,7 @@ export class AppRuntimeHost {
       appId,
       instanceId,
       version: packageInfo.manifest.version,
-      generation: deployment.generation,
-      target: { type: deployment.targetType, id: deployment.targetId },
+      generation: runtimeRecord.generation,
       dataDir: this.appDataPath(this.dataDir, appId, 'instances', instanceId),
       runtimeDir: this.appDataPath(this.runtimeDir, appId, instanceId),
       owner: this.currentOwner(),
@@ -819,7 +811,7 @@ export class AppRuntimeHost {
       protocol,
       method,
       input,
-      protocols: resolveBackendProtocols(backend, deployment.targetType),
+      protocols: resolveBackendProtocols(backend),
       permissions: packageInfo.manifest.permissions || [],
       grants: installation.grants || [],
       signal: options.signal,
@@ -832,48 +824,47 @@ export class AppRuntimeHost {
   }
 
   async dispatchHostRequestNow(request) {
-    let deployment = this.deployments.get(request.key)
-    if (!deployment) {
-      throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App deployment is unavailable')
+    let runtimeRecord = this.runtimes.get(request.key)
+    if (!runtimeRecord) {
+      throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App runtime is unavailable')
     }
-    if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
-      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the deployment scope')
+    if (runtimeRecord.appId !== request.appId || runtimeRecord.instanceId !== request.instanceId) {
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the App instance scope')
     }
-    if (deployment.generation !== request.generation) {
-      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App deployment generation is stale')
+    if (runtimeRecord.generation !== request.generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
     }
-    this.authorizeInvocation(deployment)
+    this.authorizeInvocation(runtimeRecord)
     const packageInfo = await this.getActivePackage(request.appId)
     if (packageInfo.manifest.version !== request.version) {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App version is stale')
     }
-    deployment = this.deployments.get(request.key)
-    if (!deployment || deployment.generation !== request.generation) {
-      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App deployment generation is stale')
+    runtimeRecord = this.runtimes.get(request.key)
+    if (!runtimeRecord || runtimeRecord.generation !== request.generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
     }
-    if (deployment.appId !== request.appId || deployment.instanceId !== request.instanceId) {
-      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the deployment scope')
+    if (runtimeRecord.appId !== request.appId || runtimeRecord.instanceId !== request.instanceId) {
+      throw new AppServiceError(APP_ERROR_CODES.unauthorized, 'Host request is outside the App instance scope')
     }
     if (this.installations.get(request.appId)?.activeVersion !== request.version) {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App version is stale')
     }
-    this.authorizeInvocation(deployment)
+    this.authorizeInvocation(runtimeRecord)
     const backend = packageInfo.manifest.backend
     if (typeof this.hostCapabilities?.dispatch !== 'function') {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker is not configured')
     }
     return this.hostCapabilities.dispatch({
       ...request,
-      appId: deployment.appId,
-      instanceId: deployment.instanceId,
+      appId: runtimeRecord.appId,
+      instanceId: runtimeRecord.instanceId,
       version: packageInfo.manifest.version,
-      generation: deployment.generation,
-      target: { type: deployment.targetType, id: deployment.targetId },
-      dataDir: this.appDataPath(this.dataDir, deployment.appId, 'instances', deployment.instanceId),
-      runtimeDir: this.appDataPath(this.runtimeDir, deployment.appId, deployment.instanceId),
+      generation: runtimeRecord.generation,
+      dataDir: this.appDataPath(this.dataDir, runtimeRecord.appId, 'instances', runtimeRecord.instanceId),
+      runtimeDir: this.appDataPath(this.runtimeDir, runtimeRecord.appId, runtimeRecord.instanceId),
       owner: this.currentOwner(),
       principal: request.principal || this.currentOwner(),
-      protocols: resolveBackendProtocols(backend, deployment.targetType),
+      protocols: resolveBackendProtocols(backend),
       permissions: packageInfo.manifest.permissions || [],
       grants: this.installations.get(request.appId)?.grants ?? [],
     })
@@ -884,8 +875,8 @@ export class AppRuntimeHost {
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     const instance = this.requireInstance(appId, instanceId)
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
-    const deployment = this.localDeployment(appId, instanceId)
-    if (!deployment) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance is not deployed on this Host')
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance runtime is unavailable')
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
     const prepared = await this.hostCapabilities.prepareEvent({
@@ -894,13 +885,13 @@ export class AppRuntimeHost {
       protocol,
       name,
       data,
-      protocols: resolveBackendProtocols(backend, deployment.targetType),
+      protocols: resolveBackendProtocols(backend),
       permissions: packageInfo.manifest.permissions || [],
       grants: installation.grants ?? [],
     })
-    await this.prepareDeployment(deployment)
+    await this.prepareRuntime(runtimeRecord)
     return this.supervisor.publishHostEvent(
-      deployment.key,
+      runtimeRecord.key,
       prepared.protocol,
       prepared.name,
       prepared.data,
@@ -910,14 +901,14 @@ export class AppRuntimeHost {
 
   cancelHostEvent(appId, instanceId, protocol, eventId) {
     this.requireInstance(appId, instanceId)
-    const deployment = this.localDeployment(appId, instanceId)
-    return deployment ? this.supervisor.cancelHostEvent(deployment.key, protocol, eventId) : false
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    return runtimeRecord ? this.supervisor.cancelHostEvent(runtimeRecord.key, protocol, eventId) : false
   }
 
   cancel(appId, instanceId, requestId) {
     this.requireInstance(appId, instanceId)
-    const deployment = this.localDeployment(appId, instanceId)
-    return deployment ? this.actions.cancel(deployment.key, requestId) : false
+    const runtimeRecord = this.runtimeForInstance(appId, instanceId)
+    return runtimeRecord ? this.actions.cancel(runtimeRecord.key, requestId) : false
   }
 
   async getLogs(appId, instanceId, options) {
@@ -925,37 +916,32 @@ export class AppRuntimeHost {
     return this.logs.list(appId, instanceId, { ...options, owner: this.currentOwner() })
   }
 
-  async prepareDeployment(deployment) {
-    const packageInfo = await this.getActivePackage(deployment.appId)
-    const instance = this.instances.get(deployment.instanceId)
+  async prepareRuntime(runtimeRecord) {
+    const packageInfo = await this.getActivePackage(runtimeRecord.appId)
+    const instance = this.instances.get(runtimeRecord.instanceId)
     if (!instance) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance does not exist')
-    if (this.target === 'server') {
-      const leased = await this.deployments.acquireLease(deployment.key, this.hostId, this.leaseTtlMs)
-      if (!leased) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'Another Server owns this App deployment lease')
-      deployment = leased
-    }
-    this.registerDeployment(packageInfo, instance, deployment, await this.credentials.get(deployment.appId, deployment.instanceId))
+    this.registerRuntime(packageInfo, instance, runtimeRecord, await this.credentials.get(runtimeRecord.appId, runtimeRecord.instanceId))
   }
 
-  registerDeployment(packageInfo, instance, deployment, secrets) {
+  registerRuntime(packageInfo, instance, runtimeRecord, secrets) {
     const backend = packageInfo.manifest.backend
+    const configuration = validateConfiguration(packageInfo.root, backend, instance.config, secrets)
     this.supervisor.register({
-      key: deployment.key,
+      key: runtimeRecord.key,
       appId: packageInfo.manifest.id,
       version: packageInfo.manifest.version,
       instanceId: instance.id,
-      generation: deployment.generation,
+      generation: runtimeRecord.generation,
       entry: backend.entry,
       lifecycle: backend.lifecycle,
-      protocols: resolveBackendProtocols(backend, deployment.targetType),
+      protocols: resolveBackendProtocols(backend),
       permissions: packageInfo.manifest.permissions || [],
       grants: this.installations.get(packageInfo.manifest.id)?.grants ?? [],
       packageRoot: packageInfo.root,
-      config: instance.config || {},
-      secrets: secrets || {},
+      config: configuration.config,
+      secrets: configuration.secrets,
       dataDir: this.appDataPath(this.dataDir, packageInfo.manifest.id, 'instances', instance.id),
       runtimeDir: this.appDataPath(this.runtimeDir, packageInfo.manifest.id, instance.id),
-      target: { type: deployment.targetType, id: deployment.targetId },
       owner: this.currentOwner(),
     })
   }
@@ -963,24 +949,24 @@ export class AppRuntimeHost {
   async reconcileApp(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend || !backend.targets.includes(this.target)) {
-      for (const deployment of this.deployments.list(appId)) await this.removeDeploymentRecord(deployment)
+    if (!backend) {
+      for (const runtimeRecord of this.runtimes.list(appId)) await this.removeRuntimeRecord(runtimeRecord)
       return
     }
     const defaultInstance = await this.ensureDefaultInstance(appId)
     if (backend.instanceMode === 'single') {
-      for (const deployment of this.deployments.list(appId)) {
-        if (deployment.instanceId !== defaultInstance.id) await this.removeDeploymentRecord(deployment)
+      for (const runtimeRecord of this.runtimes.list(appId)) {
+        if (runtimeRecord.instanceId !== defaultInstance.id) await this.removeRuntimeRecord(runtimeRecord)
       }
     }
     const instances = backend.instanceMode === 'single' ? [defaultInstance] : this.instances.list(appId)
     for (const instance of instances) await this.reconcileInstance(instance.id)
   }
 
-  async removeDeploymentRecord(deployment) {
-    await this.supervisor.stop(deployment.key)
-    this.supervisor.unregister(deployment.key)
-    await this.deployments.remove(deployment.key)
+  async removeRuntimeRecord(runtimeRecord) {
+    await this.supervisor.stop(runtimeRecord.key)
+    this.supervisor.unregister(runtimeRecord.key)
+    await this.runtimes.remove(runtimeRecord.key)
   }
 
   async reconcileInstance(instanceId) {
@@ -990,37 +976,35 @@ export class AppRuntimeHost {
     const packageInfo = await this.getActivePackage(instance.appId)
     const backend = packageInfo.manifest.backend
     if (!backend) return
-    let placements = this.deployments.list(instance.appId).filter((item) => item.instanceId === instanceId)
+    const runtimeRecords = this.runtimes.list(instance.appId).filter((item) => item.instanceId === instanceId)
     if (backend.instanceMode === 'single' && instance.id !== defaultInstanceId(instance.appId)) {
-      for (const deployment of placements) await this.removeDeploymentRecord(deployment)
+      for (const runtimeRecord of runtimeRecords) await this.removeRuntimeRecord(runtimeRecord)
       return
     }
-    for (const deployment of placements.filter((item) => !backend.targets.includes(item.targetType))) {
-      await this.removeDeploymentRecord(deployment)
-    }
-    placements = this.deployments.list(instance.appId).filter((item) => item.instanceId === instanceId)
-    const shouldRun = Boolean(installation.enabled && instance.enabled && backend.lifecycle === 'persistent')
+    let configurationReady = true
     if (installation.enabled && instance.enabled) {
-      validateConfiguration(packageInfo.root, backend, instance.config || {}, await this.credentials.get(instance.appId, instance.id))
-    }
-    let deployment = placements.find((item) => item.targetType === this.target && item.targetId === this.deploymentTargetId)
-    if (!deployment && placements.length) {
-      for (const remote of placements) {
-        await this.deployments.upsert({ ...remote, desiredState: shouldRun ? 'running' : 'stopped' })
+      try {
+        validateConfiguration(packageInfo.root, backend, instance.config || {}, await this.credentials.get(instance.appId, instance.id))
+      } catch (error) {
+        if (error?.code !== APP_ERROR_CODES.invalidInput) throw error
+        configurationReady = false
       }
+    }
+    const shouldRun = Boolean(
+      installation.enabled && instance.enabled && configurationReady && backend.lifecycle === 'persistent',
+    )
+    let runtimeRecord = runtimeRecords[0]
+    if (!runtimeRecord) {
+      runtimeRecord = await this.ensureRuntime(packageInfo, instance)
+    }
+    if (!runtimeRecord) return
+    await this.runtimes.upsert({ ...runtimeRecord, desiredState: shouldRun ? 'running' : 'stopped' })
+    if (!installation.enabled || !instance.enabled || !configurationReady) {
+      await this.supervisor.stop(runtimeRecord.key)
       return
     }
-    if (!deployment && backend.targets.includes(this.target)) {
-      deployment = await this.ensureDeployment(packageInfo, instance)
-    }
-    if (!deployment) return
-    await this.deployments.upsert({ ...deployment, desiredState: shouldRun ? 'running' : 'stopped' })
-    if (!installation.enabled || !instance.enabled) {
-      await this.supervisor.stop(deployment.key)
-      return
-    }
-    await this.prepareDeployment(deployment)
-    if (shouldRun) await this.supervisor.start(deployment.key)
+    await this.prepareRuntime(runtimeRecord)
+    if (shouldRun) await this.supervisor.start(runtimeRecord.key)
   }
 
   async restore() {
@@ -1029,31 +1013,6 @@ export class AppRuntimeHost {
         this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
       }
     }
-  }
-
-  async renewLeases() {
-    for (const deployment of this.deployments.list().filter((item) => item.targetType === 'server' && item.targetId === this.deploymentTargetId)) {
-      const status = this.supervisor.status(deployment.key)
-      if (status.state === 'running' || deployment.desiredState === 'running') {
-        const lease = await this.deployments.acquireLease(deployment.key, this.hostId, this.leaseTtlMs)
-        if (!lease) {
-          await this.supervisor.stop(deployment.key)
-        } else if (deployment.desiredState === 'running' && this.supervisor.status(deployment.key).state === 'stopped') {
-          const packageInfo = await this.getActivePackage(deployment.appId)
-          const instance = this.instances.get(deployment.instanceId)
-          if (instance) {
-            this.registerDeployment(packageInfo, instance, lease, await this.credentials.get(deployment.appId, deployment.instanceId))
-            await this.supervisor.start(deployment.key)
-          }
-        }
-      }
-    }
-  }
-
-  async renewAllLeases() {
-    const owners = this.installations.listOwners()
-    if (!owners.length) owners.push(this.defaultOwner)
-    for (const owner of owners) await this.withOwner(owner, () => this.renewLeases())
   }
 
   async activateVersion(appId, version, options = {}) {
@@ -1068,37 +1027,37 @@ export class AppRuntimeHost {
         ? this.getApp(appId)
         : this.setAppGrantsNow(appId, options.grants)
     }
-    const targetPackage = await this.packages.get(appId, version)
-    this.packageCache.set(`${appId}@${version}`, targetPackage)
+    const nextPackage = await this.packages.get(appId, version)
+    this.packageCache.set(`${appId}@${version}`, nextPackage)
     const previousVersion = installation.activeVersion
     const previousGrants = installation.grants || []
-    const nextGrants = installationGrantsForPackage(installation, targetPackage.manifest, options.grants)
-    const activeDeployments = this.deployments.list(appId)
+    const nextGrants = installationGrantsForPackage(installation, nextPackage.manifest, options.grants)
+    const activeRuntimes = this.runtimes.list(appId)
     const activeInstanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
-    await Promise.allSettled(activeDeployments.map((item) => this.supervisor.stop(item.key)))
+    await Promise.allSettled(activeRuntimes.map((item) => this.supervisor.stop(item.key)))
     try {
       await this.installations.upsert(appId, { activeVersion: version, grants: nextGrants })
-      for (const deployment of activeDeployments) await this.deployments.bumpGeneration(deployment.key)
+      for (const runtimeRecord of activeRuntimes) await this.runtimes.bumpGeneration(runtimeRecord.key)
       await this.reconcileApp(appId)
       const app = await this.getApp(appId)
       this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return app
     } catch (error) {
-      const snapshotKeys = new Set(activeDeployments.map((item) => item.key))
-      for (const deployment of this.deployments.list(appId)) {
-        await this.supervisor.stop(deployment.key)
-        if (!snapshotKeys.has(deployment.key)) {
-          this.supervisor.unregister(deployment.key)
-          await this.deployments.remove(deployment.key)
+      const snapshotKeys = new Set(activeRuntimes.map((item) => item.key))
+      for (const runtimeRecord of this.runtimes.list(appId)) {
+        await this.supervisor.stop(runtimeRecord.key)
+        if (!snapshotKeys.has(runtimeRecord.key)) {
+          this.supervisor.unregister(runtimeRecord.key)
+          await this.runtimes.remove(runtimeRecord.key)
         }
       }
       await this.installations.upsert(appId, { activeVersion: previousVersion, grants: previousGrants })
       for (const instance of this.instances.list(appId)) {
         if (!activeInstanceIds.has(instance.id)) await this.instances.remove(instance.id).catch(() => {})
       }
-      for (const snapshot of activeDeployments) {
-        const current = this.deployments.get(snapshot.key)
-        await this.deployments.upsert({
+      for (const snapshot of activeRuntimes) {
+        const current = this.runtimes.get(snapshot.key)
+        await this.runtimes.upsert({
           ...snapshot,
           generation: Math.max(snapshot.generation, current?.generation || 0) + 1,
           leaseOwner: current?.leaseOwner ?? snapshot.leaseOwner,
@@ -1108,7 +1067,7 @@ export class AppRuntimeHost {
       try {
         await this.reconcileApp(appId)
       } catch (rollbackError) {
-        await Promise.allSettled(this.deployments.list(appId).map((item) => this.supervisor.stop(item.key)))
+        await Promise.allSettled(this.runtimes.list(appId).map((item) => this.supervisor.stop(item.key)))
         throw new AppServiceError(
           APP_ERROR_CODES.backendUnavailable,
           `Version activation failed; rollback to ${previousVersion} also failed: ${rollbackError.message}`,
@@ -1116,41 +1075,6 @@ export class AppRuntimeHost {
       }
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Version activation failed and was rolled back: ${error.message}`)
     }
-  }
-
-  async moveDeployment(appId, instanceId, targetType, targetId, options = {}) {
-    return this.transitionApp(appId, () => this.moveDeploymentNow(appId, instanceId, targetType, targetId, options))
-  }
-
-  async moveDeploymentNow(appId, instanceId, targetType, targetId, options = {}) {
-    const instance = this.requireInstance(appId, instanceId)
-    const packageInfo = await this.getActivePackage(appId)
-    if (!packageInfo.manifest.backend?.targets.includes(targetType)) {
-      throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App Backend does not support target: ${targetType}`)
-    }
-    const current = this.deployments.list(appId).find((item) => item.instanceId === instanceId)
-    if (current) {
-      const currentIsLocal = current.targetType === this.target && current.targetId === this.deploymentTargetId
-      if (!currentIsLocal && !options.sourceStopped && !options.force) {
-        throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'The source deployment must confirm it has stopped')
-      }
-      if (currentIsLocal) await this.supervisor.stop(current.key)
-      this.supervisor.unregister(current.key)
-      await this.deployments.remove(current.key)
-    }
-    const deployment = await this.deployments.upsert({
-      appId,
-      instanceId,
-      targetType,
-      targetId,
-      desiredState: this.installations.get(appId)?.enabled && instance.enabled && packageInfo.manifest.backend.lifecycle === 'persistent'
-        ? 'running'
-        : 'stopped',
-      generation: (current?.generation || 0) + 1,
-    })
-    if (targetType === this.target && targetId === this.deploymentTargetId) await this.reconcileInstance(instanceId)
-    this.publishRuntimeEvent({ type: 'deployment-moved', appId, instanceId, deployment })
-    return deployment
   }
 
   async uninstall(appId, options = {}) {
@@ -1161,10 +1085,10 @@ export class AppRuntimeHost {
     const installation = this.installations.get(appId)
     if (!installation) return false
     await this.installations.upsert(appId, { enabled: false })
-    const deployments = this.deployments.list(appId)
-    await Promise.allSettled(deployments.map((item) => this.supervisor.stop(item.key)))
-    for (const deployment of deployments) this.supervisor.unregister(deployment.key)
-    await this.deployments.removeForApp(appId)
+    const runtimes = this.runtimes.list(appId)
+    await Promise.allSettled(runtimes.map((item) => this.supervisor.stop(item.key)))
+    for (const runtimeRecord of runtimes) this.supervisor.unregister(runtimeRecord.key)
+    await this.runtimes.removeForApp(appId)
     if (options.deleteData) await this.instances.removeForApp(appId)
     await this.installations.remove(appId)
     if (!this.installations.listAll().some((item) => item.appId === appId)) {
@@ -1189,16 +1113,6 @@ export class AppRuntimeHost {
   }
 
   async shutdown() {
-    if (this.leaseTimer) clearInterval(this.leaseTimer)
     await this.supervisor.shutdown()
-    if (this.target === 'server') {
-      const owners = this.installations.listOwners()
-      if (!owners.length) owners.push(this.defaultOwner)
-      for (const owner of owners) {
-        await this.withOwner(owner, () => Promise.allSettled(
-          this.deployments.list().map((item) => this.deployments.releaseLease(item.key, this.hostId)),
-        ))
-      }
-    }
   }
 }

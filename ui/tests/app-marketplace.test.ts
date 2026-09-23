@@ -250,7 +250,7 @@ describe('App marketplace', () => {
     const runtime = {
       getInstallation: () => ({
         activeVersion: '1.1.0',
-        grants: ['agent:turns:write', 'desktop:files'],
+        grants: ['agent:turns:write', 'platform:files'],
       }),
       registerInstalled: async (_appId: string, installedVersion: string, options: { grants: string[] }) => {
         calls.push({ version: installedVersion, grants: options.grants })

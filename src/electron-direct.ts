@@ -493,7 +493,7 @@ export interface ClaudeSessionOptions {
   agentMailEnabled?: boolean
   /** Expose Moss Library as first-party in-process tools. */
   libraryEnabled?: boolean
-  /** Tools contributed by enabled Desktop Apps. */
+  /** Tools contributed by enabled Apps. */
   appTools?: AppToolContributionDescriptor[]
   /** Restrict Bash to commands accepted by the core read-only validator. */
   readOnlyBashOnly?: boolean

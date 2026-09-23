@@ -10,7 +10,7 @@ import {
 } from '../../packages/app-runtime/src/index.mjs'
 
 describe('OpenIM management Host protocol', () => {
-  it('accepts only the bounded management operations needed by the Desktop App', () => {
+  it('accepts only the bounded management operations needed by the App', () => {
     expect(validateOpenIMHostInput('session.issue', { platformId: 4 })).toEqual({ platformId: 4 })
     expect(validateOpenIMHostInput('conversation.direct.prepare', { userId: 'user-2' }))
       .toEqual({ userId: 'user-2' })

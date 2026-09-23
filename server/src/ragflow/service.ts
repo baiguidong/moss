@@ -7,7 +7,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { ServerAppCredentialAdapter } from '../apps/serverAppCredentialAdapter.js'
+import { ServerCredentialStore } from '../security/credentialStore.js'
 import { AuthServiceError } from '../auth/service.js'
 import { hasScope, type AuthContext } from '../auth/token.js'
 import type { ServerConfig } from '../types.js'
@@ -250,11 +250,11 @@ class RagflowAdminClient {
 }
 
 export class RagflowIntegrationService {
-  private readonly credentials: ServerAppCredentialAdapter
+  private readonly credentials: ServerCredentialStore
   private readonly pending = new Map<string, Promise<ProvisionedAccount>>()
 
   constructor(private readonly input: { db: DatabaseSync; rootDir: string; config: ServerConfig['ragflow'] }) {
-    this.credentials = new ServerAppCredentialAdapter(input.rootDir)
+    this.credentials = new ServerCredentialStore(input.rootDir)
     this.initTables()
   }
 

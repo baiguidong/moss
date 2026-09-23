@@ -4,7 +4,7 @@
   "type": "object",
   "required": [
     "schemaVersion",
-    "targetSkill",
+    "sourceSkill",
     "app",
     "product",
     "sourceReview",
@@ -16,7 +16,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "targetSkill": {
+    "sourceSkill": {
       "type": "object",
       "required": ["name", "source", "fingerprint"],
       "properties": {
@@ -70,11 +70,11 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["source", "strategy", "generatedTargets"],
+        "required": ["source", "strategy", "generatedFiles"],
         "properties": {
           "source": { "type": "string", "minLength": 1 },
           "strategy": { "enum": ["reuse", "bundle", "adapter", "reimplement"] },
-          "generatedTargets": {
+          "generatedFiles": {
             "type": "array",
             "items": { "type": "string", "minLength": 1 },
             "minItems": 1,

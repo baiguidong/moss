@@ -21,8 +21,6 @@ async function createRuntime(fixture: string, processOptions = {}, mutate?: (sou
   const runtime = await new AppRuntimeHost({
     rootDir: root,
     nodeExecutable,
-    target: 'desktop',
-    hostId: 'desktop-test',
     processOptions: { handshakeTimeoutMs: 2000, shutdownTimeoutMs: 200, killTimeoutMs: 100, ...processOptions },
   }).initialize()
   await runtime.installFromDirectory(source)
@@ -101,30 +99,12 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const app = await runtime.getApp('fixture.ui-only')
     expect(app?.instances).toHaveLength(0)
     expect(runtime.supervisor.listStatuses()).toHaveLength(0)
-    expect((await runtime.listContributions({ kinds: ['views'] })).views).toHaveLength(0)
-    await runtime.setAppEnabled('fixture.ui-only', true)
     expect((await runtime.listContributions({ kinds: ['views'] })).views).toMatchObject([
       { id: 'fixture.ui-only/home', route: '#/home' },
     ])
     expect(runtime.supervisor.listStatuses()).toHaveLength(0)
     await runtime.setAppEnabled('fixture.ui-only', false)
     expect((await runtime.listContributions({ kinds: ['views'] })).views).toHaveLength(0)
-    await runtime.shutdown()
-  })
-
-  it('does not expose Backend instances on a Host excluded by the manifest targets', async () => {
-    const runtime = await createRuntime('persistent-single', {}, async (source) => {
-      const manifestPath = path.join(source, 'app.moss.json')
-      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
-      delete manifest.ui
-      manifest.backend.targets = ['server']
-      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-    })
-    const appId = 'fixture.persistent-single'
-    expect((await runtime.getApp(appId))?.instances).toEqual([])
-    expect(runtime.instances.list(appId)).toEqual([])
-    expect(runtime.deployments.list(appId)).toEqual([])
-    await expect(runtime.setAppEnabled(appId, true)).rejects.toThrow('does not support target: desktop')
     await runtime.shutdown()
   })
 
@@ -142,7 +122,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     expect(second.instanceId).toBe(instanceId)
     expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
     await new Promise((resolve) => setTimeout(resolve, 180))
-    expect(runtime.supervisor.status(runtime.deployments.list(appId)[0].key).state).toBe('stopped')
+    expect(runtime.supervisor.status(runtime.runtimes.list(appId)[0].key).state).toBe('stopped')
     await runtime.shutdown()
   })
 
@@ -172,7 +152,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.setAppEnabled(appId, true)
     await expect(runtime.createInstance(appId, { id: instanceId, displayName: 'Failed', enabled: true })).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
     expect(runtime.instances.get(instanceId)).toBeNull()
-    expect(runtime.deployments.list(appId)).toEqual([])
+    expect(runtime.runtimes.list(appId)).toEqual([])
     expect(runtime.supervisor.listStatuses()).toEqual([])
     await expect(fs.stat(path.join(runtime.dataDir, appId, 'instances', instanceId))).rejects.toMatchObject({ code: 'ENOENT' })
     await runtime.shutdown()
@@ -184,7 +164,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const instanceId = defaultInstanceId(appId)
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true)
-    const key = runtime.deployments.list(appId)[0].key
+    const key = runtime.runtimes.list(appId)[0].key
     const previousPid = runtime.supervisor.status(key).pid
 
     await installVersion(runtime, '2.0.0', () => {})
@@ -229,18 +209,20 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const runtime = await createRuntime('persistent-single')
     const appId = 'fixture.persistent-single'
     const instanceId = defaultInstanceId(appId)
+    await runtime.setAppEnabled(appId, false)
     await expect(runtime.restartInstance(appId, instanceId)).rejects.toMatchObject({ code: 'APP_DISABLED' })
     await runtime.setAppEnabled(appId, true)
+    await runtime.setInstanceEnabled(appId, instanceId, false)
     await expect(runtime.restartInstance(appId, instanceId)).rejects.toMatchObject({ code: 'APP_INSTANCE_DISABLED' })
     await runtime.setInstanceEnabled(appId, instanceId, true)
-    const key = runtime.deployments.list(appId)[0].key
+    const key = runtime.runtimes.list(appId)[0].key
     const previousPid = runtime.supervisor.status(key).pid
     await runtime.restartInstance(appId, instanceId)
     expect(runtime.supervisor.status(key).pid).not.toBe(previousPid)
     await runtime.shutdown()
   })
 
-  it('reconciles deployments and visible instances when a version changes runtime shape', async () => {
+  it('reconciles runtimes and visible instances when a version changes runtime shape', async () => {
     const runtime = await createRuntime('persistent-multiple')
     const appId = 'fixture.persistent-multiple'
     await runtime.setAppEnabled(appId, true)
@@ -254,10 +236,10 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.activateVersion(appId, '2.0.0')
     const singleApp = await runtime.getApp(appId)
     expect(singleApp?.instances.map((instance: any) => instance.id)).toEqual([defaultInstanceId(appId)])
-    expect(runtime.deployments.list(appId).map((deployment) => deployment.instanceId)).toEqual([defaultInstanceId(appId)])
+    expect(runtime.runtimes.list(appId).map((runtimeRecord) => runtimeRecord.instanceId)).toEqual([defaultInstanceId(appId)])
     expect(runtime.instances.get(first.id)).not.toBeNull()
     expect(runtime.instances.get(second.id)).not.toBeNull()
-    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(0)
+    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
 
     await installVersion(runtime, '3.0.0', async (manifest, source) => {
       delete manifest.backend
@@ -267,24 +249,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     })
     await runtime.activateVersion(appId, '3.0.0')
     expect((await runtime.getApp(appId))?.instances).toEqual([])
-    expect(runtime.deployments.list(appId)).toEqual([])
-    expect(runtime.supervisor.listStatuses()).toEqual([])
-    await runtime.shutdown()
-  })
-
-  it('removes a local deployment when the new version no longer targets this Host', async () => {
-    const runtime = await createRuntime('persistent-single')
-    const appId = 'fixture.persistent-single'
-    const instanceId = defaultInstanceId(appId)
-    await runtime.setInstanceEnabled(appId, instanceId, true)
-    await runtime.setAppEnabled(appId, true)
-    await installVersion(runtime, '2.0.0', (manifest) => {
-      delete manifest.ui
-      manifest.backend.targets = ['server']
-    })
-    await runtime.activateVersion(appId, '2.0.0')
-    expect((await runtime.getApp(appId))?.instances).toEqual([])
-    expect(runtime.deployments.list(appId)).toEqual([])
+    expect(runtime.runtimes.list(appId)).toEqual([])
     expect(runtime.supervisor.listStatuses()).toEqual([])
     await runtime.shutdown()
   })
@@ -300,24 +265,6 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await Promise.all([runtime.activateVersion(appId, '2.0.0'), runtime.activateVersion(appId, '3.0.0')])
     expect(runtime.installations.get(appId)?.activeVersion).toBe('3.0.0')
     expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(1)
-    await runtime.shutdown()
-  })
-
-  it('stops a local process before moving and requires confirmation for a remote source', async () => {
-    const runtime = await createRuntime('persistent-multiple')
-    const appId = 'fixture.persistent-multiple'
-    await runtime.setAppEnabled(appId, true)
-    const instance = await runtime.createInstance(appId, { displayName: 'Movable', enabled: true })
-    const local = runtime.deployments.list(appId)[0]
-    expect(runtime.supervisor.status(local.key).state).toBe('running')
-
-    const remote = await runtime.moveDeployment(appId, instance.id, 'server', 'server-default')
-    expect(remote.targetType).toBe('server')
-    expect(runtime.supervisor.status(local.key).state).toBe('stopped')
-    await expect(runtime.moveDeployment(appId, instance.id, 'desktop', 'desktop-test')).rejects.toThrow(/confirm it has stopped/)
-
-    const movedBack = await runtime.moveDeployment(appId, instance.id, 'desktop', 'desktop-test', { sourceStopped: true })
-    expect(runtime.supervisor.status(movedBack.key).state).toBe('running')
     await runtime.shutdown()
   })
 
@@ -428,21 +375,13 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
   })
 
   it('rejects a Backend that sends ready before hello and init', async () => {
-    const runtime = await createRuntime('persistent-single', { handshakeTimeoutMs: 300 }, async (source) => {
+    await expect(createRuntime('persistent-single', { handshakeTimeoutMs: 300 }, async (source) => {
       await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), `
 const payload = { generation: Number(process.env.MOSS_APP_GENERATION), launchToken: process.env.MOSS_APP_LAUNCH_TOKEN }
 process.send?.({ version: 1, id: 'early', type: 'service.ready', timestamp: Date.now(), payload })
 setInterval(() => {}, 1000)
 `)
-    })
-    const appId = 'fixture.persistent-single'
-    const instanceId = defaultInstanceId(appId)
-    await runtime.setInstanceEnabled(appId, instanceId, true)
-    await expect(runtime.setAppEnabled(appId, true)).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
-    expect(runtime.installations.get(appId)?.enabled).toBe(false)
-    expect(runtime.instances.get(instanceId)?.enabled).toBe(true)
-    expect(runtime.supervisor.listStatuses().filter((item) => item.state === 'running')).toHaveLength(0)
-    await runtime.shutdown()
+    })).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
   })
 
   it('does not mark a Backend running when it exits immediately after ready', async () => {
@@ -465,7 +404,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.shutdown()
   })
 
-  it('restores Desktop desired state independently of App windows', async () => {
+  it('restores enabled state independently of App windows', async () => {
     const first = await createRuntime('persistent-single')
     const appId = 'fixture.persistent-single'
     const instanceId = defaultInstanceId(appId)
@@ -478,8 +417,6 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const restored = await new AppRuntimeHost({
       rootDir: root,
       nodeExecutable,
-      target: 'desktop',
-      hostId: 'desktop-restored',
       processOptions: { handshakeTimeoutMs: 2000, shutdownTimeoutMs: 200, killTimeoutMs: 100 },
     }).initialize()
     expect(restored.installations.get(appId)?.enabled).toBe(true)
@@ -493,6 +430,8 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const preview = await createRuntime('on-demand-single', { idleTimeoutMs: 500 })
     const appId = 'fixture.on-demand-single'
     const instanceId = defaultInstanceId(appId)
+    await published.setInstanceEnabled(appId, instanceId, false)
+    await published.setAppEnabled(appId, false)
     await preview.setInstanceEnabled(appId, instanceId, true)
     await preview.setAppEnabled(appId, true)
     await preview.invoke(appId, instanceId, 'echo', { preview: true })

@@ -180,8 +180,7 @@ describe('App Host Capability API', () => {
         apiVersion: 1,
         lifecycle: 'persistent',
         instanceMode: 'single',
-        targets: ['desktop'],
-        protocols: { desktop: ['moss.test/v1'] },
+        protocols: ['moss.test/v1'],
         actions: [{ name: 'host.request', inputSchema: 'schemas/echo.json' }],
       },
       permissions: ['test:echo', 'test:notice'],
@@ -228,8 +227,6 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const runtime = await new AppRuntimeHost({
       rootDir: root,
       nodeExecutable,
-      target: 'desktop',
-      hostId: 'desktop-test',
       processOptions: { handshakeTimeoutMs: 1000, shutdownTimeoutMs: 200 },
     }).initialize()
     runtime.registerHostProtocol({

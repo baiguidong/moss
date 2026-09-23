@@ -3,23 +3,20 @@ import {
   APP_ERROR_CODES,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
-  MOSS_DESKTOP_PROTOCOL,
-  MOSS_REMOTE_PROTOCOL,
+  MOSS_PLATFORM_PROTOCOL,
   validateAccountBackendEventData,
   validateAccountHostInput,
   validateAccountHostOutput,
   validateAgentHostInput,
   validateAgentHostOutput,
-  validateDesktopHostInput,
-  validateDesktopHostOutput,
-  validateRemoteHostInput,
+  validatePlatformHostInput,
+  validatePlatformHostOutput,
 } from '../../packages/app-sdk/src/index.mjs'
 import {
   AppHostCapabilityRegistry,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
-  createDesktopProtocolDefinition,
-  createRemoteProtocolDefinition,
+  createPlatformProtocolDefinition,
 } from '../../packages/app-runtime/src/index.mjs'
 
 function request(protocol: string, method: string, input: Record<string, unknown>, permission: string) {
@@ -59,13 +56,13 @@ describe('Account and Agent Host protocols', () => {
 
   it('validates fixed-shape Host protocol outputs', () => {
     expect(validateAccountHostOutput('identity.current', {
-      source: 'local', user: null, organization: null, scopes: [],
-    })).toMatchObject({ source: 'local', user: null })
+      user: null, organization: null, scopes: [],
+    })).toMatchObject({ user: null })
     expect(() => validateAccountHostOutput('identity.current', {
-      source: 'server', user: null, organization: null, scopes: [], token: 'secret',
+      user: null, organization: null, scopes: [], token: 'secret',
     })).toThrow(/unknown field: token/)
-    expect(validateDesktopHostOutput('file.pick', { files: [] })).toEqual({ files: [] })
-    expect(() => validateDesktopHostOutput('shell.open-external', { opened: false }))
+    expect(validatePlatformHostOutput('file.pick', { files: [] })).toEqual({ files: [] })
+    expect(() => validatePlatformHostOutput('shell.open-external', { opened: false }))
       .toThrow(/opened is invalid/)
     expect(validateAgentHostOutput('context.observe', { observed: true, duplicate: false }))
       .toEqual({ observed: true, duplicate: false })
@@ -165,7 +162,7 @@ describe('Account and Agent Host protocols', () => {
     registry.registerProtocol(createAccountProtocolDefinition())
     registry.registerProtocol(createAgentProtocolDefinition())
     registry.registerHandler(MOSS_ACCOUNT_PROTOCOL, 'identity.current', () => ({
-      source: 'local', user: null, organization: null, scopes: [],
+      user: null, organization: null, scopes: [],
     }))
     registry.registerHandler(MOSS_AGENT_PROTOCOL, 'catalog.list', () => ({ agents: [] }))
 
@@ -174,7 +171,7 @@ describe('Account and Agent Host protocols', () => {
       'identity.current',
       {},
       'account:identity:read',
-    ))).resolves.toEqual({ source: 'local', user: null, organization: null, scopes: [] })
+    ))).resolves.toEqual({ user: null, organization: null, scopes: [] })
     await expect(registry.dispatch(request(
       MOSS_AGENT_PROTOCOL,
       'catalog.list',
@@ -188,39 +185,19 @@ describe('Account and Agent Host protocols', () => {
     })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
   })
 
-  it('validates and permission-gates Desktop and same-App remote protocols', async () => {
-    expect(validateDesktopHostInput('file.pick', { kind: 'image', multiple: true }))
+  it('validates and permission-gates the platform protocol', async () => {
+    expect(validatePlatformHostInput('file.pick', { kind: 'image', multiple: true }))
       .toEqual({ kind: 'image', multiple: true })
-    expect(() => validateDesktopHostInput('shell.open-external', { url: 'file:///tmp/secret' }))
+    expect(() => validatePlatformHostInput('shell.open-external', { url: 'file:///tmp/secret' }))
       .toThrow(/HTTP or HTTPS/)
-    expect(validateRemoteHostInput('action.invoke', {
-      action: 'directory.list', input: {}, timeoutMs: 30_000, ownerScope: 'org',
-    })).toEqual({ action: 'directory.list', input: {}, timeoutMs: 30_000, ownerScope: 'org' })
-    expect(() => validateRemoteHostInput('action.invoke', { action: 'directory.list', ownerScope: 'host' }))
-      .toThrow(/ownerScope/)
-    expect(() => validateRemoteHostInput('action.invoke', { action: '../other-app' }))
-      .toThrow(/invalid action/)
-
     const registry = new AppHostCapabilityRegistry()
-    registry.registerProtocol(createDesktopProtocolDefinition())
-    registry.registerProtocol(createRemoteProtocolDefinition())
-    registry.registerHandler(MOSS_DESKTOP_PROTOCOL, 'file.pick', () => ({ files: [] }))
-    registry.registerHandler(MOSS_REMOTE_PROTOCOL, 'action.invoke', input => ({ action: input.action }))
+    registry.registerProtocol(createPlatformProtocolDefinition())
+    registry.registerHandler(MOSS_PLATFORM_PROTOCOL, 'file.pick', () => ({ files: [] }))
     await expect(registry.dispatch(request(
-      MOSS_DESKTOP_PROTOCOL,
+      MOSS_PLATFORM_PROTOCOL,
       'file.pick',
       { kind: 'file' },
-      'desktop:files',
+      'platform:files',
     ))).resolves.toEqual({ files: [] })
-    await expect(registry.dispatch(request(
-      MOSS_REMOTE_PROTOCOL,
-      'action.invoke',
-      { action: 'directory.list' },
-      'remote:actions',
-    ))).resolves.toEqual({ action: 'directory.list' })
-    await expect(registry.dispatch({
-      ...request(MOSS_REMOTE_PROTOCOL, 'action.invoke', { action: 'directory.list' }, 'remote:actions'),
-      grants: [],
-    })).rejects.toMatchObject({ code: APP_ERROR_CODES.permissionDenied })
   })
 })

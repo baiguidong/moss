@@ -40,12 +40,12 @@ function copyIntoCache(sourcePath, context, preferredName) {
   const stat = fs.statSync(source)
   if (!stat.isFile()) throw new Error('Selected path is not a file')
   if (stat.size > MAX_FILE_BYTES) throw new Error('File cannot exceed 100 MB')
-  const target = path.join(cacheRoot(context), `${randomUUID()}-${safeName(preferredName || path.basename(source))}`)
-  fs.copyFileSync(source, target)
-  return { name: safeName(preferredName || path.basename(source)), path: target, size: stat.size, mediaUrl: mediaUrl(target) }
+  const cachedPath = path.join(cacheRoot(context), `${randomUUID()}-${safeName(preferredName || path.basename(source))}`)
+  fs.copyFileSync(source, cachedPath)
+  return { name: safeName(preferredName || path.basename(source)), path: cachedPath, size: stat.size, mediaUrl: mediaUrl(cachedPath) }
 }
 
-export function createDesktopPlatformHandlers({
+export function createAppPlatformHandlers({
   desktopCapturer,
   dialog,
   nativeImage,
@@ -88,15 +88,15 @@ export function createDesktopPlatformHandlers({
       fs.appendFileSync(transferPath, buffer, { mode: 0o600 })
       const size = currentSize + buffer.length
       if (input.complete === false) return { transferId, complete: false, size }
-      const target = path.join(root, `${randomUUID()}-${name}`)
-      fs.renameSync(transferPath, target)
-      return authorize({ name, path: target, size, mediaUrl: mediaUrl(target) })
+      const cachedPath = path.join(root, `${randomUUID()}-${name}`)
+      fs.renameSync(transferPath, cachedPath)
+      return authorize({ name, path: cachedPath, size, mediaUrl: mediaUrl(cachedPath) })
     },
 
     async 'file.thumbnail'(input, context) {
       const root = cacheRoot(context)
       const source = inside(root, input.path)
-      const target = path.join(root, `${randomUUID()}.png`)
+      const cachedPath = path.join(root, `${randomUUID()}.png`)
       let image
       try {
         image = await nativeImage.createThumbnailFromPath(source, {
@@ -110,9 +110,9 @@ export function createDesktopPlatformHandlers({
           ),
         )
       }
-      fs.writeFileSync(target, image.toPNG(), { mode: 0o600 })
-      authorize({ path: target })
-      return { path: target, mediaUrl: mediaUrl(target) }
+      fs.writeFileSync(cachedPath, image.toPNG(), { mode: 0o600 })
+      authorize({ path: cachedPath })
+      return { path: cachedPath, mediaUrl: mediaUrl(cachedPath) }
     },
 
     async 'screen.capture'(_input, context) {
@@ -140,9 +140,9 @@ export function createDesktopPlatformHandlers({
       if (!source || source.thumbnail.isEmpty()) throw new Error('未找到可截图的显示器')
       const buffer = source.thumbnail.toPNG()
       const name = `screenshot-${Date.now()}.png`
-      const target = path.join(cacheRoot(context), `${randomUUID()}-${name}`)
-      fs.writeFileSync(target, buffer, { mode: 0o600 })
-      return authorize({ name, path: target, size: buffer.length, mediaUrl: mediaUrl(target) })
+      const cachedPath = path.join(cacheRoot(context), `${randomUUID()}-${name}`)
+      fs.writeFileSync(cachedPath, buffer, { mode: 0o600 })
+      return authorize({ name, path: cachedPath, size: buffer.length, mediaUrl: mediaUrl(cachedPath) })
     },
 
     async 'file.download'(input) {
@@ -175,7 +175,7 @@ export function isAllowedAppMediaPermission({ state, runtime, permission, mediaT
   return Boolean(
     installation?.enabled
     && hasEnabledInstance
-    && state.manifest?.permissions?.includes('desktop:media')
-    && installation.grants?.includes('desktop:media')
+    && state.manifest?.permissions?.includes('platform:media')
+    && installation.grants?.includes('platform:media')
   )
 }

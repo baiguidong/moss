@@ -1,4 +1,3 @@
-export type AppTarget = 'desktop' | 'server'
 export type AppOwner = {
   scope: 'host' | 'org' | 'user'
   orgId: string | null
@@ -11,7 +10,6 @@ export type AppHostCapabilityContext = {
   version: string
   instanceId: string
   generation: number
-  target: { type: AppTarget; id: string }
   owner: AppOwner | null
   principal: AppOwner | null
   dataDir: string | null
@@ -64,7 +62,7 @@ export class AppRuntimeHost {
   removeInstance(appId: string, instanceId: string, options?: Record<string, any>): Promise<void>
   clearInstanceCredentials(appId: string, instanceId: string): Promise<any>
   requireInstance(appId: string, instanceId: string): any
-  getInstanceStatus(appId: string, instanceId: string): Promise<any[]>
+  getInstanceStatus(appId: string, instanceId: string): Promise<any | null>
   restartInstance(appId: string, instanceId: string): Promise<any>
   invoke(appId: string, instanceId: string, action: string, input: unknown, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal; principal?: Partial<AppOwner> }): Promise<any>
   cancel(appId: string, instanceId: string, requestId: string): boolean
@@ -76,12 +74,11 @@ export class AppRuntimeHost {
   cancelHostEvent(appId: string, instanceId: string, protocol: string, eventId: string): boolean
   getLogs(appId: string, instanceId: string, options?: Record<string, any>): Promise<any[]>
   activateVersion(appId: string, version: string, options?: { grants?: string[] }): Promise<any>
-  moveDeployment(appId: string, instanceId: string, targetType: string, targetId: string, options?: Record<string, any>): Promise<any>
   uninstall(appId: string, options?: Record<string, any>): Promise<boolean>
   shutdown(): Promise<void>
   readonly installations: InstallationStore
   readonly instances: InstanceStore
-  readonly deployments: DeploymentStore
+  readonly runtimes: RuntimeStore
   readonly packages: AppPackageStore
   readonly actions: AppActionBroker
   readonly hostCapabilities: AppHostCapabilityRegistry
@@ -93,9 +90,6 @@ export class AppRuntimeHost {
   readonly dataDir: string
   readonly runtimeDir: string
   readonly rootDir: string
-  readonly target: AppTarget
-  readonly hostId: string
-  readonly deploymentTargetId: string
 }
 
 export class JsonAppStateStore implements AppStateStore {
@@ -134,15 +128,13 @@ export class InstanceStore {
   removeForApp(appId: string): Promise<void>
 }
 
-export class DeploymentStore {
+export class RuntimeStore {
   constructor(state: AppStateStore, options?: { ownerResolver?: () => AppOwner })
   list(appId?: string): any[]
   listAll(): any[]
   get(key: string): any | null
   upsert(input: Record<string, any>): Promise<any>
   bumpGeneration(key: string, patch?: Record<string, any>): Promise<any>
-  acquireLease(key: string, owner: string, ttlMs: number, now?: number): Promise<any | null>
-  releaseLease(key: string, owner: string): Promise<void>
   remove(key: string): Promise<void>
   removeForApp(appId: string): Promise<void>
 }
@@ -182,8 +174,8 @@ export class AppProcessSupervisor {
 
 export class AppActionBroker {
   constructor(options: Record<string, any>)
-  invoke(deployment: Record<string, any>, actionName: string, input: unknown, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<unknown>
-  cancel(deploymentKey: string, requestId: string): boolean
+  invoke(runtimeRecord: Record<string, any>, actionName: string, input: unknown, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<unknown>
+  cancel(runtimeKey: string, requestId: string): boolean
   readonly pendingTotal: number
   readonly requests: Map<string, unknown>
 }
@@ -200,9 +192,8 @@ export class AppHostCapabilityRegistry {
 }
 export function createAccountProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createAgentProtocolDefinition(options?: Record<string, any>): Record<string, any>
-export function createDesktopProtocolDefinition(options?: Record<string, any>): Record<string, any>
+export function createPlatformProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export function createOpenIMProtocolDefinition(options?: Record<string, any>): Record<string, any>
-export function createRemoteProtocolDefinition(options?: Record<string, any>): Record<string, any>
 export const DEFAULT_AGENT_CHANNEL_POLICY: Readonly<Record<string, any>>
 export const AGENT_CHANNEL_SYSTEM_PROMPT: string
 export function createAgentChannelStore(db: any, options?: { now?: () => number }): any
@@ -251,6 +242,6 @@ export function createAppSignaturePayload(manifest: Record<string, any>, checksu
 export function defaultInstanceId(appId: string): string
 export const DEFAULT_APP_OWNER: AppOwner
 export function normalizeAppOwner(owner?: Partial<AppOwner>): AppOwner
-export function deploymentKey(instanceId: string, targetType: string, targetId: string, owner?: Partial<AppOwner>): string
-export function validateConfiguration(packageRoot: string, backend: Record<string, any>, config: unknown, secrets?: unknown): true
+export function runtimeKey(instanceId: string, owner?: Partial<AppOwner>): string
+export function validateConfiguration(packageRoot: string, backend: Record<string, any>, config: unknown, secrets?: unknown): { config: Record<string, unknown>; secrets: Record<string, unknown> }
 export function redactAppValue(value: unknown, secretValues?: string[]): unknown

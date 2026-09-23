@@ -11,11 +11,11 @@
 
 ## Analysis Boundary
 
-Treat the target Skill as a specification assembled from `SKILL.md`, directly referenced resources, deterministic scripts, and assets. Preserve its user outcomes and domain rules without copying conversational instructions blindly into generated code.
+Treat the source Skill as a specification assembled from `SKILL.md`, directly referenced resources, deterministic scripts, and assets. Preserve its user outcomes and domain rules without copying conversational instructions blindly into generated code.
 
 Build a source map. For every generated capability, record the originating file and a short evidence note. Record `sourceReview.reviewedFiles` and the dependency-closure files that affect implemented behavior. Mark statements that are ambiguous, contradictory, platform-specific, or dependent on unavailable services.
 
-Never run a target script merely to discover what it does. Prefer static source inspection, `package.json`, parser definitions, function signatures, schemas, documented examples, and the inspector's local dependency graph. A `--help` invocation is execution and must wait until the implementation/test phase when it is known to be read-only.
+Never run a Skill script merely to discover what it does. Prefer static source inspection, `package.json`, parser definitions, function signatures, schemas, documented examples, and the inspector's local dependency graph. A `--help` invocation is execution and must wait until the implementation/test phase when it is known to be read-only.
 
 For every source module selected as an implementation entry, read its full `localDependencyClosure`. Reliability and correctness often live below the public wrapper: connection pools, retries, validation, cleanup, pagination, caching, and error normalization are part of the behavior to preserve. Do not infer equivalence from matching function names.
 
@@ -45,7 +45,7 @@ Classify implementation:
 
 ## Product Brief
 
-Recommend one coherent product model for the target domain so the App Builder can implement it. Record the recommendation in the report; do not create UI or App source files from this toolkit. Flag these generator artifacts for the App Builder to avoid:
+Recommend one coherent product model for the source domain so the App Builder can implement it. Record the recommendation in the report; do not create UI or App source files from this toolkit. Flag these generator artifacts for the App Builder to avoid:
 
 - A grid of unrelated cards for every command.
 - A permanent raw JSON panel as the primary result.
@@ -100,11 +100,11 @@ When no provider or credentials contract is available, record the workflow as a 
 
 ## Coverage Report
 
-Write `generated/skill-app-analysis.json` before App implementation. Treat initial generated targets as a planned mapping, then reconcile the report after the App Builder and this toolkit have produced their respective files. Keep it as an auditable map between the Skill and the self-contained App.
+Write `generated/skill-app-analysis.json` before App implementation. Treat the initial capability mapping as a plan, then reconcile the report after the App Builder and this toolkit have produced their respective files. Keep it as an auditable map between the Skill and the self-contained App.
 
 The report must include:
 
-- Target Skill identity and source fingerprint.
+- Source Skill identity and fingerprint.
 - Product concept and recommended information architecture for App Builder.
 - Every discovered capability and its disposition.
 - Declared App Backend action names.

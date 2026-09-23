@@ -29,7 +29,7 @@ apps/<app-name>/
     "apiVersion": 1,
     "lifecycle": "on-demand",
     "instanceMode": "single",
-    "targets": ["desktop"],
+    "protocols": [],
     "actions": [{
       "name": "search",
       "inputSchema": "schemas/search.input.json",
@@ -42,17 +42,7 @@ apps/<app-name>/
 
 Use `persistent` only for services that must receive events or maintain a long-lived connection. Use `multiple` only when users need isolated named configurations. Backend dependencies must be bundled into `dist`; installed Apps run no install scripts.
 
-Use the smallest deployment target set that satisfies the product requirement:
-
-- Default to `["desktop"]`.
-- Add `server` only for an explicit always-on or unattended placement requirement. Most Apps should remain Desktop-only. Server logic may differ from Desktop logic, but it must run without Electron, a window, desktop-local paths, or another concurrently running Backend.
-- Use `["server"]` only when the Backend must always run on Server. UI presence is independent from Backend placement; UI calls a logical instance and the Host routes it to the active deployment.
-
-Do not infer a target from unrelated properties: UI presence does not require a Desktop Backend; Backend presence, `persistent` lifecycle, network access, and possible future deployment do not require Server. A Desktop UI with `["server"]` is valid. When the requirement is ambiguous, keep `["desktop"]`.
-
-`targets` is a set of alternative placements, not cooperating process roles. `["desktop", "server"]` does not mean two processes, frontend/backend, replication, failover, synchronization, or cross-target division of responsibility. One App instance is active on Desktop or Server at a time. The Host exposes Server migration only when `server` is present. Target-specific branches may differ substantially but must operate independently.
-
-Declare `backend.protocols` per target, for example `{"desktop": ["moss.desktop/v1"], "server": ["moss.agent/v1"]}`. Each key must also be present in `targets`; do not use the legacy shared-array form for new Apps. Never declare `moss.desktop/v1`, `moss.openim/v1`, or `moss.remote/v1` for `server`.
+A `persistent` Backend starts after installation and remains alive while Moss is running. Declare required Host protocols as a flat array, for example `"protocols": ["moss.platform/v1", "moss.agent/v1"]`.
 
 ## Entry
 

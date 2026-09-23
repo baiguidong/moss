@@ -156,7 +156,7 @@ export function validateAgentMessageContent(input, method) {
   }
 }
 
-function validateBindingTarget(input, method) {
+function validateBindingReference(input, method) {
   requireText(input, 'externalConversationId', method)
   requireText(input, 'externalMemberId', method, { optional: true })
 }
@@ -267,14 +267,14 @@ export function validateAgentHostInput(method, value) {
       break
     case 'binding.get':
       rejectUnknownFields(input, ['externalConversationId', 'externalMemberId', 'defaultConversationId'], normalizedMethod)
-      validateBindingTarget(input, normalizedMethod)
+      validateBindingReference(input, normalizedMethod)
       requireText(input, 'defaultConversationId', normalizedMethod, { optional: true })
       break
     case 'binding.update':
       rejectUnknownFields(input, [
         'externalConversationId', 'externalMemberId', 'defaultConversationId', 'expectedRevision', 'patch',
       ], normalizedMethod)
-      validateBindingTarget(input, normalizedMethod)
+      validateBindingReference(input, normalizedMethod)
       requireText(input, 'defaultConversationId', normalizedMethod, { optional: true })
       if (!Object.hasOwn(input, 'patch')) fail('binding.update requires a patch')
       validateBindingPatch(input.patch)
@@ -287,7 +287,7 @@ export function validateAgentHostInput(method, value) {
       rejectUnknownFields(input, [
         'externalConversationId', 'externalMemberId', 'defaultConversationId', 'expectedRevision',
       ], normalizedMethod)
-      validateBindingTarget(input, normalizedMethod)
+      validateBindingReference(input, normalizedMethod)
       requireText(input, 'defaultConversationId', normalizedMethod, { optional: true })
       if (input.expectedRevision !== undefined
         && (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0)) {

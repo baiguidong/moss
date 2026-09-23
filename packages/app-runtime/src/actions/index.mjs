@@ -18,11 +18,11 @@ export class AppActionBroker {
     this.pendingCounts = new Map()
     this.validators = new Map()
     this.pendingTotal = 0
-    this.maxQueuedPerDeployment = options.maxQueuedPerDeployment || 32
+    this.maxQueuedPerRuntime = options.maxQueuedPerRuntime || 32
     this.maxQueuedTotal = options.maxQueuedTotal || 512
   }
 
-  async invoke(deployment, actionName, input, options = {}) {
+  async invoke(runtimeRecord, actionName, input, options = {}) {
     if (options.signal?.aborted) {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
     }
@@ -37,15 +37,15 @@ export class AppActionBroker {
     } catch (error) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App action input cannot be serialized: ${error.message}`)
     }
-    const requestKey = requestId === null ? null : `${deployment.key}:${requestId}`
+    const requestKey = requestId === null ? null : `${runtimeRecord.key}:${requestId}`
     if (requestKey && this.requests.has(requestKey)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Duplicate action request: ${options.requestId}`)
     }
-    const pendingForDeployment = this.pendingCounts.get(deployment.key) || 0
-    if (pendingForDeployment >= this.maxQueuedPerDeployment || this.pendingTotal >= this.maxQueuedTotal) {
+    const pendingForRuntime = this.pendingCounts.get(runtimeRecord.key) || 0
+    if (pendingForRuntime >= this.maxQueuedPerRuntime || this.pendingTotal >= this.maxQueuedTotal) {
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App action queue limit reached')
     }
-    this.pendingCounts.set(deployment.key, pendingForDeployment + 1)
+    this.pendingCounts.set(runtimeRecord.key, pendingForRuntime + 1)
     this.pendingTotal += 1
     const controller = new AbortController()
     let rejectCancellation = null
@@ -60,7 +60,7 @@ export class AppActionBroker {
     options.signal?.addEventListener('abort', abortFromCaller, { once: true })
     if (requestKey) this.requests.set(requestKey, { controller, rejectCancellation })
     const validateRequest = async () => {
-      const packageInfo = await this.packageResolver(deployment.appId)
+      const packageInfo = await this.packageResolver(runtimeRecord.appId)
       const action = packageInfo.manifest.backend?.actions.find((item) => item.name === actionName)
       if (!action) throw new AppServiceError(APP_ERROR_CODES.actionNotFound, `Action is not declared: ${actionName}`)
       if (action.inputSchema) {
@@ -70,26 +70,26 @@ export class AppActionBroker {
         }
       }
     }
-    const admission = (this.admissions.get(deployment.key) || Promise.resolve()).then(validateRequest, validateRequest)
+    const admission = (this.admissions.get(runtimeRecord.key) || Promise.resolve()).then(validateRequest, validateRequest)
     const admissionTail = admission.catch(() => {})
-    this.admissions.set(deployment.key, admissionTail)
+    this.admissions.set(runtimeRecord.key, admissionTail)
     admissionTail.finally(() => {
-      if (this.admissions.get(deployment.key) === admissionTail) this.admissions.delete(deployment.key)
+      if (this.admissions.get(runtimeRecord.key) === admissionTail) this.admissions.delete(runtimeRecord.key)
     })
     try {
       await admission
     } catch (error) {
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (requestKey) this.requests.delete(requestKey)
-      this.releaseQueueSlot(deployment.key)
+      this.releaseQueueSlot(runtimeRecord.key)
       throw error
     }
     const run = async () => {
       if (controller.signal.aborted) {
         throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled before execution')
       }
-      await this.authorize(deployment)
-      const activePackage = await this.packageResolver(deployment.appId)
+      await this.authorize(runtimeRecord)
+      const activePackage = await this.packageResolver(runtimeRecord.appId)
       const activeAction = activePackage.manifest.backend?.actions.find((item) => item.name === actionName)
       if (!activeAction) throw new AppServiceError(APP_ERROR_CODES.actionNotFound, `Action is not declared: ${actionName}`)
       if (activeAction.inputSchema) {
@@ -98,7 +98,7 @@ export class AppActionBroker {
           throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Invalid input for ${actionName}`, validate.errors)
         }
       }
-      const result = await this.supervisor.invoke(deployment.key, actionName, input, {
+      const result = await this.supervisor.invoke(runtimeRecord.key, actionName, input, {
         requestId: requestId || undefined,
         timeoutMs: options.timeoutMs ?? activeAction.timeoutMs,
         signal: controller.signal,
@@ -112,21 +112,21 @@ export class AppActionBroker {
       }
       return result
     }
-    const queued = (this.queues.get(deployment.key) || Promise.resolve()).then(run, run)
+    const queued = (this.queues.get(runtimeRecord.key) || Promise.resolve()).then(run, run)
     const tail = queued.catch(() => {})
-    this.queues.set(deployment.key, tail)
+    this.queues.set(runtimeRecord.key, tail)
     tail.finally(() => {
       options.signal?.removeEventListener('abort', abortFromCaller)
-      if (this.queues.get(deployment.key) === tail) this.queues.delete(deployment.key)
+      if (this.queues.get(runtimeRecord.key) === tail) this.queues.delete(runtimeRecord.key)
       if (requestKey) this.requests.delete(requestKey)
-      this.releaseQueueSlot(deployment.key)
+      this.releaseQueueSlot(runtimeRecord.key)
     })
     return requestKey || options.signal ? Promise.race([queued, cancellation]) : queued
   }
 
-  cancel(deploymentKey, requestId) {
-    const request = this.requests.get(`${deploymentKey}:${requestId}`)
-    if (!request) return this.supervisor.cancel(deploymentKey, requestId)
+  cancel(runtimeKey, requestId) {
+    const request = this.requests.get(`${runtimeKey}:${requestId}`)
+    if (!request) return this.supervisor.cancel(runtimeKey, requestId)
     if (!request.controller.signal.aborted) {
       request.controller.abort()
       request.rejectCancellation(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled'))
@@ -134,10 +134,10 @@ export class AppActionBroker {
     return true
   }
 
-  releaseQueueSlot(deploymentKey) {
-    const count = this.pendingCounts.get(deploymentKey) || 0
-    if (count <= 1) this.pendingCounts.delete(deploymentKey)
-    else this.pendingCounts.set(deploymentKey, count - 1)
+  releaseQueueSlot(runtimeKey) {
+    const count = this.pendingCounts.get(runtimeKey) || 0
+    if (count <= 1) this.pendingCounts.delete(runtimeKey)
+    else this.pendingCounts.set(runtimeKey, count - 1)
     this.pendingTotal = Math.max(0, this.pendingTotal - 1)
   }
 

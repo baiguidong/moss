@@ -195,8 +195,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   rollbackApp: (payload) => ipcRenderer.invoke('app:rollback', payload),
   deleteApp: (payload) => ipcRenderer.invoke('app:delete', payload),
   installAppArchive: () => ipcRenderer.invoke('app:install-archive'),
-  installAppOnServer: (payload) => ipcRenderer.invoke('app:install-server', payload),
-  uninstallAppOnServer: (payload) => ipcRenderer.invoke('app:uninstall-server', payload),
   getAppRuntimeState: (payload) => ipcRenderer.invoke('app:get-runtime-state', payload),
   listAppContributions: (payload) => ipcRenderer.invoke('app:list-contributions', payload),
   invokeAppContribution: (payload) => ipcRenderer.invoke('app:invoke-contribution', payload),
@@ -210,7 +208,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   removeAppInstance: (payload) => ipcRenderer.invoke('app:remove-instance', payload),
   restartAppInstance: (payload) => ipcRenderer.invoke('app:restart-instance', payload),
   getAppInstanceLogs: (payload) => ipcRenderer.invoke('app:get-instance-logs', payload),
-  moveAppInstance: (payload) => ipcRenderer.invoke('app:move-instance', payload),
   listWorkspaceDir: (payload) => ipcRenderer.invoke('workspace:list-dir', payload),
   readWorkspaceFile: (payload) => ipcRenderer.invoke('workspace:read-file', payload),
   document: {

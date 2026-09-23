@@ -33,7 +33,7 @@ describe('App Runtime hardening', () => {
     const root = await temporaryRoot()
     const source = await packageFixture(root, 'crashing-backend')
     const runtime = await new AppRuntimeHost({
-      rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test',
+      rootDir: root, nodeExecutable,
       processOptions: { handshakeTimeoutMs: 500, restartBaseDelayMs: 10, maxRestartDelayMs: 20, crashLoopThreshold: 3 },
     }).initialize()
     await runtime.installFromDirectory(source)
@@ -41,7 +41,7 @@ describe('App Runtime hardening', () => {
     const instanceId = defaultInstanceId(appId)
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true).catch(() => {})
-    const key = runtime.deployments.list(appId)[0].key
+    const key = runtime.runtimes.list(appId)[0].key
     const deadline = Date.now() + 5000
     while (runtime.supervisor.status(key).state !== 'crash-loop' && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20))
@@ -54,9 +54,9 @@ describe('App Runtime hardening', () => {
     const root = await temporaryRoot()
     const source = await packageFixture(root, 'slow-backend')
     const runtime = await new AppRuntimeHost({
-      rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test',
+      rootDir: root, nodeExecutable,
       processOptions: { idleTimeoutMs: 40, handshakeTimeoutMs: 1000, maxActionTimeoutMs: 120 },
-      actionOptions: { maxQueuedPerDeployment: 2 },
+      actionOptions: { maxQueuedPerRuntime: 2 },
     }).initialize()
     await runtime.installFromDirectory(source)
     const appId = 'fixture.slow-backend'
@@ -101,7 +101,7 @@ process.on('message', (message) => {
 send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOSS_APP_VERSION, apiVersion: 1, instanceId: process.env.MOSS_APP_INSTANCE_ID })
 `)
     await writePackageChecksums(source)
-    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test' }).initialize()
+    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize()
     await runtime.installFromDirectory(source)
     const appId = 'fixture.persistent-multiple'
     await runtime.setAppEnabled(appId, true)
@@ -128,7 +128,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
   it('rejects oversized and circular action inputs with a stable error code', async () => {
     const root = await temporaryRoot()
     const source = await packageFixture(root, 'on-demand-single')
-    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test' }).initialize()
+    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize()
     await runtime.installFromDirectory(source)
     const appId = 'fixture.on-demand-single'
     const instanceId = defaultInstanceId(appId)
@@ -169,7 +169,7 @@ process.on('message', (message) => {
 send('service.hello', { ...identity, appId: process.env.MOSS_APP_ID, version: process.env.MOSS_APP_VERSION, apiVersion: 1, instanceId: process.env.MOSS_APP_INSTANCE_ID }, 'hello')
 `)
     await writePackageChecksums(source)
-    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test' }).initialize()
+    const runtime = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize()
     await runtime.installFromDirectory(source)
     const appId = 'fixture.on-demand-single'
     const instanceId = defaultInstanceId(appId)
@@ -203,7 +203,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
 `)
     await writePackageChecksums(source)
     const runtime = await new AppRuntimeHost({
-      rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test',
+      rootDir: root, nodeExecutable,
       processOptions: { handshakeTimeoutMs: 300, shutdownTimeoutMs: 100 },
     }).initialize()
     await runtime.installFromDirectory(source)
@@ -215,7 +215,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await expect(runtime.updateInstance(appId, instance.id, { displayName: 'Broken', config: { label: 'bad' } })).rejects.toMatchObject({ code: 'APP_HANDSHAKE_FAILED' })
     expect(runtime.instances.get(instance.id)).toMatchObject({ displayName: 'Healthy', config: { label: 'good' }, enabled: true })
     expect(await runtime.credentials.get(appId, instance.id)).toEqual({ token: 'kept-secret' })
-    expect((await runtime.getInstanceStatus(appId, instance.id))[0].runtime.state).toBe('running')
+    expect((await runtime.getInstanceStatus(appId, instance.id))?.state).toBe('running')
     await runtime.shutdown()
   })
 
@@ -234,7 +234,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
 `)
     await writePackageChecksums(source)
     const runtime = await new AppRuntimeHost({
-      rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test',
+      rootDir: root, nodeExecutable,
       processOptions: { healthCheckIntervalMs: 20, healthCheckTimeoutMs: 50, shutdownTimeoutMs: 30, killTimeoutMs: 30 },
     }).initialize()
     await runtime.installFromDirectory(source)
@@ -243,7 +243,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true)
     await runtime.invoke(appId, instanceId, 'echo', {})
-    const key = runtime.deployments.list(appId)[0].key
+    const key = runtime.runtimes.list(appId)[0].key
     const pid = runtime.supervisor.status(key).pid
     const deadline = Date.now() + 500
     while (runtime.supervisor.status(key).state === 'running' && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
@@ -256,7 +256,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const root = await temporaryRoot()
     const healthy = await packageFixture(root, 'persistent-single', 'healthy')
     const runtime = await new AppRuntimeHost({
-      rootDir: root, nodeExecutable, target: 'desktop', hostId: 'desktop-test',
+      rootDir: root, nodeExecutable,
       processOptions: { handshakeTimeoutMs: 300, restartBaseDelayMs: 10, maxRestartDelayMs: 20 },
     }).initialize()
     await runtime.installFromDirectory(healthy)
@@ -276,7 +276,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.installFromDirectory(broken)
     await expect(runtime.activateVersion(appId, '2.0.0')).rejects.toThrow(/rolled back/)
     expect(runtime.installations.get(appId)?.activeVersion).toBe('1.0.0')
-    expect((await runtime.getInstanceStatus(appId, instanceId))[0].runtime.state).toBe('running')
+    expect((await runtime.getInstanceStatus(appId, instanceId))?.state).toBe('running')
     await runtime.shutdown()
   })
 })

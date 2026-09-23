@@ -23,7 +23,7 @@ describe('App Action Broker', () => {
     })
     const controller = new AbortController()
     const invocation = broker.invoke(
-      { key: 'deployment-1', appId: 'example.app' },
+      { key: 'runtimeRecord-1', appId: 'example.app' },
       'wait',
       {},
       { requestId: 'request-1', signal: controller.signal },
@@ -49,7 +49,7 @@ describe('App Action Broker', () => {
     controller.abort()
 
     await expect(broker.invoke(
-      { key: 'deployment-1', appId: 'example.app' },
+      { key: 'runtimeRecord-1', appId: 'example.app' },
       'wait',
       {},
       { signal: controller.signal },

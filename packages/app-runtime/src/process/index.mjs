@@ -145,11 +145,11 @@ export class AppProcessSupervisor {
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
     }
     const definition = this.definitions.get(key)
-    if (!definition) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Unknown App deployment: ${key}`)
+    if (!definition) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Unknown App runtime: ${key}`)
     const current = this.processes.get(key)
     if (current?.state === 'running') return this.status(key)
     if (current?.state === 'crash-loop' && !options.clearCrashLoop) {
-      throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App deployment is in crash-loop: ${key}`)
+      throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App runtime is in crash-loop: ${key}`)
     }
     const running = [...this.processes.values()].filter((item) => ['starting', 'running'].includes(item.state))
     if (running.length >= this.maxProcesses) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'Host App process limit reached')
@@ -301,7 +301,6 @@ export class AppProcessSupervisor {
         secrets: expected.secrets || {},
         dataDir: expected.dataDir,
         runtimeDir: expected.runtimeDir,
-        target: expected.target,
         owner: expected.owner || null,
         protocols: expected.protocols || [],
         permissions: expected.permissions || [],
@@ -470,7 +469,6 @@ export class AppProcessSupervisor {
         version: hosted.definition.version,
         instanceId: hosted.definition.instanceId,
         generation: hosted.definition.generation,
-        target: hosted.definition.target,
         owner: hosted.definition.owner || null,
         principal: actionRequest?.principal || hosted.definition.owner || null,
         requestId,

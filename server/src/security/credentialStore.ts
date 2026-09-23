@@ -18,30 +18,37 @@ type EncryptedDocument = {
   values: Record<string, Record<string, CredentialEnvelope>>
 }
 
-export class ServerAppCredentialAdapter {
+export class ServerCredentialStore {
   private readonly storagePath: string
+  private readonly legacyStoragePath: string
   private readonly keys: ReturnType<typeof createCredentialMasterKeyStore>
-  private readonly identity = 'moss-server-app-credentials'
-  private readonly scope = 'app-instance-secrets'
+  private readonly identity = 'moss-server-credentials'
+  private readonly scope = 'service-secrets'
 
   constructor(rootDir: string) {
-    this.storagePath = join(rootDir, 'credentials', 'app-secrets.json')
+    this.storagePath = join(rootDir, 'credentials', 'server-secrets.json')
+    this.legacyStoragePath = join(rootDir, 'credentials', 'app-secrets.json')
     const paths = getMossCredentialMasterKeyPaths(rootDir)
     this.keys = createCredentialMasterKeyStore({ primaryPath: paths.primaryPath, backupPath: paths.backupPath })
   }
 
-  private key(appId: string, instanceId: string): string { return `${appId}/${instanceId}` }
+  private key(namespace: string, recordId: string): string { return `${namespace}/${recordId}` }
 
-  private read(): { values: SecretValues; document: EncryptedDocument | null; masterKey: Buffer | null } {
-    if (!existsSync(this.storagePath)) return { values: {}, document: null, masterKey: null }
-    const document = JSON.parse(readPrivateFile(this.storagePath).toString('utf8')) as EncryptedDocument
-    if (document.version !== 1 || !document.values || typeof document.values !== 'object') throw new Error('Unsupported Server App credential file')
+  private readFrom(
+    storagePath: string,
+    identity: string,
+    scope: string,
+  ): { values: SecretValues; document: EncryptedDocument; masterKey: Buffer } {
+    const document = JSON.parse(readPrivateFile(storagePath).toString('utf8')) as EncryptedDocument
+    if (document.version !== 1 || !document.values || typeof document.values !== 'object') {
+      throw new Error('Unsupported Server credential file')
+    }
     const masterKey = this.keys.loadMatching(candidate => {
-      createCredentialCipher({ identity: this.identity, scope: this.scope, masterKey: candidate, header: document.encryption })
+      createCredentialCipher({ identity, scope, masterKey: candidate, header: document.encryption })
       return true
     })
-    if (!masterKey) throw new Error('Server App credential master key is missing')
-    const cipher = createCredentialCipher({ identity: this.identity, scope: this.scope, masterKey, header: document.encryption })
+    if (!masterKey) throw new Error('Server credential master key is missing')
+    const cipher = createCredentialCipher({ identity, scope, masterKey, header: document.encryption })
     const values: SecretValues = {}
     for (const [scopeKey, fields] of Object.entries(document.values)) {
       values[scopeKey] = {}
@@ -50,6 +57,21 @@ export class ServerAppCredentialAdapter {
       }
     }
     return { values, document, masterKey }
+  }
+
+  private read(): { values: SecretValues; document: EncryptedDocument | null; masterKey: Buffer | null } {
+    if (existsSync(this.storagePath)) {
+      return this.readFrom(this.storagePath, this.identity, this.scope)
+    }
+    if (existsSync(this.legacyStoragePath)) {
+      const legacy = this.readFrom(
+        this.legacyStoragePath,
+        'moss-server-app-credentials',
+        'app-instance-secrets',
+      )
+      return { values: legacy.values, document: null, masterKey: legacy.masterKey }
+    }
+    return { values: {}, document: null, masterKey: null }
   }
 
   private update(mutator: (values: SecretValues) => SecretValues): void {
@@ -70,18 +92,21 @@ export class ServerAppCredentialAdapter {
     })
   }
 
-  async get(appId: string, instanceId: string): Promise<Record<string, string>> {
-    return this.read().values[this.key(appId, instanceId)] || {}
+  async get(namespace: string, recordId: string): Promise<Record<string, string>> {
+    return this.read().values[this.key(namespace, recordId)] || {}
   }
-  async set(appId: string, instanceId: string, values: Record<string, string>): Promise<void> {
-    this.update(all => { all[this.key(appId, instanceId)] = { ...values }; return all })
+
+  async set(namespace: string, recordId: string, values: Record<string, string>): Promise<void> {
+    this.update(all => { all[this.key(namespace, recordId)] = { ...values }; return all })
   }
-  async remove(appId: string, instanceId: string): Promise<void> {
-    this.update(all => { delete all[this.key(appId, instanceId)]; return all })
+
+  async remove(namespace: string, recordId: string): Promise<void> {
+    this.update(all => { delete all[this.key(namespace, recordId)]; return all })
   }
-  async removeApp(appId: string): Promise<void> {
+
+  async removeNamespace(namespace: string): Promise<void> {
     this.update(all => {
-      for (const key of Object.keys(all)) if (key.startsWith(`${appId}/`)) delete all[key]
+      for (const key of Object.keys(all)) if (key.startsWith(`${namespace}/`)) delete all[key]
       return all
     })
   }

@@ -8,7 +8,7 @@ import {
   loadJsonSchema,
 } from '../../../app-sdk/src/index.mjs'
 
-const EMPTY_STATE = Object.freeze({ version: 3, installations: {}, instances: {}, deployments: {} })
+const EMPTY_STATE = Object.freeze({ version: 5, installations: {}, instances: {}, runtimes: {} })
 export const DEFAULT_APP_OWNER = Object.freeze({
   scope: 'host',
   orgId: null,
@@ -80,8 +80,8 @@ function normalizeInstanceId(appId, value, single) {
   return id
 }
 
-export function deploymentKey(instanceId, targetType, targetId, owner = DEFAULT_APP_OWNER) {
-  return scopedRecordKey(normalizeAppOwner(owner), `${instanceId}@${targetType}:${targetId}`)
+export function runtimeKey(instanceId, owner = DEFAULT_APP_OWNER) {
+  return scopedRecordKey(normalizeAppOwner(owner), instanceId)
 }
 
 export class JsonAppStateStore {
@@ -105,13 +105,21 @@ export class JsonAppStateStore {
         const owner = recordOwner(item)
         instances[scopedRecordKey(owner, item.id)] = { ...item, owner }
       }
-      const deployments = {}
-      for (const item of Object.values(parsed?.deployments || {})) {
+      const runtimes = {}
+      for (const item of Object.values(parsed?.runtimes || {})) {
         const owner = recordOwner(item)
-        const key = deploymentKey(item.instanceId, item.targetType, item.targetId, owner)
-        deployments[key] = { ...item, key, owner }
+        const key = runtimeKey(item.instanceId, owner)
+        runtimes[key] = {
+          key,
+          appId: item.appId,
+          instanceId: item.instanceId,
+          desiredState: item.desiredState,
+          generation: item.generation,
+          owner,
+          updatedAt: item.updatedAt,
+        }
       }
-      this.state = { version: 3, installations, instances, deployments }
+      this.state = { version: 5, installations, instances, runtimes }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
       await this.persist()
@@ -169,12 +177,10 @@ export class SqliteAppStateStore {
     const columns = (name) => new Set(this.db.prepare(`PRAGMA table_info(${name})`).all().map((row) => row.name))
     const legacyInstallations = tableExists('app_installations') && !columns('app_installations').has('owner_key')
     const legacyInstances = tableExists('app_instances') && !columns('app_instances').has('owner_key')
-    const legacyDeployments = tableExists('app_deployments') && !columns('app_deployments').has('owner_key')
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (legacyInstallations) this.db.exec('ALTER TABLE app_installations RENAME TO app_installations_legacy_owner')
       if (legacyInstances) this.db.exec('ALTER TABLE app_instances RENAME TO app_instances_legacy_owner')
-      if (legacyDeployments) this.db.exec('ALTER TABLE app_deployments RENAME TO app_deployments_legacy_owner')
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS app_installations (
           record_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
@@ -192,13 +198,13 @@ export class SqliteAppStateStore {
           UNIQUE(owner_key, id)
         );
         CREATE INDEX IF NOT EXISTS idx_app_instances_owner_app ON app_instances(owner_key, app_id);
-        CREATE TABLE IF NOT EXISTS app_deployments (
-          deployment_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS app_runtimes (
+          runtime_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
           org_id TEXT, user_id TEXT, app_id TEXT NOT NULL, instance_id TEXT NOT NULL,
-          target_type TEXT NOT NULL, target_id TEXT NOT NULL, desired_state TEXT NOT NULL,
-          generation INTEGER NOT NULL, lease_owner TEXT, lease_expires_at INTEGER, updated_at INTEGER NOT NULL
+          desired_state TEXT NOT NULL, generation INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          UNIQUE(owner_key, instance_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_app_deployments_owner_app ON app_deployments(owner_key, app_id);
+        CREATE INDEX IF NOT EXISTS idx_app_runtimes_owner_app ON app_runtimes(owner_key, app_id);
       `)
       if (legacyInstallations) {
         const legacyColumns = columns('app_installations_legacy_owner')
@@ -219,15 +225,6 @@ export class SqliteAppStateStore {
           SELECT id, 'host', 'host', NULL, NULL, id, app_id, display_name, config_json, secret_refs_json, enabled, created_at, updated_at
           FROM app_instances_legacy_owner;
           DROP TABLE app_instances_legacy_owner;
-        `)
-      }
-      if (legacyDeployments) {
-        this.db.exec(`
-          INSERT INTO app_deployments
-            (deployment_key, owner_key, owner_scope, org_id, user_id, app_id, instance_id, target_type, target_id, desired_state, generation, lease_owner, lease_expires_at, updated_at)
-          SELECT deployment_key, 'host', 'host', NULL, NULL, app_id, instance_id, target_type, target_id, desired_state, generation, lease_owner, lease_expires_at, updated_at
-          FROM app_deployments_legacy_owner;
-          DROP TABLE app_deployments_legacy_owner;
         `)
       }
       this.db.exec('COMMIT')
@@ -259,18 +256,17 @@ export class SqliteAppStateStore {
         enabled: Boolean(row.enabled), owner, createdAt: row.created_at, updatedAt: row.updated_at,
       }
     }
-    const deployments = {}
-    for (const row of this.db.prepare('SELECT * FROM app_deployments').all()) {
+    const runtimes = {}
+    for (const row of this.db.prepare('SELECT * FROM app_runtimes').all()) {
       const owner = normalizeAppOwner({ scope: row.owner_scope, orgId: row.org_id, userId: row.user_id })
-      deployments[row.deployment_key] = {
-        key: row.deployment_key, appId: row.app_id, instanceId: row.instance_id,
-        targetType: row.target_type, targetId: row.target_id, desiredState: row.desired_state,
-        generation: row.generation, leaseOwner: row.lease_owner, leaseExpiresAt: row.lease_expires_at,
+      runtimes[row.runtime_key] = {
+        key: row.runtime_key, appId: row.app_id, instanceId: row.instance_id,
+        desiredState: row.desired_state, generation: row.generation,
         owner,
         updatedAt: row.updated_at,
       }
     }
-    return { version: 3, installations, instances, deployments }
+    return { version: 5, installations, instances, runtimes }
   }
 
   snapshot() { return clone(this.readState()) }
@@ -294,7 +290,7 @@ export class SqliteAppStateStore {
   }
 
   writeState(state) {
-    this.db.exec('DELETE FROM app_installations; DELETE FROM app_instances; DELETE FROM app_deployments;')
+    this.db.exec('DELETE FROM app_installations; DELETE FROM app_instances; DELETE FROM app_runtimes;')
     const insertInstallation = this.db.prepare(`
       INSERT INTO app_installations
         (record_key, owner_key, owner_scope, org_id, user_id, app_id, active_version, enabled, grants_json, created_at, updated_at)
@@ -329,17 +325,16 @@ export class SqliteAppStateStore {
         JSON.stringify(item.secretRefs || {}), item.enabled ? 1 : 0, item.createdAt, item.updatedAt,
       )
     }
-    const insertDeployment = this.db.prepare(`
-      INSERT INTO app_deployments
-        (deployment_key, owner_key, owner_scope, org_id, user_id, app_id, instance_id, target_type, target_id, desired_state, generation, lease_owner, lease_expires_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    const insertRuntime = this.db.prepare(`
+      INSERT INTO app_runtimes
+        (runtime_key, owner_key, owner_scope, org_id, user_id, app_id, instance_id, desired_state, generation, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
-    for (const item of Object.values(state.deployments)) {
+    for (const item of Object.values(state.runtimes)) {
       const owner = recordOwner(item)
-      insertDeployment.run(
+      insertRuntime.run(
         item.key, owner.key, owner.scope, owner.orgId, owner.userId,
-        item.appId, item.instanceId, item.targetType, item.targetId, item.desiredState,
-        item.generation, item.leaseOwner, item.leaseExpiresAt, item.updatedAt,
+        item.appId, item.instanceId, item.desiredState, item.generation, item.updatedAt,
       )
     }
   }
@@ -467,7 +462,7 @@ export class InstanceStore {
   }
 }
 
-export class DeploymentStore {
+export class RuntimeStore {
   constructor(state, options = {}) {
     this.state = state
     this.ownerResolver = options.ownerResolver || (() => DEFAULT_APP_OWNER)
@@ -475,80 +470,51 @@ export class DeploymentStore {
   owner() { return normalizeAppOwner(this.ownerResolver()) }
   list(appId) {
     const owner = this.owner()
-    return Object.values(this.state.snapshot().deployments).filter((item) =>
+    return Object.values(this.state.snapshot().runtimes).filter((item) =>
       (!appId || item.appId === appId) && ownerMatches(item, owner))
   }
-  listAll() { return Object.values(this.state.snapshot().deployments) }
+  listAll() { return Object.values(this.state.snapshot().runtimes) }
   get(key) {
-    const item = this.state.snapshot().deployments[key] || null
+    const item = this.state.snapshot().runtimes[key] || null
     return item && ownerMatches(item, this.owner()) ? item : null
   }
   async upsert(input) {
     const owner = this.owner()
-    const key = deploymentKey(input.instanceId, input.targetType, input.targetId, owner)
+    const key = runtimeKey(input.instanceId, owner)
     return this.state.transaction((state) => {
-      const current = state.deployments[key]
-      state.deployments[key] = {
+      const current = state.runtimes[key]
+      state.runtimes[key] = {
         key,
         owner,
         appId: input.appId,
         instanceId: input.instanceId,
-        targetType: input.targetType,
-        targetId: input.targetId,
         desiredState: input.desiredState ?? current?.desiredState ?? 'stopped',
         generation: input.generation ?? current?.generation ?? 1,
-        leaseOwner: input.leaseOwner ?? current?.leaseOwner ?? null,
-        leaseExpiresAt: input.leaseExpiresAt ?? current?.leaseExpiresAt ?? null,
         updatedAt: Date.now(),
       }
-      return clone(state.deployments[key])
+      return clone(state.runtimes[key])
     })
   }
   async bumpGeneration(key, patch = {}) {
     const owner = this.owner()
     return this.state.transaction((state) => {
-      const current = state.deployments[key]
-      if (!current || !ownerMatches(current, owner)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Unknown App deployment: ${key}`)
-      state.deployments[key] = { ...current, ...patch, generation: current.generation + 1, updatedAt: Date.now() }
-      return clone(state.deployments[key])
-    })
-  }
-  async acquireLease(key, owner, ttlMs, now = Date.now()) {
-    const recordOwnerValue = this.owner()
-    return this.state.transaction((state) => {
-      const current = state.deployments[key]
-      if (!current || !ownerMatches(current, recordOwnerValue)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Unknown App deployment: ${key}`)
-      if (current.leaseOwner && current.leaseOwner !== owner && current.leaseExpiresAt > now) return null
-      if (current.leaseOwner && current.leaseOwner !== owner) current.generation += 1
-      current.leaseOwner = owner
-      current.leaseExpiresAt = now + ttlMs
-      current.updatedAt = now
-      return clone(current)
-    })
-  }
-  async releaseLease(key, owner) {
-    const recordOwnerValue = this.owner()
-    await this.state.transaction((state) => {
-      const current = state.deployments[key]
-      if (current && ownerMatches(current, recordOwnerValue) && current.leaseOwner === owner) {
-        current.generation += 1
-        current.leaseOwner = null
-        current.leaseExpiresAt = null
-        current.updatedAt = Date.now()
-      }
+      const current = state.runtimes[key]
+      if (!current || !ownerMatches(current, owner)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Unknown App runtime: ${key}`)
+      state.runtimes[key] = { ...current, ...patch, generation: current.generation + 1, updatedAt: Date.now() }
+      return clone(state.runtimes[key])
     })
   }
   async remove(key) {
     const owner = this.owner()
     await this.state.transaction((state) => {
-      if (state.deployments[key] && ownerMatches(state.deployments[key], owner)) delete state.deployments[key]
+      if (state.runtimes[key] && ownerMatches(state.runtimes[key], owner)) delete state.runtimes[key]
     })
   }
   async removeForApp(appId) {
     const owner = this.owner()
     await this.state.transaction((state) => {
-      for (const [key, item] of Object.entries(state.deployments)) {
-        if (item.appId === appId && ownerMatches(item, owner)) delete state.deployments[key]
+      for (const [key, item] of Object.entries(state.runtimes)) {
+        if (item.appId === appId && ownerMatches(item, owner)) delete state.runtimes[key]
       }
     })
   }
@@ -556,14 +522,17 @@ export class DeploymentStore {
 
 export function validateConfiguration(packageRoot, backend, config, secrets = {}) {
   const validate = (relativePath, value, name) => {
-    if (!relativePath) return
+    const normalized = clone(value || {})
+    if (!relativePath) return normalized
     const schema = loadJsonSchema(packageRoot, relativePath, name)
-    const validator = compileJsonSchema(schema)
-    if (!validator(value)) {
+    const validator = compileJsonSchema(schema, { removeAdditional: true })
+    if (!validator(normalized)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Invalid ${name}: ${JSON.stringify(validator.errors)}`)
     }
+    return normalized
   }
-  validate(backend?.configuration?.schema, config || {}, 'App configuration')
-  validate(backend?.configuration?.secrets, secrets || {}, 'App secrets')
-  return true
+  return {
+    config: validate(backend?.configuration?.schema, config, 'App configuration'),
+    secrets: validate(backend?.configuration?.secrets, secrets, 'App secrets'),
+  }
 }

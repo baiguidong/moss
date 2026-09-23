@@ -20,8 +20,8 @@ function sha256(buffer) {
   return `sha256-${createHash('sha256').update(buffer).digest('base64')}`
 }
 
-function isInside(root, target) {
-  const relative = path.relative(path.resolve(root), path.resolve(target))
+function isInside(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate))
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
@@ -322,12 +322,12 @@ export class AppPackageStore {
       throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `Invalid App package version: ${value}`)
     }
     const root = path.join(this.appRoot(appId), 'versions')
-    const target = path.resolve(root, value)
-    const relative = path.relative(path.resolve(root), target)
+    const resolvedPath = path.resolve(root, value)
+    const relative = path.relative(path.resolve(root), resolvedPath)
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'App package version escapes its version store')
     }
-    return target
+    return resolvedPath
   }
 
   async get(appId, version) {

@@ -14,7 +14,6 @@ function renderInstance(hasSettings: boolean, enabled = true) {
     backend: {
       lifecycle: 'persistent',
       instanceMode: 'single',
-      targets: ['desktop'],
       configuration: {
         schema: {
           type: 'object',
@@ -25,16 +24,12 @@ function renderInstance(hasSettings: boolean, enabled = true) {
         },
       },
     },
-    deployments: [{
-      deployment: { instanceId: 'example.settings--default', targetType: 'desktop' },
-      runtime: { state: 'running' },
-    }],
   } as StoredApp;
   const instance = {
     id: 'example.settings--default',
     displayName: 'Default',
-    target: 'desktop',
     enabled,
+    status: { state: 'running' },
     config: { appId: 'cli_example', allowedUsers: [] },
     secretRefs: { appSecret: { configured: true } },
   } as AppInstance;
@@ -74,8 +69,7 @@ describe('Apps management', () => {
 
   test('does not show a stale running state for a disabled host and instance', () => {
     const markup = renderInstance(true, false);
-    expect(markup).toContain('Desktop · 已停止');
-    expect(markup).not.toContain('Desktop · 运行中');
+    expect(markup).toContain('已停止');
   });
 
   test('prevents opening a disabled App and tells the user to enable it', () => {
@@ -89,7 +83,6 @@ describe('Apps management', () => {
       enabled: false,
       permissions: [],
       instances: [],
-      deployments: [],
     } as StoredApp;
     const markup = renderToStaticMarkup(
       <AppsPanel
@@ -132,7 +125,6 @@ describe('Apps management', () => {
       enabled: false,
       permissions: [],
       instances: [],
-      deployments: [],
     } as StoredApp;
     const markup = renderToStaticMarkup(
       <AppsPanel

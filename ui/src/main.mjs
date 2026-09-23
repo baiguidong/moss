@@ -89,15 +89,14 @@ import {
   revokeAppUiBundleRoot,
   toAppUiUrl,
 } from './apps/app-ui-protocol.mjs';
-import { createDesktopAppRuntime } from './apps/desktop-app-runtime.mjs';
+import { createAppRuntime } from './apps/app-runtime.mjs';
 import {
   createAgentChannelController,
   createAgentChannelStore,
   createAccountProtocolDefinition,
   createAgentProtocolDefinition,
-  createDesktopProtocolDefinition,
+  createPlatformProtocolDefinition,
   createOpenIMProtocolDefinition,
-  createRemoteProtocolDefinition,
   DEFAULT_AGENT_CHANNEL_POLICY,
   resolveAgentChannelConnectorIds,
   resolveAgentChannelToolSelectors,
@@ -106,20 +105,18 @@ import {
 } from '../../packages/app-runtime/src/index.mjs';
 import {
   AGENT_HOST_METHODS,
-  DESKTOP_HOST_METHODS,
+  PLATFORM_HOST_METHODS,
   MOSS_ACCOUNT_PROTOCOL,
   MOSS_AGENT_PROTOCOL,
-  MOSS_DESKTOP_PROTOCOL,
+  MOSS_PLATFORM_PROTOCOL,
   MOSS_OPENIM_PROTOCOL,
-  MOSS_REMOTE_PROTOCOL,
   OPENIM_HOST_METHODS,
-  resolveBackendProtocols,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import {
-  createDesktopPlatformHandlers,
+  createAppPlatformHandlers,
   isAllowedAppMediaPermission,
-} from './apps/desktop-platform-host.mjs';
+} from './apps/app-platform-host.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
 import { requireEnabledAppForLaunch } from './apps/app-launch-policy.mjs';
 import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
@@ -685,8 +682,8 @@ const pendingBrowserAutomationGrants = new Map();
 let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
-let desktopAppRuntime = null;
-let desktopAppShutdownComplete = false;
+let appRuntime = null;
+let appShutdownComplete = false;
 let agentTeamsService = null;
 let agentTeamShutdownComplete = false;
 let agentTeamShutdownPromise = null;
@@ -1220,9 +1217,6 @@ const {
   fetchRemoteProfileMemory,
   fetchRemoteProfileMemoryFile,
   fetchRemoteSessionMemory,
-  fetchRemoteApps,
-  fetchRemoteApp,
-  fetchRemoteAppAvailability,
   getDesktopAgentMode,
   getRemoteDirectSettings,
   isRemoteDirectModeEnabled,
@@ -1230,18 +1224,6 @@ const {
   parseRemoteDirectError,
   resolveRemoteDirectConnection,
   resumeRemoteDirectSession,
-  installRemoteApp,
-  updateRemoteApp,
-  uninstallRemoteApp,
-  createRemoteAppInstance,
-  listRemoteAppInstances,
-  updateRemoteAppInstance,
-  removeRemoteAppInstance,
-  restartRemoteAppInstance,
-  fetchRemoteAppInstanceStatus,
-  invokeRemoteAppAction,
-  requestRemoteAppHostCapability,
-  fetchRemoteAppLogs,
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
 
 const remoteSkillSyncPromises = new Map();
@@ -3168,8 +3150,8 @@ async function getAgentChannelCatalog() {
     getDesktopAgentCatalog({ workspace: MOSS_SESSIONS_DIR }),
     getInstalledSkills(),
     listInstalledConnectors(),
-    desktopAppRuntime
-      ? desktopAppRuntime.listContributions({ kinds: ['tools'], loadSchemas: false }).catch(() => ({ tools: [] }))
+    appRuntime
+      ? appRuntime.listContributions({ kinds: ['tools'], loadSchemas: false }).catch(() => ({ tools: [] }))
       : Promise.resolve({ tools: [] }),
   ]);
   const builtInTools = typeof runtime.listDesktopTools === 'function'
@@ -3446,7 +3428,7 @@ function summarizeAgentChannelSession(session) {
   return buildProjectConversationExcerpt(sessionRecord.history, 12_000);
 }
 
-async function requestDesktopAccount(pathname) {
+async function requestAppAccount(pathname) {
   const remote = getRemoteDirectSettings();
   if (!remote.serverUrl) return null;
   const { serverUrl, authToken } = await resolveRemoteDirectConnection();
@@ -3459,7 +3441,7 @@ async function requestDesktopAccount(pathname) {
   return response.json();
 }
 
-async function requestDesktopOpenIM(pathname, { method = 'GET', body } = {}) {
+async function requestAppOpenIM(pathname, { method = 'GET', body } = {}) {
   const remote = getRemoteDirectSettings();
   if (!remote.serverUrl) throw new Error('请先连接 Moss Server。');
   const { serverUrl, authToken } = await resolveRemoteDirectConnection();
@@ -3476,10 +3458,10 @@ async function requestDesktopOpenIM(pathname, { method = 'GET', body } = {}) {
   return response.json();
 }
 
-async function handleDesktopOpenIMRequest(method, input, context) {
+async function handleAppOpenIMRequest(method, input, context) {
   if (context.appId !== 'moss.openim') throw new Error('OpenIM Host access is restricted to moss.openim.');
   if (method === 'session.issue') {
-    return requestDesktopOpenIM('/api/v1/im/session', {
+    return requestAppOpenIM('/api/v1/im/session', {
       method: 'POST',
       body: { platform_id: input.platformId },
     });
@@ -3489,16 +3471,16 @@ async function handleDesktopOpenIMRequest(method, input, context) {
     if (input.cursor) params.set('cursor', input.cursor);
     if (input.limit) params.set('limit', String(input.limit));
     const query = params.size ? `?${params}` : '';
-    return requestDesktopOpenIM(`/api/v1/im/directory${query}`);
+    return requestAppOpenIM(`/api/v1/im/directory${query}`);
   }
   if (method === 'conversation.direct.prepare') {
-    return requestDesktopOpenIM('/api/v1/im/direct-session', {
+    return requestAppOpenIM('/api/v1/im/direct-session', {
       method: 'POST',
       body: { user_id: input.userId },
     });
   }
   if (method === 'conversation.group.prepare') {
-    return requestDesktopOpenIM('/api/v1/im/group-session', {
+    return requestAppOpenIM('/api/v1/im/group-session', {
       method: 'POST',
       body: { user_ids: input.userIds },
     });
@@ -3506,23 +3488,21 @@ async function handleDesktopOpenIMRequest(method, input, context) {
   throw new Error(`Unsupported OpenIM request: ${method}`);
 }
 
-function localDesktopAccountIdentity() {
+function localAppAccountIdentity() {
   let name = 'Local user';
   try { name = os.userInfo().username || name; } catch {}
   const id = `local-${createHash('sha256').update(name).digest('hex').slice(0, 16)}`;
   return {
-    source: 'local',
     user: { id, name, email: null, departmentId: null, status: 'active' },
     organization: null,
     scopes: [],
   };
 }
 
-async function getDesktopAccountIdentity() {
-  const remote = await requestDesktopAccount('/api/v1/auth/me').catch(() => null);
-  if (!remote) return localDesktopAccountIdentity();
+async function getAppAccountIdentity() {
+  const remote = await requestAppAccount('/api/v1/auth/me').catch(() => null);
+  if (!remote) return localAppAccountIdentity();
   return {
-    source: 'server',
     user: remote.user ? {
       id: String(remote.user.id),
       name: String(remote.user.name || remote.user.id),
@@ -3538,9 +3518,9 @@ async function getDesktopAccountIdentity() {
   };
 }
 
-async function getDesktopAccountDirectory(input = {}) {
-  const remote = await requestDesktopAccount('/api/v1/directory').catch(() => null);
-  const local = localDesktopAccountIdentity();
+async function getAppAccountDirectory(input = {}) {
+  const remote = await requestAppAccount('/api/v1/directory').catch(() => null);
+  const local = localAppAccountIdentity();
   const source = remote || { users: [local.user], departments: [] };
   const query = String(input.query || '').trim().toLowerCase();
   const departmentId = String(input.departmentId || '').trim();
@@ -3575,10 +3555,10 @@ function agentChannelDefaults(context) {
   return DEFAULT_AGENT_CHANNEL_POLICY;
 }
 
-async function handleDesktopAccountRequest(method, input) {
-  if (method === 'identity.current') return getDesktopAccountIdentity();
+async function handleAppAccountRequest(method, input) {
+  if (method === 'identity.current') return getAppAccountIdentity();
   if (method === 'directory.list' || method === 'directory.search') {
-    return getDesktopAccountDirectory(input);
+    return getAppAccountDirectory(input);
   }
   throw new Error(`Unsupported Account request: ${method}`);
 }
@@ -4013,9 +3993,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const [connectorRuntimeCredentials, appTools] = await Promise.all([
     resolveSessionConnectorRuntimeCredentials(sessionRecord),
-    sessionRecord?.agentMode === 'remote-direct' || !desktopAppRuntime
+    sessionRecord?.agentMode === 'remote-direct' || !appRuntime
       ? []
-      : desktopAppRuntime.listContributions({ kinds: ['tools'], loadSchemas: true })
+      : appRuntime.listContributions({ kinds: ['tools'], loadSchemas: true })
         .then((contributions) => contributions.tools || [])
         .catch((error) => {
           mossLog('error', 'app-runtime', 'Unable to load App Tool contributions', {
@@ -4689,48 +4669,6 @@ function refreshDesktopSettings(payload = {}) {
   return getDesktopSettingsPayload({
     skippedSessionCount,
   });
-}
-
-function remoteAppConnectionFingerprint(settings) {
-  return JSON.stringify([
-    settings.remoteEnabled === true,
-    getRemoteCredentialServerUrl(settings.remoteDirectServerUrl),
-    settings.remoteDirectCredentialMode || '',
-    settings.remoteDirectUserName || '',
-    settings.remoteDirectUserEmail || '',
-    settings.remoteDirectUserPassword || '',
-    settings.remoteDirectApiKey || '',
-  ]);
-}
-
-async function restartRemoteDependentAppBackends() {
-  if (!desktopAppRuntime) return;
-  const restarts = [];
-  for (const appEntry of await desktopAppRuntime.listApps()) {
-    if (!appEntry.installation?.enabled
-      || !resolveBackendProtocols(appEntry.manifest?.backend, 'desktop').includes(MOSS_REMOTE_PROTOCOL)) continue;
-    for (const instance of appEntry.instances || []) {
-      if (!instance.enabled) continue;
-      restarts.push(desktopAppRuntime.restartInstance(appEntry.manifest.id, instance.id));
-    }
-  }
-  const results = await Promise.allSettled(restarts);
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      mossLog('error', 'apps', 'Unable to restart a remote-dependent App Backend', {
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      });
-    }
-  }
-}
-
-async function refreshDesktopSettingsWithAppRestart(payload = {}) {
-  const previousFingerprint = remoteAppConnectionFingerprint(desktopSettings);
-  const result = refreshDesktopSettings(payload);
-  if (previousFingerprint !== remoteAppConnectionFingerprint(desktopSettings)) {
-    await restartRemoteDependentAppBackends();
-  }
-  return result;
 }
 
 function normalizeSessionKind(value) {
@@ -6722,7 +6660,7 @@ function getBootStatus() {
     appRegistryPath: APP_REGISTRY_PATH,
     skillsDir: MOSS_SKILLS_DIR,
     assistantsDir: MOSS_ASSISTANTS_DIR,
-    appRuntimeReady: Boolean(desktopAppRuntime),
+    appRuntimeReady: Boolean(appRuntime),
     localSettingsAuthOnly: process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY === 'true',
     userSettingsPath: localSettingsAuthConfig.path,
     userSettingsExists: localSettingsAuthConfig.exists,
@@ -7450,17 +7388,17 @@ async function emitAppsChanged(payload = {}) {
     ...nextPayload,
   });
   const appId = payload.appId || payload.app?.id || payload.app?.name;
-  if (appId && desktopAppRuntime?.installations?.get(appId)?.enabled === false) {
+  if (appId && appRuntime?.installations?.get(appId)?.enabled === false) {
     closePublishedAppViews(appId);
   }
   const version = payload.app?.currentVersion || payload.app?.publishedVersion;
-  if (desktopAppRuntime && appId && version) {
-    const previousVersion = desktopAppRuntime.installations.get(appId)?.activeVersion || null;
+  if (appRuntime && appId && version) {
+    const previousVersion = appRuntime.installations.get(appId)?.activeVersion || null;
     const versionChanged = Boolean(previousVersion && previousVersion !== version);
     const openViews = versionChanged ? closePublishedAppViews(appId) : { standalone: false, embedded: false };
     const activation = versionChanged
-      ? desktopAppRuntime.activateVersion(appId, version)
-      : desktopAppRuntime.registerInstalled(appId, version);
+      ? appRuntime.activateVersion(appId, version)
+      : appRuntime.registerInstalled(appId, version);
     try {
       await activation;
       if (openViews.standalone) launchAppWindow(getPublishedApp(appId), { mode: 'published' });
@@ -7660,7 +7598,7 @@ function createAppWebContentsState(appEntry, targetWebContents, source, ownerWin
     dataDir,
     storagePath: path.join(dataDir, APP_STORAGE_FILENAME),
     bundleToken: appEntry.bundleToken || null,
-    runtime: appEntry.runtime || desktopAppRuntime,
+    runtime: appEntry.runtime || appRuntime,
   };
   appWindowStates.set(targetWebContents.id, state);
   return state;
@@ -7845,7 +7783,7 @@ function configureAppSession(appSession) {
   installAppUiProtocol(appSession.protocol);
   const allowed = (webContents, permission, details = {}) => isAllowedAppMediaPermission({
     state: appWindowStates.get(webContents?.id),
-    runtime: desktopAppRuntime,
+    runtime: appRuntime,
     permission,
     mediaTypes: details?.mediaTypes,
   });
@@ -7958,7 +7896,7 @@ function launchAppWindow(appEntry, source = {}) {
   const appId = appEntry.id || appEntry.name;
   if (source.mode !== 'preview') {
     requireEnabledAppForLaunch({
-      runtime: desktopAppRuntime,
+      runtime: appRuntime,
       appId,
       displayName: appEntry.displayName || appEntry.title || appId,
     });
@@ -8026,7 +7964,7 @@ async function previewAppBuild(buildDir) {
   const previewRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-app-preview-'));
   let previewRuntime = null;
   try {
-    previewRuntime = await createDesktopAppRuntime({
+    previewRuntime = await createAppRuntime({
       mossHome: previewRoot,
       appsDir: path.join(previewRoot, 'apps'),
       nodeExecutable: process.env.MOSS_NODE_PATH || process.execPath,
@@ -9621,13 +9559,13 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 async function handleMossHostEvent(event, sessionRecord) {
   if (event?.type === 'app_tool_invoke') {
     if (sessionRecord?.agentMode === 'remote-direct') {
-      return { ok: false, error: 'Remote Direct sessions cannot invoke local App Tools.' };
+      return { ok: false, error: 'This session cannot invoke App Tools.' };
     }
-    if (!desktopAppRuntime) {
-      return { ok: false, error: 'The Desktop App Runtime is not ready.' };
+    if (!appRuntime) {
+      return { ok: false, error: 'The App Runtime is not ready.' };
     }
     try {
-      const result = await desktopAppRuntime.invokeToolContribution(
+      const result = await appRuntime.invokeToolContribution(
         event.input?.contributionId,
         event.input?.input || {},
         {
@@ -11030,8 +10968,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     abortSession: abortSessionFromAgentChannel,
     defaultsFor: agentChannelDefaults,
     publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId }) => {
-      if (!desktopAppRuntime) throw new Error('Desktop App Runtime is not ready.');
-      return desktopAppRuntime.publishHostEvent(
+      if (!appRuntime) throw new Error('App Runtime is not ready.');
+      return appRuntime.publishHostEvent(
         appId,
         instanceId,
         eventProtocol,
@@ -11042,7 +10980,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
     log: (level, message, details) => mossLog(level, 'agent-channel', message, details),
   });
-  const desktopPlatformHandlers = createDesktopPlatformHandlers({
+  const appPlatformHandlers = createAppPlatformHandlers({
     desktopCapturer,
     dialog,
     nativeImage,
@@ -11052,7 +10990,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     allowMediaFile,
     fetchImpl: remoteDirectNetFetch,
   });
-  desktopAppRuntime = await createDesktopAppRuntime({
+  appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
@@ -11060,41 +10998,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     hostProtocols: [
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
-      createDesktopProtocolDefinition(),
+      createPlatformProtocolDefinition(),
       createOpenIMProtocolDefinition(),
-      createRemoteProtocolDefinition(),
     ],
     hostHandlers: {
       [MOSS_ACCOUNT_PROTOCOL]: {
-        'identity.current': (input) => handleDesktopAccountRequest('identity.current', input),
-        'directory.list': (input) => handleDesktopAccountRequest('directory.list', input),
-        'directory.search': (input) => handleDesktopAccountRequest('directory.search', input),
+        'identity.current': (input) => handleAppAccountRequest('identity.current', input),
+        'directory.list': (input) => handleAppAccountRequest('directory.list', input),
+        'directory.search': (input) => handleAppAccountRequest('directory.search', input),
       },
       [MOSS_AGENT_PROTOCOL]: Object.fromEntries(AGENT_HOST_METHODS.map((method) => [
         method,
         (input, context) => agentChannelController.handleAgentRequest(method, input, context),
       ])),
-      [MOSS_DESKTOP_PROTOCOL]: Object.fromEntries(DESKTOP_HOST_METHODS.map((method) => [
+      [MOSS_PLATFORM_PROTOCOL]: Object.fromEntries(PLATFORM_HOST_METHODS.map((method) => [
         method,
-        (input, context) => desktopPlatformHandlers[method](input, context),
+        (input, context) => appPlatformHandlers[method](input, context),
       ])),
       [MOSS_OPENIM_PROTOCOL]: Object.fromEntries(OPENIM_HOST_METHODS.map((method) => [
         method,
-        (input, context) => handleDesktopOpenIMRequest(method, input, context),
+        (input, context) => handleAppOpenIMRequest(method, input, context),
       ])),
-      [MOSS_REMOTE_PROTOCOL]: {
-        'action.invoke': (input, context) => invokeRemoteAppAction(
-          context.appId,
-          context.instanceId,
-          input.action,
-          input.input || {},
-          {
-            requestId: context.requestId,
-            timeoutMs: input.timeoutMs,
-            ownerScope: input.ownerScope,
-          },
-        ),
-      },
     },
     onEvent: (event) => {
       emitToRenderer('app:runtime-event', event);
@@ -11116,15 +11040,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   for (const installed of listAllStoredApps()) {
     if (!installed.currentVersion) continue;
-    await desktopAppRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
+    await appRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
       mossLog('error', 'app-runtime', 'Unable to register installed App', {
         appId: installed.id,
         error: error.message || String(error),
       });
     });
   }
-  for (const installation of desktopAppRuntime.installations.list().filter((entry) => entry.enabled)) {
-    for (const instance of desktopAppRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
+  for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled)) {
+    for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
       agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
     }
   }
@@ -11137,20 +11061,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerAppRuntimeIpc({
     ipcMain,
     dialog,
-    getRuntime: () => desktopAppRuntime,
+    getRuntime: () => appRuntime,
     emitChanged: emitAppsChanged,
     installArchivePackage: installAppPackage,
-    remote: {
-      listApps: fetchRemoteApps,
-      installApp: installRemoteApp,
-      updateApp: updateRemoteApp,
-      uninstallApp: uninstallRemoteApp,
-      createInstance: createRemoteAppInstance,
-      updateInstance: updateRemoteAppInstance,
-      removeInstance: removeRemoteAppInstance,
-      restartInstance: restartRemoteAppInstance,
-      getLogs: fetchRemoteAppLogs,
-    },
   });
   registerAppMarketplaceIpc({
     ipcMain,
@@ -11158,7 +11071,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       indexUrl: appMarketConfiguration.indexUrl,
       cachePath: path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'),
       trustedPublishers,
-      getRuntime: () => desktopAppRuntime,
+      getRuntime: () => appRuntime,
       getInstalledApps: () => listAllStoredApps(),
       installPackage: installAppPackage,
       rollbackPackage: async ({ appId, previousVersion }) => {
@@ -11387,11 +11300,11 @@ app.on('before-quit', (event) => {
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
   }
-  if (desktopAppRuntime && !desktopAppShutdownComplete) {
+  if (appRuntime && !appShutdownComplete) {
     event.preventDefault();
-    void desktopAppRuntime.shutdown().finally(() => {
-      desktopAppShutdownComplete = true;
-      desktopAppRuntime = null;
+    void appRuntime.shutdown().finally(() => {
+      appShutdownComplete = true;
+      appRuntime = null;
       app.quit();
     });
   }
@@ -11428,7 +11341,7 @@ ipcMain.handle('agent:get-remote-identity', async () => {
   }
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
-ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettingsWithAppRestart(payload));
+ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
 ipcMain.handle('agent:agents-list', (_event, payload = {}) => getDesktopAgentCatalog(payload));
 ipcMain.handle('agent:agents-read', (_event, payload = {}) => desktopAgentStore.read({
   ...payload,
@@ -11586,7 +11499,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   remoteDirectOAuthInFlight = authentication;
   try {
     const authenticated = await promise;
-    const settings = await refreshDesktopSettingsWithAppRestart({
+    const settings = await refreshDesktopSettings({
       remoteDirectServerUrl: rawServerUrl,
       remoteDirectCredentialMode: 'api-key',
       remoteDirectUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
@@ -13055,57 +12968,20 @@ function enabledAppContributions(manifest, installation) {
 ipcMain.handle('app:list', async () => {
   const results = [];
   const storedApps = listAllStoredApps();
-  let remoteApps = [];
-  let remoteAvailability = [];
-  let remoteError = null;
-  let remoteAvailabilityError = null;
-  const serverConfigured = Boolean(getRemoteDirectSettings().serverUrl);
-  let serverAvailable = false;
-  if (serverConfigured) {
-    try {
-      const remoteScopes = [...new Set([
-        'user',
-        ...storedApps
-          .filter((stored) => stored.manifest?.backend?.targets?.includes('server'))
-          .map((stored) => stored.manifest?.backend?.serverOwnerScope || 'user'),
-      ])];
-      remoteApps = (await Promise.all(remoteScopes.map((ownerScope) => fetchRemoteApps({ ownerScope })))).flat();
-      serverAvailable = true;
-      const requestedPackages = storedApps
-        .filter((stored) => stored.currentVersion && stored.manifest?.backend?.targets?.includes('server'))
-        .map((stored) => ({ appId: stored.id, version: stored.currentVersion }));
-      if (requestedPackages.length) {
-        try { remoteAvailability = await fetchRemoteAppAvailability(requestedPackages); }
-        catch (error) { remoteAvailabilityError = error.message || String(error); }
-      }
-    }
-    catch (error) { remoteError = error.message || String(error); }
-  }
-  const availabilityByPackage = new Map(remoteAvailability.map((entry) => [`${entry.appId}@${entry.version}`, entry]));
-  const remoteById = new Map(remoteApps.map((entry) => [
-    `${entry.installation?.owner?.scope || 'user'}:${entry.installation?.appId || entry.manifest?.id}`,
-    entry,
-  ]));
   for (const stored of storedApps) {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
-    try { runtimeState = await desktopAppRuntime?.getApp(stored.id); } catch (error) {
+    try { runtimeState = await appRuntime?.getApp(stored.id); } catch (error) {
       runtimeState = {
         error: error.message || String(error),
-        installation: desktopAppRuntime?.getInstallation(stored.id) || null,
+        installation: appRuntime?.getInstallation(stored.id) || null,
         instances: [],
-        deployments: [],
       };
     }
     const packageReady = stored.packageStatus !== 'incompatible' && stored.packageStatus !== 'invalid';
-    const serverOwnerScope = manifest?.backend?.serverOwnerScope || 'user';
-    const remoteKey = `${serverOwnerScope}:${stored.id}`;
-    const remoteState = remoteById.get(remoteKey) || null;
-    const packageAvailability = availabilityByPackage.get(`${stored.id}@${stored.currentVersion}`) || null;
-    remoteById.delete(remoteKey);
-    const deployments = [...(runtimeState?.deployments || []), ...(remoteState?.deployments || [])];
-    const observedStates = deployments.map((item) => item.runtime?.state).filter(Boolean);
-    const observedError = deployments.map((item) => item.runtime?.lastError).find(Boolean) || null;
+    const instances = runtimeState?.instances || [];
+    const observedStates = instances.map((item) => item.status?.state).filter(Boolean);
+    const observedError = instances.map((item) => item.status?.lastError).find(Boolean) || null;
     const state = observedStates.includes('crash-loop') ? 'crash-loop'
       : observedStates.includes('error') ? 'error'
         : observedStates.includes('running') ? 'running'
@@ -13117,75 +12993,17 @@ ipcMain.handle('app:list', async () => {
         ? Boolean(manifest.ui && manifest.contributes?.settings?.length)
         : Boolean(appEntry.hasSettings),
       hasBackend: manifest
-        ? Boolean(manifest.backend || remoteState?.manifest?.backend)
-        : Boolean(appEntry.hasBackend || remoteState?.manifest?.backend),
+        ? Boolean(manifest.backend)
+        : Boolean(appEntry.hasBackend),
       backend: manifest?.backend || null,
-      serverBackend: remoteState?.manifest?.backend || null,
-      serverVersion: remoteState?.installation?.activeVersion || null,
       permissions: manifest?.permissions || [],
-      serverPermissions: remoteState?.manifest?.permissions || [],
       trust: runtimeState?.trust || null,
-      serverTrust: remoteState?.trust || null,
       grants: runtimeState?.installation?.grants || [],
-      serverGrants: remoteState?.installation?.grants || [],
       contributes: enabledAppContributions(manifest, runtimeState?.installation),
       enabled: packageReady && Boolean(runtimeState?.installation?.enabled),
       configuration: runtimeState?.configuration || null,
-      serverConfiguration: remoteState?.configuration || null,
-      instances: [
-        ...(runtimeState?.instances || []).map((item) => ({ ...item, target: 'desktop' })),
-        ...(remoteState?.instances || []).map((item) => ({ ...item, target: 'server' })),
-      ],
-      deployments,
-      remoteInstalled: Boolean(remoteState),
-      serverConfigured,
-      serverAvailable,
-      serverPackageAvailable: Boolean(packageAvailability?.available),
-      serverPackageError: packageAvailability?.reason
-        || (manifest?.backend?.targets?.includes('server') ? remoteAvailabilityError : null),
-      serverEnabled: remoteState?.installation?.enabled || false,
-      serverOwnerScope,
-      remoteError: remoteState ? remoteError : null,
+      instances,
       runtimeStatus: { state, error: runtimeState?.error || observedError },
-    });
-  }
-  for (const [, remoteState] of remoteById) {
-    const manifest = remoteState.manifest;
-    const appId = remoteState.installation?.appId || manifest?.id;
-    results.push({
-      id: appId, name: appId, kind: 'app',
-      displayName: manifest?.displayName || appId,
-      title: manifest?.displayName || appId,
-      description: manifest?.description || '', icon: manifest?.icon || '',
-      width: manifest?.ui?.window?.width || 1100,
-      height: manifest?.ui?.window?.height || 760,
-      resizable: manifest?.ui?.window?.resizable !== false,
-      createdAt: remoteState.installation?.createdAt || Date.now(),
-      updatedAt: remoteState.installation?.updatedAt || Date.now(),
-      currentVersion: remoteState.installation?.activeVersion,
-      currentVersionId: remoteState.installation?.activeVersion,
-      versionCount: 1,
-      hasUi: false,
-      hasSettings: false,
-      hasBackend: Boolean(manifest?.backend), backend: manifest?.backend || null,
-      serverBackend: manifest?.backend || null,
-      serverVersion: remoteState.installation?.activeVersion || null,
-      permissions: [], serverPermissions: manifest?.permissions || [], configuration: remoteState.configuration || null,
-      trust: null, serverTrust: remoteState.trust || null,
-      grants: [], serverGrants: remoteState.installation?.grants || [],
-      contributes: null,
-      serverConfiguration: remoteState.configuration || null,
-      enabled: false, serverEnabled: remoteState.installation?.enabled || false,
-      serverOwnerScope: remoteState.installation?.owner?.scope || manifest?.backend?.serverOwnerScope || 'user',
-      remoteInstalled: true, remoteOnly: true,
-      serverConfigured,
-      serverAvailable,
-      instances: (remoteState.instances || []).map((item) => ({ ...item, target: 'server' })),
-      deployments: remoteState.deployments || [], remoteError,
-      runtimeStatus: {
-        state: remoteState.deployments?.some((item) => item.runtime?.state === 'running') ? 'running' : 'stopped',
-        error: remoteState.deployments?.map((item) => item.runtime?.lastError).find(Boolean) || null,
-      },
     });
   }
   return results;
@@ -13218,7 +13036,7 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
     const appEntry = getPublishedApp(registryEntry.id || name);
     requireEnabledAppForLaunch({
-      runtime: desktopAppRuntime,
+      runtime: appRuntime,
       appId: appEntry.id || appEntry.name,
       displayName: appEntry.displayName || appEntry.title || appEntry.id || appEntry.name,
     });
@@ -13305,8 +13123,8 @@ ipcMain.handle('app:delete', async (_event, { name, deleteData = false, deleteCr
     for (const [key, win] of appWindows.entries()) {
       if (key.startsWith(`${appId}:`) && !win.isDestroyed()) win.close();
     }
-    if (desktopAppRuntime) {
-      await desktopAppRuntime.uninstall(appId, { deleteData, deleteCredentials });
+    if (appRuntime) {
+      await appRuntime.uninstall(appId, { deleteData, deleteCredentials });
       await deleteApp(appId);
     } else {
       await deleteApp(appId);
@@ -13376,26 +13194,8 @@ ipcMain.on('debug:close', (event) => {
   }
 });
 
-function appUiTarget(input = {}) {
-  const target = input?.target || 'desktop';
-  if (target !== 'desktop' && target !== 'server') {
-    throw new Error(`Unsupported App Host target: ${String(target)}`);
-  }
-  return target;
-}
-
-function appUiRemoteOptions(state) {
-  return { ownerScope: state.manifest?.backend?.serverOwnerScope || 'user' };
-}
-
-async function listAppUiInstances(state, target) {
-  return target === 'server'
-    ? listRemoteAppInstances(state.id, appUiRemoteOptions(state))
-    : state.runtime.listInstances(state.id);
-}
-
-async function getAppUiInstance(state, instanceId, target) {
-  const instances = await listAppUiInstances(state, target);
+async function getAppUiInstance(state, instanceId) {
+  const instances = await state.runtime.listInstances(state.id);
   return instances.find((instance) => instance.id === instanceId) || null;
 }
 
@@ -13421,97 +13221,59 @@ ipcMain.handle('app-ui:list-versions', async (event) => {
   return listAppVersions(state.id);
 });
 
-ipcMain.handle('app-ui:get-installation-state', async (event, options = {}) => {
+ipcMain.handle('app-ui:get-installation-state', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
-  return appUiTarget(options) === 'server'
-    ? fetchRemoteApp(state.id, appUiRemoteOptions(state))
-    : state.runtime?.getApp(state.id);
+  return state.runtime?.getApp(state.id);
 });
 
-ipcMain.handle('app-ui:instances:list', async (event, options = {}) => {
+ipcMain.handle('app-ui:instances:list', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
-  return listAppUiInstances(state, appUiTarget(options));
+  return state.runtime.listInstances(state.id);
 });
 
 ipcMain.handle('app-ui:instances:create', async (event, input = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  const { target: requestedTarget, ...instanceInput } = input;
-  const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') {
-    const result = await createRemoteAppInstance(state.id, instanceInput, appUiRemoteOptions(state));
-    return result?.instance || getAppUiInstance(state, instanceInput.id, target);
-  }
-  await state.runtime.createInstance(state.id, instanceInput);
-  return getAppUiInstance(state, instanceInput.id, target);
+  await state.runtime.createInstance(state.id, input);
+  return getAppUiInstance(state, input.id);
 });
 
-ipcMain.handle('app-ui:instances:update', async (event, { instanceId, target: requestedTarget, ...patch }) => {
+ipcMain.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await updateRemoteAppInstance(state.id, instanceId, patch, appUiRemoteOptions(state));
-  else await state.runtime.updateInstance(state.id, instanceId, patch);
-  return getAppUiInstance(state, instanceId, target);
+  await state.runtime.updateInstance(state.id, instanceId, patch);
+  return getAppUiInstance(state, instanceId);
 });
 
-ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled, target: requestedTarget }) => {
+ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled }) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
-  return target === 'server'
-    ? updateRemoteAppInstance(state.id, instanceId, { enabled }, appUiRemoteOptions(state))
-    : state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
+  return state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
 });
 
-ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId, target: requestedTarget }) => {
+ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId }) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await updateRemoteAppInstance(
-    state.id,
-    instanceId,
-    { clearCredentials: true },
-    appUiRemoteOptions(state),
-  );
-  else await state.runtime.clearInstanceCredentials(state.id, instanceId);
-  return getAppUiInstance(state, instanceId, target);
+  await state.runtime.clearInstanceCredentials(state.id, instanceId);
+  return getAppUiInstance(state, instanceId);
 });
 
-ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, target: requestedTarget, ...options }) => {
+ipcMain.handle('app-ui:instances:remove', async (event, { instanceId, ...options }) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
-  if (target === 'server') await removeRemoteAppInstance(
-    state.id,
-    instanceId,
-    { ...options, ...appUiRemoteOptions(state) },
-  );
-  else await state.runtime.removeInstance(state.id, instanceId, options);
+  await state.runtime.removeInstance(state.id, instanceId, options);
   return { ok: true };
 });
 
-ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId, target: requestedTarget }) => {
+ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return appUiTarget({ target: requestedTarget }) === 'server'
-    ? fetchRemoteAppInstanceStatus(state.id, instanceId, appUiRemoteOptions(state))
-    : state.runtime.getInstanceStatus(state.id, instanceId);
+  return state.runtime.getInstanceStatus(state.id, instanceId);
 });
 
 ipcMain.handle('app-ui:actions:invoke', async (event, {
-  instanceId, name, input, requestId, timeoutMs, target: requestedTarget,
+  instanceId, name, input, requestId, timeoutMs,
 }) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
-  return target === 'server'
-    ? invokeRemoteAppAction(state.id, instanceId, String(name || ''), input, {
-      requestId,
-      timeoutMs,
-      ...appUiRemoteOptions(state),
-    })
-    : state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
+  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
 });
 
-ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId, target: requestedTarget }) => {
+ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId }) => {
   const state = getAppWindowStateBySender(event.sender);
-  if (appUiTarget({ target: requestedTarget }) === 'server') {
-    throw new Error('Canceling a remote App action is not supported.');
-  }
   return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
 });
 
@@ -13520,29 +13282,18 @@ ipcMain.handle('app-ui:host:request', async (event, {
   protocol: hostProtocol,
   method,
   input,
-  target: requestedTarget,
   requestId,
 } = {}) => {
   const state = getAppWindowStateBySender(event.sender);
-  const target = appUiTarget({ target: requestedTarget });
   const normalizedInput = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  return target === 'server'
-    ? requestRemoteAppHostCapability(
-      state.id,
-      String(instanceId || ''),
-      String(hostProtocol || ''),
-      String(method || ''),
-      normalizedInput,
-      { requestId, ...appUiRemoteOptions(state) },
-    )
-    : state.runtime.requestHostCapability(
-      state.id,
-      String(instanceId || ''),
-      String(hostProtocol || ''),
-      String(method || ''),
-      normalizedInput,
-      { requestId },
-    );
+  return state.runtime.requestHostCapability(
+    state.id,
+    String(instanceId || ''),
+    String(hostProtocol || ''),
+    String(method || ''),
+    normalizedInput,
+    { requestId },
+  );
 });
 
 ipcMain.handle('app-ui:storage:get', async (event, { key }) => {

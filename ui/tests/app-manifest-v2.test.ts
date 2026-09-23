@@ -45,48 +45,41 @@ describe('App manifest V2', () => {
       ui: undefined,
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'persistent', instanceMode: 'single', targets: ['desktop'],
+        lifecycle: 'persistent', instanceMode: 'single',
         actions: [{ name: 'same' }, { name: 'same' }],
       },
     })).toThrow(/Duplicate Backend action/)
   })
 
-  it('keeps UI presence independent from Backend placement', () => {
-    const serverBackend = {
+  it('keeps UI presence independent from a Backend', () => {
+    const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-      lifecycle: 'persistent', instanceMode: 'single', targets: ['server'],
+      lifecycle: 'persistent', instanceMode: 'single',
       actions: [{ name: 'serve' }],
     }
-    expect(validateAppManifest({ ...valid, ui: undefined, backend: serverBackend }).backend?.targets).toEqual(['server'])
-    expect(validateAppManifest({ ...valid, backend: serverBackend }).backend?.targets).toEqual(['server'])
+    expect(validateAppManifest({ ...valid, ui: undefined, backend }).backend).toMatchObject(backend)
+    expect(validateAppManifest({ ...valid, backend }).backend).toMatchObject(backend)
     const validateSchema = new Ajv2020({ strict: false }).compile(APP_MANIFEST_SCHEMA)
-    expect(validateSchema({ ...valid, backend: serverBackend })).toBe(true)
+    expect(validateSchema({ ...valid, backend })).toBe(true)
   })
 
-  it('preserves the declared Server owner scope', () => {
+  it('retains only fields defined by the current manifest schema', () => {
     const manifest = validateAppManifest({
       ...valid,
+      obsoleteRootField: true,
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'persistent', instanceMode: 'single', serverOwnerScope: 'org',
-        targets: ['desktop', 'server'], actions: [],
+        lifecycle: 'persistent', instanceMode: 'single', obsoleteBackendField: true, actions: [],
       },
     })
-    expect(manifest.backend?.serverOwnerScope).toBe('org')
-    expect(() => validateAppManifest({
-      ...valid,
-      backend: {
-        entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'persistent', instanceMode: 'single', serverOwnerScope: 'org',
-        targets: ['desktop'], actions: [],
-      },
-    })).toThrow(/serverOwnerScope requires server/)
+    expect(manifest).not.toHaveProperty('obsoleteRootField')
+    expect(manifest.backend).not.toHaveProperty('obsoleteBackendField')
   })
 
   it('supports versioned Host protocols without coupling manifests to a product integration', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-      lifecycle: 'persistent', instanceMode: 'multiple', targets: ['desktop'],
+      lifecycle: 'persistent', instanceMode: 'multiple',
       protocols: ['moss.agent/v1'], actions: [],
     }
     expect(validateAppManifest({
@@ -95,7 +88,7 @@ describe('App manifest V2', () => {
       backend,
       permissions: ['agent:turns:write'],
     }).backend?.protocols).toEqual(['moss.agent/v1'])
-    expect(resolveBackendProtocols({ ...backend, targets: ['desktop', 'server'] }, 'server')).toEqual(['moss.agent/v1'])
+    expect(resolveBackendProtocols(backend)).toEqual(['moss.agent/v1'])
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
@@ -115,32 +108,11 @@ describe('App manifest V2', () => {
       permissions: [],
     })).toThrow(/protocols/)
 
-    const targeted = validateAppManifest({
-      ...valid,
-      hostApi: '^2.1.0',
-      ui: undefined,
-      backend: {
-        ...backend,
-        targets: ['desktop', 'server'],
-        protocols: {
-          desktop: ['moss.agent/v1', 'moss.desktop/v1'],
-          server: ['moss.agent/v1'],
-        },
-      },
-    })
-    expect(resolveBackendProtocols(targeted.backend, 'desktop')).toEqual(['moss.agent/v1', 'moss.desktop/v1'])
-    expect(resolveBackendProtocols(targeted.backend, 'server')).toEqual(['moss.agent/v1'])
-    expect(() => validateAppManifest({
-      ...valid,
-      hostApi: '^2.1.0',
-      ui: undefined,
-      backend: { ...backend, protocols: { server: ['moss.agent/v1'] } },
-    })).toThrow(/protocols.server requires server/)
     expect(() => validateAppManifest({
       ...valid,
       ui: undefined,
-      backend: { ...backend, protocols: { desktop: ['moss.agent/v1'] } },
-    })).toThrow(/Host API >=2.1.0/)
+      backend: { ...backend, protocols: { invalid: ['moss.agent/v1'] } },
+    })).toThrow(/protocols/)
   })
 
   it('normalizes contribution points and rejects dangling or ungranted references', () => {
@@ -149,7 +121,7 @@ describe('App manifest V2', () => {
       permissions: ['catalog:read'],
       backend: {
         entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
-        lifecycle: 'on-demand', instanceMode: 'single', targets: ['desktop'],
+        lifecycle: 'on-demand', instanceMode: 'single',
         actions: [{ name: 'catalog.search', inputSchema: 'schemas/search.json' }],
       },
       contributes: {

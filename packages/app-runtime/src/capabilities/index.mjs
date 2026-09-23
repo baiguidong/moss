@@ -236,7 +236,6 @@ export class AppHostCapabilityRegistry {
       version: request.version,
       instanceId: request.instanceId,
       generation: request.generation,
-      target: request.target,
       owner: request.owner || null,
       principal: request.principal || null,
       dataDir: request.dataDir || null,

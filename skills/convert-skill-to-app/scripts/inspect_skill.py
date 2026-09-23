@@ -262,7 +262,7 @@ def inspect(root: Path) -> dict:
         "riskSignals": {name: paths for name, paths in risk_hits.items() if paths},
         "skippedSymlinks": skipped_symlinks,
         "notes": [
-            "Static inventory only; no target code or commands were executed.",
+            "Static inventory only; no Skill code or commands were executed.",
             "Symbolic links were inventoried by path but not followed.",
             "Risk signals identify files for review and are not vulnerability findings.",
         ],

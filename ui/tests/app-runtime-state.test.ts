@@ -7,11 +7,12 @@ import path from 'node:path'
 import {
   AppPackageStore,
   AppRuntimeHost,
-  DeploymentStore,
+  RuntimeStore,
   InstallationStore,
   InstanceStore,
   JsonAppStateStore,
   normalizeAppOwner,
+  validateConfiguration,
   validateAppPackage,
   writePackageChecksums,
 } from '../../packages/app-runtime/src/index.mjs'
@@ -133,6 +134,27 @@ describe('App package and state stores', () => {
     await expect(store.installFromDirectory(source)).rejects.toThrow(/must describe an object/)
   })
 
+  it('keeps only declared App configuration and secret fields', () => {
+    const packageRoot = path.join(fixtureRoot, 'persistent-multiple')
+    const backend = {
+      configuration: {
+        schema: 'schemas/config.schema.json',
+        secrets: 'schemas/secrets.schema.json',
+      },
+    }
+
+    expect(validateConfiguration(packageRoot, backend, {
+      label: 'current',
+      unusedFeature: true,
+      unusedSettings: { enabled: true },
+    }, { token: 'current', unusedSecret: 'unused' })).toEqual({
+      config: { label: 'current' },
+      secrets: { token: 'current' },
+    })
+    expect(() => validateConfiguration(packageRoot, backend, { label: 42, unusedFeature: true }))
+      .toThrow(/Invalid App configuration/)
+  })
+
   it('requires App Tool input schemas to describe objects', async () => {
     const root = await tempRoot()
     const source = path.join(root, 'source')
@@ -162,24 +184,27 @@ describe('App package and state stores', () => {
     )
   })
 
-  it('fences an active Server lease and permits takeover after expiry', async () => {
+  it('loads only current runtime record fields', async () => {
     const root = await tempRoot()
-    const state = await new JsonAppStateStore(path.join(root, 'state.json')).initialize()
-    const deployments = new DeploymentStore(state)
-    const deployment = await deployments.upsert({
-      appId: 'example.app', instanceId: 'instance-1', targetType: 'server', targetId: 'cluster', generation: 1,
-    })
-    expect((await deployments.acquireLease(deployment.key, 'node-a', 1000, 100))?.leaseOwner).toBe('node-a')
-    expect(await deployments.acquireLease(deployment.key, 'node-b', 1000, 500)).toBeNull()
-    const takeover = await deployments.acquireLease(deployment.key, 'node-b', 1000, 1200)
-    expect(takeover?.leaseOwner).toBe('node-b')
-    expect(takeover?.generation).toBe(2)
-    await deployments.releaseLease(deployment.key, 'node-b')
-    const released = deployments.get(deployment.key)
-    expect(released?.leaseOwner).toBeNull()
-    expect(released?.generation).toBe(3)
-    const gracefulTakeover = await deployments.acquireLease(deployment.key, 'node-c', 1000, 1300)
-    expect(gracefulTakeover?.generation).toBe(3)
+    const statePath = path.join(root, 'state.json')
+    await fs.writeFile(statePath, JSON.stringify({
+      version: 5,
+      installations: {},
+      instances: {},
+      runtimes: {
+        first: {
+          key: 'unused-key', appId: 'example.app', instanceId: 'instance-1',
+          desiredState: 'running', generation: 4, updatedAt: 20, unused: true,
+        },
+      },
+    }))
+
+    const state = await new JsonAppStateStore(statePath).initialize()
+    expect(state.snapshot().version).toBe(5)
+    expect(new RuntimeStore(state).list('example.app')).toEqual([
+      expect.objectContaining({ key: 'instance-1', instanceId: 'instance-1', desiredState: 'running' }),
+    ])
+    expect(new RuntimeStore(state).list('example.app')[0]).not.toHaveProperty('unused')
   })
 
   it('isolates identical App and instance ids by owner', async () => {
@@ -191,73 +216,38 @@ describe('App package and state stores', () => {
     const options = { ownerResolver: () => owners.current }
     const installations = new InstallationStore(state, options)
     const instances = new InstanceStore(state, options)
-    const deployments = new DeploymentStore(state, options)
+    const runtimes = new RuntimeStore(state, options)
     await installations.upsert('example.app', { activeVersion: '1.0.0', grants: ['example:read'] })
     const firstInstance = await instances.create('example.app', {}, { single: true })
-    const firstDeployment = await deployments.upsert({
-      appId: 'example.app', instanceId: firstInstance.id, targetType: 'server', targetId: 'cluster',
+    const firstRuntime = await runtimes.upsert({
+      appId: 'example.app', instanceId: firstInstance.id,
     })
 
     owners.current = normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-b' })
     expect(installations.get('example.app')).toBeNull()
     expect(instances.get(firstInstance.id)).toBeNull()
-    expect(deployments.get(firstDeployment.key)).toBeNull()
+    expect(runtimes.get(firstRuntime.key)).toBeNull()
     await installations.upsert('example.app', { activeVersion: '2.0.0', grants: [] })
     const secondInstance = await instances.create('example.app', {}, { single: true })
-    const secondDeployment = await deployments.upsert({
-      appId: 'example.app', instanceId: secondInstance.id, targetType: 'server', targetId: 'cluster',
+    const secondRuntime = await runtimes.upsert({
+      appId: 'example.app', instanceId: secondInstance.id,
     })
-    expect(secondDeployment.key).not.toBe(firstDeployment.key)
+    expect(secondRuntime.key).not.toBe(firstRuntime.key)
     expect(installations.get('example.app')?.activeVersion).toBe('2.0.0')
 
     owners.current = normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-a' })
     expect(installations.get('example.app')?.activeVersion).toBe('1.0.0')
-    expect(deployments.get(firstDeployment.key)?.owner.userId).toBe('user-a')
+    expect(runtimes.get(firstRuntime.key)?.owner.userId).toBe('user-a')
   })
 
-  it('releases Server deployment leases for every App owner on shutdown', async () => {
-    const root = await tempRoot()
-    const runtime = await new AppRuntimeHost({
-      rootDir: root,
-      target: 'server',
-      hostId: 'server-owner-test',
-      leaseTtlMs: 60_000,
-    }).initialize()
-    const owners = [
-      normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-a' }),
-      normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-b' }),
-    ]
-    for (const owner of owners) {
-      await runtime.withOwner(owner, async () => {
-        await runtime.installations.upsert('example.app', { activeVersion: '1.0.0' })
-        const instance = await runtime.instances.create('example.app', {}, { single: true })
-        const deployment = await runtime.deployments.upsert({
-          appId: 'example.app',
-          instanceId: instance.id,
-          targetType: 'server',
-          targetId: 'server-default',
-        })
-        await runtime.deployments.acquireLease(deployment.key, runtime.hostId, 60_000)
-      })
-    }
-
-    await runtime.shutdown()
-
-    for (const owner of owners) {
-      const deployment = runtime.withOwner(owner, () => runtime.deployments.list()[0])
-      expect(deployment.leaseOwner).toBeNull()
-      expect(deployment.leaseExpiresAt).toBeNull()
-    }
-  })
-
-  it('migrates legacy SQLite App state into the host owner without data loss', async () => {
+  it('migrates SQLite App installation and instance state into the host owner', async () => {
     const root = await tempRoot()
     const databasePath = path.join(root, 'legacy.sqlite')
     const stateModuleUrl = new URL('../../packages/app-runtime/src/state/index.mjs', import.meta.url).href
     const script = `
       import assert from 'node:assert/strict';
       import { DatabaseSync } from 'node:sqlite';
-      import { SqliteAppStateStore, InstallationStore, InstanceStore, DeploymentStore } from ${JSON.stringify(stateModuleUrl)};
+      import { SqliteAppStateStore, InstallationStore, InstanceStore, RuntimeStore } from ${JSON.stringify(stateModuleUrl)};
       const databasePath = ${JSON.stringify(databasePath)};
       const legacy = new DatabaseSync(databasePath);
       legacy.exec(\`
@@ -270,25 +260,19 @@ describe('App package and state stores', () => {
         config_json TEXT NOT NULL, secret_refs_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       );
-      CREATE TABLE app_deployments (
-        deployment_key TEXT PRIMARY KEY, app_id TEXT NOT NULL, instance_id TEXT NOT NULL,
-        target_type TEXT NOT NULL, target_id TEXT NOT NULL, desired_state TEXT NOT NULL,
-        generation INTEGER NOT NULL, lease_owner TEXT, lease_expires_at INTEGER, updated_at INTEGER NOT NULL
-      );
       INSERT INTO app_installations VALUES ('example.app', '1.0.0', 1, 1, 1);
       INSERT INTO app_instances VALUES ('example.app--default', 'example.app', 'Default', '{}', '{}', 1, 1, 1);
-      INSERT INTO app_deployments VALUES ('example.app--default@server:cluster', 'example.app', 'example.app--default', 'server', 'cluster', 'running', 2, NULL, NULL, 1);
       \`);
       legacy.close();
       const state = await new SqliteAppStateStore(databasePath).initialize();
       const installations = new InstallationStore(state);
       const instances = new InstanceStore(state);
-      const deployments = new DeploymentStore(state);
+      const runtimes = new RuntimeStore(state);
       assert.deepEqual(installations.get('example.app').owner, { scope: 'host', orgId: null, userId: null, key: 'host' });
       assert.equal(installations.get('example.app').activeVersion, '1.0.0');
       assert.deepEqual(installations.get('example.app').grants, []);
       assert.equal(instances.get('example.app--default').owner.scope, 'host');
-      assert.equal(deployments.list('example.app')[0].generation, 2);
+      assert.deepEqual(runtimes.list('example.app'), []);
       state.close();
     `
     const nodeExecutable = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
@@ -300,7 +284,7 @@ describe('App package and state stores', () => {
     const source = path.join(root, 'source')
     await fs.cp(path.join(fixtureRoot, 'ui-only'), source, { recursive: true })
     await writePackageChecksums(source)
-    const runtime = await new AppRuntimeHost({ rootDir: root, target: 'server', hostId: 'server-test' }).initialize()
+    const runtime = await new AppRuntimeHost({ rootDir: root }).initialize()
     const ownerA = normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-a' })
     const ownerB = normalizeAppOwner({ scope: 'user', orgId: 'org-1', userId: 'user-b' })
     await runtime.withOwner(ownerA, () => runtime.installFromDirectory(source))

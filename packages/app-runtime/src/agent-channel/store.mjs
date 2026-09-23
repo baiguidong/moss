@@ -216,23 +216,23 @@ function mergePolicy(defaults, conversation, member) {
       ...(isRecord(defaults?.proactive) ? defaults.proactive : {}),
     },
   };
-  const apply = (target, source, isMember) => {
-    if (!isRecord(source)) return target;
-    const next = { ...target };
+  const apply = (base, source, isMember) => {
+    if (!isRecord(source)) return base;
+    const next = { ...base };
     if (source.replyMode && (!isMember || source.replyMode !== 'inherit')) next.replyMode = source.replyMode;
     if (Object.hasOwn(source, 'agentId') && source.agentId !== null) next.agentId = source.agentId;
     if (Object.hasOwn(source, 'permissionMode') && source.permissionMode !== null) {
       next.permissionMode = isMember
-        ? narrowPermissionMode(target.permissionMode, source.permissionMode)
+        ? narrowPermissionMode(base.permissionMode, source.permissionMode)
         : source.permissionMode;
     }
     next.resources = isMember
-      ? narrowResources(target.resources, source.resources)
-      : mergeResources(target.resources, source.resources);
-    next.session = mergeNested(target.session, source.session, ['mode', 'rotateAfterTurns']);
+      ? narrowResources(base.resources, source.resources)
+      : mergeResources(base.resources, source.resources);
+    next.session = mergeNested(base.session, source.session, ['mode', 'rotateAfterTurns']);
     next.proactive = isMember
-      ? narrowProactive(target.proactive, source.proactive)
-      : mergeNested(target.proactive, source.proactive, ['enabled', 'maxConsecutiveReplies', 'cooldownMs']);
+      ? narrowProactive(base.proactive, source.proactive)
+      : mergeNested(base.proactive, source.proactive, ['enabled', 'maxConsecutiveReplies', 'cooldownMs']);
     return next;
   };
   return apply(apply(base, conversation, false), member, true);
