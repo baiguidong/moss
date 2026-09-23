@@ -46,8 +46,8 @@ export function getTextModelConfig(
       stringField(source, 'apiKey'),
     ),
     model: firstNonEmptyString(
-      stringField(source, 'model'),
       stringField(text, 'model'),
+      stringField(source, 'model'),
     ),
   }
 }

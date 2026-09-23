@@ -452,7 +452,7 @@ async function defaultDesktopPermissionRequest(
 export interface ClaudeSessionOptions {
   /** 工作目录 */
   cwd?: string
-  /** 模型名，如 'claude-sonnet-4-6' */
+  /** 已配置的文本模型名称；未配置时拒绝创建会话。 */
   model?: string
   /** 用于检索、提取和摘要等轻量任务的模型名。 */
   fastModel?: string
@@ -787,7 +787,10 @@ export class ClaudeSession {
 
   constructor(opts: ClaudeSessionOptions = {}) {
     this.sessionId = opts.sessionId ?? randomUUID()
-    const model = opts.model?.trim() || 'claude-sonnet-4-6'
+    const model = opts.model?.trim()
+    if (!model) {
+      throw new Error('未配置文本模型，请先在设置中填写 models.text.model。')
+    }
     this.#sessionApiOverrides = buildSessionApiOverrides({ ...opts, model })
     if (opts.onAppEvent) {
       // Register keyed by this session's id so concurrent sessions'

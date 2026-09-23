@@ -60,18 +60,12 @@ export type SessionWebSearchSettings = {
 
 /**
  * Serializable desktop preferences that affect one remote Agent session.
- * Server lifecycle/storage settings intentionally remain server-owned.
+ * Model, credential, thinking and lifecycle/storage settings remain server-owned.
  */
 export type SessionRuntimeOptions = {
-  model?: string
-  fastModel?: string
-  url?: string
-  apiKey?: string
   customSystemPrompt?: string
   appendSystemPrompt?: string
   allowedTools?: string[] | null
-  maxTurns?: number
-  thinkingConfig?: SessionThinkingConfig
   webSearch?: SessionWebSearchSettings
   mcpServers?: Record<string, Record<string, unknown>>
   environment?: Record<string, string>
@@ -190,39 +184,19 @@ export const advancedSettingsSchema = lazySchema(() =>
   }),
 )
 
-const sessionThinkingConfigSchema = lazySchema(() =>
-  z.discriminatedUnion('type', [
-    z.object({ type: z.literal('adaptive') }),
-    z.object({
-      type: z.literal('enabled'),
-      budgetTokens: z.number().int().min(1024).max(128_000),
-    }),
-    z.object({ type: z.literal('disabled') }),
-  ]),
-)
-
 const sessionWebSearchSettingsSchema = lazySchema(() =>
   z.object({
     mode: z.enum(['auto', 'tavily', 'brave', 'native', 'disabled']),
     tavilyApiKey: z.string().max(16_384).optional(),
     braveApiKey: z.string().max(16_384).optional(),
-    nativeCapability: z
-      .enum(['supported', 'compatible', 'unsupported', 'unknown'])
-      .optional(),
   }),
 )
 
 export const sessionRuntimeOptionsSchema = lazySchema(() =>
   z.object({
-    model: z.string().trim().min(1).max(256).optional(),
-    fastModel: z.string().trim().max(256).optional(),
-    url: z.string().trim().max(4096).optional(),
-    apiKey: z.string().max(16_384).optional(),
     customSystemPrompt: z.string().max(1_000_000).optional(),
     appendSystemPrompt: z.string().max(1_000_000).optional(),
     allowedTools: z.array(z.string().trim().min(1).max(256)).max(512).nullable().optional(),
-    maxTurns: z.number().int().min(1).max(10_000).optional(),
-    thinkingConfig: sessionThinkingConfigSchema().optional(),
     webSearch: sessionWebSearchSettingsSchema().optional(),
     mcpServers: z
       .record(z.string().min(1).max(160), z.record(z.string(), z.unknown()))
@@ -266,6 +240,15 @@ export function normalizeSessionRuntimeOptions(
 ): SessionRuntimeOptions | undefined {
   const parsed = sessionRuntimeOptionsSchema().safeParse(value)
   if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
+  if (parsed.data.environment) {
+    // Old clients and persisted sessions may still contain model overrides.
+    // They must not bypass the server configuration through environment variables.
+    parsed.data.environment = Object.fromEntries(
+      Object.entries(parsed.data.environment).filter(([key]) =>
+        !/^(ANTHROPIC_|MOSS_MODEL_|MOSS_(BASE_URL|AUTH_TOKEN)$|CLAUDE_CODE_(USE_(BEDROCK|VERTEX|FOUNDRY)|DISABLE_THINKING)$)/i.test(key),
+      ),
+    )
+  }
   return parsed.data
 }
 

@@ -66,7 +66,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   'settingsPath' | 'settingsExists' | 'settingsLoaded' | 'settingsParseError'
 > = {
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
-  model: 'claude-sonnet-4-6',
+  model: '',
   fastModel: '',
   maxTurns: 100,
   thinkingMode: 'adaptive',
@@ -367,7 +367,23 @@ function readSystemSettingsState(): SystemSettingsState {
     const raw = readFileSync(settingsPath, 'utf8')
     const parsed = JSON.parse(raw)
     const rawSettings = isRecord(parsed) ? parsed : {}
-    const normalized = normalizeSystemSettings(rawSettings, rawSettings)
+    const models = recordField(rawSettings, 'models')
+    const text = recordField(models, 'text')
+    const thinking = recordField(text, 'thinking')
+    const source = { ...rawSettings }
+    for (const [field, value] of Object.entries({
+      model: text.model,
+      fastModel: text.fastModel,
+      url: text.baseUrl,
+      apiKey: text.apiKey,
+      maxTurns: text.maxTurns,
+      thinkingMode: thinking.mode,
+      thinkingBudgetTokens: thinking.budgetTokens,
+      image: models.image,
+    })) {
+      if (value !== undefined) source[field] = value
+    }
+    const normalized = normalizeSystemSettings(source, source)
 
     result.value = {
       ...rawSettings,

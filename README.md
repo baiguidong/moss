@@ -187,6 +187,9 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:latest whoami
 
 桌面端配置存储在 `~/.moss/settings.json`，服务端配置存储在 `$MOSS_SERVER_HOME/settings.json`（Compose 默认是 `/data/moss-server/settings.json`）。模型配置统一写在 `models.text` 和 `models.image` 下；运行时需要传给模型进程时，再由程序注入 `MOSS_MODEL_BASE_URL` / `MOSS_MODEL_AUTH_TOKEN`。
 
+本地会话使用桌面端模型配置，远程会话只使用服务端模型配置，客户端不能覆盖服务端的模型或凭据。
+没有内置文本模型默认值；未配置 `models.text.model` 时会提示补充配置。
+
 ### 配置示例
 
 ```json

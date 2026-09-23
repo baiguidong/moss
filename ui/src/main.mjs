@@ -4158,22 +4158,17 @@ function createRemoteDirectRuntime({
         runtimeSystemPrompt,
       );
       const runtimeOptions = {
-        model: localRuntimeConfig.model,
-        // Preserve an explicit empty value so the Server does not substitute
-        // its own fast model for a Desktop session that should fall back to
-        // this session's primary model.
-        fastModel: localRuntimeConfig.fastModel || '',
-        ...(localRuntimeConfig.url ? { url: localRuntimeConfig.url } : {}),
-        ...(localRuntimeConfig.apiKey ? { apiKey: localRuntimeConfig.apiKey } : {}),
         ...(localRuntimeConfig.customSystemPrompt
           ? { customSystemPrompt: localRuntimeConfig.customSystemPrompt }
           : {}),
         ...(localRuntimeConfig.appendSystemPrompt
           ? { appendSystemPrompt: localRuntimeConfig.appendSystemPrompt }
           : {}),
-        maxTurns: localRuntimeConfig.maxTurns,
-        thinkingConfig: localRuntimeConfig.thinkingConfig,
-        webSearch: localRuntimeConfig.webSearch,
+        webSearch: {
+          ...localRuntimeConfig.webSearch,
+          // Capability was probed with the desktop model, not the server model.
+          nativeCapability: undefined,
+        },
         mcpServers: localRuntimeConfig.mcpServers,
         environment: localRuntimeConfig.environment,
         libraryEnabled: localRuntimeConfig.libraryEnabled === true,

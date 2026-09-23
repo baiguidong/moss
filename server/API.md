@@ -667,13 +667,7 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
     "compactMaxTokens": 40000
   },
   "runtimeOptions": {
-    "model": "claude-sonnet-4-6",
-    "fastModel": "claude-haiku-4-5",
-    "url": "https://model-gateway.example.com",
-    "apiKey": "session-model-token",
     "appendSystemPrompt": "Additional session instructions",
-    "maxTurns": 100,
-    "thinkingConfig": { "type": "adaptive" },
     "webSearch": { "mode": "auto" },
     "mcpServers": {},
     "environment": {},
@@ -690,9 +684,11 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 所有 session 固定使用用户级共享 Memory，因此 `autoMemory.dreamEnabled` 可以直接
 跨同一用户的会话进行聚合。
 
-`runtimeOptions` 可选，用来固定 Desktop 创建该远端会话时的模型、思考、系统提示、
-Web Search、MCP 和相关运行设置。该字段可能包含凭据，会持久化用于无重放恢复，但不会
-出现在 session 查询响应中。
+`runtimeOptions` 可选，用来固定 Desktop 创建该远端会话时的系统提示、Web Search、
+MCP 和相关运行设置。文本模型、快速模型、API 地址、API Key、思考配置和最大轮数
+只读取服务端 `settings.json` 的 `models.text`；未配置文本模型时明确报错，不使用内置模型。
+旧客户端或旧会话中残留的模型参数及模型环境变量会被忽略，恢复会话时同样适用。
+该字段仍可能包含 MCP 等凭据，会持久化用于无重放恢复，但不会出现在 session 查询响应中。
 
 `cwd` 可选。指定时 server 尊重该路径，并把它作为 `runtime.workspaceDir`。
 未指定时 server 会先使用服务端默认 workspace；没有默认 workspace 时，始终使用

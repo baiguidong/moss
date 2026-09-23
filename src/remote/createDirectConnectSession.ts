@@ -7,6 +7,7 @@ import type { DirectConnectConfig } from './directConnectManager.js'
 import {
   attachSessionResponseSchema,
   connectResponseSchema,
+  normalizeSessionRuntimeOptions,
   type AdvancedSettings,
   type AutoMemorySettings,
   type SessionMemorySettings,
@@ -144,7 +145,9 @@ export async function createDirectConnectSession({
         ...(advancedSettings ? { advancedSettings } : {}),
         ...(autoMemory ? { autoMemory } : {}),
         ...(sessionMemory ? { sessionMemory } : {}),
-        ...(runtimeOptions ? { runtimeOptions } : {}),
+        ...(runtimeOptions
+          ? { runtimeOptions: normalizeSessionRuntimeOptions(runtimeOptions) }
+          : {}),
       }),
     })
   } catch (err) {

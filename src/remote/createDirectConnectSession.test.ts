@@ -65,8 +65,8 @@ describe('createDirectConnectSession', () => {
         compactMaxTokens: 4000,
       },
       runtimeOptions: {
-        model: 'desktop-primary-model',
-        fastModel: 'desktop-fast-model',
+        appendSystemPrompt: 'Session instructions',
+        libraryEnabled: true,
       },
     })
 
@@ -109,8 +109,8 @@ describe('createDirectConnectSession', () => {
         compactMaxTokens: 4000,
       },
       runtimeOptions: {
-        model: 'desktop-primary-model',
-        fastModel: 'desktop-fast-model',
+        appendSystemPrompt: 'Session instructions',
+        libraryEnabled: true,
       },
     })
     expect(created.workDir).toBe('/srv/moss/sessions/remote-session/workspace')

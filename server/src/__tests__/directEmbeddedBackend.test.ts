@@ -107,80 +107,68 @@ describe('direct embedded backend model settings', () => {
     expect(process.env.MOSS_SERVER_AUTH_TOKEN).toBeUndefined()
   })
 
-  test('passes the fast model to ClaudeSession when starting a session', async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-fast-model-'))
-    const createdOptions: Array<{ model?: string; fastModel?: string }> = []
-
+  test('uses only server model settings when creating and resuming sessions', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-server-model-'))
+    const createdOptions: Array<Record<string, unknown>> = []
     class FakeSession {
-      constructor(options: { model?: string; fastModel?: string }) {
-        createdOptions.push(options)
-      }
+      constructor(options: Record<string, unknown>) { createdOptions.push(options) }
       async *send(): AsyncGenerator<unknown> {}
       abort(): void {}
       dispose(): void {}
       setPermissionMode(): void {}
     }
-
     registerDirectRuntimeModule({
       ClaudeSession: FakeSession,
-      resumeClaudeSession: async () => null,
+      resumeClaudeSession: async (_id, options) => ({ session: new FakeSession(options) }),
     })
-
     const backend = new DirectEmbeddedBackend()
-    const baseSpawnOptions = {
-      cwd: join(tempRoot, 'workspace'),
-      runtime: {
-        backend: 'host' as const,
-        profileDir: join(tempRoot, 'profile'),
-        transcriptDir: join(tempRoot, 'transcripts'),
-        workspaceDir: join(tempRoot, 'workspace'),
-      },
-      systemSettings: makeSettings({
-        model: 'server-primary-model',
-        fastModel: 'server-fast-model',
-      }),
+    // These fields may still exist in old persisted manifests or old clients.
+    const legacyOptions = {
+      model: 'desktop-model', fastModel: 'desktop-fast',
+      url: 'https://desktop.test', apiKey: 'desktop-key',
+      maxTurns: 1, thinkingConfig: { type: 'disabled' },
+      appendSystemPrompt: 'Keep session instructions',
+      environment: { MOSS_MODEL_AUTH_TOKEN: 'desktop-token', CONNECTOR_KEY: 'keep' },
     }
+    for (const resumeSessionId of [undefined, 'previous-session']) {
+      const handle = await backend.spawn({
+        sessionId: resumeSessionId || 'new-session',
+        resumeSessionId,
+        cwd: join(tempRoot, 'workspace'),
+        runtime: {
+          backend: 'host',
+          profileDir: join(tempRoot, 'profile'),
+          transcriptDir: join(tempRoot, 'transcripts'),
+        },
+        systemSettings: makeSettings({
+          model: 'server-model', fastModel: 'server-fast',
+          url: 'https://server-model.test', apiKey: 'server-key',
+          maxTurns: 55, thinkingMode: 'enabled', thinkingBudgetTokens: 8192,
+        }),
+        runtimeOptions: legacyOptions,
+      })
+      handle.destroy()
+    }
+    expect(createdOptions).toHaveLength(2)
+    for (const options of createdOptions) {
+      expect(options).toMatchObject({
+        model: 'server-model', fastModel: 'server-fast',
+        url: 'https://server-model.test', apiKey: 'server-key',
+        maxTurns: 55, thinkingConfig: { type: 'enabled', budgetTokens: 8192 },
+        appendSystemPrompt: 'Keep session instructions',
+        environment: { CONNECTOR_KEY: 'keep' },
+      })
+      expect(options.environment).not.toHaveProperty('MOSS_MODEL_AUTH_TOKEN')
+    }
+  })
 
-    const serverConfigured = await backend.spawn({
-      ...baseSpawnOptions,
-      sessionId: 'session-server-fast-model',
-    })
-    serverConfigured.destroy()
-
-    const sessionConfigured = await backend.spawn({
-      ...baseSpawnOptions,
-      sessionId: 'session-runtime-fast-model',
-      runtimeOptions: {
-        model: 'runtime-primary-model',
-        fastModel: 'runtime-fast-model',
-      },
-    })
-    sessionConfigured.destroy()
-
-    const sessionWithFastFallback = await backend.spawn({
-      ...baseSpawnOptions,
-      sessionId: 'session-runtime-fast-model-empty',
-      runtimeOptions: {
-        model: 'runtime-primary-model',
-        fastModel: '',
-      },
-    })
-    sessionWithFastFallback.destroy()
-
-    expect(createdOptions.map(({ model, fastModel }) => ({ model, fastModel }))).toEqual([
-      {
-        model: 'server-primary-model',
-        fastModel: 'server-fast-model',
-      },
-      {
-        model: 'runtime-primary-model',
-        fastModel: 'runtime-fast-model',
-      },
-      {
-        model: 'runtime-primary-model',
-        fastModel: undefined,
-      },
-    ])
+  test('requires a configured server model instead of a built-in fallback', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-missing-model-'))
+    await expect(new DirectEmbeddedBackend().spawn({
+      sessionId: 'missing-model', cwd: tempRoot,
+      runtime: { backend: 'host', profileDir: tempRoot, transcriptDir: tempRoot },
+      systemSettings: makeSettings({ model: '' }),
+    })).rejects.toThrow('服务端未配置文本模型')
   })
 
   test('requires both the client switch and server scope for Agent Mail', async () => {

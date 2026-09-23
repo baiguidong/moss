@@ -418,7 +418,7 @@ export default function SystemSettingsPage() {
                     : current,
                 )
               }
-              placeholder="claude-sonnet-4-6"
+              placeholder="填写模型服务支持的模型名称"
             />
           </SettingField>
 

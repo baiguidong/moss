@@ -18,6 +18,51 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('does not select a built-in model when no model is configured', () => {
+    expect(normalizeDesktopSettings({}).model).toBe('');
+  });
+
+  it('preserves configured models through startup hydration and unrelated saves', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-startup-model-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const text = {
+      model: 'configured-model', fastModel: 'configured-fast',
+      baseUrl: 'https://configured.test/v1', apiKey: 'configured-key',
+      maxTurns: 42, thinking: { mode: 'enabled', budgetTokens: 8192 },
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      model: 'stale-legacy-model', url: '', apiKey: '',
+      models: { text },
+    }));
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.value).toMatchObject({
+      model: text.model, fastModel: text.fastModel, url: text.baseUrl,
+      apiKey: text.apiKey, maxTurns: text.maxTurns,
+    });
+    store.save({ ...store.value, remoteDirectApiKey: 'hydrated-server-login-key' });
+    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text).toEqual(text);
+
+    const updatedText = { ...text, model: 'edited-model', apiKey: 'edited-key' };
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text: updatedText } }));
+    store.save({ ...store.value, language: 'english' });
+    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text).toEqual(updatedText);
+    expect(createDesktopSettingsStore({ settingsPath }).value.model).toBe('edited-model');
+  });
+
+  it('does not replace an unreadable settings file with startup defaults', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-invalid-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const unfinishedJson = '{"models":{"text":{"model":"saved-model"}';
+    fs.writeFileSync(settingsPath, unfinishedJson);
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.state.loaded).toBe(false);
+    expect(store.value.model).toBe('');
+    expect(() => store.save({ ...store.value, language: 'english' })).toThrow('保留配置');
+    expect(fs.readFileSync(settingsPath, 'utf8')).toBe(unfinishedJson);
+  });
+
   it('normalizes five permission modes and migrates the legacy bypass switch', () => {
     expect(normalizeDesktopSettings({}).permissionMode).toBe('default');
     expect(normalizeDesktopSettings({ permissionMode: 'acceptEdits' }).permissionMode)

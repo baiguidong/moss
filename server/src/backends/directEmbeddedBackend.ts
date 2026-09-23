@@ -10,6 +10,7 @@ import type {
   SessionRuntimeInfo,
 } from '../backendTypes.js'
 import { buildSessionEnv } from './backendUtils.js'
+import { normalizeSessionRuntimeOptions } from '../../../packages/direct-connect-protocol/src/index.js'
 
 type JsonObject = Record<string, unknown>
 const DIRECT_PERMISSION_MODES = [
@@ -778,7 +779,10 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const profileDir = options.runtime.profileDir
     await mkdir(profileDir, { recursive: true })
     const settings = options.systemSettings ?? getSystemSettings()
-    const runtimeOptions = options.runtimeOptions ?? {}
+    if (!settings.model.trim()) {
+      throw new Error('服务端未配置文本模型，请在服务端设置 models.text.model。')
+    }
+    const runtimeOptions = normalizeSessionRuntimeOptions(options.runtimeOptions) ?? {}
     await writeManagedSessionSettings(profileDir, settings)
 
     const processEnvironment = buildSessionEnv(options, {
@@ -806,29 +810,23 @@ export class DirectEmbeddedBackend implements SessionBackend {
     const bypassPermissions =
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
-    const fastModel = Object.prototype.hasOwnProperty.call(
-      runtimeOptions,
-      'fastModel',
-    )
-      ? runtimeOptions.fastModel || undefined
-      : settings.fastModel || undefined
     const sessionOptions: DirectSessionOptions = {
       cwd: options.cwd,
-      model: runtimeOptions.model || settings.model,
-      fastModel,
+      model: settings.model,
+      fastModel: settings.fastModel || undefined,
       customSystemPrompt: runtimeOptions.customSystemPrompt,
       appendSystemPrompt: runtimeOptions.appendSystemPrompt,
       allowedTools: runtimeOptions.allowedTools,
-      maxTurns: runtimeOptions.maxTurns ?? settings.maxTurns,
-      thinkingConfig: runtimeOptions.thinkingConfig ?? buildThinkingConfig(settings),
+      maxTurns: settings.maxTurns,
+      thinkingConfig: buildThinkingConfig(settings),
       coordinatorMode: runtimeOptions.coordinatorMode === true,
       projectDir: options.runtime.transcriptDir,
       workspaceDirectories: [options.cwd],
       addDirs: [],
       mcpServers: runtimeOptions.mcpServers,
       permissionMode: bypassPermissions ? 'allow-all' : 'default',
-      url: runtimeOptions.url || settings.url || undefined,
-      apiKey: runtimeOptions.apiKey || settings.apiKey || undefined,
+      url: settings.url || undefined,
+      apiKey: settings.apiKey || undefined,
       webSearch: runtimeOptions.webSearch,
       sessionId: options.sessionId,
       environment: {

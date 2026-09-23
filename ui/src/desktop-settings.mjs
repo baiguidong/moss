@@ -27,7 +27,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentTeamsEnabled: false,
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
-  model: 'claude-sonnet-4-6',
+  model: '',
   fastModel: '',
   maxTurns: 100,
   language: 'chinese',
@@ -868,6 +868,33 @@ export function normalizeDesktopSettings(input, existing = {}) {
   return result;
 }
 
+const MODEL_RUNTIME_FIELDS = [
+  'model', 'fastModel', 'url', 'apiKey', 'maxTurns',
+  'thinkingMode', 'thinkingBudgetTokens', 'image',
+];
+
+function normalizePersistedDesktopSettings(parsed) {
+  const source = { ...parsed };
+  const models = objectField(parsed, 'models');
+  const text = objectField(models, 'text');
+  const thinking = objectField(text, 'thinking');
+  // Structured persisted settings are authoritative over stale legacy fields.
+  // Flat fields remain supported for incremental updates from the settings UI.
+  for (const [field, value] of Object.entries({
+    model: text.model,
+    fastModel: text.fastModel,
+    url: text.baseUrl,
+    apiKey: text.apiKey,
+    maxTurns: text.maxTurns,
+    thinkingMode: thinking.mode,
+    thinkingBudgetTokens: thinking.budgetTokens,
+    image: models.image,
+  })) {
+    if (value !== undefined) source[field] = value;
+  }
+  return normalizeDesktopSettings(source, source);
+}
+
 function loadDesktopSettings(settingsPath, log) {
   const result = {
     path: settingsPath,
@@ -888,7 +915,7 @@ function loadDesktopSettings(settingsPath, log) {
     const parsed = JSON.parse(raw);
     result.appearancePersisted = hasPersistedAppearance(parsed);
     // 启动加载时，保留原始 JSON 中的所有 key，只对标准 key 进行合并/格式化
-    const normalized = normalizeDesktopSettings(parsed, parsed);
+    const normalized = normalizePersistedDesktopSettings(parsed);
     result.value = {
       ...parsed,
       ...normalized,
@@ -927,8 +954,6 @@ function syncDesktopModelEnv(settings) {
 }
 
 function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
-  const normalizedSettings = normalizeDesktopSettings(nextSettings, currentSettings);
-
   // 读取现有文件，保留 env 等其他配置
   let existingFile = {};
   let existingEnv = {};
@@ -943,7 +968,21 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
         existingEnv = existing.env;
       }
     }
-  } catch { /* ignore */ }
+  } catch (error) {
+    throw new Error(`无法读取现有设置，已停止保存以保留配置：${error.message}`);
+  }
+
+  const normalizedSettings = normalizeDesktopSettings(nextSettings, currentSettings);
+  const persistedSettings = normalizePersistedDesktopSettings(existingFile);
+  // Startup credential hydration and unrelated autosaves must not overwrite
+  // model settings edited on disk after this process loaded its snapshot.
+  if (Object.keys(existingFile).length > 0) {
+    for (const field of MODEL_RUNTIME_FIELDS) {
+      if (JSON.stringify(normalizedSettings[field]) === JSON.stringify(currentSettings[field])) {
+        normalizedSettings[field] = persistedSettings[field];
+      }
+    }
+  }
 
   const env = { ...existingEnv };
   deleteManagedEndpointEnvKeys(env);

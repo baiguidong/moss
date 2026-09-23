@@ -16,6 +16,24 @@ afterEach(async () => {
 })
 
 describe('system settings model layout', () => {
+  test('has no built-in model and prefers persisted structured model settings', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-server-model-'))
+    process.env.MOSS_SERVER_HOME = tempRoot
+    const mod = await import(`../systemSettings.js?case=${randomUUID()}`)
+    expect(mod.getSystemSettings().model).toBe('')
+    await writeFile(join(tempRoot, 'settings.json'), JSON.stringify({
+      model: 'stale-legacy-model', url: '', apiKey: '',
+      models: { text: {
+        model: 'configured-model', baseUrl: 'https://server-model.test', apiKey: 'server-key',
+      } },
+    }))
+    expect(mod.getSystemSettings()).toMatchObject({
+      model: 'configured-model', url: 'https://server-model.test', apiKey: 'server-key',
+    })
+    mod.updateSystemSettings({ bypassPermissions: true })
+    expect(mod.getSystemSettings().model).toBe('configured-model')
+  })
+
   test('reads models.text/models.image and saves only the new layout', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-settings-'))
     const serverHome = join(tempRoot, 'server-home')
