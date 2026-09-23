@@ -66,6 +66,8 @@ example-app/
 
 App 必须按实际支持范围显式选择 `targets: ["desktop"]`、`["server"]` 或 `["desktop", "server"]`。只声明 `desktop` 的 Backend 只有 Moss Desktop 正在运行时才可用；只有声明 `server` 的 Backend 才能部署到 Moss Server 并 7×24 运行。Server 支持不是默认要求，大多数普通 App 应只声明 `desktop`。Backend 可以根据 `context.target.type` 使用明显不同的实现和功能，但每种已声明模式都必须能独立运行，不能依赖另一 target 的 Backend 同时在线。迁移必须先停止源 deployment，再复制配置和密钥、递增 generation，最后启动并健康检查目标 deployment。
 
+Target 与其他 App 属性没有隐含对应关系：有 UI 不代表 Backend 必须包含 `desktop`，App 可以使用 Desktop UI 搭配 Server-only Backend；有 Backend、`persistent` 生命周期、网络访问或未来扩展设想也不代表应包含 `server`。`["desktop", "server"]` 不是前后端拆分、双进程、主备、同步或故障转移声明。需求没有明确要求离开 Desktop 后继续运行时，应选择 `["desktop"]`。
+
 `backend.protocols` 按 target 声明当前模式会使用的 Host 协议。推荐格式是 `{ "desktop": [...], "server": [...] }`，且只能包含 `backend.targets` 已声明的 key。Account、Agent 等协议可按实际需要出现在任一 target；Desktop 专属协议只能出现在 `desktop`。旧数组格式暂时兼容现有 App，并视为对所有 target 使用同一组协议，新 App 不应再使用。
 
 App 管理界面仅在 `targets` 包含 `server` 且 Server 包源存在相同版本时提供 Server 部署或迁移入口。UI 与 Backend placement 相互独立：UI 可以在 Desktop 打开，而 Backend 只部署在 Server。App UI 调用逻辑 instance，由 Host 解析其 active deployment；App UI 不应自行连接 Server，也不应要求调用者了解 Backend 的物理位置。

@@ -11,6 +11,7 @@ DANGEROUS = {
     "shell true": re.compile(r"shell\s*:\s*true"),
     "dynamic evaluation": re.compile(r"\b(?:eval|Function)\s*\("),
 }
+DESKTOP_ONLY_PROTOCOLS = {"moss.desktop/v1", "moss.openim/v1", "moss.remote/v1"}
 
 def read_json(path, errors, label):
     try:
@@ -58,8 +59,23 @@ def validate(root, phase, report_root):
         if backend.get("instanceMode") not in {"single", "multiple"}: errors.append("Backend instanceMode is invalid")
         targets = backend.get("targets")
         if not isinstance(targets, list) or not targets or any(item not in {"desktop", "server"} for item in targets): errors.append("Backend targets are invalid")
-        if isinstance(ui, dict) and isinstance(targets, list) and "desktop" not in targets:
-            errors.append("Apps with a UI must include desktop in Backend targets")
+        elif len(set(targets)) != len(targets): errors.append("Backend targets must be unique")
+        if backend.get("serverOwnerScope") is not None and (not isinstance(targets, list) or "server" not in targets):
+            errors.append("backend.serverOwnerScope requires server in Backend targets")
+        protocols = backend.get("protocols")
+        if isinstance(protocols, list):
+            errors.append("backend.protocols must use the per-target object form for new Apps")
+        elif protocols is not None and not isinstance(protocols, dict):
+            errors.append("backend.protocols must be an object keyed by target")
+        elif isinstance(protocols, dict):
+            for target, names in protocols.items():
+                if target not in {"desktop", "server"} or not isinstance(targets, list) or target not in targets:
+                    errors.append(f"backend.protocols.{target} requires {target} in Backend targets")
+                if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+                    errors.append(f"backend.protocols.{target} must be an array of protocol names")
+                elif target == "server":
+                    invalid = sorted(set(names) & DESKTOP_ONLY_PROTOCOLS)
+                    if invalid: errors.append(f"Server Backend cannot declare Desktop-only protocols: {', '.join(invalid)}")
         entry = safe_file(root, backend.get("entry"), "backend.entry", errors)
         actions = backend.get("actions")
         if not isinstance(actions, list): errors.append("Backend actions must be an array"); actions = []

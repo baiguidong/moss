@@ -145,16 +145,20 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
 #### Backend 部署目标（强制）
 
-`backend.targets` 是 App 对运行位置的明确能力声明，也是 Host 判断 App 是否具备“部署到 Server”能力的依据。App Builder 必须按实际需求选择最小范围，不能为了预留能力默认加入 `server`：
+`backend.targets` 只回答一个问题：**这个 Backend 子进程允许由哪个 Host 启动？** 它不表示 UI 在哪里、不表示前后端角色、不表示进程之间的调用方向，也不表示未来可能支持的位置。App Builder 必须按实际需求选择最小范围，不能为了预留能力默认加入 `server`。
+
+写 manifest 前必须按以下顺序判定：
 
 - 没有 Backend：省略整个 `backend`，不要声明 `targets`。
-- 普通桌面 App：默认使用 `"targets": ["desktop"]`；此类 App 不允许部署到 Server，只有 Moss Desktop 正在运行时 Backend 才可用，Host 不显示 Server 部署按钮。
-- 同时支持 Desktop 和 Server：仅当用户明确需要迁移到 Server 长期在线或无人值守，并且 Backend 为两种位置都实现了可独立运行的模式时，使用 `"targets": ["desktop", "server"]`。两种模式的逻辑和适用功能可以不同，但不能互相依赖同时在线。这表示互斥的候选运行位置，不表示生成两个协作 Backend。
-- 仅 Server：用户明确要求 Backend 始终在 Server 运行时使用 `"targets": ["server"]`。只有声明了 `server` 的 Backend 才具备 Server 端 7×24 运行能力。UI 与 Backend placement 独立；App 可以有 Desktop UI 和 Server-only Backend，但 UI 只能调用逻辑 instance，由 Host 路由到 active deployment。
+- 用户没有明确要求“退出 Desktop 后仍运行”、7×24、无人值守或 Server 事件消费：默认使用 `"targets": ["desktop"]`。`persistent` 只表示在当前 Host 内常驻，不会把 Desktop Backend 变成 Server Backend。
+- 用户明确要求 Backend 始终远程运行，且全部核心功能都能在没有 Electron、窗口、Desktop 专属协议和用户电脑本地路径的情况下独立完成：使用 `"targets": ["server"]`。UI 与 Backend placement 独立；App 仍可包含 Desktop UI，有 UI 不等于 Backend 必须包含 `desktop`。
+- 只有用户明确要求**同一个逻辑实例可在本地与 Server 之间迁移**，并且两种模式都能独立完成各自承诺的功能时，才使用 `"targets": ["desktop", "server"]`。
 
-Server 是可选部署目标，不是 App Runtime 的默认依赖。一个 App instance 同一时刻只能在 Desktop 或 Server 的一个位置 active；迁移时先停止源端，再启动目标端。允许部署到 Server 的 Backend 不得依赖同时运行的 Desktop Backend，也不得用跨端 Action 把一项核心职责拆成 Desktop/Server 两半。App UI 不得自行连接 Moss Server；实例路由和迁移由 Host 管理。新建计划、自检和发布前都要核对 `targets` 与用户需求一致。
+下列理由都**不能**用于加入 `server`：App 有 UI、App 有 Backend、`lifecycle` 是 `persistent`、Backend 会访问网络、为了以后扩展、为了故障转移，或把 Desktop 控制面与 Server 数据面拆成两个协作进程。下列理由也不能用于加入 `desktop`：App 有 UI、用户从 Desktop 打开 App，或 UI 需要调用一个部署在 Server 的逻辑实例。
 
-`backend.protocols` 必须按 target 声明，例如 `{"desktop": ["moss.desktop/v1"], "server": ["moss.account/v1"]}`。只写实际会在该模式调用的协议；Desktop 专属协议不得放入 `server`。旧的协议数组格式仅供现有 App 迁移，新 App 禁止使用。
+Server 是可选部署目标，不是 App Runtime 的默认依赖。`["desktop", "server"]` 表示互斥的候选运行位置，不表示启动两个 Backend，不表示主备、同步或协作。一个 App instance 同一时刻只能在一个位置 active；迁移时先停止源端，再启动目标端。允许部署到 Server 的 Backend 不得依赖同时运行的 Desktop Backend，也不得用跨端 Action 把一项核心职责拆成 Desktop/Server 两半。App UI 不得自行连接 Moss Server；实例路由和迁移由 Host 管理。新建计划、自检和发布前都要核对 `targets` 与用户需求一致；需求含糊时固定选择 `desktop`。
+
+`backend.protocols` 必须按 target 声明，例如 `{"desktop": ["moss.desktop/v1"], "server": ["moss.account/v1"]}`。只写实际会在该模式调用的协议；`moss.desktop/v1`、`moss.openim/v1` 和过渡期的 `moss.remote/v1` 都不得放入 `server`。旧的协议数组格式仅供现有 App 迁移，新 App 禁止使用。
 
 界面和交互必须根据应用领域设计：
 
@@ -412,9 +416,10 @@ if (!rootEl) {
 - App 的 `app.moss.json` 是合法 JSON
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
 - App 声明的 `ui.entry` 不为空，并且能找到脚本入口或可见静态内容
-- Backend 的 `targets` 使用满足需求的最小集合；未明确需要远程运行时必须是 `["desktop"]`，不得默认加入 `server`
-- `targets` 不含 `server` 时，不实现或描述 Server 部署；包含 `server` 时，确认每个实例是单 target 单活，Backend 在任一 target 都能独立工作，且不依赖另一端同时运行
-- `protocols` 使用按 target 的对象格式，key 必须属于 `targets`，每种模式只声明实际使用的 Host 协议
+- Backend 的 `targets` 使用满足需求的最小集合；未明确要求退出 Desktop 后仍运行、7×24、无人值守或 Server 事件消费时必须是 `["desktop"]`，不得默认加入 `server`
+- 不从 UI、Backend、`persistent`、网络访问或未来扩展推导 target；允许 Desktop UI 搭配 Server-only Backend
+- `targets` 不含 `server` 时，不实现或描述 Server 部署；包含两个 target 时，确认这是同一逻辑实例的可迁移位置而非双进程、主备、同步或跨端分工，且两种模式均可独立工作
+- `protocols` 使用按 target 的对象格式，key 必须属于 `targets`；Server 不得声明 Desktop、OpenIM 或 Remote 专属协议
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
 - 检查 App 使用 Moss 桌面 token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级
