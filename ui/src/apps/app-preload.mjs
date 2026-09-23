@@ -41,4 +41,4 @@ contextBridge.exposeInMainWorld('mossApp', {
   events: { on: (eventName, callback) => on(`app-ui:event:${String(eventName || '')}`, callback) },
 })
 
-contextBridge.exposeInMainWorld('appVersionInfo', { version: '2.1.0', name: 'Moss App Runtime' })
+contextBridge.exposeInMainWorld('appVersionInfo', { version: '2.2.0', name: 'Moss App Runtime' })

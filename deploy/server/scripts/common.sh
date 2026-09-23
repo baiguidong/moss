@@ -27,15 +27,16 @@ compose() {
 
 show_failure_logs() {
   compose ps || true
-  compose logs --tail=160 server nginx || true
+  compose logs --tail=160 mysql server nginx || true
 }
 
 wait_for_server() {
-  local port status
+  local port status container
   port="$(env_value MOSS_HTTPS_PORT)"
   log 'Waiting for Moss Server HTTPS endpoint'
   for _ in $(seq 1 60); do
-    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' moss-server 2>/dev/null || true)"
+    container="$(compose ps -a -q server)"
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
     case "$status" in
       healthy)
         curl --insecure --fail --silent --max-time 5 \

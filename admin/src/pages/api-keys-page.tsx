@@ -61,6 +61,9 @@ const apiKeySchema = z.object({
 type ApiKeyFormData = z.infer<typeof apiKeySchema>
 
 const scopeOptions = [
+  { value: 'cloud-storage:read', label: '读取云端空间' },
+  { value: 'cloud-storage:write', label: '写入云端空间' },
+  { value: 'cloud-storage:delete', label: '删除云端文件' },
   { value: 'sessions:create', label: '创建会话' },
   { value: 'sessions:attach', label: '接入会话' },
   { value: 'sessions:list', label: '列出会话' },

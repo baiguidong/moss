@@ -6,10 +6,10 @@ import {
   randomUUID,
   timingSafeEqual,
 } from 'node:crypto'
-import type { DatabaseSync } from 'node:sqlite'
-import { ServerCredentialStore } from '../security/credentialStore.js'
 import { AuthServiceError } from '../auth/service.js'
 import { hasScope, type AuthContext } from '../auth/token.js'
+import { RagflowRepository } from '../model/repositories/ragflow.js'
+import { ServerCredentialStore } from '../security/credentialStore.js'
 import type { ServerConfig } from '../types.js'
 
 export type RagflowPermission = 'readonly' | 'manager'
@@ -76,7 +76,8 @@ function mapBinding(row: SqlRow): RagflowBinding {
     userId: String(row.user_id),
     instanceId: String(row.instance_id),
     ragflowUsername: String(row.ragflow_username),
-    ragflowUserId: row.ragflow_user_id == null ? null : String(row.ragflow_user_id),
+    ragflowUserId:
+      row.ragflow_user_id == null ? null : String(row.ragflow_user_id),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   }
@@ -98,27 +99,45 @@ function messageFromPayload(payload: unknown, fallback: string): string {
 
 function randomLetterPassword(length: number): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-  return Array.from({ length }, () => alphabet[randomInt(alphabet.length)]).join('')
+  return Array.from(
+    { length },
+    () => alphabet[randomInt(alphabet.length)],
+  ).join('')
 }
 
-function usernameLocalPart(name: string, email: string, userId: string): string {
-  const normalize = (value: string) => value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^[._-]+|[._-]+$/g, '')
-    .slice(0, 48)
-  return normalize(name) || normalize(email.split('@')[0] || '') || `user-${userId.slice(0, 8)}`
+function usernameLocalPart(
+  name: string,
+  email: string,
+  userId: string,
+): string {
+  const normalize = (value: string) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[._-]+|[._-]+$/g, '')
+      .slice(0, 48)
+  return (
+    normalize(name) ||
+    normalize(email.split('@')[0] || '') ||
+    `user-${userId.slice(0, 8)}`
+  )
 }
 
 class RagflowAdminClient {
   constructor(private readonly config: ServerConfig['ragflow']) {
     if (!config.adminUrl || !config.adminPassword) {
-      throw new AuthServiceError(503, 'RAGFlow adminUrl and adminPassword are required for account management')
+      throw new AuthServiceError(
+        503,
+        'RAGFlow adminUrl and adminPassword are required for account management',
+      )
     }
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<{
+  private async request(
+    path: string,
+    init: RequestInit = {},
+  ): Promise<{
     response: Response
     payload: Record<string, unknown>
   }> {
@@ -134,13 +153,19 @@ class RagflowAdminClient {
         },
       })
     } catch (error) {
-      throw new AuthServiceError(502, `RAGFlow Admin API request failed: ${error instanceof Error ? error.message : String(error)}`)
+      throw new AuthServiceError(
+        502,
+        `RAGFlow Admin API request failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
     let payload: Record<string, unknown>
     try {
-      payload = await response.json() as Record<string, unknown>
+      payload = (await response.json()) as Record<string, unknown>
     } catch {
-      throw new AuthServiceError(502, `RAGFlow Admin API returned HTTP ${response.status} with a non-JSON response`)
+      throw new AuthServiceError(
+        502,
+        `RAGFlow Admin API returned HTTP ${response.status} with a non-JSON response`,
+      )
     }
     return { response, payload }
   }
@@ -155,12 +180,18 @@ class RagflowAdminClient {
     })
     const authorization = response.headers.get('authorization')?.trim() || ''
     if (!response.ok || Number(payload.code) !== 0 || !authorization) {
-      throw new AuthServiceError(502, messageFromPayload(payload, 'RAGFlow admin login failed'))
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(payload, 'RAGFlow admin login failed'),
+      )
     }
     return authorization
   }
 
-  async createUser(username: string, password: string): Promise<{ ragflowUserId: string | null }> {
+  async createUser(
+    username: string,
+    password: string,
+  ): Promise<{ ragflowUserId: string | null }> {
     const authorization = await this.login()
     const created = await this.request('/api/v1/admin/users', {
       method: 'POST',
@@ -172,30 +203,51 @@ class RagflowAdminClient {
       }),
     })
     if (!created.response.ok || Number(created.payload.code) !== 0) {
-      const message = messageFromPayload(created.payload, 'RAGFlow user provisioning failed')
-      const statusCode = created.response.status === 409 || /already|exist/i.test(message) ? 409 : 502
+      const message = messageFromPayload(
+        created.payload,
+        'RAGFlow user provisioning failed',
+      )
+      const statusCode =
+        created.response.status === 409 || /already|exist/i.test(message)
+          ? 409
+          : 502
       throw new AuthServiceError(statusCode, message)
     }
     const data = created.payload.data
-    const record = data && typeof data === 'object' ? data as Record<string, unknown> : {}
+    const record =
+      data && typeof data === 'object' ? (data as Record<string, unknown>) : {}
     return { ragflowUserId: typeof record.id === 'string' ? record.id : null }
   }
 
-  async generateKey(username: string): Promise<{ apiKey: string; ragflowUserId: string | null }> {
+  async generateKey(
+    username: string,
+  ): Promise<{ apiKey: string; ragflowUserId: string | null }> {
     const authorization = await this.login()
     const generated = await this.request(
       `/api/v1/admin/users/${encodeURIComponent(username)}/keys`,
       { method: 'POST', headers: { authorization } },
     )
     const data = generated.payload.data
-    const record = data && typeof data === 'object' ? data as Record<string, unknown> : {}
+    const record =
+      data && typeof data === 'object' ? (data as Record<string, unknown>) : {}
     const apiKey = typeof record.token === 'string' ? record.token.trim() : ''
-    if (!generated.response.ok || Number(generated.payload.code) !== 0 || !apiKey) {
-      throw new AuthServiceError(502, messageFromPayload(generated.payload, 'RAGFlow API key generation failed'))
+    if (
+      !generated.response.ok ||
+      Number(generated.payload.code) !== 0 ||
+      !apiKey
+    ) {
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(
+          generated.payload,
+          'RAGFlow API key generation failed',
+        ),
+      )
     }
     return {
       apiKey,
-      ragflowUserId: typeof record.tenant_id === 'string' ? record.tenant_id : null,
+      ragflowUserId:
+        typeof record.tenant_id === 'string' ? record.tenant_id : null,
     }
   }
 
@@ -206,11 +258,16 @@ class RagflowAdminClient {
       {
         method: 'PUT',
         headers: { authorization },
-        body: JSON.stringify({ new_password: encryptRagflowPassword(password) }),
+        body: JSON.stringify({
+          new_password: encryptRagflowPassword(password),
+        }),
       },
     )
     if (!updated.response.ok || Number(updated.payload.code) !== 0) {
-      throw new AuthServiceError(502, messageFromPayload(updated.payload, 'RAGFlow password update failed'))
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(updated.payload, 'RAGFlow password update failed'),
+      )
     }
   }
 
@@ -221,7 +278,13 @@ class RagflowAdminClient {
       { method: 'DELETE', headers: { authorization } },
     )
     if (!removed.response.ok || Number(removed.payload.code) !== 0) {
-      throw new AuthServiceError(502, messageFromPayload(removed.payload, 'RAGFlow API key revocation failed'))
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(
+          removed.payload,
+          'RAGFlow API key revocation failed',
+        ),
+      )
     }
   }
 
@@ -237,14 +300,23 @@ class RagflowAdminClient {
       },
     )
     if (!disabled.response.ok || Number(disabled.payload.code) !== 0) {
-      throw new AuthServiceError(502, messageFromPayload(disabled.payload, 'RAGFlow user deactivation failed'))
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(
+          disabled.payload,
+          'RAGFlow user deactivation failed',
+        ),
+      )
     }
     const removed = await this.request(
       `/api/v1/admin/users/${encodedUsername}`,
       { method: 'DELETE', headers: { authorization } },
     )
     if (!removed.response.ok || Number(removed.payload.code) !== 0) {
-      throw new AuthServiceError(502, messageFromPayload(removed.payload, 'RAGFlow user cleanup failed'))
+      throw new AuthServiceError(
+        502,
+        messageFromPayload(removed.payload, 'RAGFlow user cleanup failed'),
+      )
     }
   }
 }
@@ -253,9 +325,14 @@ export class RagflowIntegrationService {
   private readonly credentials: ServerCredentialStore
   private readonly pending = new Map<string, Promise<ProvisionedAccount>>()
 
-  constructor(private readonly input: { db: DatabaseSync; rootDir: string; config: ServerConfig['ragflow'] }) {
+  constructor(
+    private readonly input: {
+      repository: RagflowRepository
+      rootDir: string
+      config: ServerConfig['ragflow']
+    },
+  ) {
     this.credentials = new ServerCredentialStore(input.rootDir)
-    this.initTables()
   }
 
   get enabled(): boolean {
@@ -268,44 +345,15 @@ export class RagflowIntegrationService {
     if (!expected || !actual) return false
     const expectedBuffer = Buffer.from(expected, 'utf8')
     const actualBuffer = Buffer.from(actual, 'utf8')
-    return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer)
-  }
-
-  private initTables(): void {
-    this.input.db.exec(`
-      DROP TABLE IF EXISTS ragflow_permissions;
-
-      CREATE TABLE IF NOT EXISTS ragflow_bindings (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        instance_id TEXT NOT NULL,
-        ragflow_username TEXT NOT NULL,
-        ragflow_user_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE (instance_id, user_id),
-        UNIQUE (instance_id, ragflow_username)
-      );
-
-      CREATE TABLE IF NOT EXISTS ragflow_audit_events (
-        id TEXT PRIMARY KEY,
-        org_id TEXT NOT NULL,
-        actor_user_id TEXT NOT NULL,
-        target_user_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS ragflow_bindings_org_idx
-        ON ragflow_bindings (org_id, instance_id);
-      CREATE INDEX IF NOT EXISTS ragflow_audit_org_idx
-        ON ragflow_audit_events (org_id, created_at);
-    `)
+    return (
+      expectedBuffer.length === actualBuffer.length &&
+      timingSafeEqual(expectedBuffer, actualBuffer)
+    )
   }
 
   private assertEnabled(): void {
-    if (!this.enabled) throw new AuthServiceError(503, 'RAGFlow integration is disabled')
+    if (!this.enabled)
+      throw new AuthServiceError(503, 'RAGFlow integration is disabled')
   }
 
   private permissionFor(auth: AuthContext): RagflowPermission {
@@ -314,52 +362,76 @@ export class RagflowIntegrationService {
     throw new AuthServiceError(403, 'Knowledge base permission is required')
   }
 
-  private getBinding(orgId: string, userId: string): RagflowBinding | null {
-    const row = this.input.db.prepare(`
-      SELECT * FROM ragflow_bindings
-      WHERE org_id = ? AND user_id = ? AND instance_id = ? LIMIT 1
-    `).get(orgId, userId, this.input.config.instanceId) as SqlRow | undefined
+  private async getBinding(
+    orgId: string,
+    userId: string,
+  ): Promise<RagflowBinding | null> {
+    const row = (await this.input.repository.getBinding(
+      orgId,
+      userId,
+      this.input.config.instanceId,
+    )) as SqlRow | undefined
     return row ? mapBinding(row) : null
   }
 
-  private getUser(orgId: string, userId: string): { id: string; name: string; email: string } {
-    const row = this.input.db.prepare(`
-      SELECT id, name, email FROM users WHERE org_id = ? AND id = ? LIMIT 1
-    `).get(orgId, userId) as SqlRow | undefined
+  private async getUser(
+    orgId: string,
+    userId: string,
+  ): Promise<{ id: string; name: string; email: string }> {
+    const row = (await this.input.repository.getUser(orgId, userId)) as
+      SqlRow | undefined
     if (!row) throw new AuthServiceError(404, 'Unknown user_id')
-    return { id: String(row.id), name: String(row.name), email: String(row.email) }
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      email: String(row.email),
+    }
   }
 
-  private async readSecrets(binding: RagflowBinding): Promise<RagflowSecrets | null> {
+  private async readSecrets(
+    binding: RagflowBinding,
+  ): Promise<RagflowSecrets | null> {
     const stored = await this.credentials.get('ragflow-bindings', binding.id)
     const apiKey = stored.apiKey?.trim() || ''
     const password = stored.password || ''
     return apiKey && password ? { apiKey, password } : null
   }
 
-  private candidateUsername(orgId: string, userId: string, fallback = false): string {
-    const user = this.getUser(orgId, userId)
-    const configuredDomain = (this.input.config.userDomain || 'ragflow.com').trim().toLowerCase()
+  private async candidateUsername(
+    orgId: string,
+    userId: string,
+    fallback = false,
+  ): Promise<string> {
+    const user = await this.getUser(orgId, userId)
+    const configuredDomain = (this.input.config.userDomain || 'ragflow.com')
+      .trim()
+      .toLowerCase()
     if (!/^[a-z0-9.-]+\.[a-z0-9-]{2,}$/.test(configuredDomain)) {
       throw new AuthServiceError(500, 'Invalid RAGFlow user domain')
     }
     const local = usernameLocalPart(user.name, user.email, user.id)
-    const suffix = fallback ? `.${createHash('sha256').update(`${orgId}:${userId}`).digest('hex').slice(0, 8)}` : ''
+    const suffix = fallback
+      ? `.${createHash('sha256').update(`${orgId}:${userId}`).digest('hex').slice(0, 8)}`
+      : ''
     return `${local}${suffix}@${configuredDomain}`
   }
 
-  private async createAccount(orgId: string, userId: string): Promise<ProvisionedAccount> {
+  private async createAccount(
+    orgId: string,
+    userId: string,
+  ): Promise<ProvisionedAccount> {
     const client = new RagflowAdminClient(this.input.config)
     const password = randomLetterPassword(this.input.config.passwordLength || 6)
-    let username = this.candidateUsername(orgId, userId)
+    let username = await this.candidateUsername(orgId, userId)
     let remoteCreated = false
     try {
       let created: { ragflowUserId: string | null }
       try {
         created = await client.createUser(username, password)
       } catch (error) {
-        if (!(error instanceof AuthServiceError) || error.statusCode !== 409) throw error
-        username = this.candidateUsername(orgId, userId, true)
+        if (!(error instanceof AuthServiceError) || error.statusCode !== 409)
+          throw error
+        username = await this.candidateUsername(orgId, userId, true)
         created = await client.createUser(username, password)
       }
       remoteCreated = true
@@ -378,11 +450,7 @@ export class RagflowIntegrationService {
       const secrets = { apiKey: generated.apiKey, password }
       await this.credentials.set('ragflow-bindings', binding.id, secrets)
       try {
-        this.input.db.prepare(`
-          INSERT INTO ragflow_bindings (
-            id, org_id, user_id, instance_id, ragflow_username, ragflow_user_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        await this.input.repository.createAccount(
           binding.id,
           binding.orgId,
           binding.userId,
@@ -397,37 +465,54 @@ export class RagflowIntegrationService {
         throw error
       }
       try {
-        this.audit(orgId, userId, userId, 'ragflow.account.provision')
+        await this.audit(orgId, userId, userId, 'ragflow.account.provision')
       } catch {}
       return { binding, secrets }
     } catch (error) {
-      if (remoteCreated) await client.deleteUser(username).catch(() => undefined)
+      if (remoteCreated)
+        await client.deleteUser(username).catch(() => undefined)
       throw error
     }
   }
 
-  private async ensureAccount(orgId: string, userId: string): Promise<ProvisionedAccount> {
+  private async ensureAccount(
+    orgId: string,
+    userId: string,
+  ): Promise<ProvisionedAccount> {
     this.assertEnabled()
-    const existing = this.getBinding(orgId, userId)
+    const existing = await this.getBinding(orgId, userId)
     if (existing) {
       const secrets = await this.readSecrets(existing)
       if (secrets) return { binding: existing, secrets }
-      throw new AuthServiceError(409, 'RAGFlow binding is incomplete; clear the development data and provision again')
+      throw new AuthServiceError(
+        409,
+        'RAGFlow binding is incomplete; clear the development data and provision again',
+      )
     }
     const pendingKey = `${this.input.config.instanceId}:${orgId}:${userId}`
     const current = this.pending.get(pendingKey)
     if (current) return current
-    const operation = this.createAccount(orgId, userId).finally(() => this.pending.delete(pendingKey))
+    const operation = this.createAccount(orgId, userId).finally(() =>
+      this.pending.delete(pendingKey),
+    )
     this.pending.set(pendingKey, operation)
     return operation
   }
 
-  private audit(orgId: string, actorUserId: string, targetUserId: string, action: string): void {
-    this.input.db.prepare(`
-      INSERT INTO ragflow_audit_events (
-        id, org_id, actor_user_id, target_user_id, action, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(randomUUID(), orgId, actorUserId, targetUserId, action, Date.now())
+  private async audit(
+    orgId: string,
+    actorUserId: string,
+    targetUserId: string,
+    action: string,
+  ): Promise<void> {
+    await this.input.repository.audit(
+      randomUUID(),
+      orgId,
+      actorUserId,
+      targetUserId,
+      action,
+      Date.now(),
+    )
   }
 
   async resolve(auth: AuthContext): Promise<RagflowResolvedIdentity> {
@@ -440,12 +525,18 @@ export class RagflowIntegrationService {
       ragflow_username: account.binding.ragflowUsername,
       ragflow_api_key: account.secrets.apiKey,
       permission,
-      scopes: permission === 'manager' ? ['read', 'write', 'agent', 'admin'] : ['read'],
+      scopes:
+        permission === 'manager'
+          ? ['read', 'write', 'agent', 'admin']
+          : ['read'],
     }
   }
 
-  async getUserStatus(orgId: string, userId: string): Promise<RagflowAccountStatus> {
-    const binding = this.getBinding(orgId, userId)
+  async getUserStatus(
+    orgId: string,
+    userId: string,
+  ): Promise<RagflowAccountStatus> {
+    const binding = await this.getBinding(orgId, userId)
     const secrets = binding ? await this.readSecrets(binding) : null
     return {
       enabled: this.enabled,
@@ -460,19 +551,27 @@ export class RagflowIntegrationService {
     }
   }
 
-  async provisionForUser(orgId: string, userId: string, actorUserId: string): Promise<RagflowAccountStatus> {
+  async provisionForUser(
+    orgId: string,
+    userId: string,
+    actorUserId: string,
+  ): Promise<RagflowAccountStatus> {
     await this.ensureAccount(orgId, userId)
-    this.audit(orgId, actorUserId, userId, 'ragflow.account.ensure')
-    return this.getUserStatus(orgId, userId)
+    await this.audit(orgId, actorUserId, userId, 'ragflow.account.ensure')
+    return await this.getUserStatus(orgId, userId)
   }
 
-  async revealCredentials(orgId: string, userId: string, actorUserId: string): Promise<{
+  async revealCredentials(
+    orgId: string,
+    userId: string,
+    actorUserId: string,
+  ): Promise<{
     username: string
     password: string
     api_key: string
   }> {
     const account = await this.ensureAccount(orgId, userId)
-    this.audit(orgId, actorUserId, userId, 'ragflow.credentials.reveal')
+    await this.audit(orgId, actorUserId, userId, 'ragflow.credentials.reveal')
     return {
       username: account.binding.ragflowUsername,
       password: account.secrets.password,
@@ -480,22 +579,33 @@ export class RagflowIntegrationService {
     }
   }
 
-  async rotatePassword(orgId: string, userId: string, actorUserId: string): Promise<{
+  async rotatePassword(
+    orgId: string,
+    userId: string,
+    actorUserId: string,
+  ): Promise<{
     username: string
     password: string
   }> {
     const account = await this.ensureAccount(orgId, userId)
     const password = randomLetterPassword(this.input.config.passwordLength || 6)
-    await new RagflowAdminClient(this.input.config).resetPassword(account.binding.ragflowUsername, password)
+    await new RagflowAdminClient(this.input.config).resetPassword(
+      account.binding.ragflowUsername,
+      password,
+    )
     await this.credentials.set('ragflow-bindings', account.binding.id, {
       ...account.secrets,
       password,
     })
-    this.audit(orgId, actorUserId, userId, 'ragflow.password.rotate')
+    await this.audit(orgId, actorUserId, userId, 'ragflow.password.rotate')
     return { username: account.binding.ragflowUsername, password }
   }
 
-  async rotateApiKey(orgId: string, userId: string, actorUserId: string): Promise<{
+  async rotateApiKey(
+    orgId: string,
+    userId: string,
+    actorUserId: string,
+  ): Promise<{
     username: string
     api_key: string
   }> {
@@ -506,9 +616,15 @@ export class RagflowIntegrationService {
       ...account.secrets,
       apiKey: generated.apiKey,
     })
-    await client.revokeKey(account.binding.ragflowUsername, account.secrets.apiKey)
-    this.audit(orgId, actorUserId, userId, 'ragflow.api-key.rotate')
-    return { username: account.binding.ragflowUsername, api_key: generated.apiKey }
+    await client.revokeKey(
+      account.binding.ragflowUsername,
+      account.secrets.apiKey,
+    )
+    await this.audit(orgId, actorUserId, userId, 'ragflow.api-key.rotate')
+    return {
+      username: account.binding.ragflowUsername,
+      api_key: generated.apiKey,
+    }
   }
 
   async getStatus(): Promise<{
@@ -522,9 +638,14 @@ export class RagflowIntegrationService {
     let reachable = false
     if (this.enabled && this.input.config.baseUrl) {
       try {
-        const response = await fetch(`${this.input.config.baseUrl}/api/v1/system/healthz`, {
-          signal: AbortSignal.timeout(Math.min(this.input.config.requestTimeoutMs, 5_000)),
-        })
+        const response = await fetch(
+          `${this.input.config.baseUrl}/api/v1/system/healthz`,
+          {
+            signal: AbortSignal.timeout(
+              Math.min(this.input.config.requestTimeoutMs, 5_000),
+            ),
+          },
+        )
         reachable = response.ok
       } catch {}
     }

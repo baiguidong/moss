@@ -243,3 +243,5 @@ export function normalizeAppOwner(owner?: Partial<AppOwner>): AppOwner
 export function runtimeKey(instanceId: string, owner?: Partial<AppOwner>): string
 export function validateConfiguration(packageRoot: string, backend: Record<string, any>, config: unknown, secrets?: unknown): { config: Record<string, unknown>; secrets: Record<string, unknown> }
 export function redactAppValue(value: unknown, secretValues?: string[]): unknown
+
+export function createCloudStorageProtocolDefinition(options?: Record<string, any>): Record<string, any>

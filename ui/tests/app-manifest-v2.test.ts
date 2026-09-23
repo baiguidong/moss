@@ -20,11 +20,11 @@ const valid = {
 }
 
 describe('App manifest V2', () => {
-  it('advertises Host API 2.1 while accepting Apps built for compatible 2.x hosts', () => {
-    expect(APP_HOST_API_VERSION).toBe('2.1.0')
+  it('advertises Host API 2.2 while accepting Apps built for compatible 2.x hosts', () => {
+    expect(APP_HOST_API_VERSION).toBe('2.2.0')
     expect(validateAppManifest(valid).hostApi).toBe('^2.0.0')
     expect(validateAppManifest({ ...valid, hostApi: '^2.1.0' }).hostApi).toBe('^2.1.0')
-    expect(() => validateAppManifest({ ...valid, hostApi: '^2.2.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^2.3.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {

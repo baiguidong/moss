@@ -121,7 +121,7 @@ describe('App V2 registry hydration', () => {
       currentVersion: '1.3.0',
       packageStatus: 'incompatible',
       requiredHostApi: '^1.3.0',
-      packageError: 'App requires Host API ^1.3.0; this Host provides 2.1.0',
+      packageError: 'App requires Host API ^1.3.0; this Host provides 2.2.0',
     }])
   })
 })

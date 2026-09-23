@@ -90,6 +90,7 @@ import {
   toAppUiUrl,
 } from './apps/app-ui-protocol.mjs';
 import { createAppRuntime } from './apps/app-runtime.mjs';
+import { CloudStorageHost } from './apps/cloud-storage.mjs';
 import {
   createAgentChannelController,
   createAgentChannelStore,
@@ -97,6 +98,7 @@ import {
   createAgentProtocolDefinition,
   createPlatformProtocolDefinition,
   createOpenIMProtocolDefinition,
+  createCloudStorageProtocolDefinition,
   DEFAULT_AGENT_CHANNEL_POLICY,
   resolveAgentChannelConnectorIds,
   resolveAgentChannelToolSelectors,
@@ -111,6 +113,8 @@ import {
   MOSS_PLATFORM_PROTOCOL,
   MOSS_OPENIM_PROTOCOL,
   OPENIM_HOST_METHODS,
+  CLOUD_STORAGE_HOST_METHODS,
+  MOSS_CLOUD_STORAGE_PROTOCOL,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import {
@@ -683,6 +687,7 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+let cloudStorageHost = null;
 let appShutdownComplete = false;
 let agentTeamsService = null;
 let agentTeamShutdownComplete = false;
@@ -4635,6 +4640,7 @@ function refreshDesktopSettings(payload = {}) {
     Object.keys(payload).some((key) => key.startsWith('remoteDirect'))
   ) {
     agentMailPoller?.refresh();
+    cloudStorageHost?.invalidate();
   }
   invalidateEmbeddedSettingsCache();
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
@@ -10988,6 +10994,32 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     allowMediaFile,
     fetchImpl: remoteDirectNetFetch,
   });
+  cloudStorageHost = new CloudStorageHost({
+    directory: path.join(MOSS_HOME, 'cloud-transfers'),
+    getSettings: () => desktopSettings,
+    resolveConnection: (options) => resolveRemoteDirectConnection(undefined, options),
+    fetchImpl: remoteDirectNetFetch,
+    pickFiles: async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
+      return result.canceled ? [] : result.filePaths;
+    },
+    pickDestination: async (name) => {
+      const result = await dialog.showSaveDialog({ defaultPath: path.basename(name) });
+      return result.canceled ? null : result.filePath;
+    },
+    authorizeApp: async (context, permission) => {
+      const installation = appRuntime?.installations.get(context.appId);
+      if (!installation?.enabled || !installation.grants?.includes(permission)) return false;
+      const instance = appRuntime.instances.get(context.instanceId);
+      if (!instance?.enabled || instance.appId !== context.appId) return false;
+      const pkg = await appRuntime.getActivePackage(context.appId);
+      return Boolean(pkg.manifest.backend?.protocols?.includes(MOSS_CLOUD_STORAGE_PROTOCOL)
+        && pkg.manifest.permissions?.includes(permission));
+    },
+    publish: (context, name, data) => {
+      void appRuntime?.publishHostEvent(context.appId, context.instanceId, MOSS_CLOUD_STORAGE_PROTOCOL, name, data)?.catch?.(() => {});
+    },
+  });
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
@@ -10998,8 +11030,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createAgentProtocolDefinition(),
       createPlatformProtocolDefinition(),
       createOpenIMProtocolDefinition(),
+      createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
+        method, (input, context) => cloudStorageHost.handle(method, input, context),
+      ])),
       [MOSS_ACCOUNT_PROTOCOL]: {
         'identity.current': (input) => handleAppAccountRequest('identity.current', input),
         'directory.list': (input) => handleAppAccountRequest('directory.list', input),
@@ -11025,6 +11061,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
+        void cloudStorageHost?.watch();
         resetLocalRuntimesForMcpReload();
       }
       for (const state of appWindowStates.values()) {
@@ -11310,7 +11347,7 @@ app.on('before-quit', (event) => {
   }
   if (appRuntime && !appShutdownComplete) {
     event.preventDefault();
-    void appRuntime.shutdown().finally(() => {
+    void (async () => { await cloudStorageHost?.close(); await appRuntime.shutdown(); })().finally(() => {
       appShutdownComplete = true;
       appRuntime = null;
       app.quit();

@@ -1,13 +1,13 @@
 import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
+import { getMossServerHomeDir } from './lib/env.js'
+import { expandPath } from './lib/path.js'
 import {
   serverFileConfigSchema,
   type ServerConfig,
   type ServerFileConfig,
 } from './types.js'
-import { getMossServerHomeDir } from './lib/env.js'
-import { expandPath } from './lib/path.js'
 
 export function getDefaultServerConfigPath(): string {
   return join(getMossServerHomeDir(), 'server.json')
@@ -33,6 +33,7 @@ function getDefaultStoragePaths(): {
 export function getDefaultServerConfig(): ServerFileConfig {
   const storage = getDefaultStoragePaths()
   return {
+    cloudStorage: serverFileConfigSchema().parse({}).cloudStorage,
     server: {
       host: '0.0.0.0',
       port: 43127,
@@ -44,9 +45,9 @@ export function getDefaultServerConfig(): ServerFileConfig {
     bootstrapAdmin: {
       username: 'admin',
     },
+    database: { driver: 'sqlite', filename: storage.dbPath },
     storage: {
       rootDir: storage.rootDir,
-      dbPath: storage.dbPath,
       dataDir: storage.dataDir,
       runDir: storage.runDir,
       logDir: storage.logDir,
@@ -86,6 +87,7 @@ function normalizePath(input: string): string {
 function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
   const defaultStorage = getDefaultStoragePaths()
   return {
+    cloudStorage: raw.cloudStorage,
     host: raw.server.host,
     port: raw.server.port,
     advertisedHost: raw.server.advertisedHost,
@@ -105,9 +107,18 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     rootDir: raw.storage.rootDir
       ? normalizePath(raw.storage.rootDir)
       : defaultStorage.rootDir,
-    dbPath: raw.storage.dbPath
-      ? normalizePath(raw.storage.dbPath)
-      : defaultStorage.dbPath,
+    database:
+      !raw.database || raw.database.driver === 'sqlite'
+        ? {
+            driver: 'sqlite',
+            filename:
+              raw.database?.filename === ':memory:'
+                ? ':memory:'
+                : normalizePath(
+                    raw.database?.filename || defaultStorage.dbPath,
+                  ),
+          }
+        : raw.database,
     dataDir: raw.storage.dataDir
       ? normalizePath(raw.storage.dataDir)
       : defaultStorage.dataDir,
@@ -134,10 +145,15 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       baseUrl: raw.ragflow.baseUrl?.replace(/\/+$/, ''),
       adminUrl: raw.ragflow.adminUrl?.replace(/\/+$/, ''),
       adminEmail: raw.ragflow.adminEmail,
-      adminPassword: process.env.MOSS_RAGFLOW_ADMIN_PASSWORD || raw.ragflow.adminPassword,
-      gatewayToken: process.env.MOSS_RAGFLOW_GATEWAY_TOKEN || raw.ragflow.gatewayToken,
-      userDomain: process.env.MOSS_RAGFLOW_USER_DOMAIN || raw.ragflow.userDomain,
-      passwordLength: Number(process.env.MOSS_RAGFLOW_PASSWORD_LENGTH) || raw.ragflow.passwordLength,
+      adminPassword:
+        process.env.MOSS_RAGFLOW_ADMIN_PASSWORD || raw.ragflow.adminPassword,
+      gatewayToken:
+        process.env.MOSS_RAGFLOW_GATEWAY_TOKEN || raw.ragflow.gatewayToken,
+      userDomain:
+        process.env.MOSS_RAGFLOW_USER_DOMAIN || raw.ragflow.userDomain,
+      passwordLength:
+        Number(process.env.MOSS_RAGFLOW_PASSWORD_LENGTH) ||
+        raw.ragflow.passwordLength,
       requestTimeoutMs: raw.ragflow.requestTimeoutMs,
     },
   }
@@ -156,11 +172,17 @@ export async function readServerConfig(
     // Create default config file and parent directory
     const defaultConfig = getDefaultServerConfig()
     await mkdir(dirname(resolvedConfigPath), { recursive: true })
-    await writeFile(resolvedConfigPath, JSON.stringify(defaultConfig, null, 2), 'utf8')
+    await writeFile(
+      resolvedConfigPath,
+      JSON.stringify(defaultConfig, null, 2),
+      'utf8',
+    )
 
     process.stderr.write(`\nCreated default config at: ${resolvedConfigPath}\n`)
     process.stderr.write(`Please edit the config file to customize settings.\n`)
-    process.stderr.write(`Default admin credentials: admin/password. Change the password after first login.\n\n`)
+    process.stderr.write(
+      `Default admin credentials: admin/password. Change the password after first login.\n\n`,
+    )
 
     return {
       configPath: resolvedConfigPath,
@@ -174,7 +196,9 @@ export async function readServerConfig(
     : {}
   const result = serverFileConfigSchema().safeParse(parsed)
   if (!result.success) {
-    throw new Error(`Invalid server config at ${resolvedConfigPath}: ${result.error.message}`)
+    throw new Error(
+      `Invalid server config at ${resolvedConfigPath}: ${result.error.message}`,
+    )
   }
   return {
     configPath: resolvedConfigPath,
@@ -182,13 +206,21 @@ export async function readServerConfig(
   }
 }
 
-export async function ensureServerDirectories(config: ServerConfig): Promise<void> {
+export async function ensureServerDirectories(
+  config: ServerConfig,
+): Promise<void> {
   await Promise.all([
     mkdir(config.rootDir, { recursive: true }),
-    mkdir(dirname(config.dbPath), { recursive: true }),
+    config.database.driver === 'sqlite' &&
+    config.database.filename &&
+    config.database.filename !== ':memory:'
+      ? mkdir(dirname(config.database.filename), { recursive: true })
+      : Promise.resolve(),
     mkdir(config.dataDir, { recursive: true }),
     mkdir(config.runDir, { recursive: true }),
     mkdir(config.logDir, { recursive: true }),
-    config.auditFile ? mkdir(dirname(config.auditFile), { recursive: true }) : Promise.resolve(),
+    config.auditFile
+      ? mkdir(dirname(config.auditFile), { recursive: true })
+      : Promise.resolve(),
   ])
 }

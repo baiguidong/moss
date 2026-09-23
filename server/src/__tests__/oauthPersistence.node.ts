@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { DatabaseSync } from 'node:sqlite'
 import { createAuthService } from '../auth/service.js'
-import { startServer } from '../server.js'
 import type { RuntimeService } from '../runtimeService.js'
+import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
+import { openTestDatabase } from './databaseTestUtils.js'
 
-const db = new DatabaseSync(':memory:')
+const db = await openTestDatabase(':memory:')
 try {
   const { service } = await createAuthService({
     db,
-    dbPath: ':memory:',
     tokenTtlSec: 3_600,
     bootstrapAdmin: {
       username: 'admin',
@@ -27,7 +26,7 @@ try {
     idleTimeoutMs: 600_000,
     maxSessions: 32,
     rootDir: '/tmp/moss-oauth-http-test',
-    dbPath: ':memory:',
+    database: { driver: 'sqlite', filename: ':memory:' },
     dataDir: '/tmp/moss-oauth-http-test/data',
     runDir: '/tmp/moss-oauth-http-test/run',
     logDir: '/tmp/moss-oauth-http-test/log',
@@ -43,7 +42,7 @@ try {
     store: { db },
     countActiveSessions: () => 0,
   } as unknown as RuntimeService
-  const moss = startServer(config, runtime, service)
+  const moss = await startServer(config, runtime, service)
   try {
     const mossPort = await moss.ready
     assert.ok(mossPort)
@@ -68,15 +67,18 @@ try {
       })
       assert.equal(startResponse.status, 200)
       assert.equal(startResponse.headers.get('cache-control'), 'no-store')
-      const started = await startResponse.json() as { authorization_url: string }
+      const started = (await startResponse.json()) as {
+        authorization_url: string
+      }
       const authorizationUrl = new URL(started.authorization_url, baseUrl)
 
       const pageResponse = await fetch(authorizationUrl)
       assert.equal(pageResponse.status, 200)
       assert.equal(pageResponse.headers.get('cache-control'), 'no-store')
       assert.ok(
-        (pageResponse.headers.get('content-security-policy') || '')
-          .includes(`form-action 'self' ${redirectUri}`),
+        (pageResponse.headers.get('content-security-policy') || '').includes(
+          `form-action 'self' ${redirectUri}`,
+        ),
       )
       const page = await pageResponse.text()
       assert.match(page, /登录到 Moss Server/)
@@ -90,38 +92,45 @@ try {
       assert.equal(legacyPage.status, 404)
       assert.doesNotMatch(await legacyPage.text(), /name="transaction_id"/)
 
-      const failedLogin = await fetch(`${baseUrl}/api/v1/auth/oauth/authorize`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          transaction_id: transactionId,
-          login_identifier: 'admin@example.com',
-          password: 'wrong-password',
-          action: 'authorize',
-        }),
-        redirect: 'manual',
-      })
+      const failedLogin = await fetch(
+        `${baseUrl}/api/v1/auth/oauth/authorize`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            transaction_id: transactionId,
+            login_identifier: 'admin@example.com',
+            password: 'wrong-password',
+            action: 'authorize',
+          }),
+          redirect: 'manual',
+        },
+      )
       assert.equal(failedLogin.status, 401)
       assert.equal(failedLogin.headers.get('cache-control'), 'no-store')
       assert.ok(
-        (failedLogin.headers.get('content-security-policy') || '')
-          .includes(`form-action 'self' ${redirectUri}`),
+        (failedLogin.headers.get('content-security-policy') || '').includes(
+          `form-action 'self' ${redirectUri}`,
+        ),
       )
       const failedPage = await failedLogin.text()
       assert.match(failedPage, /用户名、邮箱或密码不正确/)
       assert.match(failedPage, /value="admin@example\.com"/)
 
-      const loginResponse = await fetch(`${baseUrl}/api/v1/auth/oauth/authorize`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          transaction_id: transactionId,
-          login_identifier: 'admin@example.com',
-          password: 'admin-password',
-          action: 'authorize',
-        }),
-        redirect: 'manual',
-      })
+      const loginResponse = await fetch(
+        `${baseUrl}/api/v1/auth/oauth/authorize`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            transaction_id: transactionId,
+            login_identifier: 'admin@example.com',
+            password: 'admin-password',
+            action: 'authorize',
+          }),
+          redirect: 'manual',
+        },
+      )
       assert.equal(loginResponse.status, 303)
       assert.equal(loginResponse.headers.get('cache-control'), 'no-store')
       const callback = new URL(loginResponse.headers.get('location') || '')
@@ -130,18 +139,21 @@ try {
       const code = callback.searchParams.get('code')
       assert.ok(code)
 
-      const exchangeResponse = await fetch(`${baseUrl}/api/v1/auth/oauth/exchange`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          code_verifier: codeVerifier,
-          redirect_uri: redirectUri,
-        }),
-      })
+      const exchangeResponse = await fetch(
+        `${baseUrl}/api/v1/auth/oauth/exchange`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            code_verifier: codeVerifier,
+            redirect_uri: redirectUri,
+          }),
+        },
+      )
       assert.equal(exchangeResponse.status, 200)
       assert.equal(exchangeResponse.headers.get('cache-control'), 'no-store')
-      return await exchangeResponse.json() as {
+      return (await exchangeResponse.json()) as {
         api_key: string
         key: { id: string }
         user: { id: string }
@@ -150,8 +162,13 @@ try {
 
     const first = await login()
     assert.match(first.api_key, /^moss_sk_/)
-    assert.equal(service.issueTokenFromApiKey(first.api_key).user.id, first.user.id)
-    const stored = db.prepare('SELECT secret_hash FROM api_keys WHERE id = ?').get(first.key.id) as {
+    assert.equal(
+      (await service.issueTokenFromApiKey(first.api_key)).user.id,
+      first.user.id,
+    )
+    const stored = (await db
+      .prepare('SELECT secret_hash FROM api_keys WHERE id = ?')
+      .get(first.key.id)) as {
       secret_hash: string
     }
     assert.ok(stored.secret_hash)
@@ -159,8 +176,14 @@ try {
 
     const second = await login()
     assert.notEqual(second.api_key, first.api_key)
-    assert.throws(() => service.issueTokenFromApiKey(first.api_key), /Invalid API key/)
-    assert.equal(service.issueTokenFromApiKey(second.api_key).user.id, first.user.id)
+    await assert.rejects(
+      async () => await service.issueTokenFromApiKey(first.api_key),
+      /Invalid API key/,
+    )
+    assert.equal(
+      (await service.issueTokenFromApiKey(second.api_key)).user.id,
+      first.user.id,
+    )
 
     const canceledStart = await fetch(`${baseUrl}/api/v1/auth/oauth/start`, {
       method: 'POST',
@@ -172,7 +195,9 @@ try {
         code_challenge_method: 'S256',
       }),
     })
-    const canceledAuthorization = await canceledStart.json() as { authorization_url: string }
+    const canceledAuthorization = (await canceledStart.json()) as {
+      authorization_url: string
+    }
     const canceled = await fetch(`${baseUrl}/api/v1/auth/oauth/cancel`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -180,11 +205,14 @@ try {
     })
     assert.equal(canceled.status, 200)
     assert.deepEqual(await canceled.json(), { canceled: true })
-    const canceledPage = await fetch(new URL(canceledAuthorization.authorization_url, baseUrl))
+    const canceledPage = await fetch(
+      new URL(canceledAuthorization.authorization_url, baseUrl),
+    )
     assert.equal(canceledPage.status, 404)
     assert.ok(
-      (canceledPage.headers.get('content-security-policy') || '')
-        .includes("form-action 'none'"),
+      (canceledPage.headers.get('content-security-policy') || '').includes(
+        "form-action 'none'",
+      ),
     )
     assert.match(await canceledPage.text(), /授权请求无效或已过期/)
 
@@ -204,5 +232,5 @@ try {
     await moss.stop()
   }
 } finally {
-  db.close()
+  await db.close()
 }

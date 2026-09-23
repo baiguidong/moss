@@ -19,8 +19,9 @@ SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-
 
 case "$ARCH" in
   amd64) NODE_ARCH=x64 ;;
+  arm64) NODE_ARCH=arm64 ;;
   *)
-    echo "Unsupported architecture: $ARCH (currently only amd64 is released)" >&2
+    echo "Unsupported architecture: $ARCH (expected amd64 or arm64)" >&2
     exit 1
     ;;
 esac
@@ -100,7 +101,7 @@ install -m 0755 "$PACK_ROOT/$NODE_DIST/bin/node" "$NODE_ROOT/bin/node"
 
 # Bun bundles sharp's JavaScript but leaves its platform-specific native addon
 # as a dynamic require. Seed the portable dependencies, then replace any host
-# native packages with the Linux x64 packages used by the release.
+# native packages with the selected Linux packages.
 npm install \
   --prefix "$APP_ROOT" \
   --omit=dev \
@@ -124,11 +125,11 @@ extract_npm_package() {
 }
 
 extract_npm_package \
-  "@img/sharp-linux-x64@$SHARP_VERSION" \
-  "$APP_ROOT/node_modules/@img/sharp-linux-x64"
+  "@img/sharp-linux-$NODE_ARCH@$SHARP_VERSION" \
+  "$APP_ROOT/node_modules/@img/sharp-linux-$NODE_ARCH"
 extract_npm_package \
-  "@img/sharp-libvips-linux-x64@$SHARP_LIBVIPS_VERSION" \
-  "$APP_ROOT/node_modules/@img/sharp-libvips-linux-x64"
+  "@img/sharp-libvips-linux-$NODE_ARCH@$SHARP_LIBVIPS_VERSION" \
+  "$APP_ROOT/node_modules/@img/sharp-libvips-linux-$NODE_ARCH"
 # Runtime code loads these packages directly; npm's command shims are unused
 # and would introduce symbolic links into the Server image.
 rm -rf "$APP_ROOT/node_modules/.bin"
@@ -141,9 +142,9 @@ test -f "$APP_ROOT/bin/moss-server.mjs"
 test -f "$APP_ROOT/bin/moss-session-runner.mjs"
 test ! -e "$APP_ROOT/apps"
 test -f "$APP_ROOT/admin/dist/index.html"
-test -f "$APP_ROOT/node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node"
+test -f "$APP_ROOT/node_modules/@img/sharp-linux-$NODE_ARCH/lib/sharp-linux-$NODE_ARCH.node"
 
-if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
+if [ "$(uname -s)" = Linux ] && { { [ "$ARCH" = amd64 ] && [ "$(uname -m)" = x86_64 ]; } || { [ "$ARCH" = arm64 ] && [ "$(uname -m)" = aarch64 ]; }; }; then
   "$NODE_ROOT/bin/node" --no-warnings -e "require('node:sqlite')"
   (
     cd "$APP_ROOT"

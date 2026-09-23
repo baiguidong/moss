@@ -3,9 +3,10 @@ import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
-  SessionRuntimeOptions,
   SessionRuntimeInfo,
+  SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
+import { databaseConfigSchema, type DatabaseConfig } from './model/config.js'
 
 function lazySchema<T>(factory: () => T): () => T {
   let cached: T | undefined
@@ -14,95 +15,146 @@ function lazySchema<T>(factory: () => T): () => T {
 
 export const serverFileConfigSchema = lazySchema(() =>
   z.object({
-    server: z.object({
-      host: z.string().default('0.0.0.0'),
-      port: z.number().int().min(0).default(43127),
-      advertisedHost: z.string().min(1).optional(),
-      publicUrl: z.string().url().optional(),
-    }).default({
-      host: '0.0.0.0',
-      port: 43127,
-    }),
-    auth: z.object({
-      mode: z.enum(['local', 'auth-center']).default('local'),
-      tokenTtlSec: z.number().int().min(60).default(60 * 60),
-      authCenterUrl: z.string().min(1).optional(),
-    }).default({
-      mode: 'local',
-      tokenTtlSec: 60 * 60,
-    }),
-    bootstrapAdmin: z.object({
-      username: z.string().min(1).default('admin'),
-      password: z.string().min(1).optional(),
-      email: z.string().min(1).optional(),
-    }).default({
-      username: 'admin',
-    }),
-    storage: z.object({
-      rootDir: z.string().min(1).optional(),
-      dbPath: z.string().min(1).optional(),
-      dataDir: z.string().min(1).optional(),
-      runDir: z.string().min(1).optional(),
-      logDir: z.string().min(1).optional(),
-    }).default({}),
-    runtimeDefaults: z.object({
-      workspace: z.string().optional(),
-      idleTimeoutMs: z.number().int().min(0).default(10 * 60 * 1000),
-      maxSessions: z.number().int().min(0).default(32),
-    }).default({
-      idleTimeoutMs: 10 * 60 * 1000,
-      maxSessions: 32,
-    }),
-    docker: z.object({
-      network: z.string().optional(),
-      stopTimeoutSec: z.number().int().min(1).default(10),
-      labels: z.record(z.string(), z.string()).default({}),
-    }).default({
-      stopTimeoutSec: 10,
-      labels: {},
-    }),
-    recovery: z.object({
-      startupPolicy: z.enum(['reattach-or-resume']).default('reattach-or-resume'),
-      heartbeatTimeoutMs: z.number().int().min(1).default(30_000),
-      reattachProbeTimeoutMs: z.number().int().min(1).default(3_000),
-      resumeOnMissingRuntime: z.boolean().default(true),
-    }).default({
-      startupPolicy: 'reattach-or-resume',
-      heartbeatTimeoutMs: 30_000,
-      reattachProbeTimeoutMs: 3_000,
-      resumeOnMissingRuntime: true,
-    }),
-    logging: z.object({
-      level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-      auditFile: z.string().optional(),
-    }).default({
-      level: 'info',
-    }),
-    ragflow: z.object({
-      enabled: z.boolean().default(false),
-      instanceId: z.string().min(1).default('default'),
-      baseUrl: z.string().min(1).optional(),
-      adminUrl: z.string().min(1).optional(),
-      adminEmail: z.string().min(1).default('admin@ragflow.io'),
-      adminPassword: z.string().min(1).optional(),
-      gatewayToken: z.string().min(32).optional(),
-      userDomain: z.string().min(3).default('ragflow.com'),
-      passwordLength: z.number().int().min(6).max(64).default(6),
-      requestTimeoutMs: z.number().int().min(1_000).default(15_000),
-    }).default({
-      enabled: false,
-      instanceId: 'default',
-      adminEmail: 'admin@ragflow.io',
-      userDomain: 'ragflow.com',
-      passwordLength: 6,
-      requestTimeoutMs: 15_000,
-    }),
+    server: z
+      .object({
+        host: z.string().default('0.0.0.0'),
+        port: z.number().int().min(0).default(43127),
+        advertisedHost: z.string().min(1).optional(),
+        publicUrl: z.string().url().optional(),
+      })
+      .default({
+        host: '0.0.0.0',
+        port: 43127,
+      }),
+    auth: z
+      .object({
+        mode: z.enum(['local', 'auth-center']).default('local'),
+        tokenTtlSec: z
+          .number()
+          .int()
+          .min(60)
+          .default(60 * 60),
+        authCenterUrl: z.string().min(1).optional(),
+      })
+      .default({
+        mode: 'local',
+        tokenTtlSec: 60 * 60,
+      }),
+    bootstrapAdmin: z
+      .object({
+        username: z.string().min(1).default('admin'),
+        password: z.string().min(1).optional(),
+        email: z.string().min(1).optional(),
+      })
+      .default({
+        username: 'admin',
+      }),
+    database: databaseConfigSchema.optional(),
+    storage: z
+      .object({
+        rootDir: z.string().min(1).optional(),
+        dataDir: z.string().min(1).optional(),
+        runDir: z.string().min(1).optional(),
+        logDir: z.string().min(1).optional(),
+      })
+      .default({}),
+    cloudStorage: z
+      .object({
+        enabled: z.boolean().default(false),
+        endpoint: z.string().url().optional(),
+        bucket: z.string().min(3).default('moss-cloud-storage'),
+        region: z.string().min(1).default('us-east-1'),
+        forcePathStyle: z.boolean().default(true),
+        quotaBytes: z
+          .number()
+          .int()
+          .positive()
+          .max(Number.MAX_SAFE_INTEGER)
+          .default(100 * 1024 ** 3),
+        uploadTtlMs: z
+          .number()
+          .int()
+          .min(3600000)
+          .default(7 * 86400000),
+      })
+      .prefault({}),
+    runtimeDefaults: z
+      .object({
+        workspace: z.string().optional(),
+        idleTimeoutMs: z
+          .number()
+          .int()
+          .min(0)
+          .default(10 * 60 * 1000),
+        maxSessions: z.number().int().min(0).default(32),
+      })
+      .default({
+        idleTimeoutMs: 10 * 60 * 1000,
+        maxSessions: 32,
+      }),
+    docker: z
+      .object({
+        network: z.string().optional(),
+        stopTimeoutSec: z.number().int().min(1).default(10),
+        labels: z.record(z.string(), z.string()).default({}),
+      })
+      .default({
+        stopTimeoutSec: 10,
+        labels: {},
+      }),
+    recovery: z
+      .object({
+        startupPolicy: z
+          .enum(['reattach-or-resume'])
+          .default('reattach-or-resume'),
+        heartbeatTimeoutMs: z.number().int().min(1).default(30_000),
+        reattachProbeTimeoutMs: z.number().int().min(1).default(3_000),
+        resumeOnMissingRuntime: z.boolean().default(true),
+      })
+      .default({
+        startupPolicy: 'reattach-or-resume',
+        heartbeatTimeoutMs: 30_000,
+        reattachProbeTimeoutMs: 3_000,
+        resumeOnMissingRuntime: true,
+      }),
+    logging: z
+      .object({
+        level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+        auditFile: z.string().optional(),
+      })
+      .default({
+        level: 'info',
+      }),
+    ragflow: z
+      .object({
+        enabled: z.boolean().default(false),
+        instanceId: z.string().min(1).default('default'),
+        baseUrl: z.string().min(1).optional(),
+        adminUrl: z.string().min(1).optional(),
+        adminEmail: z.string().min(1).default('admin@ragflow.io'),
+        adminPassword: z.string().min(1).optional(),
+        gatewayToken: z.string().min(32).optional(),
+        userDomain: z.string().min(3).default('ragflow.com'),
+        passwordLength: z.number().int().min(6).max(64).default(6),
+        requestTimeoutMs: z.number().int().min(1_000).default(15_000),
+      })
+      .default({
+        enabled: false,
+        instanceId: 'default',
+        adminEmail: 'admin@ragflow.io',
+        userDomain: 'ragflow.com',
+        passwordLength: 6,
+        requestTimeoutMs: 15_000,
+      }),
   }),
 )
 
-export type ServerFileConfig = z.infer<ReturnType<typeof serverFileConfigSchema>>
+export type ServerFileConfig = z.infer<
+  ReturnType<typeof serverFileConfigSchema>
+>
 
 export type ServerConfig = {
+  cloudStorage?: ServerFileConfig['cloudStorage']
   host: string
   port: number
   advertisedHost?: string
@@ -118,7 +170,7 @@ export type ServerConfig = {
   idleTimeoutMs: number
   maxSessions: number
   rootDir: string
-  dbPath: string
+  database: DatabaseConfig
   dataDir: string
   runDir: string
   logDir: string
@@ -157,12 +209,7 @@ export type SessionStatus =
 export type DesiredSessionState = 'active' | 'ended' | 'terminated'
 
 export type AttemptRuntimeState =
-  | 'starting'
-  | 'running'
-  | 'detached'
-  | 'stopped'
-  | 'failed'
-  | 'lost'
+  'starting' | 'running' | 'detached' | 'stopped' | 'failed' | 'lost'
 
 export type SessionRecord = {
   sessionId: string

@@ -59,7 +59,7 @@ export interface PermissionDefinition {
   code: string
   name: string
   description: string
-  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow'
+  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow' | 'cloud-storage'
   protected?: boolean
 }
 

@@ -40,7 +40,7 @@ if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
     printf '%s' "$registry_token" | docker login "$(env_value MOSS_REGISTRY)" \
       --username "$registry_username" --password-stdin
   fi
-  log 'Pulling Moss Server, runtime, and Nginx images'
+  log 'Pulling Moss Server, runtime, MySQL, and Nginx images'
   compose pull
   docker pull "$(env_value MOSS_RUNTIME_IMAGE)"
 fi
@@ -51,6 +51,9 @@ if ! compose up -d --remove-orphans; then
   die 'failed to start Moss Server'
 fi
 wait_for_server
+if ! "$SCRIPT_DIR/scripts/cloud-storage-init.sh"; then
+  echo 'Cloud storage initialization failed. Moss Server remains available; rerun scripts/cloud-storage-init.sh to retry.' >&2
+fi
 
 server_home="$(env_value MOSS_SERVER_HOME)"
 config_path="$server_home/server.json"

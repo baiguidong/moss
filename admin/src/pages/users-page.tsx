@@ -175,6 +175,7 @@ const PERMISSION_GROUP_LABELS: Record<PermissionDefinition['group'], string> = {
   'agent-mail': 'Agent Mail',
   administration: '系统管理',
   ragflow: '知识库',
+  'cloud-storage': '云端空间',
 }
 
 const userFormSchema = z.object({

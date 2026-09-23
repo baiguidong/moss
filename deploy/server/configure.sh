@@ -59,14 +59,27 @@ apply_setting MOSS_REGISTRY_USERNAME ''
 apply_setting MOSS_SERVER_IMAGE ''
 apply_setting MOSS_RUNTIME_IMAGE ''
 apply_setting NGINX_IMAGE docker.m.daocloud.io/library/nginx:alpine
+apply_setting MINIO_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
+apply_setting SILO_MC_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
+apply_setting SILO_ROOT_USER moss-admin
+apply_setting SILO_ROOT_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
 apply_setting MOSS_SERVER_HOME /data/moss-server
 apply_setting MOSS_HTTPS_PORT 443
 apply_setting MOSS_ADMIN_USERNAME admin
 apply_setting MOSS_ADMIN_PASSWORD password
 apply_setting TZ Asia/Shanghai
+apply_setting MYSQL_IMAGE mysql:8.4.8
+apply_setting MOSS_DB_NAME moss
+apply_setting MOSS_DB_USER moss
+apply_setting MOSS_DB_PASSWORD moss_internal_password
+apply_setting MOSS_DB_ROOT_PASSWORD moss_root_internal_password
 
-for image_key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE; do
+[[ "$(read_value MOSS_DB_NAME)" =~ ^[A-Za-z0-9_]+$ ]] || die 'MOSS_DB_NAME must contain only letters, numbers and underscores'
+[[ "$(read_value MOSS_DB_USER)" =~ ^[A-Za-z0-9_]+$ && "$(read_value MOSS_DB_USER)" != root ]] || die 'MOSS_DB_USER must be a non-root application username'
+
+
+for image_key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE MYSQL_IMAGE; do
   image_value="$(read_value "$image_key")"
   [[ -n "$image_value" && "$image_value" != *[[:space:]]* ]] \
     || die "$image_key must be a non-empty image reference without whitespace"
@@ -125,7 +138,6 @@ else
       bootstrapAdmin: {username: $username, password: $password},
       storage: {
         rootDir: $root,
-        dbPath: ($root + "/var/lib/moss-server.db"),
         dataDir: ($root + "/var/lib"),
         runDir: ($root + "/var/run"),
         logDir: ($root + "/var/log")
@@ -142,6 +154,20 @@ else
       apps: {}
     }' > "$config_path.new"
 fi
+mv "$config_path.new" "$config_path"
+jq --arg database "$(read_value MOSS_DB_NAME)" '
+  .database = {
+    driver: "mysql", host: "mysql", port: 3306, database: $database,
+    userEnv: "MOSS_DB_USER", passwordEnv: "MOSS_DB_PASSWORD",
+    connectionLimit: 10, connectTimeoutMs: 10000
+  } | del(.storage.dbPath)
+' "$config_path" > "$config_path.new"
+mv "$config_path.new" "$config_path"
+jq 'if has("cloudStorage") then . else .cloudStorage = {
+  enabled: true, endpoint: "http://silo:9000", bucket: "moss-cloud-storage",
+  region: "us-east-1", forcePathStyle: true, quotaBytes: 107374182400,
+  uploadTtlMs: 604800000
+} end' "$config_path" > "$config_path.new"
 mv "$config_path.new" "$config_path"
 
 settings_path="$server_home/settings.json"

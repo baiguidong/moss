@@ -2,19 +2,19 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
-import { DirectConnectStore } from '../db.js'
+import { SessionRepository } from '../model/repositories/session.js'
+import { openTestDatabase } from './databaseTestUtils.js'
 
 const root = await mkdtemp(join(tmpdir(), 'moss-server-db-'))
 
 try {
-  const memoryStore = new DirectConnectStore(':memory:')
-  memoryStore.close()
+  const memoryStore = new SessionRepository(await openTestDatabase(':memory:'))
+  await memoryStore.close()
 
   const dbPath = join(root, 'server.db')
-  const store = new DirectConnectStore(dbPath)
+  const store = new SessionRepository(await openTestDatabase(dbPath))
   try {
-    const session = store.createSession({
+    const session = await store.createSession({
       sessionId: 'session-1',
       transcriptSessionId: 'session-1',
       transcriptPath: join(root, 'session-1.jsonl'),
@@ -126,72 +126,21 @@ try {
       thinkingConfig: { type: 'enabled', budgetTokens: 4096 },
     })
   } finally {
-    store.close()
+    await store.close()
   }
 
-  if (process.platform !== 'win32') {
+  if (!process.env.MOSS_TEST_MYSQL && process.platform !== 'win32') {
     assert.equal((await stat(dbPath)).mode & 0o777, 0o600)
   }
 
-  const legacyDb = new DatabaseSync(dbPath)
-  legacyDb.exec('ALTER TABLE sessions DROP COLUMN advanced_settings_json')
-  legacyDb.exec('ALTER TABLE sessions DROP COLUMN auto_memory_json')
-  legacyDb.exec('ALTER TABLE sessions DROP COLUMN session_memory_json')
-  legacyDb.exec('ALTER TABLE sessions DROP COLUMN runtime_options_json')
-  legacyDb.close()
-
-  const migratedStore = new DirectConnectStore(dbPath)
+  const reopened = new SessionRepository(await openTestDatabase(dbPath))
   try {
-    const columns = migratedStore.db
-      .prepare('PRAGMA table_info(sessions)')
-      .all() as Array<{ name: string }>
     assert.equal(
-      columns.some(column => column.name === 'advanced_settings_json'),
-      true,
+      (await reopened.getSession('session-1'))?.runtimeOptions?.apiKey,
+      'secret',
     )
-    assert.equal(
-      columns.some(column => column.name === 'auto_memory_json'),
-      true,
-    )
-    assert.equal(
-      columns.some(column => column.name === 'session_memory_json'),
-      true,
-    )
-    assert.equal(
-      columns.some(column => column.name === 'runtime_options_json'),
-      true,
-    )
-    assert.equal(columns.some(column => column.name === 'runtime_backend'), false)
-    const attemptColumns = migratedStore.db
-      .prepare('PRAGMA table_info(session_attempts)')
-      .all() as Array<{ name: string }>
-    assert.equal(
-      attemptColumns.some(column => column.name === 'backend_type'),
-      false,
-    )
-    assert.equal(migratedStore.getSession('session-1')?.advancedSettings, undefined)
-    assert.equal(migratedStore.getSession('session-1')?.autoMemory, undefined)
-    assert.equal(migratedStore.getSession('session-1')?.sessionMemory, undefined)
-    assert.equal(migratedStore.getSession('session-1')?.runtimeOptions, undefined)
   } finally {
-    migratedStore.close()
-  }
-
-  const incompatibleDb = new DatabaseSync(dbPath)
-  incompatibleDb.exec(
-    "ALTER TABLE sessions ADD COLUMN profile_mode TEXT NOT NULL DEFAULT 'session'",
-  )
-  incompatibleDb.close()
-
-  const resetStore = new DirectConnectStore(dbPath)
-  try {
-    const columns = resetStore.db
-      .prepare('PRAGMA table_info(sessions)')
-      .all() as Array<{ name: string }>
-    assert.equal(columns.some(column => column.name === 'profile_mode'), false)
-    assert.equal(resetStore.getSession('session-1'), null)
-  } finally {
-    resetStore.close()
+    await reopened.close()
   }
 } finally {
   await rm(root, { recursive: true, force: true })

@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-runtime",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -19,10 +19,11 @@
     "./contributions": { "types": "./src/index.d.mts", "import": "./src/contributions/index.mjs" },
     "./catalog": { "types": "./src/index.d.mts", "import": "./src/catalog/index.mjs" },
     "./logging": { "types": "./src/index.d.mts", "import": "./src/logging/index.mjs" },
-    "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" }
+    "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" },
+    "./cloud-storage": { "types": "./src/index.d.mts", "import": "./src/cloud-storage/index.mjs" }
   },
   "dependencies": {
-    "@moss/app-sdk": "2.1.0",
+    "@moss/app-sdk": "2.2.0",
     "ajv": "^8.18.0",
     "semver": "^7.7.4"
   }

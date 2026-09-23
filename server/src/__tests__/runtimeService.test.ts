@@ -12,13 +12,21 @@ import {
 } from '../runtimePaths.js'
 import { SessionTurnLock } from '../sessionTurnLock.js'
 import type { ServerConfig } from '../types.js'
+import { buildNodeFixture } from './buildNodeFixture.js'
 
 describe('runtime service workspace layout', () => {
   test('uses per-session server workspace when client does not request cwd', () => {
     const config = makeConfig('/tmp/moss-server')
 
     expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe(
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'workspace'),
+      join(
+        '/tmp/moss-server',
+        'var',
+        'lib',
+        'sessions',
+        'session-1',
+        'workspace',
+      ),
     )
   })
 
@@ -26,7 +34,14 @@ describe('runtime service workspace layout', () => {
     const config = makeConfig('/tmp/moss-server')
 
     expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe(
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'workspace'),
+      join(
+        '/tmp/moss-server',
+        'var',
+        'lib',
+        'sessions',
+        'session-1',
+        'workspace',
+      ),
     )
     expect(getUserProfileDir(config, 'user-1')).toBe(
       join('/tmp/moss-server', 'var', 'lib', 'profiles', 'users', 'user-1'),
@@ -37,14 +52,8 @@ describe('runtime service workspace layout', () => {
     const config = makeConfig('/tmp/moss-server')
 
     expect(
-      resolveSessionWorkspaceDir(
-        config,
-        'session-1',
-        '/work/project',
-      ),
-    ).toBe(
-      '/work/project',
-    )
+      resolveSessionWorkspaceDir(config, 'session-1', '/work/project'),
+    ).toBe('/work/project')
   })
 
   test('uses server default workspace before per-session workspace', () => {
@@ -53,7 +62,9 @@ describe('runtime service workspace layout', () => {
       workspace: '/work/default',
     }
 
-    expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe('/work/default')
+    expect(resolveSessionWorkspaceDir(config, 'session-1')).toBe(
+      '/work/default',
+    )
   })
 
   test('keeps attempt files under the session root', () => {
@@ -61,7 +72,15 @@ describe('runtime service workspace layout', () => {
     const attemptDir = getAttemptDir(config, 'session-1', 'attempt-1')
 
     expect(attemptDir).toBe(
-      join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-1', 'attempts', 'attempt-1'),
+      join(
+        '/tmp/moss-server',
+        'var',
+        'lib',
+        'sessions',
+        'session-1',
+        'attempts',
+        'attempt-1',
+      ),
     )
     expect(getDockerBackendManifestPath(attemptDir)).toBe(
       join(attemptDir, 'docker-backend.json'),
@@ -71,9 +90,7 @@ describe('runtime service workspace layout', () => {
   test('mounts only the current session root in addition to the user profile', () => {
     const config = makeConfig('/tmp/moss-server')
 
-    expect(
-      getSessionRuntimeMountDirs(config, 'session-2'),
-    ).toEqual([
+    expect(getSessionRuntimeMountDirs(config, 'session-2')).toEqual([
       join('/tmp/moss-server', 'var', 'lib', 'sessions', 'session-2'),
     ])
   })
@@ -107,7 +124,7 @@ test('reattaches live runtimes and recovers missing runtimes without prompt repl
       dirname(fileURLToPath(import.meta.url)),
       'runtimeRecovery.node.ts',
     )
-    const build = await Bun.build({
+    const build = await buildNodeFixture({
       entrypoints: [entrypoint],
       outdir,
       target: 'node',
@@ -143,7 +160,7 @@ function makeConfig(rootDir: string): ServerConfig {
     idleTimeoutMs: 600000,
     maxSessions: 32,
     rootDir,
-    dbPath: join(rootDir, 'moss-server.db'),
+    database: { driver: 'sqlite', filename: join(rootDir, 'moss-server.db') },
     dataDir: join(rootDir, 'var', 'lib'),
     runDir: join(rootDir, 'var', 'run'),
     logDir: join(rootDir, 'var', 'log'),

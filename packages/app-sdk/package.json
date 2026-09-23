@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-sdk",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -13,7 +13,8 @@
     "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" },
     "./client": { "types": "./src/index.d.mts", "import": "./src/client/index.mjs" },
     "./schemas": { "types": "./src/index.d.mts", "import": "./src/schemas/index.mjs" },
-    "./testing": { "types": "./src/index.d.mts", "import": "./src/testing/index.mjs" }
+    "./testing": { "types": "./src/index.d.mts", "import": "./src/testing/index.mjs" },
+    "./cloud-storage": { "types": "./src/index.d.mts", "import": "./src/cloud-storage/index.mjs" }
   },
   "dependencies": {
     "ajv": "^8.18.0",

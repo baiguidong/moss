@@ -1,11 +1,28 @@
-import http from 'http'
-import net from 'net'
 import { createHash, randomUUID } from 'crypto'
 import { createReadStream, existsSync } from 'fs'
-import { mkdir, open, readFile, readdir, realpath, rename, rm, stat } from 'fs/promises'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from 'fs/promises'
+import http from 'http'
+import net from 'net'
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'path'
 import { WebSocketServer } from 'ws'
-import type { ServerConfig, SessionRecord } from './types.js'
 import {
   advancedSettingsSchema,
   autoMemorySettingsSchema,
@@ -19,42 +36,45 @@ import {
   type SessionMemorySettings,
   type SessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
-import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
-import { createServerLogger, type ServerLogger } from './serverLog.js'
-import { hasScope, type AuthContext } from './auth/token.js'
-import { AuthService, AuthServiceError } from './auth/service.js'
-import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
-import { RagflowIntegrationService } from './ragflow/service.js'
-import { OpenIMIntegrationService } from './openim/service.js'
-import { RuntimeService } from './runtimeService.js'
 import {
-  consumeClientControlResponse,
-  trackClientControlRequest,
-} from './sessionWebSocketBridge.js'
-import {
-  getSystemSettings,
-  updateSystemSettings,
-} from './systemSettings.js'
-import { jsonParse, jsonStringify } from './lib/json.js'
-import { loadSessionContextFromTranscript } from './transcript.js'
-import { AgentMailService } from './agentMail/agentMailService.js'
-import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
-import { getUserProfileDir } from './runtimePaths.js'
-import {
-  getSkillSyncStatus,
-  installSkillArchive,
-  listProfileMemory,
-  MAX_PROFILE_ARCHIVE_BYTES,
-  readProfileMemory,
-  readSessionMemory,
-} from './profileResources.js'
-import {
+  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
   decodeWorkspaceTextBuffer,
   getWorkspaceFilePreviewInfo,
   isBinaryPreviewContentType,
   isLikelyBinaryBuffer,
-  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
 } from '../../shared/workspace-preview.mjs'
+import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
+import { AgentMailService } from './agentMail/agentMailService.js'
+import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
+import { AuthService, AuthServiceError } from './auth/service.js'
+import { hasScope, type AuthContext } from './auth/token.js'
+import { handleCloudStorageRoute } from './cloudStorage/routes.js'
+import type { ObjectStore } from './cloudStorage/s3.js'
+import { CloudStorageService } from './cloudStorage/service.js'
+import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
+import { jsonParse, jsonStringify } from './lib/json.js'
+import { AgentMailRepository } from './model/repositories/agentMail.js'
+import { CloudStorageRepository } from './model/repositories/cloudStorage.js'
+import { OpenIMIntegrationService } from './openim/service.js'
+import {
+  MAX_PROFILE_ARCHIVE_BYTES,
+  getSkillSyncStatus,
+  installSkillArchive,
+  listProfileMemory,
+  readProfileMemory,
+  readSessionMemory,
+} from './profileResources.js'
+import { RagflowIntegrationService } from './ragflow/service.js'
+import { getUserProfileDir } from './runtimePaths.js'
+import { RuntimeService } from './runtimeService.js'
+import { createServerLogger, type ServerLogger } from './serverLog.js'
+import {
+  consumeClientControlResponse,
+  trackClientControlRequest,
+} from './sessionWebSocketBridge.js'
+import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
+import { loadSessionContextFromTranscript } from './transcript.js'
+import type { ServerConfig, SessionRecord } from './types.js'
 
 type JsonBody = Record<string, unknown>
 
@@ -178,7 +198,10 @@ async function listSessionWorkspaceDir(
   session: SessionRecord,
   dirPath?: string | null,
 ) {
-  const { root, targetPath } = await resolveExistingSessionWorkspacePath(session, dirPath)
+  const { root, targetPath } = await resolveExistingSessionWorkspacePath(
+    session,
+    dirPath,
+  )
   const targetStat = await stat(targetPath)
   if (!targetStat.isDirectory()) {
     throw new HttpError(400, 'Target is not a directory')
@@ -216,7 +239,10 @@ async function readSessionWorkspaceFile(
   if (!filePath?.trim()) {
     throw new HttpError(400, 'Missing file path')
   }
-  const { root, targetPath } = await resolveExistingSessionWorkspacePath(session, filePath)
+  const { root, targetPath } = await resolveExistingSessionWorkspacePath(
+    session,
+    filePath,
+  )
   const targetStat = await stat(targetPath)
   if (!targetStat.isFile()) {
     throw new HttpError(400, 'Target is not a file')
@@ -232,16 +258,25 @@ async function readSessionWorkspaceFile(
     mimeType: previewInfo.mimeType,
     metadata: {
       modifiedAt: targetStat.mtimeMs,
-      ...(previewInfo.previewEngine ? { previewEngine: previewInfo.previewEngine } : {}),
-      ...(previewInfo.previewFamily ? { previewFamily: previewInfo.previewFamily } : {}),
-      ...(previewInfo.previewCapability ? { previewCapability: previewInfo.previewCapability } : {}),
-      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false ? { ofvText: true } : {}),
+      ...(previewInfo.previewEngine
+        ? { previewEngine: previewInfo.previewEngine }
+        : {}),
+      ...(previewInfo.previewFamily
+        ? { previewFamily: previewInfo.previewFamily }
+        : {}),
+      ...(previewInfo.previewCapability
+        ? { previewCapability: previewInfo.previewCapability }
+        : {}),
+      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false
+        ? { ofvText: true }
+        : {}),
     },
   }
 
-  const isBinaryPreview = typeof previewInfo.binary === 'boolean'
-    ? previewInfo.binary
-    : isBinaryPreviewContentType(previewInfo.contentType)
+  const isBinaryPreview =
+    typeof previewInfo.binary === 'boolean'
+      ? previewInfo.binary
+      : isBinaryPreviewContentType(previewInfo.contentType)
   if (isBinaryPreview) {
     return {
       ...baseResult,
@@ -257,7 +292,9 @@ async function readSessionWorkspaceFile(
   const handle = await open(targetPath, 'r')
   let buffer: Buffer
   try {
-    buffer = Buffer.alloc(Math.min(targetStat.size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES))
+    buffer = Buffer.alloc(
+      Math.min(targetStat.size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES),
+    )
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     buffer = buffer.subarray(0, bytesRead)
   } finally {
@@ -303,7 +340,10 @@ async function writeSessionWorkspaceFileContent(
   if (!filePath?.trim()) {
     throw new HttpError(400, 'Missing file path')
   }
-  const { targetPath } = await resolveExistingSessionWorkspacePath(session, filePath)
+  const { targetPath } = await resolveExistingSessionWorkspacePath(
+    session,
+    filePath,
+  )
   const targetStat = await stat(targetPath)
   if (!targetStat.isFile()) {
     throw new HttpError(400, 'Target is not a file')
@@ -383,16 +423,20 @@ async function writeSessionWorkspaceFile(
   filePath?: string | null,
 ) {
   if (!filePath?.trim()) throw new HttpError(400, 'Missing file path')
-  const { targetPath } = await resolveWritableSessionWorkspacePath(session, filePath)
+  const { targetPath } = await resolveWritableSessionWorkspacePath(
+    session,
+    filePath,
+  )
   await writeRequestBodyToFile(req, targetPath)
-  return readSessionWorkspaceFile(session, targetPath)
+  return await readSessionWorkspaceFile(session, targetPath)
 }
 
 function sanitizeUploadName(value: string): string {
   const safe = basename(value)
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
     .trim()
-  if (!safe || safe === '.' || safe === '..') throw new HttpError(400, 'Invalid upload name')
+  if (!safe || safe === '.' || safe === '..')
+    throw new HttpError(400, 'Invalid upload name')
   return safe.slice(0, 240)
 }
 
@@ -407,14 +451,20 @@ async function uploadSessionWorkspaceFile(
   await mkdir(inputDir, { recursive: true })
   const realInputDir = await realpath(inputDir)
   if (!isInsidePath(root, realInputDir)) {
-    throw new HttpError(400, 'Upload directory is outside the session workspace')
+    throw new HttpError(
+      400,
+      'Upload directory is outside the session workspace',
+    )
   }
   const safeName = sanitizeUploadName(fileName)
   const parsed = extname(safeName)
   const stem = parsed ? safeName.slice(0, -parsed.length) : safeName
-  const targetPath = join(realInputDir, `${stem}-${randomUUID().slice(0, 8)}${parsed}`)
+  const targetPath = join(
+    realInputDir,
+    `${stem}-${randomUUID().slice(0, 8)}${parsed}`,
+  )
   await writeRequestBodyToFile(req, targetPath)
-  return readSessionWorkspaceFile(session, targetPath)
+  return await readSessionWorkspaceFile(session, targetPath)
 }
 
 function isInsidePath(root: string, target: string): boolean {
@@ -533,8 +583,15 @@ async function readOAuthFormBody(
   req: http.IncomingMessage,
   maxBytes: number,
 ): Promise<URLSearchParams> {
-  if (!String(req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded')) {
-    throw new OAuthLoginError(415, 'OAuth authorization form must be URL encoded')
+  if (
+    !String(req.headers['content-type'] || '').startsWith(
+      'application/x-www-form-urlencoded',
+    )
+  ) {
+    throw new OAuthLoginError(
+      415,
+      'OAuth authorization form must be URL encoded',
+    )
   }
   try {
     return new URLSearchParams(await readBody(req, maxBytes))
@@ -555,17 +612,17 @@ function getBearerToken(req: http.IncomingMessage): string | null {
   return match?.[1] ?? null
 }
 
-function authenticateRequest(
+async function authenticateRequest(
   req: http.IncomingMessage,
   authService: AuthService,
-): AuthContext | null {
+): Promise<AuthContext | null> {
   const token = getBearerToken(req)
   if (!token) return null
-  const accessTokenAuth = authService.verifyAccessToken(token)
+  const accessTokenAuth = await authService.verifyAccessToken(token)
   if (accessTokenAuth) return accessTokenAuth
   try {
-    const issued = authService.issueTokenFromApiKey(token)
-    return authService.verifyAccessToken(issued.access_token)
+    const issued = await authService.issueTokenFromApiKey(token)
+    return await authService.verifyAccessToken(issued.access_token)
   } catch {
     return null
   }
@@ -636,12 +693,9 @@ function writeOAuthAuthorizePage(
         </div>
       </form>`
     : '<p class="muted">请返回 Moss 客户端重新发起认证。</p>'
-  const callbackTarget = canLogin && input.redirectUri
-    ? new URL(input.redirectUri).toString()
-    : ''
-  const formAction = callbackTarget
-    ? `'self' ${callbackTarget}`
-    : "'none'"
+  const callbackTarget =
+    canLogin && input.redirectUri ? new URL(input.redirectUri).toString() : ''
+  const formAction = callbackTarget ? `'self' ${callbackTarget}` : "'none'"
   const payload = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
     :root{color-scheme:light dark;font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#f4f5f7;color:#17191d}
     *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f5f7}
@@ -664,10 +718,7 @@ function writeOAuthAuthorizePage(
   res.end(payload)
 }
 
-function redirectNoStore(
-  res: http.ServerResponse,
-  location: string,
-): void {
+function redirectNoStore(res: http.ServerResponse, location: string): void {
   res.writeHead(303, {
     'cache-control': 'no-store',
     location,
@@ -676,15 +727,14 @@ function redirectNoStore(
   res.end()
 }
 
-function redirect(
-  res: http.ServerResponse,
-  location: string,
-): void {
+function redirect(res: http.ServerResponse, location: string): void {
   res.writeHead(302, { location })
   res.end()
 }
 
-function parseAutoMemorySettings(body: JsonBody): AutoMemorySettings | undefined {
+function parseAutoMemorySettings(
+  body: JsonBody,
+): AutoMemorySettings | undefined {
   const value = body.autoMemory ?? body.auto_memory
   if (value === undefined) return undefined
   const parsed = autoMemorySettingsSchema().safeParse(value)
@@ -732,15 +782,19 @@ const BLOCKED_REMOTE_ENV_KEYS = new Set([
   'MOSS_SESSION_RUNTIME_TYPE',
 ])
 
-function parseSessionRuntimeOptions(body: JsonBody): SessionRuntimeOptions | undefined {
+function parseSessionRuntimeOptions(
+  body: JsonBody,
+): SessionRuntimeOptions | undefined {
   const normalized = normalizeSessionRuntimeOptions(
     body.runtimeOptions ?? body.runtime_options,
   )
   if (!normalized) return undefined
   const environment = Object.fromEntries(
-    Object.entries(normalized.environment || {}).filter(([key]) => (
-      /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && !BLOCKED_REMOTE_ENV_KEYS.has(key)
-    )),
+    Object.entries(normalized.environment || {}).filter(
+      ([key]) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) &&
+        !BLOCKED_REMOTE_ENV_KEYS.has(key),
+    ),
   )
   return {
     ...normalized,
@@ -748,7 +802,11 @@ function parseSessionRuntimeOptions(body: JsonBody): SessionRuntimeOptions | und
   }
 }
 
-function buildWsUrl(server: http.Server, config: ServerConfig, sessionId: string): string {
+function buildWsUrl(
+  server: http.Server,
+  config: ServerConfig,
+  sessionId: string,
+): string {
   if (config.publicUrl) {
     const publicUrl = new URL(config.publicUrl)
     publicUrl.protocol = publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -787,9 +845,7 @@ function canAccessSession(
 }
 
 function resolveAdminDistDir(): string | null {
-  const candidates = [
-    resolve(MOSS_SERVER_ASSET_ROOT, 'admin', 'dist'),
-  ]
+  const candidates = [resolve(MOSS_SERVER_ASSET_ROOT, 'admin', 'dist')]
 
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'index.html'))) {
@@ -800,7 +856,9 @@ function resolveAdminDistDir(): string | null {
 }
 
 function contentTypeForPath(filePath: string): string {
-  return MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+  return (
+    MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+  )
 }
 
 async function writeFileResponse(
@@ -829,7 +887,10 @@ async function serveAdminRequest(
   headOnly = false,
 ): Promise<void> {
   if (!adminDistDir) {
-    throw new HttpError(503, 'Admin UI is not built. Run `pnpm --dir admin run build`.')
+    throw new HttpError(
+      503,
+      'Admin UI is not built. Run `pnpm --dir admin run build`.',
+    )
   }
 
   const relativePath =
@@ -839,7 +900,8 @@ async function serveAdminRequest(
   const requestedPath = relativePath || 'index.html'
   const resolvedPath = resolve(adminDistDir, requestedPath)
   const insideAdminRoot =
-    resolvedPath === adminDistDir || resolvedPath.startsWith(`${adminDistDir}${sep}`)
+    resolvedPath === adminDistDir ||
+    resolvedPath.startsWith(`${adminDistDir}${sep}`)
 
   if (!insideAdminRoot) {
     throw new HttpError(403, 'Forbidden')
@@ -892,6 +954,7 @@ export function startServer(
   logger: ServerLogger = createServerLogger(),
   ragflowIntegration?: RagflowIntegrationService,
   openIMIntegration?: OpenIMIntegrationService,
+  cloudObjectStore?: ObjectStore,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -899,7 +962,15 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
-  const agentMailService = new AgentMailService(runtime.store.db)
+  const agentMailService = new AgentMailService(
+    new AgentMailRepository(runtime.store.db),
+  )
+  const cloudStorage = new CloudStorageService(
+    new CloudStorageRepository(runtime.store.db),
+    config,
+    async (auth, scope) => await authService.requireCurrentScope(auth, scope),
+    cloudObjectStore,
+  )
   const oauthLoginService = new OAuthLoginService(authService)
 
   const server = http.createServer(async (req, res) => {
@@ -917,7 +988,6 @@ export function startServer(
         writeJson(res, 200, {
           ok: true,
           ready: true,
-          sessions: runtime.countActiveSessions(),
           auth_mode: config.authMode,
           oauth_enabled: true,
         })
@@ -925,6 +995,12 @@ export function startServer(
       }
 
       if ((req.method === 'GET' || isHead) && pathname === '/readyz') {
+        try {
+          await runtime.store.db.check()
+        } catch {
+          writeJson(res, 503, { ok: false, ready: false })
+          return
+        }
         writeJson(res, 200, {
           ok: true,
           ready: true,
@@ -956,7 +1032,7 @@ export function startServer(
           writeJson(
             res,
             200,
-            authService.issueTokenFromApiKey(
+            await authService.issueTokenFromApiKey(
               typeof body.api_key === 'string' ? body.api_key : '',
             ),
           )
@@ -967,7 +1043,7 @@ export function startServer(
           writeJson(
             res,
             200,
-            authService.issueTokenFromPassword({
+            await authService.issueTokenFromPassword({
               username: typeof body.username === 'string' ? body.username : '',
               email: typeof body.email === 'string' ? body.email : '',
               password: typeof body.password === 'string' ? body.password : '',
@@ -981,43 +1057,54 @@ export function startServer(
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/start') {
         const body = await readOAuthJsonBody(req, 4 * 1024)
-        writeNoStoreJson(res, 200, oauthLoginService.start({
-          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
-          state: typeof body.state === 'string' ? body.state : '',
-          codeChallenge:
-            typeof body.code_challenge === 'string' ? body.code_challenge : '',
-          codeChallengeMethod:
-            typeof body.code_challenge_method === 'string'
-              ? body.code_challenge_method
-              : '',
-        }))
+        writeNoStoreJson(
+          res,
+          200,
+          await oauthLoginService.start({
+            redirectUri:
+              typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+            state: typeof body.state === 'string' ? body.state : '',
+            codeChallenge:
+              typeof body.code_challenge === 'string'
+                ? body.code_challenge
+                : '',
+            codeChallengeMethod:
+              typeof body.code_challenge_method === 'string'
+                ? body.code_challenge_method
+                : '',
+          }),
+        )
         return
       }
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/cancel') {
         const body = await readOAuthJsonBody(req, 4 * 1024)
-        writeNoStoreJson(res, 200, oauthLoginService.cancelClientRequest({
-          state: typeof body.state === 'string' ? body.state : '',
-          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
-          code: typeof body.code === 'string' ? body.code : undefined,
-        }))
+        writeNoStoreJson(
+          res,
+          200,
+          await oauthLoginService.cancelClientRequest({
+            state: typeof body.state === 'string' ? body.state : '',
+            redirectUri:
+              typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+            code: typeof body.code === 'string' ? body.code : undefined,
+          }),
+        )
         return
       }
 
       if (
         req.method === 'GET' &&
-        (
-          pathname === '/api/v1/auth/oauth/authorize' ||
-          pathname.startsWith('/api/v1/auth/oauth/authorize/')
-        )
+        (pathname === '/api/v1/auth/oauth/authorize' ||
+          pathname.startsWith('/api/v1/auth/oauth/authorize/'))
       ) {
         try {
-          const pathTransactionId = pathname.startsWith('/api/v1/auth/oauth/authorize/')
+          const pathTransactionId = pathname.startsWith(
+            '/api/v1/auth/oauth/authorize/',
+          )
             ? pathname.slice('/api/v1/auth/oauth/authorize/'.length)
             : ''
-          const authorization = oauthLoginService.getAuthorizationRequest(
-            pathTransactionId,
-          )
+          const authorization =
+            await oauthLoginService.getAuthorizationRequest(pathTransactionId)
           writeOAuthAuthorizePage(res, authorization)
         } catch (error) {
           if (!(error instanceof OAuthLoginError)) throw error
@@ -1029,28 +1116,36 @@ export function startServer(
         return
       }
 
-      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/authorize') {
+      if (
+        req.method === 'POST' &&
+        pathname === '/api/v1/auth/oauth/authorize'
+      ) {
         const form = await readOAuthFormBody(req, 8 * 1024)
         const transactionId = form.get('transaction_id') || ''
         if (form.get('action') === 'cancel') {
-          redirectNoStore(res, oauthLoginService.cancel(transactionId))
+          redirectNoStore(res, await oauthLoginService.cancel(transactionId))
           return
         }
         try {
-          redirectNoStore(res, oauthLoginService.authorizeWithPassword({
-            transactionId,
-            loginIdentifier: form.get('login_identifier') || '',
-            password: form.get('password') || '',
-          }))
+          redirectNoStore(
+            res,
+            await oauthLoginService.authorizeWithPassword({
+              transactionId,
+              loginIdentifier: form.get('login_identifier') || '',
+              password: form.get('password') || '',
+            }),
+          )
         } catch (error) {
           if (!(error instanceof OAuthLoginError)) throw error
           const retryable = error.statusCode === 401
           const retryAuthorization = retryable
-            ? oauthLoginService.getAuthorizationRequest(transactionId)
+            ? await oauthLoginService.getAuthorizationRequest(transactionId)
             : null
           writeOAuthAuthorizePage(res, {
             ...retryAuthorization,
-            loginIdentifier: retryable ? form.get('login_identifier') || '' : undefined,
+            loginIdentifier: retryable
+              ? form.get('login_identifier') || ''
+              : undefined,
             error: error.message,
             status: error.statusCode,
           })
@@ -1060,12 +1155,17 @@ export function startServer(
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/exchange') {
         const body = await readOAuthJsonBody(req, 4 * 1024)
-        writeNoStoreJson(res, 200, oauthLoginService.exchange({
-          code: typeof body.code === 'string' ? body.code : '',
-          codeVerifier:
-            typeof body.code_verifier === 'string' ? body.code_verifier : '',
-          redirectUri: typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
-        }))
+        writeNoStoreJson(
+          res,
+          200,
+          await oauthLoginService.exchange({
+            code: typeof body.code === 'string' ? body.code : '',
+            codeVerifier:
+              typeof body.code_verifier === 'string' ? body.code_verifier : '',
+            redirectUri:
+              typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+          }),
+        )
         return
       }
 
@@ -1074,11 +1174,11 @@ export function startServer(
         if (!token) {
           throw new HttpError(401, 'Missing bearer token')
         }
-        const auth = authService.verifyAccessToken(token)
+        const auth = await authService.verifyAccessToken(token)
         if (!auth) {
           throw new HttpError(401, 'Invalid access token')
         }
-        writeJson(res, 200, authService.getMe(auth))
+        writeJson(res, 200, await authService.getMe(auth))
         return
       }
 
@@ -1088,81 +1188,142 @@ export function startServer(
         if (!token) {
           throw new HttpError(400, 'Missing token')
         }
-        writeJson(res, 200, authService.introspect(token))
+        writeJson(res, 200, await authService.introspect(token))
         return
       }
 
-      const openIMWebhookMatch = pathname.match(/^\/api\/v1\/im\/openim-callback\/([^/]+)\/([^/]+)$/)
+      const openIMWebhookMatch = pathname.match(
+        /^\/api\/v1\/im\/openim-callback\/([^/]+)\/([^/]+)$/,
+      )
       if (openIMIntegration && req.method === 'POST' && openIMWebhookMatch) {
         const webhookSecret = decodeURIComponent(openIMWebhookMatch[1] || '')
         const command = decodeURIComponent(openIMWebhookMatch[2] || '')
-        if (!openIMIntegration.webhookEnabled() || !openIMIntegration.matchesWebhookSecret(webhookSecret)) {
+        if (
+          !openIMIntegration.webhookEnabled() ||
+          !openIMIntegration.matchesWebhookSecret(webhookSecret)
+        ) {
           throw new HttpError(404, 'Not found')
         }
         const body = await readJsonBody(req, 512 * 1024)
-        writeNoStoreJson(res, 200, openIMIntegration.handleWebhook(command, body))
+        writeNoStoreJson(
+          res,
+          200,
+          await openIMIntegration.handleWebhook(command, body),
+        )
         return
       }
 
-      const auth = authenticateRequest(req, authService)
+      const auth = await authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
 
-      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/session') {
+      if (
+        await handleCloudStorageRoute({
+          req,
+          res,
+          url,
+          auth,
+          service: cloudStorage,
+        })
+      )
+        return
+
+      if (
+        openIMIntegration &&
+        req.method === 'POST' &&
+        pathname === '/api/v1/im/session'
+      ) {
         const body = await readJsonBody(req)
         const platformID = Math.floor(Number(body.platform_id) || 0)
         if (![1, 2, 3, 4, 5, 6, 7, 8].includes(platformID)) {
           throw new HttpError(400, 'Invalid platform_id')
         }
-        writeNoStoreJson(res, 200, await openIMIntegration.createSession(auth, platformID))
+        writeNoStoreJson(
+          res,
+          200,
+          await openIMIntegration.createSession(auth, platformID),
+        )
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/directory') {
         authService.requireScope(auth, 'directory:read')
-        writeJson(res, 200, authService.listDirectory(auth.orgId))
+        writeJson(res, 200, await authService.listDirectory(auth.orgId))
         return
       }
 
-      if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/im/directory') {
-        writeJson(res, 200, openIMIntegration.listDirectory(auth, {
-          cursor: url.searchParams.get('cursor') || undefined,
-          limit: Number(url.searchParams.get('limit')) || undefined,
-        }))
+      if (
+        openIMIntegration &&
+        req.method === 'GET' &&
+        pathname === '/api/v1/im/directory'
+      ) {
+        writeJson(
+          res,
+          200,
+          await openIMIntegration.listDirectory(auth, {
+            cursor: url.searchParams.get('cursor') || undefined,
+            limit: Number(url.searchParams.get('limit')) || undefined,
+          }),
+        )
         return
       }
 
-      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/direct-session') {
+      if (
+        openIMIntegration &&
+        req.method === 'POST' &&
+        pathname === '/api/v1/im/direct-session'
+      ) {
         const body = await readJsonBody(req)
-        const targetUserId = typeof body.user_id === 'string' ? body.user_id.trim() : ''
+        const targetUserId =
+          typeof body.user_id === 'string' ? body.user_id.trim() : ''
         if (!targetUserId) throw new HttpError(400, 'Missing user_id')
-        writeJson(res, 200, await openIMIntegration.prepareDirectConversation(auth, targetUserId))
+        writeJson(
+          res,
+          200,
+          await openIMIntegration.prepareDirectConversation(auth, targetUserId),
+        )
         return
       }
 
-      if (openIMIntegration && req.method === 'POST' && pathname === '/api/v1/im/group-session') {
+      if (
+        openIMIntegration &&
+        req.method === 'POST' &&
+        pathname === '/api/v1/im/group-session'
+      ) {
         const body = await readJsonBody(req)
         const targetUserIds = Array.isArray(body.user_ids)
-          ? body.user_ids.filter((value): value is string => typeof value === 'string')
+          ? body.user_ids.filter(
+              (value): value is string => typeof value === 'string',
+            )
           : []
-        writeJson(res, 200, await openIMIntegration.prepareGroupConversation(auth, targetUserIds))
+        writeJson(
+          res,
+          200,
+          await openIMIntegration.prepareGroupConversation(auth, targetUserIds),
+        )
         return
       }
 
-      if (openIMIntegration && req.method === 'GET' && pathname === '/api/v1/im/health') {
+      if (
+        openIMIntegration &&
+        req.method === 'GET' &&
+        pathname === '/api/v1/im/health'
+      ) {
         writeJson(res, 200, await openIMIntegration.health(auth))
         return
       }
 
-      if (await handleAgentMailRoute({
-        req,
-        res,
-        url,
-        auth,
-        authService,
-        service: agentMailService,
-      })) {
+      if (
+        await handleAgentMailRoute({
+          req,
+          res,
+          url,
+          auth,
+          authService,
+          service: agentMailService,
+        })
+      ) {
         return
       }
 
@@ -1171,6 +1332,10 @@ export function startServer(
           client_data: null,
           additional_model_options: [],
           capabilities: {
+            cloud_storage: {
+              version: 1,
+              enabled: config.cloudStorage?.enabled ?? false,
+            },
             agent_mail: { version: 1 },
             ragflow: {
               enabled: ragflowIntegration?.enabled ?? false,
@@ -1185,10 +1350,12 @@ export function startServer(
         req.method === 'POST' &&
         pathname === '/api/v1/integrations/ragflow/resolve'
       ) {
-        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
-        const gatewayToken = typeof req.headers['x-moss-rag-gateway-token'] === 'string'
-          ? req.headers['x-moss-rag-gateway-token']
-          : ''
+        if (!ragflowIntegration)
+          throw new HttpError(503, 'RAGFlow integration is unavailable')
+        const gatewayToken =
+          typeof req.headers['x-moss-rag-gateway-token'] === 'string'
+            ? req.headers['x-moss-rag-gateway-token']
+            : ''
         if (!ragflowIntegration.authorizeGateway(gatewayToken)) {
           throw new HttpError(403, 'Invalid Moss RAG gateway token')
         }
@@ -1200,7 +1367,8 @@ export function startServer(
         req.method === 'GET' &&
         pathname === '/api/v1/integrations/ragflow/status'
       ) {
-        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
+        if (!ragflowIntegration)
+          throw new HttpError(503, 'RAGFlow integration is unavailable')
         authService.requireScope(auth, 'admin:users')
         writeJson(res, 200, await ragflowIntegration.getStatus())
         return
@@ -1210,22 +1378,31 @@ export function startServer(
         /^\/api\/v1\/users\/([^/]+)\/ragflow(?:\/(provision|credentials|password|api-key))?$/,
       )
       if (ragflowUserMatch) {
-        if (!ragflowIntegration) throw new HttpError(503, 'RAGFlow integration is unavailable')
+        if (!ragflowIntegration)
+          throw new HttpError(503, 'RAGFlow integration is unavailable')
         authService.requireScope(auth, 'admin:users')
         const userId = decodeURIComponent(ragflowUserMatch[1] || '')
         const action = ragflowUserMatch[2] || ''
-        if (!authService.getUserOrNull(userId, auth.orgId, auth)) {
+        if (!(await authService.getUserOrNull(userId, auth.orgId, auth))) {
           throw new HttpError(404, 'Unknown user_id')
         }
         if (req.method === 'GET' && !action) {
-          writeJson(res, 200, await ragflowIntegration.getUserStatus(auth.orgId, userId))
+          writeJson(
+            res,
+            200,
+            await ragflowIntegration.getUserStatus(auth.orgId, userId),
+          )
           return
         }
         if (req.method === 'POST' && action === 'provision') {
           writeJson(
             res,
             200,
-            await ragflowIntegration.provisionForUser(auth.orgId, userId, auth.userId),
+            await ragflowIntegration.provisionForUser(
+              auth.orgId,
+              userId,
+              auth.userId,
+            ),
           )
           return
         }
@@ -1234,7 +1411,11 @@ export function startServer(
           writeNoStoreJson(
             res,
             200,
-            await ragflowIntegration.revealCredentials(auth.orgId, userId, auth.userId),
+            await ragflowIntegration.revealCredentials(
+              auth.orgId,
+              userId,
+              auth.userId,
+            ),
           )
           return
         }
@@ -1242,7 +1423,11 @@ export function startServer(
           writeNoStoreJson(
             res,
             200,
-            await ragflowIntegration.rotatePassword(auth.orgId, userId, auth.userId),
+            await ragflowIntegration.rotatePassword(
+              auth.orgId,
+              userId,
+              auth.userId,
+            ),
           )
           return
         }
@@ -1250,13 +1435,20 @@ export function startServer(
           writeNoStoreJson(
             res,
             200,
-            await ragflowIntegration.rotateApiKey(auth.orgId, userId, auth.userId),
+            await ragflowIntegration.rotateApiKey(
+              auth.orgId,
+              userId,
+              auth.userId,
+            ),
           )
           return
         }
       }
 
-      if (req.method === 'GET' && pathname === '/api/v1/settings/remote-managed') {
+      if (
+        req.method === 'GET' &&
+        pathname === '/api/v1/settings/remote-managed'
+      ) {
         const settings = {}
         writeJson(res, 200, {
           uuid: `${auth.orgId}:default`,
@@ -1276,7 +1468,7 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/roles') {
         authService.requireScope(auth, 'admin:users')
-        writeJson(res, 200, authService.listRoles(auth.orgId))
+        writeJson(res, 200, await authService.listRoles(auth.orgId))
         return
       }
 
@@ -1289,14 +1481,21 @@ export function startServer(
       if (req.method === 'POST' && pathname === '/api/v1/roles') {
         authService.requireSystemAdmin(auth)
         const body = await readJsonBody(req)
-        writeJson(res, 200, authService.createRole({
-          orgId: auth.orgId,
-          name: typeof body.name === 'string' ? body.name : '',
-          description: typeof body.description === 'string' ? body.description : '',
-          permissions: Array.isArray(body.permissions)
-            ? body.permissions.filter((value): value is string => typeof value === 'string')
-            : [],
-        }))
+        writeJson(
+          res,
+          200,
+          await authService.createRole({
+            orgId: auth.orgId,
+            name: typeof body.name === 'string' ? body.name : '',
+            description:
+              typeof body.description === 'string' ? body.description : '',
+            permissions: Array.isArray(body.permissions)
+              ? body.permissions.filter(
+                  (value): value is string => typeof value === 'string',
+                )
+              : [],
+          }),
+        )
         return
       }
 
@@ -1304,30 +1503,43 @@ export function startServer(
       if (req.method === 'PATCH' && roleMatch) {
         authService.requireSystemAdmin(auth)
         const body = await readJsonBody(req)
-        writeJson(res, 200, authService.updateRole({
-          orgId: auth.orgId,
-          roleId: roleMatch[1] || '',
-          name: typeof body.name === 'string' ? body.name : undefined,
-          description: typeof body.description === 'string' ? body.description : undefined,
-          permissions: Array.isArray(body.permissions)
-            ? body.permissions.filter((value): value is string => typeof value === 'string')
-            : undefined,
-        }))
+        writeJson(
+          res,
+          200,
+          await authService.updateRole({
+            orgId: auth.orgId,
+            roleId: roleMatch[1] || '',
+            name: typeof body.name === 'string' ? body.name : undefined,
+            description:
+              typeof body.description === 'string'
+                ? body.description
+                : undefined,
+            permissions: Array.isArray(body.permissions)
+              ? body.permissions.filter(
+                  (value): value is string => typeof value === 'string',
+                )
+              : undefined,
+          }),
+        )
         return
       }
 
       if (req.method === 'DELETE' && roleMatch) {
         authService.requireSystemAdmin(auth)
-        writeJson(res, 200, authService.deleteRole({
-          orgId: auth.orgId,
-          roleId: roleMatch[1] || '',
-        }))
+        writeJson(
+          res,
+          200,
+          await authService.deleteRole({
+            orgId: auth.orgId,
+            roleId: roleMatch[1] || '',
+          }),
+        )
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/departments') {
         authService.requireScope(auth, 'admin:users')
-        writeJson(res, 200, authService.listDepartments(auth.orgId, auth))
+        writeJson(res, 200, await authService.listDepartments(auth.orgId, auth))
         return
       }
 
@@ -1337,7 +1549,7 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.createDepartment({
+          await authService.createDepartment({
             orgId: auth.orgId,
             name: typeof body.name === 'string' ? body.name : '',
             parentId:
@@ -1349,7 +1561,9 @@ export function startServer(
         return
       }
 
-      const departmentMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)$/)
+      const departmentMatch = pathname.match(
+        /^\/api\/v1\/departments\/([^/]+)$/,
+      )
       if (req.method === 'PATCH' && departmentMatch) {
         authService.requireScope(auth, 'admin:users')
         const departmentId = departmentMatch[1] || ''
@@ -1357,7 +1571,7 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.updateDepartment({
+          await authService.updateDepartment({
             orgId: auth.orgId,
             departmentId,
             name: typeof body.name === 'string' ? body.name : undefined,
@@ -1376,7 +1590,7 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.deleteDepartment({
+          await authService.deleteDepartment({
             orgId: auth.orgId,
             departmentId,
           }),
@@ -1386,7 +1600,7 @@ export function startServer(
 
       if (req.method === 'GET' && pathname === '/api/v1/users') {
         authService.requireScope(auth, 'admin:users')
-        writeJson(res, 200, authService.listUsers(auth.orgId, auth))
+        writeJson(res, 200, await authService.listUsers(auth.orgId, auth))
         return
       }
 
@@ -1396,20 +1610,26 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.createUser({
-            orgId: auth.orgId,
-            email: typeof body.email === 'string' ? body.email : '',
-            name: typeof body.name === 'string' ? body.name : '',
-            departmentId:
-              body.department_id === null || typeof body.department_id === 'string'
-                ? body.department_id
+          await authService.createUser(
+            {
+              orgId: auth.orgId,
+              email: typeof body.email === 'string' ? body.email : '',
+              name: typeof body.name === 'string' ? body.name : '',
+              departmentId:
+                body.department_id === null ||
+                typeof body.department_id === 'string'
+                  ? body.department_id
+                  : undefined,
+              role: typeof body.role === 'string' ? body.role : 'user',
+              roleIds: Array.isArray(body.role_ids)
+                ? body.role_ids.filter(
+                    (value): value is string => typeof value === 'string',
+                  )
                 : undefined,
-            role: typeof body.role === 'string' ? body.role : 'user',
-            roleIds: Array.isArray(body.role_ids)
-              ? body.role_ids.filter((value): value is string => typeof value === 'string')
-              : undefined,
-            password: typeof body.password === 'string' ? body.password : '',
-          }, auth),
+              password: typeof body.password === 'string' ? body.password : '',
+            },
+            auth,
+          ),
         )
         return
       }
@@ -1419,27 +1639,34 @@ export function startServer(
         authService.requireScope(auth, 'admin:users')
         const userId = userMatch[1] || ''
         const body = await readJsonBody(req)
-        const result = authService.updateUser({
+        const result = await authService.updateUser(
+          {
             orgId: auth.orgId,
             userId,
             name: typeof body.name === 'string' ? body.name : undefined,
             departmentId:
-              body.department_id === null || typeof body.department_id === 'string'
+              body.department_id === null ||
+              typeof body.department_id === 'string'
                 ? body.department_id
                 : undefined,
             role: typeof body.role === 'string' ? body.role : undefined,
             roleIds: Array.isArray(body.role_ids)
-              ? body.role_ids.filter((value): value is string => typeof value === 'string')
+              ? body.role_ids.filter(
+                  (value): value is string => typeof value === 'string',
+                )
               : undefined,
-            status:
-              typeof body.status === 'string' ? body.status : undefined,
-          }, auth)
+            status: typeof body.status === 'string' ? body.status : undefined,
+          },
+          auth,
+        )
         if (openIMIntegration) {
           if (result.user.status === 'disabled') {
             await openIMIntegration.syncUser(result.user)
           } else {
             await openIMIntegration.syncUser(result.user).catch(error => {
-              logger.warn(`Unable to synchronize OpenIM user ${result.user.id}: ${error instanceof Error ? error.message : String(error)}`)
+              logger.warn(
+                `Unable to synchronize OpenIM user ${result.user.id}: ${error instanceof Error ? error.message : String(error)}`,
+              )
             })
           }
         }
@@ -1447,21 +1674,34 @@ export function startServer(
         return
       }
 
-      const userRolesMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/roles$/)
+      const userRolesMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/roles$/,
+      )
       if (req.method === 'PUT' && userRolesMatch) {
         authService.requireSystemAdmin(auth)
         const body = await readJsonBody(req)
-        writeJson(res, 200, authService.setUserRoles({
-          orgId: auth.orgId,
-          userId: userRolesMatch[1] || '',
-          roleIds: Array.isArray(body.role_ids)
-            ? body.role_ids.filter((value): value is string => typeof value === 'string')
-            : [],
-        }, auth))
+        writeJson(
+          res,
+          200,
+          await authService.setUserRoles(
+            {
+              orgId: auth.orgId,
+              userId: userRolesMatch[1] || '',
+              roleIds: Array.isArray(body.role_ids)
+                ? body.role_ids.filter(
+                    (value): value is string => typeof value === 'string',
+                  )
+                : [],
+            },
+            auth,
+          ),
+        )
         return
       }
 
-      const userPasswordMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/password$/)
+      const userPasswordMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/password$/,
+      )
       if (req.method === 'POST' && userPasswordMatch) {
         authService.requireScope(auth, 'admin:users')
         const userId = userPasswordMatch[1] || ''
@@ -1469,71 +1709,94 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.setUserPassword({
-            orgId: auth.orgId,
-            userId,
-            password: typeof body.password === 'string' ? body.password : '',
-          }, auth),
+          await authService.setUserPassword(
+            {
+              orgId: auth.orgId,
+              userId,
+              password: typeof body.password === 'string' ? body.password : '',
+            },
+            auth,
+          ),
         )
         return
       }
 
-      const userTokenLimitMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/token-limit$/)
+      const userTokenLimitMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/token-limit$/,
+      )
       if (req.method === 'PATCH' && userTokenLimitMatch) {
         authService.requireScope(auth, 'admin:users')
         const userId = userTokenLimitMatch[1] || ''
         const body = await readJsonBody(req)
-        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit)
+        const tokenLimit =
+          body.tokenLimit === null ? null : Number(body.tokenLimit)
         writeJson(
           res,
           200,
-          authService.setUserTokenLimit({
-            orgId: auth.orgId,
-            userId,
-            tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null,
-          }, auth),
+          await authService.setUserTokenLimit(
+            {
+              orgId: auth.orgId,
+              userId,
+              tokenLimit:
+                tokenLimit !== null && Number.isFinite(tokenLimit)
+                  ? tokenLimit
+                  : null,
+            },
+            auth,
+          ),
         )
         return
       }
 
-      const departmentTokenLimitMatch = pathname.match(/^\/api\/v1\/departments\/([^/]+)\/token-limit$/)
+      const departmentTokenLimitMatch = pathname.match(
+        /^\/api\/v1\/departments\/([^/]+)\/token-limit$/,
+      )
       if (req.method === 'PATCH' && departmentTokenLimitMatch) {
         authService.requireScope(auth, 'admin:users')
         const departmentId = departmentTokenLimitMatch[1] || ''
         const body = await readJsonBody(req)
-        const tokenLimit = body.tokenLimit === null ? null : Number(body.tokenLimit)
+        const tokenLimit =
+          body.tokenLimit === null ? null : Number(body.tokenLimit)
         writeJson(
           res,
           200,
-          authService.setDepartmentTokenLimit({
-            orgId: auth.orgId,
-            departmentId,
-            tokenLimit: tokenLimit !== null && Number.isFinite(tokenLimit) ? tokenLimit : null,
-          }, auth),
+          await authService.setDepartmentTokenLimit(
+            {
+              orgId: auth.orgId,
+              departmentId,
+              tokenLimit:
+                tokenLimit !== null && Number.isFinite(tokenLimit)
+                  ? tokenLimit
+                  : null,
+            },
+            auth,
+          ),
         )
         return
       }
 
-      const userSessionsMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/sessions$/)
+      const userSessionsMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/sessions$/,
+      )
       if (req.method === 'GET' && userSessionsMatch) {
         authService.requireScope(auth, 'admin:users')
         const userId = userSessionsMatch[1] || ''
-        const user = authService.getUserOrNull(userId, auth.orgId, auth)
+        const user = await authService.getUserOrNull(userId, auth.orgId, auth)
         if (!user) {
           throw new HttpError(404, 'Unknown user_id')
         }
         writeJson(res, 200, {
           user,
-          sessions: runtime.store
-            .listUserSessions(auth.orgId, userId)
-            .map(session => serializeSession(session)),
+          sessions: (
+            await runtime.store.listUserSessions(auth.orgId, userId)
+          ).map(session => serializeSession(session)),
         })
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/api-keys') {
         authService.requireScope(auth, 'admin:api_keys')
-        writeJson(res, 200, authService.listApiKeys(auth.orgId, auth))
+        writeJson(res, 200, await authService.listApiKeys(auth.orgId, auth))
         return
       }
 
@@ -1543,14 +1806,19 @@ export function startServer(
         writeJson(
           res,
           200,
-          authService.createApiKey({
-            orgId: auth.orgId,
-            userId: typeof body.user_id === 'string' ? body.user_id : '',
-            name: typeof body.name === 'string' ? body.name : '',
-            scopes: Array.isArray(body.scopes)
-              ? body.scopes.filter((scope): scope is string => typeof scope === 'string')
-              : [],
-          }, auth),
+          await authService.createApiKey(
+            {
+              orgId: auth.orgId,
+              userId: typeof body.user_id === 'string' ? body.user_id : '',
+              name: typeof body.name === 'string' ? body.name : '',
+              scopes: Array.isArray(body.scopes)
+                ? body.scopes.filter(
+                    (scope): scope is string => typeof scope === 'string',
+                  )
+                : [],
+            },
+            auth,
+          ),
         )
         return
       }
@@ -1559,7 +1827,11 @@ export function startServer(
       if (req.method === 'DELETE' && apiKeyMatch) {
         authService.requireScope(auth, 'admin:api_keys')
         const keyId = apiKeyMatch[1] || ''
-        writeJson(res, 200, authService.revokeApiKey({ orgId: auth.orgId, keyId }, auth))
+        writeJson(
+          res,
+          200,
+          await authService.revokeApiKey({ orgId: auth.orgId, keyId }, auth),
+        )
         return
       }
 
@@ -1591,9 +1863,10 @@ export function startServer(
       if (req.method === 'PUT' && pathname === '/api/v1/profile/skills') {
         authService.requireScope(auth, 'sessions:create')
         const archive = await readBufferBody(req, MAX_PROFILE_ARCHIVE_BYTES)
-        const requestedRevision = typeof req.headers['x-moss-content-sha256'] === 'string'
-          ? req.headers['x-moss-content-sha256'].trim()
-          : ''
+        const requestedRevision =
+          typeof req.headers['x-moss-content-sha256'] === 'string'
+            ? req.headers['x-moss-content-sha256'].trim()
+            : ''
         try {
           writeJson(
             res,
@@ -1605,28 +1878,36 @@ export function startServer(
             ),
           )
         } catch (error) {
-          throw new HttpError(400, error instanceof Error ? error.message : String(error))
+          throw new HttpError(
+            400,
+            error instanceof Error ? error.message : String(error),
+          )
         }
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/profile/memory') {
-        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        authService.requireAnyScope(auth, [
+          'sessions:list',
+          'sessions:list:any',
+        ])
         const profileDir = getUserProfileDir(config, auth.userId)
-        const sessions = runtime.listSessionRecords({
+        const sessions = await runtime.listSessionRecords({
           orgId: auth.orgId,
           userId: auth.userId,
         })
-        const sessionEntries = await Promise.all(sessions.map(async session => {
-          const memory = await readSessionMemory(session)
-          return {
-            sessionId: session.sessionId,
-            exists: memory.exists,
-            bytes: memory.bytes,
-            updatedAt: memory.updatedAt,
-            readable: memory.readable,
-          }
-        }))
+        const sessionEntries = await Promise.all(
+          sessions.map(async session => {
+            const memory = await readSessionMemory(session)
+            return {
+              sessionId: session.sessionId,
+              exists: memory.exists,
+              bytes: memory.bytes,
+              updatedAt: memory.updatedAt,
+              readable: memory.readable,
+            }
+          }),
+        )
         writeJson(res, 200, {
           global: {
             rootLabel: 'Moss Server / memory',
@@ -1638,7 +1919,10 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/profile/memory/read') {
-        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        authService.requireAnyScope(auth, [
+          'sessions:list',
+          'sessions:list:any',
+        ])
         try {
           writeJson(
             res,
@@ -1658,22 +1942,32 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/sessions') {
-        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        authService.requireAnyScope(auth, [
+          'sessions:list',
+          'sessions:list:any',
+        ])
         const activeOnly = url.searchParams.get('active_only') === 'true'
-        const sessions = runtime.listSessions({
+        const sessions = await runtime.listSessions({
           orgId: auth.orgId,
-          userId: hasScope(auth.scopes, 'sessions:list:any') ? undefined : auth.userId,
+          userId: hasScope(auth.scopes, 'sessions:list:any')
+            ? undefined
+            : auth.userId,
           activeOnly,
         })
-        const enrichedSessions = sessions.map(session => ({ ...session, originChannel: 'desktop' }))
+        const enrichedSessions = sessions.map(session => ({
+          ...session,
+          originChannel: 'desktop',
+        }))
         writeJson(res, 200, { sessions: enrichedSessions })
         return
       }
 
-      const sessionResumeMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/resume$/)
+      const sessionResumeMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/resume$/,
+      )
       if (req.method === 'POST' && sessionResumeMatch) {
         const sessionId = sessionResumeMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1688,11 +1982,13 @@ export function startServer(
         return
       }
 
-      const sessionForkMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/fork$/)
+      const sessionForkMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/fork$/,
+      )
       if (req.method === 'POST' && sessionForkMatch) {
         authService.requireScope(auth, 'sessions:create')
         const sessionId = sessionForkMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1709,7 +2005,8 @@ export function startServer(
         try {
           created = await runtime.forkSession(sessionId, {
             title,
-            dangerouslySkipPermissions: body.dangerously_skip_permissions === true,
+            dangerouslySkipPermissions:
+              body.dangerously_skip_permissions === true,
             userId: auth.userId,
             orgId: auth.orgId,
             role: auth.role,
@@ -1725,10 +2022,12 @@ export function startServer(
         return
       }
 
-      const sessionTerminateMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/terminate$/)
+      const sessionTerminateMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/terminate$/,
+      )
       if (req.method === 'POST' && sessionTerminateMatch) {
         const sessionId = sessionTerminateMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1740,10 +2039,12 @@ export function startServer(
         return
       }
 
-      const sessionContextMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/context$/)
+      const sessionContextMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/context$/,
+      )
       if (req.method === 'GET' && sessionContextMatch) {
         const sessionId = sessionContextMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1765,10 +2066,12 @@ export function startServer(
         return
       }
 
-      const sessionWorkspaceListMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/list$/)
+      const sessionWorkspaceListMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/list$/,
+      )
       if (req.method === 'GET' && sessionWorkspaceListMatch) {
         const sessionId = sessionWorkspaceListMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1783,10 +2086,12 @@ export function startServer(
         return
       }
 
-      const sessionWorkspaceReadMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/read$/)
+      const sessionWorkspaceReadMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/read$/,
+      )
       if (req.method === 'GET' && sessionWorkspaceReadMatch) {
         const sessionId = sessionWorkspaceReadMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1801,10 +2106,12 @@ export function startServer(
         return
       }
 
-      const sessionWorkspaceContentMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/content$/)
+      const sessionWorkspaceContentMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/content$/,
+      )
       if (req.method === 'GET' && sessionWorkspaceContentMatch) {
         const sessionId = sessionWorkspaceContentMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1821,7 +2128,7 @@ export function startServer(
 
       if (req.method === 'PUT' && sessionWorkspaceContentMatch) {
         const sessionId = sessionWorkspaceContentMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) throw new HttpError(404, 'Session not found')
         if (!canAccessSession(auth, session, 'sessions:attach:any')) {
           throw new HttpError(403, 'Forbidden')
@@ -1829,15 +2136,21 @@ export function startServer(
         writeJson(
           res,
           200,
-          await writeSessionWorkspaceFile(req, session, url.searchParams.get('file')),
+          await writeSessionWorkspaceFile(
+            req,
+            session,
+            url.searchParams.get('file'),
+          ),
         )
         return
       }
 
-      const sessionWorkspaceUploadMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/workspace\/upload$/)
+      const sessionWorkspaceUploadMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/upload$/,
+      )
       if (req.method === 'POST' && sessionWorkspaceUploadMatch) {
         const sessionId = sessionWorkspaceUploadMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) throw new HttpError(404, 'Session not found')
         if (!canAccessSession(auth, session, 'sessions:attach:any')) {
           throw new HttpError(403, 'Forbidden')
@@ -1845,15 +2158,21 @@ export function startServer(
         writeJson(
           res,
           200,
-          await uploadSessionWorkspaceFile(req, session, url.searchParams.get('name')),
+          await uploadSessionWorkspaceFile(
+            req,
+            session,
+            url.searchParams.get('name'),
+          ),
         )
         return
       }
 
-      const sessionMemoryMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/memory$/)
+      const sessionMemoryMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/memory$/,
+      )
       if (req.method === 'GET' && sessionMemoryMatch) {
         const sessionId = sessionMemoryMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) throw new HttpError(404, 'Session not found')
         if (!canAccessSession(auth, session, 'sessions:attach:any')) {
           throw new HttpError(403, 'Forbidden')
@@ -1865,7 +2184,7 @@ export function startServer(
       const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (req.method === 'GET' && sessionIdMatch) {
         const sessionId = sessionIdMatch[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           throw new HttpError(404, 'Session not found')
         }
@@ -1931,7 +2250,7 @@ export function startServer(
   server.on('upgrade', (req, socket, head) => {
     void (async () => {
       try {
-        const auth = authenticateRequest(req, authService)
+        const auth = await authenticateRequest(req, authService)
         if (!auth) {
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
           socket.destroy()
@@ -1948,7 +2267,7 @@ export function startServer(
         }
 
         const sessionId = match[1] || ''
-        const session = runtime.getSession(sessionId)
+        const session = await runtime.getSession(sessionId)
         if (!session) {
           socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
           socket.destroy()
@@ -1962,166 +2281,195 @@ export function startServer(
 
         const ready = await runtime.ensureSessionReady(sessionId)
         wss.handleUpgrade(req, socket, head, ws => {
-          void runtime.connectToAttempt(ready.attempt).then((runnerSocket: net.Socket) => {
-            let buffer = ''
-            let userMessageQueue: Promise<void> = Promise.resolve()
-            let activeTurn: { release: () => void; complete: () => void } | null = null
-            let websocketClosed = false
-            const pendingControlRequestIds = new Set<string>()
-            const sendToRunner = (payload: Record<string, unknown>) => {
-              if (!runnerSocket.destroyed) {
-                runnerSocket.write(`${jsonStringify(payload)}\n`)
-              }
-            }
-            const finishActiveTurn = () => {
-              const turn = activeTurn
-              activeTurn = null
-              turn?.release()
-              turn?.complete()
-              if (websocketClosed && !runnerSocket.destroyed) {
-                runnerSocket.end()
-              }
-            }
-            const detachClient = () => {
-              if (websocketClosed) return
-              websocketClosed = true
-              if (!activeTurn) {
-                runnerSocket.end()
-                return
-              }
-
-              // A disconnected client cannot receive host-tool requests or the
-              // rest of the turn. Abort that turn in place, but keep the
-              // persistent session runtime alive for a later attach. Keep the
-              // turn lock until its result arrives so a replacement client
-              // cannot mistake that stale result for its own turn.
-              sendToRunner({ type: 'interrupt' })
-            }
-            const queueUserMessage = (text: string) => {
-              userMessageQueue = userMessageQueue.then(async () => {
-                const release = await runtime.acquireSessionTurn(sessionId)
-                try {
-                  if (ws.readyState !== ws.OPEN || runnerSocket.destroyed) return
-                  await new Promise<void>(complete => {
-                    activeTurn = { release, complete }
-                    sendToRunner({
-                      type: 'stdin',
-                      data: text.endsWith('\n') ? text : `${text}\n`,
-                    })
-                  })
-                } finally {
-                  release()
+          void runtime
+            .connectToAttempt(ready.attempt)
+            .then((runnerSocket: net.Socket) => {
+              let buffer = ''
+              let userMessageQueue: Promise<void> = Promise.resolve()
+              let activeTurn: {
+                release: () => void
+                complete: () => void
+              } | null = null
+              let websocketClosed = false
+              const pendingControlRequestIds = new Set<string>()
+              const sendToRunner = (payload: Record<string, unknown>) => {
+                if (!runnerSocket.destroyed) {
+                  runnerSocket.write(`${jsonStringify(payload)}\n`)
                 }
-              }).catch(error => {
-                logger.error(error instanceof Error ? error.message : String(error))
-              })
-            }
-
-            ws.on('message', data => {
-              const text =
-                typeof data === 'string'
-                  ? data
-                  : Buffer.from(data).toString('utf8')
-              let parsed: Record<string, unknown> | null = null
-              try {
-                parsed = jsonParse(text) as Record<string, unknown>
-                if (parsed.type === 'control_request' && (parsed.request as Record<string, unknown>)?.subtype === 'interrupt') {
-                  sendToRunner({ type: 'interrupt' })
-                  const requestId = typeof parsed.request_id === 'string'
-                    ? parsed.request_id
-                    : ''
-                  if (requestId && ws.readyState === ws.OPEN) {
-                    ws.send(jsonStringify({
-                      type: 'control_response',
-                      response: {
-                        subtype: 'success',
-                        request_id: requestId,
-                        response: { interrupted: activeTurn !== null },
-                      },
-                    }))
-                  }
+              }
+              const finishActiveTurn = () => {
+                const turn = activeTurn
+                activeTurn = null
+                turn?.release()
+                turn?.complete()
+                if (websocketClosed && !runnerSocket.destroyed) {
+                  runnerSocket.end()
+                }
+              }
+              const detachClient = () => {
+                if (websocketClosed) return
+                websocketClosed = true
+                if (!activeTurn) {
+                  runnerSocket.end()
                   return
                 }
-              } catch {}
-              trackClientControlRequest(parsed, pendingControlRequestIds)
-              if (parsed?.type === 'user') {
-                queueUserMessage(text)
-                return
+
+                // A disconnected client cannot receive host-tool requests or the
+                // rest of the turn. Abort that turn in place, but keep the
+                // persistent session runtime alive for a later attach. Keep the
+                // turn lock until its result arrives so a replacement client
+                // cannot mistake that stale result for its own turn.
+                sendToRunner({ type: 'interrupt' })
               }
-              sendToRunner({
-                type: 'stdin',
-                data: text.endsWith('\n') ? text : `${text}\n`,
-              })
-            })
-            ws.on('close', () => {
-              detachClient()
-            })
-            ws.on('error', () => {
-              detachClient()
-            })
+              const queueUserMessage = (text: string) => {
+                userMessageQueue = userMessageQueue
+                  .then(async () => {
+                    const release = await runtime.acquireSessionTurn(sessionId)
+                    try {
+                      if (ws.readyState !== ws.OPEN || runnerSocket.destroyed)
+                        return
+                      await new Promise<void>(complete => {
+                        activeTurn = { release, complete }
+                        sendToRunner({
+                          type: 'stdin',
+                          data: text.endsWith('\n') ? text : `${text}\n`,
+                        })
+                      })
+                    } finally {
+                      release()
+                    }
+                  })
+                  .catch(error => {
+                    logger.error(
+                      error instanceof Error ? error.message : String(error),
+                    )
+                  })
+              }
 
-            runnerSocket.on('data', chunk => {
-              buffer += Buffer.from(chunk).toString('utf8')
-              while (true) {
-                const idx = buffer.indexOf('\n')
-                if (idx < 0) {
-                  break
-                }
-                const line = buffer.slice(0, idx)
-                buffer = buffer.slice(idx + 1)
-                if (!line.trim()) {
-                  continue
-                }
-
-                let parsed: { type?: string; line?: string }
+              ws.on('message', data => {
+                const text =
+                  typeof data === 'string'
+                    ? data
+                    : Buffer.from(data).toString('utf8')
+                let parsed: Record<string, unknown> | null = null
                 try {
-                  parsed = jsonParse(line) as { type?: string; line?: string }
-                } catch {
-                  continue
+                  parsed = jsonParse(text) as Record<string, unknown>
+                  if (
+                    parsed.type === 'control_request' &&
+                    (parsed.request as Record<string, unknown>)?.subtype ===
+                      'interrupt'
+                  ) {
+                    sendToRunner({ type: 'interrupt' })
+                    const requestId =
+                      typeof parsed.request_id === 'string'
+                        ? parsed.request_id
+                        : ''
+                    if (requestId && ws.readyState === ws.OPEN) {
+                      ws.send(
+                        jsonStringify({
+                          type: 'control_response',
+                          response: {
+                            subtype: 'success',
+                            request_id: requestId,
+                            response: { interrupted: activeTurn !== null },
+                          },
+                        }),
+                      )
+                    }
+                    return
+                  }
+                } catch {}
+                trackClientControlRequest(parsed, pendingControlRequestIds)
+                if (parsed?.type === 'user') {
+                  queueUserMessage(text)
+                  return
                 }
+                sendToRunner({
+                  type: 'stdin',
+                  data: text.endsWith('\n') ? text : `${text}\n`,
+                })
+              })
+              ws.on('close', () => {
+                detachClient()
+              })
+              ws.on('error', () => {
+                detachClient()
+              })
 
-                if (parsed.type === 'stdout' && typeof parsed.line === 'string') {
-                  const ownsTurn = activeTurn !== null
-                  let message: Record<string, unknown> | null = null
-                  try {
-                    message = jsonParse(parsed.line) as Record<string, unknown>
-                  } catch {}
-                  const ownsControlResponse = consumeClientControlResponse(
-                    message,
-                    pendingControlRequestIds,
-                  )
-                  if ((ownsTurn || ownsControlResponse) && ws.readyState === ws.OPEN) {
-                    ws.send(parsed.line)
+              runnerSocket.on('data', chunk => {
+                buffer += Buffer.from(chunk).toString('utf8')
+                while (true) {
+                  const idx = buffer.indexOf('\n')
+                  if (idx < 0) {
+                    break
                   }
-                  if (ownsTurn && message?.type === 'result') {
+                  const line = buffer.slice(0, idx)
+                  buffer = buffer.slice(idx + 1)
+                  if (!line.trim()) {
+                    continue
+                  }
+
+                  let parsed: { type?: string; line?: string }
+                  try {
+                    parsed = jsonParse(line) as { type?: string; line?: string }
+                  } catch {
+                    continue
+                  }
+
+                  if (
+                    parsed.type === 'stdout' &&
+                    typeof parsed.line === 'string'
+                  ) {
+                    const ownsTurn = activeTurn !== null
+                    let message: Record<string, unknown> | null = null
+                    try {
+                      message = jsonParse(parsed.line) as Record<
+                        string,
+                        unknown
+                      >
+                    } catch {}
+                    const ownsControlResponse = consumeClientControlResponse(
+                      message,
+                      pendingControlRequestIds,
+                    )
+                    if (
+                      (ownsTurn || ownsControlResponse) &&
+                      ws.readyState === ws.OPEN
+                    ) {
+                      ws.send(parsed.line)
+                    }
+                    if (ownsTurn && message?.type === 'result') {
+                      finishActiveTurn()
+                    }
+                  }
+                  if (parsed.type === 'exit') {
                     finishActiveTurn()
+                    ws.close()
                   }
                 }
-                if (parsed.type === 'exit') {
-                  finishActiveTurn()
+              })
+
+              runnerSocket.on('close', () => {
+                finishActiveTurn()
+                if (ws.readyState === ws.OPEN) {
                   ws.close()
                 }
-              }
-            })
+              })
+              runnerSocket.on('error', () => {
+                finishActiveTurn()
+                if (ws.readyState === ws.OPEN) {
+                  ws.close()
+                }
+              })
 
-            runnerSocket.on('close', () => {
-              finishActiveTurn()
-              if (ws.readyState === ws.OPEN) {
-                ws.close()
-              }
+              wss.emit('connection', ws, req)
             })
-            runnerSocket.on('error', () => {
-              finishActiveTurn()
-              if (ws.readyState === ws.OPEN) {
-                ws.close()
-              }
+            .catch(error => {
+              logger.error(
+                error instanceof Error ? error.message : String(error),
+              )
+              ws.close()
             })
-
-            wss.emit('connection', ws, req)
-          }).catch(error => {
-            logger.error(error instanceof Error ? error.message : String(error))
-            ws.close()
-          })
         })
       } catch (error) {
         logger.error(error instanceof Error ? error.message : String(error))
@@ -2143,12 +2491,16 @@ export function startServer(
     })
   })
 
+  server.requestTimeout = 15 * 60_000
+  server.headersTimeout = 30_000
   server.listen(config.port, config.host)
+  void cloudStorage.reconcile().catch(error => logger.error(String(error)))
 
   return {
     port: null,
     ready,
     stop: async () => {
+      await cloudStorage.close()
       agentMailService.dispose()
       wss.close()
       await new Promise<void>((resolveClose, reject) => {

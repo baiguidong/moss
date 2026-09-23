@@ -575,3 +575,49 @@ export function createBackendTestHarness(actions?: Record<string, AppActionHandl
   host: unknown
   send(message: AppServiceEnvelope): void
 }
+
+/** Cloud storage is separate from App KV, local libraries and workspaces. */
+export const MOSS_CLOUD_STORAGE_PROTOCOL: 'moss.cloud-storage/v1'
+export type CloudStoragePermission = 'cloud-storage:read' | 'cloud-storage:write' | 'cloud-storage:delete'
+export type CloudStorageState = 'remote_disabled' | 'unauthenticated' | 'unconfigured' | 'disabled' | 'unsupported' | 'unavailable' | 'target_mismatch' | 'forbidden' | 'ready'
+export interface CloudFile {
+  id: string; parentId: string | null; name: string; kind: 'file' | 'folder'; size: number;
+  revision: string; createdAt: number; updatedAt: number
+}
+export interface CloudTransfer {
+  id: string; transferId: string; direction: 'upload' | 'download'; name: string; fileId: string | null;
+  state: 'queued' | 'running' | 'paused' | 'cancelled' | 'completed';
+  totalBytes: number; transferredBytes: number; error: string | null; createdAt: number; updatedAt: number
+}
+export interface CloudStorageInputMap {
+  'status.get': Record<string, never>; 'quota.get': Record<string, never>;
+  'files.list': { parentId?: string | null; cursor?: string; limit?: number };
+  'files.get': { fileId: string }; 'folders.create': { name: string; parentId?: string | null };
+  'files.update': { fileId: string; name?: string; parentId?: string | null }; 'files.delete': { fileId: string };
+  'local-files.pick': Record<string, never>;
+  'uploads.start': { handle: string; parentId?: string | null; name?: string };
+  'downloads.start': { fileId: string }; 'transfers.list': { cursor?: string; limit?: number };
+  'transfers.get': { transferId: string }; 'transfers.pause': { transferId: string };
+  'transfers.resume': { transferId: string }; 'transfers.cancel': { transferId: string };
+}
+export interface CloudStorageOutputMap {
+  'status.get': { state: CloudStorageState; version?: number };
+  'quota.get': { usedBytes: number; reservedBytes: number; limitBytes: number };
+  'files.list': { files: CloudFile[]; nextCursor: string | null };
+  'files.get': CloudFile; 'folders.create': CloudFile; 'files.update': CloudFile; 'files.delete': { ok: true };
+  'local-files.pick': { files: Array<{ handle: string; name: string; size: number }> };
+  'uploads.start': { transferId: string }; 'downloads.start': { transferId: string };
+  'transfers.list': { transfers: CloudTransfer[]; nextCursor: string | null }; 'transfers.get': CloudTransfer;
+  'transfers.pause': CloudTransfer; 'transfers.resume': CloudTransfer; 'transfers.cancel': CloudTransfer;
+}
+export type CloudStorageMethod = keyof CloudStorageInputMap
+export const CLOUD_STORAGE_HOST_METHOD_PERMISSIONS: Readonly<Record<CloudStorageMethod, CloudStoragePermission>>
+export const CLOUD_STORAGE_HOST_METHODS: readonly CloudStorageMethod[]
+export const CLOUD_STORAGE_EVENTS: readonly ['transfers.progress', 'transfers.changed', 'storage.status-changed']
+export const CLOUD_STORAGE_STATES: readonly CloudStorageState[]
+export function validateCloudStorageHostInput<M extends CloudStorageMethod>(method: M, value?: unknown): CloudStorageInputMap[M]
+export function validateCloudStorageHostOutput<M extends CloudStorageMethod>(method: M, value: unknown): CloudStorageOutputMap[M]
+export function createCloudStorageClient(host: AppHostApi): {
+  request<M extends CloudStorageMethod>(method: M, input?: CloudStorageInputMap[M], options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<CloudStorageOutputMap[M]>;
+  on(name: typeof CLOUD_STORAGE_EVENTS[number], listener: (data: Record<string, unknown>, context: HostEventContext) => void): () => void;
+}

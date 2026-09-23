@@ -143,6 +143,9 @@ export async function requestRemoteDirectAuthentication({
   loginIdentifier,
   password,
   apiKey,
+  signal,
+  fetchImpl = remoteDirectFetch,
+  redirect,
 }) {
   const normalizedAuthCenterUrl = typeof authCenterUrl === 'string'
     ? authCenterUrl.trim().replace(/\/+$/, '')
@@ -182,7 +185,9 @@ export async function requestRemoteDirectAuthentication({
 
   let response;
   try {
-    response = await remoteDirectFetch(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
+    response = await fetchImpl(`${normalizedAuthCenterUrl}/api/v1/auth/token`, {
+      signal,
+      ...(redirect ? { redirect } : {}),
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -202,7 +207,7 @@ export async function requestRemoteDirectAuthentication({
         message = data.error;
       }
     } catch {}
-    throw new Error(`Failed to get access token from moss server: ${message}`);
+    throw Object.assign(new Error(`Failed to get access token from moss server: ${message}`), { status: response.status });
   }
 
   const data = await response.json();
@@ -227,7 +232,7 @@ export async function requestRemoteDirectAccessToken(input) {
   return (await requestRemoteDirectAuthentication(input)).authToken;
 }
 
-export async function resolveRemoteDirectConnection(settings) {
+export async function resolveRemoteDirectConnection(settings, options = {}) {
   const remoteDirect = getRemoteDirectSettings(settings);
   const raw = remoteDirect.serverUrl;
 
@@ -237,6 +242,9 @@ export async function resolveRemoteDirectConnection(settings) {
 
   const parsed = parseRemoteDirectServerInput(raw);
   const authentication = await requestRemoteDirectAuthentication({
+    signal: options.signal,
+    fetchImpl: options.fetchImpl,
+    redirect: options.redirect,
     authCenterUrl: parsed.authCenterUrl,
     credentialMode: remoteDirect.credentialMode,
     loginIdentifier: remoteDirect.userEmail,
@@ -823,7 +831,7 @@ export function createRemoteDirectClient({ getSettings }) {
     parseRemoteDirectServerInput,
     requestRemoteDirectAuthentication,
     requestRemoteDirectAccessToken,
-    resolveRemoteDirectConnection: (settings) => resolveRemoteDirectConnection(currentSettings(settings)),
+    resolveRemoteDirectConnection: (settings, options) => resolveRemoteDirectConnection(currentSettings(settings), options),
     parseRemoteDirectError,
     fetchRemoteDirectSessions,
     fetchRemoteDirectSessionInfo,

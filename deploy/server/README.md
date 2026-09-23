@@ -7,12 +7,115 @@ dependencies can use stable container DNS names instead of host IP addresses.
 
 ## Requirements
 
-- Linux x86_64
+- Linux x86_64 for published releases; source builds also support ARM64 with compatible dependency images
 - Docker Engine and Docker Compose v2
 - `curl`, `jq`, and `openssl`
 - Port 443 available (or set `MOSS_HTTPS_PORT`)
 
+## Linux 部署入口
+
+复制到 Linux 后，按需要选择安装方式：
+
+| 复制的内容 | 执行入口 | Server 镜像来源 |
+| --- | --- | --- |
+| `deploy/server` 目录或解压后的部署包 | `install.sh` | 拉取 `.env` 配置的镜像，不编译源码 |
+| 完整源码仓库 | `deploy/server/local.sh` | 按服务器架构自动编译，再安装和启动 |
+
+### 使用已发布镜像
+
+将 `deploy/server` 目录（包括 `.env.example` 等隐藏文件）复制到 Linux，
+或按下文步骤上传并解压部署包，然后执行：
+
+```bash
+cd /tmp/moss-server
+sudo env MOSS_PUBLIC_HOST=10.0.1.181 bash install.sh
+```
+
+将示例 IP 替换为服务器实际 IP 或域名，不带 `https://`。
+默认安装目录为 `/data/moss-server`，默认访问地址为 `https://服务器IP/admin/`。
+安装脚本启动 Server、MySQL、Nginx 和私有 Silo，自动创建 Silo 的 bucket、
+受限服务账号并配置 S3 连接。初始账号为 `admin / password`，首次登录后修改密码。
+默认生成自签名证书，客户端需信任证书或换成正式证书。
+
+`install.sh` 默认使用 `.env.example` 中的发布镜像；可用 `MOSS_SERVER_IMAGE`
+和 `MOSS_RUNTIME_IMAGE` 指定版本。要部署尚未发布的源码改动，使用下面的源码构建入口。
+
+### 在 Linux 自动编译当前源码
+
+复制完整源码仓库，不携带 Mac 的 `node_modules`；在 Linux 重新安装依赖。
+除上述部署依赖外，还需要 Node.js 22、npm、Bun 和 Docker Buildx。
+以下命令在已配置这些工具的 root 环境，或具有 Docker、源码及目标目录写权限的用户环境执行：
+
+```bash
+cd /path/to/moss
+bun install
+
+MOSS_PUBLIC_HOST=10.0.1.181 \
+MOSS_HTTPS_PORT=443 \
+COMPOSE_PROJECT_NAME=moss-server \
+MOSS_INTEGRATION_NETWORK=moss-integrations \
+bash deploy/server/local.sh /data/moss-server
+```
+
+该入口只自动编译 Server；会话运行时使用 `MOSS_RUNTIME_IMAGE` 配置的镜像，
+MySQL、Nginx 和 Silo 使用各自配置的镜像，缺失时自动拉取。
+后续更新源码后，在仓库重新执行同一命令即可构建并部署，保留安装目录中的配置、凭证和数据。
+需要镜像代理时，设置下文的 `MOSS_SERVER_BASE_IMAGE` 和 `MOSS_DOCKER_CLI_IMAGE`，
+后续构建继续使用相同设置。
+
+源码构建默认根据 Docker daemon 的架构选择 AMD64 或 ARM64。
+Mac 上构建的 ARM64 镜像用于 ARM64 环境；常见的 Linux x86_64 服务器应构建 AMD64 镜像。
+全新安装只需复制源码或部署包，无需复制本机测试部署的 `.env`、TLS 证书和数据库；
+迁移已有数据请使用一致性备份恢复流程。
+
 ## Package and install
+
+For a local source build on macOS Docker Desktop or Linux, run from a checkout:
+
+```bash
+bash deploy/server/local.sh "$HOME/moss-server-local"
+```
+
+This builds the Server image for the Docker daemon's architecture (ARM64 or AMD64),
+extracts the normal deployment package into the separate directory, and starts
+MySQL, Server, Nginx, and private Silo. The first run defaults to
+`https://127.0.0.1:8443`, Compose project `moss-local`, and its own integration
+network. Set `MOSS_RUNTIME_IMAGE` to reuse an available session-runtime image.
+Missing dependency images are pulled; the Server image is always compiled locally.
+Rerun the command to rebuild and apply source changes while preserving data and
+configuration. `MOSS_LOCAL_ARCH` and `MOSS_LOCAL_SERVER_IMAGE` override the build
+architecture and tag. Published release installation below still targets Linux x86_64.
+
+If Docker Hub is unavailable, select reachable base-image mirrors for the build:
+
+```bash
+MOSS_SERVER_BASE_IMAGE=docker.m.daocloud.io/library/debian:bookworm-slim \
+MOSS_DOCKER_CLI_IMAGE=docker.m.daocloud.io/library/docker:29.2.1-cli \
+bash deploy/server/local.sh "$HOME/moss-server-local"
+```
+
+Use the same overrides when rebuilding. The image includes a current Docker CLI
+compatible with Docker Engine 29; the host still provides the Docker daemon.
+Dependency image references and runtime configuration are preserved in the
+installation directory.
+
+To verify a disposable local installation through HTTPS, including a 2 GiB
+multipart transfer, user isolation, Host pause/resume and checksum verification:
+
+```bash
+node server/scripts/test-deployment.mjs "$HOME/moss-server-local" --restart
+```
+
+The optional `--restart` also restarts this installation's MySQL, Silo and Server
+to check persistence. This test reads bootstrap login settings from `.env`, deletes
+its test files, disables its test user and writes `verification/deployment.json`.
+Run it only against a test installation whose bootstrap login is still valid.
+`--backup` additionally checks a stopped backup by deleting a test file and then
+restoring the installation. `--rebuild` reruns `local.sh` with the current build
+environment and checks that data, configuration and credentials survive. Both
+options restart services. Set `MOSS_DEPLOY_TEST_MODE=host-only` to skip the repeated
+2 GiB transfer when running these additional checks. Reports are saved as
+`verification/backup.json` and `verification/rebuild.json`, respectively.
 
 Build a deployment package from the repository:
 
@@ -112,7 +215,7 @@ to `configure.sh` before starting.
 ## Storage and Agent runtime
 
 `/data/moss-server` is bind-mounted into the Server container at the same
-absolute path. It contains `server.json`, `settings.json`, the SQLite database,
+absolute path. It contains `server.json`, `settings.json`, the MySQL data directory,
 logs, session workspaces, user profiles, transcripts, and the image-owned
 `container-app` payload. The Docker socket is mounted separately at
 `/var/run/docker.sock`.
@@ -137,3 +240,53 @@ sudo /data/moss-server/stop.sh
 sudo /data/moss-server/upgrade.sh
 cd /data/moss-server && docker compose --env-file .env -f compose.yaml logs -f
 ```
+
+## Public cloud storage
+
+New Compose installations also start a private Silo service, initialize its bucket
+and restricted service account, and verify S3 access. Silo publishes no host ports.
+The pinned `MINIO_IMAGE` and `SILO_MC_IMAGE` use
+`docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z`; its included `mc` is used
+only by the initialization container. These image versions do not track Moss upgrades.
+
+Connection settings live in `server.json.cloudStorage`; service credentials use the
+server's encrypted credential store. An existing cloud configuration, including an
+explicit `enabled: false` or external S3 endpoint, is preserved. Runtime data lives
+under `silo-data/`. Run `scripts/cloud-storage-init.sh` to retry initialization.
+Storage initialization failures leave other Moss Server features available.
+
+For a consistent backup, stop server writers/cleanup first, then Silo, and back up
+the entire server home including MySQL data, Silo data, configuration and
+`credentials/.master.key`. Restore the objects, metadata and credentials together.
+For external S3 configuration, API contracts, transfer recovery and detailed backup
+instructions, see `docs/cloud-storage.md` in the source repository.
+
+## Database
+
+New Compose installations use the bundled MySQL 8.4 service. `configure.sh`
+sets `server.json` to `database.driver=mysql`; `.env` supplies `MYSQL_IMAGE`,
+`MOSS_DB_NAME`, `MOSS_DB_USER`, `MOSS_DB_PASSWORD`, and `MOSS_DB_ROOT_PASSWORD`.
+MySQL has no published port and joins only the internal `moss-db` network.
+Server receives the application credentials; root credentials belong to MySQL.
+Its data persists at `${MOSS_SERVER_HOME}/var/lib/mysql`. `stop.sh` preserves it.
+Changing initialization passwords in `.env` does not change existing MySQL users;
+update the database account before changing its connection environment.
+Moss upgrades leave the independently pinned MySQL image version unchanged.
+
+Check the configured connection inside the Server container:
+
+```bash
+docker compose exec server /opt/moss/node/bin/node /opt/moss/app/bin/moss-server.mjs db check
+```
+
+Direct program startup defaults to SQLite at `${MOSS_SERVER_HOME}/moss-server.db`
+(`~/.moss/server/moss-server.db` when the environment variable is absent).
+An explicit SQLite configuration is `{"database":{"driver":"sqlite","filename":"/path/to/moss-server.db"}}`.
+Database configuration errors fail startup; MySQL failures never switch to SQLite.
+This release initializes fresh databases. Legacy `storage.dbPath` configuration
+and legacy database schemas are not migrated.
+
+`cloud-storage verify-target` is an offline maintenance command. Stop Server
+before executing it with the same configuration and environment. It shares an
+exclusive owner lock with Server, verifies objects outside a database transaction,
+and accepts the target in a short transaction after verification.

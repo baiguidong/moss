@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BackendHandle } from '../backendTypes.js'
 import { DockerBackend } from '../backends/dockerBackend.js'
-import { DirectConnectStore } from '../db.js'
+import { SessionRepository } from '../model/repositories/session.js'
 import { RuntimeService } from '../runtimeService.js'
 import { SessionRunnerDaemon } from '../sessionRunnerDaemon.js'
 import type { AttemptRecord, RunnerManifest, ServerConfig } from '../types.js'
+import { openTestDatabase, testDatabaseConfig } from './databaseTestUtils.js'
 
-function makeConfig(rootDir: string): ServerConfig {
+async function makeConfig(rootDir: string): Promise<ServerConfig> {
   return {
     host: '127.0.0.1',
     port: 43127,
@@ -20,7 +21,7 @@ function makeConfig(rootDir: string): ServerConfig {
     idleTimeoutMs: 600000,
     maxSessions: 32,
     rootDir,
-    dbPath: join(rootDir, 'moss-server.db'),
+    database: await testDatabaseConfig(join(rootDir, 'moss-server.db')),
     dataDir: join(rootDir, 'var', 'lib'),
     runDir: join(rootDir, 'var', 'run'),
     logDir: join(rootDir, 'var', 'log'),
@@ -34,10 +35,12 @@ function makeConfig(rootDir: string): ServerConfig {
   }
 }
 
-function createRecoveryFixture(root: string, attachPath: string) {
-  const config = makeConfig(root)
-  const store = new DirectConnectStore(config.dbPath)
-  const session = store.createSession({
+async function createRecoveryFixture(root: string, attachPath: string) {
+  const config = await makeConfig(root)
+  const store = new SessionRepository(
+    await openTestDatabase(join(root, 'moss-server.db')),
+  )
+  const session = await store.createSession({
     sessionId: 'session-recovery',
     transcriptSessionId: 'transcript-recovery',
     transcriptPath: join(root, 'transcript.jsonl'),
@@ -56,7 +59,7 @@ function createRecoveryFixture(root: string, attachPath: string) {
     status: 'active',
     desiredState: 'active',
   })
-  const attempt = store.createAttempt({
+  const attempt = await store.createAttempt({
     attemptId: 'attempt-original',
     sessionId: session.sessionId,
     generation: 1,
@@ -67,7 +70,7 @@ function createRecoveryFixture(root: string, attachPath: string) {
     manifestPath: join(root, 'attempt-original', 'manifest.json'),
     attachPath,
   })
-  store.setCurrentAttempt(session.sessionId, attempt.attemptId)
+  await store.setCurrentAttempt(session.sessionId, attempt.attemptId)
   const runtime = new RuntimeService({
     config,
     store,
@@ -85,11 +88,16 @@ async function testLiveRunnerReattach(): Promise<void> {
     socketServer.listen(attachPath, resolve)
   })
 
-  const { runtime, store, attempt } = createRecoveryFixture(root, attachPath)
+  const { runtime, store, attempt } = await createRecoveryFixture(
+    root,
+    attachPath,
+  )
   let recoveryCount = 0
-  ;(runtime as unknown as {
-    spawnAttempt: () => Promise<AttemptRecord>
-  }).spawnAttempt = async () => {
+  ;(
+    runtime as unknown as {
+      spawnAttempt: () => Promise<AttemptRecord>
+    }
+  ).spawnAttempt = async () => {
     recoveryCount += 1
     throw new Error('healthy attempts must not be rebuilt')
   }
@@ -98,35 +106,37 @@ async function testLiveRunnerReattach(): Promise<void> {
     const ready = await runtime.ensureSessionReady('session-recovery')
     assert.equal(ready.attempt.attemptId, attempt.attemptId)
     assert.equal(
-      store.getCurrentAttempt('session-recovery')?.attemptId,
+      (await store.getCurrentAttempt('session-recovery'))?.attemptId,
       attempt.attemptId,
     )
     assert.equal(recoveryCount, 0)
   } finally {
     await new Promise<void>(resolve => socketServer.close(() => resolve()))
-    store.close()
+    await store.close()
     await rm(root, { recursive: true, force: true })
   }
 }
 
 async function testMissingRunnerRecovery(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'moss-runtime-recover-'))
-  const { runtime, store, attempt } = createRecoveryFixture(
+  const { runtime, store, attempt } = await createRecoveryFixture(
     root,
     join(root, 'missing-runner.sock'),
   )
   let recoveryCount = 0
   let recoveryOptions: Record<string, unknown> | undefined
 
-  ;(runtime as unknown as {
-    spawnAttempt: (
-      session: { sessionId: string; transcriptSessionId: string },
-      options: Record<string, unknown>,
-    ) => Promise<AttemptRecord>
-  }).spawnAttempt = async (session, options) => {
+  ;(
+    runtime as unknown as {
+      spawnAttempt: (
+        session: { sessionId: string; transcriptSessionId: string },
+        options: Record<string, unknown>,
+      ) => Promise<AttemptRecord>
+    }
+  ).spawnAttempt = async (session, options) => {
     recoveryCount += 1
     recoveryOptions = options
-    const recovered = store.createAttempt({
+    const recovered = await store.createAttempt({
       attemptId: 'attempt-recovered',
       sessionId: session.sessionId,
       generation: 2,
@@ -137,7 +147,7 @@ async function testMissingRunnerRecovery(): Promise<void> {
       manifestPath: join(root, 'attempt-recovered', 'manifest.json'),
       attachPath: join(root, 'recovered-runner.sock'),
     })
-    store.setCurrentAttempt(session.sessionId, recovered.attemptId)
+    await store.setCurrentAttempt(session.sessionId, recovered.attemptId)
     return recovered
   }
 
@@ -155,15 +165,17 @@ async function testMissingRunnerRecovery(): Promise<void> {
     })
     assert.deepEqual(
       {
-        runtimeState: store.getAttempt(attempt.attemptId)?.runtimeState,
-        stopReason: store.getAttempt(attempt.attemptId)?.stopReason,
+        runtimeState: (await store.getAttempt(attempt.attemptId))?.runtimeState,
+        stopReason: (await store.getAttempt(attempt.attemptId))?.stopReason,
       },
       { runtimeState: 'lost', stopReason: 'runner_unavailable' },
     )
     assert.deepEqual(
       {
-        attemptId: store.latestEvent('session-recovery', 'attempt_lost')?.attemptId,
-        payload: store.latestEvent('session-recovery', 'attempt_lost')?.payload,
+        attemptId: (await store.latestEvent('session-recovery', 'attempt_lost'))
+          ?.attemptId,
+        payload: (await store.latestEvent('session-recovery', 'attempt_lost'))
+          ?.payload,
       },
       {
         attemptId: attempt.attemptId,
@@ -171,7 +183,7 @@ async function testMissingRunnerRecovery(): Promise<void> {
       },
     )
   } finally {
-    store.close()
+    await store.close()
     await rm(root, { recursive: true, force: true })
   }
 }
@@ -199,7 +211,8 @@ async function connectRunner(path: string) {
       if (newline < 0) break
       const line = buffer.slice(0, newline)
       buffer = buffer.slice(newline + 1)
-      if (line.trim()) messages.push(JSON.parse(line) as Record<string, unknown>)
+      if (line.trim())
+        messages.push(JSON.parse(line) as Record<string, unknown>)
     }
   })
   await new Promise<void>((resolve, reject) => {
@@ -211,10 +224,12 @@ async function connectRunner(path: string) {
 
 async function testRunnerTurnOwnership(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'moss-runner-turns-'))
-  const config = makeConfig(root)
+  const config = await makeConfig(root)
   config.idleTimeoutMs = 0
-  const store = new DirectConnectStore(config.dbPath)
-  const session = store.createSession({
+  const store = new SessionRepository(
+    await openTestDatabase(join(root, 'moss-server.db')),
+  )
+  const session = await store.createSession({
     sessionId: 'session-runner',
     transcriptSessionId: 'transcript-runner',
     transcriptPath: join(root, 'transcript.jsonl'),
@@ -236,7 +251,7 @@ async function testRunnerTurnOwnership(): Promise<void> {
   })
   const attemptDir = join(root, 'attempt')
   const attachPath = join(root, 'runner.sock')
-  const attempt = store.createAttempt({
+  const attempt = await store.createAttempt({
     attemptId: 'attempt-runner',
     sessionId: session.sessionId,
     generation: 1,
@@ -247,8 +262,8 @@ async function testRunnerTurnOwnership(): Promise<void> {
     manifestPath: join(attemptDir, 'manifest.json'),
     attachPath,
   })
-  store.setCurrentAttempt(session.sessionId, attempt.attemptId)
-  store.close()
+  await store.setCurrentAttempt(session.sessionId, attempt.attemptId)
+  await store.close()
 
   const manifest: RunnerManifest = {
     config,
@@ -284,7 +299,9 @@ async function testRunnerTurnOwnership(): Promise<void> {
     workDir: session.cwd,
     runtime: session.runtime,
     writeStdin: data => writes.push(data),
-    interrupt: () => { interrupts += 1 },
+    interrupt: () => {
+      interrupts += 1
+    },
     onStdoutLine: listener => {
       stdoutListeners.add(listener)
       return () => stdoutListeners.delete(listener)
@@ -302,22 +319,23 @@ async function testRunnerTurnOwnership(): Promise<void> {
     })}\n`
     for (const listener of stdoutListeners) listener(line)
   }
-  const userInput = (id: string) => `${JSON.stringify({
-    type: 'user',
-    uuid: id,
-    message: { role: 'user', content: id },
-  })}\n`
-  const runnerInput = (id: string) => `${JSON.stringify({
-    type: 'stdin',
-    data: userInput(id),
-  })}\n`
-  const hasResult = (
-    messages: Array<Record<string, unknown>>,
-    id: string,
-  ) => messages.some(message => {
-    if (message.type !== 'stdout' || typeof message.line !== 'string') return false
-    return (JSON.parse(message.line) as { id?: string }).id === id
-  })
+  const userInput = (id: string) =>
+    `${JSON.stringify({
+      type: 'user',
+      uuid: id,
+      message: { role: 'user', content: id },
+    })}\n`
+  const runnerInput = (id: string) =>
+    `${JSON.stringify({
+      type: 'stdin',
+      data: userInput(id),
+    })}\n`
+  const hasResult = (messages: Array<Record<string, unknown>>, id: string) =>
+    messages.some(message => {
+      if (message.type !== 'stdout' || typeof message.line !== 'string')
+        return false
+      return (JSON.parse(message.line) as { id?: string }).id === id
+    })
 
   const originalSpawn = DockerBackend.prototype.spawn
   DockerBackend.prototype.spawn = async () => fakeHandle
@@ -337,19 +355,25 @@ async function testRunnerTurnOwnership(): Promise<void> {
 
     second.socket.write(`${JSON.stringify({ type: 'interrupt' })}\n`)
     await waitFor(
-      () => hasResult(second!.messages, 'result-2') === false
-        && second!.messages.some(message => {
-          if (message.type !== 'stdout' || typeof message.line !== 'string') return false
+      () =>
+        hasResult(second!.messages, 'result-2') === false &&
+        second!.messages.some(message => {
+          if (message.type !== 'stdout' || typeof message.line !== 'string')
+            return false
           const result = JSON.parse(message.line) as {
             type?: string
             errors?: string[]
           }
-          return result.type === 'result'
-            && result.errors?.includes('Request interrupted by user before execution.')
+          return (
+            result.type === 'result' &&
+            result.errors?.includes(
+              'Request interrupted by user before execution.',
+            )
+          )
         }),
       'queued turn was not canceled',
     )
-    assert.equal(interrupts, 0, 'one client interrupted another client\'s turn')
+    assert.equal(interrupts, 0, "one client interrupted another client's turn")
 
     emitResult('result-1')
     await waitFor(

@@ -1,26 +1,10 @@
 import { randomUUID } from 'crypto'
-import { chmodSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { DatabaseSync } from 'node:sqlite'
-import type {
-  AttemptRecord,
-  AttemptRuntimeState,
-  DesiredSessionState,
-  ServerConfig,
-  ServerInstanceRecord,
-  SessionEventRecord,
-  SessionListFilter,
-  SessionRecord,
-  SessionStatus,
-  SessionSummary,
-} from './types.js'
-import type { SessionRuntimeInfo } from './backendTypes.js'
 import type {
   AdvancedSettings,
   AutoMemorySettings,
   SessionMemorySettings,
   SessionRuntimeOptions,
-} from '../../packages/direct-connect-protocol/src/index.js'
+} from '../../../../packages/direct-connect-protocol/src/index.js'
 import {
   advancedSettingsSchema,
   autoMemorySettingsSchema,
@@ -29,7 +13,20 @@ import {
   normalizeSessionMemorySettings,
   normalizeSessionRuntimeOptions,
   sessionMemorySettingsSchema,
-} from '../../packages/direct-connect-protocol/src/index.js'
+} from '../../../../packages/direct-connect-protocol/src/index.js'
+import type { SessionRuntimeInfo } from '../../backendTypes.js'
+import type {
+  AttemptRecord,
+  AttemptRuntimeState,
+  DesiredSessionState,
+  ServerInstanceRecord,
+  SessionEventRecord,
+  SessionListFilter,
+  SessionRecord,
+  SessionStatus,
+  SessionSummary,
+} from '../../types.js'
+import type { Database } from '../database.js'
 
 type SqlRow = Record<string, unknown>
 
@@ -43,7 +40,9 @@ function parseJsonArray(value: unknown): string[] {
   }
   try {
     const parsed = JSON.parse(value) as unknown
-    return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : []
+    return Array.isArray(parsed)
+      ? parsed.filter(v => typeof v === 'string')
+      : []
   } catch {
     return []
   }
@@ -58,7 +57,9 @@ function parseJsonValue(value: unknown): unknown {
   }
 }
 
-function parseAutoMemorySettings(value: unknown): AutoMemorySettings | undefined {
+function parseAutoMemorySettings(
+  value: unknown,
+): AutoMemorySettings | undefined {
   const parsed = autoMemorySettingsSchema().safeParse(parseJsonValue(value))
   if (!parsed.success || Object.keys(parsed.data).length === 0) return undefined
   return normalizeAutoMemorySettings(parsed.data)
@@ -81,7 +82,8 @@ function parseSessionMemorySettings(
 function mapRuntime(row: SqlRow): SessionRuntimeInfo {
   return {
     backend: 'docker',
-    dockerImage: typeof row.docker_image === 'string' ? row.docker_image : undefined,
+    dockerImage:
+      typeof row.docker_image === 'string' ? row.docker_image : undefined,
     containerName:
       typeof row.container_name === 'string' ? row.container_name : undefined,
     profileDir: String(row.profile_dir),
@@ -104,15 +106,20 @@ function mapSession(row: SqlRow): SessionRecord {
     status: String(row.status) as SessionStatus,
     desiredState: String(row.desired_state) as DesiredSessionState,
     currentAttemptId:
-      typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      typeof row.current_attempt_id === 'string'
+        ? row.current_attempt_id
+        : null,
     transcriptPath: String(row.transcript_path),
     title: typeof row.title === 'string' ? row.title : null,
     summary: typeof row.summary === 'string' ? row.summary : null,
-    assistantName: typeof row.assistant_name === 'string' ? row.assistant_name : null,
+    assistantName:
+      typeof row.assistant_name === 'string' ? row.assistant_name : null,
     advancedSettings: parseAdvancedSettings(row.advanced_settings_json),
     autoMemory: parseAutoMemorySettings(row.auto_memory_json),
     sessionMemory: parseSessionMemorySettings(row.session_memory_json),
-    runtimeOptions: normalizeSessionRuntimeOptions(parseJsonValue(row.runtime_options_json)),
+    runtimeOptions: normalizeSessionRuntimeOptions(
+      parseJsonValue(row.runtime_options_json),
+    ),
     createdAt: Number(row.created_at),
     lastActiveAt: Number(row.last_active_at),
     endedAt: row.ended_at == null ? null : Number(row.ended_at),
@@ -128,7 +135,9 @@ function mapAttempt(row: SqlRow): AttemptRecord {
     backendType: 'docker',
     runtimeState: String(row.runtime_state) as AttemptRuntimeState,
     serverInstanceId:
-      typeof row.server_instance_id === 'string' ? row.server_instance_id : null,
+      typeof row.server_instance_id === 'string'
+        ? row.server_instance_id
+        : null,
     runnerPid: row.runner_pid == null ? null : Number(row.runner_pid),
     containerName:
       typeof row.container_name === 'string' ? row.container_name : null,
@@ -147,171 +156,42 @@ function mapAttempt(row: SqlRow): AttemptRecord {
   }
 }
 
-function tableColumns(db: DatabaseSync, table: string): string[] {
-  return db
-    .prepare(`PRAGMA table_info(${table})`)
-    .all()
-    .map(row => String((row as SqlRow).name))
-}
+export class SessionRepository {
+  constructor(readonly db: Database) {}
 
-function resetIncompatibleSessionSchema(db: DatabaseSync): void {
-  const columns = tableColumns(db, 'sessions')
-  if (
-    columns.length === 0 ||
-    (columns.includes('docker_image') &&
-      !columns.includes('runtime_backend') &&
-      !columns.includes('profile_mode'))
-  ) {
-    return
-  }
-  db.exec(`
-    DROP TABLE IF EXISTS session_events;
-    DROP TABLE IF EXISTS session_attempts;
-    DROP TABLE IF EXISTS sessions;
-  `)
-}
-
-export class DirectConnectStore {
-  readonly db: DatabaseSync
-
-  constructor(public readonly dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true })
-    this.db = new DatabaseSync(dbPath)
-    // Session runtime options can contain model, WebSearch, and MCP credentials.
-    // Tighten both newly created and pre-existing database files before SQLite
-    // creates its journal sidecars from the database mode.
-    if (dbPath !== ':memory:') chmodSync(dbPath, 0o600)
-    this.db.exec(`
-      PRAGMA journal_mode=WAL;
-      PRAGMA synchronous=FULL;
-      PRAGMA foreign_keys=ON;
-      PRAGMA busy_timeout=5000;
-    `)
-
-    resetIncompatibleSessionSchema(this.db)
-
-    this.db.exec(`
-      PRAGMA foreign_keys=ON;
-
-      CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        transcript_session_id TEXT NOT NULL,
-        org_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        scopes_json TEXT NOT NULL,
-        cwd TEXT NOT NULL,
-        docker_image TEXT,
-        profile_dir TEXT NOT NULL,
-        workspace_dir TEXT,
-        transcript_dir TEXT NOT NULL,
-        container_name TEXT,
-        status TEXT NOT NULL,
-        desired_state TEXT NOT NULL,
-        current_attempt_id TEXT,
-        transcript_path TEXT NOT NULL,
-        title TEXT,
-        summary TEXT,
-        assistant_name TEXT,
-        advanced_settings_json TEXT NOT NULL DEFAULT '{}',
-        auto_memory_json TEXT NOT NULL DEFAULT '{}',
-        session_memory_json TEXT NOT NULL DEFAULT '{}',
-        runtime_options_json TEXT NOT NULL DEFAULT '{}',
-        created_at INTEGER NOT NULL,
-        last_active_at INTEGER NOT NULL,
-        ended_at INTEGER,
-        deleted_at INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS session_attempts (
-        attempt_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(session_id),
-        generation INTEGER NOT NULL,
-        runtime_state TEXT NOT NULL,
-        server_instance_id TEXT,
-        runner_pid INTEGER,
-        container_name TEXT,
-        attempt_dir TEXT NOT NULL,
-        manifest_path TEXT NOT NULL,
-        attach_path TEXT,
-        resume_transcript_session_id TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        last_heartbeat_at INTEGER,
-        stopped_at INTEGER,
-        exit_code INTEGER,
-        exit_signal TEXT,
-        stop_reason TEXT,
-        error_text TEXT,
-        UNIQUE (session_id, generation)
-      );
-
-      CREATE TABLE IF NOT EXISTS server_instances (
-        instance_id TEXT PRIMARY KEY,
-        host TEXT NOT NULL,
-        pid INTEGER,
-        started_at INTEGER NOT NULL,
-        heartbeat_at INTEGER NOT NULL,
-        stopped_at INTEGER,
-        status TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS session_events (
-        event_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(session_id),
-        attempt_id TEXT,
-        event_type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS sessions_user_idx
-        ON sessions (org_id, user_id, last_active_at DESC);
-      CREATE INDEX IF NOT EXISTS sessions_state_idx
-        ON sessions (org_id, status, last_active_at DESC);
-      CREATE INDEX IF NOT EXISTS attempts_session_idx
-        ON session_attempts (session_id, generation DESC);
-    `)
-
-    // Migration: add assistant_name column if it doesn't exist
-    try {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`)
-    } catch {
-      // Column already exists, ignore
-    }
-    try {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN advanced_settings_json TEXT NOT NULL DEFAULT '{}'`)
-    } catch {
-      // Column already exists, ignore
-    }
-    try {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN auto_memory_json TEXT NOT NULL DEFAULT '{}'`)
-    } catch {
-      // Column already exists, ignore
-    }
-    try {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN session_memory_json TEXT NOT NULL DEFAULT '{}'`)
-    } catch {
-      // Column already exists, ignore
-    }
-    try {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN runtime_options_json TEXT NOT NULL DEFAULT '{}'`)
-    } catch {
-      // Column already exists, ignore
-    }
+  async createNextAttempt(
+    input: Omit<
+      Parameters<SessionRepository['createAttempt']>[0],
+      'generation'
+    >,
+  ): Promise<AttemptRecord> {
+    return this.db.transaction(async () => {
+      const generation = await this.getNextGeneration(input.sessionId)
+      const attempt = await this.createAttempt({ ...input, generation })
+      await this.setCurrentAttempt(input.sessionId, attempt.attemptId)
+      return attempt
+    })
   }
 
-  close(): void {
-    this.db.close()
+  async close(): Promise<void> {
+    await this.db.close()
   }
 
-  registerServerInstance(host: string, pid = process.pid): ServerInstanceRecord {
+  async registerServerInstance(
+    host: string,
+    pid = process.pid,
+  ): Promise<ServerInstanceRecord> {
     const instanceId = randomUUID()
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       INSERT INTO server_instances (
         instance_id, host, pid, started_at, heartbeat_at, status
       ) VALUES (?, ?, ?, ?, ?, 'running')
-    `).run(instanceId, host, pid, ts, ts)
+    `,
+      )
+      .run(instanceId, host, pid, ts, ts)
     return {
       instanceId,
       host,
@@ -323,24 +203,32 @@ export class DirectConnectStore {
     }
   }
 
-  heartbeatServerInstance(instanceId: string): void {
-    this.db.prepare(`
+  async heartbeatServerInstance(instanceId: string): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE server_instances
       SET heartbeat_at = ?, status = 'running'
       WHERE instance_id = ?
-    `).run(now(), instanceId)
+    `,
+      )
+      .run(now(), instanceId)
   }
 
-  stopServerInstance(instanceId: string): void {
+  async stopServerInstance(instanceId: string): Promise<void> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       UPDATE server_instances
       SET heartbeat_at = ?, stopped_at = ?, status = 'stopped'
       WHERE instance_id = ?
-    `).run(ts, ts, instanceId)
+    `,
+      )
+      .run(ts, ts, instanceId)
   }
 
-  createSession(input: {
+  async createSession(input: {
     sessionId: string
     transcriptSessionId: string
     transcriptPath: string
@@ -358,9 +246,11 @@ export class DirectConnectStore {
     autoMemory?: AutoMemorySettings
     sessionMemory?: SessionMemorySettings
     runtimeOptions?: SessionRuntimeOptions
-  }): SessionRecord {
+  }): Promise<SessionRecord> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       INSERT INTO sessions (
         session_id, transcript_session_id, org_id, user_id, role, scopes_json,
         cwd, docker_image, profile_dir,
@@ -369,41 +259,43 @@ export class DirectConnectStore {
         advanced_settings_json, auto_memory_json, session_memory_json, runtime_options_json,
         created_at, last_active_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.sessionId,
-      input.transcriptSessionId,
-      input.orgId,
-      input.userId,
-      input.role,
-      JSON.stringify(input.scopes),
-      input.cwd,
-      input.runtime.dockerImage ?? null,
-      input.runtime.profileDir,
-      input.runtime.workspaceDir ?? null,
-      input.runtime.transcriptDir,
-      input.runtime.containerName ?? null,
-      input.status,
-      input.desiredState,
-      input.transcriptPath,
-      input.title?.trim() || null,
-      input.assistantName ?? null,
-      JSON.stringify(input.advancedSettings ?? {}),
-      JSON.stringify(input.autoMemory ?? {}),
-      JSON.stringify(input.sessionMemory ?? {}),
-      JSON.stringify(input.runtimeOptions ?? {}),
-      ts,
-      ts,
-    )
-    this.addEvent(input.sessionId, null, 'session_created', {
+    `,
+      )
+      .run(
+        input.sessionId,
+        input.transcriptSessionId,
+        input.orgId,
+        input.userId,
+        input.role,
+        JSON.stringify(input.scopes),
+        input.cwd,
+        input.runtime.dockerImage ?? null,
+        input.runtime.profileDir,
+        input.runtime.workspaceDir ?? null,
+        input.runtime.transcriptDir,
+        input.runtime.containerName ?? null,
+        input.status,
+        input.desiredState,
+        input.transcriptPath,
+        input.title?.trim() || null,
+        input.assistantName ?? null,
+        JSON.stringify(input.advancedSettings ?? {}),
+        JSON.stringify(input.autoMemory ?? {}),
+        JSON.stringify(input.sessionMemory ?? {}),
+        JSON.stringify(input.runtimeOptions ?? {}),
+        ts,
+        ts,
+      )
+    await this.addEvent(input.sessionId, null, 'session_created', {
       runtime: input.runtime,
       cwd: input.cwd,
       title: input.title,
       assistantName: input.assistantName,
     })
-    return this.getSession(input.sessionId)!
+    return (await this.getSession(input.sessionId))!
   }
 
-  createAttempt(input: {
+  async createAttempt(input: {
     attemptId: string
     sessionId: string
     generation: number
@@ -413,29 +305,33 @@ export class DirectConnectStore {
     attemptDir: string
     manifestPath: string
     attachPath?: string
-  }): AttemptRecord {
+  }): Promise<AttemptRecord> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       INSERT INTO session_attempts (
         attempt_id, session_id, generation, runtime_state,
         server_instance_id, runner_pid, container_name, attempt_dir,
         manifest_path, attach_path,
         resume_transcript_session_id, started_at, last_heartbeat_at
       ) VALUES (?, ?, ?, 'starting', ?, NULL, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.attemptId,
-      input.sessionId,
-      input.generation,
-      input.serverInstanceId,
-      input.containerName ?? null,
-      input.attemptDir,
-      input.manifestPath,
-      input.attachPath ?? null,
-      input.resumeTranscriptSessionId,
-      ts,
-      ts,
-    )
-    this.addEvent(input.sessionId, input.attemptId, 'attempt_created', {
+    `,
+      )
+      .run(
+        input.attemptId,
+        input.sessionId,
+        input.generation,
+        input.serverInstanceId,
+        input.containerName ?? null,
+        input.attemptDir,
+        input.manifestPath,
+        input.attachPath ?? null,
+        input.resumeTranscriptSessionId,
+        ts,
+        ts,
+      )
+    await this.addEvent(input.sessionId, input.attemptId, 'attempt_created', {
       generation: input.generation,
       backendType: 'docker',
       attachPath: input.attachPath,
@@ -443,24 +339,33 @@ export class DirectConnectStore {
       attemptDir: input.attemptDir,
       manifestPath: input.manifestPath,
     })
-    return this.getAttempt(input.attemptId)!
+    return (await this.getAttempt(input.attemptId))!
   }
 
-  setCurrentAttempt(sessionId: string, attemptId: string | null): void {
-    this.db.prepare(`
+  async setCurrentAttempt(
+    sessionId: string,
+    attemptId: string | null,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET current_attempt_id = ?
       WHERE session_id = ?
-    `).run(attemptId, sessionId)
+    `,
+      )
+      .run(attemptId, sessionId)
   }
 
-  setSessionLifecycle(
+  async setSessionLifecycle(
     sessionId: string,
     status: SessionStatus,
     desiredState: DesiredSessionState,
-  ): void {
+  ): Promise<void> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET status = ?,
           desired_state = ?,
@@ -470,94 +375,123 @@ export class DirectConnectStore {
             ELSE ended_at
           END
       WHERE session_id = ?
-    `).run(status, desiredState, ts, status, sessionId)
+    `,
+      )
+      .run(status, desiredState, ts, status, sessionId)
   }
 
-  markSessionEnded(
+  async markSessionEnded(
     sessionId: string,
     status: SessionStatus,
     desiredState: DesiredSessionState,
-  ): void {
+  ): Promise<void> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET status = ?, desired_state = ?, ended_at = ?, last_active_at = ?
       WHERE session_id = ?
-    `).run(status, desiredState, ts, ts, sessionId)
+    `,
+      )
+      .run(status, desiredState, ts, ts, sessionId)
   }
 
-  touchSessionActivity(sessionId: string): void {
-    this.db.prepare(`
+  async touchSessionActivity(sessionId: string): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET last_active_at = ?
       WHERE session_id = ?
-    `).run(now(), sessionId)
+    `,
+      )
+      .run(now(), sessionId)
   }
 
-  updateSessionTranscript(
+  async updateSessionTranscript(
     sessionId: string,
     patch: {
       transcriptSessionId: string
       transcriptPath: string
     },
-  ): void {
-    this.db.prepare(`
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET transcript_session_id = ?,
           transcript_path = ?
       WHERE session_id = ?
-    `).run(
-      patch.transcriptSessionId,
-      patch.transcriptPath,
-      sessionId,
-    )
+    `,
+      )
+      .run(patch.transcriptSessionId, patch.transcriptPath, sessionId)
   }
 
-  updateSessionMetadata(
+  async updateSessionMetadata(
     sessionId: string,
     patch: { title?: string | null; summary?: string | null },
-  ): void {
-    this.db.prepare(`
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET title = COALESCE(?, title),
           summary = COALESCE(?, summary)
       WHERE session_id = ?
-    `).run(
-      patch.title === undefined ? null : patch.title,
-      patch.summary === undefined ? null : patch.summary,
-      sessionId,
-    )
+    `,
+      )
+      .run(
+        patch.title === undefined ? null : patch.title,
+        patch.summary === undefined ? null : patch.summary,
+        sessionId,
+      )
   }
 
-  deleteSession(sessionId: string): void {
-    this.db.prepare(`
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE sessions
       SET deleted_at = ?
       WHERE session_id = ?
-    `).run(now(), sessionId)
+    `,
+      )
+      .run(now(), sessionId)
   }
 
-  updateAttemptRunner(attemptId: string, runnerPid: number): void {
+  async updateAttemptRunner(
+    attemptId: string,
+    runnerPid: number,
+  ): Promise<void> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       UPDATE session_attempts
       SET runner_pid = ?, runtime_state = 'running', last_heartbeat_at = ?
       WHERE attempt_id = ?
-    `).run(runnerPid, ts, attemptId)
+    `,
+      )
+      .run(runnerPid, ts, attemptId)
   }
 
-  touchAttemptHeartbeat(
+  async touchAttemptHeartbeat(
     attemptId: string,
     state: AttemptRuntimeState = 'running',
-  ): void {
-    this.db.prepare(`
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `
       UPDATE session_attempts
       SET last_heartbeat_at = ?, runtime_state = ?
       WHERE attempt_id = ?
-    `).run(now(), state, attemptId)
+    `,
+      )
+      .run(now(), state, attemptId)
   }
 
-  markAttemptStopped(
+  async markAttemptStopped(
     attemptId: string,
     input: {
       runtimeState: AttemptRuntimeState
@@ -566,34 +500,40 @@ export class DirectConnectStore {
       stopReason?: string | null
       errorText?: string | null
     },
-  ): void {
+  ): Promise<void> {
     const ts = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       UPDATE session_attempts
       SET runtime_state = ?, stopped_at = ?, last_heartbeat_at = ?,
           exit_code = ?, exit_signal = ?, stop_reason = ?, error_text = ?
       WHERE attempt_id = ?
-    `).run(
-      input.runtimeState,
-      ts,
-      ts,
-      input.exitCode ?? null,
-      input.exitSignal ?? null,
-      input.stopReason ?? null,
-      input.errorText ?? null,
-      attemptId,
-    )
+    `,
+      )
+      .run(
+        input.runtimeState,
+        ts,
+        ts,
+        input.exitCode ?? null,
+        input.exitSignal ?? null,
+        input.stopReason ?? null,
+        input.errorText ?? null,
+        attemptId,
+      )
   }
 
-  markAttemptLost(attemptId: string, errorText: string): void {
-    this.markAttemptStopped(attemptId, {
+  async markAttemptLost(attemptId: string, errorText: string): Promise<void> {
+    await this.markAttemptStopped(attemptId, {
       runtimeState: 'lost',
       stopReason: 'runner_unavailable',
       errorText,
     })
   }
 
-  listSessionRecords(filter: SessionListFilter): SessionRecord[] {
+  async listSessionRecords(
+    filter: SessionListFilter,
+  ): Promise<SessionRecord[]> {
     const clauses = ['org_id = ?']
     const values: Array<string | number> = [filter.orgId]
     if (filter.userId) {
@@ -606,111 +546,150 @@ export class DirectConnectStore {
     if (filter.activeOnly) {
       clauses.push(`status IN ('creating', 'active', 'detached')`)
     }
-    const rows = this.db.prepare(`
+    const rows = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM sessions
       WHERE ${clauses.join(' AND ')}
       ORDER BY last_active_at DESC
-    `).all(...values) as SqlRow[]
+    `,
+      )
+      .all(...values)) as SqlRow[]
     return rows.map(mapSession)
   }
 
-  listSessions(filter: SessionListFilter): SessionSummary[] {
-    return this.listSessionRecords(filter).map(toSessionSummary)
+  async listSessions(filter: SessionListFilter): Promise<SessionSummary[]> {
+    return (await this.listSessionRecords(filter)).map(toSessionSummary)
   }
 
-  listUserSessions(orgId: string, userId: string): SessionRecord[] {
-    const rows = this.db.prepare(`
+  async listUserSessions(
+    orgId: string,
+    userId: string,
+  ): Promise<SessionRecord[]> {
+    const rows = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM sessions
       WHERE org_id = ? AND user_id = ? AND deleted_at IS NULL
       ORDER BY last_active_at DESC
-    `).all(orgId, userId) as SqlRow[]
+    `,
+      )
+      .all(orgId, userId)) as SqlRow[]
     return rows.map(mapSession)
   }
 
-  listSessionsToRecover(): SessionRecord[] {
-    const rows = this.db.prepare(`
+  async listSessionsToRecover(): Promise<SessionRecord[]> {
+    const rows = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM sessions
       WHERE desired_state = 'active'
         AND deleted_at IS NULL
         AND status IN ('creating', 'active', 'detached', 'lost', 'failed')
       ORDER BY last_active_at DESC
-    `).all() as SqlRow[]
+    `,
+      )
+      .all()) as SqlRow[]
     return rows.map(mapSession)
   }
 
-  countActiveSessions(): number {
-    const row = this.db.prepare(`
+  async countActiveSessions(): Promise<number> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT COUNT(*) AS count
       FROM sessions
       WHERE deleted_at IS NULL
         AND status IN ('creating', 'active', 'detached')
-    `).get() as SqlRow | undefined
+    `,
+      )
+      .get()) as SqlRow | undefined
     return Number(row?.count ?? 0)
   }
 
-  getSession(sessionId: string): SessionRecord | null {
-    const row = this.db.prepare(`
+  async getSession(sessionId: string): Promise<SessionRecord | null> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM sessions
       WHERE session_id = ? AND deleted_at IS NULL
       LIMIT 1
-    `).get(sessionId) as SqlRow | undefined
+    `,
+      )
+      .get(sessionId)) as SqlRow | undefined
     return row ? mapSession(row) : null
   }
 
-  getAttempt(attemptId: string): AttemptRecord | null {
-    const row = this.db.prepare(`
+  async getAttempt(attemptId: string): Promise<AttemptRecord | null> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM session_attempts
       WHERE attempt_id = ?
       LIMIT 1
-    `).get(attemptId) as SqlRow | undefined
+    `,
+      )
+      .get(attemptId)) as SqlRow | undefined
     return row ? mapAttempt(row) : null
   }
 
-  getCurrentAttempt(sessionId: string): AttemptRecord | null {
-    const row = this.db.prepare(`
+  async getCurrentAttempt(sessionId: string): Promise<AttemptRecord | null> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT a.*
       FROM session_attempts a
       JOIN sessions s ON s.current_attempt_id = a.attempt_id
       WHERE s.session_id = ? AND s.deleted_at IS NULL
       LIMIT 1
-    `).get(sessionId) as SqlRow | undefined
+    `,
+      )
+      .get(sessionId)) as SqlRow | undefined
     return row ? mapAttempt(row) : null
   }
 
-  getNextGeneration(sessionId: string): number {
-    const row = this.db.prepare(`
+  async getNextGeneration(sessionId: string): Promise<number> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT COALESCE(MAX(generation), 0) AS max_generation
       FROM session_attempts
       WHERE session_id = ?
-    `).get(sessionId) as SqlRow | undefined
+    `,
+      )
+      .get(sessionId)) as SqlRow | undefined
     return Number(row?.max_generation ?? 0) + 1
   }
 
-  addEvent(
+  async addEvent(
     sessionId: string,
     attemptId: string | null,
     eventType: string,
     payload: Record<string, unknown>,
-  ): SessionEventRecord {
+  ): Promise<SessionEventRecord> {
     const eventId = randomUUID()
     const createdAt = now()
-    this.db.prepare(`
+    await this.db
+      .prepare(
+        `
       INSERT INTO session_events (
         event_id, session_id, attempt_id, event_type, payload_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      eventId,
-      sessionId,
-      attemptId,
-      eventType,
-      JSON.stringify(payload),
-      createdAt,
-    )
+    `,
+      )
+      .run(
+        eventId,
+        sessionId,
+        attemptId,
+        eventType,
+        JSON.stringify(payload),
+        createdAt,
+      )
     return {
       eventId,
       sessionId,
@@ -721,14 +700,21 @@ export class DirectConnectStore {
     }
   }
 
-  latestEvent(sessionId: string, eventType: string): SessionEventRecord | null {
-    const row = this.db.prepare(`
+  async latestEvent(
+    sessionId: string,
+    eventType: string,
+  ): Promise<SessionEventRecord | null> {
+    const row = (await this.db
+      .prepare(
+        `
       SELECT *
       FROM session_events
       WHERE session_id = ? AND event_type = ?
       ORDER BY created_at DESC
       LIMIT 1
-    `).get(sessionId, eventType) as SqlRow | undefined
+    `,
+      )
+      .get(sessionId, eventType)) as SqlRow | undefined
     if (!row) {
       return null
     }
@@ -744,10 +730,6 @@ export class DirectConnectStore {
       createdAt: Number(row.created_at),
     }
   }
-}
-
-export function openDirectConnectStore(config: ServerConfig): DirectConnectStore {
-  return new DirectConnectStore(config.dbPath)
 }
 
 export function toSessionSummary(session: SessionRecord): SessionSummary {

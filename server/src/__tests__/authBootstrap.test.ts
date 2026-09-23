@@ -11,16 +11,25 @@ test('an existing bootstrap username does not block startup', async () => {
       dirname(fileURLToPath(import.meta.url)),
       'authBootstrap.node.ts',
     )
-    const build = await Bun.build({
-      entrypoints: [entrypoint],
-      outdir,
-      target: 'node',
-      format: 'esm',
-    })
-    expect(build.success).toBe(true)
-    const output = build.outputs[0]
-    if (!output) throw new Error('Auth bootstrap test did not build')
-    const process = Bun.spawn(['node', '--no-warnings', output.path], {
+    const outputPath = join(outdir, 'auth-bootstrap.mjs')
+    // A separate compiler process avoids Bun test-loader resolution caching.
+    const build = Bun.spawn(
+      [
+        'bun',
+        'build',
+        entrypoint,
+        '--target=node',
+        '--format=esm',
+        `--outfile=${outputPath}`,
+      ],
+      { stdout: 'pipe', stderr: 'pipe' },
+    )
+    const [buildCode, buildError] = await Promise.all([
+      build.exited,
+      new Response(build.stderr).text(),
+    ])
+    if (buildCode) throw new Error(buildError)
+    const process = Bun.spawn(['node', '--no-warnings', outputPath], {
       stdout: 'pipe',
       stderr: 'pipe',
     })

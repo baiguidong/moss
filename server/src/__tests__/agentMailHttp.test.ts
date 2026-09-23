@@ -3,12 +3,21 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildNodeFixture } from './buildNodeFixture.js'
 
 test('Agent Mail HTTP authentication and delivery flow in Node', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-agent-mail-http-test-'))
   try {
-    const entrypoint = join(dirname(fileURLToPath(import.meta.url)), 'agentMailHttp.node.ts')
-    const build = await Bun.build({ entrypoints: [entrypoint], outdir, target: 'node', format: 'esm' })
+    const entrypoint = join(
+      dirname(fileURLToPath(import.meta.url)),
+      'agentMailHttp.node.ts',
+    )
+    const build = await buildNodeFixture({
+      entrypoints: [entrypoint],
+      outdir,
+      target: 'node',
+      format: 'esm',
+    })
     expect(build.success).toBe(true)
     const output = build.outputs[0]
     if (!output) throw new Error('Node Agent Mail HTTP test did not build')

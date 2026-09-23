@@ -32,6 +32,8 @@ required=(
   stop.sh
   nginx.conf
   scripts/common.sh
+  scripts/cloud-storage-init.sh
+  scripts/silo-init.sh
   scripts/validate.sh
 )
 for file in "${required[@]}"; do
@@ -48,6 +50,9 @@ if [[ "$stage_real" != "$install_real" ]]; then
   done
   for file in configure.sh install.sh upgrade.sh package.sh start.sh stop.sh; do
     install -m 0755 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
+  done
+  for script in cloud-storage-init.sh silo-init.sh; do
+    install -m 0755 "$STAGE_DIR/scripts/$script" "$INSTALL_DIR/scripts/$script"
   done
   install -m 0755 "$STAGE_DIR/scripts/common.sh" "$INSTALL_DIR/scripts/common.sh"
   install -m 0755 "$STAGE_DIR/scripts/validate.sh" "$INSTALL_DIR/scripts/validate.sh"

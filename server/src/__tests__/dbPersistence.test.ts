@@ -3,15 +3,16 @@ import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { buildNodeFixture } from './buildNodeFixture.js'
 
-test('persists session settings and resets incompatible session schemas in Node', async () => {
+test('persists session settings across database reopen in Node', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-server-db-test-'))
   try {
     const entrypoint = join(
       dirname(fileURLToPath(import.meta.url)),
       'dbPersistence.node.ts',
     )
-    const build = await Bun.build({
+    const build = await buildNodeFixture({
       entrypoints: [entrypoint],
       outdir,
       target: 'node',

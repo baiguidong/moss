@@ -3,12 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildNodeFixture } from './buildNodeFixture.js'
 
 test('Agent Mail service behavior in Node', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-agent-mail-test-'))
   try {
-    const entrypoint = join(dirname(fileURLToPath(import.meta.url)), 'agentMailService.node.ts')
-    const build = await Bun.build({
+    const entrypoint = join(
+      dirname(fileURLToPath(import.meta.url)),
+      'agentMailService.node.ts',
+    )
+    const build = await buildNodeFixture({
       entrypoints: [entrypoint],
       outdir,
       target: 'node',

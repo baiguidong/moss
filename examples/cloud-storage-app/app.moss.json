@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "id": "example.cloud-storage",
+  "version": "1.0.0",
+  "displayName": "云端空间接入示例",
+  "description": "公共云端 API 和传输事件的最小示例",
+  "hostApi": "^2.2.0",
+  "ui": { "entry": "index.html" },
+  "backend": {
+    "entry": "dist/backend.mjs",
+    "runtime": "node",
+    "apiVersion": 1,
+    "lifecycle": "persistent",
+    "protocols": ["moss.cloud-storage/v1"],
+    "actions": [{ "name": "request" }]
+  },
+  "permissions": ["cloud-storage:read", "cloud-storage:write", "cloud-storage:delete"]
+}

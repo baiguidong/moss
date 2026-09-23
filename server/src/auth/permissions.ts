@@ -2,7 +2,7 @@ export type PermissionDefinition = {
   code: string
   name: string
   description: string
-  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow'
+  group: 'session' | 'communication' | 'agent-mail' | 'administration' | 'ragflow' | 'cloud-storage'
   protected?: boolean
 }
 
@@ -16,6 +16,9 @@ export type BuiltinRoleTemplate = {
 }
 
 export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
+  { code: 'cloud-storage:read', name: '读取云端空间', description: '列出和下载自己的云端文件。', group: 'cloud-storage' },
+  { code: 'cloud-storage:write', name: '写入云端空间', description: '上传文件、创建目录及移动改名。', group: 'cloud-storage' },
+  { code: 'cloud-storage:delete', name: '删除云端文件', description: '删除自己的云端文件和空目录。', group: 'cloud-storage' },
   { code: 'sessions:create', name: '创建会话', description: '创建新的 Agent 会话。', group: 'session' },
   { code: 'sessions:attach', name: '接入会话', description: '连接并继续自己的 Agent 会话。', group: 'session' },
   { code: 'sessions:list', name: '查看自己的会话', description: '查看本人创建的会话。', group: 'session' },
@@ -47,6 +50,7 @@ export const BUILTIN_ROLE_TEMPLATES: BuiltinRoleTemplate[] = [
     name: '部门管理员',
     description: '管理所属部门及子部门的用户，并管理自己的个人知识库。',
     permissions: [
+      'cloud-storage:read', 'cloud-storage:write', 'cloud-storage:delete',
       'sessions:create',
       'sessions:attach',
       'sessions:list',
@@ -66,6 +70,7 @@ export const BUILTIN_ROLE_TEMPLATES: BuiltinRoleTemplate[] = [
     name: '普通用户',
     description: '使用基础会话、Agent Mail，并读取自己的个人知识库。',
     permissions: [
+      'cloud-storage:read', 'cloud-storage:write', 'cloud-storage:delete',
       'sessions:create',
       'sessions:attach',
       'sessions:list',

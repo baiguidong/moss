@@ -24,6 +24,8 @@ files=(
   stop.sh
   nginx.conf
   scripts/common.sh
+  scripts/cloud-storage-init.sh
+  scripts/silo-init.sh
   scripts/validate.sh
 )
 for file in "${files[@]}"; do

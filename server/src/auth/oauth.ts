@@ -9,7 +9,9 @@ const RANDOM_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
 const STATE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/
 
-type PermanentApiKeyResult = ReturnType<AuthService['issuePermanentApiKeyForOAuthUser']>
+type PermanentApiKeyResult = ReturnType<
+  AuthService['issuePermanentApiKeyForOAuthUser']
+>
 
 export class OAuthLoginError extends Error {
   constructor(
@@ -32,7 +34,10 @@ function sha256Base64Url(value: string): string {
 function valuesMatch(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'ascii')
   const rightBuffer = Buffer.from(right, 'ascii')
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer)
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    timingSafeEqual(leftBuffer, rightBuffer)
+  )
 }
 
 function requireValue(value: string, name: string, pattern: RegExp): string {
@@ -82,11 +87,10 @@ function appendCallbackParams(
 }
 
 function controlledAuthStatus(error: unknown): number | undefined {
-  if (!(error instanceof Error) || error.name !== 'AuthServiceError') return undefined
+  if (!(error instanceof Error) || error.name !== 'AuthServiceError')
+    return undefined
   const statusCode = (error as Error & { statusCode?: unknown }).statusCode
-  return statusCode === 400 || statusCode === 401
-    ? statusCode
-    : undefined
+  return statusCode === 400 || statusCode === 401 ? statusCode : undefined
 }
 
 export class OAuthLoginService {
@@ -95,17 +99,20 @@ export class OAuthLoginService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  start(input: {
+  async start(input: {
     redirectUri: string
     state: string
     codeChallenge: string
     codeChallengeMethod: string
-  }): {
+  }): Promise<{
     authorization_url: string
     expires_in: number
-  } {
-    this.pruneExpired()
-    if (this.authService.countOAuthAuthorizationRecords() >= MAX_PENDING_RECORDS) {
+  }> {
+    await this.pruneExpired()
+    if (
+      (await this.authService.countOAuthAuthorizationRecords()) >=
+      MAX_PENDING_RECORDS
+    ) {
       throw new OAuthLoginError(503, '认证请求过多，请稍后重试。')
     }
     if (input.codeChallengeMethod !== 'S256') {
@@ -120,7 +127,7 @@ export class OAuthLoginService {
       RANDOM_ID_PATTERN,
     )
     const id = randomBase64Url()
-    this.authService.createOAuthAuthorizationRequest({
+    await this.authService.createOAuthAuthorizationRequest({
       id,
       redirectUri,
       state,
@@ -130,23 +137,25 @@ export class OAuthLoginService {
     })
 
     return {
-      authorization_url:
-        `/api/v1/auth/oauth/authorize/${encodeURIComponent(id)}`,
+      authorization_url: `/api/v1/auth/oauth/authorize/${encodeURIComponent(id)}`,
       expires_in: Math.floor(AUTHORIZATION_TTL_MS / 1000),
     }
   }
 
-  getAuthorizationRequest(transactionId: string): {
+  async getAuthorizationRequest(transactionId: string): Promise<{
     transactionId: string
     redirectUri: string
-  } {
-    this.pruneExpired()
-    const request = this.authService.getOAuthAuthorizationRequest(
+  }> {
+    await this.pruneExpired()
+    const request = await this.authService.getOAuthAuthorizationRequest(
       transactionId.trim(),
       this.now(),
     )
     if (!request) {
-      throw new OAuthLoginError(404, '授权请求无效或已过期，请返回 Moss 客户端重新认证。')
+      throw new OAuthLoginError(
+        404,
+        '授权请求无效或已过期，请返回 Moss 客户端重新认证。',
+      )
     }
     return {
       transactionId: request.id,
@@ -154,43 +163,58 @@ export class OAuthLoginService {
     }
   }
 
-  authorizeWithPassword(input: {
+  async authorizeWithPassword(input: {
     transactionId: string
     loginIdentifier: string
     password: string
-  }): string {
-    this.pruneExpired()
-    const request = this.authService.incrementOAuthAuthorizationAttempts(
+  }): Promise<string> {
+    await this.pruneExpired()
+    const request = await this.authService.incrementOAuthAuthorizationAttempts(
       input.transactionId.trim(),
       this.now(),
     )
     if (!request) {
-      throw new OAuthLoginError(404, '授权请求无效或已过期，请返回 Moss 客户端重新认证。')
+      throw new OAuthLoginError(
+        404,
+        '授权请求无效或已过期，请返回 Moss 客户端重新认证。',
+      )
     }
     if (request.passwordAttempts > MAX_PASSWORD_ATTEMPTS) {
-      this.authService.deleteOAuthAuthorizationRequest(request.id)
-      throw new OAuthLoginError(429, '登录尝试次数过多，请返回 Moss 客户端重新认证。')
+      await this.authService.deleteOAuthAuthorizationRequest(request.id)
+      throw new OAuthLoginError(
+        429,
+        '登录尝试次数过多，请返回 Moss 客户端重新认证。',
+      )
     }
 
     const loginIdentifier = input.loginIdentifier.trim()
     try {
-      const authenticated = this.authService.authenticatePasswordForOAuth({
-        username: loginIdentifier.includes('@') ? undefined : loginIdentifier,
-        email: loginIdentifier.includes('@') ? loginIdentifier : undefined,
-        password: input.password,
-      })
+      const authenticated = await this.authService.authenticatePasswordForOAuth(
+        {
+          username: loginIdentifier.includes('@') ? undefined : loginIdentifier,
+          email: loginIdentifier.includes('@') ? loginIdentifier : undefined,
+          password: input.password,
+        },
+      )
       const code = randomBase64Url()
-      const completed = this.authService.completeOAuthAuthorization(request.id, {
-        code,
-        redirectUri: request.redirectUri,
-        state: request.state,
-        codeChallenge: request.codeChallenge,
-        userId: authenticated.user.id,
-        orgId: authenticated.user.orgId,
-        expiresAt: this.now() + CODE_TTL_MS,
-      }, this.now())
+      const completed = await this.authService.completeOAuthAuthorization(
+        request.id,
+        {
+          code,
+          redirectUri: request.redirectUri,
+          state: request.state,
+          codeChallenge: request.codeChallenge,
+          userId: authenticated.user.id,
+          orgId: authenticated.user.orgId,
+          expiresAt: this.now() + CODE_TTL_MS,
+        },
+        this.now(),
+      )
       if (!completed) {
-        throw new OAuthLoginError(404, '授权请求无效或已过期，请返回 Moss 客户端重新认证。')
+        throw new OAuthLoginError(
+          404,
+          '授权请求无效或已过期，请返回 Moss 客户端重新认证。',
+        )
       }
       return appendCallbackParams(request.redirectUri, {
         code,
@@ -204,12 +228,18 @@ export class OAuthLoginService {
     }
   }
 
-  cancel(transactionId: string): string {
-    this.pruneExpired()
+  async cancel(transactionId: string): Promise<string> {
+    await this.pruneExpired()
     const id = transactionId.trim()
-    const request = this.authService.consumeOAuthAuthorizationRequest(id, this.now())
+    const request = await this.authService.consumeOAuthAuthorizationRequest(
+      id,
+      this.now(),
+    )
     if (!request) {
-      throw new OAuthLoginError(404, '授权请求无效或已过期，请返回 Moss 客户端重新认证。')
+      throw new OAuthLoginError(
+        404,
+        '授权请求无效或已过期，请返回 Moss 客户端重新认证。',
+      )
     }
     return appendCallbackParams(request.redirectUri, {
       error: 'access_denied',
@@ -217,39 +247,44 @@ export class OAuthLoginService {
     })
   }
 
-  cancelClientRequest(input: {
+  async cancelClientRequest(input: {
     state: string
     redirectUri: string
     code?: string
-  }): { canceled: boolean } {
+  }): Promise<{ canceled: boolean }> {
     const state = requireValue(input.state, 'state', STATE_PATTERN)
     const redirectUri = requireLoopbackRedirectUri(input.redirectUri)
     const code = input.code?.trim()
-    const requestCanceled = this.authService.deleteOAuthAuthorizationRequestByState(
-      state,
-      redirectUri,
-    )
-    const stateCodeCanceled = this.authService.deleteOAuthAuthorizationCodeByState(
-      state,
-      redirectUri,
-    )
+    const requestCanceled =
+      await this.authService.deleteOAuthAuthorizationRequestByState(
+        state,
+        redirectUri,
+      )
+    const stateCodeCanceled =
+      await this.authService.deleteOAuthAuthorizationCodeByState(
+        state,
+        redirectUri,
+      )
     if (code) requireValue(code, 'code', RANDOM_ID_PATTERN)
     const codeCanceled = code
-      ? this.authService.deleteOAuthAuthorizationCode(code, redirectUri)
+      ? await this.authService.deleteOAuthAuthorizationCode(code, redirectUri)
       : false
     return {
       canceled: requestCanceled || stateCodeCanceled || codeCanceled,
     }
   }
 
-  exchange(input: {
+  async exchange(input: {
     code: string
     codeVerifier: string
     redirectUri: string
-  }): PermanentApiKeyResult {
-    this.pruneExpired()
+  }): Promise<PermanentApiKeyResult> {
+    await this.pruneExpired()
     const code = requireValue(input.code, 'code', RANDOM_ID_PATTERN)
-    const authorization = this.authService.consumeOAuthAuthorizationCode(code, this.now())
+    const authorization = await this.authService.consumeOAuthAuthorizationCode(
+      code,
+      this.now(),
+    )
     if (!authorization) {
       throw new OAuthLoginError(400, '授权码无效或已过期，请重新认证。')
     }
@@ -266,13 +301,13 @@ export class OAuthLoginService {
       throw new OAuthLoginError(400, '授权码校验失败，请重新认证。')
     }
 
-    return this.authService.issuePermanentApiKeyForOAuthUser({
+    return await this.authService.issuePermanentApiKeyForOAuthUser({
       userId: authorization.userId,
       orgId: authorization.orgId,
     })
   }
 
-  private pruneExpired(): void {
-    this.authService.pruneOAuthAuthorizationRecords(this.now())
+  private async pruneExpired(): Promise<void> {
+    await this.authService.pruneOAuthAuthorizationRecords(this.now())
   }
 }

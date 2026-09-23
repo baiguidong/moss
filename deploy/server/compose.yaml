@@ -1,6 +1,10 @@
 name: ${COMPOSE_PROJECT_NAME}
 
 networks:
+  moss-db:
+    internal: true
+  moss-storage:
+    internal: true
   moss-server:
     driver: bridge
   moss-integration:
@@ -8,10 +12,62 @@ networks:
     external: true
 
 services:
+  mysql:
+    image: ${MYSQL_IMAGE}
+    environment:
+      MYSQL_DATABASE: ${MOSS_DB_NAME}
+      MYSQL_USER: ${MOSS_DB_USER}
+      MYSQL_PASSWORD: ${MOSS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MOSS_DB_ROOT_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - ${MOSS_SERVER_HOME}/var/lib/mysql:/var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP --host=127.0.0.1 --user="$${MYSQL_USER}" --database="$${MYSQL_DATABASE}" --execute="SELECT 1" >/dev/null 2>&1']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+    networks: [moss-db]
+
+  silo:
+    image: ${MINIO_IMAGE}
+    profiles: [cloud]
+    command: server /data --console-address :9090
+    environment:
+      MINIO_ROOT_USER: ${SILO_ROOT_USER:-moss-admin}
+      MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:-not-configured}
+    volumes:
+      - ${MOSS_SERVER_HOME}/silo-data:/data
+    healthcheck:
+      test: [CMD, silo, healthcheck, ready]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    networks: [moss-storage]
+
+  silo-init:
+    image: ${SILO_MC_IMAGE}
+    profiles: [cloud-init]
+    entrypoint: [/bin/sh, /scripts/silo-init.sh]
+    environment:
+      MINIO_ROOT_USER: ${SILO_ROOT_USER:-moss-admin}
+      MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:-not-configured}
+      CLOUD_BUCKET: ${CLOUD_BUCKET:-moss-cloud-storage}
+    volumes:
+      - ./scripts/silo-init.sh:/scripts/silo-init.sh:ro
+      - ${MOSS_SERVER_HOME}/var/run/cloud-init:/run/cloud-init:ro
+    networks: [moss-storage]
+
   server:
     image: ${MOSS_SERVER_IMAGE}
-    container_name: moss-server
+    depends_on:
+      mysql: { condition: service_healthy }
     environment:
+      MOSS_DB_USER: ${MOSS_DB_USER}
+      MOSS_DB_PASSWORD: ${MOSS_DB_PASSWORD}
       HOME: /root
       MOSS_SERVER_HOME: ${MOSS_SERVER_HOME}
       MOSS_SERVER_ASSET_ROOT: ${MOSS_SERVER_HOME}/container-app
@@ -28,20 +84,21 @@ services:
     expose:
       - "43127"
     healthcheck:
-      test: [CMD, curl, --fail, --silent, http://127.0.0.1:43127/healthz]
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:43127/readyz]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
     restart: unless-stopped
     networks:
+      moss-db:
+      moss-storage:
       moss-server:
       moss-integration:
         aliases: [moss-server]
 
   nginx:
     image: ${NGINX_IMAGE}
-    container_name: moss-server-nginx
     depends_on:
       server: { condition: service_healthy }
     ports:

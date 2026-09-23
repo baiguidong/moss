@@ -1,19 +1,39 @@
+import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
 import net from 'net'
-import { spawn } from 'child_process'
 import { join } from 'path'
-import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
-import { DirectConnectStore, openDirectConnectStore, toSessionSummary } from './db.js'
+import type { SessionRuntimeInfo } from '../../packages/direct-connect-protocol/src/index.js'
 import {
   normalizeAdvancedSettings,
   normalizeAutoMemorySettings,
   normalizeSessionMemorySettings,
   normalizeSessionRuntimeOptions,
 } from '../../packages/direct-connect-protocol/src/index.js'
-import { getSystemSettings } from './systemSettings.js'
+import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
+import { errorMessage } from './lib/json.js'
+import {
+  SessionRepository,
+  toSessionSummary,
+} from './model/repositories/session.js'
+import {
+  getAttachPath,
+  getAttemptDir,
+  getAttemptManifestPath,
+  getDockerBackendManifestPath,
+  getRuntimeStatusPath,
+  getRuntimeStderrLogPath,
+  getRuntimeStdoutLogPath,
+  getSessionRuntimeMountDirs,
+  getSessionTranscriptDir,
+  getTranscriptPath,
+  getUserProfileDir,
+  resolveSessionWorkspaceDir,
+} from './runtimePaths.js'
 import { SessionTurnLock } from './sessionTurnLock.js'
+import { getSystemSettings } from './systemSettings.js'
+import { cloneSessionTranscript } from './transcript.js'
 import type {
   AttemptRecord,
   RunnerManifest,
@@ -23,25 +43,6 @@ import type {
   SessionRecord,
   SessionSummary,
 } from './types.js'
-import { cloneSessionTranscript } from './transcript.js'
-import {
-  getAttachPath,
-  getAttemptManifestPath,
-  getAttemptDir,
-  getDockerBackendManifestPath,
-  getUserProfileDir,
-  getRuntimeStatusPath,
-  getRuntimeStderrLogPath,
-  getRuntimeStdoutLogPath,
-  getSessionRuntimeMountDirs,
-  resolveSessionWorkspaceDir,
-  getSessionTranscriptDir,
-  getTranscriptPath,
-} from './runtimePaths.js'
-import { errorMessage } from './lib/json.js'
-import type {
-  SessionRuntimeInfo,
-} from '../../packages/direct-connect-protocol/src/index.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -154,53 +155,53 @@ export async function probeAttachPath(
 
 type RuntimeServiceOptions = {
   config: ServerConfig
-  store?: DirectConnectStore
+  store: SessionRepository
   serverInstanceId: string
 }
 
 export class RuntimeService {
-  readonly store: DirectConnectStore
+  readonly store: SessionRepository
   private readonly pendingEnsures = new Map<string, Promise<AttemptRecord>>()
   private readonly sessionTurnLock = new SessionTurnLock()
 
   constructor(private readonly options: RuntimeServiceOptions) {
-    this.store = options.store ?? openDirectConnectStore(options.config)
+    this.store = options.store
   }
 
-  listSessions(filter: {
+  async listSessions(filter: {
     orgId: string
     userId?: string
     activeOnly?: boolean
-  }): SessionSummary[] {
-    return this.store.listSessions({
+  }): Promise<SessionSummary[]> {
+    return await this.store.listSessions({
       orgId: filter.orgId,
       userId: filter.userId,
       activeOnly: filter.activeOnly,
     })
   }
 
-  listSessionRecords(filter: {
+  async listSessionRecords(filter: {
     orgId: string
     userId?: string
     activeOnly?: boolean
-  }): SessionRecord[] {
-    return this.store.listSessionRecords({
+  }): Promise<SessionRecord[]> {
+    return await this.store.listSessionRecords({
       orgId: filter.orgId,
       userId: filter.userId,
       activeOnly: filter.activeOnly,
     })
   }
 
-  getSession(sessionId: string): SessionRecord | null {
-    return this.store.getSession(sessionId)
+  async getSession(sessionId: string): Promise<SessionRecord | null> {
+    return await this.store.getSession(sessionId)
   }
 
-  countActiveSessions(): number {
-    return this.store.countActiveSessions()
+  async countActiveSessions(): Promise<number> {
+    return await this.store.countActiveSessions()
   }
 
   async createSession(input: SessionCreateInput): Promise<SessionRecord> {
-    const active = this.store.listSessions({
+    const active = await this.store.listSessions({
       orgId: input.orgId,
       activeOnly: true,
     })
@@ -248,7 +249,7 @@ export class RuntimeService {
       mkdir(runtime.transcriptDir, { recursive: true }),
       mkdir(workspaceDir, { recursive: true }),
     ])
-    const created = this.store.createSession({
+    const created = await this.store.createSession({
       sessionId,
       transcriptSessionId: sessionId,
       transcriptPath,
@@ -276,21 +277,21 @@ export class RuntimeService {
         assistantName: input.assistantName,
       })
     } catch (error) {
-      this.store.markSessionEnded(created.sessionId, 'failed', 'active')
+      await this.store.markSessionEnded(created.sessionId, 'failed', 'active')
       throw error
     }
-    return this.store.getSession(created.sessionId) ?? created
+    return (await this.store.getSession(created.sessionId)) ?? created
   }
 
   async forkSession(
     sourceSessionId: string,
     input: SessionForkInput,
   ): Promise<SessionRecord> {
-    const source = this.store.getSession(sourceSessionId)
+    const source = await this.store.getSession(sourceSessionId)
     if (!source) {
       throw new Error('Session not found')
     }
-    const active = this.store.listSessions({
+    const active = await this.store.listSessions({
       orgId: input.orgId,
       activeOnly: true,
     })
@@ -309,7 +310,10 @@ export class RuntimeService {
       sessionId,
       sessionId,
     )
-    const transcriptDir = getSessionTranscriptDir(this.options.config, sessionId)
+    const transcriptDir = getSessionTranscriptDir(
+      this.options.config,
+      sessionId,
+    )
     const profileDir = getUserProfileDir(this.options.config, input.userId)
     const dockerImage = getSystemSettings().serverRuntime.dockerImage.trim()
     if (!dockerImage) {
@@ -338,7 +342,7 @@ export class RuntimeService {
       title,
     )
 
-    const created = this.store.createSession({
+    const created = await this.store.createSession({
       sessionId,
       transcriptSessionId: sessionId,
       transcriptPath,
@@ -365,45 +369,56 @@ export class RuntimeService {
         assistantName: source.assistantName ?? undefined,
       })
     } catch (error) {
-      this.store.markSessionEnded(created.sessionId, 'failed', 'active')
+      await this.store.markSessionEnded(created.sessionId, 'failed', 'active')
       throw error
     }
-    return this.store.getSession(created.sessionId) ?? created
+    return (await this.store.getSession(created.sessionId)) ?? created
   }
 
-  async ensureSessionReady(
-    sessionId: string,
-  ): Promise<{
+  async ensureSessionReady(sessionId: string): Promise<{
     session: SessionRecord
     attempt: AttemptRecord
   }> {
-    const session = this.store.getSession(sessionId)
+    const session = await this.store.getSession(sessionId)
     if (!session) {
       throw new Error('Session not found')
     }
     const attempt = await this.ensureAttempt(session)
-    return { session: this.store.getSession(sessionId) ?? session, attempt }
+    return {
+      session: (await this.store.getSession(sessionId)) ?? session,
+      attempt,
+    }
   }
 
   async reconcileOnStartup(): Promise<void> {
-    const sessions = this.store.listSessionsToRecover()
+    const sessions = await this.store.listSessionsToRecover()
     for (const session of sessions) {
       try {
         await this.ensureAttempt(session)
       } catch (error) {
-        this.store.addEvent(session.sessionId, session.currentAttemptId, 'reconcile_failed', {
-          error: errorMessage(error),
-        })
+        await this.store.addEvent(
+          session.sessionId,
+          session.currentAttemptId,
+          'reconcile_failed',
+          {
+            error: errorMessage(error),
+          },
+        )
       }
     }
   }
 
   async terminateSession(sessionId: string): Promise<void> {
-    const session = this.store.getSession(sessionId)
+    const session = await this.store.getSession(sessionId)
     if (!session) return
-    const attempt = this.store.getCurrentAttempt(sessionId)
-    this.store.setSessionLifecycle(sessionId, 'terminated', 'terminated')
-    this.store.addEvent(sessionId, attempt?.attemptId ?? null, 'session_terminate_requested', {})
+    const attempt = await this.store.getCurrentAttempt(sessionId)
+    await this.store.setSessionLifecycle(sessionId, 'terminated', 'terminated')
+    await this.store.addEvent(
+      sessionId,
+      attempt?.attemptId ?? null,
+      'session_terminate_requested',
+      {},
+    )
     if (attempt?.runnerPid) {
       try {
         process.kill(attempt.runnerPid, 'SIGTERM')
@@ -424,7 +439,7 @@ export class RuntimeService {
   }
 
   async acquireSessionTurn(sessionId: string): Promise<() => void> {
-    return this.sessionTurnLock.acquire(sessionId)
+    return await this.sessionTurnLock.acquire(sessionId)
   }
 
   private async ensureAttempt(session: SessionRecord): Promise<AttemptRecord> {
@@ -446,7 +461,7 @@ export class RuntimeService {
     session: SessionRecord,
   ): Promise<AttemptRecord> {
     const existing = session.currentAttemptId
-      ? this.store.getAttempt(session.currentAttemptId)
+      ? await this.store.getAttempt(session.currentAttemptId)
       : null
     if (existing?.attachPath) {
       const healthy = await probeAttachPath(
@@ -454,14 +469,26 @@ export class RuntimeService {
         this.options.config.reattachProbeTimeoutMs,
       )
       if (healthy) {
-        this.store.setSessionLifecycle(session.sessionId, 'active', session.desiredState)
+        await this.store.setSessionLifecycle(
+          session.sessionId,
+          'active',
+          session.desiredState,
+        )
         return existing
       }
-      this.store.markAttemptLost(existing.attemptId, 'attach socket unavailable')
-      this.store.addEvent(session.sessionId, existing.attemptId, 'attempt_lost', {
-        reason: 'attach_socket_unavailable',
-      })
-      this.store.setSessionLifecycle(session.sessionId, 'lost', 'active')
+      await this.store.markAttemptLost(
+        existing.attemptId,
+        'attach socket unavailable',
+      )
+      await this.store.addEvent(
+        session.sessionId,
+        existing.attemptId,
+        'attempt_lost',
+        {
+          reason: 'attach_socket_unavailable',
+        },
+      )
+      await this.store.setSessionLifecycle(session.sessionId, 'lost', 'active')
     }
 
     if (!this.options.config.resumeOnMissingRuntime) {
@@ -481,9 +508,12 @@ export class RuntimeService {
       assistantName?: string
     } = {},
   ): Promise<AttemptRecord> {
-    const generation = this.store.getNextGeneration(session.sessionId)
     const attemptId = randomUUID()
-    const attemptDir = getAttemptDir(this.options.config, session.sessionId, attemptId)
+    const attemptDir = getAttemptDir(
+      this.options.config,
+      session.sessionId,
+      attemptId,
+    )
     const attachPath = getAttachPath(this.options.config, attemptId)
     const manifestPath = getAttemptManifestPath(attemptDir)
     const backendManifestPath = getDockerBackendManifestPath(attemptDir)
@@ -499,10 +529,9 @@ export class RuntimeService {
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
     await mkdir(attemptDir, { recursive: true })
-    const attempt = this.store.createAttempt({
+    const attempt = await this.store.createNextAttempt({
       attemptId,
       sessionId: session.sessionId,
-      generation,
       resumeTranscriptSessionId:
         options.resumeTranscriptSessionId ?? session.transcriptSessionId,
       serverInstanceId: this.options.serverInstanceId,
@@ -511,7 +540,7 @@ export class RuntimeService {
       manifestPath,
       attachPath,
     })
-    this.store.setCurrentAttempt(session.sessionId, attempt.attemptId)
+    const generation = attempt.generation
 
     const manifest: RunnerManifest = {
       config: this.options.config,
@@ -557,11 +586,10 @@ export class RuntimeService {
       },
     }
 
-    await writeFile(
-      manifestPath,
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      { encoding: 'utf8', mode: 0o600 },
-    )
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
     await chmod(manifestPath, 0o600)
 
     const runnerEntryPath = resolveRunnerEntryPath()
@@ -574,15 +602,20 @@ export class RuntimeService {
     if (!child.pid) {
       throw new Error('Failed to spawn session runner')
     }
-    this.store.updateAttemptRunner(attempt.attemptId, child.pid)
+    await this.store.updateAttemptRunner(attempt.attemptId, child.pid)
     await waitForRunnerReady(attachPath, statusPath, stderrLogPath, 5_000)
-    this.store.setSessionLifecycle(session.sessionId, 'active', 'active')
-    this.store.addEvent(session.sessionId, attempt.attemptId, 'attempt_spawned', {
-      runnerPid: child.pid,
-      generation,
-      attachPath,
-    })
-    return this.store.getAttempt(attempt.attemptId) ?? attempt
+    await this.store.setSessionLifecycle(session.sessionId, 'active', 'active')
+    await this.store.addEvent(
+      session.sessionId,
+      attempt.attemptId,
+      'attempt_spawned',
+      {
+        runnerPid: child.pid,
+        generation,
+        attachPath,
+      },
+    )
+    return (await this.store.getAttempt(attempt.attemptId)) ?? attempt
   }
 }
 

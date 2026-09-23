@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>云端空间接入示例</title>
+<style>body{font:16px system-ui;padding:24px;max-width:900px}button,input{font:inherit;margin:5px;padding:8px}pre{background:#eee;padding:15px;white-space:pre-wrap}progress{width:100%}</style>
+<h1>云端空间接入示例</h1>
+<p>选择的文件会上传到当前远程账号。现有本地数据不会自动迁移。</p>
+<button id="status">查看连接状态</button><button id="list">列出云端文件</button><button id="upload">选择并上传文件</button>
+<p><input id="fileId" placeholder="文件 ID"><button id="download">下载</button></p>
+<p><input id="transferId" placeholder="传输任务 ID"><button id="pause">暂停</button><button id="resume">恢复</button><button id="cancel">取消</button><button id="tasks">查看任务</button><button id="moreTasks" disabled>下一页任务</button></p>
+<progress id="progress" max="1" value="0"></progress><pre id="output">等待操作</pre>
+<script type="module">
+const output=document.querySelector('#output');let instanceId,taskCursor
+const show=v=>{output.textContent=JSON.stringify(v,null,2)}
+async function request(method,input={}){
+  instanceId ||= (await mossApp.instances.list())[0].id
+  return mossApp.actions.invoke(instanceId,'request',{method,input})
+}
+function button(id,fn){document.getElementById(id).onclick=()=>Promise.resolve().then(fn).then(show).catch(e=>show({error:e.message}))}
+button('status',()=>request('status.get'))
+button('list',()=>request('files.list'))
+async function tasks(cursor){const page=await request('transfers.list',cursor?{cursor}:{});taskCursor=page.nextCursor;document.querySelector('#moreTasks').disabled=!taskCursor;return page}
+button('tasks',()=>tasks())
+button('moreTasks',()=>tasks(taskCursor))
+button('upload',async()=>{const selected=await request('local-files.pick');const transfers=[];for(const file of selected.files){const task=await request('uploads.start',{handle:file.handle});transfers.push(task);document.querySelector('#transferId').value=task.transferId}return transfers})
+button('download',async()=>{const task=await request('downloads.start',{fileId:document.querySelector('#fileId').value});document.querySelector('#transferId').value=task.transferId;return task})
+for(const action of ['pause','resume','cancel'])button(action,()=>request(`transfers.${action}`,{transferId:document.querySelector('#transferId').value}))
+mossApp.events.on('cloud.event',event=>{show(event);if(event.data.totalBytes)document.querySelector('#progress').value=event.data.transferredBytes/event.data.totalBytes})
+</script></html>
