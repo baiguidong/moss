@@ -430,7 +430,7 @@ export async function initializeToolPermissionContext({
   permissionMode,
   allowDangerouslySkipPermissions,
   addDirs,
-  workspaceDirectories,
+  workspaceDirectories = [],
 }: {
   allowedToolsCli: string[]
   disallowedToolsCli: string[]
@@ -438,7 +438,7 @@ export async function initializeToolPermissionContext({
   permissionMode: PermissionMode
   allowDangerouslySkipPermissions: boolean
   addDirs: string[]
-  workspaceDirectories: string[]
+  workspaceDirectories?: string[]
 }): Promise<{
   toolPermissionContext: ToolPermissionContext
   warnings: string[]

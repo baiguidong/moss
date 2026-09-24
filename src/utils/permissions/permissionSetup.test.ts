@@ -26,6 +26,37 @@ afterEach(async () => {
   await rm(tempRoot, { recursive: true, force: true })
 })
 
+describe('workspace permission initialization', () => {
+  test('initializes CLI permissions without desktop workspace directories', async () => {
+    const { toolPermissionContext } = await initializeToolPermissionContext({
+      allowedToolsCli: [],
+      disallowedToolsCli: [],
+      permissionMode: 'default',
+      allowDangerouslySkipPermissions: false,
+      addDirs: [],
+    })
+
+    expect(toolPermissionContext.mode).toBe('default')
+    expect(toolPermissionContext.isBypassPermissionsModeAvailable).toBe(false)
+  })
+
+  test('preserves explicitly supplied desktop workspace directories', async () => {
+    const { toolPermissionContext } = await initializeToolPermissionContext({
+      allowedToolsCli: [],
+      disallowedToolsCli: [],
+      permissionMode: 'default',
+      allowDangerouslySkipPermissions: false,
+      addDirs: [],
+      workspaceDirectories: [tempRoot],
+    })
+
+    expect(toolPermissionContext.additionalWorkingDirectories.get(tempRoot)).toEqual({
+      path: tempRoot,
+      source: 'session',
+    })
+  })
+})
+
 describe('bypass permissions setting', () => {
   test('allows the CLI mode when the setting is absent', () => {
     expect(isBypassPermissionsModeDisabled()).toBe(false)

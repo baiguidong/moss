@@ -180,6 +180,13 @@ export type UsageOverview = {
   daily: UsageDailySummary[];
 };
 
+export type CloudUsageOverview = Omit<UsageOverview, 'totals'> & {
+  totals: Omit<UsageOverview['totals'], 'currentStreak' | 'longestStreak' | 'todayTokens'>;
+  timezone: string;
+  today: string;
+  historyIncomplete: boolean;
+};
+
 export type MemoryGlobalEntry = {
   id: string;
   path: string;
@@ -1744,6 +1751,7 @@ declare global {
       probeWebSearch: () => Promise<DesktopSettings>;
       usage: {
         getOverview: () => Promise<UsageOverview>;
+        getCloudOverview: () => Promise<CloudUsageOverview | null>;
       };
       memory: {
         getCatalog: () => Promise<MemoryCatalog>;

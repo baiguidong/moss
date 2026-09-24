@@ -295,6 +295,27 @@ export async function requestRemoteCron({ serverUrl, authToken, operation, taskI
   return response.json();
 }
 
+export async function fetchRemoteUsageOverview({ serverUrl, authToken, signal = AbortSignal.timeout(20_000) }) {
+  const response = await remoteDirectFetch(`${serverUrl}/api/v1/usage`, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${authToken}` },
+    signal,
+  });
+  if (!response.ok) throw new Error(await parseRemoteDirectError('云端用量请求失败', response));
+  const data = await response.json();
+  const isCount = (value) => Number.isFinite(value) && value >= 0;
+  const isDay = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const hasCounts = (row) => ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens', 'requestCount']
+    .every((field) => isCount(row?.[field]));
+  if (!Number.isFinite(data?.generatedAt) || typeof data?.timezone !== 'string' || !isDay(data?.today)
+    || !hasCounts(data?.totals) || !isCount(data.totals.activeDays) || !isCount(data.totals.peakTokens)
+    || (data.totals.peakDay !== null && !isDay(data.totals.peakDay))
+    || !Array.isArray(data?.daily) || !data.daily.every((row) => isDay(row?.day) && hasCounts(row))) {
+    throw new Error('云端用量数据格式无效');
+  }
+  return data;
+}
+
 export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
   let response;
   try {
@@ -882,6 +903,17 @@ export function createRemoteDirectClient({ getSettings }) {
     requestRemoteDirectAccessToken,
     resolveRemoteDirectConnection: (settings, options) => resolveRemoteDirectConnection(currentSettings(settings), options),
     parseRemoteDirectError,
+    getCloudUsageOverview: async (settings) => {
+      const resolvedSettings = currentSettings(settings);
+      const remote = getRemoteDirectSettings(resolvedSettings);
+      const hasCredentials = remote.credentialMode === 'api-key'
+        ? Boolean(remote.apiKey)
+        : Boolean(remote.userEmail && remote.userPassword);
+      if (!resolvedSettings?.remoteEnabled || !remote.serverUrl || !hasCredentials) return null;
+      const signal = AbortSignal.timeout(20_000);
+      const connection = await resolveRemoteDirectConnection(resolvedSettings, { signal });
+      return fetchRemoteUsageOverview({ ...connection, signal });
+    },
     fetchRemoteDirectSessions,
     deleteRemoteDirectSession,
     fetchRemoteDirectSessionInfo,

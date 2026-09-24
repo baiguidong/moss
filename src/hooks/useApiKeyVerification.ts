@@ -4,6 +4,7 @@ import { verifyApiKey } from '../services/api/claude.js'
 import {
   getAnthropicApiKeyWithSource,
   getApiKeyFromApiKeyHelper,
+  getAuthTokenSource,
   isUsing3PServices,
 } from '../utils/auth.js'
 
@@ -22,7 +23,9 @@ export type ApiKeyVerificationResult = {
 
 export function useApiKeyVerification(): ApiKeyVerificationResult {
   const [status, setStatus] = useState<VerificationStatus>(() => {
-    if (isUsing3PServices()) {
+    // Moss uses the configured model endpoint's bearer token. It does not
+    // require a separate Anthropic API key or an Anthropic key probe.
+    if (isUsing3PServices() || getAuthTokenSource().source === 'MOSS_MODEL_AUTH_TOKEN') {
       return 'valid'
     }
     // Use skipRetrievingKeyFromApiKeyHelper to avoid executing apiKeyHelper
@@ -40,8 +43,9 @@ export function useApiKeyVerification(): ApiKeyVerificationResult {
   const [error, setError] = useState<Error | null>(null)
 
   const verify = useCallback(async (): Promise<void> => {
-    if (isUsing3PServices()) {
+    if (isUsing3PServices() || getAuthTokenSource().source === 'MOSS_MODEL_AUTH_TOKEN') {
       setStatus('valid')
+      setError(null)
       return
     }
     // Warm the apiKeyHelper cache (no-op if not configured), then read from

@@ -9,6 +9,7 @@ import {
 } from 'src/utils/auth.js'
 import { getUserAgent } from 'src/utils/http.js'
 import { getSmallFastModel } from 'src/utils/model/model.js'
+import { normalizeMossBaseUrl } from 'src/utils/model/modelBaseUrl.js'
 import {
   getAPIProvider,
   isFirstPartyModelBaseUrl,
@@ -290,9 +291,8 @@ export async function getAnthropicClient({
   }
 
   const mossBaseUrl =
-    getSessionMossBaseUrl() ||
-    process.env.MOSS_MODEL_BASE_URL ||
-    getApiBaseUrl()
+    normalizeMossBaseUrl(getSessionMossBaseUrl()) ||
+    normalizeMossBaseUrl(getApiBaseUrl())
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
     apiKey: apiKey || getAnthropicApiKey(),
     authToken: mossAuthToken,

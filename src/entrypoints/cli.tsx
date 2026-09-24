@@ -1,6 +1,6 @@
 // Build-time macro definitions (normally injected by bundler)
 const MACRO = {
-  VERSION: '2.1.88',
+  VERSION: '0.0.1',
   BUILD_TIME: new Date().toISOString()
 };
 
@@ -129,4 +129,21 @@ async function main(): Promise<void> {
 }
 
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
-void main();
+void main().catch(async (error: unknown) => {
+  const details = error instanceof Error ? error.stack ?? error.message : String(error);
+  process.stderr.write(`Moss failed to start: ${details}\n`);
+
+  try {
+    const { gracefulShutdown } = await import('../utils/gracefulShutdown.js');
+    await gracefulShutdown(1);
+  } finally {
+    // Imports can fail before shutdown is available. Always release early
+    // input capture and exit, even when initialization left live watchers.
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } finally {
+      // eslint-disable-next-line custom-rules/no-process-exit
+      process.exit(1);
+    }
+  }
+});

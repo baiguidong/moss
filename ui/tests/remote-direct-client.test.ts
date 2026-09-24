@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  createRemoteDirectClient,
+  fetchRemoteUsageOverview,
   fetchRemoteDirectSessions,
   fetchRemoteDirectSessionTasks,
   deleteRemoteDirectSession,
@@ -26,6 +28,60 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe('cloud usage', () => {
+  it('does not request usage when cloud is disabled, unconfigured or not signed in', async () => {
+    globalThis.fetch = async () => { throw new Error('Unexpected request'); };
+    for (const settings of [
+      { remoteEnabled: false, remoteDirectServerUrl: 'https://moss.example.com', remoteDirectApiKey: 'key' },
+      { remoteEnabled: true },
+      { remoteEnabled: true, remoteDirectServerUrl: 'https://moss.example.com', remoteDirectCredentialMode: 'api-key' },
+    ]) {
+      const client = createRemoteDirectClient({ getSettings: () => settings });
+      expect(await client.getCloudUsageOverview()).toBeNull();
+    }
+  });
+
+  it('uses the current cloud account and shares a timeout across authentication and usage', async () => {
+    const requests: any[] = [];
+    const overview = {
+      generatedAt: Date.now(), timezone: 'Asia/Shanghai', today: '2026-09-24', historyIncomplete: false,
+      totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+        totalTokens: 0, requestCount: 0, activeDays: 0, peakDay: null, peakTokens: 0 },
+      daily: [],
+    };
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return Response.json(String(input).endsWith('/auth/token') ? { access_token: 'current-account-token' } : overview);
+    };
+    const client = createRemoteDirectClient({ getSettings: () => ({
+      remoteEnabled: true,
+      agentMode: 'local',
+      remoteDirect: { serverUrl: 'https://moss.example.com/', credentialMode: 'api-key', apiKey: 'current-account-key' },
+    }) });
+
+    expect(await client.getCloudUsageOverview()).toEqual(overview);
+    expect(requests.map(request => request.url)).toEqual([
+      'https://moss.example.com/api/v1/auth/token', 'https://moss.example.com/api/v1/usage',
+    ]);
+    expect(JSON.parse(requests[0].init.body)).toEqual({ grant_type: 'api_key', api_key: 'current-account-key' });
+    expect(requests[1].init.headers.authorization).toBe('Bearer current-account-token');
+    expect(requests[1].init.signal).toBeInstanceOf(AbortSignal);
+    expect(requests[1].init.signal).toBe(requests[0].init.signal);
+  });
+
+  it('reports unavailable or invalid cloud data instead of treating it as zero usage', async () => {
+    const connection = { serverUrl: 'https://moss.example.com', authToken: 'token' };
+    for (const status of [401, 403, 404, 503]) {
+      globalThis.fetch = async () => Response.json({ error: 'Unavailable' }, { status });
+      await expect(fetchRemoteUsageOverview(connection)).rejects.toThrow(String(status));
+    }
+    globalThis.fetch = async () => Response.json({ totals: {}, daily: [] });
+    await expect(fetchRemoteUsageOverview(connection)).rejects.toThrow('云端用量数据格式无效');
+    globalThis.fetch = async () => { throw new TypeError('offline'); };
+    await expect(fetchRemoteUsageOverview(connection)).rejects.toThrow('offline');
+  });
 });
 
 describe('remote direct client settings', () => {

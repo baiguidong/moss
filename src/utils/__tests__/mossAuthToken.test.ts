@@ -51,6 +51,53 @@ describe('Moss model auth token', () => {
     expect(client.authToken).toBe('moss-token')
   })
 
+  test.each([
+    ['https://moss.example.test', '/v1/messages'],
+    ['https://moss.example.test/v1', '/v1/messages'],
+    ['https://moss.example.test/v1/', '/v1/messages'],
+    ['https://moss.example.test/gateway/v1/', '/gateway/v1/messages'],
+  ])('uses the same request URL for CLI and desktop with %s', async (baseUrl, expectedPath) => {
+    process.env.MOSS_MODEL_AUTH_TOKEN = 'moss-token'
+    process.env.MOSS_MODEL_BASE_URL = baseUrl
+    testGlobal.MACRO = { VERSION: 'test' }
+
+    const { getAnthropicClient } = await import('../../services/api/client.js')
+    const urls: string[] = []
+    const fetchOverride: NonNullable<Parameters<typeof getAnthropicClient>[0]['fetchOverride']> = async input => {
+      urls.push(input instanceof Request ? input.url : String(input))
+      return new Response(JSON.stringify({
+        id: 'test-message',
+        type: 'message',
+        role: 'assistant',
+        model: 'test-model',
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { headers: { 'content-type': 'application/json' } })
+    }
+
+    for (const overrides of [undefined, { mossBaseUrl: baseUrl }]) {
+      await runWithSessionApiOverrides(overrides, async () => {
+        const client = await getAnthropicClient({
+          apiKey: 'test-key',
+          maxRetries: 0,
+          fetchOverride,
+        })
+        await client.messages.create({
+          model: 'test-model',
+          max_tokens: 16,
+          messages: [{ role: 'user', content: 'hello' }],
+        })
+      })
+    }
+
+    expect(urls).toEqual([
+      `https://moss.example.test${expectedPath}`,
+      `https://moss.example.test${expectedPath}`,
+    ])
+  })
+
   test('supports session-scoped Moss model endpoint and token overrides', () => {
     const overrides = runWithSessionApiOverrides(
       {

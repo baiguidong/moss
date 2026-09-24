@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   probeWebSearch: () => ipcRenderer.invoke('agent:probe-web-search'),
   usage: {
     getOverview: () => ipcRenderer.invoke('usage:get-overview'),
+    getCloudOverview: () => ipcRenderer.invoke('usage:get-cloud-overview'),
   },
   memory: {
     getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),

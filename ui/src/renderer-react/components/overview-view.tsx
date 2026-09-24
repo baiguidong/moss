@@ -16,7 +16,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { MemoryOverview, type MemoryScope } from "@/components/memory-overview";
 import { cn } from "@/lib/utils";
-import type { UsageDailySummary, UsageOverview } from "../types";
+import { mergeUsageDaily } from "@/lib/usage-overview";
+import type { CloudUsageOverview, UsageDailySummary, UsageOverview } from "../types";
 
 type ActivityMode = "daily" | "weekly" | "cumulative";
 type OverviewTab = "usage" | MemoryScope;
@@ -191,7 +192,7 @@ function StatCard({
   );
 }
 
-function ActivityChart({ data, now }: { data: UsageDailySummary[]; now: number }) {
+function ActivityChart({ data, now, description }: { data: UsageDailySummary[]; now: number; description: string }) {
   const [mode, setMode] = React.useState<ActivityMode>("daily");
   const cells = React.useMemo(() => buildCalendarCells(data, now), [data, now]);
   const monthLabels = React.useMemo(() => buildMonthLabels(cells), [cells]);
@@ -209,7 +210,7 @@ function ActivityChart({ data, now }: { data: UsageDailySummary[]; now: number }
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-foreground">Token 活动</h2>
-          <p className="mt-1 text-xs text-muted-foreground">最近 53 周</p>
+          <p className="mt-1 text-xs text-muted-foreground">{description} · 最近 53 周</p>
         </div>
         <div className="inline-flex rounded-md bg-muted p-1" role="tablist" aria-label="Token 活动统计方式">
           {ACTIVITY_MODES.map((item) => (
@@ -302,65 +303,149 @@ function ActivityChart({ data, now }: { data: UsageDailySummary[]; now: number }
   );
 }
 
-export function OverviewView() {
-  const [activeTab, setActiveTab] = React.useState<OverviewTab>("usage");
-  const [overview, setOverview] = React.useState<UsageOverview | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState("");
+type UsageSource<T> = { data: T | null; loading: boolean; error: string };
 
-  const loadOverview = React.useCallback(async (background = false) => {
-    if (!background) setLoading(true);
-    try {
-      const next = await window.agentDesktop.usage.getOverview();
-      setOverview(next);
-      setError("");
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      if (!background) setLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void loadOverview();
-    const interval = window.setInterval(() => void loadOverview(true), 60_000);
-    return () => window.clearInterval(interval);
-  }, [loadOverview]);
-
-  const totals = overview?.totals;
-  const cacheTokens = (totals?.cacheReadTokens ?? 0) + (totals?.cacheWriteTokens ?? 0);
-  const cards = totals ? [
+function UsageStatsRow({
+  title,
+  totalLabel,
+  source,
+  description,
+  onRefresh,
+}: {
+  title: string;
+  totalLabel: string;
+  source: UsageSource<Pick<CloudUsageOverview, "totals">>;
+  description?: string;
+  onRefresh: () => void;
+}) {
+  const totals = source.data?.totals;
+  const tokens = (value: number | undefined) => value === undefined ? "—" : formatCompactTokens(value);
+  const cards = [
     {
-      label: "本机累计 Token",
-      value: formatCompactTokens(totals.totalTokens),
-      detail: `${totals.activeDays} 个活跃日 · ${totals.requestCount} 次请求`,
+      label: totalLabel,
+      value: tokens(totals?.totalTokens),
+      detail: totals ? `${totals.activeDays} 个活跃日 · ${totals.requestCount} 次请求` : "—",
       icon: Gauge,
     },
     {
       label: "单日峰值",
-      value: formatCompactTokens(totals.peakTokens),
-      detail: formatDay(totals.peakDay),
+      value: tokens(totals?.peakTokens),
+      detail: totals ? formatDay(totals.peakDay) : "—",
       icon: Flame,
     },
     {
       label: "输入 Token",
-      value: formatCompactTokens(totals.inputTokens),
-      detail: `${formatFullTokens(totals.inputTokens)} Token`,
+      value: tokens(totals?.inputTokens),
+      detail: totals ? `${formatFullTokens(totals.inputTokens)} Token` : "—",
       icon: ArrowDownToLine,
     },
     {
       label: "输出 Token",
-      value: formatCompactTokens(totals.outputTokens),
-      detail: `${formatFullTokens(totals.outputTokens)} Token`,
+      value: tokens(totals?.outputTokens),
+      detail: totals ? `${formatFullTokens(totals.outputTokens)} Token` : "—",
       icon: ArrowUpFromLine,
     },
     {
       label: "缓存 Token",
-      value: formatCompactTokens(cacheTokens),
-      detail: `读取 ${formatCompactTokens(totals.cacheReadTokens)} · 写入 ${formatCompactTokens(totals.cacheWriteTokens)}`,
+      value: tokens(totals ? totals.cacheReadTokens + totals.cacheWriteTokens : undefined),
+      detail: totals ? `读取 ${formatCompactTokens(totals.cacheReadTokens)} · 写入 ${formatCompactTokens(totals.cacheWriteTokens)}` : "—",
       icon: Database,
     },
-  ] : [];
+  ];
+
+  return (
+    <section className="mt-6" aria-label={`${title}用量`}>
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {source.error ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground" role="alert">
+            <span>{title}用量暂时不可用</span>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={source.loading} onClick={onRefresh}>重试</Button>
+          </div>
+        ) : description ? <p className="text-xs text-muted-foreground" role="status">{description}</p> : null}
+      </div>
+      {source.loading && !source.data ? (
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5" aria-label={`正在加载${title}用量`}>
+          {Array.from({ length: 5 }, (_, index) => (
+            <div key={index} className="h-[142px] animate-pulse rounded-md border border-border/70 bg-muted/50" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+          {cards.map((card) => <StatCard key={card.label} {...card} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function UsageOverviewContent({ local, cloud, onRefresh }: {
+  local: UsageSource<UsageOverview>;
+  cloud: UsageSource<CloudUsageOverview>;
+  onRefresh: () => void;
+}) {
+  const daily = React.useMemo(() => mergeUsageDaily(local.data?.daily ?? [], cloud.data?.daily ?? []), [local.data, cloud.data]);
+  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloud.data?.generatedAt ?? 0);
+  // Keep the cloud's current day visible even when its timezone is ahead of this computer.
+  const now = Math.max(generatedAt, cloud.data ? Date.parse(`${cloud.data.today}T12:00:00`) : 0);
+  const sources = [local.data && "本机", cloud.data && "云端"].filter(Boolean).join(" + ");
+  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezoneNote = local.data && cloud.data && localTimezone !== cloud.data.timezone
+    ? ` · 按各自日期合并（本机 ${localTimezone}，云端 ${cloud.data.timezone}）`
+    : "";
+
+  return (
+    <>
+      <UsageStatsRow title="本地电脑" totalLabel="本机累计 Token" source={local} onRefresh={onRefresh} />
+      <UsageStatsRow
+        title="云端"
+        totalLabel="云端累计 Token"
+        source={cloud}
+        description={cloud.data ? `当前账号 · 按 ${cloud.data.timezone} 统计` : cloud.loading ? "正在获取当前账号的用量…" : "连接 Moss Server 后查看当前账号的用量"}
+        onRefresh={onRefresh}
+      />
+      {cloud.data?.historyIncomplete && <p className="mt-2 text-xs text-muted-foreground" role="status">部分云端历史记录无法读取，累计值可能不完整。</p>}
+      {(local.data || cloud.data) && <ActivityChart data={daily} now={now} description={`${sources}${timezoneNote}`} />}
+    </>
+  );
+}
+
+export function OverviewView() {
+  const [activeTab, setActiveTab] = React.useState<OverviewTab>("usage");
+  const [local, setLocal] = React.useState<UsageSource<UsageOverview>>({ data: null, loading: true, error: "" });
+  const [cloud, setCloud] = React.useState<UsageSource<CloudUsageOverview>>({ data: null, loading: true, error: "" });
+  const requestVersion = React.useRef(0);
+
+  const loadOverview = React.useCallback(async (resetCloud = false) => {
+    const version = ++requestVersion.current;
+    const load = async <T,>(request: () => Promise<T | null>, setSource: React.Dispatch<React.SetStateAction<UsageSource<T>>>, reset = false) => {
+      setSource(previous => ({ data: reset ? null : previous.data, loading: true, error: "" }));
+      try {
+        const data = await request();
+        if (version === requestVersion.current) setSource({ data, loading: false, error: "" });
+      } catch (error) {
+        if (version === requestVersion.current) setSource({ data: null, loading: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    };
+    await Promise.all([
+      load(() => window.agentDesktop.usage.getOverview(), setLocal),
+      load(() => window.agentDesktop.usage.getCloudOverview(), setCloud, resetCloud),
+    ]);
+  }, []);
+
+  React.useEffect(() => {
+    void loadOverview();
+    const interval = window.setInterval(() => void loadOverview(), 60_000);
+    const offSettingsChanged = window.agentDesktop.onSettingsChanged(() => void loadOverview(true));
+    return () => {
+      requestVersion.current += 1;
+      window.clearInterval(interval);
+      offSettingsChanged();
+    };
+  }, [loadOverview]);
+
+  const loading = local.loading || cloud.loading;
+  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloud.data?.generatedAt ?? 0);
 
   return (
     <main className="h-full min-h-0 overflow-y-auto bg-background">
@@ -368,9 +453,9 @@ export function OverviewView() {
         <header className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-foreground">概览</h1>
-            {activeTab === "usage" && overview ? (
+            {activeTab === "usage" && generatedAt > 0 ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                更新于 {new Date(overview.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                更新于 {new Date(generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
               </p>
             ) : activeTab !== "usage" ? (
               <p className="mt-1 text-xs text-muted-foreground">本机 Moss 记忆</p>
@@ -396,28 +481,7 @@ export function OverviewView() {
 
         {activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />
-        ) : error ? (
-          <div className="mt-8 flex min-h-48 flex-col items-center justify-center gap-3 border-y border-border/70 text-sm text-muted-foreground">
-            <p>用量数据暂时不可用</p>
-            <Button variant="outline" size="sm" onClick={() => void loadOverview()}>
-              <RefreshCw className="h-4 w-4" />
-              重试
-            </Button>
-          </div>
-        ) : loading && !overview ? (
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5" aria-label="正在加载用量概览">
-            {Array.from({ length: 5 }, (_, index) => (
-              <div key={index} className="h-[142px] animate-pulse rounded-md border border-border/70 bg-muted/50" />
-            ))}
-          </div>
-        ) : overview ? (
-          <>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
-              {cards.map((card) => <StatCard key={card.label} {...card} />)}
-            </div>
-            <ActivityChart data={overview.daily} now={overview.generatedAt} />
-          </>
-        ) : null}
+        ) : <UsageOverviewContent local={local} cloud={cloud} onRefresh={() => void loadOverview()} />}
       </div>
     </main>
   );

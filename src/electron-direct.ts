@@ -8,6 +8,7 @@ import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessio
 import type { ImageSettings } from './services/imageGeneration.js'
 import { randomUUID, type UUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
+import { normalizeMossBaseUrl } from './utils/model/modelBaseUrl.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
@@ -580,20 +581,6 @@ function addDynamicMcpScope(
     scoped[name] = { ...config, scope: 'dynamic' } as ScopedMcpServerConfig
   }
   return scoped
-}
-
-function normalizeMossBaseUrl(value: string | undefined): string | undefined {
-  if (!value) return value
-  const trimmed = value.trim()
-  if (!trimmed) return undefined
-
-  try {
-    const url = new URL(trimmed)
-    const normalizedPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '')
-    return `${url.origin}${normalizedPath}${url.search}${url.hash}`
-  } catch {
-    return trimmed.replace(/\/+$/, '').replace(/\/v1$/, '')
-  }
 }
 
 function normalizeDesktopPermissionDecision(

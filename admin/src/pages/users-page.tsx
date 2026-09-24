@@ -1325,12 +1325,14 @@ export default function UsersPage() {
                                     <UserCog className="mr-2 size-4" />
                                     查看详情
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem asChild>
-                                    <Link to={`/usage?user_id=${encodeURIComponent(user.id)}`}>
-                                      <Coins className="mr-2 size-4" />
-                                      查看 Token 用量
-                                    </Link>
-                                  </DropdownMenuItem>
+                                  {user.id === currentUser?.id && (
+                                    <DropdownMenuItem asChild>
+                                      <Link to="/usage">
+                                        <Coins className="mr-2 size-4" />
+                                        查看 Token 用量
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem
                                     onClick={() =>
                                       setUserDialog({
@@ -2125,15 +2127,19 @@ export default function UsersPage() {
           <SheetHeader>
             <SheetTitle>{selectedUser?.name ?? '用户详情'}</SheetTitle>
             <SheetDescription>
-              查看用户基础信息、Token 用量、API Key 以及最近会话。
+              查看用户基础信息、API Key 以及最近会话。
             </SheetDescription>
           </SheetHeader>
           {selectedUser ? (
             <div className="mt-6 space-y-6">
-              <UserUsage key={selectedUser.id} userId={selectedUser.id} compact />
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/usage?user_id=${encodeURIComponent(selectedUser.id)}`}>查看完整用量趋势</Link>
-              </Button>
+              {selectedUser.id === currentUser?.id && (
+                <>
+                  <UserUsage key={currentUser.id} userId={currentUser.id} compact />
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/usage">查看完整用量趋势</Link>
+                  </Button>
+                </>
+              )}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">基本信息</CardTitle>
