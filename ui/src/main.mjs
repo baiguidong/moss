@@ -257,6 +257,12 @@ import {
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
 import {
+  compareTaskIds,
+  createRemoteSessionTaskSync,
+  normalizeSessionTask,
+  snapshotRemoteSessionTasks,
+} from './session-tasks.mjs';
+import {
   createDesktopDataPaths,
   DESKTOP_PROJECT_KIND,
   DESKTOP_PROJECT_LAYOUT_VERSION,
@@ -284,8 +290,10 @@ import {
   setRemoteDirectFetchImplementation,
 } from './remote-direct-client.mjs';
 import {
+  applyRemoteSessionHistoryTitle,
   applyRemoteSessionTitle,
   createRemoteHistoryCheckpoint,
+  createRemoteSessionDeletionStore,
 } from './remote-session-reconcile.mjs';
 import { performRemoteDirectOAuth } from './remote-direct-oauth.mjs';
 import { openRemoteDirectAuthorizationWindow } from './remote-direct-auth-window.mjs';
@@ -781,6 +789,7 @@ try { sessionDb.exec('PRAGMA journal_mode=WAL'); } catch {}
 try { sessionDb.exec('PRAGMA synchronous=NORMAL'); } catch {}
 try { sessionDb.exec('PRAGMA busy_timeout=5000'); } catch {}
 const sessionSearchIndex = createSessionSearchIndex(sessionDb);
+const remoteSessionDeletions = createRemoteSessionDeletionStore(sessionDb);
 const usageLedger = createUsageLedger(sessionDb);
 const memoryCatalog = createMemoryCatalog({
   mossHome: MOSS_HOME,
@@ -1208,8 +1217,10 @@ try {
 
 const {
   fetchRemoteDirectSessionContext,
+  fetchRemoteDirectSessionTasks,
   fetchRemoteDirectSessionInfo,
   fetchRemoteDirectSessions,
+  deleteRemoteDirectSession,
   forkRemoteDirectSession,
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
@@ -1230,6 +1241,12 @@ const {
   resolveRemoteDirectConnection,
   resumeRemoteDirectSession,
 } = createRemoteDirectClient({ getSettings: () => desktopSettings });
+
+const syncRemoteSessionTasks = createRemoteSessionTaskSync({
+  resolveConnection: () => resolveRemoteDirectConnection(),
+  fetchTasks: fetchRemoteDirectSessionTasks,
+  onTasks: (record, tasks) => emitToRenderer('agent:state', { sessionId: record.id, tasks }),
+});
 
 const remoteSkillSyncPromises = new Map();
 const remoteAttachmentSources = new Map();
@@ -4131,6 +4148,9 @@ function createRemoteDirectRuntime({
     if (sessionPromise) {
       return sessionPromise;
     }
+    if (sessionRecord.deleting || sessionRecord.deleted) {
+      throw new Error('会话正在删除，无法连接服务器。');
+    }
 
     sessionPromise = (async () => {
       const mod = await getClaudeRuntimeModule();
@@ -4273,7 +4293,11 @@ function createRemoteDirectRuntime({
     kind: 'remote-direct',
     coordinatorMode,
     ensureSession: ensureSessionConfig,
+    waitForSessionCreation: () => sessionPromise,
     async *send(prompt) {
+      if (sessionRecord.deleting || sessionRecord.deleted) {
+        throw new Error('会话正在删除，无法发送消息。');
+      }
       if (disposed) {
         throw new Error('Remote runtime has been disposed.');
       }
@@ -4925,6 +4949,7 @@ function hydratePersistedSessions() {
   const rows = loadSessionsStmt.all();
   for (const row of rows) {
     const agentMode = inferPersistedSessionAgentMode(row);
+    if (agentMode === 'remote-direct' && remoteSessionDeletions.has(row.underlying_session_id)) continue;
     const history = parsePersistedSessionHistory(row.history_json);
     const preview = row.preview || deriveSessionPreview(history) || '';
     const messageCount = Number(row.message_count) || 0;
@@ -4992,6 +5017,7 @@ function hydratePersistedSessions() {
     };
     if (agentMode === 'remote-direct') {
       applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
+      applyRemoteSessionHistoryTitle(sessionRecord);
     }
     sessions.set(sessionRecord.id, sessionRecord);
     syncSessionSearchIndexBestEffort(sessionRecord);
@@ -5566,6 +5592,9 @@ function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
   }
   if (typeof metadata.customTitle === 'string' && metadata.customTitle.trim()) {
     sessionRecord.title = metadata.customTitle.trim();
+  }
+  if (sessionRecord.agentMode === 'remote-direct') {
+    applyRemoteSessionHistoryTitle(sessionRecord);
   }
   if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
     if (sessionRecord.agentMode === 'remote-direct') {
@@ -8006,7 +8035,6 @@ async function previewAppBuild(buildDir) {
 const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
 const WORKFLOW_TASK_EMIT_DELAY_MS = 50;
 const SESSION_TASK_EMIT_DELAY_MS = 150;
-const TASK_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 
 function loadPersistedWorkflowTasks(sessionRecord) {
   const sessionIds = [
@@ -8288,32 +8316,10 @@ function getSessionTasksDir(sessionRecord) {
   );
 }
 
-function normalizeSessionTask(rawTask) {
-  if (!rawTask || typeof rawTask !== 'object') return null;
-  const id = typeof rawTask.id === 'string' ? rawTask.id : '';
-  const subject = typeof rawTask.subject === 'string' ? rawTask.subject : '';
-  if (!id.trim() || !subject.trim()) return null;
-  return {
-    id,
-    subject,
-    description: typeof rawTask.description === 'string' ? rawTask.description : '',
-    activeForm: typeof rawTask.activeForm === 'string' ? rawTask.activeForm : '',
-    owner: typeof rawTask.owner === 'string' ? rawTask.owner : null,
-    status: TASK_STATUSES.has(rawTask.status) ? rawTask.status : 'pending',
-    blockedBy: Array.isArray(rawTask.blockedBy)
-      ? rawTask.blockedBy.filter((entry) => typeof entry === 'string')
-      : [],
-  };
-}
-
-function compareTaskIds(a, b) {
-  const left = Number.parseInt(a.id, 10);
-  const right = Number.parseInt(b.id, 10);
-  if (!Number.isNaN(left) && !Number.isNaN(right)) return left - right;
-  return String(a.id).localeCompare(String(b.id));
-}
-
 function snapshotSessionTasks(sessionRecord) {
+  if (sessionRecord.agentMode === 'remote-direct') {
+    return snapshotRemoteSessionTasks(sessionRecord);
+  }
   const dir = getSessionTasksDir(sessionRecord);
   let files = [];
   try {
@@ -8337,6 +8343,7 @@ function snapshotSessionTasks(sessionRecord) {
 }
 
 function attachSessionTaskWatcher(sessionRecord) {
+  if (sessionRecord?.agentMode === 'remote-direct') return;
   const runtime = sessionRecord?.runtime;
   if (!runtime || typeof runtime.subscribe !== 'function') return;
   if (sessionRecord.sessionTaskWatcherRuntime === runtime) return;
@@ -8574,6 +8581,7 @@ function createSessionRecord({
   sessionRole = 'chat',
   subagentStatus,
   permissionMode,
+  underlyingSessionId = null,
 } = {}) {
   const now = Date.now();
   const id = randomUUID();
@@ -8609,7 +8617,7 @@ function createSessionRecord({
     busyStartedAt: null,
     messageCount: 0,
     preview: '',
-    underlyingSessionId: null,
+    underlyingSessionId,
     pendingPlanApproval: null,
     history: [],
     historyLoadedFromSource: false,
@@ -8736,6 +8744,7 @@ async function syncRemoteDirectSessionsFromServer() {
         ? remoteSession.sessionId.trim()
         : '';
       if (!serverSessionId) continue;
+      if (remoteSessionDeletions.has(serverSessionId)) continue;
 
       const originChannel = normalizeOriginChannel(remoteSession.originChannel, 'chat');
       const createdAt = remoteSessionTimestamp(remoteSession.createdAt);
@@ -8753,12 +8762,14 @@ async function syncRemoteDirectSessionsFromServer() {
             : null,
           agentMode: 'remote-direct',
           originChannel,
+          underlyingSessionId: serverSessionId,
         });
         closeWorkspaceWatcher(sessionRecord);
         sessionRecord.underlyingSessionId = serverSessionId;
         sessionRecord.createdAt = createdAt;
         sessionRecord.updatedAt = lastActiveAt;
       }
+      if (sessionRecord.deleted) continue;
 
       const historyCheckpoint = createRemoteHistoryCheckpoint(sessionRecord, lastActiveAt, {
         isNew,
@@ -8793,6 +8804,7 @@ async function syncRemoteDirectSessionsFromServer() {
             authToken,
             sessionId: serverSessionId,
           });
+          if (sessionRecord.deleted || remoteSessionDeletions.has(serverSessionId)) continue;
           const history = Array.isArray(context?.context?.messages)
             ? context.context.messages
             : [];
@@ -8825,6 +8837,8 @@ async function syncRemoteDirectSessionsFromServer() {
         }
       }
 
+      if (sessionRecord.deleted) continue;
+      applyRemoteSessionHistoryTitle(sessionRecord);
       schedulePersistSession(sessionRecord, true);
       emitSessionMeta(sessionRecord);
       synchronized.push(sessionRecord);
@@ -12156,6 +12170,7 @@ function listVisibleSessionSummaries() {
   const showAll = localEnabled && remoteEnabled;
   return [...sessions.values(), ...subAgentSessions.values()]
     .filter(s => !s.deleted)
+    .filter(s => s.agentMode !== 'remote-direct' || !remoteSessionDeletions.has(s.underlyingSessionId))
     .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -12395,6 +12410,9 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   await interruptedSessionRecoveryPromise;
   const sessionRecord = getSessionRecord(sessionId);
   const history = await loadSessionHistoryFromSource(sessionRecord);
+  if (sessionRecord.agentMode === 'remote-direct') {
+    await syncRemoteSessionTasks(sessionRecord).catch(() => {});
+  }
   const openedMessageCount = countSessionMessages(history);
   if (sessionRecord.messageCount !== openedMessageCount) {
     sessionRecord.messageCount = openedMessageCount;
@@ -12408,6 +12426,15 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
     history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
     tasks: snapshotSessionTasks(sessionRecord),
+  };
+});
+
+ipcMain.handle('agent:list-session-tasks', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  return {
+    tasks: sessionRecord.agentMode === 'remote-direct'
+      ? await syncRemoteSessionTasks(sessionRecord)
+      : snapshotSessionTasks(sessionRecord),
   };
 });
 
@@ -12733,6 +12760,28 @@ async function deleteSessionRecordById(sessionId) {
   const activeProjectTaskRun = projectCoordinatorTaskRuns.get(sessionRecord.id) || null;
   if (sessionRecord.isSubAgent) {
     throw new Error('子会话由主会话管理，不能单独删除。');
+  }
+  if (sessionRecord.deleting) {
+    throw new Error('会话正在删除，请稍候。');
+  }
+  if (sessionRecord.agentMode === 'remote-direct') {
+    sessionRecord.deleting = true;
+    try {
+      // A first send may still be creating the server session. Wait for its ID
+      // before deleting; an untouched local draft has no server session to remove.
+      await sessionRecord.runtime?.waitForSessionCreation?.();
+      if (sessionRecord.underlyingSessionId) {
+        const connection = await resolveRemoteDirectConnection(undefined, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        await deleteRemoteDirectSession({ ...connection, sessionId: sessionRecord.underlyingSessionId });
+        remoteSessionDeletions.mark(sessionRecord.underlyingSessionId);
+      }
+    } catch (error) {
+      throw new Error(`远端会话删除失败，已保留本地记录：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      sessionRecord.deleting = false;
+    }
   }
   if (isProjectTaskRootSession(sessionRecord)) {
     projectTaskCancellationRequests.add(sessionRecord.id);

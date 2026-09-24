@@ -71,6 +71,8 @@ try {
         compactMaxTokens: 4000,
       },
       runtimeOptions: {
+        customSystemPrompt: 'persistent instructions',
+        allowedTools: ['Read'],
         model: 'desktop-model',
         fastModel: 'desktop-fast-model',
         url: 'https://model.example.test',
@@ -119,11 +121,8 @@ try {
       compactMaxTokens: 4000,
     })
     assert.deepEqual(session.runtimeOptions, {
-      model: 'desktop-model',
-      fastModel: 'desktop-fast-model',
-      url: 'https://model.example.test',
-      apiKey: 'secret',
-      thinkingConfig: { type: 'enabled', budgetTokens: 4096 },
+      customSystemPrompt: 'persistent instructions',
+      allowedTools: ['Read'],
     })
   } finally {
     await store.close()
@@ -136,8 +135,8 @@ try {
   const reopened = new SessionRepository(await openTestDatabase(dbPath))
   try {
     assert.equal(
-      (await reopened.getSession('session-1'))?.runtimeOptions?.apiKey,
-      'secret',
+      (await reopened.getSession('session-1'))?.runtimeOptions?.customSystemPrompt,
+      'persistent instructions',
     )
   } finally {
     await reopened.close()

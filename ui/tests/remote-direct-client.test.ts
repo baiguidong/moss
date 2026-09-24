@@ -5,6 +5,8 @@ import path from 'node:path';
 
 import {
   fetchRemoteDirectSessions,
+  fetchRemoteDirectSessionTasks,
+  deleteRemoteDirectSession,
   downloadRemoteDirectWorkspaceFile,
   fetchRemoteProfileMemory,
   fetchRemoteProfileMemoryFile,
@@ -127,6 +129,30 @@ describe('remote direct client settings', () => {
     expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
   });
 
+  it('fetches cloud task snapshots with authentication, URL encoding and a timeout', async () => {
+    const requests: any[] = [];
+    const tasks = [{ id: '1', subject: '分析', status: 'in_progress', blockedBy: [] }];
+    globalThis.fetch = async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return Response.json({ tasks });
+    };
+    expect(await fetchRemoteDirectSessionTasks({
+      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud/id',
+    })).toEqual({ tasks });
+    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions/cloud%2Fid/tasks');
+    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
+    expect(requests[0].init.signal).toBeInstanceOf(AbortSignal);
+
+    globalThis.fetch = async () => Response.json({ error: 'Forbidden' }, { status: 403 });
+    await expect(fetchRemoteDirectSessionTasks({
+      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud',
+    })).rejects.toThrow('Forbidden');
+    globalThis.fetch = async () => Response.json({});
+    await expect(fetchRemoteDirectSessionTasks({
+      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud',
+    })).rejects.toThrow('Invalid remote session tasks response');
+  });
+
   it('forks a remote session with bearer auth', async () => {
     const requests = [];
     globalThis.fetch = async (input, init = {}) => {
@@ -151,6 +177,26 @@ describe('remote direct client settings', () => {
       title: 'Research (Fork)',
       dangerously_skip_permissions: true,
     });
+  });
+
+  it('requires explicit server confirmation before accepting a remote deletion', async () => {
+    const connection = { serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'source/1' };
+    globalThis.fetch = async (input, init = {}) => {
+      expect(String(input)).toBe('https://moss.example.com/api/v1/sessions/source%2F1');
+      expect(init.method).toBe('DELETE');
+      expect(init.headers.authorization).toBe('Bearer access-token');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      return new Response('{"ok":true}', { status: 200 });
+    };
+    await expect(deleteRemoteDirectSession(connection)).resolves.toBeUndefined();
+    for (const status of [403, 404, 500]) {
+      globalThis.fetch = async () => new Response('{"error":"Unavailable"}', { status });
+      await expect(deleteRemoteDirectSession(connection)).rejects.toThrow(String(status));
+    }
+    globalThis.fetch = async () => new Response('{"ok":false}', { status: 200 });
+    await expect(deleteRemoteDirectSession(connection)).rejects.toThrow('未确认');
+    globalThis.fetch = async () => { throw new TypeError('offline'); };
+    await expect(deleteRemoteDirectSession(connection)).rejects.toThrow('offline');
   });
 
   it('downloads an authenticated remote workspace file to the requested path', async () => {

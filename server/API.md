@@ -786,6 +786,32 @@ profile/Memory 目录，但不会挂载该用户的其他 session 目录。显�
 
 返回单个 session；当 `desiredState=active` 时会确保 runtime attempt 可 attach。
 
+### GET `/api/v1/sessions/:sessionId/tasks`
+
+读取 `TaskCreate` / `TaskUpdate` 持久化的当前任务列表，无需启动或恢复 runtime。
+权限与会话上下文读取相同：当前 org 内的会话所有者，或具有 `sessions:attach:any` 的用户。
+不存在或已删除的会话返回 404；尚未创建任务时返回 `{ "tasks": [] }`。
+
+从该会话的服务端 profile 读取任务，兼容恢复后的 transcript session ID 和
+`TeamCreate` 切换的团队任务列表，过滤内部任务并按任务 ID 排序。
+
+```json
+{
+  "tasks": [{
+    "id": "1",
+    "subject": "分析销售数据",
+    "description": "汇总本月销售数据",
+    "activeForm": "正在分析销售数据",
+    "owner": null,
+    "status": "in_progress",
+    "blockedBy": []
+  }]
+}
+```
+
+`status` 为 `pending`、`in_progress` 或 `completed`。桌面端打开云端会话时立即读取，
+此后每 5 秒轮询当前会话；失败时保留上次成功结果并重试，切换会话或关闭视图时停止旧轮询。
+
 ### GET `/api/v1/sessions/:sessionId/workspace/list?dir=<path>`
 
 列出 session workspace 内的目录。`dir` 可传相对路径，也可传 workspace 内的绝对路径；未传时列出 workspace root。
@@ -829,6 +855,16 @@ GET 返回当前用户由 Desktop 同步的技能版本；PUT 接收 ZIP，请�
 终止 session。
 
 这是状态变更，不是删除。
+
+### DELETE `/api/v1/sessions/:sessionId`
+
+终止运行并软删除会话，之后不会再出现在会话列表中，也不能读取或恢复。
+允许会话所有者操作；同组织的其他用户需要 `sessions:terminate:any` scope。
+重复删除返回 `200 { "ok": true }`。工作区与 transcript 文件保留在服务器上。
+
+Desktop 必须收到服务端 `ok: true` 的确认后才删除本地记录，并持久保存远端会话 ID
+的删除标记，防止旧列表响应或重启后重新导入。网络失败、权限不足、旧服务端未提供
+删除接口（404）或响应未确认成功时，保留本地会话并提示失败。
 
 ### WS `/ws/sessions/:sessionId`
 

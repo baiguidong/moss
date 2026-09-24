@@ -69,6 +69,7 @@ import {
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { getUserProfileDir } from './runtimePaths.js'
 import { RuntimeService } from './runtimeService.js'
+import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import {
   consumeClientControlResponse,
@@ -2006,7 +2007,9 @@ export function startServer(
             : auth.userId,
           activeOnly,
         })
-        const enrichedSessions = sessions.map(session => ({
+        // An in-flight creation is not yet a usable session. In particular it
+        // must not be imported by clients if its runner subsequently fails.
+        const enrichedSessions = sessions.filter(session => session.status !== 'creating').map(session => ({
           ...session,
           originChannel: 'desktop',
         }))
@@ -2115,6 +2118,19 @@ export function startServer(
             },
           },
         })
+        return
+      }
+
+      const sessionTasksMatch = pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/tasks$/,
+      )
+      if (req.method === 'GET' && sessionTasksMatch) {
+        const session = await runtime.getSession(sessionTasksMatch[1] || '')
+        if (!session) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        writeNoStoreJson(res, 200, { tasks: await listSessionTasks(session) })
         return
       }
 
@@ -2234,6 +2250,16 @@ export function startServer(
       }
 
       const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
+      if (req.method === 'DELETE' && sessionIdMatch) {
+        const sessionId = sessionIdMatch[1] || ''
+        const session = await runtime.getSession(sessionId)
+        if (session && !canAccessSession(auth, session, 'sessions:terminate:any')) {
+          throw new HttpError(403, 'Forbidden')
+        }
+        if (session) await runtime.deleteSession(sessionId)
+        writeJson(res, 200, { ok: true })
+        return
+      }
       if (req.method === 'GET' && sessionIdMatch) {
         const sessionId = sessionIdMatch[1] || ''
         const session = await runtime.getSession(sessionId)

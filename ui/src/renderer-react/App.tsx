@@ -19,6 +19,7 @@ import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
+import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
@@ -1171,6 +1172,11 @@ export default function App() {
   }, [desktopSettings?.remoteEnabled]);
 
   React.useEffect(() => {
+    if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
+    return startSessionTaskPolling(() => window.agentDesktop.listSessionTasks({ sessionId: activeSessionId }));
+  }, [activeView, activeSessionId, activeDetail?.id, activeDetail?.agentMode]);
+
+  React.useEffect(() => {
 
     const offEvent = window.agentDesktop.onEvent((payload) => {
       if (removedSessionIdsRef.current.has(payload.sessionId)) return;
@@ -1685,13 +1691,12 @@ export default function App() {
   const handleDeleteSession = React.useCallback(async (sessionId: string) => {
     if (deletingSessionIdsRef.current.has(sessionId)) return;
     deletingSessionIdsRef.current.add(sessionId);
-    removedSessionIdsRef.current.add(sessionId);
-    setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
 
     let result: { ok?: boolean; removedCronTasks?: number } | undefined;
     try {
       result = await window.agentDesktop.deleteSession({ sessionId }) as
         typeof result;
+      if (result?.ok !== true) throw new Error('会话删除未完成，请重试。');
     } catch (err) {
       if (!isSessionAlreadyRemovedError(err)) {
         removedSessionIdsRef.current.delete(sessionId);
@@ -1703,6 +1708,8 @@ export default function App() {
       deletingSessionIdsRef.current.delete(sessionId);
     }
 
+    removedSessionIdsRef.current.add(sessionId);
+    setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
     if (result?.removedCronTasks) {
       const notice = `会话已删除，同时清理了 ${result.removedCronTasks} 个定时任务`;
       showPermissionNotice(notice, 'info', 5000);

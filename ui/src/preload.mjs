@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   createSession: (payload) => ipcRenderer.invoke('agent:create-session', payload),
   forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
+  listSessionTasks: (payload) => ipcRenderer.invoke('agent:list-session-tasks', payload),
   getTurnChanges: (payload) => ipcRenderer.invoke('agent:get-turn-changes', payload),
   previewTurnRewind: (payload) => ipcRenderer.invoke('agent:preview-turn-rewind', payload),
   rewindTurn: (payload) => ipcRenderer.invoke('agent:rewind-turn', payload),

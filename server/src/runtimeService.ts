@@ -109,9 +109,12 @@ async function waitForRunnerReady(
   statusPath: string,
   stderrLogPath: string,
   timeoutMs: number,
+  processFailure: () => Error | null,
 ): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
+    const exited = processFailure()
+    if (exited) throw exited
     if (existsSync(attachPath)) {
       return
     }
@@ -157,6 +160,7 @@ type RuntimeServiceOptions = {
   config: ServerConfig
   store: SessionRepository
   serverInstanceId: string
+  runnerStartupTimeoutMs?: number
 }
 
 export class RuntimeService {
@@ -249,26 +253,37 @@ export class RuntimeService {
       mkdir(runtime.transcriptDir, { recursive: true }),
       mkdir(workspaceDir, { recursive: true }),
     ])
-    const created = await this.store.createSession({
-      sessionId,
-      transcriptSessionId: sessionId,
-      transcriptPath,
-      userId: input.userId,
-      orgId: input.orgId,
-      role: input.role,
-      scopes: input.scopes,
-      cwd: workspaceDir,
-      runtime,
-      status: 'creating',
-      desiredState: 'active',
-      title: input.title,
-      assistantName: input.assistantName,
-      advancedSettings: normalizedAdvancedSettings,
-      autoMemory: normalizedAutoMemory,
-      sessionMemory: input.sessionMemory
-        ? normalizeSessionMemorySettings(input.sessionMemory)
-        : undefined,
-      runtimeOptions: normalizeSessionRuntimeOptions(input.runtimeOptions),
+    const created = await this.store.db.transaction(async () => {
+      const created = await this.store.createSession({
+        sessionId,
+        transcriptSessionId: sessionId,
+        transcriptPath,
+        userId: input.userId,
+        orgId: input.orgId,
+        role: input.role,
+        scopes: input.scopes,
+        cwd: workspaceDir,
+        runtime,
+        status: 'creating',
+        desiredState: 'active',
+        title: input.title,
+        assistantName: input.assistantName,
+        advancedSettings: normalizedAdvancedSettings,
+        autoMemory: normalizedAutoMemory,
+        sessionMemory: input.sessionMemory
+          ? normalizeSessionMemorySettings(input.sessionMemory)
+          : undefined,
+        runtimeOptions: normalizeSessionRuntimeOptions(input.runtimeOptions),
+      })
+
+      if (input.scheduledTask) {
+        await this.store.db.prepare('INSERT INTO cron_session_links (session_id,task_id,source_session_id) VALUES (?,?,?)')
+          .run(created.sessionId, input.scheduledTask.taskId, input.scheduledTask.sourceSessionId)
+        created.sessionKind = 'cron'
+        created.cronTaskId = input.scheduledTask.taskId
+        created.sourceSessionId = input.scheduledTask.sourceSessionId
+      }
+      return created
     })
 
     try {
@@ -277,7 +292,8 @@ export class RuntimeService {
         assistantName: input.assistantName,
       })
     } catch (error) {
-      await this.store.markSessionEnded(created.sessionId, 'failed', 'active')
+      await this.store.markSessionEnded(created.sessionId, 'failed', 'terminated')
+      await this.store.deleteSession(created.sessionId)
       throw error
     }
     return (await this.store.getSession(created.sessionId)) ?? created
@@ -369,7 +385,8 @@ export class RuntimeService {
         assistantName: source.assistantName ?? undefined,
       })
     } catch (error) {
-      await this.store.markSessionEnded(created.sessionId, 'failed', 'active')
+      await this.store.markSessionEnded(created.sessionId, 'failed', 'terminated')
+      await this.store.deleteSession(created.sessionId)
       throw error
     }
     return (await this.store.getSession(created.sessionId)) ?? created
@@ -436,6 +453,11 @@ export class RuntimeService {
       socket.once('connect', () => resolve(socket))
       socket.once('error', reject)
     })
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.terminateSession(sessionId)
+    await this.store.deleteSession(sessionId)
   }
 
   async acquireSessionTurn(sessionId: string): Promise<() => void> {
@@ -525,9 +547,10 @@ export class RuntimeService {
       this.options.config,
       session.sessionId,
     )
-    const dangerouslySkipPermissions =
+    const dangerouslySkipPermissions = session.sessionKind !== 'cron' && (
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
+    )
     await mkdir(attemptDir, { recursive: true })
     const attempt = await this.store.createNextAttempt({
       attemptId,
@@ -556,7 +579,8 @@ export class RuntimeService {
         role: session.role,
         scopes: session.scopes,
         dangerouslySkipPermissions,
-        assistantName: options.assistantName,
+        unattended: session.sessionKind === 'cron',
+        assistantName: options.assistantName ?? session.assistantName ?? undefined,
         advancedSettings: session.advancedSettings
           ? normalizeAdvancedSettings(session.advancedSettings)
           : undefined,
@@ -598,13 +622,46 @@ export class RuntimeService {
       stdio: 'ignore',
       cwd: session.cwd,
     })
-    child.unref()
-    if (!child.pid) {
-      throw new Error('Failed to spawn session runner')
+    let spawnError: Error | null = null
+    const onError = (error: Error) => { spawnError = error }
+    child.on('error', onError)
+    const closed = new Promise<void>(resolve => child.once('close', () => resolve()))
+    try {
+      if (!child.pid) throw new Error('Failed to spawn session runner')
+      await this.store.updateAttemptRunner(attempt.attemptId, child.pid)
+      const current = await this.store.getSession(session.sessionId)
+      if (!current || current.desiredState !== 'active') {
+        throw new Error('Session was deleted or terminated during startup')
+      }
+      await waitForRunnerReady(
+        attachPath, statusPath, stderrLogPath,
+        this.options.runnerStartupTimeoutMs ?? 30_000,
+        () => spawnError ?? (child.exitCode !== null || child.signalCode !== null
+          ? new Error(`Runner exited before attach (code=${child.exitCode}, signal=${child.signalCode})`)
+          : null),
+      )
+      // A concurrent delete may have missed the PID before it was persisted.
+      // Activate only the current, still-wanted attempt; otherwise reap it below.
+      const activated = await this.store.db.prepare(`UPDATE sessions
+        SET status='active', desired_state='active', last_active_at=?, ended_at=NULL
+        WHERE session_id=? AND current_attempt_id=? AND deleted_at IS NULL AND desired_state='active'`)
+        .run(Date.now(), session.sessionId, attempt.attemptId)
+      if (!activated.changes) throw new Error('Session was deleted or terminated during startup')
+    } catch (error) {
+      // Stop and reap the unready runner before recording failure; it must not
+      // become ready later and revive an unsuccessful session creation.
+      child.kill('SIGTERM')
+      const forceKill = setTimeout(() => child.kill('SIGKILL'), 1_000)
+      try { await closed } finally { clearTimeout(forceKill) }
+      await this.store.markAttemptStopped(attempt.attemptId, {
+        runtimeState: 'failed', stopReason: 'startup_failed', errorText: errorMessage(error),
+        exitCode: child.exitCode, exitSignal: child.signalCode,
+      })
+      throw error
+    } finally {
+      child.off('error', onError)
     }
-    await this.store.updateAttemptRunner(attempt.attemptId, child.pid)
-    await waitForRunnerReady(attachPath, statusPath, stderrLogPath, 5_000)
-    await this.store.setSessionLifecycle(session.sessionId, 'active', 'active')
+    child.unref()
     await this.store.addEvent(
       session.sessionId,
       attempt.attemptId,

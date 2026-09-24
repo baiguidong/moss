@@ -333,6 +333,24 @@ export async function fetchRemoteDirectSessionInfo({ serverUrl, authToken, sessi
   return response.json();
 }
 
+export async function deleteRemoteDirectSession({ serverUrl, authToken, sessionId }) {
+  const response = await remoteDirectFetch(
+    `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('服务端删除失败', response));
+  }
+  const data = await response.json();
+  if (data?.ok !== true) {
+    throw new Error('服务端未确认会话删除成功。');
+  }
+}
+
 export async function fetchRemoteDirectSessionContext({ serverUrl, authToken, sessionId }) {
   let response;
   try {
@@ -357,6 +375,23 @@ export async function fetchRemoteDirectSessionContext({ serverUrl, authToken, se
   }
 
   return response.json();
+}
+
+export async function fetchRemoteDirectSessionTasks({ serverUrl, authToken, sessionId }) {
+  const response = await remoteDirectFetch(
+    `${serverUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/tasks`,
+    {
+      method: 'GET',
+      headers: { authorization: `Bearer ${authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await parseRemoteDirectError('Failed to query remote session tasks', response));
+  }
+  const data = await response.json();
+  if (!Array.isArray(data?.tasks)) throw new Error('Invalid remote session tasks response.');
+  return { tasks: data.tasks };
 }
 
 export async function fetchRemoteDirectWorkspaceDir({ serverUrl, authToken, sessionId, dirPath }) {
@@ -834,8 +869,10 @@ export function createRemoteDirectClient({ getSettings }) {
     resolveRemoteDirectConnection: (settings, options) => resolveRemoteDirectConnection(currentSettings(settings), options),
     parseRemoteDirectError,
     fetchRemoteDirectSessions,
+    deleteRemoteDirectSession,
     fetchRemoteDirectSessionInfo,
     fetchRemoteDirectSessionContext,
+    fetchRemoteDirectSessionTasks,
     forkRemoteDirectSession,
     fetchRemoteDirectWorkspaceDir,
     fetchRemoteDirectWorkspaceFile,

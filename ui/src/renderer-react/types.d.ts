@@ -1883,6 +1883,7 @@ declare global {
       createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
       previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;
       rewindTurn: (payload: { sessionId: string; userMessageId: string }) => Promise<{

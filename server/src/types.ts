@@ -212,6 +212,9 @@ export type AttemptRuntimeState =
   'starting' | 'running' | 'detached' | 'stopped' | 'failed' | 'lost'
 
 export type SessionRecord = {
+  sessionKind?: 'chat' | 'cron'
+  cronTaskId?: string
+  sourceSessionId?: string
   sessionId: string
   transcriptSessionId: string
   orgId: string
@@ -286,6 +289,9 @@ export type SessionListFilter = {
 }
 
 export type SessionSummary = {
+  sessionKind?: 'chat' | 'cron'
+  cronTaskId?: string
+  sourceSessionId?: string
   sessionId: string
   transcriptSessionId: string
   workDir: string
@@ -305,6 +311,7 @@ export type SessionSummary = {
 }
 
 export type SessionCreateInput = {
+  scheduledTask?: { taskId: string; sourceSessionId: string }
   cwd?: string
   title?: string
   dangerouslySkipPermissions: boolean
@@ -341,6 +348,7 @@ export type RunnerManifest = {
     role: string
     scopes: string[]
     dangerouslySkipPermissions: boolean
+    unattended?: boolean
     mountDirs?: string[]
     runtime: SessionRuntimeInfo
     assistantName?: string

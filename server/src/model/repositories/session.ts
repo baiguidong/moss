@@ -96,6 +96,7 @@ function mapRuntime(row: SqlRow): SessionRuntimeInfo {
 function mapSession(row: SqlRow): SessionRecord {
   return {
     sessionId: String(row.session_id),
+    ...(row.cron_task_id ? { sessionKind: 'cron' as const, cronTaskId: String(row.cron_task_id), sourceSessionId: String(row.cron_source_session_id) } : {}),
     transcriptSessionId: String(row.transcript_session_id),
     orgId: String(row.org_id),
     userId: String(row.user_id),
@@ -549,7 +550,7 @@ export class SessionRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT *
+      SELECT sessions.*, (SELECT task_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_task_id, (SELECT source_session_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_source_session_id
       FROM sessions
       WHERE ${clauses.join(' AND ')}
       ORDER BY last_active_at DESC
@@ -570,7 +571,7 @@ export class SessionRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT *
+      SELECT sessions.*, (SELECT task_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_task_id, (SELECT source_session_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_source_session_id
       FROM sessions
       WHERE org_id = ? AND user_id = ? AND deleted_at IS NULL
       ORDER BY last_active_at DESC
@@ -584,7 +585,7 @@ export class SessionRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT *
+      SELECT sessions.*, (SELECT task_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_task_id, (SELECT source_session_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_source_session_id
       FROM sessions
       WHERE desired_state = 'active'
         AND deleted_at IS NULL
@@ -614,7 +615,7 @@ export class SessionRepository {
     const row = (await this.db
       .prepare(
         `
-      SELECT *
+      SELECT sessions.*, (SELECT task_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_task_id, (SELECT source_session_id FROM cron_session_links WHERE session_id=sessions.session_id) AS cron_source_session_id
       FROM sessions
       WHERE session_id = ? AND deleted_at IS NULL
       LIMIT 1
@@ -735,6 +736,9 @@ export class SessionRepository {
 export function toSessionSummary(session: SessionRecord): SessionSummary {
   return {
     sessionId: session.sessionId,
+    sessionKind: session.sessionKind,
+    cronTaskId: session.cronTaskId,
+    sourceSessionId: session.sourceSessionId,
     transcriptSessionId: session.transcriptSessionId,
     workDir: session.cwd,
     userId: session.userId,
