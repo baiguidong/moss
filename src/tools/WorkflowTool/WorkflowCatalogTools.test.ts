@@ -15,6 +15,7 @@ import { runWithSessionIdContext } from '../../utils/sessionIdContext.js'
 import { asSessionId } from '../../types/ids.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { MOSS_RUNTIME_ADVANCED_SETTINGS_ENV } from '../../services/advancedSettings.js'
+import { describeWorkflowsDisabled, getWorkflowsDisabledReason } from '../../utils/workflows/enabled.js'
 
 const GENERIC_DEFINITION = {
   version: 3,
@@ -98,6 +99,25 @@ describe('workflow catalog tools', () => {
           moss_workflows_enabled: false,
         }),
       },
+    )
+  })
+
+  test('server sessions cannot enable workflows through settings or direct execution', async () => {
+    await runWithSessionIdContext(
+      asSessionId('server-workflows'),
+      null,
+      async () => {
+        expect(getWorkflowsDisabledReason()).toBe('server')
+        expect([WorkflowRunTool, ...WorkflowCatalogTools].every(tool => !tool.isEnabled())).toBe(true)
+        await expect(WorkflowRunTool.call(
+          { name: 'deep-research' },
+          {} as ToolUseContext,
+          (() => {}) as never,
+        )).rejects.toThrow(describeWorkflowsDisabled('server'))
+      },
+      undefined,
+      { [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({ moss_workflows_enabled: true }) },
+      { executionEnvironment: 'server' },
     )
   })
 

@@ -14,7 +14,8 @@ import { WORKFLOW_RUN_TOOL_NAME } from './constants.js'
  * pins everything else so the model's only job is that conversion.
  */
 export async function getWorkflowCommands(cwd?: string): Promise<Command[]> {
-  if (!areWorkflowsEnabled()) return []
+  // Discovery is cached by cwd. Keep it independent of the loading session;
+  // getCommands evaluates each command's isEnabled in the current session.
   const workflows = await loadWorkflows(cwd)
   return workflows.map(workflow => createWorkflowCommand(workflow))
 }

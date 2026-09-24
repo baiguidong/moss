@@ -1,3 +1,4 @@
+import { ImageGenerateTool } from '../ImageTool/ImageTool.js'
 import { describe, expect, test } from 'bun:test'
 import type { MossAppEvent, ToolUseContext } from '../../Tool.js'
 import { MOSS_RUNTIME_ADVANCED_SETTINGS_ENV } from '../../services/advancedSettings.js'
@@ -10,7 +11,6 @@ import {
   BrowserOpenTool,
   BrowserSnapshotTool,
   ConnectorMcpAuthenticateTool,
-  ImageGenerateTool,
   MossTools,
 } from './MossTool.js'
 import { MOSS_TOOL_GROUPS } from './toolLoading.js'
@@ -39,8 +39,6 @@ describe('split Moss host tools', () => {
       'app_get_versions',
       'connector_cli_setup',
       'connector_mcp_authenticate',
-      'image_generate',
-      'image_edit',
     ])
     const mossToolNames = new Set(MossTools.map(tool => tool.name))
     expect(Object.values(MOSS_TOOL_GROUPS).flat().filter(name => mossToolNames.has(name)))

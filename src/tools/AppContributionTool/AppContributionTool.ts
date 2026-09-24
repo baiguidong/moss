@@ -75,6 +75,7 @@ export function createAppContributionTool(
 
   return buildTool({
     name: descriptor.name,
+    supportedEnvironments: ['desktop'],
     searchHint: `${descriptor.title} from ${appLabel}`.slice(0, 160),
     maxResultSizeChars: 100_000,
     deferLoading: true,

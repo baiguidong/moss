@@ -3160,7 +3160,7 @@ async function getAgentChannelCatalog() {
       : Promise.resolve({ tools: [] }),
   ]);
   const builtInTools = typeof runtime.listDesktopTools === 'function'
-    ? runtime.listDesktopTools()
+    ? runtime.listDesktopTools(desktopSettings.image)
     : [];
   const appTools = Array.isArray(contributions?.tools)
     ? contributions.tools.map((tool) => ({
@@ -4027,6 +4027,8 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
 
   return {
     cwd,
+    executionEnvironment: 'desktop',
+    image: desktopSettings.image ? { ...desktopSettings.image } : undefined,
     model: desktopSettings.model,
     fastModel: desktopSettings.fastModel || undefined,
     customSystemPrompt: customSystemPrompt || undefined,
@@ -9475,8 +9477,6 @@ const mossAppEventHandler = createMossAppEventHandler(
     emitAppsChanged,
   },
   {
-    getSettings: () => desktopSettings,
-    allowMediaRoot,
     setupConnectorCli: (connectorId, context = {}) => setupConnectorCli(connectorId, {
       sessionId: context.sessionId || null,
       openBrowser: ({ url, sessionId, browserMode }) => {

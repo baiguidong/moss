@@ -1,6 +1,7 @@
 import { getGlobalConfig } from '../config.js'
 import { isEnvTruthy } from '../envUtils.js'
 import { getAdvancedSetting } from '../../services/advancedSettings.js'
+import { getSessionRuntimeContext } from '../sessionIdContext.js'
 import {
   getSettings_DEPRECATED,
   getSettingsForSource,
@@ -28,7 +29,7 @@ export const WORKFLOW_SIZE_AGENT_TARGETS: Record<
   large: 50,
 }
 
-export type WorkflowsDisabledReason = 'env' | 'managed' | 'settings'
+export type WorkflowsDisabledReason = 'server' | 'env' | 'managed' | 'settings'
 
 /** Agent count that triggers the "Large workflow" advisory, absent a guideline. */
 export const WORKFLOW_LARGE_AGENT_THRESHOLD = 25
@@ -45,6 +46,7 @@ export const WORKFLOW_ASSUMED_TOKENS_PER_AGENT = 70_000
  * know it was their organisation, not a toggle they flipped.
  */
 export function getWorkflowsDisabledReason(): WorkflowsDisabledReason | null {
+  if (getSessionRuntimeContext()?.executionEnvironment === 'server') return 'server'
   if (getAdvancedSetting('moss_workflows_enabled') === false) return 'settings'
   if (
     isEnvTruthy(process.env.MOSS_DISABLE_WORKFLOWS) ||
@@ -139,6 +141,8 @@ export function describeWorkflowsDisabled(
   reason: WorkflowsDisabledReason,
 ): string {
   switch (reason) {
+    case 'server':
+      return 'Dynamic workflows are unavailable in server sessions. Use a desktop session.'
     case 'env':
       return 'Dynamic workflows are disabled by MOSS_DISABLE_WORKFLOWS.'
     case 'managed':

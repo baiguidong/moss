@@ -1,3 +1,4 @@
+import type { CronProvider, HostCronTask } from '../../../shared/cron-provider.js'
 import type { ModelUsageEvent } from '../usageTypes.js'
 import { randomUUID } from 'crypto'
 import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
@@ -49,6 +50,10 @@ type DirectAppEventResult =
   | ({ ok: true } & JsonObject)
   | { ok: false; error: string }
 type DirectSessionOptions = {
+  executionEnvironment?: 'desktop' | 'server'
+  unattended?: boolean
+  cron?: CronProvider
+  image?: BackendSystemSettings['image']
   cwd?: string
   model?: string
   fastModel?: string
@@ -813,11 +818,26 @@ export class DirectEmbeddedBackend implements SessionBackend {
       backend: 'host',
       profileDir,
     }
-    const bypassPermissions =
+    const bypassPermissions = options.unattended !== true && (
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
+    )
+    const requestCron = async (input: JsonObject): Promise<JsonObject> => {
+      if (!handle) throw new Error('Server scheduler bridge is not ready.')
+      const result = await handle.emitAppEvent({ type: 'server_cron', input })
+      if (!result.ok) throw new Error(result.error)
+      return result
+    }
     const sessionOptions: DirectSessionOptions = {
+      executionEnvironment: 'server',
       onUsage: event => handle?.emitUsage(event),
+      unattended: options.unattended === true,
+      cron: {
+        create: async input => (await requestCron({ operation: 'create', task: input })).task as { id: string },
+        list: async () => (await requestCron({ operation: 'list' })).tasks as HostCronTask[],
+        remove: async ids => { await requestCron({ operation: 'remove', ids }) },
+      },
+      image: settings.image ? { ...settings.image } : undefined,
       cwd: options.cwd,
       model: settings.model,
       fastModel: settings.fastModel || undefined,

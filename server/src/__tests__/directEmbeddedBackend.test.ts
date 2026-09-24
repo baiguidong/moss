@@ -124,6 +124,8 @@ describe('direct embedded backend model settings', () => {
     const backend = new DirectEmbeddedBackend()
     // These fields may still exist in old persisted manifests or old clients.
     const legacyOptions = {
+      executionEnvironment: 'desktop',
+      image: { provider: 'openai', url: 'https://desktop.test', apiKey: 'desktop-image-key', model: 'desktop-image' },
       model: 'desktop-model', fastModel: 'desktop-fast',
       url: 'https://desktop.test', apiKey: 'desktop-key',
       maxTurns: 1, thinkingConfig: { type: 'disabled' },
@@ -141,6 +143,7 @@ describe('direct embedded backend model settings', () => {
           transcriptDir: join(tempRoot, 'transcripts'),
         },
         systemSettings: makeSettings({
+          image: { provider: 'openai', url: 'https://image.server.test', apiKey: 'server-image-key', model: 'server-image' },
           model: 'server-model', fastModel: 'server-fast',
           url: 'https://server-model.test', apiKey: 'server-key',
           maxTurns: 55, thinkingMode: 'enabled', thinkingBudgetTokens: 8192,
@@ -152,6 +155,8 @@ describe('direct embedded backend model settings', () => {
     expect(createdOptions).toHaveLength(2)
     for (const options of createdOptions) {
       expect(options).toMatchObject({
+        executionEnvironment: 'server',
+        image: { provider: 'openai', url: 'https://image.server.test', apiKey: 'server-image-key', model: 'server-image' },
         model: 'server-model', fastModel: 'server-fast',
         url: 'https://server-model.test', apiKey: 'server-key',
         maxTurns: 55, thinkingConfig: { type: 'enabled', budgetTokens: 8192 },
@@ -159,6 +164,42 @@ describe('direct embedded backend model settings', () => {
         environment: { CONNECTOR_KEY: 'keep' },
       })
       expect(options.environment).not.toHaveProperty('MOSS_MODEL_AUTH_TOKEN')
+    }
+  })
+
+  test('unattended sessions retain permission checks even when bypass is enabled', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-unattended-'))
+    const createdOptions: Array<Record<string, any>> = []
+    class FakeSession {
+      constructor(options: Record<string, any>) { createdOptions.push(options) }
+      async *send(): AsyncGenerator<unknown> {}
+      abort(): void {}
+      dispose(): void {}
+      setPermissionMode(): void {}
+    }
+    registerDirectRuntimeModule({
+      ClaudeSession: FakeSession,
+      resumeClaudeSession: async (_id, options) => ({ session: new FakeSession(options) }),
+    })
+    for (const resumeSessionId of [undefined, 'previous-cron']) {
+      const handle = await new DirectEmbeddedBackend().spawn({
+        sessionId: 'cron', resumeSessionId, cwd: tempRoot,
+        runtime: { backend: 'host', profileDir: tempRoot, transcriptDir: tempRoot },
+        unattended: true, dangerouslySkipPermissions: true,
+        systemSettings: makeSettings({ bypassPermissions: true }),
+      })
+      try {
+        const options = createdOptions.at(-1)!
+        expect(options.permissionMode).toBe('default')
+        const requested = waitForStdout(handle, message => message.type === 'control_request')
+        const decision = options.onPermissionRequest('Bash', { command: 'example' }, {})
+        const request = await requested
+        expect(request.request.subtype).toBe('can_use_tool')
+        handle.writeStdin(`${JSON.stringify({ type: 'control_response', response: {
+          subtype: 'error', request_id: request.request_id, error: 'Manual approval required',
+        } })}\n`)
+        expect((await decision).behavior).toBe('deny')
+      } finally { handle.destroy() }
     }
   })
 

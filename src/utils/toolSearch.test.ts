@@ -1,3 +1,4 @@
+import { ImageTools } from '../tools/ImageTool/ImageTool.js'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { getEmptyToolPermissionContext } from '../Tool.js'
 import { BashTool } from '../tools/BashTool/BashTool.js'
@@ -142,7 +143,7 @@ describe('generic ToolSearch', () => {
     ])
     expect(expandMatchesWithConfiguredGroups(
       ['image_edit'],
-      MossTools,
+      ImageTools,
     )).toEqual(['image_generate', 'image_edit'])
   })
 

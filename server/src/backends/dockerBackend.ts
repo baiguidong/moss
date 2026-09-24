@@ -114,6 +114,7 @@ function snapshotSystemSettings(): BackendSystemSettings {
     thinkingBudgetTokens: settings.thinkingBudgetTokens,
     url: settings.url,
     apiKey: settings.apiKey,
+    image: { ...settings.image },
   }
 }
 
@@ -205,6 +206,7 @@ export class DockerBackend implements SessionBackend {
 
     args.push('-w', options.cwd)
     const passthroughEnvKeys = [
+      'TZ',
       'MOSS_CONFIG_DIR',
       'MOSS_SESSION_USER_ID',
       'MOSS_SESSION_ORG_ID',

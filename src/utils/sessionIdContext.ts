@@ -1,5 +1,18 @@
 import { AsyncLocalStorage } from 'async_hooks'
+import type { CronProvider } from '../../shared/cron-provider.js'
 import type { SessionId } from '../types/ids.js'
+import type { ImageSettings } from '../services/imageGeneration.js'
+
+export type SessionExecutionEnvironment = 'desktop' | 'server'
+
+/** Host-owned capabilities, inherited by workers; never taken from model input. */
+export type SessionRuntime = {
+  executionEnvironment: SessionExecutionEnvironment
+  image?: ImageSettings
+  desktopCronHostId?: string
+  cron?: CronProvider
+  unattended?: boolean
+}
 
 export type ScopedWorkerResources = {
   connectors: Array<{
@@ -37,6 +50,7 @@ type SessionIdContext = {
   engineDir?: string | null
   taskScope?: TaskScope
   environment?: Record<string, string>
+  runtime?: SessionRuntime
 }
 
 const sessionIdStorage = new AsyncLocalStorage<SessionIdContext>()
@@ -57,6 +71,10 @@ export function getSessionEnvironmentContext(): Record<string, string> | undefin
   return sessionIdStorage.getStore()?.environment
 }
 
+export function getSessionRuntimeContext(): SessionRuntime | undefined {
+  return sessionIdStorage.getStore()?.runtime
+}
+
 export function setTaskScopeContext(taskScope: TaskScope | undefined): void {
   const context = sessionIdStorage.getStore()
   if (!context) return
@@ -73,8 +91,9 @@ export function runWithSessionIdContext<T>(
   fn: () => T,
   taskScope?: TaskScope,
   environment?: Record<string, string>,
+  runtime?: SessionRuntime,
 ): T {
-  return sessionIdStorage.run({ sessionId, engineDir, taskScope, environment }, fn)
+  return sessionIdStorage.run({ sessionId, engineDir, taskScope, environment, runtime }, fn)
 }
 
 function runWithExistingSessionIdContext<T>(
@@ -113,12 +132,14 @@ export async function* runWithSessionIdContextGenerator<T, TReturn = void>(
   fn: () => AsyncGenerator<T, TReturn, unknown>,
   taskScope?: TaskScope,
   environment?: Record<string, string>,
+  runtime?: SessionRuntime,
 ): AsyncGenerator<T, TReturn, unknown> {
   const context: SessionIdContext = {
     sessionId,
     engineDir,
     taskScope,
     environment,
+    runtime,
   }
   yield* runGeneratorWithSessionContext(context, fn)
 }

@@ -326,8 +326,6 @@ export type MossAppEvent =
   | { type: 'browser_reload'; input: MossBrowserTabInput }
   | { type: 'connector_cli_setup'; input: MossConnectorCliSetupInput }
   | { type: 'connector_mcp_authenticate'; input: MossConnectorMcpAuthenticateInput }
-  | { type: 'image_generate'; input: MossImageGenerateInput }
-  | { type: 'image_edit'; input: MossImageEditInput }
   | { type: 'agent_mail_search'; input: MossAgentMailSearchInput }
   | { type: 'agent_mail_send'; input: MossAgentMailSendInput }
   | { type: 'agent_mail_list_outbox'; input: MossAgentMailListOutboxInput }
@@ -393,16 +391,6 @@ export type MossAppExtractToWorkspaceInput = {
   versionId?: string
 }
 
-export type MossImageGenerateInput = {
-  prompt: string
-  aspect_ratio?: '1:1' | '16:9' | '4:3' | '3:2' | '2:3' | '3:4' | '9:16' | '21:9'
-  subject_reference?: Array<{
-    type: 'character'
-    image_file: string
-  }>
-  out_path: string
-}
-
 export type MossBrowserOpenInput = {
   url?: string
   query?: string
@@ -441,13 +429,6 @@ export type MossConnectorCliSetupInput = {
 export type MossConnectorMcpAuthenticateInput = {
   connector_id?: string
   server_name?: string
-}
-
-export type MossImageEditInput = {
-  prompt: string
-  source_path: string
-  aspect_ratio?: '1:1' | '16:9' | '4:3' | '3:2' | '2:3' | '3:4' | '9:16' | '21:9'
-  out_path: string
 }
 
 export type MossAgentMailSearchInput = {
@@ -660,6 +641,9 @@ export type Tool<
    * The tool can be looked up by any of these names in addition to its primary name.
    */
   aliases?: string[]
+  /** Omitted for tools available in either environment. Applied before model exposure. */
+  requiresDesktop?: boolean
+  supportedEnvironments?: readonly import('./utils/sessionIdContext.js').SessionExecutionEnvironment[]
   /**
    * One-line capability phrase used by ToolSearch for keyword matching.
    * Helps the model find this tool via keyword search when it's deferred.
@@ -690,7 +674,7 @@ export type Tool<
   outputSchema?: z.ZodType<unknown>
   inputsEquivalent?(a: z.infer<Input>, b: z.infer<Input>): boolean
   isConcurrencySafe(input: z.infer<Input>): boolean
-  isEnabled(): boolean
+  isEnabled(runtime?: import('./utils/sessionIdContext.js').SessionRuntime): boolean
   isReadOnly(input: z.infer<Input>): boolean
   /** Defaults to false. Only set when the tool performs irreversible operations (delete, overwrite, send). */
   isDestructive?(input: z.infer<Input>): boolean

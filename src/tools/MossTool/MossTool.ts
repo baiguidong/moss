@@ -13,22 +13,6 @@ import { jsonStringify } from '../../utils/slowOperations.js'
 import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
 import type { MossToolName } from './toolLoading.js'
 
-const imageAspectRatioSchema = z.enum([
-  '1:1',
-  '16:9',
-  '4:3',
-  '3:2',
-  '2:3',
-  '3:4',
-  '9:16',
-  '21:9',
-])
-
-const subjectReferenceSchema = z.strictObject({
-  type: z.literal('character'),
-  image_file: z.string().url(),
-})
-
 const tabIdField = {
   tab_id: z.string().optional().describe('Browser tab id. Omit to use the active tab in the current Moss session.'),
 }
@@ -73,6 +57,7 @@ type MossToolConfig<InputSchema extends MossInputSchema> = {
   inputJSONSchema?: ToolInputJSONSchema
   event: (input: z.infer<InputSchema>) => MossAppEvent
   readOnly?: boolean
+  supportedEnvironments?: readonly ('desktop' | 'server')[]
   browserPermission?: boolean
   userFacingName?: string
   repeatKey?: (input: z.infer<InputSchema>) => string
@@ -169,6 +154,8 @@ function createMossTool<InputSchema extends MossInputSchema>(
 ) {
   return buildTool({
     name: config.name,
+    requiresDesktop: true,
+    supportedEnvironments: config.supportedEnvironments ?? ['desktop'],
     searchHint: config.searchHint,
     maxResultSizeChars: 100_000,
     async description() {
@@ -385,6 +372,7 @@ const browserOpenSchema = z.strictObject({
 
 export const BrowserOpenTool = createMossTool({
   name: 'browser_open',
+  supportedEnvironments: ['desktop', 'server'],
   description: 'Open a URL or search query in the Moss right-side browser panel and bring it into view.',
   prompt: 'Open a URL or search query in the Moss right-side browser. Provide either url or query. Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine. When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the browser panel is on the right and provide the exact URL.',
   searchHint: 'open website search browser',
@@ -585,39 +573,6 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
   userFacingName: '连接器',
 })
 
-const imageGenerateSchema = z.strictObject({
-  prompt: z.string().min(1).describe('Description of the image to synthesize.'),
-  out_path: z.string().min(1).describe('Relative output path inside the current session workspace.'),
-  aspect_ratio: imageAspectRatioSchema.optional().describe('Requested output aspect ratio.'),
-  subject_reference: z.array(subjectReferenceSchema).optional().describe('Optional character reference images.'),
-})
-
-export const ImageGenerateTool = createMossTool({
-  name: 'image_generate',
-  description: 'Synthesize a new image from a prompt and save it in the current session workspace.',
-  prompt: 'Use only for synthesizing a new image. Never use this tool to recreate or approximate a browser or application screenshot; use browser_snapshot for screenshots. out_path must be relative to the current session workspace. On success, prefer previewMarkdown when referencing the result.',
-  searchHint: 'generate create synthetic image',
-  inputSchema: imageGenerateSchema,
-  event: input => ({ type: 'image_generate', input }),
-  userFacingName: '图片生成',
-})
-
-const imageEditSchema = z.strictObject({
-  prompt: z.string().min(1).describe('Requested image edit.'),
-  source_path: z.string().min(1).describe('Relative source image path inside the current session workspace.'),
-  out_path: z.string().min(1).describe('Relative output path inside the current session workspace.'),
-  aspect_ratio: imageAspectRatioSchema.optional().describe('Optional output aspect ratio.'),
-})
-
-export const ImageEditTool = createMossTool({
-  name: 'image_edit',
-  description: 'Edit a workspace image and save the result to a new workspace path.',
-  searchHint: 'edit transform workspace image',
-  inputSchema: imageEditSchema,
-  event: input => ({ type: 'image_edit', input }),
-  userFacingName: '图片编辑',
-})
-
 export const MossTools = [
   BrowserOpenTool,
   BrowserSnapshotTool,
@@ -636,6 +591,4 @@ export const MossTools = [
   AppGetVersionsTool,
   ConnectorCliSetupTool,
   ConnectorMcpAuthenticateTool,
-  ImageGenerateTool,
-  ImageEditTool,
 ] as const

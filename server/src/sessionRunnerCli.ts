@@ -29,7 +29,7 @@ function boundedInt(
     : fallback
 }
 
-function readBackendSystemSettings(
+export function readBackendSystemSettings(
   value: unknown,
 ): BackendSystemSettings | undefined {
   if (!isRecord(value) || typeof value.model !== 'string') {
@@ -56,6 +56,12 @@ function readBackendSystemSettings(
     ),
     url: typeof value.url === 'string' ? value.url.trim() : '',
     apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : '',
+    image: isRecord(value.image) ? {
+      provider: typeof value.image.provider === 'string' ? value.image.provider.trim() : '',
+      url: typeof value.image.url === 'string' ? value.image.url.trim() : '',
+      apiKey: typeof value.image.apiKey === 'string' ? value.image.apiKey.trim() : '',
+      model: typeof value.image.model === 'string' ? value.image.model.trim() : '',
+    } : undefined,
   }
 }
 
@@ -95,6 +101,7 @@ function readBackendSpawnOptions(value: unknown): BackendSpawnOptions {
         : undefined,
     cwd,
     dangerouslySkipPermissions: value.dangerouslySkipPermissions === true,
+    unattended: value.unattended === true,
     userId: typeof value.userId === 'string' ? value.userId : undefined,
     orgId: typeof value.orgId === 'string' ? value.orgId : undefined,
     role: typeof value.role === 'string' ? value.role : undefined,

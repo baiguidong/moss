@@ -91,6 +91,7 @@ export type Output = z.infer<OutputSchema>
 
 export const WorkflowRunTool = buildTool({
   name: WORKFLOW_TOOL_NAME,
+  supportedEnvironments: ['desktop'],
   deferLoading: true,
   searchHint: 'orchestrate subagents with a structured visual workflow',
   maxResultSizeChars: 100_000,

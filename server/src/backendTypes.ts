@@ -5,7 +5,7 @@ import type {
   SessionRuntimeOptions,
   SessionRuntimeInfo,
 } from '../../packages/direct-connect-protocol/src/index.js'
-import type { ThinkingMode } from './systemSettings.js'
+import type { ThinkingMode, SystemSettingsImage } from './systemSettings.js'
 
 export type { SessionRuntimeInfo }
 
@@ -18,6 +18,7 @@ export type BackendSystemSettings = {
   thinkingBudgetTokens: number
   url: string
   apiKey: string
+  image?: SystemSettingsImage
 }
 
 export type BackendSpawnOptions = {
@@ -27,6 +28,7 @@ export type BackendSpawnOptions = {
   backendManifestPath?: string
   cwd: string
   dangerouslySkipPermissions?: boolean
+  unattended?: boolean
   userId?: string
   orgId?: string
   role?: string

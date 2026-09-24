@@ -10,6 +10,8 @@ import { NotebookEditTool } from './tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
 import { MossTools } from './tools/MossTool/MossTool.js'
+import { ImageTools } from './tools/ImageTool/ImageTool.js'
+import { filterToolsForSession } from './utils/toolAvailability.js'
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 const SleepTool =
   feature('PROACTIVE')
@@ -123,7 +125,7 @@ export function parseToolPreset(preset: string): ToolPreset | null {
  * @returns Array of tool names
  */
 export function getToolsForDefaultPreset(): string[] {
-  const tools = getAllBaseTools()
+  const tools = filterToolsForSession(getAllBaseTools())
   const isEnabled = tools.map(tool => tool.isEnabled())
   return tools.filter((_, i) => isEnabled[i]).map(tool => tool.name)
 }
@@ -150,6 +152,7 @@ export function getAllBaseTools(): Tools {
     AskUserQuestionTool,
     SkillTool,
     ...MossTools,
+    ...ImageTools,
     EnterPlanModeTool,
     ...(WebBrowserTool ? [WebBrowserTool] : []),
     TaskCreateTool,
@@ -217,7 +220,7 @@ export const getTools = (permissionContext: ToolPermissionContext): Tools => {
     SYNTHETIC_OUTPUT_TOOL_NAME,
   ])
 
-  const tools = getAllBaseTools().filter(tool => !specialTools.has(tool.name))
+  const tools = filterToolsForSession(getAllBaseTools()).filter(tool => !specialTools.has(tool.name))
 
   // Filter out tools that are denied by the deny rules
   let allowedTools = filterToolsByDenyRules(tools, permissionContext)
@@ -249,7 +252,7 @@ export function assembleToolPool(
   const builtInTools = getTools(permissionContext)
 
   // Filter out MCP tools that are in the deny list
-  const allowedMcpTools = filterToolsByDenyRules(mcpTools, permissionContext)
+  const allowedMcpTools = filterToolsForSession(filterToolsByDenyRules(mcpTools, permissionContext))
 
   // Sort each partition for prompt-cache stability, keeping built-ins as a
   // contiguous prefix. The server's claude_code_system_cache_policy places a
@@ -285,5 +288,5 @@ export function getMergedTools(
   mcpTools: Tools,
 ): Tools {
   const builtInTools = getTools(permissionContext)
-  return [...builtInTools, ...mcpTools]
+  return filterToolsForSession([...builtInTools, ...mcpTools])
 }

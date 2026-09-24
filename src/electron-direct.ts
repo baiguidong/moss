@@ -4,6 +4,8 @@
  * 直接在当前 Node.js 进程中运行 QueryEngine，无 IPC/序列化开销。
  */
 
+import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessionIdContext.js'
+import type { ImageSettings } from './services/imageGeneration.js'
 import { randomUUID, type UUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
@@ -337,13 +339,13 @@ export type DesktopToolCatalogEntry = {
 }
 
 /** A credential-free catalog suitable for App configuration screens. */
-export function listDesktopTools(): DesktopToolCatalogEntry[] {
+export function listDesktopTools(image?: ImageSettings): DesktopToolCatalogEntry[] {
   initLocalAgentRuntimeOnce()
   return getAllBaseTools().map(tool => ({
     id: tool.name,
     aliases: [...(tool.aliases ?? [])],
     searchHint: tool.searchHint ?? '',
-    enabled: tool.isEnabled(),
+    enabled: tool.isEnabled({ executionEnvironment: 'desktop', image }),
     source: 'built-in' as const,
   }))
 }
@@ -452,6 +454,13 @@ async function defaultDesktopPermissionRequest(
 export interface ClaudeSessionOptions {
   /** 工作目录 */
   cwd?: string
+  /** Execution environment supplied by the session owner; defaults to desktop. */
+  executionEnvironment?: SessionExecutionEnvironment
+  desktopCronHostId?: string
+  cron?: import('../shared/cron-provider.js').CronProvider
+  unattended?: boolean
+  /** Image provider configuration for this runtime, independent of the desktop bridge. */
+  image?: ImageSettings
   /** 已配置的文本模型名称；未配置时拒绝创建会话。 */
   model?: string
   /** 用于检索、提取和摘要等轻量任务的模型名。 */
@@ -522,6 +531,7 @@ export interface ClaudeSessionOptions {
 }
 
 type ResolvedClaudeSessionOptions = {
+  runtime: SessionRuntime
   cwd: string
   model: string
   fastModel?: string
@@ -826,6 +836,13 @@ export class ClaudeSession {
       )
     }
     this.#opts = {
+      runtime: {
+        executionEnvironment: opts.executionEnvironment ?? 'desktop',
+        image: opts.image ? { ...opts.image } : undefined,
+        desktopCronHostId: opts.desktopCronHostId,
+        cron: opts.cron,
+        unattended: opts.unattended,
+      },
       cwd,
       model,
       fastModel: opts.fastModel?.trim() || undefined,
@@ -1130,26 +1147,33 @@ export class ClaudeSession {
     // 工具列表
     const toolsStart = Date.now()
     const appTools = createAppContributionTools(this.#opts.appTools)
-    const computeTools = () => {
-      const state = store.getState()
-      const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
-      const modeTools = this.#opts.coordinatorMode
-        ? assembled
-        : applyChatToolFilter(assembled)
-      const dynamicTools = [
-        ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
-        ...(this.#opts.libraryEnabled ? LibraryTools : []),
-        ...appTools,
-      ]
-      const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
-      const selectors = this.#opts.allowedTools
-      if (selectors === null || selectors.includes('*')) return merged
-      const allowed = new Set(selectors)
-      const matches = (name: string) => allowed.has(name) || selectors.some(
-        selector => selector.endsWith('*') && name.startsWith(selector.slice(0, -1)),
-      )
-      return merged.filter(tool => matches(tool.name) || tool.aliases?.some(matches))
-    }
+    const computeTools = () => runWithSessionIdContext(
+      asSessionId(this.sessionId),
+      this.#opts.projectDir,
+      () => {
+        const state = store.getState()
+        const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools)
+        const modeTools = this.#opts.coordinatorMode
+          ? assembled
+          : applyChatToolFilter(assembled)
+        const dynamicTools = [
+          ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
+          ...(this.#opts.libraryEnabled ? LibraryTools : []),
+          ...appTools,
+        ]
+        const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
+        const selectors = this.#opts.allowedTools
+        if (selectors === null || selectors.includes('*')) return merged
+        const allowed = new Set(selectors)
+        const matches = (name: string) => allowed.has(name) || selectors.some(
+          selector => selector.endsWith('*') && name.startsWith(selector.slice(0, -1)),
+        )
+        return merged.filter(tool => matches(tool.name) || tool.aliases?.some(matches))
+      },
+      this.#opts.taskScope,
+      this.#opts.environment,
+      this.#opts.runtime,
+    )
     const tools = computeTools()
     logForDiagnosticsNoPII('info', 'local_agent_engine_tools_loaded', {
       duration_ms: Date.now() - toolsStart,
@@ -1247,6 +1271,7 @@ export class ClaudeSession {
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
           this.#opts.taskScope,
           this.#opts.environment,
+          this.#opts.runtime,
         )
 
       // Resolve the project root before entering the ALS wrappers so even
@@ -1538,6 +1563,7 @@ export class ClaudeSession {
                 ),
               this.#opts.taskScope,
               this.#opts.environment,
+              this.#opts.runtime,
             ),
           {
             projectRoot: this.#projectRoot,
@@ -1575,6 +1601,7 @@ export class ClaudeSession {
         () => runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
         this.#opts.taskScope,
         this.#opts.environment,
+        this.#opts.runtime,
       )
 
     return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
@@ -1619,6 +1646,7 @@ export class ClaudeSession {
           ),
           this.#opts.taskScope,
           this.#opts.environment,
+          this.#opts.runtime,
         ),
         {
           projectRoot: this.#projectRoot,
@@ -1783,6 +1811,7 @@ export class ClaudeSession {
               ),
             this.#opts.taskScope,
             this.#opts.environment,
+            this.#opts.runtime,
           ),
         {
           projectRoot: this.#projectRoot,

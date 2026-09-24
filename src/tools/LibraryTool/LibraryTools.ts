@@ -105,6 +105,7 @@ function mapResult(content: ListOutput | ReadOutput | WriteOutput, toolUseID: st
 
 export const LibraryListTool = buildTool({
   name: LIBRARY_LIST_TOOL_NAME,
+  requiresDesktop: true,
   searchHint: 'list local Library collections sources and resources',
   maxResultSizeChars: 100_000,
   async description() {
@@ -142,6 +143,7 @@ export const LibraryListTool = buildTool({
 
 export const LibrarySearchTool = buildTool({
   name: LIBRARY_SEARCH_TOOL_NAME,
+  requiresDesktop: true,
   searchHint: 'search indexed local knowledge and evidence',
   maxResultSizeChars: 100_000,
   async description() {
@@ -179,6 +181,7 @@ export const LibrarySearchTool = buildTool({
 
 export const LibraryReadTool = buildTool({
   name: LIBRARY_READ_TOOL_NAME,
+  requiresDesktop: true,
   searchHint: 'read indexed chunks from a Library resource',
   maxResultSizeChars: 100_000,
   async description() {
@@ -216,6 +219,8 @@ export const LibraryReadTool = buildTool({
 
 export const LibraryWriteTool = buildTool({
   name: LIBRARY_WRITE_TOOL_NAME,
+  requiresDesktop: true,
+  supportedEnvironments: ['desktop'],
   searchHint: 'add selected workspace files to a personal Library collection',
   maxResultSizeChars: 100_000,
   async description() {

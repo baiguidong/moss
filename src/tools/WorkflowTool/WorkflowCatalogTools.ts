@@ -182,6 +182,7 @@ function notifyCatalogChanged(
 
 export const WorkflowCreateTool = buildTool({
   name: WORKFLOW_CREATE_TOOL_NAME,
+  supportedEnvironments: ['desktop'],
   deferLoading: true,
   searchHint: 'create and preview a structured workflow draft without running it',
   maxResultSizeChars: 200_000,
@@ -221,6 +222,7 @@ export const WorkflowCreateTool = buildTool({
 
 export const WorkflowEditTool = buildTool({
   name: WORKFLOW_EDIT_TOOL_NAME,
+  supportedEnvironments: ['desktop'],
   deferLoading: true,
   searchHint: 'replace a workflow draft definition using optimistic revision control',
   maxResultSizeChars: 200_000,
@@ -258,6 +260,7 @@ export const WorkflowEditTool = buildTool({
 
 export const WorkflowManageTool = buildTool({
   name: WORKFLOW_MANAGE_TOOL_NAME,
+  supportedEnvironments: ['desktop'],
   deferLoading: true,
   searchHint: 'list inspect publish duplicate archive or delete workflow templates',
   maxResultSizeChars: 200_000,

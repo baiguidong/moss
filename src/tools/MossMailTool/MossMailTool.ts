@@ -53,6 +53,7 @@ function permissionSuggestions(input: Input): PermissionUpdate[] | undefined {
 
 export const MossMailTool = buildTool({
   name: 'MossMail',
+  requiresDesktop: true,
   searchHint: 'search Moss Server users and send authenticated Agent Mail',
   maxResultSizeChars: 100_000,
   async description() {

@@ -9,6 +9,7 @@ import {
 import { isMcpTool } from '../services/mcp/utils.js'
 import type { Tool, ToolPermissionContext, Tools } from '../Tool.js'
 import { isAgentSwarmsEnabled } from './agentSwarmsEnabled.js'
+import { filterToolsForSession } from './toolAvailability.js'
 
 // MCP tool name suffixes for PR activity subscription. These are lightweight
 // orchestration actions the coordinator calls directly rather than delegating
@@ -85,7 +86,7 @@ export function mergeAndFilterTools(
   // Partition-sort for prompt-cache stability (same as assembleToolPool):
   // built-ins must stay a contiguous prefix for the server's cache policy.
   const [mcp, builtIn] = partition(
-    uniqBy([...initialTools, ...assembled], 'name'),
+    uniqBy(filterToolsForSession([...initialTools, ...assembled]), 'name'),
     isMcpTool,
   )
   const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)
