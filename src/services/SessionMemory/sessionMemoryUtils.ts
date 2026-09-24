@@ -41,13 +41,15 @@ export const DEFAULT_SESSION_MEMORY_CONFIG: SessionMemoryConfig = {
 
 type SessionMemoryRuntimeState = {
   lastSummarizedMessageId?: string
-  extractionStartedAt?: number
   tokensAtLastExtraction: number
   initialized: boolean
   config: SessionMemoryConfig
 }
 
 const sessionMemoryStates = new Map<string, SessionMemoryRuntimeState>()
+// Keep ownership until the actual extraction settles, even if session state
+// is discarded during runtime disposal. A timeout must not admit another writer.
+const activeExtractions = new Map<string, { startedAt: number }>()
 
 function getState(): SessionMemoryRuntimeState {
   const sessionId = getSessionId()
@@ -80,17 +82,23 @@ export function setLastSummarizedMessageId(
 }
 
 /**
- * Mark extraction as started (called from sessionMemory.ts)
+ * Atomically acquire the session's writer slot. Automatic and manual updates
+ * share it. The returned release function always belongs to this acquisition.
  */
-export function markExtractionStarted(): void {
-  getState().extractionStartedAt = Date.now()
+export function tryStartSessionMemoryExtraction(): (() => void) | undefined {
+  const sessionId = getSessionId()
+  if (activeExtractions.has(sessionId)) return undefined
+  const active = { startedAt: Date.now() }
+  activeExtractions.set(sessionId, active)
+  return () => {
+    if (activeExtractions.get(sessionId) === active) {
+      activeExtractions.delete(sessionId)
+    }
+  }
 }
 
-/**
- * Mark extraction as completed (called from sessionMemory.ts)
- */
-export function markExtractionCompleted(): void {
-  getState().extractionStartedAt = undefined
+export function isSessionMemoryExtractionRunning(): boolean {
+  return activeExtractions.has(getSessionId())
 }
 
 /**
@@ -99,8 +107,9 @@ export function markExtractionCompleted(): void {
  */
 export async function waitForSessionMemoryExtraction(): Promise<void> {
   const startTime = Date.now()
-  while (getState().extractionStartedAt) {
-    const extractionAge = Date.now() - getState().extractionStartedAt!
+  const sessionId = getSessionId()
+  while (activeExtractions.has(sessionId)) {
+    const extractionAge = Date.now() - activeExtractions.get(sessionId)!.startedAt
     if (extractionAge > EXTRACTION_STALE_THRESHOLD_MS) {
       // Extraction is stale, don't wait
       return

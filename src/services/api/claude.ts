@@ -95,6 +95,7 @@ import {
 import { getAPIContextManagement } from '../compact/apiMicrocompact.js'
 
 import { feature } from 'bun:bundle'
+import { ensureResponseId } from './responseIdentity.js'
 import type { ClientOptions } from '@anthropic-ai/sdk'
 import {
   APIConnectionTimeoutError,
@@ -1811,6 +1812,9 @@ async function* queryModel(
 
         switch (part.type) {
           case 'message_start': {
+            // Gateways may omit id. Every block from this response must share
+            // one ID, and separate responses must never merge as undefined.
+            part.message = ensureResponseId(part.message)
             partialMessage = part.message
             ttftMs = Date.now() - start
             usage = updateUsage(usage, part.message?.usage)
@@ -2365,7 +2369,7 @@ async function* queryModel(
       const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
       const m: AssistantMessage = {
         message: {
-          ...result,
+          ...ensureResponseId(result),
           usage: normalizedResultUsage,
           content: normalizeContentFromAPI(
             result.content,
@@ -2462,7 +2466,7 @@ async function* queryModel(
         const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
         const m: AssistantMessage = {
           message: {
-            ...result,
+            ...ensureResponseId(result),
             usage: normalizedResultUsage,
             content: normalizeContentFromAPI(
               result.content,

@@ -1771,6 +1771,23 @@ export function normalizeMessagesForAPI(
             },
           }
 
+          const responseId = normalizedMessage.message.id
+          if (typeof responseId !== 'string' || !responseId.trim()) {
+            // Old streams can split one response into adjacent blocks without
+            // IDs. Join only adjacent assistant blocks; never cross a user or
+            // tool-result message without a known response identity.
+            const previous = result.at(-1)
+            if (
+              previous?.type === 'assistant' &&
+              !(typeof previous.message.id === 'string' && previous.message.id.trim())
+            ) {
+              result[result.length - 1] = mergeAssistantMessages(previous, normalizedMessage)
+            } else {
+              result.push(normalizedMessage)
+            }
+            return
+          }
+
           // Find a previous assistant message with the same message ID and merge.
           // Walk backwards, skipping tool results and different-ID assistants,
           // since concurrent agents (teammates) can interleave streaming content
@@ -1783,7 +1800,7 @@ export function normalizeMessagesForAPI(
             }
 
             if (msg.type === 'assistant') {
-              if (msg.message.id === normalizedMessage.message.id) {
+              if (msg.message.id === responseId) {
                 result[i] = mergeAssistantMessages(msg, normalizedMessage)
                 return
               }

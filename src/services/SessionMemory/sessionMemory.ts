@@ -5,6 +5,7 @@
  */
 
 import { writeFile } from 'fs/promises'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { getIsRemoteMode, getSessionId } from '../../bootstrap/state.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
@@ -20,7 +21,6 @@ import { count } from '../../utils/array.js'
 import {
   createCacheSafeParams,
   createSubagentContext,
-  runForkedAgent,
 } from '../../utils/forkedAgent.js'
 import { getFsImplementation } from '../../utils/fsOperations.js'
 import {
@@ -35,6 +35,7 @@ import {
   getSessionMemoryDir,
   getSessionMemoryPath,
 } from '../../utils/permissions/filesystem.js'
+import { sequential } from '../../utils/sequential.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { getTokenUsage, tokenCountWithEstimation } from '../../utils/tokens.js'
 import { logEvent } from '../analytics/index.js'
@@ -49,8 +50,8 @@ import {
   hasMetInitializationThreshold,
   hasMetUpdateThreshold,
   isSessionMemoryInitialized,
-  markExtractionCompleted,
-  markExtractionStarted,
+  isSessionMemoryExtractionRunning,
+  tryStartSessionMemoryExtraction,
   markSessionMemoryInitialized,
   recordExtractionTokenCount,
   setLastSummarizedMessageId,
@@ -64,12 +65,17 @@ import {
 import { errorMessage, getErrnoCode } from '../../utils/errors.js'
 import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
 import { getSessionMemorySettings } from '../sessionMemorySettings.js'
+import { runMemoryUpdate } from './runMemoryUpdate.js'
 
 // ============================================================================
 // Module State
 // ============================================================================
 
 const lastMemoryMessageUuidBySession = new Map<string, string | undefined>()
+const sessionMemoryQueues = new Map<string, {
+  run: (extract: () => Promise<void>) => Promise<void>
+  pending: number
+}>()
 
 /**
  * Reset the last memory message UUID (for testing)
@@ -109,6 +115,7 @@ function countToolCallsSince(
 }
 
 export function shouldExtractMemory(messages: Message[]): boolean {
+  if (isSessionMemoryExtractionRunning()) return false
   const sessionId = getSessionId()
   const lastMemoryMessageUuid = lastMemoryMessageUuidBySession.get(sessionId)
 
@@ -256,7 +263,7 @@ let sessionMemoryHookRegistered = false
 const extractSessionMemory = async function (
   context: REPLHookContext,
 ): Promise<void> {
-  const { messages, toolUseContext, querySource } = context
+  const { querySource } = context
 
   // Only run session memory on main user-facing thread. Desktop embedded
   // sessions go through QueryEngine and use querySource "sdk".
@@ -264,6 +271,39 @@ const extractSessionMemory = async function (
     // Don't log this - it's expected for subagents, teammates, etc.
     return
   }
+
+  // Restore the original sequential gate: check thresholds when a queued
+  // update gets its turn. Embedded sessions need independent queues.
+  const sessionId = getSessionId()
+  const queue = getSessionMemoryQueue(sessionId)
+  // sequential drains queued callbacks from the first caller's async context.
+  // Retain each caller's session settings and runtime context explicitly.
+  const runInContext = AsyncLocalStorage.snapshot()
+  queue.pending++
+  try {
+    await queue.run(() => runInContext(extractSessionMemoryNow, context))
+  } finally {
+    if (--queue.pending === 0) {
+      sessionMemoryQueues.delete(sessionId)
+    }
+  }
+}
+
+function getSessionMemoryQueue(sessionId: string) {
+  let queue = sessionMemoryQueues.get(sessionId)
+  if (!queue) {
+    queue = {
+      run: sequential(async (extract: () => Promise<void>) => extract()),
+      pending: 0,
+    }
+    sessionMemoryQueues.set(sessionId, queue)
+  }
+  return queue
+}
+
+async function extractSessionMemoryNow(context: REPLHookContext): Promise<void> {
+  const { messages, toolUseContext } = context
+  if (toolUseContext.abortController.signal.aborted) return
 
   // Check gate lazily when hook runs (cached, non-blocking)
   if (!isSessionMemoryEnabled()) {
@@ -281,9 +321,13 @@ const extractSessionMemory = async function (
     return
   }
 
-  markExtractionStarted()
+  const releaseExtraction = tryStartSessionMemoryExtraction()
+  if (!releaseExtraction) return
 
   try {
+    // Consume the snapshot on start, including failed attempts, so the next
+    // sampling hook cannot retry the same unchanged context indefinitely.
+    recordExtractionTokenCount(tokenCountWithEstimation(messages))
     // Create isolated context for setup to avoid polluting parent's cache
     const setupContext = createSubagentContext(toolUseContext)
 
@@ -300,11 +344,10 @@ const extractSessionMemory = async function (
     // Run session memory extraction using runForkedAgent for prompt caching
     // runForkedAgent creates an isolated context to prevent mutation of parent state
     // Pass setupContext.readFileState so the forked agent can edit the memory file
-    await runForkedAgent({
+    await runMemoryUpdate({
       promptMessages: [createUserMessage({ content: userPrompt })],
       cacheSafeParams: createCacheSafeParams(context),
       canUseTool: createMemoryFileCanUseTool(memoryPath),
-      querySource: 'session_memory',
       forkLabel: 'session_memory',
       overrides: { readFileState: setupContext.readFileState },
     })
@@ -329,13 +372,10 @@ const extractSessionMemory = async function (
       session_id: getSessionId(),
     })
 
-    // Record the context size at extraction for tracking minimumTokensBetweenUpdate
-    recordExtractionTokenCount(tokenCountWithEstimation(messages))
-
     // Update lastSummarizedMessageId after successful completion
     updateLastSummarizedMessageIdIfSafe(messages)
   } finally {
-    markExtractionCompleted()
+    releaseExtraction()
   }
 }
 
@@ -370,9 +410,13 @@ export async function manuallyExtractSessionMemory(
   if (messages.length === 0) {
     return { success: false, error: 'No messages to summarize' }
   }
-  markExtractionStarted()
+  const releaseExtraction = tryStartSessionMemoryExtraction()
+  if (!releaseExtraction) {
+    return { success: false, error: 'A session memory update is already running.' }
+  }
 
   try {
+    recordExtractionTokenCount(tokenCountWithEstimation(messages))
     // Create isolated context for setup to avoid polluting parent's cache
     const setupContext = createSubagentContext(toolUseContext)
 
@@ -396,7 +440,7 @@ export async function manuallyExtractSessionMemory(
     const systemPrompt = asSystemPrompt(rawSystemPrompt)
 
     // Run session memory extraction using runForkedAgent
-    await runForkedAgent({
+    await runMemoryUpdate({
       promptMessages: [createUserMessage({ content: userPrompt })],
       cacheSafeParams: {
         systemPrompt,
@@ -406,16 +450,12 @@ export async function manuallyExtractSessionMemory(
         forkContextMessages: messages,
       },
       canUseTool: createMemoryFileCanUseTool(memoryPath),
-      querySource: 'session_memory',
       forkLabel: 'session_memory_manual',
       overrides: { readFileState: setupContext.readFileState },
     })
 
     // Log manual extraction event
     logEvent('tengu_session_memory_manual_extraction', {})
-
-    // Record the context size at extraction for tracking minimumTokensBetweenUpdate
-    recordExtractionTokenCount(tokenCountWithEstimation(messages))
 
     // Update lastSummarizedMessageId after successful completion
     updateLastSummarizedMessageIdIfSafe(messages)
@@ -427,7 +467,7 @@ export async function manuallyExtractSessionMemory(
       error: errorMessage(error),
     }
   } finally {
-    markExtractionCompleted()
+    releaseExtraction()
   }
 }
 
