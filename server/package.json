@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "croner": "^10.0.1",
     "@aws-sdk/client-s3": "^3.1029.0",
     "@smithy/node-http-handler": "^4.12.1",
     "mysql2": "^3.24.4",

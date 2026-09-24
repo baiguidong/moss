@@ -2760,7 +2760,7 @@ export default function App() {
           ) : activeView === 'overview' ? (
             <OverviewView />
           ) : activeView === 'cron' ? (
-            <CronView onOpenSession={handleSelectSession} />
+            <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
           ) : activeView === 'audit' ? (
             <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
           ) : activeView === 'library' && libraryEnabled ? (

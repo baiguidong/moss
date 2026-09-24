@@ -892,3 +892,38 @@ OpenIM 是 Moss Server 的内置组织级 integration。管理密钥保存在 Se
 - `AuthService.verifyAccessToken()` 已经是进程内调用，server 不再反向 fetch 外部 auth-center。
 - `admin/dist` 由同一个进程直接挂在 `/admin`。
 - 单库模式下，auth / users / api_keys / sessions / runtime events 共用同一个 SQLite 文件。
+
+## 云端定时任务
+
+云端任务由 Moss Server 调度并存入数据库，按 `orgId/userId` 隔离。
+Desktop 的“定时任务”页面分为“本地”和“云端”；关闭 Desktop 不会停止云端调度。
+Agent 的 CronCreate/List/Delete 通过宿主注入的调度接口操作当前会话的云端任务，
+任务请求由 Server runner 处理，不经过 Desktop，也不向会话容器暴露数据库凭据。
+
+| API | 行为 |
+| --- | --- |
+| `GET /api/v1/cron/tasks` | 列出当前用户的任务，包含状态、错误、来源与执行会话 ID |
+| `POST /api/v1/cron/tasks` | 创建任务：`ownerSessionId`、`cron`、`prompt`、可选 `recurring` 和 `timezone` |
+| `POST /api/v1/cron/tasks/:id/enabled` | `{ "enabled": true/false }` 启用或暂停任务 |
+| `POST /api/v1/cron/tasks/:id/run` | 手动执行，返回 HTTP 202；通过列表查询执行结果 |
+| `DELETE /api/v1/cron/tasks/:id` | 删除任务，已经开始的回合可以结束，但任务不会恢复 |
+
+列表要求当前有效的 `sessions:list` 权限；创建和修改要求 `sessions:create`。
+管理接口始终限定当前用户，创建时会验证来源会话属于该用户。
+调度前重新检查用户状态和执行权限。时间表达式为标准五字段 cron，
+`timezone` 使用 IANA 时区（例如 `Asia/Shanghai`），默认服务器时区。
+
+任务全部持久保存。循环任务持续到取消，不使用本地任务的七天过期规则。
+服务端每 20 秒检查到期任务；错过的次数合并为一次补跑。同一用户最多一个
+定时回合并发，整个服务最多四个；每用户最多 50 个任务，单次执行最长 30 分钟。
+
+每个任务首次执行创建专用会话，继承来源工作区和运行配置，后续复用。
+来源聊天历史不会复制到执行会话，任务提示词需要包含完整指令。
+会话列表及详情返回 `sessionKind: "cron"`、`cronTaskId` 和 `sourceSessionId`；
+客户端通过现有远端同步获得会话和已保存的历史。
+
+无人值守会话及其 worker 不加载依赖 Desktop 的工具；需要人工确认时暂停，
+不自动授权。执行异常或中断会保留任务并暂停，一次性任务在成功后删除。
+重启时，过期的执行租约标为中断，不自动重试可能已经产生副作用的回合。
+旧 profile 中缺少生命周期信息的 `cron_tasks.json` 记录只导入为暂停待处理状态，
+不会自动执行；原文件保留，数据库记录一次性导入标记。

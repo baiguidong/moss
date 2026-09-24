@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { handleCronHostRequest } from './cronHostBridge.js'
 import { appendFile, mkdir, unlink, writeFile } from 'fs/promises'
 import net from 'net'
 import { dirname } from 'path'
@@ -444,6 +445,7 @@ export class SessionRunnerDaemon {
         autoMemory: this.manifest.session.autoMemory,
         sessionMemory: this.manifest.session.sessionMemory,
         runtimeOptions: this.manifest.session.runtimeOptions,
+        unattended: this.manifest.session.unattended,
       })
 
       this.#handle = handle
@@ -485,6 +487,7 @@ export class SessionRunnerDaemon {
       handle.onStdoutLine(line =>
         this.#enqueueOutput(async () => {
           if (await recordRunnerUsage(line, this.manifest.session, this.#usage)) return
+          if (await handleCronHostRequest(line, this.manifest.session.sessionId, this.#store, handle)) return
           await this.#maybeUpdateTranscriptSession(line)
           await this.#store.touchAttemptHeartbeat(
             this.manifest.attempt.attemptId,

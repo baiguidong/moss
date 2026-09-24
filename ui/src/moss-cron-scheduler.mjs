@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { readCronTaskStore, updateCronTaskStore } from '../../shared/cron-task-store.mjs';
 
 function parseMossCronField(part, min, max) {
   if (part === '*') return { any: true };
@@ -65,277 +66,20 @@ export function createMossCronScheduler({
   linkSessionToProject,
   readProjectSync,
   runSessionPrompt,
+  hostId = randomUUID(),
+  now = Date.now,
 }) {
+  const filePath = path.join(mossHome, 'cron_tasks.json');
+  const recurringMaxAge = 7 * 24 * 60 * 60 * 1000;
+  const activeRuns = new Map();
+  let initialized;
+  let timer;
+  let stopped = false;
+  let ticking = false;
 
-  // ---------------------------------------------------------------------------
-  // Moss cron scheduler
-  //
-  // The embedded runtime's CronCreate tool mirrors every job into
-  // <MOSS_HOME>/cron_tasks.json, but its own firing loop only runs in the CLI REPL
-  // (idle-loop injection). In SDK mode nothing consumes the file, so scheduled
-  // prompts silently never fire. This scheduler reads the file, matches cron
-  // expressions each tick, and injects the prompt into the session that created
-  // the job (located by scanning session history for the job id).
-  // ---------------------------------------------------------------------------
-  const MOSS_CRON_FILE = path.join(mossHome, 'cron_tasks.json');
-  const MOSS_CRON_BINDINGS_FILE = path.join(mossHome, 'cron_bindings.json');
-  const MOSS_CRON_TICK_MS = 20 * 1000;
-  const MOSS_CRON_RECURRING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-  const MOSS_CRON_ONESHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-  const MOSS_CRON_UNRESOLVED_GRACE_MS = 10 * 60 * 1000;
-  const cronSessionBindings = new Map();
-  const cronFiredMinutes = new Map();
-  const cronUnresolvableSince = new Map();
-  let cronTickRunning = false;
-  let cronBindingsLoaded = false;
-
-  function loadCronBindings() {
-    if (cronBindingsLoaded) return;
-    cronBindingsLoaded = true;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(MOSS_CRON_BINDINGS_FILE, 'utf8'));
-      if (parsed && typeof parsed === 'object') {
-        for (const [taskId, sessionId] of Object.entries(parsed)) {
-          if (typeof sessionId === 'string') cronSessionBindings.set(taskId, sessionId);
-        }
-      }
-    } catch {}
-  }
-
-  function persistCronBindings() {
-    try {
-      fs.writeFileSync(
-        MOSS_CRON_BINDINGS_FILE,
-        `${JSON.stringify(Object.fromEntries(cronSessionBindings), null, 2)}\n`,
-        'utf8',
-      );
-    } catch (err) {
-      console.warn('[moss-cron] failed to persist bindings:', err?.message || err);
-    }
-  }
-
-  async function readMossCronTaskIds() {
-    try {
-      const parsed = JSON.parse(await fsp.readFile(MOSS_CRON_FILE, 'utf8'));
-      const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
-      return new Set(tasks.map((t) => t?.id).filter((id) => typeof id === 'string'));
-    } catch {
-      return new Set();
-    }
-  }
-
-  // Deterministic binding: any cron task that appeared in the file during this
-  // session's turn was created by this session.
-  async function bindNewCronTasks(idsBefore, sessionRecord) {
-    try {
-      const idsAfter = await readMossCronTaskIds();
-      let changed = false;
-      for (const id of idsAfter) {
-        if (!idsBefore.has(id) && !cronSessionBindings.has(id)) {
-          cronSessionBindings.set(id, sessionRecord.id);
-          changed = true;
-          console.log(`[moss-cron] bound task ${id} → session ${sessionRecord.id}`);
-        }
-      }
-      if (changed) persistCronBindings();
-    } catch {}
-  }
-
-  // Returns the owning session, or null. Never guesses: a task with no
-  // resolvable owner is left unfired (and cleaned up if its session was
-  // deleted) — misdelivering a scheduled prompt into an unrelated session is
-  // worse than not firing.
-  function findSessionForCronTask(taskId) {
-    const boundId = cronSessionBindings.get(taskId);
-    if (boundId) {
-      return sessions.get(boundId) ?? null;
-    }
-    // In-memory history scan (session created the task before bindings existed).
-    for (const [id, record] of sessions) {
-      if (record.agentMode === 'remote-direct') continue;
-      if (record.sessionKind === 'cron') continue;
-      const history = record.history;
-      if (!Array.isArray(history)) continue;
-      const start = Math.max(0, history.length - 500);
-      for (let i = history.length - 1; i >= start; i -= 1) {
-        const ev = history[i];
-        if (ev?.type !== 'user' && ev?.type !== 'assistant') continue;
-        try {
-          if (JSON.stringify(ev.message?.content ?? '').includes(taskId)) {
-            cronSessionBindings.set(taskId, id);
-            persistCronBindings();
-            return record;
-          }
-        } catch {}
-      }
-    }
-    // Durable scan: histories are hydrated lazily after restart, so search the
-    // persisted history_json in SQLite for the task id.
-    try {
-      const row = sessionDb
-        .prepare(`SELECT id FROM sessions WHERE is_sub_agent = 0 AND session_kind <> 'cron' AND history_json LIKE ? ORDER BY updated_at DESC LIMIT 1`)
-        .get(`%${taskId}%`);
-      if (row?.id && sessions.has(row.id)) {
-        cronSessionBindings.set(taskId, row.id);
-        persistCronBindings();
-        return sessions.get(row.id);
-      }
-    } catch (err) {
-      console.warn('[moss-cron] history_json scan failed:', err?.message || err);
-    }
-    return null;
-  }
-
-  function findCronExecutionSession(taskId) {
-    for (const record of sessions.values()) {
-      if (record.sessionKind === 'cron' && record.cronTaskId === taskId) {
-        return record;
-      }
-    }
-    return null;
-  }
-
-  async function getOrCreateCronExecutionSession(task, ownerSessionRecord) {
-    const existing = findCronExecutionSession(task.id);
-    if (existing) return existing;
-
-    const titleSuffix = normalizePreviewText(task.prompt, 42) || task.id;
-    const executionSession = createSessionRecord({
-      workspace: ownerSessionRecord.workspace,
-      title: `定时任务 · ${titleSuffix}`,
-      assistantName: ownerSessionRecord.assistantName,
-      projectId: ownerSessionRecord.projectId,
-      connectorIds: ownerSessionRecord.connectorIds,
-      agentMode: ownerSessionRecord.agentMode,
-      sessionKind: 'cron',
-      sourceSessionId: ownerSessionRecord.id,
-      cronTaskId: task.id,
-      parentSessionId: ownerSessionRecord.id,
-    });
-    if (executionSession.projectId) {
-      await linkSessionToProject(executionSession.projectId, executionSession);
-    }
-    return executionSession;
-  }
-
-  async function mossCronTick() {
-    if (cronTickRunning) return;
-    cronTickRunning = true;
-    try {
-      const mainWindow = getMainWindow();
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      let raw;
-      try {
-        raw = await fsp.readFile(MOSS_CRON_FILE, 'utf8');
-      } catch {
-        return;
-      }
-      let parsed;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        return;
-      }
-      const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
-      if (tasks.length === 0) return;
-
-      const now = new Date();
-      const nowMs = now.getTime();
-      const minuteKey = Math.floor(nowMs / 60000);
-      const removedIds = new Set();
-      let dirty = false;
-
-      for (const task of tasks) {
-        if (!task || typeof task.id !== 'string' || typeof task.cron !== 'string' || typeof task.prompt !== 'string') continue;
-        if (task.enabled === false) continue;
-        const createdAt = typeof task.createdAt === 'number' ? task.createdAt : 0;
-        const maxAge = task.recurring ? MOSS_CRON_RECURRING_MAX_AGE_MS : MOSS_CRON_ONESHOT_MAX_AGE_MS;
-        if (createdAt && nowMs - createdAt > maxAge) {
-          removedIds.add(task.id);
-          continue;
-        }
-        if (!task.recurring && typeof task.lastFiredAt === 'number') {
-          removedIds.add(task.id);
-          continue;
-        }
-        const fields = parseMossCronExpression(task.cron);
-        if (!fields) continue;
-        if (!mossCronMatches(fields, now)) continue;
-        if (cronFiredMinutes.get(task.id) === minuteKey) continue;
-
-        const ownerSessionRecord = findSessionForCronTask(task.id);
-        if (!ownerSessionRecord) {
-          const boundId = cronSessionBindings.get(task.id);
-          if (boundId && !sessions.has(boundId)) {
-            // Owning session was deleted — drop the orphaned task.
-            console.warn(`[moss-cron] task ${task.id} owner session ${boundId} is gone; removing task`);
-            removedIds.add(task.id);
-            cronSessionBindings.delete(task.id);
-            cronUnresolvableSince.delete(task.id);
-            persistCronBindings();
-            continue;
-          }
-          // Unbindable (e.g. owner session deleted before a binding was ever
-          // recorded). Give it a grace window in case histories are still
-          // loading, then clean it up instead of skipping forever.
-          const firstSeen = cronUnresolvableSince.get(task.id) ?? nowMs;
-          cronUnresolvableSince.set(task.id, firstSeen);
-          if (nowMs - firstSeen >= MOSS_CRON_UNRESOLVED_GRACE_MS) {
-            console.warn(`[moss-cron] task ${task.id} unresolvable for over 10 minutes (owner session likely deleted); removing task`);
-            removedIds.add(task.id);
-            cronUnresolvableSince.delete(task.id);
-          } else if (firstSeen === nowMs) {
-            console.warn(`[moss-cron] task ${task.id} has no resolvable owner session; will retry, then clean up after grace period`);
-          }
-          continue;
-        }
-        cronUnresolvableSince.delete(task.id);
-        if (ownerSessionRecord.projectId) {
-          const project = readProjectSync(ownerSessionRecord.projectId);
-          if (!project || project.archivedAt) continue;
-        }
-        const executionSession = await getOrCreateCronExecutionSession(task, ownerSessionRecord);
-        if (executionSession.busy) continue; // retry on the next tick within this minute
-
-        cronFiredMinutes.set(task.id, minuteKey);
-        task.lastFiredAt = nowMs;
-        dirty = true;
-        if (!task.recurring) removedIds.add(task.id);
-
-        console.log(`[moss-cron] firing task ${task.id} (${task.cron}) → cron session ${executionSession.id}`);
-        void runSessionPrompt({
-          sessionRecord: executionSession,
-          sender: mainWindow.webContents,
-          runtimePrompt: task.prompt,
-          visibleUserPrompt: `⏰ 定时任务：${task.prompt}`,
-        }).catch((err) => {
-          console.warn('[moss-cron] task run failed:', err?.message || err);
-        });
-      }
-
-      if (dirty || removedIds.size > 0) {
-        const remaining = tasks.filter((t) => !removedIds.has(t?.id));
-        try {
-          await fsp.writeFile(MOSS_CRON_FILE, `${JSON.stringify({ tasks: remaining }, null, 2)}\n`, 'utf8');
-        } catch (err) {
-          console.warn('[moss-cron] failed to persist cron file:', err?.message || err);
-        }
-      }
-    } finally {
-      cronTickRunning = false;
-    }
-  }
-
-  function startMossCronScheduler() {
-    loadCronBindings();
-    const timer = setInterval(() => {
-      void mossCronTick();
-    }, MOSS_CRON_TICK_MS);
-    timer.unref?.();
-  }
-
-  function computeNextCronRunMs(fields, fromMs) {
-    // Minute-resolution walk; bounded to one year ahead.
+  function nextRunAt(task, fromMs) {
+    const fields = parseMossCronExpression(task.cron);
+    if (!fields) return null;
     const cursor = new Date(fromMs);
     cursor.setSeconds(0, 0);
     cursor.setMinutes(cursor.getMinutes() + 1);
@@ -347,132 +91,273 @@ export function createMossCronScheduler({
     return null;
   }
 
-  async function readMossCronTasks() {
-    try {
-      const parsed = JSON.parse(await fsp.readFile(MOSS_CRON_FILE, 'utf8'));
-      return Array.isArray(parsed?.tasks) ? parsed.tasks.filter((t) => t && typeof t.id === 'string') : [];
-    } catch {
-      return [];
-    }
+  function ownerFor(task) {
+    const owner = sessions.get(task.ownerSessionId);
+    return owner && !owner.deleted && owner.agentMode !== 'remote-direct' ? owner : null;
   }
 
-  async function writeMossCronTasks(tasks) {
-    await fsp.mkdir(path.dirname(MOSS_CRON_FILE), { recursive: true });
-    await fsp.writeFile(MOSS_CRON_FILE, `${JSON.stringify({ tasks }, null, 2)}\n`, 'utf8');
-  }
-
-  function resolveCronOwnerSessionId(taskId) {
-    loadCronBindings();
-    const record = findSessionForCronTask(taskId);
-    return record?.id ?? null;
-  }
-
-  async function removeCronTasksForSession(sessionId) {
-    loadCronBindings();
-    const tasks = await readMossCronTasks();
-    if (tasks.length === 0) return [];
-    const removed = [];
-    const remaining = tasks.filter((task) => {
-      const owner = resolveCronOwnerSessionId(task.id);
-      if (owner === sessionId) {
-        removed.push(task);
-        cronSessionBindings.delete(task.id);
-        cronUnresolvableSince.delete(task.id);
-        return false;
+  // Old files did not store durability or ownership. Only a matching
+  // CronCreate tool/result pair is evidence of how a legacy task was created.
+  function legacyCreation(task) {
+    for (const record of sessions.values()) {
+      if (record.agentMode === 'remote-direct' || record.sessionKind === 'cron') continue;
+      let history = record.history || [];
+      if (sessionDb) {
+        try {
+          const row = sessionDb.prepare('SELECT history_json FROM sessions WHERE id = ?').get(record.id);
+          if (row?.history_json) history = [...JSON.parse(row.history_json), ...history];
+        } catch {}
       }
-      return true;
-    });
-    if (removed.length > 0) {
-      await writeMossCronTasks(remaining);
-      persistCronBindings();
-      console.log(`[moss-cron] removed ${removed.length} task(s) bound to deleted session ${sessionId}`);
+      const calls = new Map();
+      for (const event of history) {
+        const content = event?.message?.content;
+        for (const block of Array.isArray(content) ? content : []) {
+          if (block.type === 'tool_use' && block.name === 'CronCreate') calls.set(block.id, block.input);
+          if (block.type !== 'tool_result' || !calls.has(block.tool_use_id)) continue;
+          const result = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+          if (!result?.includes(task.id) || block.is_error) continue;
+          return { ownerSessionId: record.id, durable: calls.get(block.tool_use_id)?.durable === true };
+        }
+      }
     }
-    return removed;
+    return null;
+  }
+
+  function initialize() {
+    if (!initialized) {
+      initialized = updateCronTaskStore(filePath, tasks => {
+        let bindings = {};
+        try { bindings = JSON.parse(fs.readFileSync(path.join(mossHome, 'cron_bindings.json'), 'utf8')); } catch {}
+        for (let index = tasks.length - 1; index >= 0; index--) {
+          const task = tasks[index];
+          if (typeof task.durable !== 'boolean') {
+            const creation = legacyCreation(task);
+            if (creation) Object.assign(task, creation);
+            else {
+              // Preserve unidentifiable legacy records for review, never
+              // silently turn an old session-only reminder into a durable job.
+              task.durable = true;
+              task.ownerSessionId ||= bindings[task.id];
+              task.enabled = false;
+              task.status = 'failed';
+              task.lastError = '旧任务缺少生命周期信息，请检查后重新启用。';
+            }
+          }
+          if (task.durable === false && task.desktopHostId !== hostId) {
+            tasks.splice(index, 1);
+            continue;
+          }
+          if (task.runId && task.runHostId !== hostId) {
+            task.enabled = false;
+            task.status = 'failed';
+            task.lastError = '上次执行被中断，结果未确认，请检查执行会话后手动重试。';
+            delete task.runId;
+            delete task.runHostId;
+          }
+          if (!Number.isFinite(task.nextRunAt)) {
+            task.nextRunAt = nextRunAt(task, task.lastCompletedAt ?? task.lastFiredAt ?? task.createdAt ?? now());
+          }
+        }
+      }).catch(error => { initialized = undefined; throw error; });
+    }
+    return initialized;
+  }
+
+  function executionFor(taskId) {
+    return [...sessions.values()].find(record => !record.deleted && record.sessionKind === 'cron' && record.cronTaskId === taskId);
+  }
+
+  async function getExecution(task, owner) {
+    const existing = executionFor(task.id);
+    if (existing) return existing;
+    const record = createSessionRecord({
+      workspace: owner.workspace,
+      title: `定时任务 · ${normalizePreviewText(task.prompt, 42) || task.id}`,
+      assistantName: owner.assistantName,
+      projectId: owner.projectId,
+      connectorIds: owner.connectorIds,
+      agentMode: owner.agentMode,
+      permissionMode: owner.permissionMode,
+      sessionKind: 'cron',
+      sourceSessionId: owner.id,
+      cronTaskId: task.id,
+      parentSessionId: owner.id,
+    });
+    if (record.projectId) await linkSessionToProject(record.projectId, record);
+    return record;
+  }
+
+  async function execute(taskId, manual) {
+    await initialize();
+    const runId = randomUUID();
+    const claimed = await updateCronTaskStore(filePath, tasks => {
+      const task = tasks.find(entry => entry.id === taskId);
+      if (!task) { if (manual) throw new Error('Task not found.'); return null; }
+      if (stopped || task.runId) { if (manual) throw new Error('定时任务正在执行或调度器已停止。'); return null; }
+      if (task.durable === false && task.desktopHostId !== hostId) return null;
+      if (!manual && (task.enabled === false || !Number.isFinite(task.nextRunAt) || task.nextRunAt > now())) return null;
+      const owner = ownerFor(task);
+      if (!owner) { if (manual) throw new Error('归属会话不存在，不能执行该任务。'); return null; }
+      if (owner.projectId) {
+        const project = readProjectSync(owner.projectId);
+        if (!project || project.archivedAt) { if (manual) throw new Error('项目已删除或归档。'); return null; }
+      }
+      if (executionFor(taskId)?.busy) { if (manual) throw new Error('定时任务会话正在执行，请稍后再试。'); return null; }
+      Object.assign(task, { runId, runHostId: hostId, status: 'running', lastFiredAt: now() });
+      return { ...task };
+    });
+    if (!claimed) return null;
+    let execution;
+    try {
+      execution = await getExecution(claimed, ownerFor(claimed));
+      // Recheck deletion/pause after async session creation, before starting work.
+      const current = (await readCronTaskStore(filePath)).find(task => task.id === taskId);
+      if (!current || (!manual && current.enabled === false) || stopped) {
+        await updateCronTaskStore(filePath, tasks => {
+          const task = tasks.find(entry => entry.id === taskId && entry.runId === runId);
+          if (task) { delete task.runId; delete task.runHostId; task.status = 'idle'; }
+        });
+        return null;
+      }
+      const window = getMainWindow();
+      await runSessionPrompt({
+        sessionRecord: execution,
+        sender: window && !window.isDestroyed() ? window.webContents : null,
+        runtimePrompt: claimed.prompt,
+        visibleUserPrompt: `⏰ 定时任务${manual ? '（手动触发）' : ''}：${claimed.prompt}`,
+        failOnApiError: true,
+      });
+      await updateCronTaskStore(filePath, tasks => {
+        const index = tasks.findIndex(task => task.id === taskId && task.runId === runId);
+        if (index < 0) return; // A delete during execution must stay deleted.
+        const task = tasks[index];
+        if (!task.recurring) { tasks.splice(index, 1); return; }
+        Object.assign(task, { status: 'idle', lastError: null, lastCompletedAt: now(), nextRunAt: nextRunAt(task, now()) });
+        delete task.runId;
+        delete task.runHostId;
+      });
+      return execution;
+    } catch (error) {
+      await updateCronTaskStore(filePath, tasks => {
+        const task = tasks.find(entry => entry.id === taskId && entry.runId === runId);
+        if (!task) return;
+        task.enabled = false;
+        task.status = 'failed';
+        task.lastError = error instanceof Error ? error.message : String(error);
+        delete task.runId;
+        delete task.runHostId;
+      });
+      throw error;
+    }
+  }
+
+  function launch(taskId, manual = false) {
+    if (activeRuns.has(taskId)) return Promise.reject(new Error('定时任务正在执行，请稍后再试。'));
+    const operation = execute(taskId, manual);
+    activeRuns.set(taskId, operation);
+    void operation.finally(() => activeRuns.delete(taskId)).catch(() => {});
+    return operation;
+  }
+
+  async function tick() {
+    if (stopped || ticking) return;
+    ticking = true;
+    try {
+      await initialize();
+      await updateCronTaskStore(filePath, tasks => {
+        for (let index = tasks.length - 1; index >= 0; index--) {
+          const task = tasks[index];
+          if (task.runId) continue;
+          const staleSession = task.durable === false && task.desktopHostId !== hostId;
+          const expired = task.enabled !== false && task.recurring && now() - task.createdAt > recurringMaxAge;
+          if (staleSession || expired || (task.ownerSessionId && !sessions.has(task.ownerSessionId))) {
+            tasks.splice(index, 1);
+            continue;
+          }
+          if (!Number.isFinite(task.nextRunAt)) task.nextRunAt = nextRunAt(task, task.createdAt ?? now());
+        }
+      });
+      for (const task of await readCronTaskStore(filePath)) {
+        if (task.enabled === false || task.runId || activeRuns.has(task.id)) continue;
+        if (Number.isFinite(task.nextRunAt) && task.nextRunAt <= now()) {
+          void launch(task.id).catch(error => console.warn('[moss-cron] task run failed:', error?.message || error));
+        }
+      }
+    } finally { ticking = false; }
+  }
+
+  function start() {
+    if (timer) return;
+    stopped = false;
+    const check = () => void tick().catch(error => console.warn('[moss-cron] scheduler failed:', error?.message || error));
+    timer = setInterval(check, 20_000);
+    timer.unref?.();
+    check();
+  }
+
+  function stop() { stopped = true; clearInterval(timer); timer = null; }
+
+  async function removeTasksForSession(sessionId) {
+    await initialize();
+    return updateCronTaskStore(filePath, tasks => {
+      const removed = tasks.filter(task => task.ownerSessionId === sessionId);
+      for (let index = tasks.length - 1; index >= 0; index--) {
+        if (tasks[index].ownerSessionId === sessionId) tasks.splice(index, 1);
+      }
+      return removed;
+    });
   }
 
   ipcMain.handle('agent:cron-list', async () => {
-    loadCronBindings();
-    const tasks = await readMossCronTasks();
-    const nowMs = Date.now();
-    return {
-      tasks: tasks.map((task) => {
-        const ownerId = resolveCronOwnerSessionId(task.id);
-        const ownerRecord = ownerId ? sessions.get(ownerId) : null;
-        const executionRecord = findCronExecutionSession(task.id);
-        const fields = parseMossCronExpression(task.cron);
-        const enabled = task.enabled !== false;
-        return {
-          id: task.id,
-          cron: task.cron,
-          prompt: task.prompt,
-          recurring: Boolean(task.recurring),
-          createdAt: task.createdAt ?? null,
-          lastFiredAt: task.lastFiredAt ?? null,
-          enabled,
-          orphaned: !ownerRecord,
-          ownerSessionId: ownerRecord?.id ?? null,
-          ownerSessionTitle: ownerRecord?.title ?? null,
-          executionSessionId: executionRecord?.id ?? null,
-          executionSessionTitle: executionRecord?.title ?? null,
-          nextRunAt: enabled && fields ? computeNextCronRunMs(fields, nowMs) : null,
-        };
-      }),
-    };
+    await initialize();
+    return { tasks: (await readCronTaskStore(filePath)).map(task => {
+      const owner = ownerFor(task);
+      const execution = executionFor(task.id);
+      return {
+        ...task,
+        enabled: task.enabled !== false,
+        orphaned: !owner,
+        ownerSessionId: owner?.id ?? null,
+        ownerSessionTitle: owner?.title ?? null,
+        executionSessionId: execution?.id ?? null,
+        executionSessionTitle: execution?.title ?? null,
+        nextRunAt: task.enabled === false ? null : task.nextRunAt ?? nextRunAt(task, task.createdAt ?? now()),
+      };
+    }) };
   });
 
   ipcMain.handle('agent:cron-remove', async (_event, { taskId }) => {
-    const tasks = await readMossCronTasks();
-    const remaining = tasks.filter((t) => t.id !== taskId);
-    if (remaining.length === tasks.length) return { ok: false, error: 'Task not found.' };
-    await writeMossCronTasks(remaining);
-    cronSessionBindings.delete(taskId);
-    cronUnresolvableSince.delete(taskId);
-    persistCronBindings();
-    return { ok: true };
+    await initialize();
+    return updateCronTaskStore(filePath, tasks => {
+      const index = tasks.findIndex(task => task.id === taskId);
+      if (index < 0) return { ok: false, error: 'Task not found.' };
+      tasks.splice(index, 1);
+      return { ok: true };
+    });
   });
 
   ipcMain.handle('agent:cron-toggle', async (_event, { taskId, enabled }) => {
-    const tasks = await readMossCronTasks();
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return { ok: false, error: 'Task not found.' };
-    task.enabled = Boolean(enabled);
-    await writeMossCronTasks(tasks);
-    return { ok: true, enabled: task.enabled };
+    await initialize();
+    return updateCronTaskStore(filePath, tasks => {
+      const task = tasks.find(entry => entry.id === taskId);
+      if (!task) return { ok: false, error: 'Task not found.' };
+      if (enabled && !task.enabled) {
+        task.nextRunAt = task.lastError ? now() : nextRunAt(task, now());
+        task.lastError = null;
+        if (!task.runId) task.status = 'idle';
+      }
+      task.enabled = Boolean(enabled);
+      return { ok: true, enabled: task.enabled };
+    });
   });
 
   ipcMain.handle('agent:cron-run-now', async (_event, { taskId }) => {
-    const tasks = await readMossCronTasks();
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return { ok: false, error: 'Task not found.' };
-    const sessionRecord = findSessionForCronTask(task.id);
-    if (!sessionRecord) return { ok: false, error: '归属会话不存在（孤儿任务）' };
-    if (sessionRecord.projectId) {
-      const project = readProjectSync(sessionRecord.projectId);
-      if (!project || project.archivedAt) {
-        return { ok: false, error: '项目已删除或项目记录不存在，不能再执行该定时任务。' };
-      }
-    }
-    const executionSession = await getOrCreateCronExecutionSession(task, sessionRecord);
-    if (executionSession.busy) return { ok: false, error: '定时任务会话正在执行，请稍后再试' };
-    const mainWindow = getMainWindow();
-    if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'Window not ready.' };
-    task.lastFiredAt = Date.now();
-    await writeMossCronTasks(tasks);
-    void runSessionPrompt({
-      sessionRecord: executionSession,
-      sender: mainWindow.webContents,
-      runtimePrompt: task.prompt,
-      visibleUserPrompt: `⏰ 定时任务（手动触发）：${task.prompt}`,
-    }).catch((err) => {
-      console.warn('[moss-cron] manual run failed:', err?.message || err);
-    });
-    return { ok: true, sessionId: executionSession.id };
+    try {
+      // Await completion: a successful dispatch is not a successful run.
+      const execution = await launch(taskId, true);
+      return execution ? { ok: true, sessionId: execution.id } : { ok: false, error: '任务未执行。' };
+    } catch (error) { return { ok: false, error: error?.message || String(error) }; }
   });
 
-  return {
-    bindNewTasks: bindNewCronTasks,
-    readTaskIds: readMossCronTaskIds,
-    removeTasksForSession: removeCronTasksForSession,
-    start: startMossCronScheduler,
-  };
+  return { hostId, start, stop, tick, removeTasksForSession, waitForIdle: () => Promise.allSettled([...activeRuns.values()]) };
 }

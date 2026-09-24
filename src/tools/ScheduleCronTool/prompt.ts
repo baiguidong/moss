@@ -1,4 +1,5 @@
-import { DEFAULT_CRON_JITTER_CONFIG } from '../../utils/cronTasks.js'
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
+import { DEFAULT_CRON_JITTER_CONFIG, getDesktopCronHostId } from '../../utils/cronTasks.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 
 export const DEFAULT_MAX_AGE_DAYS =
@@ -25,12 +26,27 @@ export const CRON_DELETE_TOOL_NAME = 'CronDelete'
 export const CRON_LIST_TOOL_NAME = 'CronList'
 
 export function buildCronCreateDescription(durableEnabled: boolean): string {
+  if (getSessionRuntimeContext()?.cron) return 'Schedule a persistent prompt on Moss Server, including when desktop is offline.'
+  if (getDesktopCronHostId()) return 'Schedule a prompt through Moss Desktop. Runs while the app is running; durable: true survives app restarts.'
   return durableEnabled
     ? 'Schedule a prompt to run at a future time — either recurring on a cron schedule, or once at a specific time. Pass durable: true to persist to .moss/scheduled_tasks.json; otherwise session-only.'
     : 'Schedule a prompt to run at a future time within this Claude session — either recurring on a cron schedule, or once at a specific time.'
 }
 
 export function buildCronCreatePrompt(durableEnabled: boolean): string {
+  if (getSessionRuntimeContext()?.cron) return `Schedule a persistent cloud task on Moss Server. Use a standard five-field cron and timezone (IANA, e.g. Asia/Shanghai); if omitted, server timezone applies.
+All cloud tasks survive session/server restarts regardless of durable. Recurring tasks continue until cancelled; there is no seven-day expiry. One-shot tasks are removed after successful completion.
+Each task runs in its own reusable conversation with the source workspace and runtime configuration, without copying source chat history. Put all necessary instructions in prompt.
+The desktop can be offline. Desktop-dependent tools are unavailable; operations requiring human confirmation pause the task. Missed occurrences coalesce into one run. Failed/interrupted runs pause for manual retry.
+Returns a task ID for CronDelete. The desktop cloud task list shows status and the execution conversation.`
+  if (getDesktopCronHostId()) {
+    return `Schedule a recurring or one-shot prompt through Moss Desktop using a standard 5-field cron expression in the computer's local timezone.
+The desktop app must be running, but its window may be closed. The scheduler creates a separate execution conversation with the owner's workspace, project, connectors and permission mode; include the instructions needed to perform the task in prompt.
+durable: false (default) is valid only during this desktop app run. durable: true persists in the desktop cron_tasks.json and survives app restarts; use it only when the user asks for a persistent schedule.
+Missed occurrences are coalesced into one catch-up execution. A busy task waits until its execution conversation is free. A failed or interrupted execution pauses the task for manual review/retry; one-shot tasks are removed only after success.
+recurring: false runs once at the next matching date. Pin the minute, hour, day and month for a specific reminder. Recurring tasks expire after ${DEFAULT_MAX_AGE_DAYS} days. Tell the user about this limit.
+Returns a job ID for ${CRON_DELETE_TOOL_NAME}.`
+  }
   const durabilitySection = durableEnabled
     ? `## Durability
 
@@ -81,6 +97,8 @@ Returns a job ID you can pass to ${CRON_DELETE_TOOL_NAME}.`
 
 export const CRON_DELETE_DESCRIPTION = 'Cancel a scheduled cron job by ID'
 export function buildCronDeletePrompt(durableEnabled: boolean): string {
+  if (getSessionRuntimeContext()?.cron) return 'Cancel a cloud scheduled task owned by this conversation.'
+  if (getDesktopCronHostId()) return 'Cancel a scheduled task owned by this conversation in Moss Desktop.'
   return durableEnabled
     ? `Cancel a cron job previously scheduled with ${CRON_CREATE_TOOL_NAME}. Removes it from .moss/scheduled_tasks.json (durable jobs) or the in-memory session store (session-only jobs).`
     : `Cancel a cron job previously scheduled with ${CRON_CREATE_TOOL_NAME}. Removes it from the in-memory session store.`
@@ -88,6 +106,8 @@ export function buildCronDeletePrompt(durableEnabled: boolean): string {
 
 export const CRON_LIST_DESCRIPTION = 'List scheduled cron jobs'
 export function buildCronListPrompt(durableEnabled: boolean): string {
+  if (getSessionRuntimeContext()?.cron) return 'List cloud scheduled tasks owned by this conversation, including paused tasks and errors.'
+  if (getDesktopCronHostId()) return 'List tasks owned by this conversation in Moss Desktop, including durable tasks and tasks valid only during this app run.'
   return durableEnabled
     ? `List all cron jobs scheduled via ${CRON_CREATE_TOOL_NAME}, both durable (.moss/scheduled_tasks.json) and session-only.`
     : `List all cron jobs scheduled via ${CRON_CREATE_TOOL_NAME} in this session.`

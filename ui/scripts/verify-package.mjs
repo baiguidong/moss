@@ -417,6 +417,18 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
   requireFile(path.join(paths.resourcesDir, 'shared', 'security', 'credential-crypto.mjs'), 'credential crypto');
+  const cronStorePath = requireFile(path.join(paths.resourcesDir, 'shared', 'cron-task-store.mjs'), 'cron task store');
+  const cronStore = await import(pathToFileURL(cronStorePath).href);
+  const cronTestRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-package-cron-'));
+  try {
+    const cronTestFile = path.join(cronTestRoot, 'cron_tasks.json');
+    await cronStore.updateCronTaskStore(cronTestFile, tasks => tasks.push({ id: 'package-check' }));
+    if ((await cronStore.readCronTaskStore(cronTestFile))[0]?.id !== 'package-check') {
+      throw new Error('Packaged cron task store failed its write/read check.');
+    }
+  } finally {
+    await fsp.rm(cronTestRoot, { recursive: true, force: true });
+  }
   requireFile(path.join(paths.resourcesDir, 'library', 'library_parser.py'), 'Library parser');
   requireFile(path.join(paths.resourcesDir, 'licenses', 'open-file-viewer.LICENSE'), 'Open File Viewer license');
   requireFile(path.join(paths.resourcesDir, 'library', 'engine-manifest.json'), 'Library engine manifest');

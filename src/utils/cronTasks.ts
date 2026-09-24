@@ -1,4 +1,6 @@
-// Scheduled prompts, stored in <project>/.moss/scheduled_tasks.json.
+// Scheduled prompts. Desktop uses <MOSS_CONFIG_DIR>/cron_tasks.json as its
+// authoritative store. CLI uses <project>/.moss/scheduled_tasks.json for durable
+// tasks and process memory for session-only tasks.
 //
 // Tasks come in two flavors:
 //   - One-shot (recurring: false/undefined) — fire once, then auto-delete.
@@ -9,7 +11,7 @@
 // File format:
 //   { "tasks": [{ id, cron, prompt, createdAt, recurring? }] }
 //
-// Global cron file (<MOSS_CONFIG_DIR>/cron_tasks.json) mirrors all tasks for app access.
+// CLI also mirrors tasks to the global file for app access.
 
 import { randomUUID } from 'crypto'
 import { readFileSync } from 'fs'
@@ -29,6 +31,13 @@ import { getFsImplementation } from './fsOperations.js'
 import { safeParseJSON } from './json.js'
 import { logError } from './log.js'
 import { jsonStringify } from './slowOperations.js'
+import { getSessionRuntimeContext, getTaskScopeContext } from './sessionIdContext.js'
+import { readCronTaskStore, updateCronTaskStore } from '../../shared/cron-task-store.mjs'
+
+export function getDesktopCronHostId(): string | undefined {
+  const runtime = getSessionRuntimeContext()
+  return runtime?.executionEnvironment === 'desktop' ? runtime.desktopCronHostId : undefined
+}
 
 export type CronTask = {
   id: string
@@ -45,21 +54,26 @@ export type CronTask = {
    * never-fired task uses createdAt (correct for pinned crons like
    * `30 14 27 2 *` whose next-from-now is next year); a fired-before task
    * reconstructs the same `nextFireAt` the prior process had in memory.
-   * Never set for one-shots (they're deleted on fire).
+   * Desktop also records one-shot starts; it deletes them only on success.
    */
   lastFiredAt?: number
   /** When true, the task reschedules after firing instead of being deleted. */
   recurring?: boolean
   /**
-   * Runtime-only flag. false → session-scoped (never written to disk).
-   * File-backed tasks leave this undefined; writeCronTasks strips it so
-   * the on-disk shape stays { id, cron, prompt, createdAt, lastFiredAt?, recurring? }.
+   * Desktop persists this flag: false means valid only for desktopHostId.
+   * CLI uses it at runtime only; project-file tasks are implicitly durable.
    */
   durable?: boolean
+  ownerSessionId?: string
+  desktopHostId?: string
+  enabled?: boolean
+  status?: string
+  lastError?: string | null
+  timezone?: string
+  nextRunAt?: number | null
   /**
-   * Runtime-only. When set, the task was created by an in-process teammate.
-   * The scheduler routes fires to that teammate's queue instead of the main
-   * REPL's. Never written to disk (teammate crons are always session-only).
+   * Identifies the creating teammate. CLI routes fires to that teammate's
+   * queue; desktop runs tasks in a separate execution conversation.
    */
   agentId?: string
 }
@@ -74,6 +88,7 @@ const CRON_FILE_REL = join('.moss', 'scheduled_tasks.json')
  * SDK daemon, which has no bootstrap state).
  */
 export function getCronFilePath(dir?: string): string {
+  if (dir === undefined && getDesktopCronHostId()) return getGlobalCronFilePath()
   return join(dir ?? getProjectRoot(), CRON_FILE_REL)
 }
 
@@ -179,7 +194,8 @@ export async function writeCronTasks(
  * Append a task. Returns the generated id. Caller is responsible for having
  * already validated the cron string (the tool does this via validateInput).
  *
- * When `durable` is false the task is held in process memory only
+ * Desktop writes ownership and lifetime into its shared store atomically.
+ * In CLI, when `durable` is false the task is held in process memory only
  * (bootstrap/state.ts) — it fires on schedule this session but is never
  * written to .moss/scheduled_tasks.json and dies with the process. The
  * scheduler merges session tasks into its tick loop directly, so no file
@@ -191,7 +207,10 @@ export async function addCronTask(
   recurring: boolean,
   durable: boolean,
   agentId?: string,
+  timezone?: string,
 ): Promise<string> {
+  const provider = getSessionRuntimeContext()?.cron
+  if (provider) return (await provider.create({ cron, prompt, recurring, agentId, timezone })).id
   // Short ID — 8 hex chars is plenty for MAX_JOBS=50, avoids slice/prefix
   // juggling between the tool layer (shows short IDs) and disk.
   const id = randomUUID().slice(0, 8)
@@ -201,6 +220,15 @@ export async function addCronTask(
     prompt,
     createdAt: Date.now(),
     ...(recurring ? { recurring: true } : {}),
+  }
+  const desktopHostId = getDesktopCronHostId()
+  if (desktopHostId) {
+    const ownerSessionId = getTaskScopeContext()?.sessionId
+    if (!ownerSessionId) throw new Error('Desktop cron requires an owning session.')
+    await updateCronTaskStore(getGlobalCronFilePath(), tasks => {
+      tasks.push({ ...task, durable, ownerSessionId, desktopHostId, ...(agentId ? { agentId } : {}) })
+    })
+    return id
   }
   if (!durable) {
     addSessionCronTask({ ...task, ...(agentId ? { agentId } : {}) })
@@ -231,6 +259,19 @@ export async function removeCronTasks(
   dir?: string,
 ): Promise<void> {
   if (ids.length === 0) return
+  if (dir === undefined && getSessionRuntimeContext()?.cron) {
+    await getSessionRuntimeContext()!.cron!.remove(ids)
+    return
+  }
+  if (dir === undefined && getDesktopCronHostId()) {
+    const ownerSessionId = getTaskScopeContext()?.sessionId
+    await updateCronTaskStore(getGlobalCronFilePath(), tasks => {
+      for (let index = tasks.length - 1; index >= 0; index--) {
+        if (ids.includes(tasks[index].id) && tasks[index].ownerSessionId === ownerSessionId) tasks.splice(index, 1)
+      }
+    })
+    return
+  }
   // Sweep session store first. If every id was accounted for there, we're
   // done — skip the file read entirely. removeSessionCronTasks is a no-op
   // (returns 0) on miss, so pre-existing durable-delete paths fall through
@@ -288,6 +329,15 @@ export async function markCronTasksFired(
  * have no session store to merge with.
  */
 export async function listAllCronTasks(dir?: string): Promise<CronTask[]> {
+  if (dir === undefined && getSessionRuntimeContext()?.cron) return getSessionRuntimeContext()!.cron!.list()
+  const desktopHostId = dir === undefined ? getDesktopCronHostId() : undefined
+  if (desktopHostId) {
+    const ownerSessionId = getTaskScopeContext()?.sessionId
+    return (await readCronTaskStore<CronTask>(getGlobalCronFilePath())).filter(task =>
+      task.ownerSessionId === ownerSessionId &&
+      (task.durable !== false || task.desktopHostId === desktopHostId),
+    )
+  }
   const fileTasks = await readCronTasks(dir)
   if (dir !== undefined) return fileTasks
   const sessionTasks = getSessionCronTasks().map(t => ({
@@ -458,45 +508,13 @@ function getGlobalCronFilePath(): string {
   return join(getMossConfigHomeDir(), GLOBAL_CRON_FILE)
 }
 
-async function readGlobalCronTasks(): Promise<CronTask[]> {
-  const fs = getFsImplementation()
-  const filePath = getGlobalCronFilePath()
-  try {
-    const raw = await fs.readFile(filePath, { encoding: 'utf-8' })
-    const parsed = safeParseJSON(raw, false)
-    if (!parsed || typeof parsed !== 'object') return []
-    const tasks = (parsed as { tasks?: CronTask[] }).tasks
-    if (!Array.isArray(tasks)) return []
-    return tasks.filter(
-      t =>
-        t &&
-        typeof t.id === 'string' &&
-        typeof t.cron === 'string' &&
-        typeof t.prompt === 'string' &&
-        typeof t.createdAt === 'number',
-    )
-  } catch {
-    return []
-  }
-}
-
-async function writeGlobalCronTasks(tasks: CronTask[]): Promise<void> {
-  const fs = getFsImplementation()
-  const filePath = getGlobalCronFilePath()
-  const dir = dirname(filePath)
-  await mkdir(dir, { recursive: true })
-  await writeFile(filePath, jsonStringify({ tasks }, null, 2) + '\n', 'utf-8')
-}
-
 /**
  * Add a task to the global cron file for app access.
  * Called alongside addSessionCronTask so apps can list all tasks.
  */
 export async function addCronTaskToGlobalFile(task: CronTask): Promise<void> {
   try {
-    const tasks = await readGlobalCronTasks()
-    tasks.push(task)
-    await writeGlobalCronTasks(tasks)
+    await updateCronTaskStore(getGlobalCronFilePath(), tasks => { tasks.push(task) })
   } catch (e) {
     logForDebugging(`[GlobalCron] failed to add task: ${e}`)
   }
@@ -508,10 +526,11 @@ export async function addCronTaskToGlobalFile(task: CronTask): Promise<void> {
  */
 export async function removeCronTasksFromGlobalFile(ids: string[]): Promise<void> {
   try {
-    const tasks = await readGlobalCronTasks()
-    const idSet = new Set(ids)
-    const remaining = tasks.filter(t => !idSet.has(t.id))
-    await writeGlobalCronTasks(remaining)
+    await updateCronTaskStore(getGlobalCronFilePath(), tasks => {
+      for (let index = tasks.length - 1; index >= 0; index--) {
+        if (ids.includes(tasks[index].id)) tasks.splice(index, 1)
+      }
+    })
   } catch (e) {
     logForDebugging(`[GlobalCron] failed to remove tasks: ${e}`)
   }

@@ -281,6 +281,20 @@ export async function parseRemoteDirectError(prefix, response) {
     : `${prefix}: ${response.status} ${response.statusText}`;
 }
 
+export async function requestRemoteCron({ serverUrl, authToken, operation, taskId, enabled }) {
+  const operations = { list: ['GET', ''], delete: ['DELETE', ''], enabled: ['POST', '/enabled'], run: ['POST', '/run'] };
+  const config = operations[operation];
+  if (!config || (operation !== 'list' && !taskId)) throw new Error('Invalid cron request.');
+  const [method, suffix] = config;
+  const endpoint = `/api/v1/cron/tasks${operation === 'list' ? '' : `/${encodeURIComponent(taskId)}${suffix}`}`;
+  const response = await remoteDirectFetch(`${serverUrl}${endpoint}`, {
+    method, headers: { authorization: `Bearer ${authToken}`, 'content-type': 'application/json' },
+    ...(operation === 'enabled' ? { body: JSON.stringify({ enabled }) } : {}),
+  });
+  if (!response.ok) throw new Error(await parseRemoteDirectError('云端定时任务请求失败', response));
+  return response.json();
+}
+
 export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
   let response;
   try {

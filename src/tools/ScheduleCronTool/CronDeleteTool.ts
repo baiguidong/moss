@@ -1,3 +1,4 @@
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import { z } from 'zod/v4'
 import type { ValidationResult } from '../../Tool.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
@@ -52,7 +53,7 @@ export const CronDeleteTool = buildTool({
     return buildCronDeletePrompt(isDurableCronEnabled())
   },
   getPath() {
-    return getCronFilePath()
+    return getSessionRuntimeContext()?.cron ? '' : getCronFilePath()
   },
   async validateInput(input): Promise<ValidationResult> {
     const tasks = await listAllCronTasks()

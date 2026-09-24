@@ -1,3 +1,5 @@
+import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
+import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
 const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
@@ -4045,6 +4047,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   return {
     cwd,
     executionEnvironment: 'desktop',
+    desktopCronHostId,
     image: desktopSettings.image ? { ...desktopSettings.image } : undefined,
     model: desktopSettings.model,
     fastModel: desktopSettings.fastModel || undefined,
@@ -5856,7 +5859,6 @@ async function runSessionPromptNow({
     maybeUpdateUnderlyingSessionId(sessionRecord, runtime.sessionId);
     schedulePersistSession(sessionRecord, true);
   }
-  const cronIdsBeforeTurn = await readMossCronTaskIds();
 
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
   let activeVisibleUserEvent = null;
@@ -6140,7 +6142,6 @@ async function runSessionPromptNow({
           sessionId: sessionRecord.id,
         });
       }
-      void bindNewCronTasks(cronIdsBeforeTurn, sessionRecord);
     }
   }
 }
@@ -8761,6 +8762,8 @@ async function syncRemoteDirectSessionsFromServer() {
             ? remoteSession.assistantName
             : null,
           agentMode: 'remote-direct',
+          sessionKind: remoteSession.sessionKind === 'cron' ? 'cron' : 'chat',
+          cronTaskId: remoteSession.cronTaskId,
           originChannel,
           underlyingSessionId: serverSessionId,
         });
@@ -8776,6 +8779,8 @@ async function syncRemoteDirectSessionsFromServer() {
       });
       sessionRecord.agentMode = 'remote-direct';
       sessionRecord.originChannel = originChannel;
+      sessionRecord.sessionKind = remoteSession.sessionKind === 'cron' ? 'cron' : 'chat';
+      sessionRecord.cronTaskId = remoteSession.cronTaskId || null;
       sessionRecord.underlyingSessionId = serverSessionId;
       sessionRecord.createdAt = Math.min(
         remoteSessionTimestamp(sessionRecord.createdAt, createdAt),
@@ -8844,6 +8849,14 @@ async function syncRemoteDirectSessionsFromServer() {
       synchronized.push(sessionRecord);
     }
 
+    for (const remote of remoteSessions) {
+      if (remote.sessionKind !== 'cron') continue;
+      const record = findRemoteDirectSessionRecord(remote.sessionId);
+      if (!record) continue;
+      record.sourceSessionId = findRemoteDirectSessionRecord(remote.sourceSessionId)?.id || null;
+      schedulePersistSession(record, true);
+      emitSessionMeta(record);
+    }
     lastRemoteSessionSyncErrorMessage = '';
     return synchronized;
   })().finally(() => {
@@ -10902,10 +10915,10 @@ async function readWorkspaceFile(sessionRecord, filePath) {
   };
 }
 const {
-  bindNewTasks: bindNewCronTasks,
-  readTaskIds: readMossCronTaskIds,
+  hostId: desktopCronHostId,
   removeTasksForSession: removeCronTasksForSession,
   start: startMossCronScheduler,
+  stop: stopMossCronScheduler,
 } = createMossCronScheduler({
   ipcMain,
   mossHome: MOSS_HOME,
@@ -11151,7 +11164,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
-  registerCronIpcHandlers();
+  registerCronIpcHandlers({ ipcMain, mossHome: MOSS_HOME });
+  registerRemoteCronIpc({
+    ipcMain,
+    request: async (operation, payload = {}) => {
+      if (!desktopSettings.remoteEnabled) throw new Error('请先在设置中启用云端连接。');
+      return requestRemoteCron({ ...await resolveRemoteDirectConnection(), operation, taskId: payload.taskId, enabled: payload.enabled });
+    },
+    syncSessions: syncRemoteDirectSessionsFromServer,
+    findSession: findRemoteDirectSessionRecord,
+  });
   localAuditService = createLocalAuditService({
     dbPath: AUDIT_DB_PATH,
     getLocalSessions: getLocalAuditSessionSnapshots,
@@ -11300,17 +11322,20 @@ app.on('window-all-closed', () => {
   // On macOS the app stays alive after the last window closes. Retire live
   // teams before disposing their embedded runtimes so they reopen as history.
   void Promise.allSettled(Array.from(sessions.values()).map(async (sessionRecord) => {
+    if (sessionRecord.sessionKind === 'cron') return;
     await shutdownSessionAgentTeam(sessionRecord);
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
   })).then(() => agentTeamsService?.checkNow());
   for (const sessionRecord of subAgentSessions.values()) {
+    if (sessions.get(sessionRecord.parentSessionId)?.sessionKind === 'cron') continue;
     closeWorkspaceWatcher(sessionRecord);
     disposeRuntime(sessionRecord);
   }
 });
 
 app.on('before-quit', (event) => {
+  stopMossCronScheduler();
   if (!agentTeamShutdownComplete) {
     const activeTeamSessions = Array.from(sessions.values()).filter(hasActiveAgentTeam);
     if (activeTeamSessions.length > 0) {

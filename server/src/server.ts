@@ -1,3 +1,6 @@
+import { importLegacyCloudCron } from './cronLegacyImport.js'
+import { CloudCronScheduler } from './cronScheduler.js'
+import { CronRepository, assertCronUserCanRun } from './model/repositories/cron.js'
 import { createHash, randomUUID } from 'crypto'
 import { createReadStream, existsSync } from 'fs'
 import {
@@ -115,6 +118,9 @@ function isJsonBody(value: unknown): value is JsonBody {
 function serializeSession(session: {
   sessionId: string
   transcriptSessionId: string
+  sessionKind?: 'chat' | 'cron'
+  cronTaskId?: string
+  sourceSessionId?: string
   cwd: string
   userId: string
   orgId: string
@@ -136,6 +142,9 @@ function serializeSession(session: {
   return {
     sessionId: session.sessionId,
     transcriptSessionId: session.transcriptSessionId,
+    sessionKind: session.sessionKind,
+    cronTaskId: session.cronTaskId,
+    sourceSessionId: session.sourceSessionId,
     workDir: session.cwd,
     userId: session.userId,
     orgId: session.orgId,
@@ -977,6 +986,10 @@ export function startServer(
     cloudObjectStore,
   )
   const oauthLoginService = new OAuthLoginService(authService)
+  const cronStartup = importLegacyCloudCron(runtime.store.db, config).catch(error => logger.error(`Cron legacy import: ${String(error)}`))
+  const cronRepository = new CronRepository(runtime.store.db)
+  const cronScheduler = new CloudCronScheduler(cronRepository, runtime,
+    owner => assertCronUserCanRun(runtime.store.db, owner), message => logger.error(message))
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -1994,6 +2007,50 @@ export function startServer(
         return
       }
 
+      if (pathname === '/api/v1/cron/tasks') {
+        await cronStartup
+        await authService.requireCurrentScope(auth, req.method === 'GET' ? 'sessions:list' : 'sessions:create')
+        if (req.method === 'GET') {
+          writeJson(res, 200, { tasks: await cronRepository.list(auth) })
+          return
+        }
+        if (req.method === 'POST') {
+          const body = await readJsonBody(req)
+          if (typeof body.ownerSessionId !== 'string') throw new HttpError(400, 'Missing ownerSessionId')
+          try { writeJson(res, 201, { task: await cronRepository.create(auth, body.ownerSessionId, body) }) }
+          catch (error) { throw new HttpError(400, error instanceof Error ? error.message : String(error)) }
+          return
+        }
+      }
+      const cronMatch = pathname.match(/^\/api\/v1\/cron\/tasks\/([^/]+)(?:\/(run|enabled))?$/)
+      if (cronMatch) {
+        await authService.requireCurrentScope(auth, 'sessions:create')
+        let id: string
+        try {
+          id = decodeURIComponent(cronMatch[1]!)
+        } catch {
+          throw new HttpError(400, 'Invalid task ID encoding')
+        }
+        if (!(await cronRepository.get(id, auth))) throw new HttpError(404, 'Task not found')
+        if (req.method === 'DELETE' && !cronMatch[2]) {
+          await cronRepository.remove(id, auth)
+          writeJson(res, 200, { ok: true })
+          return
+        }
+        if (req.method === 'POST' && cronMatch[2] === 'enabled') {
+          const body = await readJsonBody(req)
+          if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean')
+          await cronRepository.toggle(id, auth, body.enabled)
+          writeJson(res, 200, { ok: true })
+          return
+        }
+        if (req.method === 'POST' && cronMatch[2] === 'run') {
+          if (!(await cronScheduler.launch(id, auth))) throw new HttpError(409, '任务正在执行，或当前用户/服务端并发额度已满。')
+          writeJson(res, 202, { ok: true, accepted: true })
+          return
+        }
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/sessions') {
         authService.requireAnyScope(auth, [
           'sessions:list',
@@ -2011,7 +2068,7 @@ export function startServer(
         // must not be imported by clients if its runner subsequently fails.
         const enrichedSessions = sessions.filter(session => session.status !== 'creating').map(session => ({
           ...session,
-          originChannel: 'desktop',
+          originChannel: session.sessionKind === 'cron' ? 'cron' : 'desktop',
         }))
         writeJson(res, 200, { sessions: enrichedSessions })
         return
@@ -2565,6 +2622,7 @@ export function startServer(
     server.once('error', onError)
     server.once('listening', () => {
       server.off('error', onError)
+      void cronStartup.then(() => cronScheduler.start())
       const address = server.address()
       resolvePort(typeof address === 'object' && address ? address.port : null)
     })
@@ -2579,6 +2637,8 @@ export function startServer(
     port: null,
     ready,
     stop: async () => {
+      await cronStartup
+      await cronScheduler.stop()
       await cloudStorage.close()
       agentMailService.dispose()
       wss.close()
