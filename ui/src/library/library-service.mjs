@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { LIBRARY_RESOURCE_SCHEME, parseLibraryResourceUri } from './library-resource-uri.mjs';
 
 import {
   DEFAULT_LIBRARY_DIRECTORY_SCAN,
@@ -15,7 +16,7 @@ export {
   SUPPORTED_LIBRARY_EXTENSIONS,
 } from './library-config.mjs';
 
-export const LIBRARY_RESOURCE_SCHEME = 'moss-library:';
+export { LIBRARY_RESOURCE_SCHEME, parseLibraryResourceUri } from './library-resource-uri.mjs';
 export const LIBRARY_SCHEMA_VERSION = 6;
 
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_LIBRARY_EXTENSIONS);
@@ -415,28 +416,6 @@ export function createLibraryScopeUri(kind, id, displayName = '') {
   const params = new URLSearchParams();
   if (text(displayName)) params.set('name', text(displayName).slice(0, 180));
   return `moss-library://${kind}/${resourceId}${params.size ? `?${params}` : ''}`;
-}
-
-export function parseLibraryResourceUri(value) {
-  const raw = text(value);
-  if (!raw.startsWith('moss-library://')) return null;
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error('Invalid Library resource reference.');
-  }
-  const resourceId = url.pathname.replace(/^\/+/, '');
-  if (url.protocol !== LIBRARY_RESOURCE_SCHEME || url.hostname !== 'resource'
-    || !/^[a-zA-Z0-9-]{8,80}$/.test(resourceId)) {
-    throw new Error('Invalid Library resource reference.');
-  }
-  return {
-    resourceId,
-    revision: text(url.searchParams.get('revision')) || null,
-    name: text(url.searchParams.get('name')) || null,
-    uri: raw,
-  };
 }
 
 function splitLongText(value, size, overlap) {

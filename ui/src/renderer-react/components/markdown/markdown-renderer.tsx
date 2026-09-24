@@ -1,22 +1,17 @@
 "use client";
 
 import * as React from "react";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { normalizeCodeLanguage, renderStructuredCodeBlock } from "@/components/structured/structured-renderer-registry";
+import { handleMarkdownLinkClick, markdownUrlTransform } from "@/lib/markdown-links";
+import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 
 function looksInline(code: string) {
   return !code.includes("\n");
-}
-
-function localImageUrlTransform(url: string) {
-  if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith("/") || /^[A-Za-z]:[\\/]/.test(url) || /^[~～][\\/]/.test(url)) {
-    return url;
-  }
-  return defaultUrlTransform(url);
 }
 
 export function MarkdownRenderer({
@@ -31,6 +26,8 @@ export function MarkdownRenderer({
   chatDensity?: boolean;
 }) {
   const compact = variant === "compact";
+  const [linkError, setLinkError] = React.useState("");
+  React.useEffect(() => setLinkError(""), [content]);
   return (
     <div
       className={cn(
@@ -44,7 +41,7 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        urlTransform={localImageUrlTransform}
+        urlTransform={markdownUrlTransform}
         components={{
           code: ({ className, children, ...props }: any) => {
             const code = String(children || "").replace(/\n$/, "");
@@ -77,10 +74,9 @@ export function MarkdownRenderer({
               rel="noopener noreferrer"
               className="text-primary underline-offset-4 hover:underline"
               onClick={(event) => {
-                if (typeof href === "string" && /^https?:/i.test(href)) {
-                  event.preventDefault();
-                  void window.agentDesktop.shell.openExternal(href);
-                }
+                setLinkError("");
+                void handleMarkdownLinkClick(event, href, window.agentDesktop)
+                  .catch((error) => setLinkError(`无法打开链接：${cleanIpcErrorMessage(error)}`));
               }}
             >
               {children}
@@ -134,6 +130,7 @@ export function MarkdownRenderer({
       >
         {content}
       </ReactMarkdown>
+      {linkError && <p role="alert" className="text-sm text-destructive">{linkError}</p>}
     </div>
   );
 }
