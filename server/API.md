@@ -543,6 +543,16 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 }
 ```
 
+### DELETE `/api/v1/users/:userId`
+
+需要 scope：`admin:users`，并校验当前权限和部门管理范围。部门管理员只能删除管理范围内的普通用户；不能删除当前登录用户或最后一名启用的系统管理员。
+
+返回 `{ "ok": true }`。用户被逻辑删除并从用户列表和通讯录移除，密码、已签发的访问令牌和 API Key 失效，OAuth 登录绑定及待兑换授权码清除，角色和部门关联移除，定时任务停用、会话标记为终止。用户名和邮箱可重新使用。重复删除或用户不存在返回 `404`。
+
+历史会话、消息、文件和外部知识库数据保留，不提供恢复接口。服务端会关闭该用户的 WebSocket 连接，并尝试停止运行中的会话及撤销 OpenIM 登录；运行时或 OpenIM 清理失败会记录警告，不回滚账号删除。外部知识库账号不随之删除。
+
+数据库启动时自动增加用户删除标记，兼容现有 SQLite 和 MySQL 数据。
+
 ### POST `/api/v1/users/:userId/password`
 
 需要 scope：`admin:users`
@@ -554,6 +564,47 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
   "password": "NewPassw0rd!"
 }
 ```
+
+### GET `/api/v1/usage`
+
+读取当前登录用户的服务端 Token 用量。需要当前有效的 `sessions:list`、`sessions:list:any` 或 `admin:users` 权限之一。
+
+### GET `/api/v1/users/:userId/usage`
+
+读取指定用户用量；查看自己时权限同上，查看他人需要 `admin:users`，并实时校验当前角色、组织和部门管理范围。超出范围或用户不存在返回 `404`。
+
+两个接口返回同一结构：
+
+```json
+{
+  "user": { "id": "user-id", "name": "张三" },
+  "generatedAt": 1790208000000,
+  "timezone": "Asia/Shanghai",
+  "today": "2026-09-24",
+  "historyIncomplete": false,
+  "totals": {
+    "inputTokens": 100,
+    "outputTokens": 50,
+    "cacheReadTokens": 20,
+    "cacheWriteTokens": 5,
+    "totalTokens": 175,
+    "requestCount": 1,
+    "activeDays": 1,
+    "peakDay": "2026-09-24",
+    "peakTokens": 175
+  },
+  "daily": [
+    { "day": "2026-09-24", "inputTokens": 100, "outputTokens": 50,
+      "cacheReadTokens": 20, "cacheWriteTokens": 5, "totalTokens": 175, "requestCount": 1 }
+  ]
+}
+```
+
+`user` 实际为完整的脱敏用户对象。累计 Token 为输入、输出、缓存读取、缓存写入之和，按模型请求去重；一次对话可能产生多次模型请求。云端子任务、记忆更新和定时任务使用同一采集回调，归属会话的所有者。删除会话不清除用量。
+
+统计使用首次启用用量采集时的服务端时区，接口返回 `timezone` 和 `today`；管理后台按该时区显示活跃日、单日峰值和每日／每周／累计趋势。此功能只统计服务端执行用量，不合并各客户端的本机账本，不执行 Token 限额拦截。
+
+数据库自动升级到 schema 4。首次查询会从该用户启用采集前的可用 transcript 回填历史数据，包含子任务并跳过复制的历史消息；重复的响应块仅计一次。回填只使用实际保存的 usage，不估算缺失 Token；无法读取或解析的历史记录通过 `historyIncomplete` 标识，并在后续查询重试。历史后台请求若未写入 transcript 无法回填。新采集随更新后的会话运行器启用，已运行的旧运行器需要重启会话才能采集后续请求。
 
 ### GET `/api/v1/users/:userId/sessions`
 

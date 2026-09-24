@@ -70,6 +70,10 @@ export async function updateUser(
   return authClient.patch<CreateUserResponse>(`/api/v1/users/${userId}`, data)
 }
 
+export async function deleteUser(userId: string): Promise<{ ok: true }> {
+  return authClient.delete<{ ok: true }>(`/api/v1/users/${encodeURIComponent(userId)}`)
+}
+
 export async function resetPassword(
   userId: string,
   password: string

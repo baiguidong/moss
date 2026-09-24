@@ -1,3 +1,4 @@
+import type { ModelUsageEvent } from '../usageTypes.js'
 import { randomUUID } from 'crypto'
 import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
@@ -64,6 +65,7 @@ type DirectSessionOptions = {
     request: DirectPermissionRequest,
   ) => Promise<DirectPermissionDecision>
   onAppEvent?: (event: DirectAppEvent) => Promise<DirectAppEventResult>
+  onUsage?: (event: ModelUsageEvent) => void
   agentMailEnabled?: boolean
   libraryEnabled?: boolean
   maxTurns?: number
@@ -695,6 +697,10 @@ class DirectEmbeddedHandle implements BackendHandle {
     })
   }
 
+  emitUsage(event: ModelUsageEvent): void {
+    this.#emitStdout({ type: 'moss_usage', event })
+  }
+
   emitAppEvent(event: DirectAppEvent): Promise<DirectAppEventResult> {
     if (this.#disposed) {
       return Promise.resolve({
@@ -811,6 +817,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
       options.dangerouslySkipPermissions === true ||
       settings.bypassPermissions === true
     const sessionOptions: DirectSessionOptions = {
+      onUsage: event => handle?.emitUsage(event),
       cwd: options.cwd,
       model: settings.model,
       fastModel: settings.fastModel || undefined,

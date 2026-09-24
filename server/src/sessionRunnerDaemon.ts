@@ -7,6 +7,8 @@ import { DockerBackend } from './backends/dockerBackend.js'
 import { jsonParse, jsonStringify } from './lib/json.js'
 import { openDatabase, requireSchema } from './model/index.js'
 import { SessionRepository } from './model/repositories/session.js'
+import { UsageRepository } from './model/repositories/usage.js'
+import { recordRunnerUsage } from './usageService.js'
 import type {
   RunnerClientMessage,
   RunnerServerMessage,
@@ -93,6 +95,7 @@ function extractTranscriptSessionCandidate(value: unknown): {
 
 export class SessionRunnerDaemon {
   #store!: SessionRepository
+  #usage!: UsageRepository
   readonly #backend: DockerBackend
   readonly #clients = new Set<SocketWithBuffer>()
   #heartbeatTimer: NodeJS.Timeout | undefined
@@ -134,6 +137,7 @@ export class SessionRunnerDaemon {
         throw error
       }
       this.#store = new SessionRepository(db)
+      this.#usage = new UsageRepository(db)
       this.#heartbeatTimer = setInterval(
         () => {
           if (this.#heartbeat || this.#finalized) return
@@ -480,6 +484,7 @@ export class SessionRunnerDaemon {
 
       handle.onStdoutLine(line =>
         this.#enqueueOutput(async () => {
+          if (await recordRunnerUsage(line, this.manifest.session, this.#usage)) return
           await this.#maybeUpdateTranscriptSession(line)
           await this.#store.touchAttemptHeartbeat(
             this.manifest.attempt.attemptId,

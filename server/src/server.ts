@@ -22,7 +22,7 @@ import {
   resolve,
   sep,
 } from 'path'
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, type WebSocket } from 'ws'
 import {
   advancedSettingsSchema,
   autoMemorySettingsSchema,
@@ -48,6 +48,8 @@ import { AgentMailService } from './agentMail/agentMailService.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { hasScope, type AuthContext } from './auth/token.js'
+import { UsageRepository } from './model/repositories/usage.js'
+import { UsageService } from './usageService.js'
 import { handleCloudStorageRoute } from './cloudStorage/routes.js'
 import type { ObjectStore } from './cloudStorage/s3.js'
 import { CloudStorageService } from './cloudStorage/service.js'
@@ -962,6 +964,8 @@ export function startServer(
 } {
   const adminDistDir = resolveAdminDistDir()
   const wss = new WebSocketServer({ noServer: true })
+  const websocketUsers = new WeakMap<WebSocket, AuthContext>()
+  const usageService = new UsageService(new UsageRepository(runtime.store.db), runtime.store)
   const agentMailService = new AgentMailService(
     new AgentMailRepository(runtime.store.db),
   )
@@ -1604,6 +1608,24 @@ export function startServer(
         return
       }
 
+      const userUsageMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/usage$/)
+      if (req.method === 'GET' && (pathname === '/api/v1/usage' || userUsageMatch)) {
+        const userId = userUsageMatch ? decodeURIComponent(userUsageMatch[1] || '') : auth.userId
+        if (userId === auth.userId) {
+          await authService.requireAnyCurrentScope(auth, ['sessions:list', 'sessions:list:any', 'admin:users'])
+        } else {
+          await authService.requireCurrentScope(auth, 'admin:users')
+        }
+        const actor = await authService.getUserOrNull(auth.userId, auth.orgId)
+        if (!actor) throw new HttpError(401, 'Unauthorized')
+        const currentAuth = { ...auth, role: actor.role,
+          systemRoles: actor.roles.flatMap(role => role.systemKey ? [role.systemKey] : []) }
+        const user = userId === auth.userId ? actor : await authService.getUserOrNull(userId, auth.orgId, currentAuth)
+        if (!user) throw new HttpError(404, 'Unknown user_id')
+        writeNoStoreJson(res, 200, { user, ...await usageService.getOverview({ orgId: auth.orgId, userId }) })
+        return
+      }
+
       if (req.method === 'POST' && pathname === '/api/v1/users') {
         authService.requireScope(auth, 'admin:users')
         const body = await readJsonBody(req)
@@ -1668,6 +1690,36 @@ export function startServer(
                 `Unable to synchronize OpenIM user ${result.user.id}: ${error instanceof Error ? error.message : String(error)}`,
               )
             })
+          }
+        }
+        writeJson(res, 200, result)
+        return
+      }
+
+      if (req.method === 'DELETE' && userMatch) {
+        const userId = decodeURIComponent(userMatch[1] || '')
+        const user = await authService.getUserOrNull(userId, auth.orgId, auth)
+        const result = await authService.deleteUser({ orgId: auth.orgId, userId }, auth)
+        for (const ws of wss.clients) {
+          const owner = websocketUsers.get(ws)
+          if (owner?.userId === userId && owner.orgId === auth.orgId) {
+            ws.terminate()
+          }
+        }
+        // Account deletion is already committed. Runtime/integration failures
+        // must not make the client retry an account that no longer exists.
+        const cleanup = await Promise.allSettled([
+          (async () => {
+            const sessions = await runtime.store.listUserSessions(auth.orgId, userId)
+            await Promise.all(sessions.map(session => runtime.terminateSession(session.sessionId)))
+          })(),
+          ...(openIMIntegration && user
+            ? [openIMIntegration.syncUser({ ...user, status: 'disabled' })]
+            : []),
+        ])
+        for (const outcome of cleanup) {
+          if (outcome.status === 'rejected') {
+            logger.warn(`Unable to stop deleted user ${userId} connections: ${String(outcome.reason)}`)
           }
         }
         writeJson(res, 200, result)
@@ -2281,6 +2333,7 @@ export function startServer(
 
         const ready = await runtime.ensureSessionReady(sessionId)
         wss.handleUpgrade(req, socket, head, ws => {
+          websocketUsers.set(ws, auth)
           void runtime
             .connectToAttempt(ready.attempt)
             .then((runnerSocket: net.Socket) => {

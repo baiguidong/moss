@@ -102,11 +102,14 @@ export class AuthService {
   ) {}
 
   async verifyAccessToken(token: string): Promise<AuthContext | null> {
-    return verifyAccessToken(
+    const auth = verifyAccessToken(
       token,
       await this.db.getJwtSecret(),
       await this.db.getIssuer(),
     )
+    if (!auth) return null
+    const user = await this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
+    return user?.status === 'active' ? auth : null
   }
 
   // Cloud requests and active streams must not keep permissions from a stale JWT.
@@ -137,6 +140,19 @@ export class AuthService {
     if (!hasScope(await this.getEffectiveScopes(auth.userId), scope)) {
       throw new AuthServiceError(403, `Missing current scope: ${scope}`)
     }
+  }
+
+  async requireAnyCurrentScope(auth: AuthContext, scopes: string[]): Promise<void> {
+    for (const scope of scopes) {
+      if (!hasScope(auth.scopes, scope)) continue
+      try {
+        await this.requireCurrentScope(auth, scope)
+        return
+      } catch (error) {
+        if (!(error instanceof AuthServiceError) || error.statusCode !== 403) throw error
+      }
+    }
+    throw new AuthServiceError(403, `Missing current scope: ${scopes.join(' or ')}`)
   }
 
   async introspect(token: string): Promise<{
@@ -899,6 +915,43 @@ export class AuthService {
       return {
         user: await this.withRoles(updated),
       }
+    })
+  }
+
+  async deleteUser(
+    input: { orgId: string; userId: string },
+    auth?: AuthContext,
+  ): Promise<{ ok: true }> {
+    return await this.db.transaction(async () => {
+      if (auth) {
+        await this.requireCurrentScope(auth, 'admin:users')
+        if (auth.orgId !== input.orgId) {
+          throw new AuthServiceError(403, 'You cannot manage this user')
+        }
+        const actor = await this.requireAuthUser(auth)
+        auth = {
+          ...auth,
+          role: actor.role,
+          systemRoles: (await this.db.listRolesForUser(actor.id))
+            .flatMap(role => role.systemKey ? [role.systemKey] : []),
+        }
+      }
+      const user = await this.db.getUserByIdAndOrg(input.userId, input.orgId)
+      if (!user) throw new AuthServiceError(404, 'Unknown user_id')
+      await this.assertCanManageExistingUser(user, auth)
+      await this.assertCanManageUserMutation(input.orgId, user, auth)
+      if (auth?.userId === user.id) {
+        throw new AuthServiceError(409, '不能删除当前登录用户')
+      }
+      if (
+        user.status === 'active' &&
+        (await this.userHasSystemRole(user.id, 'admin')) &&
+        (await this.db.countActiveUsersWithSystemRole(input.orgId, 'admin')) <= 1
+      ) {
+        throw new AuthServiceError(409, '至少需要保留一名启用的系统管理员')
+      }
+      await this.db.deleteUser(user.id, input.orgId)
+      return { ok: true }
     })
   }
 

@@ -626,7 +626,7 @@ export class AuthRepository {
     const row = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE id = ? LIMIT 1
+      SELECT * FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1
     `,
       )
       .get(id)) as SqlRow | undefined
@@ -637,7 +637,7 @@ export class AuthRepository {
     const row = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE email = ? LIMIT 1
+      SELECT * FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1
     `,
       )
       .get(email)) as SqlRow | undefined
@@ -648,7 +648,7 @@ export class AuthRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE name = ? ORDER BY created_at ASC
+      SELECT * FROM users WHERE name = ? AND deleted_at IS NULL ORDER BY created_at ASC
     `,
       )
       .all(name)) as SqlRow[]
@@ -662,7 +662,7 @@ export class AuthRepository {
     const row = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE id = ? AND org_id = ? LIMIT 1
+      SELECT * FROM users WHERE id = ? AND org_id = ? AND deleted_at IS NULL LIMIT 1
     `,
       )
       .get(id, orgId)) as SqlRow | undefined
@@ -673,7 +673,7 @@ export class AuthRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE org_id = ? ORDER BY created_at ASC
+      SELECT * FROM users WHERE org_id = ? AND deleted_at IS NULL ORDER BY created_at ASC
     `,
       )
       .all(orgId)) as SqlRow[]
@@ -684,7 +684,7 @@ export class AuthRepository {
     const rows = (await this.db
       .prepare(
         `
-      SELECT * FROM users WHERE role = ? ORDER BY created_at ASC
+      SELECT * FROM users WHERE role = ? AND deleted_at IS NULL ORDER BY created_at ASC
     `,
       )
       .all(role)) as SqlRow[]
@@ -739,6 +739,29 @@ export class AuthRepository {
         patch.status ?? user.status,
         id,
       )
+  }
+
+  async deleteUser(id: string, orgId: string): Promise<void> {
+    await this.transaction(async () => {
+      const deletedAt = now()
+      // Keep the identity row for historical mail/session references, but free
+      // its email and department and remove every local login credential.
+      const result = await this.db.prepare(`
+        UPDATE users SET deleted_at = ?, status = 'disabled', email = ?,
+          department_id = NULL, password_hash = NULL, password_updated_at = ?
+        WHERE id = ? AND org_id = ? AND deleted_at IS NULL
+      `).run(deletedAt, createSyntheticUserEmail(id), deletedAt, id, orgId)
+      if (!result.changes) return
+      await this.db.prepare("UPDATE api_keys SET status = 'revoked' WHERE user_id = ? AND org_id = ?").run(id, orgId)
+      await this.db.prepare('DELETE FROM oauth_authorization_codes WHERE user_id = ? AND org_id = ?').run(id, orgId)
+      await this.db.prepare('DELETE FROM oauth_identities WHERE user_id = ?').run(id)
+      await this.db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id)
+      await this.db.prepare('UPDATE cron_tasks SET enabled = 0 WHERE user_id = ? AND org_id = ?').run(id, orgId)
+      await this.db.prepare(`
+        UPDATE sessions SET status = 'terminated', desired_state = 'terminated', ended_at = COALESCE(ended_at, ?)
+        WHERE user_id = ? AND org_id = ?
+      `).run(deletedAt, id, orgId)
+    })
   }
 
   async updateUserLastLogin(id: string, lastLoginAt = now()): Promise<void> {

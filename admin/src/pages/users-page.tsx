@@ -29,6 +29,7 @@ import {
   Users,
 } from 'lucide-react'
 import { DashboardLayout } from '@/components/dashboard-layout'
+import { UserUsage } from '@/components/user-usage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -102,6 +103,7 @@ import {
   createDepartment,
   createUser,
   deleteDepartment,
+  deleteUser,
   getApiKeys,
   getDepartments,
   getRoles,
@@ -495,6 +497,7 @@ export default function UsersPage() {
   const [resetPasswordUser, setResetPasswordUser] = useState<AuthUser | null>(null)
   const [apiKeyUser, setApiKeyUser] = useState<AuthUser | null>(null)
   const [departmentToDelete, setDepartmentToDelete] = useState<AuthDepartment | null>(null)
+  const [userToDelete, setUserToDelete] = useState<AuthUser | null>(null)
   const [roleToDelete, setRoleToDelete] = useState<RoleDefinition | null>(null)
   const [roleDialog, setRoleDialog] = useState<{
     open: boolean
@@ -889,6 +892,29 @@ export default function UsersPage() {
       await fetchData()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '更新用户状态失败')
+    } finally {
+      setPendingUserActionId(null)
+    }
+  }
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete || pendingUserActionId) return
+    setPendingUserActionId(userToDelete.id)
+    try {
+      await deleteUser(userToDelete.id)
+      setUsers(previous => previous.filter(user => user.id !== userToDelete.id))
+      setApiKeys(previous => previous.filter(key => key.userId !== userToDelete.id))
+      if (selectedUser?.id === userToDelete.id) {
+        setSelectedUser(null)
+        setUserSessions([])
+        setSelectedRagflowStatus(null)
+        setRevealedRagflowCredentials(null)
+      }
+      setUserToDelete(null)
+      toast.success('用户已删除')
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除用户失败')
     } finally {
       setPendingUserActionId(null)
     }
@@ -1299,6 +1325,12 @@ export default function UsersPage() {
                                     <UserCog className="mr-2 size-4" />
                                     查看详情
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem asChild>
+                                    <Link to={`/usage?user_id=${encodeURIComponent(user.id)}`}>
+                                      <Coins className="mr-2 size-4" />
+                                      查看 Token 用量
+                                    </Link>
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem
                                     onClick={() =>
                                       setUserDialog({
@@ -1335,6 +1367,14 @@ export default function UsersPage() {
                                         启用用户
                                       </>
                                     )}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    disabled={user.id === currentUser?.id || (!isOrgAdmin && user.role !== 'user')}
+                                    onClick={() => setUserToDelete(user)}
+                                  >
+                                    <Trash2 className="mr-2 size-4" />
+                                    删除用户
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -1988,6 +2028,37 @@ export default function UsersPage() {
       </Dialog>
 
       <AlertDialog
+        open={!!userToDelete}
+        onOpenChange={(open) => {
+          if (!open && !pendingUserActionId) setUserToDelete(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除用户</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定删除用户“{userToDelete?.name ?? ''}”？删除后该用户将无法登录，API Key 将失效，定时任务将停用。
+              历史会话、消息和文件会保留。此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!pendingUserActionId}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={!!pendingUserActionId}
+              onClick={(event) => {
+                event.preventDefault()
+                void handleDeleteUser()
+              }}
+            >
+              {pendingUserActionId ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
         open={!!departmentToDelete}
         onOpenChange={(open) => !open && setDepartmentToDelete(null)}
       >
@@ -2054,11 +2125,15 @@ export default function UsersPage() {
           <SheetHeader>
             <SheetTitle>{selectedUser?.name ?? '用户详情'}</SheetTitle>
             <SheetDescription>
-              查看用户基础信息、API Key 以及最近会话。
+              查看用户基础信息、Token 用量、API Key 以及最近会话。
             </SheetDescription>
           </SheetHeader>
           {selectedUser ? (
             <div className="mt-6 space-y-6">
+              <UserUsage key={selectedUser.id} userId={selectedUser.id} compact />
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/usage?user_id=${encodeURIComponent(selectedUser.id)}`}>查看完整用量趋势</Link>
+              </Button>
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">基本信息</CardTitle>

@@ -9,6 +9,10 @@ import { RagflowRepository } from './repositories/ragflow.js'
 import { SessionRepository } from './repositories/session.js'
 import { mysqlSchema } from './schema/mysql.js'
 import { sqliteSchema } from './schema/sqlite.js'
+import { installCronSchema } from './schema/cron.js'
+import { installUserDeletionSchema } from './schema/userDeletion.js'
+import { installUsageSchema } from './schema/usage.js'
+import { UsageRepository } from './repositories/usage.js'
 
 export type { DatabaseConfig } from './config.js'
 export { Database } from './database.js'
@@ -19,6 +23,7 @@ export async function createModels(config: DatabaseConfig) {
     db,
     sessions: new SessionRepository(db),
     auth: new AuthRepository(db),
+    usage: new UsageRepository(db),
     agentMail: new AgentMailRepository(db),
     openIM: new OpenIMRepository(db),
     ragflow: new RagflowRepository(db),
@@ -69,7 +74,14 @@ export async function initializeDatabase(db: Database): Promise<void> {
     const version = await db
       .prepare('SELECT version FROM model_schema WHERE id=1')
       .get()
-    if (version && Number(version.version) === 1) return
+    if (version && Number(version.version) === 4) return
+    if (version && [1, 2, 3].includes(Number(version.version))) {
+      if (Number(version.version) === 1) await installCronSchema(db)
+      await installUserDeletionSchema(db)
+      await installUsageSchema(db)
+      await db.prepare('UPDATE model_schema SET version=4 WHERE id=1').run()
+      return
+    }
     if (version && Number(version.version) !== 0)
       throw new Error('Unsupported database schema version')
     if (!version)
@@ -96,7 +108,10 @@ export async function initializeDatabase(db: Database): Promise<void> {
         if ((error as { code?: string }).code !== 'ER_DUP_KEYNAME') throw error
       }
     }
-    await db.prepare('UPDATE model_schema SET version=1 WHERE id=1').run()
+    await installCronSchema(db)
+    await installUserDeletionSchema(db)
+    await installUsageSchema(db)
+    await db.prepare('UPDATE model_schema SET version=4 WHERE id=1').run()
   })
 }
 
@@ -104,6 +119,6 @@ export async function requireSchema(db: Database): Promise<void> {
   const row = await db
     .prepare('SELECT version FROM model_schema WHERE id=1')
     .get()
-  if (Number(row?.version) !== 1)
+  if (Number(row?.version) !== 4)
     throw new Error('Database is not initialized by Moss Server')
 }

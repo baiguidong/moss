@@ -7,6 +7,7 @@ const LoginPage = lazy(() => import('./pages/login-page'))
 const DashboardPage = lazy(() => import('./pages/dashboard-page'))
 const SessionsPage = lazy(() => import('./pages/sessions-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
+const UsagePage = lazy(() => import('./pages/usage-page'))
 const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))
 const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
 const SessionDetailPage = lazy(() =>
@@ -56,6 +57,10 @@ export default function App() {
               <DashboardPage />
             </SuspendedRoute>
           }
+        />
+        <Route
+          path="/usage"
+          element={<SuspendedRoute><UsagePage /></SuspendedRoute>}
         />
         <Route
           path="/users"

@@ -81,7 +81,7 @@ await test('initialization is repeatable; unrecognized databases are preserved a
     assert.equal(
       (await fresh.prepare('SELECT version FROM model_schema WHERE id=1').get())
         ?.version,
-      1,
+      4,
     )
     await fresh.prepare('UPDATE model_schema SET version=99 WHERE id=1').run()
     await assert.rejects(

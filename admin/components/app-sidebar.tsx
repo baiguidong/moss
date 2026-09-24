@@ -10,6 +10,7 @@ import {
   LogOut,
   Shield,
   Bot,
+  ChartNoAxesCombined,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -36,6 +37,12 @@ const menuItems: NavItem[] = [
     title: '数据看板',
     url: '/',
     icon: LayoutDashboard,
+  },
+  {
+    title: '个人用量',
+    url: '/usage',
+    icon: ChartNoAxesCombined,
+    requiredAnyScopes: ['sessions:list', 'sessions:list:any', 'admin:users'],
   },
   {
     title: '用户与组织',
