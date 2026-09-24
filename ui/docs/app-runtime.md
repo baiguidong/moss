@@ -67,6 +67,19 @@ example-app/
 `on-demand` Backend 在第一个 Action 时启动，无待处理 Action 后按空闲超时退出。`persistent` Backend
 在 App 启用且配置有效时常驻，退出 Moss 时有界停止。关闭 App 窗口不会停止 Backend。
 
+Host 在 `apps-runtime/processes/` 持久化每个 App 的进程所有权：宿主 PID 与启动时间、子进程身份、
+本次启动的唯一标识。启动器先等待 Host 保存子进程记录，再加载 App 代码。不同 Host 不能同时持有
+同一 App 的所有权；仍有活跃宿主时拒绝重复启动。IPC 断开后允许 App 完成清理，并提供 5 秒退出兜底；
+事件循环阻塞时由下次 Host 启动回收。
+
+Host 启动时先恢复这些记录，包括已停用 App 的记录。确认旧宿主已退出后，按启动时间和唯一标识
+识别遗留子进程，先发 `SIGTERM`，超时后发 `SIGKILL`，确认结束后才允许新进程访问 App 数据。
+这一路径不依赖子进程处理 IPC，因此子进程阻塞时也能在下次 Host 启动时回收。损坏或无法验证的
+记录会报告恢复错误并阻止相应 App 重复启动，不会仅凭旧 PID 杀进程。
+
+强杀 Host 后的卡死进程由下一次 Host 启动负责恢复；这不是脱离 Host 常驻的看门狗。所有权记录只
+覆盖采用此启动器创建的进程，升级前已遗留且未记录的旧进程仍需单独识别和清理。
+
 ```text
 ~/.moss/apps/<app-id>/versions/<version>/
 ~/.moss/apps/<app-id>/current.json

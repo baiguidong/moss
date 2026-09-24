@@ -156,6 +156,7 @@ export class AppPackageStore {
 
 export class AppProcessSupervisor {
   constructor(options?: Record<string, any>)
+  recoverOrphans(): Promise<Error[]>
   register(definition: Record<string, any>): any
   unregister(key: string): void
   status(key: string): any

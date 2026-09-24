@@ -416,6 +416,9 @@ async function main() {
   }
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
+  for (const file of ['bootstrap.mjs', 'lease.mjs', 'process-info.mjs']) {
+    requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'process', file), 'App process recovery');
+  }
   requireFile(path.join(paths.resourcesDir, 'shared', 'security', 'credential-crypto.mjs'), 'credential crypto');
   const cronStorePath = requireFile(path.join(paths.resourcesDir, 'shared', 'cron-task-store.mjs'), 'cron task store');
   const cronStore = await import(pathToFileURL(cronStorePath).href);

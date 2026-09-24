@@ -117,6 +117,7 @@ export class AppRuntimeHost {
     this.hostCapabilities = options.hostCapabilities ?? new AppHostCapabilityRegistry(options.hostCapabilityOptions)
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
+      processesDir: path.join(this.runtimeDir, 'processes'),
       onStatus: (status) => this.publishRuntimeEvent({ type: 'status', ...status }, status.owner),
       onEvent: (event) => this.publishRuntimeEvent({ type: 'backend-event', ...event }, event.owner),
       onLog: (entry) => this.logs.append(entry).catch(() => {}),
@@ -136,6 +137,9 @@ export class AppRuntimeHost {
   async initialize() {
     if (this.initialized) return this
     await this.state.initialize()
+    for (const error of await this.supervisor.recoverOrphans()) {
+      this.publishRuntimeEvent({ type: 'restore-error', error: error.message })
+    }
     this.initialized = true
     const owners = this.installations.listOwners()
     if (!owners.length) owners.push(this.defaultOwner)

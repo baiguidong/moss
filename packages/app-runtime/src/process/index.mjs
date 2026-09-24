@@ -14,14 +14,16 @@ import {
   validateHostProtocol,
 } from '../../../app-sdk/src/index.mjs'
 import { redactAppValue } from '../logging/index.mjs'
+import { AppProcessLeases } from './lease.mjs'
 
 const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
 const MAX_HOST_REPLY_CACHE_ENTRIES = 128
+const bootstrapUrl = new URL('./bootstrap.mjs', import.meta.url).href
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 
 function isChildRunning(child) {
-  return Boolean(child && child.exitCode === null && child.signalCode === null)
+  return Boolean(child?.pid && child.exitCode === null && child.signalCode === null)
 }
 
 function minimalEnvironment(extra = {}) {
@@ -86,6 +88,11 @@ export class AppProcessSupervisor {
     this.onStatus = options.onStatus || (() => {})
     this.onEvent = options.onEvent || (() => {})
     this.onLog = options.onLog || (() => {})
+    this.leases = new AppProcessLeases({
+      directory: options.processesDir,
+      killTimeoutMs: this.killTimeoutMs,
+      onRecover: ({ appId, instanceId, owner, pid }) => this.onLog({ appId, instanceId, owner, level: 'warn', message: 'Recovered orphaned App Backend', details: { pid } }),
+    })
     this.onHostRequest = options.onHostRequest || (() => {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker is not configured')
     })
@@ -129,6 +136,8 @@ export class AppProcessSupervisor {
     return [...this.definitions.keys()].map((key) => this.status(key))
   }
 
+  recoverOrphans() { return this.leases.recoverAll() }
+
   transition(key, operation) {
     const run = (this.transitions.get(key) || Promise.resolve()).then(operation, operation)
     this.transitions.set(key, run.catch(() => {}))
@@ -150,6 +159,9 @@ export class AppProcessSupervisor {
     if (current?.state === 'crash-loop' && !options.clearCrashLoop) {
       throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App runtime is in crash-loop: ${key}`)
     }
+    // A caller can retry immediately after an exit, before asynchronous lease
+    // cleanup has finished. Wait before trying to acquire our own old lease.
+    if (current && !isChildRunning(current.child)) await this.releaseLease(current)
     const launchToken = randomUUID()
     const entryPath = path.resolve(definition.packageRoot, definition.entry)
     const relative = path.relative(path.resolve(definition.packageRoot), entryPath)
@@ -188,31 +200,56 @@ export class AppProcessSupervisor {
       pingTimer: null,
       restartTimer: null,
       lastPongAt: Date.now(),
-      handshakeState: 'waiting-hello',
+      handshakeState: 'bootstrapping',
+      lease: null,
+      leaseRelease: null,
+      bootstrap: null,
     }
     hosted.ready = new Promise((resolve, reject) => {
       hosted.readyResolve = resolve
       hosted.readyReject = reject
     })
-    const child = spawn(this.nodeExecutable, [entryPath], {
-      cwd: definition.packageRoot,
-      env: minimalEnvironment({
-        ...(this.nodeExecutable === process.execPath && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-        MOSS_APP_ID: definition.appId,
-        MOSS_APP_VERSION: definition.version,
-        MOSS_APP_INSTANCE_ID: definition.instanceId,
-        MOSS_APP_GENERATION: String(definition.generation),
-        MOSS_APP_LAUNCH_TOKEN: launchToken,
-      }),
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      windowsHide: true,
-    })
-    hosted.child = child
+    // Reserve in memory before awaiting the cross-Host ownership lock.
     this.processes.set(key, hosted)
+    let child
+    try {
+      hosted.lease = await this.leases.acquire(definition)
+      if (this.shuttingDown) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
+      child = spawn(this.nodeExecutable, ['--import', bootstrapUrl, entryPath, hosted.lease.marker], {
+        cwd: definition.packageRoot,
+        env: minimalEnvironment({
+          ...(this.nodeExecutable === process.execPath && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+          MOSS_APP_ID: definition.appId,
+          MOSS_APP_VERSION: definition.version,
+          MOSS_APP_INSTANCE_ID: definition.instanceId,
+          MOSS_APP_GENERATION: String(definition.generation),
+          MOSS_APP_LAUNCH_TOKEN: launchToken,
+        }),
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        windowsHide: true,
+      })
+    } catch (error) {
+      await this.releaseLease(hosted)
+      if (this.processes.get(key) === hosted) this.processes.delete(key)
+      throw error
+    }
+    hosted.child = child
     this.emitStatus(key)
     child.stdout?.on('data', (chunk) => this.log(hosted, 'info', String(chunk).trim(), { stream: 'stdout' }))
     child.stderr?.on('data', (chunk) => this.log(hosted, 'error', String(chunk).trim(), { stream: 'stderr' }))
-    child.on('message', (message) => this.handleMessage(key, hosted, message))
+    child.on('message', (message) => {
+      if (hosted.handshakeState === 'bootstrapping' && message?.type === 'moss.app.bootstrap' && message.marker === hosted.lease.marker) {
+        hosted.handshakeState = 'recording-process'
+        hosted.bootstrap = hosted.lease.recordChild(child.pid).then(() => {
+          if (!isChildRunning(child)) return
+          hosted.handshakeState = 'waiting-hello'
+          this.send(hosted, { type: 'moss.app.launch', marker: hosted.lease.marker }, error => hosted.readyReject(error))
+        })
+        void hosted.bootstrap.catch(error => hosted.readyReject(error))
+        return
+      }
+      this.handleMessage(key, hosted, message)
+    })
     child.once('error', (error) => this.handleSpawnError(key, hosted, error))
     child.once('exit', (code, signal) => this.handleExit(key, hosted, code, signal))
 
@@ -824,7 +861,10 @@ export class AppProcessSupervisor {
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
     this.clearHostWork(hosted)
-    if (!isChildRunning(hosted.child)) return
+    if (!isChildRunning(hosted.child)) {
+      await this.releaseLease(hosted)
+      return
+    }
     hosted.child.kill('SIGTERM')
     await Promise.race([
       new Promise((resolve) => hosted.child.once('exit', resolve)),
@@ -840,11 +880,24 @@ export class AppProcessSupervisor {
     if (isChildRunning(hosted.child)) {
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend did not exit: ${hosted.definition.appId}`)
     }
+    await this.releaseLease(hosted)
+  }
+
+  releaseLease(hosted) {
+    if (!hosted.lease) return Promise.resolve()
+    if (!hosted.leaseRelease) {
+      hosted.leaseRelease = Promise.resolve(hosted.bootstrap).catch(() => {}).then(() => hosted.lease.release())
+    }
+    return hosted.leaseRelease
   }
 
   handleExit(key, hosted, code, signal) {
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
+    void this.releaseLease(hosted).catch(error => {
+      hosted.lastError = `App Backend ownership cleanup failed: ${error.message}`
+      this.log(hosted, 'error', hosted.lastError)
+    })
     if (this.processes.get(key) !== hosted) return
     if (hosted.state === 'starting') {
       hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend exited before handshake: ${code ?? 'null'}`))
@@ -867,10 +920,12 @@ export class AppProcessSupervisor {
     if (hosted.state === 'crash-loop' || hosted.definition.lifecycle !== 'persistent') return
     const delay = Math.min(this.maxRestartDelayMs, this.restartBaseDelayMs * (2 ** Math.max(0, hosted.failures.length - 1)))
     hosted.restartTimer = setTimeout(() => {
-      if (this.processes.get(key) === hosted && !hosted.stopping && !this.shuttingDown) {
-        this.processes.delete(key)
-        this.start(key).catch(() => {})
-      }
+      void this.releaseLease(hosted).then(() => {
+        if (this.processes.get(key) === hosted && !hosted.stopping && !this.shuttingDown) {
+          this.processes.delete(key)
+          this.start(key).catch(() => {})
+        }
+      }).catch(() => {})
     }, delay)
     hosted.restartTimer.unref?.()
   }
