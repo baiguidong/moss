@@ -125,6 +125,7 @@ export function registerTerminalIpc({
   ipcMain.handle('terminal:open', async (event, payload) => {
     if (!canOpen(event.sender)) throw new Error('请从会话顶部打开终端。');
     const launch = await resolveLaunch(payload);
+    if (!canOpen(event.sender)) throw new Error('正在退出，无法打开终端。');
     const window = new BrowserWindow({
       width: 1080, height: 720, minWidth: 600, minHeight: 360,
       title: launch.title, backgroundColor: '#10151c', autoHideMenuBar: true,
@@ -153,5 +154,6 @@ export function registerTerminalIpc({
     ipcMain.handle(`terminal:${method}`, (event, payload) => manager[method](event.sender, payload));
   }
   app.on('will-quit', () => manager.dispose());
+  manager.hasOpenTerminals = () => terminalWindows.size > 0;
   return manager;
 }

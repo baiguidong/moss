@@ -155,9 +155,8 @@ import {
   getManagedRuntimeStatus,
   MANAGED_RUNTIME_VERSIONS,
 } from './runtime/managed-runtimes.mjs';
-import { initUpdateIpcHandlers, setMainWindowRef } from './update-ipc.mjs';
-import { autoUpdaterService } from './auto-updater-service.mjs';
-import { supportsAutomaticUpdates } from './update-capabilities.mjs';
+import { initUpdateIpcHandlers, setMainWindowRef, startUpdateChecks } from './update-ipc.mjs';
+import { createUpdateInstallPreparation } from './update-install-lifecycle.mjs';
 import { registerDocumentIpcHandlers } from './process/bridge/document-bridge.mjs';
 import { registerLibreOfficeIpcHandlers } from './process/bridge/libreoffice-bridge.mjs';
 import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-history-bridge.mjs';
@@ -701,8 +700,19 @@ let appRuntime = null;
 let cloudStorageHost = null;
 let appShutdownComplete = false;
 let agentTeamsService = null;
-let agentTeamShutdownComplete = false;
-let agentTeamShutdownPromise = null;
+let desktopShutdownPromise = null;
+let terminalManager = null;
+let activeAppUpdateOperations = 0;
+const updateGuardedAppIpc = {
+  handle(channel, handler) {
+    ipcMain.handle(channel, async (...args) => {
+      assertUpdateWorkAllowed();
+      activeAppUpdateOperations++;
+      try { return await handler(...args); }
+      finally { activeAppUpdateOperations--; }
+    });
+  },
+};
 let localAuditService = null;
 let libraryService = null;
 let libraryExtensionManager = null;
@@ -6145,6 +6155,7 @@ async function runSessionPromptNow({
 }
 
 async function runSessionPrompt(options) {
+  assertUpdateWorkAllowed();
   const sessionId = String(options?.sessionRecord?.id || '').trim();
   if (!sessionId) throw new Error('Session id is required.');
   return runInKeyedQueue(
@@ -6161,6 +6172,7 @@ async function runSessionPrompt(options) {
       if (options.reopenCompletedProjectSession) {
         await reopenCompletedProjectSession(options.sessionRecord);
       }
+      assertUpdateWorkAllowed();
       return runSessionPromptNow(options);
     },
   );
@@ -6649,11 +6661,12 @@ async function completeProjectSessionNow(sessionId) {
 }
 
 async function completeProjectSession(sessionId) {
+  assertUpdateWorkAllowed();
   const sessionRecord = getSessionRecord(sessionId);
   return runInKeyedQueue(
     sessionPromptQueues,
     sessionRecord.id,
-    () => completeProjectSessionNow(sessionRecord.id),
+    () => { assertUpdateWorkAllowed(); return completeProjectSessionNow(sessionRecord.id); },
   );
 }
 
@@ -10469,31 +10482,14 @@ function createWindow() {
     closePreviewWindow();
     mainWindow = null;
   });
+  setMainWindowRef(mainWindow);
   mossLog('info', 'app', 'Main window created');
 }
 
 // Set main window reference for update IPC after window creation
 function initializeAutoUpdater() {
   setMainWindowRef(mainWindow);
-  const automaticUpdatesEnabled = supportsAutomaticUpdates();
-  if (automaticUpdatesEnabled) {
-    // Initialize auto-updater service only on platforms where unsigned builds
-    // can install an update without an OS code-signature requirement.
-    autoUpdaterService.initialize((status) => {
-      mainWindow?.webContents.send('auto-update:status', status);
-    });
-
-    // Auto-check for updates after startup (skip in dev/CI)
-    const skipAutoUpdate = process.env.MOSS_DISABLE_AUTO_UPDATE === 'true' || process.env.CI === 'true';
-    if (!skipAutoUpdate) {
-      setTimeout(() => {
-        mossLog('info', 'Update', 'Starting auto-update check...');
-        autoUpdaterService.checkForUpdatesAndNotify();
-      }, 3000);
-    }
-  } else {
-    mossLog('info', 'Update', 'Automatic installation disabled for unsigned builds; using manual release downloads.');
-  }
+  startUpdateChecks();
 
   // Set up application menu with "Check for Updates..."
   const isMac = process.platform === 'darwin';
@@ -11122,7 +11118,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   };
   ipcMain.handle('app:get-install-progress', () => [...appInstallProgress.values()]);
   registerAppRuntimeIpc({
-    ipcMain,
+    ipcMain: updateGuardedAppIpc,
     dialog,
     getRuntime: () => appRuntime,
     emitChanged: emitAppsChanged,
@@ -11130,7 +11126,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     installArchivePackage: installAppPackage,
   });
   registerAppMarketplaceIpc({
-    ipcMain,
+    ipcMain: updateGuardedAppIpc,
     service: createAppMarketplaceService({
       indexUrl: appMarketConfiguration.indexUrl,
       cachePath: path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'),
@@ -11162,15 +11158,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
-  registerTerminalIpc({
+  terminalManager = registerTerminalIpc({
     ipcMain, app, BrowserWindow,
-    canOpen: (sender) => sender === mainWindow?.webContents,
+    canOpen: (sender) => !updateInstallPreparation.isPreparing() && sender === mainWindow?.webContents,
     preloadPath: path.join(__dirname, 'terminal-preload.mjs'),
     rendererHtml,
     rendererDevServerUrl,
     resolveLaunch: async ({ sessionId, action } = {}) => {
+      assertUpdateWorkAllowed();
       const sessionRecord = getSessionRecord(sessionId);
       if (action !== 'terminal') await waitForManagedRuntimesBeforeLocalSession();
+      assertUpdateWorkAllowed();
       return buildTerminalLaunch({
         action,
         session: sessionRecord,
@@ -11258,7 +11256,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   startLocalAuditScanner();
   startMossCronScheduler();
-  initUpdateIpcHandlers();
+  await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
   registerLibreOfficeIpcHandlers();
   registerPreviewHistoryIpcHandlers();
@@ -11331,6 +11329,62 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   scheduleNativeWebSearchCapabilityDetection(0);
 });
 
+function getInstallBlockers() {
+  const blockers = [];
+  const records = [...sessions.values(), ...subAgentSessions.values()];
+  if (sessionPromptQueues.size || sessionSendQueues.size || projectCoordinatorTaskRuns.size || records.some(record =>
+    isSessionBusyForRenderer(record) || Object.values(record.runtime?.getAppState?.()?.tasks || {}).some(task => task?.status === 'running')
+  )) blockers.push('会话或后台任务');
+  if (records.some(hasActiveAgentTeam)) blockers.push('Agent Team');
+  if (terminalManager?.hasOpenTerminals()) blockers.push('终端窗口');
+  if (activeAppUpdateOperations || appRuntime?.supervisor?.listStatuses().some(status => status.pendingActions || status.pendingHostRequests || status.pendingHostEvents)) blockers.push('App 操作');
+  if (managedRuntimeInstallPromise) blockers.push('运行时安装');
+  return blockers;
+}
+
+const updateInstallPreparation = createUpdateInstallPreparation({ getBlockers: getInstallBlockers, shutdown: shutdownDesktop });
+function assertUpdateWorkAllowed() {
+  if (updateInstallPreparation.isPreparing()) throw new Error('正在准备安装更新，请完成安装或退出后重新打开 Moss。');
+}
+
+function shutdownDesktop() {
+  if (appShutdownComplete) return Promise.resolve();
+  if (desktopShutdownPromise) return desktopShutdownPromise;
+  stopMossCronScheduler();
+  desktopShutdownPromise = (async () => {
+    const errors = [];
+    const attempt = async (operation) => {
+      try { await operation(); } catch (error) { errors.push(error); }
+    };
+    await attempt(async () => {
+      const activeTeams = [...sessions.values()].filter(hasActiveAgentTeam);
+      const results = await Promise.all(activeTeams.map(shutdownSessionAgentTeam));
+      if (results.some(result => !result)) throw new Error('Agent Team 尚未完成退出。');
+      await agentTeamsService?.checkNow();
+    });
+    await attempt(() => { agentTeamsService?.stop(); agentTeamsService = null; });
+    await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
+    if (localAuditScanTimer) clearInterval(localAuditScanTimer);
+    localAuditScanTimer = null;
+    await attempt(() => { localAuditService?.close?.(); localAuditService = null; });
+    await attempt(() => { libraryService?.close?.(); libraryService = null; });
+    await attempt(() => { libraryExtensionManager?.dispose?.(); libraryExtensionManager = null; });
+    for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
+      await attempt(() => {
+        schedulePersistSession(record, true);
+        closeWorkspaceWatcher(record);
+        disposeRuntime(record);
+      });
+    }
+    await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
+    await attempt(async () => { await appRuntime?.shutdown(); appRuntime = null; });
+    void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
+    if (errors.length) throw new Error(`退出准备未完成：${errors.map(error => error?.message || String(error)).join('；')}`);
+    appShutdownComplete = true;
+  })().finally(() => { desktopShutdownPromise = null; });
+  return desktopShutdownPromise;
+}
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -11353,58 +11407,14 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
-  stopMossCronScheduler();
-  if (!agentTeamShutdownComplete) {
-    const activeTeamSessions = Array.from(sessions.values()).filter(hasActiveAgentTeam);
-    if (activeTeamSessions.length > 0) {
-      event.preventDefault();
-      if (!agentTeamShutdownPromise) {
-        agentTeamShutdownPromise = Promise.allSettled(
-          activeTeamSessions.map(shutdownSessionAgentTeam),
-        ).then(async () => {
-          await agentTeamsService?.checkNow();
-        }).finally(() => {
-          agentTeamShutdownComplete = true;
-          agentTeamShutdownPromise = null;
-          app.quit();
-        });
-      }
-      return;
-    }
-    agentTeamShutdownComplete = true;
-  }
-
-  agentTeamsService?.stop();
-  agentTeamsService = null;
-  void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true });
-  void agentMailPoller?.stop();
-  agentMailPoller = null;
-  if (localAuditScanTimer) {
-    clearInterval(localAuditScanTimer);
-    localAuditScanTimer = null;
-  }
-  localAuditService?.close?.();
-  localAuditService = null;
-  libraryService?.close?.();
-  libraryService = null;
-  libraryExtensionManager?.dispose?.();
-  libraryExtensionManager = null;
-  for (const sessionRecord of sessions.values()) {
-    closeWorkspaceWatcher(sessionRecord);
-    disposeRuntime(sessionRecord);
-  }
-  for (const sessionRecord of subAgentSessions.values()) {
-    closeWorkspaceWatcher(sessionRecord);
-    disposeRuntime(sessionRecord);
-  }
-  if (appRuntime && !appShutdownComplete) {
-    event.preventDefault();
-    void (async () => { await cloudStorageHost?.close(); await appRuntime.shutdown(); })().finally(() => {
-      appShutdownComplete = true;
-      appRuntime = null;
-      app.quit();
-    });
-  }
+  if (appShutdownComplete) return;
+  event.preventDefault();
+  void shutdownDesktop().catch(error => {
+    mossLog('error', 'app', 'Desktop shutdown failed', { error: error?.message || String(error) });
+  }).finally(() => {
+    appShutdownComplete = true;
+    app.quit();
+  });
 });
 
 ipcMain.handle('agent:get-status', () => getBootStatus());
@@ -13152,7 +13162,7 @@ ipcMain.handle('app:list-versions', async (_event, { name }) => {
   }
 });
 
-ipcMain.handle('app:launch', async (_event, { name }) => {
+updateGuardedAppIpc.handle('app:launch', async (_event, { name }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
@@ -13163,7 +13173,7 @@ ipcMain.handle('app:launch', async (_event, { name }) => {
   }
 });
 
-ipcMain.handle('app:embedded-open', async (_event, { name }) => {
+updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
@@ -13202,7 +13212,7 @@ ipcMain.handle('app:embedded-open', async (_event, { name }) => {
   }
 });
 
-ipcMain.handle('app:embedded-attach', async (_event, { embedId, webContentsId }) => {
+updateGuardedAppIpc.handle('app:embedded-attach', async (_event, { embedId, webContentsId }) => {
   try {
     const pending = pendingEmbeddedApps.get(embedId);
     if (!pending) throw new Error('Embedded App session was not found.');
@@ -13227,7 +13237,7 @@ ipcMain.handle('app:embedded-close', async (_event, { embedId }) => {
   return { ok: true };
 });
 
-ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
+updateGuardedAppIpc.handle('app:rollback', async (_event, { name, versionId }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
@@ -13247,7 +13257,7 @@ ipcMain.handle('app:rollback', async (_event, { name, versionId }) => {
   }
 });
 
-ipcMain.handle('app:delete', async (_event, { name, deleteData = false, deleteCredentials = false }) => {
+updateGuardedAppIpc.handle('app:delete', async (_event, { name, deleteData = false, deleteCredentials = false }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
@@ -13364,18 +13374,18 @@ ipcMain.handle('app-ui:instances:list', async (event) => {
   return state.runtime.listInstances(state.id);
 });
 
-ipcMain.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
+updateGuardedAppIpc.handle('app-ui:instances:update', async (event, { instanceId, ...patch }) => {
   const state = getAppWindowStateBySender(event.sender);
   await state.runtime.updateInstance(state.id, instanceId, patch);
   return getAppUiInstance(state, instanceId);
 });
 
-ipcMain.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled }) => {
+updateGuardedAppIpc.handle('app-ui:instances:set-enabled', async (event, { instanceId, enabled }) => {
   const state = getAppWindowStateBySender(event.sender);
   return state.runtime.setInstanceEnabled(state.id, instanceId, enabled);
 });
 
-ipcMain.handle('app-ui:instances:clear-credentials', async (event, { instanceId }) => {
+updateGuardedAppIpc.handle('app-ui:instances:clear-credentials', async (event, { instanceId }) => {
   const state = getAppWindowStateBySender(event.sender);
   await state.runtime.clearInstanceCredentials(state.id, instanceId);
   return getAppUiInstance(state, instanceId);
@@ -13386,7 +13396,7 @@ ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {
   return state.runtime.getInstanceStatus(state.id, instanceId);
 });
 
-ipcMain.handle('app-ui:actions:invoke', async (event, {
+updateGuardedAppIpc.handle('app-ui:actions:invoke', async (event, {
   instanceId, name, input, requestId, timeoutMs,
 }) => {
   const state = getAppWindowStateBySender(event.sender);
@@ -13398,7 +13408,7 @@ ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId })
   return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
 });
 
-ipcMain.handle('app-ui:host:request', async (event, {
+updateGuardedAppIpc.handle('app-ui:host:request', async (event, {
   instanceId,
   protocol: hostProtocol,
   method,
@@ -14148,12 +14158,13 @@ async function sendAgentPromptNow(event, {
 }
 
 function sendAgentPrompt(event, payload, options = {}) {
+  assertUpdateWorkAllowed();
   const sessionId = String(payload?.sessionId || '').trim();
   if (!sessionId) throw new Error('Session id is required.');
   return runInKeyedQueue(
     sessionSendQueues,
     sessionId,
-    () => sendAgentPromptNow(event, payload, options),
+    () => { assertUpdateWorkAllowed(); return sendAgentPromptNow(event, payload, options); },
   );
 }
 

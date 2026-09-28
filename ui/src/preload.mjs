@@ -435,31 +435,27 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   logDownload: () => ipcRenderer.invoke('log:download'),
   logWrite: (payload) => ipcRenderer.invoke('log:write', payload),
 
-  // Update / Auto-update
+  // Update state and operations are owned by the main process.
   update: {
-    check: (params) => ipcRenderer.invoke('update:check', params),
+    getState: () => ipcRenderer.invoke('update:get-state'),
+    check: () => ipcRenderer.invoke('update:check'),
     download: (params) => ipcRenderer.invoke('update:download', params),
+    cancel: () => ipcRenderer.invoke('update:cancel'),
+    dismiss: (params) => ipcRenderer.invoke('update:dismiss', params),
+    setAutoDownload: (params) => ipcRenderer.invoke('update:set-auto-download', params),
+    openDownloaded: (params) => ipcRenderer.invoke('update:open-downloaded', params),
+    showDownloaded: (params) => ipcRenderer.invoke('update:show-downloaded', params),
+    install: (params) => ipcRenderer.invoke('update:install', params),
+    openReleasePage: () => ipcRenderer.invoke('update:open-release-page'),
     onOpenModal: (callback) => {
       const handler = () => callback();
       ipcRenderer.on('update:open-modal', handler);
       return () => ipcRenderer.off('update:open-modal', handler);
     },
-    onDownloadProgress: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('update:download-progress', handler);
-      return () => ipcRenderer.off('update:download-progress', handler);
-    },
-  },
-  autoUpdate: {
-    check: (params) => ipcRenderer.invoke('auto-update:check', params),
-    download: () => ipcRenderer.invoke('auto-update:download'),
-    quitAndInstall: () => ipcRenderer.invoke('auto-update:quit-and-install'),
-    getDownloadedFilePath: () => ipcRenderer.invoke('auto-update:get-downloaded-file-path'),
-    getMirrorStatus: () => ipcRenderer.invoke('auto-update:get-mirror-status'),
-    onStatus: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('auto-update:status', handler);
-      return () => ipcRenderer.off('auto-update:status', handler);
+    onState: (callback) => {
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on('update:state', handler);
+      return () => ipcRenderer.off('update:state', handler);
     },
   },
 });

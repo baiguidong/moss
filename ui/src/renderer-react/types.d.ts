@@ -2214,18 +2214,18 @@ declare global {
       getSkillInfosByIds: (skillIds: string[]) => Promise<{ success: boolean; data?: Array<{ id: string; name: string; path: string }>; error?: string }>;
       logWrite: (payload: { level?: string; category?: string; message: string; data?: unknown }) => Promise<void>;
       update: {
-        check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: UpdateCheckResult; msg?: string }>;
-        download: (params: { url: string; fileName?: string }) => Promise<{ success: boolean; data?: { downloadId: string; filePath: string }; msg?: string }>;
+        getState: () => Promise<UpdateResponse>;
+        check: () => Promise<UpdateResponse>;
+        download: (params: { candidateId: string }) => Promise<UpdateResponse>;
+        cancel: () => Promise<UpdateResponse>;
+        dismiss: (params: { version?: string }) => Promise<UpdateResponse>;
+        setAutoDownload: (params: { enabled: boolean }) => Promise<UpdateResponse>;
+        openDownloaded: (params: { downloadId: string }) => Promise<UpdateResponse>;
+        showDownloaded: (params: { downloadId: string }) => Promise<UpdateResponse>;
+        install: (params: { candidateId: string }) => Promise<UpdateResponse>;
+        openReleasePage: () => Promise<UpdateResponse>;
         onOpenModal: (callback: () => void) => () => void;
-        onDownloadProgress: (callback: (evt: UpdateDownloadProgressEvent) => void) => () => void;
-      };
-      autoUpdate: {
-        check: (params?: { includePrerelease?: boolean }) => Promise<{ success: boolean; data?: { updateInfo?: { version: string; releaseDate?: string; releaseNotes?: string } }; msg?: string }>;
-        download: () => Promise<{ success: boolean; msg?: string }>;
-        quitAndInstall: () => Promise<{ success: boolean; msg?: string }>;
-        getDownloadedFilePath: () => Promise<{ success: boolean; data?: { path: string | null } }>;
-        getMirrorStatus: () => Promise<{ success: boolean; data?: { useMirror: boolean; reason: string } }>;
-        onStatus: (callback: (evt: AutoUpdateStatus) => void) => () => void;
+        onState: (callback: (state: UpdateState) => void) => () => void;
       };
     };
   }
@@ -2275,57 +2275,25 @@ export type InstalledAssistant = {
   enabledSkills: string[];
 };
 
-// Update types
-export type UpdateReleaseInfo = {
-  tagName: string;
-  version: string;
-  name?: string;
-  body?: string;
-  htmlUrl: string;
-  publishedAt?: string;
-  prerelease: boolean;
-  draft: boolean;
-  assets: GitHubReleaseAsset[];
-  recommendedAsset?: GitHubReleaseAsset;
-};
-
-export type GitHubReleaseAsset = {
-  name: string;
-  url: string;
-  size: number;
-  contentType?: string;
-};
-
-export type UpdateCheckResult = {
+// Update state is an authoritative main-process snapshot.
+export type UpdateState = {
+  revision: number;
   currentVersion: string;
-  updateAvailable: boolean;
-  latest?: UpdateReleaseInfo;
-};
-
-export type UpdateDownloadProgressEvent = {
-  downloadId: string;
-  status: 'starting' | 'downloading' | 'completed' | 'error' | 'cancelled';
-  receivedBytes: number;
-  totalBytes?: number;
-  percent?: number;
-  bytesPerSecond?: number;
-  filePath?: string;
-  error?: string;
-};
-
-export type AutoUpdateStatus = {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'cancelled';
+  capabilities: { platform: string; arch: string; packageType: string; mode: 'manual' | 'nativeUpdater' | 'unsupported' | 'development' };
+  phase: 'idle' | 'checking' | 'upToDate' | 'available' | 'downloading' | 'verifying' | 'downloaded' | 'preparingInstall' | 'installing' | 'error' | 'unsupported';
   version?: string;
-  releaseDate?: string;
-  releaseNotes?: string;
-  progress?: {
-    bytesPerSecond: number;
-    percent: number;
-    transferred: number;
-    total: number;
-  };
+  candidateId?: string;
+  downloadId?: string;
+  fileName?: string;
+  notes?: string;
+  reason?: string;
   error?: string;
-  downloadedFilePath?: string;
+  retry?: 'check' | 'download' | 'install';
+  releasePage: string;
+  autoDownload: boolean;
+  prompt?: boolean;
+  progress?: { transferred: number; total: number; percent: number; bytesPerSecond: number };
 };
+export type UpdateResponse = { success: boolean; data?: UpdateState; msg?: string };
 
 export {};

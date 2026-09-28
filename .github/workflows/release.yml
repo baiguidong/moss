@@ -204,7 +204,7 @@ jobs:
         run: |
           shopt -s nullglob
           assets=()
-          for asset in ui/dist/installers/*.exe ui/dist/installers/latest.yml ui/dist/installers/*.blockmap; do
+          for asset in ui/dist/installers/*.exe ui/dist/installers/latest.yml ui/dist/installers/SHA512SUMS ui/dist/installers/*.blockmap; do
             assets+=("$asset")
           done
           [[ ${#assets[@]} -gt 0 ]] || { echo 'No Windows release assets found' >&2; exit 1; }
@@ -337,18 +337,17 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq 11 ]]
-          grep -Fxq "Moss-$VERSION-arm64.dmg" <<<"$assets"
-          grep -Fxq "Moss-$VERSION-arm64.dmg.blockmap" <<<"$assets"
-          grep -Fxq "Moss-$VERSION-arm64-mac.zip" <<<"$assets"
-          grep -Fxq "Moss-$VERSION-arm64-mac.zip.blockmap" <<<"$assets"
-          grep -Fxq "Moss-Setup-$VERSION-x64.exe" <<<"$assets"
-          grep -Fxq "Moss-Setup-$VERSION-x64.exe.blockmap" <<<"$assets"
-          grep -Fxq "Moss-Portable-$VERSION-x64.exe" <<<"$assets"
-          grep -Fxq 'latest-mac.yml' <<<"$assets"
-          grep -Fxq 'latest.yml' <<<"$assets"
-          grep -Fxq "moss-server-compose-$VERSION.tar.gz" <<<"$assets"
-          grep -Fxq "moss-server-compose-$VERSION.tar.gz.sha256" <<<"$assets"
+          required=(
+            "Moss-$VERSION-arm64.dmg" "Moss-$VERSION-arm64.dmg.blockmap"
+            "Moss-$VERSION-arm64-mac.zip" "Moss-$VERSION-arm64-mac.zip.blockmap"
+            "Moss-Setup-$VERSION-x64.exe" "Moss-Setup-$VERSION-x64.exe.blockmap"
+            "Moss-Portable-$VERSION-x64.exe" latest-mac.yml latest.yml SHA512SUMS
+            "moss-server-compose-$VERSION.tar.gz" "moss-server-compose-$VERSION.tar.gz.sha256"
+          )
+          [[ $(wc -l <<<"$assets" | tr -d ' ') -eq ${#required[@]} ]]
+          for asset in "${required[@]}"; do
+            grep -Fxq "$asset" <<<"$assets"
+          done
 
       - name: Publish GitHub Release
         env:

@@ -1,420 +1,147 @@
 'use client';
 
 import * as React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Download,
-  CheckCircle,
-  XCircle,
-  RefreshCw,
-  ExternalLink,
-  FolderOpen,
-  Play,
-  Loader2,
-} from 'lucide-react';
+import { Download, ExternalLink, FolderOpen, Loader2, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type {
-  UpdateReleaseInfo,
-  UpdateDownloadProgressEvent,
-  AutoUpdateStatus,
-} from '@/types';
+import type { UpdateResponse, UpdateState } from '@/types';
 
-type UpdateStatus = 'checking' | 'upToDate' | 'available' | 'downloading' | 'downloaded' | 'success' | 'error';
+const busyPhases = new Set(['checking', 'downloading', 'verifying', 'preparingInstall', 'installing']);
+const titles: Record<UpdateState['phase'], string> = {
+  idle: '检查更新', checking: '正在检查更新…', upToDate: '已是最新版本', available: '发现新版本',
+  downloading: '正在下载安装包…', verifying: '正在校验安装包…', downloaded: '下载完成',
+  preparingInstall: '正在保存数据并准备退出…', installing: '正在启动安装程序…', error: '更新未完成', unsupported: '暂不能更新',
+};
+const size = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-function formatSpeed(bytesPerSecond: number) {
-  if (bytesPerSecond > 1024 * 1024) {
-    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
-  }
-  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
-}
+type UpdateActions = {
+  check: () => void; download: () => void; cancel: () => void; install: () => void;
+  open: () => void; reveal: () => void; release: () => void; autoDownload: (enabled: boolean) => void;
+};
 
-function formatSize(bytes: number) {
-  if (bytes > 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  return `${(bytes / 1024).toFixed(1)} KB`;
+export function UpdateContent({ state, actions, operationError }: { state: UpdateState; actions: UpdateActions; operationError?: string }) {
+  const native = state.capabilities.mode === 'nativeUpdater';
+  const mac = state.capabilities.platform === 'darwin';
+  const busy = busyPhases.has(state.phase);
+  const hasDownload = Boolean(state.downloadId);
+  const retry = state.retry === 'install' ? actions.install : state.retry === 'download' ? actions.download : actions.check;
+  return (
+    <div className="space-y-4 p-5">
+      <div className="flex items-center gap-2">
+        {busy && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+        <p className="text-sm font-medium" role="status">{titles[state.phase]}</p>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        当前版本 {state.currentVersion}{state.version ? ` → ${state.version}` : ''}
+      </p>
+      {state.reason && <p className="text-sm text-muted-foreground">{state.reason}</p>}
+      {(operationError || state.error) && <p role="alert" className="break-words text-sm text-destructive">{operationError || state.error}</p>}
+      {state.notes && <div className="max-h-44 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-accent/50 p-3 text-xs text-muted-foreground">{state.notes}</div>}
+      {state.phase === 'downloading' && (
+        <div className="space-y-2">
+          <progress className="h-2 w-full accent-primary" max={100} value={state.progress?.percent || 0} aria-label="下载进度" />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>{size(state.progress?.transferred)} / {size(state.progress?.total)}</span>
+            <span>{size(state.progress?.bytesPerSecond)}/s</span>
+          </div>
+          <p className="text-xs text-muted-foreground">关闭此弹窗后仍会继续下载。</p>
+        </div>
+      )}
+      {(state.phase === 'available' || hasDownload) && (
+        <p className="text-xs leading-5 text-muted-foreground">
+          {native ? '下载后，点击“安装并重启”完成升级。普通退出不会自动安装。'
+            : mac ? '打开 DMG 后，请完全退出 Moss，将新版拖到“应用程序”并替换旧版，再打开 Moss。无签名应用仍可能需要在系统设置中确认打开。'
+              : '这是 Windows 便携版。下载后请退出 Moss，手动替换旧的 EXE，再打开新版。'}
+        </p>
+      )}
+      {state.retry === 'install' && <p className="text-xs text-muted-foreground">退出准备后部分功能可能已停止。请重试安装；也可退出 Moss 后重新打开。</p>}
+      {hasDownload && <p className="break-all text-xs text-muted-foreground">{state.fileName}</p>}
+      <div className="flex flex-wrap gap-2">
+        {state.phase === 'available' && <Button size="sm" onClick={actions.download}><Download className="mr-1 h-3.5 w-3.5" />下载安装包</Button>}
+        {state.phase === 'downloading' && <Button size="sm" variant="outline" onClick={actions.cancel}>取消下载</Button>}
+        {hasDownload && !busy && (
+          <>
+            {native ? <Button size="sm" onClick={actions.install}>安装并重启</Button>
+              : mac && <Button size="sm" onClick={actions.open}>打开安装包</Button>}
+            <Button size="sm" variant="outline" onClick={actions.reveal}><FolderOpen className="mr-1 h-3.5 w-3.5" />{mac ? '在 Finder 中显示' : '在文件夹中显示'}</Button>
+          </>
+        )}
+        {state.phase === 'error' && !hasDownload && <Button size="sm" onClick={retry}><RefreshCw className="mr-1 h-3.5 w-3.5" />重试</Button>}
+        {!busy && !hasDownload && state.phase !== 'error' && state.capabilities.mode !== 'development' && <Button size="sm" variant="outline" onClick={actions.check}>重新检查</Button>}
+        {!busy && <Button size="sm" variant="ghost" onClick={actions.release}><ExternalLink className="mr-1 h-3.5 w-3.5" />发布页</Button>}
+      </div>
+      {native && <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={state.autoDownload} onChange={event => actions.autoDownload(event.target.checked)} />发现新版本时自动下载
+      </label>}
+    </div>
+  );
 }
 
 export function UpdateModal() {
   const [visible, setVisible] = React.useState(false);
-  const [status, setStatus] = React.useState<UpdateStatus>('checking');
-  const [updateInfo, setUpdateInfo] = React.useState<UpdateReleaseInfo | null>(null);
-  const [currentVersion, setCurrentVersion] = React.useState<string>('');
-  const [downloadId, setDownloadId] = React.useState<string | null>(null);
-  const [progress, setProgress] = React.useState({ percent: 0, speed: '', total: 0, transferred: 0 });
-  const [errorMsg, setErrorMsg] = React.useState('');
-  const [downloadPath, setDownloadPath] = React.useState('');
-  const [releasePageUrl, setReleasePageUrl] = React.useState('');
-  const [autoUpdateInfo, setAutoUpdateInfo] = React.useState<{ version: string; releaseNotes?: string } | null>(null);
-  const [autoUpdateDownloadedPath, setAutoUpdateDownloadedPath] = React.useState<string | null>(null);
-  const [includePrerelease] = React.useState(
-    localStorage.getItem('moss.update.includePrerelease') === 'true'
-  );
-
-  const resetState = () => {
-    setStatus('checking');
-    setUpdateInfo(null);
-    setCurrentVersion('');
-    setDownloadId(null);
-    setProgress({ percent: 0, speed: '', total: 0, transferred: 0 });
-    setErrorMsg('');
-    setDownloadPath('');
-    setReleasePageUrl('');
-    setAutoUpdateInfo(null);
-    setAutoUpdateDownloadedPath(null);
-  };
-
-  const openReleasePage = async () => {
-    if (!releasePageUrl) return;
-    await window.agentDesktop.shell.openExternal(releasePageUrl);
-  };
-
-  const showInFolder = async () => {
-    const pathToShow = downloadPath || autoUpdateDownloadedPath;
-    if (!pathToShow) return;
-    await window.agentDesktop.shell.showItemInFolder(pathToShow);
-  };
-
-  const checkForUpdates = async () => {
-    setStatus('checking');
-    try {
-      // Try autoUpdate first (electron-updater with COS mirror)
-      const autoRes = await window.agentDesktop.autoUpdate.check({ includePrerelease });
-      if (autoRes?.success && autoRes.data?.updateInfo) {
-        setAutoUpdateInfo({
-          version: autoRes.data.updateInfo.version,
-          releaseNotes: autoRes.data.updateInfo.releaseNotes,
-        });
-        const cached = await window.agentDesktop.autoUpdate.getDownloadedFilePath();
-        if (cached?.success && cached.data?.path) {
-          setAutoUpdateDownloadedPath(cached.data.path);
-        }
-      }
-
-      // Also check manual update for more info
-      const manualRes = await window.agentDesktop.update.check({ includePrerelease });
-      if (manualRes?.success) {
-        setCurrentVersion(manualRes.data?.currentVersion || '');
-        if (manualRes.data?.latest) {
-          setUpdateInfo(manualRes.data.latest);
-          setReleasePageUrl(manualRes.data.latest.htmlUrl || '');
-        }
-      }
-
-      if (autoRes?.success && autoRes.data?.updateInfo) {
-        setStatus('available');
-        return;
-      }
-
-      if (manualRes?.data?.updateAvailable && manualRes.data?.latest) {
-        setStatus('available');
-        return;
-      }
-
-      setStatus('upToDate');
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setStatus('error');
-    }
-  };
-
-  const startAutoDownload = async () => {
-    setStatus('downloading');
-    try {
-      const res = await window.agentDesktop.autoUpdate.download();
-      if (!res?.success) {
-        throw new Error(res?.msg || 'Download failed');
-      }
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setStatus('error');
-    }
-  };
-
-  const startManualDownload = async () => {
-    if (!updateInfo?.recommendedAsset) return;
-
-    setStatus('downloading');
-    try {
-      const res = await window.agentDesktop.update.download({
-        url: updateInfo.recommendedAsset.url,
-        fileName: updateInfo.recommendedAsset.name,
-      });
-      if (!res?.success || !res.data) {
-        throw new Error(res?.msg || 'Download failed');
-      }
-
-      if (res.data.downloadId === 'cached') {
-        setDownloadPath(res.data.filePath);
-        setStatus('success');
-        return;
-      }
-
-      setDownloadId(res.data.downloadId);
-      setDownloadPath(res.data.filePath);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setStatus('error');
-    }
-  };
-
-  const quitAndInstall = async () => {
-    await window.agentDesktop.autoUpdate.quitAndInstall();
-  };
-
-  const handleOpenModal = () => {
-    setVisible(true);
-    resetState();
-    void checkForUpdates();
-  };
-
-  // Listen for update:open-modal from menu
-  React.useEffect(() => {
-    const off = window.agentDesktop.update.onOpenModal(handleOpenModal);
-    return off;
+  const [state, setState] = React.useState<UpdateState | null>(null);
+  const [operationError, setOperationError] = React.useState('');
+  const lastPrompt = React.useRef('');
+  const accept = React.useCallback((next: UpdateState) => {
+    setState(current => !current || next.revision >= current.revision ? next : current);
   }, []);
+  const run = React.useCallback(async (operation: () => Promise<UpdateResponse>) => {
+    setOperationError('');
+    try {
+      const response = await operation();
+      if (!response.success || !response.data) throw new Error(response.msg || '更新操作失败，请重试。');
+      accept(response.data);
+      return response.data;
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+  }, [accept]);
 
-  // Listen for auto-update status events
   React.useEffect(() => {
-    const off = window.agentDesktop.autoUpdate.onStatus((evt: AutoUpdateStatus) => {
-      if (!evt) return;
-
-      switch (evt.status) {
-        case 'checking':
-          break;
-        case 'available':
-          setAutoUpdateInfo({
-            version: evt.version || '',
-            releaseNotes: evt.releaseNotes,
-          });
-          setStatus('available');
-          setVisible(true);
-          break;
-        case 'not-available':
-          setStatus('upToDate');
-          break;
-        case 'downloading':
-          if (evt.progress) {
-            setProgress({
-              percent: Math.round(evt.progress.percent),
-              speed: formatSpeed(evt.progress.bytesPerSecond),
-              total: evt.progress.total,
-              transferred: evt.progress.transferred,
-            });
-          }
-          break;
-        case 'downloaded':
-          setStatus('downloaded');
-          if (evt.downloadedFilePath) {
-            setAutoUpdateDownloadedPath(evt.downloadedFilePath);
-          }
-          break;
-        case 'error':
-          setStatus('error');
-          setErrorMsg(evt.error || 'Download failed');
-          break;
-      }
-    });
-    return off;
-  }, []);
-
-  // Listen for manual download progress
-  React.useEffect(() => {
-    const off = window.agentDesktop.update.onDownloadProgress((evt: UpdateDownloadProgressEvent) => {
-      if (!evt || !downloadId || evt.downloadId !== downloadId) return;
-
-      setProgress({
-        percent: Math.round(evt.percent ?? 0),
-        speed: formatSpeed(evt.bytesPerSecond ?? 0),
-        total: evt.totalBytes ?? 0,
-        transferred: evt.receivedBytes ?? 0,
+    const api = window.agentDesktop.update;
+    const offState = api.onState(accept);
+    const offOpen = api.onOpenModal(() => {
+      setVisible(true);
+      void run(api.getState).then(snapshot => {
+        if (snapshot && ['idle', 'upToDate'].includes(snapshot.phase)) void run(api.check);
       });
-
-      if (evt.status === 'completed') {
-        setStatus('success');
-        if (evt.filePath) setDownloadPath(evt.filePath);
-      } else if (evt.status === 'error' || evt.status === 'cancelled') {
-        setStatus('error');
-        setErrorMsg(evt.error || 'Download failed');
-      }
     });
-    return off;
-  }, [downloadId]);
+    void run(api.getState);
+    return () => { offState(); offOpen(); };
+  }, [accept, run]);
+  React.useEffect(() => {
+    if (!state?.prompt) return;
+    const key = `${state.version}:${state.phase}`;
+    if (lastPrompt.current !== key) { lastPrompt.current = key; setVisible(true); }
+  }, [state]);
 
-  const latestVersion = updateInfo?.version || autoUpdateInfo?.version || '';
-  const hasCompatibleAsset = Boolean(updateInfo?.recommendedAsset);
-
+  const close = () => {
+    setVisible(false);
+    void run(() => window.agentDesktop.update.dismiss({ version: state?.version }));
+  };
+  React.useEffect(() => {
+    if (!visible) return;
+    const handleKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  });
+  if (!visible) return null;
+  const api = window.agentDesktop.update;
   return (
-    <AnimatePresence>
-      {visible && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/50"
-            onClick={() => setVisible(false)}
-          />
-
-          {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.15 }}
-            className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2"
-          >
-            <div className="mx-4 rounded-2xl border border-border/80 bg-card shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
-                <h2 className="text-base font-semibold text-foreground">检查更新</h2>
-                <button
-                  onClick={() => setVisible(false)}
-                  className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  <XCircle className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Content */}
-              <div className="p-5">
-                {status === 'checking' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <Loader2 className="h-10 w-10 animate-spin text-primary mb-3" />
-                    <p className="text-sm text-muted-foreground">检查更新中...</p>
-                  </div>
-                )}
-
-                {status === 'upToDate' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
-                    <p className="text-base font-medium text-foreground mb-1">已是最新版本</p>
-                    <p className="text-xs text-muted-foreground">当前版本 {currentVersion || latestVersion || '-'}</p>
-                  </div>
-                )}
-
-                {status === 'available' && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-                        <Download className="h-5 w-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">发现新版本</p>
-                        <p className="text-xs text-muted-foreground">
-                          {currentVersion || '-'} → <span className="text-primary font-medium">{latestVersion}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    {(updateInfo?.body || autoUpdateInfo?.releaseNotes) && (
-                      <div className="max-h-40 overflow-y-auto rounded-lg bg-accent/50 p-3 text-xs text-muted-foreground">
-                        {updateInfo?.body || autoUpdateInfo?.releaseNotes}
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      {hasCompatibleAsset && (
-                        <Button size="sm" variant="outline" onClick={startManualDownload}>
-                          <Download className="h-3.5 w-3.5 mr-1" />
-                          下载
-                        </Button>
-                      )}
-                      {autoUpdateInfo && (
-                        <Button size="sm" onClick={startAutoDownload}>
-                          <Play className="h-3.5 w-3.5 mr-1" />
-                          下载并安装
-                        </Button>
-                      )}
-                      {releasePageUrl && (
-                        <Button size="sm" variant="ghost" onClick={openReleasePage}>
-                          <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                          访问发布页
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {status === 'downloading' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <Download className="h-10 w-10 text-primary mb-3 animate-bounce" />
-                    <p className="text-base font-medium text-foreground mb-3">下载中...</p>
-                    <div className="w-full max-w-xs">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all"
-                          style={{ width: `${progress.percent}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-                        <span>{formatSize(progress.transferred)} / {formatSize(progress.total)}</span>
-                        <span className="text-primary font-medium">{progress.speed}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {status === 'downloaded' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
-                    <p className="text-base font-medium text-foreground mb-1">准备安装</p>
-                    <p className="text-xs text-muted-foreground mb-4">更新已下载，将在退出时安装</p>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={showInFolder}>
-                        <FolderOpen className="h-3.5 w-3.5 mr-1" />
-                        显示文件
-                      </Button>
-                      <Button size="sm" onClick={quitAndInstall}>
-                        <Play className="h-3.5 w-3.5 mr-1" />
-                        立即安装
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {status === 'success' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
-                    <p className="text-base font-medium text-foreground mb-1">下载完成</p>
-                    <p className="max-w-xs truncate text-xs text-muted-foreground mb-4">{downloadPath}</p>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={showInFolder}>
-                        <FolderOpen className="h-3.5 w-3.5 mr-1" />
-                        显示文件
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {status === 'error' && (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <XCircle className="h-12 w-12 text-destructive mb-3" />
-                    <p className="text-base font-medium text-foreground mb-1">出错了</p>
-                    <p className="max-w-xs text-center text-xs text-muted-foreground mb-4">{errorMsg}</p>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setVisible(false)}>
-                        关闭
-                      </Button>
-                      <Button size="sm" onClick={() => checkForUpdates()}>
-                        <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                        重试
-                      </Button>
-                      {releasePageUrl && (
-                        <Button size="sm" variant="ghost" onClick={openReleasePage}>
-                          <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                          访问发布页
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={close}>
+      <div role="dialog" aria-modal="true" aria-labelledby="update-modal-title" className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border/80 bg-card shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
+          <h2 id="update-modal-title" className="text-base font-semibold">Moss 版本更新</h2>
+          <button aria-label="稍后提醒" onClick={close} className="rounded-md p-1 hover:bg-accent"><X className="h-4 w-4" /></button>
+        </div>
+        {state ? <UpdateContent state={state} operationError={operationError} actions={{
+          check: () => void run(api.check),
+          download: () => void run(() => api.download({ candidateId: state.candidateId! })),
+          cancel: () => void run(api.cancel),
+          install: () => void run(() => api.install({ candidateId: state.candidateId! })),
+          open: () => void run(() => api.openDownloaded({ downloadId: state.downloadId! })),
+          reveal: () => void run(() => api.showDownloaded({ downloadId: state.downloadId! })),
+          release: () => void run(api.openReleasePage),
+          autoDownload: enabled => void run(() => api.setAutoDownload({ enabled })),
+        }} /> : <div className="p-5 text-sm">{operationError || '正在读取更新状态…'}</div>}
+      </div>
+    </div>
   );
 }

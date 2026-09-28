@@ -337,6 +337,13 @@ async function verifyUpdateMetadata(platform, paths, installerFiles, appVersion)
     if (setupFiles.length !== 1 || portableFiles.length !== 1 || !listedNames.has(setupFiles[0])) {
       throw new Error('Windows output must contain one NSIS installer, one portable executable, and update metadata for the installer.');
     }
+    const checksums = await fsp.readFile(requireFile(path.join(paths.installersDir, 'SHA512SUMS'), 'Windows checksums'), 'utf8');
+    for (const name of [...setupFiles, ...portableFiles]) {
+      const digest = await digestFile(path.join(paths.installersDir, name), 'sha512', 'hex');
+      if (checksums.split(/\r?\n/).filter(line => line === `${digest}  ${name}`).length !== 1) {
+        throw new Error(`SHA512SUMS mismatch for ${name}.`);
+      }
+    }
   }
 }
 

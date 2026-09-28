@@ -1,46 +1,28 @@
-export function supportsAutomaticUpdates(platform = process.platform) {
-  return platform === 'win32';
+export function supportsAutomaticUpdates(platform = process.platform, portable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE || process.env.PORTABLE_EXECUTABLE_DIR)) {
+  return platform === 'win32' && !portable;
 }
 
-export const UNSIGNED_AUTO_UPDATE_MESSAGE =
-  'Automatic installation is disabled for unsigned builds; download the installer from the release instead.';
-
-export function scoreReleaseAsset(asset, platform = process.platform, arch = process.arch) {
-  const name = String(asset?.name || '');
-  const nameLower = name.toLowerCase();
-  const extension = name.slice(name.lastIndexOf('.'));
-  const platformHints = platform === 'win32'
-    ? ['win', 'win32', 'windows']
-    : platform === 'darwin'
-      ? ['mac', 'darwin', 'osx']
-      : ['linux'];
-  const archHints = arch === 'arm64' ? ['arm64', 'aarch64'] : ['x64', 'x86_64', 'amd64'];
-  let score = 0;
-
-  if (platformHints.some((hint) => nameLower.includes(hint))) score += 20;
-  if (archHints.some((hint) => nameLower.includes(hint))) score += 10;
-
-  if (platform === 'win32') {
-    if (extension === '.exe') score += 100;
-    if (extension === '.msi') score += 90;
-    if (extension === '.zip') score += 50;
-    if (/\bsetup\b/i.test(name)) score += 30;
-    if (/\bportable\b/i.test(name)) score -= 10;
-  } else if (platform === 'darwin') {
-    if (extension === '.dmg') score += 100;
-    if (extension === '.zip') score += 70;
-  } else {
-    if (extension === '.AppImage') score += 100;
-    if (extension === '.deb') score += 90;
-    if (extension === '.rpm') score += 80;
-    if (extension === '.zip') score += 40;
+export function getUpdateCapabilities({ platform, arch, isPackaged, portable = false, hasNsisMarker = false }) {
+  const base = { platform, arch, packageType: portable ? 'portable' : platform === 'darwin' ? 'dmg' : 'nsis' };
+  if (!isPackaged) return { ...base, mode: 'development', reason: '开发模式不检查或安装更新。' };
+  if (!['x64', 'arm64'].includes(arch) || !['darwin', 'win32'].includes(platform)) {
+    return { ...base, mode: 'unsupported', reason: '当前系统或架构暂不支持桌面更新。' };
   }
-
-  return score;
+  if (platform === 'darwin' || portable) return { ...base, mode: 'manual' };
+  if (!hasNsisMarker) return { ...base, mode: 'unsupported', reason: '未识别到 Windows 安装版，请从发布页下载安装包。' };
+  return { ...base, mode: 'nativeUpdater' };
 }
 
-export function pickRecommendedReleaseAsset(assets, platform = process.platform, arch = process.arch) {
-  return assets
-    .map((asset) => ({ asset, score: scoreReleaseAsset(asset, platform, arch) }))
-    .sort((left, right) => right.score - left.score)[0]?.asset;
+// Never fall back to a different architecture or package format.
+export function pickRecommendedReleaseAsset(assets, platform = process.platform, arch = process.arch, packageType = 'nsis', version) {
+  if (!['x64', 'arm64'].includes(arch)) return undefined;
+  const prefix = platform === 'darwin' ? 'Moss-' : platform === 'win32'
+    ? `Moss-${packageType === 'portable' ? 'Portable' : 'Setup'}-` : null;
+  if (!prefix) return undefined;
+  const suffix = `-${arch}.${platform === 'darwin' ? 'dmg' : 'exe'}`;
+  const matches = assets.filter(({ name }) => typeof name === 'string' && (
+    version ? name === `${prefix}${version}${suffix}`
+      : name.startsWith(prefix) && name.endsWith(suffix) && name.length > prefix.length + suffix.length
+  ));
+  return matches.length === 1 ? matches[0] : undefined;
 }
