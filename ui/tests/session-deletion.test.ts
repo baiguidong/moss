@@ -320,6 +320,7 @@ function deletionHarness(deleteRemote: () => Promise<void>) {
     shutdownSessionAgentTeam: async () => {},
     agentTeamsService: null,
     disposeRuntime: () => {},
+    localTranscriptSync: { forget: () => {} },
     browserViewManager: null,
     removeSubAgentSessionRecords: async () => 0,
     deletePersistedSession: () => { actions.push('local-delete'); },

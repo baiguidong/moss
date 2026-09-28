@@ -9,6 +9,7 @@ function fixture(extra: Record<string, any> = {}) {
   const context = {
     Promise, Error, appShutdownComplete: false, desktopShutdownPromise: null,
     stopMossCronScheduler: () => calls.push('cron-stop'),
+    localTranscriptSync: { dispose: () => calls.push('transcript-sync-stop') },
     sessions: new Map([['chat', { id: 'chat' }]]), subAgentSessions: new Map([['child', { id: 'child' }]]),
     hasActiveAgentTeam: () => false, shutdownSessionAgentTeam: async () => true,
     agentTeamsService: { checkNow: async () => {}, stop: () => calls.push('teams-stop') },
@@ -41,6 +42,7 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
   expect(calls.indexOf('persist-chat')).toBeLessThan(calls.indexOf('dispose-chat'));
   expect(calls.indexOf('persist-child')).toBeLessThan(calls.indexOf('dispose-child'));
   expect(calls).toContain('apps-close');
+  expect(calls).toContain('transcript-sync-stop');
   await shutdown(); expect(calls.filter(call => call === 'apps-close').length).toBe(1);
 });
 test('a failing component does not skip other cleanup or authorize installation', async () => {

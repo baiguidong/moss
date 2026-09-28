@@ -24,6 +24,7 @@ describe('terminal launch', () => {
     const fresh = buildTerminalLaunch({ ...options, action: 'new' });
     const resumed = buildTerminalLaunch({ ...options, action: 'resume' });
     expect(fresh.args.join(' ')).not.toContain('--resume');
+    expect(fresh.args.join(' ')).toContain("'--trust-directory' '/workspace'");
     expect(resumed.args.join(' ')).toContain("'--resume' '/data/engine-session.jsonl'");
     expect(resumed.cwd).toBe('/workspace');
   });
@@ -55,7 +56,7 @@ describe('terminal launch', () => {
       mkdirSync(cwd);
       const cliPath = path.join(root, "cli ' $(exit 42) `exit 43`.cjs");
       const transcriptPath = path.join(root, "session ' $d `x`.jsonl");
-      writeFileSync(cliPath, 'console.log(JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}));');
+      writeFileSync(cliPath, 'console.log(JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),node:process.env.MOSS_NODE_PATH,path:process.env.PATH}));');
       writeFileSync(transcriptPath, '');
       const launch = buildTerminalLaunch({
         ...options, action: 'resume', session: { ...session, workspace: cwd },
@@ -65,7 +66,9 @@ describe('terminal launch', () => {
       const result = spawnSync(launch.shell, launch.args, { cwd, env: launch.env, input: 'exit\n', encoding: 'utf8', timeout: 10000 });
       expect(result.status).toBe(0);
       const output = JSON.parse(result.stdout.trim());
-      expect(output.args).toEqual(['--resume', transcriptPath]);
+      expect(output.args).toEqual(['--trust-directory', cwd, '--resume', transcriptPath]);
+      expect(output.node).toBe(process.execPath);
+      expect(output.path.split(':')[0]).toBe(path.dirname(process.execPath));
       // macOS resolves /var to /private/var for the child process cwd.
       expect(output.cwd.endsWith(path.basename(cwd))).toBe(true);
     } finally { rmSync(root, { recursive: true, force: true }); }
@@ -78,6 +81,8 @@ describe('terminal launch', () => {
     const command = Buffer.from(launch.args[3], 'base64').toString('utf16le');
     expect(command).toContain("'C:\\Program Files\\Moss''s\\cli.js'");
     expect(command).toContain("'--resume' 'C:\\work\\$session.jsonl'");
+    expect(command).toContain("'--trust-directory' '/workspace'");
+    expect(command).toContain('$env:Path =');
   });
 });
 

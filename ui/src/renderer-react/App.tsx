@@ -1287,7 +1287,9 @@ export default function App() {
       if (payload.sessionId === activeSessionIdRef.current) {
         setActiveDetail((prev) => {
           if (!prev) return prev;
-          const nextHistory = mergeSessionHistorySnapshot(prev.history, payload.history);
+          const nextHistory = payload.replaceHistory
+            ? payload.history
+            : mergeSessionHistorySnapshot(prev.history, payload.history);
           const next = {
             ...prev,
             ...(payload.summary || {}),

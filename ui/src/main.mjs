@@ -258,6 +258,7 @@ import {
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
 import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
+import { createLocalTranscriptSync, readTranscriptHistory } from './local-transcript-sync.mjs';
 import {
   compareTaskIds,
   createRemoteSessionTaskSync,
@@ -556,32 +557,31 @@ function sleepMs(ms) {
   });
 }
 
-async function loadDisplayHistoryFromLocalTranscript(sessionRecord) {
+async function loadDisplayHistoryFromLocalTranscript(sessionRecord, { requireComplete = false } = {}) {
   const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
   if (!transcriptPath) return null;
-
-  let raw;
-  try {
-    raw = await fsp.readFile(transcriptPath, 'utf8');
-  } catch {
-    return null;
-  }
-
-  const history = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const entry = JSON.parse(trimmed);
-      if (isDisplayTranscriptEntry(entry)) {
-        history.push(entry);
-      }
-    } catch {
-      // Ignore malformed partial lines; the writer may be appending.
-    }
-  }
-  return history;
+  return readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
 }
+
+const localTranscriptSync = createLocalTranscriptSync({
+  getPath: record => record.agentMode === 'remote-direct' || record.isSubAgent
+    ? null : getLocalSessionTranscriptPath(record),
+  readHistory: record => loadDisplayHistoryFromLocalTranscript(record, { requireComplete: true }),
+  canSync: record => !record.busy && !record.syncingLocalTranscript && !hasActiveAgentTeam(record)
+    && !Object.values(record.runtime?.getAppState?.()?.tasks || {}).some(task => task?.status === 'running'),
+  invalidateRuntime: record => disposeRuntime(record),
+  applyHistory: (record, history, { modifiedAt }) => {
+    const filtered = applyPendingConversationRewind(record, history);
+    syncSessionRecordHistory(record, filtered.history, { allowReplacement: true });
+    record.updatedAt = Math.max(record.updatedAt || 0, modifiedAt);
+    schedulePersistSession(record, true);
+    emitSessionMeta(record);
+    emitSessionHistory(record, { replaceHistory: true });
+  },
+  onError: (error, record) => mossLog('warn', 'session', 'Unable to synchronize local transcript', {
+    sessionId: record.id, error: error.message,
+  }),
+});
 
 async function findLatestLocalTranscriptSessionId(sessionRecord) {
   if (!sessionRecord?.id || sessionRecord.agentMode === 'remote-direct') return null;
@@ -5645,6 +5645,10 @@ async function loadSessionHistoryFromSource(sessionRecord) {
     }
   }
 
+  if (sessionRecord.agentMode !== 'remote-direct' && await localTranscriptSync.refresh(sessionRecord)) {
+    return sessionRecord.history;
+  }
+
   if (sessionRecord.runtime) {
     return sessionRecord.history;
   }
@@ -5843,6 +5847,7 @@ async function runSessionPromptNow({
   retryEncryptedContentOnce = false,
   agentMailTurn = null,
 }) {
+  await localTranscriptSync.refresh(sessionRecord);
   if (resetRuntimeBeforePrompt) {
     await shutdownSessionAgentTeam(sessionRecord);
     await agentTeamsService?.checkNow();
@@ -6115,11 +6120,17 @@ async function runSessionPromptNow({
     if (agentMailTurn && sessionRecord.activeAgentMailTurn === agentMailTurn) {
       sessionRecord.activeAgentMailTurn = null;
     }
+    sessionRecord.syncingLocalTranscript = true;
     sessionRecord.busy = false;
     if (!isSessionBusyForRenderer(sessionRecord)) clearSessionBusyTiming(sessionRecord);
     sessionRecord.updatedAt = Date.now();
-    if (!sessionRecord.deleted) {
-      await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
+    try {
+      if (!sessionRecord.deleted) {
+        await refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord);
+        await localTranscriptSync.acknowledge(sessionRecord);
+      }
+    } finally {
+      sessionRecord.syncingLocalTranscript = false;
     }
     if (!sessionRecord.deleted) {
       await syncSubAgentSessionsBestEffort(sessionRecord);
@@ -6728,13 +6739,14 @@ function emitSessionMeta(sessionRecord) {
   emitToRenderer('agent:session-meta', getSessionSummary(sessionRecord));
 }
 
-function emitSessionHistory(sessionRecord) {
+function emitSessionHistory(sessionRecord, { replaceHistory = false } = {}) {
   if (!sessionRecord || sessionRecord.deleted) return;
   emitToRenderer('agent:session-history', {
     sessionId: sessionRecord.id,
     summary: getSessionSummary(sessionRecord),
     history: sessionRecord.history,
     tasks: snapshotSessionTasks(sessionRecord),
+    replaceHistory,
   });
 }
 
@@ -11169,6 +11181,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const sessionRecord = getSessionRecord(sessionId);
       if (action !== 'terminal') await waitForManagedRuntimesBeforeLocalSession();
       assertUpdateWorkAllowed();
+      await localTranscriptSync.refresh(sessionRecord);
+      const managedNode = getManagedRuntimeStatus().node;
       return buildTerminalLaunch({
         action,
         session: sessionRecord,
@@ -11176,7 +11190,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         cliPath: app.isPackaged
           ? path.join(process.resourcesPath, 'cli', 'cli.js')
           : path.join(repoRoot, 'bin', 'cli.js'),
-        nodePath: process.env.MOSS_NODE_PATH,
+        nodePath: managedNode.installed ? managedNode.path : null,
       });
     },
   });
@@ -11351,6 +11365,7 @@ function shutdownDesktop() {
   if (appShutdownComplete) return Promise.resolve();
   if (desktopShutdownPromise) return desktopShutdownPromise;
   stopMossCronScheduler();
+  localTranscriptSync.dispose();
   desktopShutdownPromise = (async () => {
     const errors = [];
     const attempt = async (operation) => {
@@ -12843,6 +12858,7 @@ async function deleteSessionRecordById(sessionId) {
   // Mark the record before aborting. Runtime abort completion runs asynchronous
   // cleanup that must not publish a final state for a session being deleted.
   sessionRecord.deleted = true;
+  localTranscriptSync.forget(sessionRecord);
   try {
     await Promise.resolve(sessionRecord.runtime?.abort?.());
   } catch {}
@@ -13772,6 +13788,7 @@ async function sendAgentPromptNow(event, {
   if (sessionRecord.busy && !allowBusyQueue) {
     throw new Error('This session is already processing a request.');
   }
+  await localTranscriptSync.refresh(sessionRecord);
   if (sessionRecord.projectId) {
     const project = readProjectSync(sessionRecord.projectId);
     if (!project || project.archivedAt) {

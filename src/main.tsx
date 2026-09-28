@@ -60,7 +60,8 @@ const coordinatorModeModule = feature('COORDINATOR_MODE') ? require('./coordinat
 import { resolve } from 'path';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/featureFlags.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
-import { getOriginalCwd, setAdditionalDirectoriesForMossMd, setMainLoopModelOverride, setMainThreadAgentType } from './bootstrap/state.js';
+import { getOriginalCwd, setAdditionalDirectoriesForMossMd, setMainLoopModelOverride, setMainThreadAgentType, setSessionTrustAccepted } from './bootstrap/state.js';
+import { isWorkspaceTrustedByDirectories } from './utils/workspaceTrust.js';
 import { getCommands } from './commands.js';
 import type { StatsStore } from './context/stats.js';
 import { launchInvalidSettingsDialog, launchResumeChooser } from './dialogLaunchers.js';
@@ -569,8 +570,13 @@ async function run(): Promise<CommanderCommand> {
     }
     return value;
   })).option('--agent <agent>', `Agent for the current session. Overrides the 'agent' setting.`).option('--betas <betas...>', 'Beta headers to include in API requests (API key users only)').option('--fallback-model <model>', 'Enable automatic fallback to specified model when default model is overloaded (only works with --print)').addOption(new Option('--workload <tag>', 'Workload tag for billing-header attribution (cc_workload). Process-scoped; set by SDK daemon callers that spawn subprocesses for cron work. (only works with --print)').hideHelp()).option('--settings <file-or-json>', 'Path to a settings JSON file or a JSON string to load additional settings from').option('--add-dir <directories...>', 'Additional directories to allow tool access to').option('--ide', 'Automatically connect to IDE on startup if exactly one valid IDE is available', () => true).option('--strict-mcp-config', 'Only use MCP servers from --mcp-config, ignoring all other MCP configurations', () => true).option('--session-id <uuid>', 'Use a specific session ID for the conversation (must be a valid UUID)').option('-n, --name <name>', 'Set a display name for this session (shown in /resume and terminal title)').option('--agents <json>', 'JSON object defining custom agents (e.g. \'{"reviewer": {"description": "Reviews code", "prompt": "You are a code reviewer"}}\')').option('--setting-sources <sources>', 'Comma-separated list of setting sources to load (user, project, local).')
+  .option('--trust-directory <directory>', 'Trust this directory and its children for this invocation (repeatable; does not bypass tool permissions)', (directory: string, previous: string[]) => [...previous, directory], [] as string[])
   .option('--disable-slash-commands', 'Disable all skills', () => true).action(async (prompt, options) => {
     profileCheckpoint('action_handler_start');
+
+    if (options.trustDirectory.length > 0 && isWorkspaceTrustedByDirectories(getOriginalCwd(), options.trustDirectory)) {
+      setSessionTrustAccepted(true);
+    }
 
     // --bare = one-switch minimal mode. Sets SIMPLE so all the existing
     // gates fire (project instructions, skills, hooks inside executeHooks, agent

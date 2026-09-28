@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 const ACTION_TITLES = { terminal: '终端', new: '新会话', resume: '跟随会话' };
 const quoteShell = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
@@ -27,7 +28,12 @@ export function buildTerminalLaunch({
   if (action !== 'terminal') {
     if (!cliPath || !fileExists(cliPath)) throw new Error('Moss CLI 尚未构建，请先运行桌面构建。');
     if (!nodePath || !fileExists(nodePath)) throw new Error('Node.js 运行时尚未就绪。');
-    const cliArgs = [nodePath, cliPath];
+    const pathImpl = platform === 'win32' ? path.win32 : path.posix;
+    const nodeDir = pathImpl.dirname(nodePath);
+    const pathKey = Object.keys(terminalEnv).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+    terminalEnv[pathKey] = [nodeDir, terminalEnv[pathKey]].filter(Boolean).join(pathImpl.delimiter);
+    terminalEnv.MOSS_NODE_PATH = nodePath;
+    const cliArgs = [nodePath, cliPath, '--trust-directory', cwd];
     if (action === 'resume') {
       if (session.busy) throw new Error('请等待当前回复完成后再跟随会话。');
       if (session.resumeReadOnlyReason) throw new Error(session.resumeReadOnlyReason);
@@ -38,10 +44,12 @@ export function buildTerminalLaunch({
     }
     if (platform === 'win32') {
       // EncodedCommand preserves paths containing spaces, quotes and shell metacharacters.
-      const command = `& ${cliArgs.map(quotePowerShell).join(' ')}`;
+      const command = `$env:Path = ${quotePowerShell(`${nodeDir};`)} + $env:Path; & ${cliArgs.map(quotePowerShell).join(' ')}`;
       args = ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')];
     } else {
-      args = ['-l', '-i', '-c', `${cliArgs.map(quoteShell).join(' ')}; exec ${quoteShell(shell)} -l`];
+      // Login/interactive profiles may replace PATH. Restore the managed Node
+      // after those profiles so CLI tools using /usr/bin/env node inherit it too.
+      args = ['-l', '-i', '-c', `export PATH=${quoteShell(nodeDir)}:"$PATH"; ${cliArgs.map(quoteShell).join(' ')}; exec ${quoteShell(shell)} -l`];
     }
   }
   return { shell, args, cwd, env: terminalEnv, title: `${ACTION_TITLES[action]} · ${session.title || 'Moss'}` };

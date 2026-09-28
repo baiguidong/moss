@@ -190,6 +190,17 @@ docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:latest whoami
 本地会话使用桌面端模型配置，远程会话只使用服务端模型配置，客户端不能覆盖服务端的模型或凭据。
 没有内置文本模型默认值；未配置 `models.text.model` 时会提示补充配置。
 
+CLI 也会读取当前项目的 `.moss/settings.json`（项目共享）和
+`.moss/settings.local.json`（本机配置）。目录信任记录独立保存在
+`~/.moss/moss.json` 的 `projects[绝对路径].hasTrustDialogAccepted` 中，信任父目录也适用于子目录。
+项目配置不能自行声明目录可信。启动 CLI 时可传入 `--trust-directory /path/to/project`
+（可重复），显式信任该目录及其子目录；仅对本次启动生效，不跳过工具权限检查。
+
+Desktop 顶部「终端 → 新会话 / 跟随会话」自动传入当前工作目录的信任参数，
+并固定使用 Moss 内置 Node；CLI 子命令的 PATH 也优先使用该 Node。
+「跟随会话」读写原会话的同一份 JSONL transcript。Desktop 打开过的本地会话会检查文件变化
+（约 1 秒），以完整落盘的记录刷新聊天，并在继续对话时从文件恢复上下文。
+
 ### 配置示例
 
 ```json

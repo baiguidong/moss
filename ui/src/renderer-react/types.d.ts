@@ -2193,6 +2193,7 @@ declare global {
       onQuestionResolved: (callback: (payload: { requestId: string; sessionId: string }) => void) => () => void;
       onSessionMeta: (callback: (payload: SessionSummary) => void) => () => void;
       onSessionHistory: (callback: (payload: {
+        replaceHistory?: boolean;
         sessionId: string;
         summary?: SessionSummary;
         history?: AgentEvent[];
