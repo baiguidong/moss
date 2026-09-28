@@ -21,6 +21,22 @@ afterEach(async () => {
 })
 
 describe('server profile resources', () => {
+  test('retains the root index when earlier directories fill the memory catalog', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'moss-profile-memory-limit-'))
+    cleanup.push(profileDir)
+    const archiveDir = join(profileDir, 'memory', 'archive')
+    await mkdir(archiveDir, { recursive: true })
+    await writeFile(join(profileDir, 'memory', 'MEMORY.md'), '# Index')
+    await Promise.all(Array.from({ length: 500 }, (_, index) => (
+      writeFile(join(archiveDir, `${index}.md`), '# Archived memory')
+    )))
+
+    const files = await listProfileMemory(profileDir)
+    expect(files).toHaveLength(500)
+    expect(files[0]).toMatchObject({ path: 'MEMORY.md', isIndex: true, indexed: true })
+    await expect(readProfileMemory(profileDir, 'MEMORY.md')).resolves.toMatchObject({ content: '# Index' })
+  })
+
   test('lists and reads profile and session memory within their roots', async () => {
     const root = await mkdtemp(join(tmpdir(), 'moss-profile-resources-'))
     cleanup.push(root)

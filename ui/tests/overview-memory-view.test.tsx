@@ -6,8 +6,10 @@ import { OverviewTabs } from '../src/renderer-react/components/overview-view';
 import {
   defaultSelection,
   GlobalList,
+  GlobalMemorySourceTabs,
   SessionList,
 } from '../src/renderer-react/components/memory-overview';
+import type { MemoryCatalog, MemoryGlobalEntry } from '../src/renderer-react/types';
 
 describe('overview memory navigation', () => {
   test('keeps usage and all three memory scopes in one top tab bar', () => {
@@ -66,7 +68,7 @@ describe('overview memory navigation', () => {
     ];
 
     const collapsed = renderToStaticMarkup(
-      <GlobalList entries={entries} selected="" onSelect={() => {}} />,
+      <GlobalList entries={entries} source="local" selected="" onSelect={() => {}} />,
     );
     expect(collapsed).toContain('有效记忆');
     expect(collapsed).toContain('回复偏好');
@@ -74,10 +76,60 @@ describe('overview memory navigation', () => {
     expect(collapsed).not.toContain('旧任务状态');
 
     const searching = renderToStaticMarkup(
-      <GlobalList entries={entries} selected="" queryActive onSelect={() => {}} />,
+      <GlobalList entries={entries} source="local" selected="" queryActive onSelect={() => {}} />,
     );
     expect(searching).toContain('旧任务状态');
     expect(searching).toContain('未索引');
+  });
+
+  test('separates cloud and local files and pins each source index ahead of memories', () => {
+    const file = (path: string, source: 'local' | 'remote', title: string): MemoryGlobalEntry => ({
+      id: `${source}:${path}`, path, source, title, description: '',
+      type: path === 'MEMORY.md' ? 'index' : 'memory',
+      isIndex: path === 'MEMORY.md', indexed: true, bytes: 10, updatedAt: 1, readable: true,
+    });
+    const entries = [
+      file('preference.md', 'local', '本地回复偏好'),
+      file('MEMORY.md', 'local', '记忆索引'),
+      file('preference.md', 'remote', '云端回复偏好'),
+      file('MEMORY.md', 'remote', '记忆索引'),
+    ];
+    const catalog: MemoryCatalog = {
+      generatedAt: 1, global: { rootLabel: '/local/memory', files: entries }, projects: [], sessions: [],
+    };
+
+    for (const source of ['remote', 'local'] as const) {
+      const html = renderToStaticMarkup(
+        <GlobalList entries={entries} source={source} selected={`global:${source}:MEMORY.md`} onSelect={() => {}} />,
+      );
+      const title = source === 'remote' ? '云端回复偏好' : '本地回复偏好';
+      expect(html).toContain(title);
+      expect(html).not.toContain(source === 'remote' ? '本地回复偏好' : '云端回复偏好');
+      expect(html.match(/>MEMORY.md</g)).toHaveLength(1);
+      expect(html.indexOf('>MEMORY.md<')).toBeLessThan(html.indexOf(title));
+      expect(defaultSelection(catalog, 'global', source)).toEqual({ scope: 'global', path: 'MEMORY.md', source });
+    }
+
+    const tabs = renderToStaticMarkup(<GlobalMemorySourceTabs source="remote" onChange={() => {}} />);
+    expect(tabs).toContain('全局记忆来源');
+    expect(tabs).toContain('云端全局记忆');
+    expect(tabs).toContain('本地全局记忆');
+    expect(tabs.match(/aria-selected="true"/g)).toHaveLength(1);
+  });
+
+  test('does not fall back to local files when cloud memory is empty', () => {
+    const entries: MemoryGlobalEntry[] = [{
+      id: 'MEMORY.md', path: 'MEMORY.md', title: '记忆索引', description: '', type: 'index',
+      isIndex: true, indexed: true, readable: true, bytes: 10, updatedAt: 1,
+    }];
+    const catalog: MemoryCatalog = {
+      generatedAt: 1, global: { rootLabel: '/local/memory', files: entries }, projects: [], sessions: [],
+    };
+    expect(defaultSelection(catalog, 'global', 'remote')).toBeNull();
+    expect(defaultSelection(catalog, 'global', 'local')).toMatchObject({ path: 'MEMORY.md', source: 'local' });
+    const html = renderToStaticMarkup(<GlobalList entries={entries} source="remote" selected="" onSelect={() => {}} />);
+    expect(html).toContain('暂无云端全局记忆');
+    expect(html).not.toContain('MEMORY.md');
   });
 
   test('does not select or enable memory entries that exceed the display limit', () => {
@@ -133,7 +185,7 @@ describe('overview memory navigation', () => {
       }],
     };
 
-    expect(defaultSelection(catalog, 'global')).toBeNull();
+    expect(defaultSelection(catalog, 'global', 'remote')).toBeNull();
     expect(defaultSelection(catalog, 'project')).toBeNull();
     expect(defaultSelection(catalog, 'session')).toBeNull();
     const html = renderToStaticMarkup(

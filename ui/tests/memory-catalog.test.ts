@@ -173,7 +173,9 @@ describe('memory catalog', () => {
     await expect(service.readEntry({ scope: 'global', path: 'linked.md' })).rejects.toThrow('超出允许范围');
   });
 
-  it('merges Moss Server global memory and resolves remote session summaries', async () => {
+  it('keeps source paths and same-named local and remote memories distinct', async () => {
+    await fs.mkdir(path.join(tempDir, 'memory'), { recursive: true });
+    await fs.writeFile(path.join(tempDir, 'memory', 'MEMORY.md'), '# Local memory');
     const remoteReads: string[] = [];
     const service = createMemoryCatalog({
       mossHome: tempDir,
@@ -223,6 +225,12 @@ describe('memory catalog', () => {
     });
 
     const catalog = await service.getCatalog();
+    expect(catalog.global).toMatchObject({
+      rootLabel: path.join(tempDir, 'memory'),
+      remoteRootLabel: 'Moss Server / memory',
+      remoteStatus: 'ready',
+    });
+    expect(catalog.global.files.filter((entry) => entry.path === 'MEMORY.md')).toHaveLength(2);
     expect(catalog.global.files).toContainEqual(expect.objectContaining({
       id: 'remote:MEMORY.md',
       source: 'remote',
@@ -234,8 +242,45 @@ describe('memory catalog', () => {
     });
     await expect(service.readEntry({ scope: 'global', source: 'remote', path: 'MEMORY.md' }))
       .resolves.toMatchObject({ content: '# Cloud memory' });
+    await expect(service.readEntry({ scope: 'global', source: 'local', path: 'MEMORY.md' }))
+      .resolves.toMatchObject({ content: '# Local memory' });
     await expect(service.readEntry({ scope: 'session', sessionId: 'desktop-session-1' }))
       .resolves.toMatchObject({ content: '# Cloud session' });
     expect(remoteReads).toEqual(['global:MEMORY.md', 'session:server-session-1']);
+  });
+
+  it('distinguishes empty cloud memory, no connection, and a failed cloud request', async () => {
+    await fs.mkdir(path.join(tempDir, 'memory'), { recursive: true });
+    await fs.writeFile(path.join(tempDir, 'memory', 'MEMORY.md'), '# Local memory');
+    const outcomes = [
+      { getRemoteMemoryCatalog: async () => ({ global: { files: [] } }), status: 'ready' },
+      { getRemoteMemoryCatalog: async () => null, status: 'disconnected' },
+      { getRemoteMemoryCatalog: async () => { throw new Error('offline'); }, status: 'error' },
+    ];
+    for (const { getRemoteMemoryCatalog, status } of outcomes) {
+      const service = createMemoryCatalog({
+        mossHome: tempDir, listProjects: () => [], getProjectMemory: async () => ({}),
+        listSessions: () => [], getRemoteMemoryCatalog,
+      });
+      const catalog = await service.getCatalog();
+      expect(catalog.global.remoteStatus).toBe(status);
+      expect(catalog.global.files).toHaveLength(1);
+      expect(catalog.global.files[0].source).toBe('local');
+    }
+  });
+
+  it('keeps the root index when nested memories exceed the catalog limit', async () => {
+    const archiveDir = path.join(tempDir, 'memory', 'archive');
+    await fs.mkdir(archiveDir, { recursive: true });
+    await fs.writeFile(path.join(tempDir, 'memory', 'MEMORY.md'), '# Index');
+    await Promise.all(Array.from({ length: 500 }, (_, index) => (
+      fs.writeFile(path.join(archiveDir, `${index}.md`), '# Archived memory')
+    )));
+    const service = createMemoryCatalog({
+      mossHome: tempDir, listProjects: () => [], getProjectMemory: async () => ({}), listSessions: () => [],
+    });
+    const catalog = await service.getCatalog();
+    expect(catalog.global.files).toHaveLength(500);
+    expect(catalog.global.files[0]).toMatchObject({ path: 'MEMORY.md', isIndex: true, indexed: true });
   });
 });

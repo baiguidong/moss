@@ -7,9 +7,9 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Cloud,
   FileText,
   FolderKanban,
-  Globe2,
   HardDrive,
   Loader2,
   MessageSquareText,
@@ -28,12 +28,13 @@ import type {
   MemoryProjectEntry,
   MemoryProjectHistoryEntry,
   MemorySessionEntry,
+  MemorySource,
 } from "../types";
 
 export type MemoryScope = "global" | "project" | "session";
 
 type MemorySelection =
-  | { scope: "global"; path: string; source?: "local" | "remote" }
+  | { scope: "global"; path: string; source?: MemorySource }
   | { scope: "project"; projectId: string; kind: "overview" }
   | { scope: "project"; projectId: string; kind: "history"; sessionId: string }
   | { scope: "session"; sessionId: string };
@@ -47,6 +48,15 @@ const TYPE_LABELS: Record<string, string> = {
   memory: "长期记忆",
 };
 
+const SOURCE_LABELS: Record<MemorySource, string> = {
+  local: "本地全局记忆",
+  remote: "云端全局记忆",
+};
+
+function entriesForSource(entries: MemoryGlobalEntry[], source: MemorySource): MemoryGlobalEntry[] {
+  return entries.filter((entry) => (entry.source || "local") === source);
+}
+
 function selectionKey(selection: MemorySelection | null): string {
   if (!selection) return "";
   if (selection.scope === "global") return `global:${selection.source || "local"}:${selection.path}`;
@@ -56,10 +66,13 @@ function selectionKey(selection: MemorySelection | null): string {
     : `project:${selection.projectId}:history:${selection.sessionId}`;
 }
 
-export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySelection | null {
+export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope, source: MemorySource = "local"): MemorySelection | null {
   if (scope === "global") {
-    const first = catalog.global.files.find((entry) => entry.readable !== false);
-    return first ? { scope: "global", path: first.path, source: first.source } : null;
+    const entries = entriesForSource(catalog.global.files, source).filter((entry) => entry.readable !== false);
+    const first = entries.find((entry) => entry.isIndex)
+      || entries.find((entry) => entry.indexed)
+      || entries[0];
+    return first ? { scope: "global", path: first.path, source } : null;
   }
   if (scope === "project") {
     const withOverview = catalog.projects.find((project) => project.hasOverview);
@@ -77,9 +90,10 @@ export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): Me
   return first ? { scope: "session", sessionId: first.id } : null;
 }
 
-function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope): boolean {
+function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope, source: MemorySource): boolean {
   if (!selection || selection.scope !== scope) return false;
   if (selection.scope === "global") {
+    if ((selection.source || "local") !== source) return false;
     return catalog.global.files.some((entry) => (
       entry.readable !== false
       && entry.path === selection.path
@@ -187,28 +201,54 @@ function CatalogEmpty({ icon, title }: { icon: React.ReactNode; title: string })
 
 export function GlobalList({
   entries,
+  source,
   selected,
   queryActive = false,
+  emptyTitle,
   onSelect,
 }: {
   entries: MemoryGlobalEntry[];
+  source: MemorySource;
   selected: string;
   queryActive?: boolean;
+  emptyTitle?: string;
   onSelect: (selection: MemorySelection) => void;
 }) {
   const [showUnindexed, setShowUnindexed] = React.useState(false);
-  if (entries.length === 0) return <CatalogEmpty icon={<Globe2 className="h-4 w-4" />} title="暂无全局记忆" />;
-  const indexedEntries = entries.filter((entry) => entry.indexed);
-  const unindexedEntries = entries.filter((entry) => !entry.indexed);
-  const unindexedVisible = queryActive || showUnindexed;
+  const sourceEntries = entriesForSource(entries, source);
+  if (sourceEntries.length === 0) {
+    return <CatalogEmpty icon={source === "remote" ? <Cloud className="h-4 w-4" /> : <HardDrive className="h-4 w-4" />} title={emptyTitle || (queryActive ? "没有匹配的记忆" : `暂无${SOURCE_LABELS[source]}`)} />;
+  }
+  const indexEntries = sourceEntries.filter((entry) => entry.isIndex);
+  const indexedEntries = sourceEntries.filter((entry) => entry.indexed && !entry.isIndex);
+  const unindexedEntries = sourceEntries.filter((entry) => !entry.indexed && !entry.isIndex);
+  const unindexedVisible = queryActive || showUnindexed
+    || unindexedEntries.some((entry) => selected === selectionKey({ scope: "global", path: entry.path, source }));
 
   return (
     <div className="space-y-3">
+      <section className="border-b border-border/70 pb-3" aria-label={`${SOURCE_LABELS[source]}索引`}>
+        {indexEntries.map((entry) => (
+          <MemoryListButton
+            key={entry.id}
+            active={selected === `global:${source}:${entry.path}`}
+            icon={<BookOpenText className="h-4 w-4" />}
+            title={entry.path}
+            description={`${SOURCE_LABELS[source]}索引`}
+            meta="记忆索引"
+            disabled={!entry.readable}
+            onClick={() => onSelect({ scope: "global", path: entry.path, source })}
+          />
+        ))}
+        {indexEntries.length === 0 && !queryActive ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground">尚未生成 MEMORY.md 索引</p>
+        ) : null}
+      </section>
       <section>
         <div className="mb-1 flex h-7 items-center justify-between px-2 text-xs font-semibold text-foreground">
           <span>有效记忆</span>
           <span className="font-normal tabular-nums text-muted-foreground">
-            {indexedEntries.filter((entry) => !entry.isIndex).length}
+            {indexedEntries.length}
           </span>
         </div>
         <div className="space-y-1">
@@ -216,12 +256,12 @@ export function GlobalList({
             <MemoryListButton
               key={entry.id}
               active={selected === `global:${entry.source || "local"}:${entry.path}`}
-              icon={entry.isIndex ? <BookOpenText className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+              icon={<FileText className="h-4 w-4" />}
               title={entry.title}
-              description={`${entry.source === "remote" ? "Moss Server · " : "本机 · "}${entry.description || entry.path}`}
+              description={entry.description || entry.path}
               meta={TYPE_LABELS[entry.type] || entry.type}
               disabled={!entry.readable}
-              onClick={() => onSelect({ scope: "global", path: entry.path, source: entry.source })}
+              onClick={() => onSelect({ scope: "global", path: entry.path, source })}
             />
           ))}
         </div>
@@ -248,16 +288,47 @@ export function GlobalList({
                   active={selected === `global:${entry.source || "local"}:${entry.path}`}
                   icon={<FileText className="h-4 w-4" />}
                   title={entry.title}
-                  description={`${entry.source === "remote" ? "Moss Server · " : "本机 · "}${entry.description || entry.path}`}
+                  description={entry.description || entry.path}
                   meta="未索引"
                   disabled={!entry.readable}
-                  onClick={() => onSelect({ scope: "global", path: entry.path, source: entry.source })}
+                  onClick={() => onSelect({ scope: "global", path: entry.path, source })}
                 />
               ))}
             </div>
           ) : null}
         </section>
       ) : null}
+    </div>
+  );
+}
+
+export function GlobalMemorySourceTabs({ source, onChange }: {
+  source: MemorySource;
+  onChange: (source: MemorySource) => void;
+}) {
+  return (
+    <div className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-md border border-border/80 bg-muted/40 p-1" role="tablist" aria-label="全局记忆来源">
+      {(["local", "remote"] as const).map((value) => {
+        const Icon = value === "remote" ? Cloud : HardDrive;
+        return (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={source === value}
+            onClick={() => onChange(value)}
+            className={cn(
+              "flex h-10 shrink-0 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              source === value
+                ? "border-primary/50 bg-primary/10 font-semibold text-primary shadow-sm"
+                : "border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+            )}
+          >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            {SOURCE_LABELS[value]}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -358,11 +429,18 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
   const [query, setQuery] = React.useState("");
-  const [selection, setSelection] = React.useState<MemorySelection | null>(null);
+  const [globalSource, setGlobalSource] = React.useState<MemorySource>("local");
+  const [requestedSelection, setSelection] = React.useState<MemorySelection | null>(null);
   const [detail, setDetail] = React.useState<MemoryEntryContent | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
   const detailRequestRef = React.useRef(0);
+  const selection = React.useMemo(() => {
+    if (!catalog) return null;
+    return selectionExists(catalog, requestedSelection, scope, globalSource)
+      ? requestedSelection
+      : defaultSelection(catalog, scope, globalSource);
+  }, [catalog, requestedSelection, scope, globalSource]);
 
   const loadCatalog = React.useCallback(async () => {
     setLoading(true);
@@ -382,10 +460,8 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   }, [loadCatalog]);
 
   React.useEffect(() => {
-    if (!catalog) return;
-    setSelection((current) => selectionExists(catalog, current, scope) ? current : defaultSelection(catalog, scope));
     setQuery("");
-  }, [catalog, scope]);
+  }, [scope, globalSource]);
 
   React.useEffect(() => {
     const requestId = ++detailRequestRef.current;
@@ -418,11 +494,14 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   }, [catalog, selection]);
 
   const normalizedQuery = query.trim();
+  const sourceGlobalEntries = React.useMemo(() => (
+    entriesForSource(catalog?.global.files || [], globalSource)
+  ), [catalog, globalSource]);
   const globalEntries = React.useMemo(() => {
-    const entries = catalog?.global.files || [];
-    if (!normalizedQuery) return entries;
-    return entries.filter((entry) => matches(`${entry.title} ${entry.description} ${entry.path} ${entry.type}`, normalizedQuery));
-  }, [catalog, normalizedQuery]);
+    if (!normalizedQuery) return sourceGlobalEntries;
+    return sourceGlobalEntries.filter((entry) => entry.isIndex
+      || matches(`${entry.title} ${entry.description} ${entry.path} ${entry.type}`, normalizedQuery));
+  }, [sourceGlobalEntries, normalizedQuery]);
   const projects = React.useMemo(() => {
     const entries = catalog?.projects || [];
     if (!normalizedQuery) return entries;
@@ -459,15 +538,23 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
     ? catalog?.sessions.find((entry) => entry.id === selection.sessionId) || null
     : null;
 
-  const indexedGlobalEntries = (catalog?.global.files || []).filter((entry) => entry.indexed && !entry.isIndex);
-  const unindexedGlobalEntries = (catalog?.global.files || []).filter((entry) => !entry.indexed);
-  const globalLatest = latestTimestamp(indexedGlobalEntries.map((entry) => entry.updatedAt));
+  const indexedGlobalEntries = sourceGlobalEntries.filter((entry) => entry.indexed && !entry.isIndex);
+  const unindexedGlobalEntries = sourceGlobalEntries.filter((entry) => !entry.indexed && !entry.isIndex);
+  const globalLatest = latestTimestamp(sourceGlobalEntries.filter((entry) => entry.indexed || entry.isIndex).map((entry) => entry.updatedAt));
+  const globalRootLabel = globalSource === "remote"
+    ? catalog?.global.remoteRootLabel || "Moss Server / memory"
+    : catalog?.global.rootLabel || "~/.moss/memory";
+  const remoteUnavailable = globalSource === "remote" && catalog?.global.remoteStatus
+    && catalog.global.remoteStatus !== "ready";
+  const globalEmptyTitle = remoteUnavailable
+    ? catalog.global.remoteStatus === "error" ? "云端记忆加载失败，请刷新重试" : "尚未连接云端记忆，请在设置中连接 Moss Server"
+    : undefined;
   const projectLatest = latestTimestamp(catalog?.projects.map((entry) => entry.memoryUpdatedAt) || []);
   const sessionLatest = latestTimestamp(catalog?.sessions.map((entry) => entry.summaryUpdatedAt) || []);
   const metrics = scope === "global" ? [
-    { label: "有效记忆", value: String(indexedGlobalEntries.length), detail: "仅统计 MEMORY.md 已索引内容" },
-    { label: "未索引文件", value: String(unindexedGlobalEntries.length), detail: "历史残留，不参与默认召回" },
-    { label: "最近更新", value: globalLatest ? formatDateTime(globalLatest) : "暂无", detail: catalog?.global.rootLabel || "~/.moss/memory" },
+    { label: "有效记忆", value: remoteUnavailable ? "—" : String(indexedGlobalEntries.length), detail: "仅统计当前来源 MEMORY.md 已索引内容" },
+    { label: "未索引文件", value: remoteUnavailable ? "—" : String(unindexedGlobalEntries.length), detail: "当前来源中未被 MEMORY.md 引用的文件" },
+    { label: "最近更新", value: globalLatest ? formatDateTime(globalLatest) : "暂无", detail: globalRootLabel },
   ] : scope === "project" ? [
     { label: "已有沉淀的项目", value: String(catalog?.projects.filter((entry) => entry.hasOverview || entry.history.length > 0).length || 0), detail: `${catalog?.projects.length || 0} 个 Moss 项目` },
     { label: "会话沉淀", value: String(catalog?.projects.reduce((sum, entry) => sum + entry.history.length, 0) || 0), detail: "由项目会话完成时生成" },
@@ -504,6 +591,17 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
 
   return (
     <div className="pb-8">
+      {scope === "global" ? (
+        <GlobalMemorySourceTabs source={globalSource} onChange={(source) => {
+          if (source === globalSource) return;
+          ++detailRequestRef.current;
+          setGlobalSource(source);
+          setQuery("");
+          setDetail(null);
+          setDetailError("");
+          setSelection(null);
+        }} />
+      ) : null}
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
         {loading && !catalog
           ? Array.from({ length: 3 }, (_, index) => <div key={index} className="h-[104px] animate-pulse rounded-md border border-border/70 bg-muted/50" />)
@@ -519,7 +617,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={scope === "global" ? "搜索全局记忆" : scope === "project" ? "搜索项目沉淀" : "搜索会话摘要"}
+                  placeholder={scope === "global" ? `搜索${SOURCE_LABELS[globalSource]}` : scope === "project" ? "搜索项目沉淀" : "搜索会话摘要"}
                   aria-label="搜索记忆"
                   className="bg-background pl-9"
                 />
@@ -528,9 +626,12 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
             <div className="min-h-0 flex-1 overflow-y-auto p-2.5 lg:max-h-[650px]">
               {scope === "global" ? (
                 <GlobalList
+                  key={globalSource}
                   entries={globalEntries}
+                  source={globalSource}
                   selected={selectedKey}
                   queryActive={Boolean(normalizedQuery)}
+                  emptyTitle={globalEmptyTitle}
                   onSelect={setSelection}
                 />
               ) : scope === "project" ? (
@@ -547,13 +648,14 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <h2 className="truncate text-base font-semibold text-foreground">{detailTitle}</h2>
                   <Badge variant="outline">
-                    {scope === "global" ? "全局记忆" : scope === "project" ? "项目记忆" : "会话摘要"}
+                    {scope === "global" ? SOURCE_LABELS[globalSource] : scope === "project" ? "项目记忆" : "会话摘要"}
                   </Badge>
                   {selectedGlobal ? <Badge variant="secondary">{TYPE_LABELS[selectedGlobal.type] || selectedGlobal.type}</Badge> : null}
                   {selectedGlobal && !selectedGlobal.indexed ? <Badge variant="outline">未索引</Badge> : null}
                   {selectedSession?.agentMode === "remote-direct" ? <Badge variant="secondary">Moss Server</Badge> : null}
                 </div>
                 {detailDescription ? <p className="mt-1 truncate text-xs text-muted-foreground">{detailDescription}</p> : null}
+                {selectedGlobal ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{selectedGlobal.path}</p> : null}
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
                 {detail?.bytes || selectedGlobal?.bytes || selectedHistory?.bytes || selectedSession?.bytes

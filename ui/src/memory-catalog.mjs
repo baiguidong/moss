@@ -127,6 +127,9 @@ async function listGlobalMemoryFiles(root) {
       return;
     }
     entries.sort((a, b) => {
+      if (!prefix && (a.name === 'MEMORY.md' || b.name === 'MEMORY.md')) {
+        return a.name === 'MEMORY.md' ? -1 : 1;
+      }
       if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
       return a.name.localeCompare(b.name, 'zh-CN');
     });
@@ -243,12 +246,19 @@ export function createMemoryCatalog({
   const globalMemoryRoot = path.join(paths.home, 'memory');
 
   async function getCatalog() {
+    let remoteStatus = 'disconnected';
     const [localGlobalFiles, projects, sessions, remoteCatalog] = await Promise.all([
       listGlobalMemoryFiles(globalMemoryRoot),
       Promise.resolve(listProjects()),
       Promise.resolve(listSessions()),
       typeof getRemoteMemoryCatalog === 'function'
-        ? Promise.resolve(getRemoteMemoryCatalog()).catch(() => null)
+        ? Promise.resolve().then(getRemoteMemoryCatalog).then((catalog) => {
+            remoteStatus = catalog ? 'ready' : 'disconnected';
+            return catalog;
+          }).catch(() => {
+            remoteStatus = 'error';
+            return null;
+          })
         : null,
     ]);
     const visibleSessions = Array.isArray(sessions) ? sessions : [];
@@ -321,9 +331,9 @@ export function createMemoryCatalog({
     return {
       generatedAt: Date.now(),
       global: {
-        rootLabel: remoteCatalog
-          ? `${globalMemoryRoot} + Moss Server / memory`
-          : globalMemoryRoot,
+        rootLabel: globalMemoryRoot,
+        remoteRootLabel: remoteCatalog?.global?.rootLabel || 'Moss Server / memory',
+        remoteStatus,
         files: globalFiles,
       },
       projects: projectEntries.sort((a, b) => (b.memoryUpdatedAt || b.updatedAt) - (a.memoryUpdatedAt || a.updatedAt)),

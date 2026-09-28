@@ -240,7 +240,12 @@ export async function listProfileMemory(profileDir: string) {
     } catch {
       return
     }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
+    entries.sort((a, b) => {
+      if (!prefix && (a.name === 'MEMORY.md' || b.name === 'MEMORY.md')) {
+        return a.name === 'MEMORY.md' ? -1 : 1
+      }
+      return a.name.localeCompare(b.name)
+    })
     for (const entry of entries) {
       if (files.length >= 500) break
       if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue

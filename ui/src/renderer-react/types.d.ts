@@ -187,10 +187,12 @@ export type CloudUsageOverview = Omit<UsageOverview, 'totals'> & {
   historyIncomplete: boolean;
 };
 
+export type MemorySource = 'local' | 'remote';
+
 export type MemoryGlobalEntry = {
   id: string;
   path: string;
-  source?: 'local' | 'remote';
+  source?: MemorySource;
   title: string;
   description: string;
   type: string;
@@ -241,6 +243,8 @@ export type MemoryCatalog = {
   generatedAt: number;
   global: {
     rootLabel: string;
+    remoteRootLabel?: string;
+    remoteStatus?: 'ready' | 'disconnected' | 'error';
     files: MemoryGlobalEntry[];
   };
   projects: MemoryProjectEntry[];
