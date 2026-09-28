@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { FilePreview } from "@/components/file-preview";
+import { UserAvatar } from "@/components/user-avatar";
 import type { UserTextRenderMessage } from "@/lib/agent-transcript";
 
 export function UserMessage({ message }: { message: UserTextRenderMessage }) {
@@ -13,11 +14,7 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
       className="group flex flex-row-reverse justify-start gap-2"
       style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
     >
-      <img
-        src="./build/icon.png"
-        alt="用户"
-        className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
-      />
+      <UserAvatar />
 
       <div
         data-message-shell="user"

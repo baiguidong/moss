@@ -55,6 +55,16 @@ export function mossCronMatches(fields, date) {
   return domMatch && dowMatch;
 }
 
+export function migrateCronSessionIndex(sessionDb) {
+  // Keep past executions: each run now has its own session for the same task.
+  sessionDb.exec(`
+    DROP INDEX IF EXISTS idx_sessions_cron_task_id;
+    CREATE INDEX IF NOT EXISTS idx_sessions_cron_task_runs
+    ON sessions(cron_task_id, created_at DESC)
+    WHERE session_kind = 'cron' AND cron_task_id IS NOT NULL
+  `);
+}
+
 export function createMossCronScheduler({
   ipcMain,
   mossHome,
@@ -163,13 +173,18 @@ export function createMossCronScheduler({
     return initialized;
   }
 
-  function executionFor(taskId) {
-    return [...sessions.values()].find(record => !record.deleted && record.sessionKind === 'cron' && record.cronTaskId === taskId);
+  function executionsFor(taskId) {
+    return [...sessions.values()].filter(record => !record.deleted && record.sessionKind === 'cron' && record.cronTaskId === taskId);
   }
 
-  async function getExecution(task, owner) {
-    const existing = executionFor(task.id);
-    if (existing) return existing;
+  function latestExecutionFor(taskId) {
+    return executionsFor(taskId).reduce((latest, record) => (
+      !latest || (record.createdAt ?? 0) >= (latest.createdAt ?? 0) ? record : latest
+    ), null);
+  }
+
+  async function createExecution(task, owner) {
+    // Copy configuration only, never a previous run's history or runtime.
     const record = createSessionRecord({
       workspace: owner.workspace,
       title: `定时任务 · ${normalizePreviewText(task.prompt, 42) || task.id}`,
@@ -202,14 +217,14 @@ export function createMossCronScheduler({
         const project = readProjectSync(owner.projectId);
         if (!project || project.archivedAt) { if (manual) throw new Error('项目已删除或归档。'); return null; }
       }
-      if (executionFor(taskId)?.busy) { if (manual) throw new Error('定时任务会话正在执行，请稍后再试。'); return null; }
+      if (executionsFor(taskId).some(record => record.busy)) { if (manual) throw new Error('定时任务会话正在执行，请稍后再试。'); return null; }
       Object.assign(task, { runId, runHostId: hostId, status: 'running', lastFiredAt: now() });
       return { ...task };
     });
     if (!claimed) return null;
     let execution;
     try {
-      execution = await getExecution(claimed, ownerFor(claimed));
+      execution = await createExecution(claimed, ownerFor(claimed));
       // Recheck deletion/pause after async session creation, before starting work.
       const current = (await readCronTaskStore(filePath)).find(task => task.id === taskId);
       if (!current || (!manual && current.enabled === false) || stopped) {
@@ -312,7 +327,7 @@ export function createMossCronScheduler({
     await initialize();
     return { tasks: (await readCronTaskStore(filePath)).map(task => {
       const owner = ownerFor(task);
-      const execution = executionFor(task.id);
+      const execution = latestExecutionFor(task.id);
       return {
         ...task,
         enabled: task.enabled !== false,

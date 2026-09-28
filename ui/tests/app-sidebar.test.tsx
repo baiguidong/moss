@@ -14,6 +14,8 @@ function renderSidebar({
   apps = [],
   activeView = 'chat',
   collapsed = false,
+  searchQuery = '',
+  activeSessionId = null,
 }: {
   libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
@@ -23,18 +25,20 @@ function renderSidebar({
   apps?: any[];
   activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
   collapsed?: boolean;
+  searchQuery?: string;
+  activeSessionId?: string | null;
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
       sessions={sessions}
       apps={apps}
-      activeSessionId={null}
+      activeSessionId={activeSessionId}
       activeView={activeView}
       appsCount={0}
       projectsCount={0}
       themeMode="system"
       collapsed={collapsed}
-      searchQuery=""
+      searchQuery={searchQuery}
       libraryEnabled={libraryEnabled}
       workflowsEnabled={workflowsEnabled}
       remoteEnabled={remoteEnabled}
@@ -169,7 +173,7 @@ describe('app sidebar resource navigation', () => {
 });
 
 describe('app sidebar child sessions', () => {
-  test('keeps child sessions collapsed by default', () => {
+  test('hides child sessions and their expand control, including search and project history', () => {
     const sessions = [
       {
         id: 'parent-session',
@@ -190,11 +194,15 @@ describe('app sidebar child sessions', () => {
         parentSessionId: 'parent-session',
       },
     ];
-    const html = renderSidebar({ sessions });
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('展开“主会话”的 1 个子会话');
-    expect(html).not.toContain('lucide-bot');
-    expect(html).not.toContain('子会话标题');
+    for (const projectId of [null, 'project-1']) {
+      for (const searchQuery of ['', '会话']) {
+        const html = renderSidebar({ sessions: sessions.map(session => ({ ...session, projectId })), searchQuery, activeSessionId: 'child-session' });
+        expect(html).toContain('主会话');
+        expect(html).not.toContain('展开“主会话”的 1 个子会话');
+        expect(html).not.toContain('子会话标题');
+      }
+    }
+    expect(renderSidebar({ sessions: [sessions[1]] })).not.toContain('子会话标题');
   });
 });
 

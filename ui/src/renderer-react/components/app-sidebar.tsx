@@ -33,6 +33,7 @@ import {
   getSessionNodePreview,
   groupProjectSessionTrees,
   groupSessionNodes,
+  getSidebarActiveSessionId,
   groupSidebarSessions,
   SIDEBAR_SESSION_GROUP_PREVIEW_LIMIT,
   type SessionGroupId,
@@ -47,7 +48,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SessionTreeChildItem } from "@/components/session-tree-child-item";
 import type { StoredApp } from "../types";
 
 export interface SidebarSession {
@@ -156,9 +156,6 @@ function SessionItem({
   onDelete,
   onRename,
   onTogglePin,
-  childSessions = [],
-  childrenExpanded = false,
-  onToggleChildren,
 }: {
   session: SidebarSession;
   isActive: boolean;
@@ -166,9 +163,6 @@ function SessionItem({
   onDelete: () => void;
   onRename: (newTitle: string) => void;
   onTogglePin: () => void;
-  childSessions?: SidebarSession[];
-  childrenExpanded?: boolean;
-  onToggleChildren?: () => void;
 }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(session.title);
@@ -239,22 +233,6 @@ function SessionItem({
             {session.title}
           </span>
         )}
-        {childSessions.length > 0 ? (
-          <button
-            type="button"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            title={childrenExpanded ? "折叠子会话" : "展开子会话"}
-            aria-label={`${childrenExpanded ? "折叠" : "展开"}“${session.title}”的 ${childSessions.length} 个子会话`}
-            aria-expanded={childrenExpanded}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleChildren?.();
-            }}
-            onKeyDown={(event) => event.stopPropagation()}
-          >
-            {childrenExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          </button>
-        ) : null}
         {!session.isSubAgent ? <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -350,7 +328,6 @@ export function AppSidebar({
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedSessionGroups, setCollapsedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
   const [collapsedProjects, setCollapsedProjects] = React.useState<Record<string, boolean>>({});
-  const [expandedSessionRoots, setExpandedSessionRoots] = React.useState<Record<string, boolean>>({});
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -361,7 +338,9 @@ export function AppSidebar({
     if (isSearchOpen) searchInputRef.current?.focus();
   }, [isSearchOpen]);
 
-  const filteredSessions = filterSidebarSessionsByQuery(sessions, searchQuery);
+  const historySessions = sessions.filter((session) => !session.isSubAgent);
+  const activeHistorySessionId = getSidebarActiveSessionId(sessions, activeSessionId);
+  const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery);
   const sessionGroups = groupSidebarSessions(filteredSessions).filter((group) => (
     group.id !== 'project' && (
       group.id !== 'agent-mail' || (remoteEnabled && agentMailEnabled)
@@ -390,20 +369,12 @@ export function AppSidebar({
       ? []
       : expandedSessionGroups[group.id]
         ? groupSessionNodes(group.sessions)
-        : getSessionNodePreview(groupSessionNodes(group.sessions), activeSessionId),
+        : getSessionNodePreview(groupSessionNodes(group.sessions), activeHistorySessionId),
   }));
   const orderedSessions = [
     ...visibleSessionGroups.flatMap((group) => group.visibleNodes.map((node) => node.session)),
     ...projectTrees.flatMap((project) => project.sessions.map((node) => node.session)),
   ];
-
-  const isSessionRootExpanded = (sessionId: string) => Boolean(searchQuery.trim()) || Boolean(expandedSessionRoots[sessionId]);
-  const toggleSessionRootExpanded = (sessionId: string) => {
-    setExpandedSessionRoots((current) => ({
-      ...current,
-      [sessionId]: !current[sessionId],
-    }));
-  };
 
   const toggleSessionGroupCollapsed = (groupId: SessionGroupId) => {
     setCollapsedSessionGroups((current) => ({
@@ -565,7 +536,7 @@ export function AppSidebar({
                 onClick={() => onSelectSession(session.id)}
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-colors",
-                  activeSessionId === session.id
+                  activeHistorySessionId === session.id
                     ? "bg-primary/20 text-primary"
                     : "bg-sidebar-accent/60 text-sidebar-foreground hover:bg-sidebar-accent"
                 )}
@@ -626,35 +597,17 @@ export function AppSidebar({
                       </div>
                       {!isCollapsed && (
                         <div className="space-y-0.5">
-                          {group.visibleNodes.map((node) => {
-                            const childrenExpanded = isSessionRootExpanded(node.session.id);
-                            return (
-                              <React.Fragment key={node.session.id}>
-                                <SessionItem
-                                  session={node.session}
-                                  childSessions={node.children}
-                                  childrenExpanded={childrenExpanded}
-                                  onToggleChildren={() => toggleSessionRootExpanded(node.session.id)}
-                                  isActive={activeSessionId === node.session.id}
-                                  onClick={() => onSelectSession(node.session.id)}
-                                  onDelete={() => onDeleteSession(node.session.id)}
-                                  onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
-                                  onTogglePin={() => onTogglePin(node.session.id)}
-                                />
-                                {childrenExpanded && node.children.map((child, childIndex) => (
-                                  <SessionTreeChildItem
-                                    key={child.id}
-                                    title={child.title}
-                                    busy={child.busy}
-                                    status={child.subagentStatus}
-                                    isLastChild={childIndex === node.children.length - 1}
-                                    isActive={activeSessionId === child.id}
-                                    onClick={() => onSelectSession(child.id)}
-                                  />
-                                ))}
-                              </React.Fragment>
-                            );
-                          })}
+                          {group.visibleNodes.map((node) => (
+                            <SessionItem
+                              key={node.session.id}
+                              session={node.session}
+                              isActive={activeHistorySessionId === node.session.id}
+                              onClick={() => onSelectSession(node.session.id)}
+                              onDelete={() => onDeleteSession(node.session.id)}
+                              onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
+                              onTogglePin={() => onTogglePin(node.session.id)}
+                            />
+                          ))}
                         </div>
                       )}
                     </section>
@@ -662,10 +615,7 @@ export function AppSidebar({
                 })}
                 {projectTrees.map((project) => {
                   const isCollapsed = Boolean(collapsedProjects[project.id]);
-                  const sessionCount = project.sessions.reduce(
-                    (count, node) => count + 1 + node.children.length,
-                    0,
-                  );
+                  const sessionCount = project.sessions.length;
                   return (
                     <section key={`project-${project.id}`}>
                       <button
@@ -684,35 +634,17 @@ export function AppSidebar({
                       </button>
                       {!isCollapsed ? (
                         <div className="space-y-0.5">
-                          {project.sessions.map((node) => {
-                            const childrenExpanded = isSessionRootExpanded(node.session.id);
-                            return (
-                              <React.Fragment key={node.session.id}>
-                                <SessionItem
-                                  session={node.session}
-                                  childSessions={node.children}
-                                  childrenExpanded={childrenExpanded}
-                                  onToggleChildren={() => toggleSessionRootExpanded(node.session.id)}
-                                  isActive={activeSessionId === node.session.id}
-                                  onClick={() => onSelectSession(node.session.id)}
-                                  onDelete={() => onDeleteSession(node.session.id)}
-                                  onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
-                                  onTogglePin={() => onTogglePin(node.session.id)}
-                                />
-                                {childrenExpanded && node.children.map((child, childIndex) => (
-                                  <SessionTreeChildItem
-                                    key={child.id}
-                                    title={child.title}
-                                    busy={child.busy}
-                                    status={child.subagentStatus}
-                                    isLastChild={childIndex === node.children.length - 1}
-                                    isActive={activeSessionId === child.id}
-                                    onClick={() => onSelectSession(child.id)}
-                                  />
-                                ))}
-                              </React.Fragment>
-                            );
-                          })}
+                          {project.sessions.map((node) => (
+                            <SessionItem
+                              key={node.session.id}
+                              session={node.session}
+                              isActive={activeHistorySessionId === node.session.id}
+                              onClick={() => onSelectSession(node.session.id)}
+                              onDelete={() => onDeleteSession(node.session.id)}
+                              onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
+                              onTogglePin={() => onTogglePin(node.session.id)}
+                            />
+                          ))}
                         </div>
                       ) : null}
                     </section>

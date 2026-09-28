@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { AssistantMessage } from '../src/renderer-react/components/chat/assistant-message';
 import { UserMessage } from '../src/renderer-react/components/chat/user-message';
+import { UserAvatarContext } from '../src/renderer-react/components/user-avatar';
 import { PreviewDrawer } from '../src/renderer-react/components/preview-drawer';
 import type { WorkspacePreviewData } from '../src/renderer-react/types';
 
@@ -34,8 +35,9 @@ test('chat messages use aligned avatars and keep actions below Moss replies', ()
   expect(userHtml).toContain('var(--chat-message-spacing, 10px)');
   expect(userHtml).toContain('var(--chat-font-size, 14px)');
   expect(userHtml).toContain('var(--chat-bubble-padding-y, 8px)');
-  expect(userHtml).toContain('src="./build/icon.png"');
-  expect(userHtml).toContain('h-7 w-7 shrink-0 self-start rounded-sm object-contain');
+  expect(userHtml).not.toContain('src="./build/icon.png"');
+  expect(userHtml).toContain('aria-label="默认用户头像"');
+  expect(userHtml).toContain('h-7 w-7 shrink-0 self-start');
   expect(userHtml).not.toContain('复制消息');
   expect(userHtml).not.toContain('mb-5');
   expect(assistantHtml).toContain('var(--chat-line-height, 1.55)');
@@ -47,6 +49,18 @@ test('chat messages use aligned avatars and keep actions below Moss replies', ()
   expect(assistantHtml).toContain('min-h-7 px-1');
   expect(assistantHtml).not.toContain('absolute top-0');
   expect(assistantHtml).not.toContain('leading-7');
+});
+
+test('user messages display the configured avatar', () => {
+  const avatar = 'data:image/png;base64,aGVsbG8=';
+  const markup = renderToStaticMarkup(
+    <UserAvatarContext.Provider value={avatar}>
+      <UserMessage message={{ id: 'user', type: 'user_text', role: 'user', content: '你好' }} />
+    </UserAvatarContext.Provider>,
+  );
+  expect(markup).toContain(`src="${avatar}"`);
+  expect(markup).not.toContain('默认用户头像');
+  expect(markup).not.toContain('./build/icon.png');
 });
 
 test('conversation edge navigation uses icon-only directional controls', () => {

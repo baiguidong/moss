@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Activity,
+  ArrowLeft,
   Bot,
   Check,
   ChevronDown,
@@ -178,10 +179,9 @@ export function SessionTabBar({
   outline,
   onJumpToOutlineItem,
   messages,
-  onFork,
-  forking,
-  forkDisabledReason,
+  terminalActions,
   childSessions,
+  onReturnToParentSession,
   onOpenWorkers,
   onSelectWorker,
 }: {
@@ -200,10 +200,9 @@ export function SessionTabBar({
   outline: OutlineEntry[];
   onJumpToOutlineItem: (messageId: string) => void;
   messages: TranscriptRenderMessage[];
-  onFork?: () => void;
-  forking?: boolean;
-  forkDisabledReason?: string | null;
+  terminalActions?: React.ReactNode;
   childSessions: SessionSummary[];
+  onReturnToParentSession?: () => void;
   onOpenWorkers: () => void;
   onSelectWorker: (workerId: string) => void;
 }) {
@@ -256,6 +255,12 @@ export function SessionTabBar({
         </Button>
 
         <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+          {onReturnToParentSession ? (
+            <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs" onClick={onReturnToParentSession}>
+              <ArrowLeft className="h-4 w-4" />
+              返回主会话
+            </Button>
+          ) : null}
           <span
             className="max-w-[40%] truncate text-sm font-medium text-foreground"
             title={title || "New Session"}
@@ -273,6 +278,7 @@ export function SessionTabBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {terminalActions}
           <div ref={outlineRef} className="relative inline-flex">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -329,25 +335,6 @@ export function SessionTabBar({
               </div>
             )}
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-full"
-                  onClick={onFork}
-                  disabled={!onFork || forking || Boolean(forkDisabledReason)}
-                  aria-label={forking ? "正在分叉会话" : "分叉当前会话"}
-                >
-                  <GitFork className={cn("h-4 w-4", forking && "animate-pulse")} />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {forkDisabledReason || (forking ? "正在分叉会话" : "分叉当前会话")}
-            </TooltipContent>
-          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -2353,6 +2340,7 @@ export function ChatArea({
   rightPanelName = "右侧栏",
   composerIntent,
   childSessions = [],
+  onReturnToParentSession,
   onChange,
   onComposerIntentChange,
   permissionMode,
@@ -2390,6 +2378,7 @@ export function ChatArea({
   onForkSession,
   forkingSession = false,
   forkDisabledReason,
+  terminalActions,
   toolDisplayMode = "expanded",
   sessionToolDisplayMode = null,
   globalToolDisplayMode = "expanded",
@@ -2426,6 +2415,7 @@ export function ChatArea({
   rightPanelName?: string;
   composerIntent: ComposerIntent;
   childSessions?: SessionSummary[];
+  onReturnToParentSession?: () => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   permissionMode: PermissionMode;
@@ -2463,6 +2453,7 @@ export function ChatArea({
   onForkSession?: () => void;
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
+  terminalActions?: React.ReactNode;
   toolDisplayMode?: ToolDisplayMode;
   sessionToolDisplayMode?: ToolDisplayMode | null;
   globalToolDisplayMode?: ToolDisplayMode;
@@ -2713,10 +2704,9 @@ export function ChatArea({
         outline={outline}
         onJumpToOutlineItem={handleJumpToOutlineItem}
         messages={messages}
-        onFork={onForkSession}
-        forking={forkingSession}
-        forkDisabledReason={forkDisabledReason}
+        terminalActions={terminalActions}
         childSessions={childSessions}
+        onReturnToParentSession={onReturnToParentSession}
         onOpenWorkers={() => {
           setAgentTeamsOpen(false);
           setWorkflowOpen(false);
@@ -2818,6 +2808,21 @@ export function ChatArea({
             loadingTokens={turnTokens}
             focusedToolUseId={focusedToolUseId}
             contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
+            latestMessageActions={onForkSession ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                      onClick={onForkSession} disabled={forkingSession || Boolean(forkDisabledReason)}
+                      aria-label="从最新消息分叉">
+                      <GitFork className={cn("h-3.5 w-3.5", forkingSession && "animate-pulse")} />
+                      {forkingSession ? "正在分叉…" : "分叉"}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{forkDisabledReason || "从最新消息分叉"}</TooltipContent>
+              </Tooltip>
+            ) : undefined}
             footer={toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
               <ToolPermissionCard
                 request={toolPermissionRequest}

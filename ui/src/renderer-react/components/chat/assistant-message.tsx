@@ -24,13 +24,23 @@ function shouldUseDocumentLayout(content: string, attachmentCount: number) {
 export function AssistantMessage({
   message,
   beforeContent,
+  actions,
 }: {
   message: AssistantTextRenderMessage;
   beforeContent?: React.ReactNode;
+  actions?: React.ReactNode;
 }) {
   const attachments = message.attachments || [];
   const hasText = message.content.trim().length > 0;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length);
+  const copyAction = hasText ? (
+    <MessageActionBar
+      copyText={message.content}
+      copyLabel="复制回复"
+      align="start"
+      className="min-h-7 px-1"
+    />
+  ) : null;
 
   return (
     <div
@@ -95,14 +105,12 @@ export function AssistantMessage({
           </div>
         )}
 
-        {hasText && (
-          <MessageActionBar
-            copyText={message.content}
-            copyLabel="复制回复"
-            align="start"
-            className="min-h-7 px-1"
-          />
-        )}
+        {actions ? (
+          <div className="-mt-1 flex w-full items-center gap-1">
+            {actions}
+            {copyAction}
+          </div>
+        ) : copyAction}
       </div>
     </div>
   );

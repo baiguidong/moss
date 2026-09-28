@@ -361,6 +361,8 @@ async function main() {
     '/dist/runtime/electron-direct.mjs',
     '/src/main.mjs',
     '/src/preload.mjs',
+    '/src/terminal-preload.mjs',
+    '/src/terminal-service.mjs',
     '/dist/renderer/index.html',
     '/dist/renderer/build/icon.png',
   ]) {
@@ -441,6 +443,7 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'connectors', 'cloud-auth-providers.json'), 'connector cloud auth configuration');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-mcp-overrides.json'), 'connector MCP overrides');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-cli-overrides.json'), 'connector CLI overrides');
+  requireFile(path.join(paths.resourcesDir, 'cli', 'cli.js'), 'Moss terminal CLI');
 
   const catalogPath = requireFile(
     path.join(paths.resourcesDir, 'connectors', 'workbuddy-connectors-config.zip'),

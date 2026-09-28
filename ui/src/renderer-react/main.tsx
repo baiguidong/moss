@@ -6,9 +6,11 @@ import '@fontsource-variable/material-symbols-outlined';
 import './globals.css';
 
 const isPreviewWindow = new URLSearchParams(window.location.search).get('window') === 'preview';
+const isTerminalWindow = new URLSearchParams(window.location.search).get('window') === 'terminal';
+const TerminalWindow = React.lazy(() => import('./TerminalWindow'));
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isPreviewWindow ? <PreviewWindow /> : <App />}
+    {isTerminalWindow ? <React.Suspense><TerminalWindow /></React.Suspense> : isPreviewWindow ? <PreviewWindow /> : <App />}
   </React.StrictMode>,
 );

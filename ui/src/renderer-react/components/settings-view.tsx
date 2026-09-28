@@ -19,6 +19,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BuddySummary } from '@/components/buddy';
+import { UserAvatarSetting } from '@/components/user-avatar-setting';
 import { AgentManager } from '@/components/agent-manager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -206,7 +207,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'basic-info',
         title: '基本信息',
-        keywords: ['回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'],
+        keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'],
       },
       {
         id: 'model',
@@ -1779,6 +1780,16 @@ export function SettingsView({
                       对话
                     </div>
                     <SettingsGroup>
+                      <SettingsRow
+                        title="用户头像"
+                        description="用于对话中的用户消息；未设置时显示默认人形头像。支持常见图片格式，最大 5 MB。"
+                        controlClassName="sm:w-auto"
+                      >
+                        <UserAvatarSetting
+                          value={settingsDraft.userAvatar}
+                          onChange={(avatar) => autoSaveSettings('userAvatar', avatar)}
+                        />
+                      </SettingsRow>
                       <SettingsRow
                         title="回复语言"
                         description="同时用于新回复和新生成的会话、项目与全局记忆；已有记忆保持原文。"

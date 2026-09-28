@@ -18,6 +18,22 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('persists a user avatar across restarts and unrelated saves, and can restore the default', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-user-avatar-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const avatar = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="12" fill="blue"/></svg>').toString('base64')}`;
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.value.userAvatar).toBe('');
+    store.save({ userAvatar: avatar });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    expect(restarted.getPayload().userAvatar).toBe(avatar);
+    restarted.save({ language: 'english' });
+    expect(createDesktopSettingsStore({ settingsPath }).value.userAvatar).toBe(avatar);
+    restarted.save({ userAvatar: '' });
+    expect(createDesktopSettingsStore({ settingsPath }).value.userAvatar).toBe('');
+  });
+
   it('does not select a built-in model when no model is configured', () => {
     expect(normalizeDesktopSettings({}).model).toBe('');
   });

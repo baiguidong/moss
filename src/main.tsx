@@ -1940,6 +1940,8 @@ async function run(): Promise<CommanderCommand> {
       clearSessionCaches();
       let processedResume: ProcessedResume | undefined = undefined;
       let maybeSessionId = validateUuid(options.resume);
+      const sourceJsonlFile = typeof options.resume === 'string' && options.resume.endsWith('.jsonl')
+        ? options.resume : undefined;
       let searchTerm: string | undefined = undefined;
       // Store full LogOption when found by custom title (for cross-worktree resume)
       let matchedLog: LogOption | null = null;
@@ -1958,7 +1960,7 @@ async function run(): Promise<CommanderCommand> {
       }
 
       // If resume value is not a UUID, try exact match by custom title first
-      if (options.resume && typeof options.resume === 'string' && !maybeSessionId) {
+      if (options.resume && typeof options.resume === 'string' && !maybeSessionId && !sourceJsonlFile) {
         const trimmedValue = options.resume.trim();
         if (trimmedValue) {
           const matches = await searchSessionsByCustomTitle(trimmedValue, {
@@ -1975,21 +1977,20 @@ async function run(): Promise<CommanderCommand> {
         }
       }
 
-      // If not loaded as a file, try as session ID
-      if (maybeSessionId) {
-        // Resume specific session by ID
-        const sessionId = maybeSessionId;
+      // Resume a desktop transcript file or a specific session ID.
+      if (maybeSessionId || sourceJsonlFile) {
+        const sessionId = maybeSessionId || undefined;
         try {
           const resumeStart = performance.now();
           // Use matchedLog if available (for cross-worktree resume by custom title)
-          // Otherwise fall back to sessionId string (for direct UUID resume)
-          const result = await loadConversationForResume(matchedLog ?? sessionId, undefined);
+          // Otherwise load the explicit transcript path or session UUID.
+          const result = await loadConversationForResume(matchedLog ?? sessionId, sourceJsonlFile);
           if (!result) {
             logEvent('tengu_session_resumed', {
               entrypoint: 'cli_flag' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
               success: false
             });
-            return await exitWithError(root, `No conversation found with session ID: ${sessionId}`);
+            return await exitWithError(root, `No conversation found: ${sourceJsonlFile || sessionId}`);
           }
           const fullPath = matchedLog?.fullPath ?? result.fullPath;
           processedResume = await processResumedConversation(result, {
@@ -2011,7 +2012,7 @@ async function run(): Promise<CommanderCommand> {
             success: false
           });
           logError(error);
-          await exitWithError(root, `Failed to resume session ${sessionId}`);
+          return await exitWithError(root, `Failed to resume session ${sourceJsonlFile || sessionId}`);
         }
       }
 

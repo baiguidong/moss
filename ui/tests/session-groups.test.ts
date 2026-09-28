@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   filterSidebarSessionsByQuery,
   getSessionNodePreview,
+  getSidebarActiveSessionId,
   groupProjectSessionTrees,
   groupSessionNodes,
   groupSidebarSessions,
@@ -9,6 +10,18 @@ import {
 } from '../src/renderer-react/lib/session-groups';
 
 describe('sidebar session groups', () => {
+  it('keeps the main session selected while viewing a nested child and keeps cron runs independent', () => {
+    const sessions = [
+      { id: 'main' },
+      { id: 'child', parentSessionId: 'main', isSubAgent: true },
+      { id: 'nested', parentSessionId: 'child', isSubAgent: true },
+      { id: 'cron', parentSessionId: 'main', sessionKind: 'cron' as const },
+    ];
+    expect(getSidebarActiveSessionId(sessions, 'nested')).toBe('main');
+    expect(getSidebarActiveSessionId(sessions, 'cron')).toBe('cron');
+    expect(groupSidebarSessions(sessions).find(group => group.id === 'cron')?.sessions.map(session => session.id)).toEqual(['cron']);
+  });
+
   it('separates App, collaborative mail, normal, cron, and project sessions', () => {
     const groups = groupSidebarSessions([
       { id: 'app', originChannel: 'app:example.chat' },

@@ -258,6 +258,7 @@ import {
   validateMcpServerConfig,
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
+import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
 import {
   compareTaskIds,
   createRemoteSessionTaskSync,
@@ -303,7 +304,7 @@ import {
   createRemoteDirectTrustStore,
   ensureRemoteDirectTrustWithConfirmation,
 } from './remote-direct-tls.mjs';
-import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
+import { createMossCronScheduler, migrateCronSessionIndex } from './moss-cron-scheduler.mjs';
 import {
   deleteAgentMail,
   fetchAgentMailCapabilities,
@@ -997,11 +998,7 @@ const persistSessionStmt = (() => {
       channel_runtime_policy_json TEXT
     )
   `);
-  sessionDb.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_cron_task_id
-    ON sessions(cron_task_id)
-    WHERE session_kind = 'cron' AND cron_task_id IS NOT NULL
-  `);
+  migrateCronSessionIndex(sessionDb);
   return sessionDb.prepare(`
     INSERT INTO sessions (
       id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json
@@ -4671,7 +4668,7 @@ function refreshDesktopSettings(payload = {}) {
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
   let skippedSessionCount = 0;
   const affectsAgentRuntime = Object.keys(payload)
-    .some((key) => key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
+    .some((key) => key !== 'userAvatar' && key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
   if (affectsAgentRuntime) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
@@ -11165,6 +11162,26 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
+  registerTerminalIpc({
+    ipcMain, app, BrowserWindow,
+    canOpen: (sender) => sender === mainWindow?.webContents,
+    preloadPath: path.join(__dirname, 'terminal-preload.mjs'),
+    rendererHtml,
+    rendererDevServerUrl,
+    resolveLaunch: async ({ sessionId, action } = {}) => {
+      const sessionRecord = getSessionRecord(sessionId);
+      if (action !== 'terminal') await waitForManagedRuntimesBeforeLocalSession();
+      return buildTerminalLaunch({
+        action,
+        session: sessionRecord,
+        transcriptPath: getLocalSessionTranscriptPath(sessionRecord),
+        cliPath: app.isPackaged
+          ? path.join(process.resourcesPath, 'cli', 'cli.js')
+          : path.join(repoRoot, 'bin', 'cli.js'),
+        nodePath: process.env.MOSS_NODE_PATH,
+      });
+    },
+  });
   registerCronIpcHandlers({ ipcMain, mossHome: MOSS_HOME });
   registerRemoteCronIpc({
     ipcMain,

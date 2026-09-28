@@ -109,7 +109,9 @@ try {
 
   let time = now + 10 * 60000, calls = 0, fail = false
   let gate: Promise<void> | undefined
+  let onRun: (() => void) | undefined
   let beforeCreate: (() => Promise<void>) | undefined
+  const runSessions: string[] = []
   const fakeRuntime = {
     getSession: (id:string) => sessions.getSession(id),
     createSession: async (input:SessionCreateInput) => {
@@ -122,7 +124,12 @@ try {
     },
   } as unknown as RuntimeService
   const scheduler = new CloudCronScheduler(repo, fakeRuntime, owner => assertCronUserCanRun(db,owner), () => {}, () => time,
-    async () => { calls++; if (fail) throw new Error('API failed'); await gate })
+    async (_runtime, sessionId, prompt) => {
+      assert.ok(!runSessions.includes(sessionId), 'Every run must have a fresh execution session')
+      runSessions.push(sessionId)
+      assert.ok(prompt)
+      calls++; onRun?.(); if (fail) throw new Error('API failed'); await gate
+    })
   const recurring = await repo.create(alice,'source',{cron:'*/5 * * * *',timezone:'UTC',prompt:'report'},now)
   await scheduler.tick(); await scheduler.waitForIdle()
   assert.equal(calls,1)
@@ -131,8 +138,14 @@ try {
   const executionId = finished.executionSessionId
   await scheduler.tick(); await scheduler.waitForIdle(); assert.equal(calls,1)
   time += 5 * 60000; await scheduler.tick(); await scheduler.waitForIdle()
-  assert.equal((await repo.get(recurring.id,alice))!.executionSessionId,executionId)
+  const nextExecutionId = (await repo.get(recurring.id,alice))!.executionSessionId
+  assert.notEqual(nextExecutionId,executionId)
+  assert.ok(await sessions.getSession(executionId!))
+  assert.equal((await sessions.getSession(nextExecutionId!))!.cronTaskId, recurring.id)
+  assert.equal((await db.prepare('SELECT session_id FROM cron_session_links WHERE task_id=?').all(recurring.id)).length,2)
   assert.equal(calls,2)
+  assert.equal(await scheduler.launch(recurring.id,alice),true); await scheduler.waitForIdle()
+  assert.notEqual((await repo.get(recurring.id,alice))!.executionSessionId,nextExecutionId)
   await repo.remove(recurring.id,alice)
 
   const one = await repo.create(alice,'source',{cron:'* * * * *',prompt:'one',recurring:false},now)
@@ -144,13 +157,21 @@ try {
 
   let release!:()=>void
   gate = new Promise(resolve=>{release=resolve})
+  const runStarted = new Promise<void>(resolve => { onRun = resolve })
   const racing = await repo.create(alice,'source',{cron:'* * * * *',prompt:'racing'},now)
   const results = await Promise.all([scheduler.launch(racing.id,alice),scheduler.launch(racing.id,alice)])
   assert.equal(results.filter(Boolean).length,1)
-  // Let asynchronous session setup reach the fake executor before completing it.
+  await runStarted
+  const callsWhileWaiting = calls
+  time += 2 * 60000
+  for (let index = 0; index < 3; index++) await scheduler.tick()
+  assert.equal(await scheduler.launch(racing.id,alice),false)
+  assert.equal(calls,callsWhileWaiting)
+  assert.equal((await repo.get(racing.id,alice))!.status,'running')
   await repo.toggle(racing.id,alice,false,time)
-  release(); await scheduler.waitForIdle(); gate=undefined
+  release(); await scheduler.waitForIdle(); gate=undefined; onRun=undefined
   assert.equal((await repo.get(racing.id,alice))!.enabled,false)
+  assert.equal((await repo.get(racing.id,alice))!.nextRunAt,time+60000)
   await repo.remove(racing.id,alice)
 
   // Deleting a running task hides it immediately but cannot free its run quota.
@@ -197,6 +218,7 @@ try {
   // Real sockets, fake Agent: verifies offline driving and handling of approval requests.
   const executionPrompt = '执行 df 命令，并将完整结果发送给我'
   for (const mode of ['success','approval','disconnect']) {
+    let userMessages = 0
     const server=net.createServer(socket=>{
       let buffer=''
       socket.on('data',chunk=>{
@@ -204,6 +226,7 @@ try {
         while((n=buffer.indexOf('\n'))>=0) {
           const message=JSON.parse(buffer.slice(0,n)); buffer=buffer.slice(n+1)
           if(message.type==='stdin' && JSON.parse(message.data).type==='user') {
+            userMessages++
             assert.equal(JSON.parse(message.data).message.content, executionPrompt)
             if(mode==='disconnect') { socket.destroy(); return }
             socket.write(JSON.stringify({type:'stdout',line:JSON.stringify(mode==='approval'
@@ -223,6 +246,7 @@ try {
       const result=runCronPrompt(runner,'fake',executionPrompt,AbortSignal.timeout(2000))
       if(mode==='success') await result
       else await assert.rejects(result,mode==='approval'?/人工确认/:/中断/)
+      assert.equal(userMessages,1)
     } finally { await new Promise<void>(resolve=>server.close(()=>resolve())) }
   }
   console.log('cloud cron: migration, ownership/API isolation, host bridge, lifecycle, restart, and offline runner passed')

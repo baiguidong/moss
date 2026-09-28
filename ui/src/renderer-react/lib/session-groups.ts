@@ -51,13 +51,19 @@ function getGroupingSession<T extends GroupableSession>(
 ) {
   let current = session;
   const visited = new Set([session.id]);
-  while (current.parentSessionId) {
+  while (current.isSubAgent && current.parentSessionId) {
     const parent = sessionsById.get(current.parentSessionId);
     if (!parent || visited.has(parent.id)) break;
     visited.add(parent.id);
     current = parent;
   }
   return current;
+}
+
+export function getSidebarActiveSessionId<T extends GroupableSession>(sessions: T[], activeSessionId?: string | null) {
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const active = activeSessionId ? sessionsById.get(activeSessionId) : null;
+  return active ? getGroupingSession(active, sessionsById).id : activeSessionId;
 }
 
 export function groupSessionNodes<T extends GroupableSession>(sessions: T[]): SessionNode<T>[] {

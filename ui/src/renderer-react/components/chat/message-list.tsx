@@ -302,6 +302,7 @@ function renderTranscriptItem(
   childToolCallsByParent: Map<string, ToolUseRenderMessage[]>,
   focusedToolUseId?: string,
   isLive = false,
+  actions?: React.ReactNode,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -324,7 +325,7 @@ function renderTranscriptItem(
     return <UserMessage key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
-    return <AssistantMessage key={message.id} message={message} />;
+    return <AssistantMessage key={message.id} message={message} actions={actions} />;
   }
   if (message.type === "thinking") {
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
@@ -547,6 +548,7 @@ export const VirtualMessageList = React.forwardRef<
     focusedToolUseId?: string;
     contentClassName?: string;
     sessionId?: string;
+    latestMessageActions?: React.ReactNode;
   }
 >(function VirtualMessageList(
   {
@@ -562,6 +564,7 @@ export const VirtualMessageList = React.forwardRef<
     focusedToolUseId,
     contentClassName,
     sessionId,
+    latestMessageActions,
   },
   ref,
 ) {
@@ -762,6 +765,19 @@ export const VirtualMessageList = React.forwardRef<
         increaseViewportBy={{ top: 400, bottom: 400 }}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
         itemContent={(index, item) => {
+          const actions = index === renderItems.length - 1
+            && item.kind === "message"
+            && item.message.type === "assistant_text"
+            && item.message.content.trim()
+            ? latestMessageActions : undefined;
+          const renderedMessage = renderTranscriptItem(
+            item,
+            resultMap,
+            childToolCallsByParent,
+            focusedToolUseId,
+            Boolean(loading && index === renderItems.length - 1),
+            actions,
+          );
           const turnId = getRenderItemTurnId(item);
           const turnChange = turnId ? turnChanges.get(turnId) : undefined;
           const showTurnChange = Boolean(
@@ -788,13 +804,7 @@ export const VirtualMessageList = React.forwardRef<
               setContextMenu({ x: e.clientX, y: e.clientY, messageText });
             }}
           >
-            {renderTranscriptItem(
-              item,
-              resultMap,
-              childToolCallsByParent,
-              focusedToolUseId,
-              Boolean(loading && index === renderItems.length - 1),
-            )}
+            {renderedMessage}
             {showTurnChange && turnChange ? (
               <TurnChangeCard
                 sessionId={sessionId}
@@ -833,6 +843,7 @@ export const MessageListPane = React.forwardRef<
     className?: string;
     contentClassName?: string;
     sessionId?: string;
+    latestMessageActions?: React.ReactNode;
   }
 >(function MessageListPane({ className, ...listProps }, ref) {
   const innerRef = React.useRef<VirtualMessageListHandle>(null);

@@ -952,6 +952,7 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
   remoteEnabled: boolean;
@@ -1734,6 +1735,14 @@ export type AuditDashboardPayload = {
 
 declare global {
   interface Window {
+    mossTerminal: {
+      start: (payload: { requestId: string; cols: number; rows: number }) => Promise<{ title: string; cwd: string; shell: string } | null>;
+      write: (payload: { requestId: string; data: string }) => Promise<void>;
+      resize: (payload: { requestId: string; cols: number; rows: number }) => Promise<void>;
+      stop: (payload: { requestId: string }) => Promise<void>;
+      onData: (callback: (payload: { requestId: string; data: string }) => void) => () => void;
+      onExit: (callback: (payload: { requestId: string; exitCode: number }) => void) => () => void;
+    };
     agentDesktop: {
       // 通用 IPC 方法
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
@@ -1890,6 +1899,7 @@ declare global {
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
       createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;

@@ -40,6 +40,19 @@ export default async function afterPack(context) {
   if (!artifacts) throw new Error(`Unsupported package target: ${target}`);
 
   const resourcesDir = resourcesDirectory(context);
+  await requireFile(path.join(resourcesDir, 'cli', 'cli.js'), 'Moss terminal CLI');
+  if (platform === 'darwin') {
+    const ptyRoot = path.join(resourcesDir, 'app.asar.unpacked', 'node_modules', 'node-pty');
+    const helpers = [
+      path.join(ptyRoot, 'prebuilds', target, 'spawn-helper'),
+      path.join(ptyRoot, 'build', 'Release', 'spawn-helper'),
+    ].filter((helper) => fs.existsSync(helper));
+    if (!helpers.length) throw new Error('Packaged terminal spawn-helper is missing.');
+    for (const helper of helpers) {
+      await requireFile(helper, 'terminal spawn-helper');
+      await fsp.chmod(helper, 0o755);
+    }
+  }
   const runtimesDir = path.join(resourcesDir, 'runtimes');
   const allowedRuntimeFiles = new Set([
     'README.md',

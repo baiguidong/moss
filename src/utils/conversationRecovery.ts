@@ -404,15 +404,15 @@ export async function loadConversationForResume(
     let messages: Message[] | null = null
     let sessionId: UUID | undefined
 
-    if (source === undefined) {
-      // --continue: load the most recent session.
-      log = (await loadMessageLogs())[0] ?? null
-    } else if (sourceJsonlFile) {
-      // --resume with a .jsonl path (cli/print.ts routes on suffix).
+    if (sourceJsonlFile) {
+      // --resume with an explicit .jsonl path takes precedence over --continue.
       // Load the standard transcript into a full LogOption so the rest of
       // the resume pipeline sees the same metadata as the normal log path.
       log = await loadTranscriptFromFile(sourceJsonlFile)
       sessionId = getSessionIdFromLog(log) as UUID
+    } else if (source === undefined) {
+      // --continue: load the most recent session.
+      log = (await loadMessageLogs())[0] ?? null
     } else if (typeof source === 'string') {
       // Load specific session by ID
       log = await getLastSessionLog(source as UUID)

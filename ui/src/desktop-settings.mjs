@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { normalizeUserAvatar } from './user-avatar-settings.mjs';
 
 import {
   DEFAULT_APPEARANCE,
@@ -21,6 +22,7 @@ const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS ==
 const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
 
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
+  userAvatar: '',
   agentMode: 'local',
   localEnabled: true,
   remoteEnabled: false,
@@ -273,6 +275,7 @@ function loadLocalSettingsAuthConfig(settingsPath) {
 export function normalizeDesktopSettings(input, existing = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
+  result.userAvatar = normalizeUserAvatar(source.userAvatar ?? result.userAvatar);
   const sourceModels = objectField(source, 'models');
   const sourceText = objectField(sourceModels, 'text');
   const sourceTextThinking = objectField(sourceText, 'thinking');

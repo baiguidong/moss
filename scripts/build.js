@@ -28,7 +28,7 @@ function sanitizePaths(outfile) {
 
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='))
 const target = targetArg ? targetArg.slice('--target='.length) : 'all'
-const buildNodeCli = target === 'all' || target === 'node'
+const buildNodeCli = target === 'all' || target === 'node' || target === 'electron-direct'
 const buildElectronDirect = target !== 'server'
 const buildServer = target !== 'electron-direct'
 

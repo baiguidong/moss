@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
+import { Database } from 'bun:sqlite';
 
 import {
+  migrateCronSessionIndex,
   mossCronMatches,
   parseMossCronExpression,
 } from '../src/moss-cron-scheduler.mjs';
@@ -20,6 +22,34 @@ describe('Moss cron expressions', () => {
     expect(mossCronMatches(fields!, new Date(2024, 0, 8, 12, 0))).toBe(true);
     expect(mossCronMatches(fields!, new Date(2024, 1, 1, 12, 0))).toBe(true);
     expect(mossCronMatches(fields!, new Date(2024, 1, 2, 12, 0))).toBe(false);
+  });
+});
+
+describe('cron execution session storage', () => {
+  it.each([false, true])('preserves separate runs with a legacy unique index: %s', (legacy) => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, session_kind TEXT, cron_task_id TEXT,
+        created_at INTEGER, history_json TEXT
+      )`);
+      if (legacy) db.exec(`CREATE UNIQUE INDEX idx_sessions_cron_task_id
+        ON sessions(cron_task_id) WHERE session_kind = 'cron' AND cron_task_id IS NOT NULL`);
+      const insert = db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?)');
+      const history = JSON.stringify([{ type: 'assistant', message: { content: 'Previous result' } }]);
+      insert.run('first', 'cron', 'job-1', at(9, 5), history);
+
+      migrateCronSessionIndex(db);
+      insert.run('second', 'cron', 'job-1', at(9, 10), '[]');
+      migrateCronSessionIndex(db);
+      insert.run('third', 'cron', 'job-1', at(9, 15), '[]');
+
+      expect(db.prepare('SELECT id FROM sessions ORDER BY created_at DESC').all()).toEqual([
+        { id: 'third' }, { id: 'second' }, { id: 'first' },
+      ]);
+      expect(db.prepare('SELECT history_json FROM sessions WHERE id = ?').get('first')).toEqual({ history_json: history });
+      expect(() => insert.run('first', 'cron', 'job-2', at(9, 20), '[]')).toThrow();
+    } finally { db.close(); }
   });
 });
 
@@ -57,7 +87,11 @@ async function fixture(tasks: any[], options: any = {}) {
       getMainWindow: () => null,
       now: () => time,
       normalizePreviewText: value => value,
-      createSessionRecord: input => { const record = { ...input, id: `exec-${sessions.size}`, busy: false }; sessions.set(record.id, record); return record; },
+      createSessionRecord: input => {
+        const record = { ...input, id: `exec-${sessions.size}`, busy: false, createdAt: time, history: [], underlyingSessionId: null, runtime: null };
+        sessions.set(record.id, record);
+        return record;
+      },
       linkSessionToProject: async () => {}, readProjectSync: () => null,
       runSessionPrompt: async input => { calls.push(input); return options.run?.(input); },
     });
@@ -72,6 +106,64 @@ async function fixture(tasks: any[], options: any = {}) {
 }
 
 describe('desktop cron lifecycle', () => {
+  test('each scheduled or manual run starts empty and the task opens its latest execution', async () => {
+    const inputHistories: unknown[][] = [];
+    const f = await fixture([job()], {
+      history: [{ type: 'user', message: { content: 'Owner conversation must not be inherited' } }],
+      run: ({ sessionRecord, runtimePrompt }) => {
+        inputHistories.push([...sessionRecord.history]);
+        expect(sessionRecord.underlyingSessionId).toBeNull();
+        expect(sessionRecord.runtime).toBeNull();
+        sessionRecord.history.push({ type: 'user', message: { content: runtimePrompt } });
+        sessionRecord.history.push({ type: 'assistant', message: { content: 'Previous result' } });
+        sessionRecord.underlyingSessionId = `engine-${sessionRecord.id}`;
+        sessionRecord.runtime = { history: sessionRecord.history };
+      },
+    });
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    const first = f.calls[0].sessionRecord;
+    f.setTime(at(9, 10));
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    const second = f.calls[1].sessionRecord;
+    f.setTime(at(9, 11));
+    const manual = await f.invoke('run-now', { taskId: 'job-1' });
+    expect(manual.ok).toBe(true);
+    const third = f.calls[2].sessionRecord;
+    expect(new Set([first.id, second.id, third.id]).size).toBe(3);
+    expect(inputHistories).toEqual([[], [], []]);
+    expect(first.history).toHaveLength(2);
+    expect(second.history).toHaveLength(2);
+    expect(f.calls.every(call => call.runtimePrompt === 'report')).toBe(true);
+    expect((await f.invoke('list')).tasks[0].executionSessionId).toBe(third.id);
+    // Restored records need not be ordered by creation time in the session map.
+    first.updatedAt = at(9, 12);
+    f.sessions.delete(first.id); f.sessions.set(first.id, first);
+    expect((await f.create('desktop-2').invoke('list')).tasks[0].executionSessionId).toBe(third.id);
+    expect(first).toMatchObject({ workspace: '/workspace', sourceSessionId: 'owner', cronTaskId: 'job-1' });
+  });
+
+  test('sends once and waits for the reply across repeated ticks and manual requests', async () => {
+    let finish!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const f = await fixture([job()], { run: () => { started(); return pending; } });
+    let completed = false;
+    const manual = f.invoke('run-now', { taskId: 'job-1' }).then(result => { completed = true; return result; });
+    await ready;
+    f.setTime(at(9, 25));
+    for (let index = 0; index < 3; index++) await f.scheduler.tick();
+    expect(await f.invoke('run-now', { taskId: 'job-1' })).toMatchObject({ ok: false });
+    expect(completed).toBe(false);
+    expect(f.calls).toHaveLength(1);
+    expect((await f.read())[0].status).toBe('running');
+    finish();
+    expect(await manual).toMatchObject({ ok: true, sessionId: f.calls[0].sessionRecord.id });
+    expect((await f.read())[0]).toMatchObject({ status: 'idle', nextRunAt: at(9, 30) });
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    expect(f.calls).toHaveLength(1);
+  });
+
   test('legacy IPC deletes by preload taskId without losing concurrent scheduler updates', async () => {
     const f = await fixture([job()]);
     const handlers = new Map<string, any>();
@@ -124,7 +216,8 @@ describe('desktop cron lifecycle', () => {
 
   test('keeps a busy task due after its scheduled minute has passed', async () => {
     const f = await fixture([job()]);
-    f.sessions.set('busy', { id: 'busy', sessionKind: 'cron', cronTaskId: 'job-1', busy: true });
+    f.sessions.set('busy', { id: 'busy', sessionKind: 'cron', cronTaskId: 'job-1', busy: true, createdAt: at(9, 1) });
+    f.sessions.set('idle', { id: 'idle', sessionKind: 'cron', cronTaskId: 'job-1', busy: false, createdAt: at(9, 2) });
     await f.scheduler.tick(); await f.scheduler.waitForIdle();
     expect(f.calls).toHaveLength(0);
     f.setTime(at(9, 8)); f.sessions.get('busy').busy = false;
@@ -154,6 +247,7 @@ describe('desktop cron lifecycle', () => {
     expect(f.calls).toHaveLength(1);
     fail = false;
     expect(await f.invoke('run-now', { taskId: 'job-1' })).toMatchObject({ ok: true });
+    expect(f.calls[1].sessionRecord.id).not.toBe(f.calls[0].sessionRecord.id);
     expect(await f.read()).toEqual([]);
   });
 

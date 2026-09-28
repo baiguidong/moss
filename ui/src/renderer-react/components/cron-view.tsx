@@ -233,7 +233,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
                         className="text-primary underline-offset-2 transition-colors hover:underline"
                         onClick={() => onOpenSession(task.executionSessionId!)}
                       >
-                        打开执行会话
+                        打开最近执行会话
                       </button>
                     ) : null}
                     {task.timezone && <span>计划时区：{task.timezone}</span>}

@@ -61,18 +61,16 @@ export class CloudCronScheduler {
       await this.authorize(current)
       const source = await this.runtime.getSession(current.ownerSessionId)
       if (!source || source.userId !== current.userId || source.orgId !== current.orgId) throw new Error('归属会话已删除或不可访问。')
-      let execution = current.executionSessionId ? await this.runtime.getSession(current.executionSessionId) : null
-      if (!execution) {
-        execution = await this.runtime.createSession({
-          orgId: current.orgId, userId: current.userId, role: source.role, scopes: source.scopes,
-          cwd: source.cwd, title: `云端定时任务 · ${current.prompt.slice(0, 42)}`,
-          dangerouslySkipPermissions: false, assistantName: source.assistantName ?? undefined,
-          advancedSettings: source.advancedSettings, autoMemory: source.autoMemory,
-          sessionMemory: source.sessionMemory, runtimeOptions: source.runtimeOptions,
-          scheduledTask: { taskId: current.id, sourceSessionId: source.sessionId },
-        })
-        await this.repo.setExecution(current, execution.sessionId)
-      }
+      // Each trigger (including manual retries) gets an empty conversation.
+      const execution = await this.runtime.createSession({
+        orgId: current.orgId, userId: current.userId, role: source.role, scopes: source.scopes,
+        cwd: source.cwd, title: `云端定时任务 · ${current.prompt.slice(0, 42)}`,
+        dangerouslySkipPermissions: false, assistantName: source.assistantName ?? undefined,
+        advancedSettings: source.advancedSettings, autoMemory: source.autoMemory,
+        sessionMemory: source.sessionMemory, runtimeOptions: source.runtimeOptions,
+        scheduledTask: { taskId: current.id, sourceSessionId: source.sessionId },
+      })
+      await this.repo.setExecution(current, execution.sessionId)
       if (execution.userId !== current.userId || execution.orgId !== current.orgId || execution.cronTaskId !== current.id) throw new Error('执行会话归属不匹配。')
       const latest = await this.repo.get(current.id, current)
       if (!latest || latest.runId !== current.runId) return

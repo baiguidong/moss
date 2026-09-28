@@ -8,6 +8,7 @@ import { LibraryView } from '@/components/library-view';
 import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
+import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
@@ -23,6 +24,7 @@ import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
+import { UserAvatarContext } from '@/components/user-avatar';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { NotificationCenter, NotificationToast } from '@/components/notification-center';
@@ -2509,6 +2511,7 @@ export default function App() {
   );
 
   return (
+    <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
       toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
     >
@@ -2663,6 +2666,9 @@ export default function App() {
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
                 childSessions={activeChildSessions}
+                onReturnToParentSession={activeDetail?.isSubAgent && activeDetail.parentSessionId
+                  ? () => { void openSession(activeDetail.parentSessionId!); }
+                  : undefined}
                 onChange={setInput}
                 onComposerIntentChange={handleComposerIntentChange}
                 onToggleLeftSidebar={() => toggleSidebar('left')}
@@ -2672,6 +2678,7 @@ export default function App() {
                 onForkSession={handleForkSession}
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
+                terminalActions={<SessionTerminalActions key={activeSessionId} session={activeDetail} />}
                 toolDisplayMode={activeToolDisplayMode}
                 sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
                 globalToolDisplayMode={globalToolDisplayMode}
@@ -2890,5 +2897,6 @@ export default function App() {
       </div>
     </div>
     </ToolDisplaySettingsProvider>
+    </UserAvatarContext.Provider>
   );
 }
