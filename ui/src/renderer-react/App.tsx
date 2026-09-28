@@ -21,7 +21,6 @@ import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
 import { startSessionTaskPolling } from '../session-tasks.mjs';
-import { AskUserQuestionModal } from '@/components/ask-user-question-modal';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { UserAvatarContext } from '@/components/user-avatar';
@@ -502,6 +501,8 @@ export default function App() {
   const [toolDisplaySettingSessionId, setToolDisplaySettingSessionId] = React.useState<string | null>(null);
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
+  const [pendingSendRequests, setPendingSendRequests] = React.useState<Map<string, symbol>>(() => new Map());
+  const [preparingNewSession, setPreparingNewSession] = React.useState(false);
   const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
   const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
   const permissionModeSettingRequestRef = React.useRef<string | null>(null);
@@ -1194,6 +1195,14 @@ export default function App() {
     const offState = window.agentDesktop.onState((payload) => {
       const eventSessionId = payload?.sessionId || payload?.summary?.id;
       if (eventSessionId && removedSessionIdsRef.current.has(eventSessionId)) return;
+      if (eventSessionId && payload?.busy === true) {
+        setPendingSendRequests((previous) => {
+          if (!previous.has(eventSessionId)) return previous;
+          const next = new Map(previous);
+          next.delete(eventSessionId);
+          return next;
+        });
+      }
       const hasSessionTasksPayload = Array.isArray(payload?.tasks);
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
@@ -1453,15 +1462,10 @@ export default function App() {
   }, [activeSessionQuestionRequest]);
 
   const activeQuestionRequest = React.useMemo(() => {
-    if (activeSessionQuestionRequest) {
-      return activeSessionQuestionRequest.input?.metadata?.source === 'session:tool-permission'
-        ? null
-        : activeSessionQuestionRequest;
-    }
-    return questionRequests.find((request) => (
-      !request.projectId && request.input?.metadata?.source !== 'session:tool-permission'
-    )) || null;
-  }, [activeSessionQuestionRequest, questionRequests]);
+    return activeSessionQuestionRequest?.input?.metadata?.source === 'session:tool-permission'
+      ? null
+      : activeSessionQuestionRequest;
+  }, [activeSessionQuestionRequest]);
 
   const workspaceTree = React.useMemo(() => {
     if (!activeDetail?.workspace) return [];
@@ -1766,16 +1770,28 @@ export default function App() {
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
     agentType?: string,
   ) => {
-    await window.agentDesktop.send({
-      sessionId,
-      prompt,
-      skills,
-      agentType,
-      mode: intent,
-      appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
-      files: files?.filter((file) => !file.resource).map((file) => file.path),
-      resources: files?.flatMap((file) => file.resource ? [file.resource] : []),
-    });
+    // Show activity during IPC/runtime startup, before the first busy event.
+    const request = Symbol();
+    setPendingSendRequests(previous => new Map(previous).set(sessionId, request));
+    try {
+      await window.agentDesktop.send({
+        sessionId,
+        prompt,
+        skills,
+        agentType,
+        mode: intent,
+        appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
+        files: files?.filter((file) => !file.resource).map((file) => file.path),
+        resources: files?.flatMap((file) => file.resource ? [file.resource] : []),
+      });
+    } finally {
+      setPendingSendRequests(previous => {
+        if (previous.get(sessionId) !== request) return previous;
+        const next = new Map(previous);
+        next.delete(sessionId);
+        return next;
+      });
+    }
   }, [selectedAppName, selectedAssistant]);
 
   const handleRunCliConnectorSetup = React.useCallback(async (
@@ -1932,6 +1948,7 @@ export default function App() {
       // retry after an errored first turn) binds to the SAME session/workspace
       // instead of spawning a second directory.
       if (!creatingSessionRef.current) {
+        setPreparingNewSession(true);
         creatingSessionRef.current = createAndOpenSession(
           preparedSession?.title,
           workspace,
@@ -1941,6 +1958,7 @@ export default function App() {
           preparedSession ? 'local' : newSessionAgentMode,
         ).finally(() => {
           creatingSessionRef.current = null;
+          setPreparingNewSession(false);
         });
         sessionJustCreated = true;
       }
@@ -2154,14 +2172,14 @@ export default function App() {
     dismissPermissionNotice();
   }, [dismissPermissionNotice, updateQuestionRequests]);
 
-  const handleRejectQuestion = React.useCallback(async (request: AskUserQuestionRequest) => {
+  const handleRejectQuestion = React.useCallback(async (request: AskUserQuestionRequest, message?: string) => {
     const isToolPermission = request.input?.metadata?.source === 'session:tool-permission';
     await window.agentDesktop.rejectQuestion({
       requestId: request.requestId,
       sessionId: request.sessionId,
-      message: isToolPermission
+      message: message || (isToolPermission
         ? 'User denied tool permission'
-        : 'User declined to answer questions',
+        : 'User declined to answer questions'),
     });
     updateQuestionRequests((prev) => prev.filter((entry) => entry.requestId !== request.requestId));
     dismissPermissionNotice();
@@ -2646,7 +2664,7 @@ export default function App() {
                 messages={chatMessages}
                 value={input}
                 selectedAppName={selectedAppName}
-                loading={Boolean(activeDetail?.busy)}
+                loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId))}
                 busyStartedAt={activeDetail?.busyStartedAt ?? null}
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
@@ -2716,6 +2734,9 @@ export default function App() {
                   showPermissionNotice(`“${workflow.record.title}”已发布到工作流`, 'info', 3500);
                 }}
                 toolPermissionRequest={activeToolPermissionRequest}
+                questionRequest={activeQuestionRequest}
+                onSubmitQuestion={handleSubmitQuestion}
+                onDiscussQuestion={handleRejectQuestion}
                 onSubmitToolPermission={handleSubmitQuestion}
                 onRejectToolPermission={handleRejectQuestion}
               />
@@ -2724,7 +2745,7 @@ export default function App() {
                 messages={[]}
                 value={input}
                 selectedAppName={selectedAppName}
-                loading={false}
+                loading={preparingNewSession}
                 hasActiveSession={false}
                 sessionTitle=""
                 sessionWorkspace={undefined}
@@ -2881,15 +2902,6 @@ export default function App() {
         {isBuddyEnabled() && (
           <BuddyCompanion key={forceBuddyUpdate} />
         )}
-        <AskUserQuestionModal
-          request={activeQuestionRequest}
-          activeSessionId={activeSessionId}
-          onSwitchToSession={(sessionId) => {
-            void handleSelectSession(sessionId);
-          }}
-          onSubmit={handleSubmitQuestion}
-          onReject={handleRejectQuestion}
-        />
         <GlobalSessionSearch
           open={globalSearchOpen}
           onClose={() => setGlobalSearchOpen(false)}

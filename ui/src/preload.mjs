@@ -190,6 +190,9 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     install: (payload) => ipcRenderer.invoke('app-market:install', payload),
   },
   listApps: () => ipcRenderer.invoke('app:list'),
+  resourceMonitor: {
+    getSnapshot: (payload) => ipcRenderer.invoke('resource-monitor:snapshot', payload),
+  },
   listAppVersions: (payload) => ipcRenderer.invoke('app:list-versions', payload),
   launchApp: (payload) => ipcRenderer.invoke('app:launch', payload),
   openEmbeddedApp: (payload) => ipcRenderer.invoke('app:embedded-open', payload),
@@ -246,6 +249,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getContent: (payload) => ipcRenderer.invoke('previewHistory.getContent', payload),
   },
   preview: {
+    readFile: (payload) => ipcRenderer.invoke('preview:read-file', payload),
     open: (payload) => ipcRenderer.invoke('preview.open', payload),
     sync: (payload) => ipcRenderer.invoke('preview.sync', payload),
     ready: () => ipcRenderer.invoke('preview.ready'),

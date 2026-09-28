@@ -164,7 +164,8 @@ jobs:
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
 
   build-windows-x64:
-    runs-on: windows-latest
+    # node-pty's node-gyp requires Visual Studio 2022; latest now uses VS 2026.
+    runs-on: windows-2022
     needs: [prepare, create-release]
     steps:
       - name: Checkout release tag

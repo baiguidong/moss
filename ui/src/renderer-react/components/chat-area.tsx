@@ -56,6 +56,7 @@ import {
   type ToolDisplayMode,
 } from "@/components/chat/tool-display-settings";
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
+import { AskUserQuestionCard, type AskUserQuestionCardProps } from "@/components/chat/ask-user-question-card";
 import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 import {
   WorkflowDraftWorkbench,
@@ -2124,6 +2125,7 @@ function deriveComposerActivity(
   if (!loading) return null;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const m = messages[i];
+    if (m.type === "user_text") break;
     if (m.type === "tool_use" && (m.status === "running" || m.status === "pending")) {
       return { label: `正在执行 ${m.displayName || m.toolName}`, kind: "tool" as const };
     }
@@ -2136,7 +2138,7 @@ function deriveComposerActivity(
       return { label: "正在输出回复", kind: "text" as const };
     }
   }
-  return { label: "正在思考", kind: "thinking" as const };
+  return { label: "working...", kind: "working" as const };
 }
 
 function ActivityStrip({
@@ -2389,6 +2391,9 @@ export function ChatArea({
   toolPermissionRequest,
   onSubmitToolPermission,
   onRejectToolPermission,
+  questionRequest,
+  onSubmitQuestion,
+  onDiscussQuestion,
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
@@ -2468,6 +2473,9 @@ export function ChatArea({
     annotations?: AskUserQuestionAnnotations,
   ) => Promise<void>;
   onRejectToolPermission?: (request: AskUserQuestionRequest) => Promise<void>;
+  questionRequest?: AskUserQuestionRequest | null;
+  onSubmitQuestion?: AskUserQuestionCardProps["onSubmit"];
+  onDiscussQuestion?: AskUserQuestionCardProps["onDiscuss"];
 }) {
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
@@ -2595,7 +2603,7 @@ export function ChatArea({
   const fallbackBusyStartRef = React.useRef<{ sessionId?: string; startedAt: number } | null>(null);
   if (!loading) {
     fallbackBusyStartRef.current = null;
-  } else if (busyStartedAt == null && fallbackBusyStartRef.current?.sessionId !== sessionId) {
+  } else if (busyStartedAt == null && (!fallbackBusyStartRef.current || fallbackBusyStartRef.current.sessionId !== sessionId)) {
     fallbackBusyStartRef.current = { sessionId, startedAt: Date.now() };
   }
   const loadingStartTime = loading
@@ -2681,7 +2689,11 @@ export function ChatArea({
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
         />
-        <div className="shrink-0 px-3 pb-4 sm:px-4" />
+        <div className="shrink-0 px-3 pb-4 sm:px-4">
+          {loading && loadingStartTime != null ? (
+            <ActivityStrip label="正在准备会话…" startTime={loadingStartTime} />
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -2803,7 +2815,8 @@ export function ChatArea({
             messages={messages}
             sessionId={sessionId}
             workspace={sessionWorkspace}
-            loading={loading && !toolPermissionRequest}
+            agentMode={sessionAgentMode}
+            loading={loading && !toolPermissionRequest && !questionRequest}
             loadingStartTime={loadingStartTime}
             loadingTokens={turnTokens}
             focusedToolUseId={focusedToolUseId}
@@ -2828,6 +2841,13 @@ export function ChatArea({
                 request={toolPermissionRequest}
                 onSubmit={onSubmitToolPermission}
                 onReject={onRejectToolPermission}
+              />
+            ) : questionRequest && onSubmitQuestion && onDiscussQuestion ? (
+              <AskUserQuestionCard
+                key={questionRequest.requestId}
+                request={questionRequest}
+                onSubmit={onSubmitQuestion}
+                onDiscuss={onDiscussQuestion}
               />
             ) : pendingPlanApproval ? (
               <PlanApprovalCard

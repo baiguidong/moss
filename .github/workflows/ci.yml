@@ -95,7 +95,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   package-windows-x64:
-    runs-on: windows-latest
+    # node-pty's node-gyp requires Visual Studio 2022; latest now uses VS 2026.
+    runs-on: windows-2022
     needs: quality
     steps:
       - name: Checkout

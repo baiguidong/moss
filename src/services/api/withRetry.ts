@@ -29,6 +29,15 @@ import {
 } from '../analytics/index.js'
 import { REPEATED_529_ERROR_MESSAGE } from './errors.js'
 import { extractConnectionErrorDetails } from './errorUtils.js'
+import {
+  getThinkingFallbackMode,
+  type ThinkingFallbackState,
+} from './thinkingFallback.js'
+import {
+  getThinkingCacheEntry,
+  readThinkingCache,
+  removeThinkingCache,
+} from './thinkingCompatibilityCache.js'
 
 const abortError = () => new APIUserAbortError()
 
@@ -98,6 +107,7 @@ export interface RetryContext {
   maxTokensOverride?: number
   model: string
   thinkingConfig: ThinkingConfig
+  omitThinking?: boolean
   fastMode?: boolean
 }
 
@@ -106,6 +116,7 @@ interface RetryOptions {
   model: string
   fallbackModel?: string
   thinkingConfig: ThinkingConfig
+  thinkingFallback?: ThinkingFallbackState
   fastMode?: boolean
   signal?: AbortSignal
   querySource?: QuerySource
@@ -154,15 +165,19 @@ export async function* withRetry<T>(
   options: RetryOptions,
 ): AsyncGenerator<SystemAPIErrorMessage, T> {
   const maxRetries = getMaxRetries(options)
+  let maxAttempts = maxRetries + 1
   const retryContext: RetryContext = {
     model: options.model,
-    thinkingConfig: options.thinkingConfig,
+    thinkingConfig: options.thinkingFallback?.mode
+      ? { type: 'disabled' }
+      : options.thinkingConfig,
+    omitThinking: options.thinkingFallback?.mode === 'omit',
   }
   let client: Anthropic | null = null
   let consecutive529Errors = options.initialConsecutive529Errors ?? 0
   let lastError: unknown
   let persistentAttempt = 0
-  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (options.signal?.aborted) {
       throw new APIUserAbortError()
     }
@@ -191,13 +206,59 @@ export async function* withRetry<T>(
         client = await getClient()
       }
 
+      const thinkingFallback = options.thinkingFallback
+      if (thinkingFallback && !thinkingFallback.cacheChecked) {
+        thinkingFallback.cacheChecked = true
+        thinkingFallback.cacheEntry = getThinkingCacheEntry(
+          client, options.model, options.thinkingConfig.type,
+        )
+        if (!thinkingFallback.mode && thinkingFallback.cacheEntry) {
+          thinkingFallback.mode = await readThinkingCache(thinkingFallback.cacheEntry)
+        }
+        if (thinkingFallback.mode) {
+          retryContext.thinkingConfig = { type: 'disabled' }
+          retryContext.omitThinking = thinkingFallback.mode === 'omit'
+        }
+      }
+      if (options.signal?.aborted) throw new APIUserAbortError()
+
       return await operation(client, attempt, retryContext)
     } catch (error) {
       lastError = error
       logForDebugging(
-        `API error (attempt ${attempt}/${maxRetries + 1}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
+        `API error (attempt ${attempt}/${maxAttempts}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
         { level: 'error' },
       )
+
+      // One immediate compatibility retry, only for an explicit rejection of
+      // thinking. Keep ordinary error handling and retry budgets unchanged.
+      const thinkingFallback = options.thinkingFallback
+      if (thinkingFallback) {
+        const mode = getThinkingFallbackMode(error)
+        // Do not loop on the same incompatibility even if a proxy marks its
+        // validation errors as retryable with x-should-retry.
+        if (mode && thinkingFallback.mode) {
+          if (thinkingFallback.cacheEntry) {
+            await removeThinkingCache(thinkingFallback.cacheEntry)
+          }
+          thinkingFallback.pendingCacheWrite = false
+          throw new CannotRetryError(error, retryContext)
+        }
+        if (
+          mode &&
+          (retryContext.thinkingConfig.type !== 'disabled' || mode === 'omit')
+        ) {
+          thinkingFallback.mode = mode
+          thinkingFallback.pendingCacheWrite = true
+          retryContext.thinkingConfig = { type: 'disabled' }
+          retryContext.omitThinking = mode === 'omit'
+          maxAttempts++
+          logForDebugging(
+            `API rejected thinking; retrying once with thinking ${mode === 'omit' ? 'omitted' : 'disabled'}`,
+          )
+          continue
+        }
+      }
 
       // Non-foreground sources bail immediately on 529 — no retry amplification
       // during capacity cascades. User never sees these fail.
@@ -249,7 +310,7 @@ export async function* withRetry<T>(
       // Only retry if the error indicates we should
       const persistent =
         isPersistentRetryEnabled() && isTransientCapacityError(error)
-      if (attempt > maxRetries && !persistent) {
+      if (attempt >= maxAttempts && !persistent) {
         throw new CannotRetryError(error, retryContext)
       }
 

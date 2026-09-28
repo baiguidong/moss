@@ -9,10 +9,39 @@ export function registerFileSystemIpcHandlers({
   ipcMain,
   uiRoot,
   getSessionRecord,
+  readWorkspaceFile,
   maxImageBase64Bytes,
   maxReadTextBytes,
   uploadRemoteWorkspaceFile,
 }) {
+  // An explicit file-card preview may target a generated file outside the
+  // session workspace. Keep that preview read-only; workspace reads/writes
+  // retain their existing session boundary.
+  ipcMain.handle('preview:read-file', async (_event, { sessionId, filePath }) => {
+    const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
+    if (sessionRecord?.agentMode === 'remote-direct') {
+      return readWorkspaceFile(sessionRecord, filePath);
+    }
+
+    const targetPath = await fsp.realpath(resolveUserPath(filePath, os.homedir()));
+    const workspace = sessionRecord?.workspace
+      ? await fsp.realpath(sessionRecord.workspace).catch(() => null)
+      : null;
+    const relative = workspace ? path.relative(workspace, targetPath) : null;
+    if (relative !== null && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return readWorkspaceFile(sessionRecord, path.resolve(sessionRecord.workspace, relative));
+    }
+
+    const preview = await readWorkspaceFile({
+      agentMode: 'local',
+      workspace: path.dirname(targetPath),
+    }, targetPath);
+    return {
+      ...preview,
+      metadata: { ...preview.metadata, previewEditable: false, previewSaveable: false },
+    };
+  });
+
   ipcMain.handle('fs:getImageBase64', async (event, { path: filePath }) => {
     try {
       const ext = path.extname(filePath || '').toLowerCase().replace(/^\./, '');

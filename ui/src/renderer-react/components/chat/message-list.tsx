@@ -27,6 +27,7 @@ import type {
   TranscriptRenderMessage,
 } from "@/lib/agent-transcript";
 import type { TurnChangeSummary, TurnChangesPayload } from "../../types";
+import { buildAssistantOutputFiles, type AssistantOutputFile } from "@/lib/assistant-output-files";
 
 type RenderItem =
   | {
@@ -303,6 +304,10 @@ function renderTranscriptItem(
   focusedToolUseId?: string,
   isLive = false,
   actions?: React.ReactNode,
+  outputFiles?: AssistantOutputFile[],
+  sessionId?: string,
+  workspace?: string,
+  remote?: boolean,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -325,7 +330,7 @@ function renderTranscriptItem(
     return <UserMessage key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
-    return <AssistantMessage key={message.id} message={message} actions={actions} />;
+    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} />;
   }
   if (message.type === "thinking") {
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
@@ -386,7 +391,7 @@ function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; token
         style={{ animationDuration: "2s" }}
       />
       <div className="flex items-center gap-2 rounded-[18px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
-        <span>working...</span>
+        <span role="status">working...</span>
         {meta.length > 0 && (
           <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
         )}
@@ -548,6 +553,7 @@ export const VirtualMessageList = React.forwardRef<
     focusedToolUseId?: string;
     contentClassName?: string;
     sessionId?: string;
+    agentMode?: 'local' | 'remote-direct';
     latestMessageActions?: React.ReactNode;
   }
 >(function VirtualMessageList(
@@ -564,6 +570,7 @@ export const VirtualMessageList = React.forwardRef<
     focusedToolUseId,
     contentClassName,
     sessionId,
+    agentMode,
     latestMessageActions,
   },
   ref,
@@ -613,6 +620,11 @@ export const VirtualMessageList = React.forwardRef<
     }
     return result;
   }, [renderItems]);
+
+  const outputFilesByMessage = React.useMemo(
+    () => buildAssistantOutputFiles(messages, workspace || "", turnChanges),
+    [messages, workspace, turnChanges],
+  );
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
     renderItems.flatMap((item, renderIndex) => (
@@ -710,12 +722,12 @@ export const VirtualMessageList = React.forwardRef<
   // user is at the bottom.
   React.useEffect(() => {
     if (atBottomRef.current) {
-      const timer = window.setTimeout(() => {
+      const frame = window.requestAnimationFrame(() => {
         if (atBottomRef.current) scrollToBottom("auto");
-      }, 50);
-      return () => window.clearTimeout(timer);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
-  }, [messages, loading, scrollToBottom]);
+  }, [messages, loading, footer, scrollToBottom]);
 
   if (renderItems.length === 0) {
     return (
@@ -777,6 +789,10 @@ export const VirtualMessageList = React.forwardRef<
             focusedToolUseId,
             Boolean(loading && index === renderItems.length - 1),
             actions,
+            item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined,
+            sessionId,
+            workspace,
+            agentMode === 'remote-direct',
           );
           const turnId = getRenderItemTurnId(item);
           const turnChange = turnId ? turnChanges.get(turnId) : undefined;
@@ -843,6 +859,7 @@ export const MessageListPane = React.forwardRef<
     className?: string;
     contentClassName?: string;
     sessionId?: string;
+    agentMode?: 'local' | 'remote-direct';
     latestMessageActions?: React.ReactNode;
   }
 >(function MessageListPane({ className, ...listProps }, ref) {
@@ -925,6 +942,7 @@ export function MessageList({
     () => buildRenderModel(messages),
     [messages],
   );
+  const outputFilesByMessage = React.useMemo(() => buildAssistantOutputFiles(messages, workspace || ""), [messages, workspace]);
 
   React.useEffect(() => {
     const bottom = bottomRef?.current;
@@ -942,7 +960,8 @@ export function MessageList({
     <WorkspacePathProvider workspace={workspace || ""}>
     <div className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
       {renderItems.length > 0 ? (
-        renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent))
+        renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent, undefined, false, undefined,
+          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, undefined, workspace))
       ) : (
         emptyState || (
           <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">

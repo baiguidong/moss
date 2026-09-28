@@ -175,6 +175,7 @@ type RenderBuilderState = {
   // 按 content_block 的 index 追踪当前流中的 tool_use, 使 input_json_delta 能精确路由到
   // 对应块(而非最后一个块), 避免并行 tool_use 时输入串位或被丢弃。
   toolUsesByIndex: Map<number, ToolUseRenderMessage>;
+  textBlocksByIndex: Map<number, AssistantTextRenderMessage | ThinkingRenderMessage>;
   activeTurnId?: string;
 };
 
@@ -579,9 +580,10 @@ function ensureAssistantTextItem(
   state: RenderBuilderState,
   turn: AssistantTurnState,
   timestamp: Date,
+  startNew = false,
 ): AssistantTextRenderMessage {
   const last = lastTurnItem(turn);
-  if (last?.type === 'assistant_text') {
+  if (last?.type === 'assistant_text' && !startNew) {
     if (timestamp.getTime() > last.timestamp.getTime()) last.timestamp = timestamp;
     return last;
   }
@@ -659,9 +661,10 @@ function ensureThinkingItem(
   state: RenderBuilderState,
   turn: AssistantTurnState,
   timestamp: Date,
+  startNew = false,
 ): ThinkingRenderMessage {
   const last = lastTurnItem(turn);
-  if (last?.type === 'thinking') {
+  if (last?.type === 'thinking' && !startNew) {
     if (timestamp.getTime() > last.timestamp.getTime()) last.timestamp = timestamp;
     return last;
   }
@@ -685,7 +688,7 @@ function appendThinkingItem(
   options?: { streaming?: boolean },
 ) {
   const normalized = String(text || '');
-  if (!normalized.trim()) return;
+  if (options?.streaming ? !normalized : !normalized.trim()) return;
   const item = ensureThinkingItem(state, turn, timestamp);
   item.content += normalized;
   if (options?.streaming) item.streaming = true;
@@ -1153,6 +1156,7 @@ export function buildTranscriptRenderMessages(
     nextId: 0,
     toolUsesById: new Map<string, ToolUseRenderMessage>(),
     toolUsesByIndex: new Map<number, ToolUseRenderMessage>(),
+    textBlocksByIndex: new Map(),
     activeTurnId: undefined,
   };
   let previousTimestamp = new Date(0);
@@ -1242,8 +1246,18 @@ export function buildTranscriptRenderMessages(
     }
 
     if (event?.type === 'stream_event') {
-      const turn = ensureAssistantTurn(state, timestamp);
       const streamEvent = event?.event;
+      if (streamEvent?.type === 'message_start') {
+        const previousTurn = state.currentAssistantTurn;
+        // Start the next response before its first delta, so the completed
+        // assistant block reconciles with that delta after a tool result.
+        if (previousTurn?.hasHiddenAskUserQuestionResult || previousTurn?.items.some(item => item.type === 'tool_result')) {
+          finalizeAssistantTurn(state, { complete: true });
+        }
+        state.toolUsesByIndex.clear();
+        state.textBlocksByIndex.clear();
+      }
+      const turn = ensureAssistantTurn(state, timestamp);
 
       if (
         streamEvent?.type === 'content_block_start' &&
@@ -1262,25 +1276,30 @@ export function buildTranscriptRenderMessages(
         }
       } else if (
         streamEvent?.type === 'content_block_start' &&
-        streamEvent.content_block?.type === 'thinking'
+        (streamEvent.content_block?.type === 'thinking' || streamEvent.content_block?.type === 'text')
       ) {
-        // 该 index 现在是非 tool_use 块, 清除旧映射以防串位的 input_json_delta 误写。
+        const block = streamEvent.content_block;
+        const item = block.type === 'thinking'
+          ? ensureThinkingItem(state, turn, timestamp, true)
+          : ensureAssistantTextItem(state, turn, timestamp, true);
+        item.content = block.type === 'thinking' ? summarizeThinkingBlock(block) : String(block.text || '');
+        item.streaming = true;
         if (typeof streamEvent.index === 'number') {
           state.toolUsesByIndex.delete(streamEvent.index);
+          state.textBlocksByIndex.set(streamEvent.index, item);
         }
-        appendThinkingItem(
-          state,
-          turn,
-          timestamp,
-          summarizeThinkingBlock(streamEvent.content_block),
-          { streaming: true },
-        );
+      } else if (streamEvent?.type === 'content_block_stop') {
+        const item = state.textBlocksByIndex.get(streamEvent.index);
+        if (item) item.streaming = false;
       } else if (streamEvent?.type === 'content_block_delta') {
+        const item = state.textBlocksByIndex.get(streamEvent.index);
         if (
           streamEvent.delta?.type === 'text_delta' &&
           typeof streamEvent.delta.text === 'string'
         ) {
-          appendAssistantTextItem(
+          if (item?.type === 'assistant_text') {
+            item.content += streamEvent.delta.text;
+          } else appendAssistantTextItem(
             state,
             turn,
             timestamp,
@@ -1291,7 +1310,9 @@ export function buildTranscriptRenderMessages(
           streamEvent.delta?.type === 'thinking_delta' &&
           typeof streamEvent.delta.thinking === 'string'
         ) {
-          appendThinkingItem(
+          if (item?.type === 'thinking') {
+            item.content += streamEvent.delta.thinking;
+          } else appendThinkingItem(
             state,
             turn,
             timestamp,

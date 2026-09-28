@@ -148,17 +148,17 @@ export function ToolPermissionCard({ request, onSubmit, onReject }: Props) {
     <section
       role="group"
       aria-label={permissionTitle(toolName, kind, filePath)}
-      className="mb-3 overflow-hidden rounded-[18px] border border-[#a57820] bg-card shadow-[0_16px_44px_-36px_rgba(74,48,10,0.75)] dark:border-[#c69a43]"
+      className="mb-3 overflow-hidden rounded-2xl border border-primary/35 bg-card shadow-sm"
     >
-      <header className="flex items-center gap-3 bg-[#fbfaf8] px-4 py-3.5 dark:bg-[#24231f]">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#a24632]/10 text-[#a24632] dark:bg-[#e07860]/15 dark:text-[#ef8d78]">
+      <header className="flex items-center gap-3 bg-muted/35 px-4 py-3.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <ToolIcon kind={kind} />
         </span>
         <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">
           {permissionTitle(toolName, kind, filePath)}
         </h3>
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#fbefd5] px-2.5 py-1 text-[11px] font-medium text-[#8d651f] dark:bg-[#6a4d1e]/45 dark:text-[#edc778]">
-          <span className="h-2 w-2 rounded-full bg-[#c39335]" />
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+          <span className="h-2 w-2 rounded-full bg-primary" />
           等待审批
         </span>
       </header>
@@ -186,8 +186,8 @@ export function ToolPermissionCard({ request, onSubmit, onReject }: Props) {
             maxLines={28}
           />
         ) : kind === "bash" && command ? (
-          <pre className="max-h-[320px] overflow-auto rounded-lg bg-[#222321] px-4 py-3 font-mono text-xs leading-6 text-[#ecebe6]">
-            <span className="select-none text-[#87c995]">$ </span>{command}
+          <pre className="max-h-[320px] overflow-auto rounded-lg border border-border/60 bg-[var(--color-code-bg)] px-4 py-3 font-mono text-xs leading-6 text-[var(--color-code-fg)]">
+            <span className="select-none text-primary">$ </span>{command}
           </pre>
         ) : fallbackDetail ? (
           <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 px-3 py-3 font-mono text-xs leading-6 text-foreground">
@@ -206,13 +206,13 @@ export function ToolPermissionCard({ request, onSubmit, onReject }: Props) {
         {error ? <p className="mt-3 text-xs text-destructive">{error}</p> : null}
       </div>
 
-      <footer className="flex flex-wrap items-center gap-2 border-t border-border/65 bg-[#faf9f7] px-4 py-3 dark:bg-[#22221f]">
+      <footer className="flex flex-wrap items-center gap-2 border-t border-border/65 bg-muted/35 px-4 py-3">
         {primaryOption ? (
           <button
             type="button"
             onClick={() => void respond(primaryOption.label)}
             disabled={Boolean(submittingLabel)}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#202020] px-4 text-xs font-medium text-white shadow-sm transition-colors hover:bg-black disabled:cursor-not-allowed disabled:opacity-55 dark:bg-[#ecebe8] dark:text-[#202020] dark:hover:bg-white"
+            className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-55"
           >
             <Check className="h-4 w-4" />
             {submittingLabel === primaryOption.label ? "处理中..." : "允许"}
@@ -235,7 +235,7 @@ export function ToolPermissionCard({ request, onSubmit, onReject }: Props) {
           type="button"
           onClick={() => void reject()}
           disabled={Boolean(submittingLabel)}
-          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#ce493c] px-4 text-xs font-medium text-white transition-colors hover:bg-[#ba3e33] disabled:cursor-not-allowed disabled:opacity-55"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-4 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-55"
         >
           <X className="h-4 w-4" />
           {submittingLabel === "拒绝" ? "处理中..." : "拒绝"}

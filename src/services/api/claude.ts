@@ -228,6 +228,10 @@ import {
   recordPromptState,
 } from './promptCacheBreakDetection.js'
 import {
+  confirmThinkingFallback,
+  type ThinkingFallbackState,
+} from './thinkingFallback.js'
+import {
   CannotRetryError,
   FallbackTriggeredError,
   is529Error,
@@ -761,6 +765,7 @@ export async function* executeNonStreamingRequest(
     model: string
     fallbackModel?: string
     thinkingConfig: ThinkingConfig
+    thinkingFallback?: ThinkingFallbackState
     fastMode?: boolean
     signal: AbortSignal
     initialConsecutive529Errors?: number
@@ -834,6 +839,7 @@ export async function* executeNonStreamingRequest(
       model: retryOptions.model,
       fallbackModel: retryOptions.fallbackModel,
       thinkingConfig: retryOptions.thinkingConfig,
+      thinkingFallback: retryOptions.thinkingFallback,
       ...(isFastModeEnabled() && { fastMode: retryOptions.fastMode }),
       signal: retryOptions.signal,
       initialConsecutive529Errors: retryOptions.initialConsecutive529Errors,
@@ -1384,6 +1390,7 @@ async function* queryModel(
   // inside it would cause the first call to steal edits from subsequent calls.
   const consumedCacheEdits = cachedMCEnabled ? consumePendingCacheEdits() : null
   const consumedPinnedEdits = cachedMCEnabled ? getPinnedCacheEdits() : []
+  const thinkingFallback: ThinkingFallbackState = {}
   const dropUnexpectedThinkingBlocks =
     thinkingConfig.type === 'disabled' ||
     isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
@@ -1449,12 +1456,18 @@ async function* queryModel(
 
     const thinkingResolution = buildAPIThinkingParam(
       options.model,
-      thinkingConfig,
+      retryContext.thinkingConfig,
       maxOutputTokens,
     )
     const hasThinking = thinkingResolution.hasThinking
-    const thinking = thinkingResolution.thinking satisfies
-      BetaMessageStreamParams['thinking'] | undefined
+    const thinking: BetaMessageStreamParams['thinking'] = retryContext.omitThinking
+      ? undefined
+      : thinkingResolution.thinking
+
+    // Extra body configuration must not re-enable a parameter the API rejected.
+    if (thinkingFallback.mode) {
+      delete extraBodyParams.thinking
+    }
 
     // Get API context management strategies if enabled
     const contextManagement = getAPIContextManagement({
@@ -1658,6 +1671,7 @@ async function* queryModel(
         model: options.model,
         fallbackModel: options.fallbackModel,
         thinkingConfig,
+        thinkingFallback,
         ...(isFastModeEnabled() ? { fastMode: isFastMode } : false),
         signal,
         querySource: options.querySource,
@@ -2164,6 +2178,10 @@ async function* queryModel(
         throw new Error('Stream ended without receiving any events')
       }
 
+      // A 200 response alone is insufficient: wait for a valid completed stream
+      // before teaching later requests to reuse the compatibility fallback.
+      if (stopReason) await confirmThinkingFallback(thinkingFallback)
+
       // Log summary if any stalls occurred during streaming
       if (stallCount > 0) {
         logForDebugging(
@@ -2350,6 +2368,7 @@ async function* queryModel(
           model: options.model,
           fallbackModel: options.fallbackModel,
           thinkingConfig,
+          thinkingFallback,
           ...(isFastModeEnabled() && { fastMode: isFastMode }),
           signal,
           initialConsecutive529Errors: is529Error(streamingError) ? 1 : 0,
@@ -2365,6 +2384,7 @@ async function* queryModel(
       )
 
       assertNonStreamingFallbackResult(result)
+      await confirmThinkingFallback(thinkingFallback)
 
       const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
       const m: AssistantMessage = {
@@ -2449,6 +2469,7 @@ async function* queryModel(
             model: options.model,
             fallbackModel: options.fallbackModel,
             thinkingConfig,
+            thinkingFallback,
             ...(isFastModeEnabled() && { fastMode: isFastMode }),
             signal,
           },
@@ -2462,6 +2483,7 @@ async function* queryModel(
         )
 
         assertNonStreamingFallbackResult(result)
+        await confirmThinkingFallback(thinkingFallback)
 
         const normalizedResultUsage = updateUsage(EMPTY_USAGE, result.usage)
         const m: AssistantMessage = {

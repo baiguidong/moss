@@ -238,7 +238,6 @@ import {
   EFFORT_LEVELS,
   resolveAppliedEffort,
 } from 'src/utils/effort.js'
-import { modelSupportsAdaptiveThinking } from 'src/utils/thinking.js'
 import { ensureModelStringsInitialized } from 'src/utils/model/modelStrings.js'
 import {
   getSessionId,
@@ -1108,7 +1107,6 @@ function runHeadlessStreaming(
         ? getDefaultMainLoopModel()
         : parseUserSpecifiedModel(modelId)
     const hasEffort = modelSupportsEffort(resolvedModel)
-    const hasAdaptiveThinking = modelSupportsAdaptiveThinking(resolvedModel)
     const hasFastMode = isFastModeSupportedByModel(option.value)
     return {
       value: modelId,
@@ -1120,7 +1118,8 @@ function runHeadlessStreaming(
           ? [...EFFORT_LEVELS]
           : EFFORT_LEVELS.filter(l => l !== 'max'),
       }),
-      ...(hasAdaptiveThinking && { supportsAdaptiveThinking: true }),
+      // Moss exposes the configured mode for every model; the endpoint validates it.
+      supportsAdaptiveThinking: true,
       ...(hasFastMode && { supportsFastMode: true }),
     }
   })

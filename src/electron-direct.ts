@@ -1207,6 +1207,8 @@ export class ClaudeSession {
       appendSystemPrompt: appendSystemPrompt || undefined,
       thinkingConfig,
       maxTurns,
+      // Desktop and server clients render thinking/text deltas as they arrive.
+      includePartialMessages: true,
       initialMessages: resumedMessages ?? bootstrapMessages,
       emitAppEvent: onAppEvent,
       refreshTools: computeTools,

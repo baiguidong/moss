@@ -42,7 +42,7 @@ test("tool permission renders inline with direct approval actions", () => {
   expect(markup).toContain(">允许</button>");
   expect(markup).toContain("本次会话允许");
   expect(markup).toContain("拒绝");
-  expect(markup).toContain("border-[#a57820]");
+  expect(markup).toContain("border-primary/35");
   expect(markup).not.toContain("fixed inset-0");
 });
 

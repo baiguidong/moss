@@ -22,7 +22,8 @@ describe('overview memory navigation', () => {
     expect(html).toContain('>全局记忆<');
     expect(html).toContain('>项目记忆<');
     expect(html).toContain('>会话摘要<');
-    expect(html.match(/role="tab"/g)).toHaveLength(4);
+    expect(html).toContain('>资源监控<');
+    expect(html.match(/role="tab"/g)).toHaveLength(5);
     expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
     expect(html).toMatch(/aria-selected="true"[^>]*>.*项目记忆/s);
   });

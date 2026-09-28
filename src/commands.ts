@@ -20,6 +20,7 @@ import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
 import terminalSetup from './commands/terminalSetup/index.js'
 import theme from './commands/theme/index.js'
+import thinkingCache from './commands/thinking-cache/index.js'
 import vim from './commands/vim/index.js'
 import { feature } from 'bun:bundle'
 // Dead code elimination: conditional imports
@@ -113,6 +114,7 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   theme,
+  thinkingCache,
   review,
   rewind,
   terminalSetup,

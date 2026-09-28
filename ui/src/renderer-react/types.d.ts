@@ -2000,6 +2000,9 @@ declare global {
         }>;
       };
       listApps: () => Promise<StoredApp[]>;
+      resourceMonitor: {
+        getSnapshot: (payload?: { since?: number; active?: boolean }) => Promise<import('./lib/resource-monitor-types').ResourceMonitorSnapshot>;
+      };
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
       openEmbeddedApp: (payload: { name: string }) => Promise<{
@@ -2057,6 +2060,7 @@ declare global {
         getContent: (payload: { target: PreviewHistoryTarget; snapshotId: string }) => Promise<{ snapshot: PreviewSnapshotInfo; content: string } | null>;
       };
       preview: {
+        readFile: (payload: { sessionId?: string; filePath: string }) => Promise<WorkspacePreviewData>;
         open: (payload: PreviewOpenPayload) => Promise<{ ok: boolean }>;
         sync: (payload: { files: WorkspacePreviewData[] }) => Promise<{ ok: boolean }>;
         ready: () => Promise<{ ok: boolean }>;

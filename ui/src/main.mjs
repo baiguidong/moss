@@ -133,6 +133,7 @@ import {
 } from './assistant-context-utils.mjs';
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
+import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
 import {
   createLocalAuditService,
   registerLocalAuditIpcHandlers,
@@ -11157,6 +11158,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
+  registerResourceMonitorIpc({
+    ipcMain, app, webContents, getWindow: () => mainWindow,
+    getRuntime: () => appRuntime, getAppStates: () => appWindowStates.values(),
+    getApps: listAllStoredApps, log: mossLog,
+  });
   registerSkillStoreIpcHandlers();
   registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings });
   registerPublicExpertHubIpcHandlers({
@@ -13478,6 +13484,7 @@ registerFileSystemIpcHandlers({
   ipcMain,
   uiRoot,
   getSessionRecord,
+  readWorkspaceFile,
   maxImageBase64Bytes: MAX_IMAGE_BASE64_BYTES,
   maxReadTextBytes: MAX_READ_TEXT_BYTES,
   uploadRemoteWorkspaceFile: uploadFileToRemoteSessionWorkspace,

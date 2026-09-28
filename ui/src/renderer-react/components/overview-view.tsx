@@ -15,12 +15,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MemoryOverview, type MemoryScope } from "@/components/memory-overview";
+import { ResourceMonitorView } from "@/components/resource-monitor-view";
 import { cn } from "@/lib/utils";
 import { mergeUsageDaily } from "@/lib/usage-overview";
 import type { CloudUsageOverview, UsageDailySummary, UsageOverview } from "../types";
 
 type ActivityMode = "daily" | "weekly" | "cumulative";
-type OverviewTab = "usage" | MemoryScope;
+type OverviewTab = "usage" | "resources" | MemoryScope;
 
 type CalendarCell = UsageDailySummary & {
   date: Date;
@@ -57,6 +58,7 @@ const OVERVIEW_TABS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: "usage", label: "使用概览", icon: ChartNoAxesCombined },
+  { id: "resources", label: "资源监控", icon: Gauge },
   { id: "global", label: "全局记忆", icon: BookOpenText },
   { id: "project", label: "项目记忆", icon: FolderKanban },
   { id: "session", label: "会话摘要", icon: MessageSquareText },
@@ -457,6 +459,8 @@ export function OverviewView() {
               <p className="mt-1 text-xs text-muted-foreground">
                 更新于 {new Date(generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
               </p>
+            ) : activeTab === "resources" ? (
+              <p className="mt-1 text-xs text-muted-foreground">进程、CPU 与内存</p>
             ) : activeTab !== "usage" ? (
               <p className="mt-1 text-xs text-muted-foreground">本机 Moss 记忆</p>
             ) : null}
@@ -479,7 +483,7 @@ export function OverviewView() {
 
         <OverviewTabs activeTab={activeTab} onChange={setActiveTab} />
 
-        {activeTab !== "usage" ? (
+        {activeTab === "resources" ? <ResourceMonitorView /> : activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />
         ) : <UsageOverviewContent local={local} cloud={cloud} onRefresh={() => void loadOverview()} />}
       </div>
