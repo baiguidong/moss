@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { prepareTerminalShell } from './terminal-shell.mjs';
 
 const ACTION_TITLES = { terminal: '终端', new: '新会话', resume: '跟随会话' };
 const quoteShell = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
@@ -8,7 +9,7 @@ const dimension = (value, fallback) => Number.isFinite(value)
   ? Math.min(500, Math.max(2, Math.floor(value))) : fallback;
 
 export function buildTerminalLaunch({
-  action, session, transcriptPath, cliPath, nodePath,
+  action, session, transcriptPath, cliPath, nodePath, pythonPath, mossHome,
   env = process.env, platform = process.platform, fileExists = fs.existsSync,
 }) {
   if (!Object.hasOwn(ACTION_TITLES, action)) throw new Error('未知终端操作。');
@@ -24,16 +25,22 @@ export function buildTerminalLaunch({
   }
   terminalEnv.TERM = 'xterm-256color';
   terminalEnv.COLORTERM = 'truecolor';
-  let args = platform === 'win32' ? ['-NoLogo'] : ['-l'];
+  if (!nodePath || !fileExists(nodePath)) throw new Error('Node.js 运行时尚未就绪。');
+  if (!pythonPath || !fileExists(pythonPath)) throw new Error('Python 运行时尚未就绪。');
+  const pathImpl = platform === 'win32' ? path.win32 : path.posix;
+  const runtimeDirs = [...new Set([pathImpl.dirname(nodePath), pathImpl.dirname(pythonPath),
+    ...(platform === 'win32' ? [pathImpl.join(pathImpl.dirname(pythonPath), 'Scripts')] : []),
+  ])];
+  const pathKey = Object.keys(terminalEnv).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+  terminalEnv[pathKey] = [...runtimeDirs, ...(terminalEnv[pathKey] || '').split(pathImpl.delimiter)
+    .filter((entry) => entry && !runtimeDirs.includes(entry))].join(pathImpl.delimiter);
+  terminalEnv.MOSS_NODE_PATH = nodePath;
+  terminalEnv.MOSS_PYTHON_PATH = pythonPath;
+  if (mossHome) terminalEnv.MOSS_HOME = mossHome;
+  let cliArgs = [];
   if (action !== 'terminal') {
     if (!cliPath || !fileExists(cliPath)) throw new Error('Moss CLI 尚未构建，请先运行桌面构建。');
-    if (!nodePath || !fileExists(nodePath)) throw new Error('Node.js 运行时尚未就绪。');
-    const pathImpl = platform === 'win32' ? path.win32 : path.posix;
-    const nodeDir = pathImpl.dirname(nodePath);
-    const pathKey = Object.keys(terminalEnv).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
-    terminalEnv[pathKey] = [nodeDir, terminalEnv[pathKey]].filter(Boolean).join(pathImpl.delimiter);
-    terminalEnv.MOSS_NODE_PATH = nodePath;
-    const cliArgs = [nodePath, cliPath, '--trust-directory', cwd];
+    cliArgs = [nodePath, cliPath, '--trust-directory', cwd];
     if (action === 'resume') {
       if (session.busy) throw new Error('请等待当前回复完成后再跟随会话。');
       if (session.resumeReadOnlyReason) throw new Error(session.resumeReadOnlyReason);
@@ -42,17 +49,39 @@ export function buildTerminalLaunch({
       }
       cliArgs.push('--resume', transcriptPath);
     }
-    if (platform === 'win32') {
-      // EncodedCommand preserves paths containing spaces, quotes and shell metacharacters.
-      const command = `$env:Path = ${quotePowerShell(`${nodeDir};`)} + $env:Path; & ${cliArgs.map(quotePowerShell).join(' ')}`;
-      args = ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')];
-    } else {
-      // Login/interactive profiles may replace PATH. Restore the managed Node
-      // after those profiles so CLI tools using /usr/bin/env node inherit it too.
-      args = ['-l', '-i', '-c', `export PATH=${quoteShell(nodeDir)}:"$PATH"; ${cliArgs.map(quoteShell).join(' ')}; exec ${quoteShell(shell)} -l`];
-    }
   }
-  return { shell, args, cwd, env: terminalEnv, title: `${ACTION_TITLES[action]} · ${session.title || 'Moss'}` };
+  // Apply again after user profiles, which can change PATH, runtime variables and cwd.
+  const runtimeEnv = { MOSS_NODE_PATH: nodePath, MOSS_PYTHON_PATH: pythonPath,
+    ...(mossHome ? { MOSS_HOME: mossHome } : {}),
+  };
+  let args;
+  let startup;
+  if (platform === 'win32') {
+    const command = [
+      ...Object.entries(runtimeEnv).map(([key, value]) => `$env:${key} = ${quotePowerShell(value)}`),
+      `$env:Path = ${quotePowerShell(`${runtimeDirs.join(';')};`)} + $env:Path`,
+      `Set-Location -LiteralPath ${quotePowerShell(cwd)}`,
+      ...(cliArgs.length ? [`& ${cliArgs.map(quotePowerShell).join(' ')}`] : []),
+    ].join('; ');
+    args = ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')];
+  } else if (path.basename(shell) === 'fish') {
+    const command = [
+      ...Object.entries(runtimeEnv).map(([key, value]) => `set -gx ${key} ${quoteShell(value)}`),
+      `set -gx PATH ${runtimeDirs.map(quoteShell).join(' ')} $PATH`,
+      `cd -- ${quoteShell(cwd)}`,
+      ...(cliArgs.length ? [cliArgs.map(quoteShell).join(' ')] : []),
+    ].join('; ');
+    args = ['-l', '-i', '-C', command];
+  } else {
+    args = ['-l', '-i'];
+    startup = [
+      ...Object.entries(runtimeEnv).map(([key, value]) => `export ${key}=${quoteShell(value)}`),
+      `export PATH=${quoteShell(runtimeDirs.join(':'))}:"$PATH"`,
+      `cd -- ${quoteShell(cwd)}`,
+      ...(cliArgs.length ? [cliArgs.map(quoteShell).join(' ')] : []),
+    ].join('\n');
+  }
+  return { shell, args, cwd, env: terminalEnv, startup, title: `${ACTION_TITLES[action]} · ${session.title || 'Moss'}` };
 }
 
 export function createTerminalManager({ loadPty = () => import('node-pty') } = {}) {
@@ -73,6 +102,8 @@ export function createTerminalManager({ loadPty = () => import('node-pty') } = {
     if (pty) {
       try { pty.kill(); } catch { /* Already exited. */ }
     }
+    entry.cleanup?.();
+    entry.cleanup = null;
   }
 
   return {
@@ -89,10 +120,18 @@ export function createTerminalManager({ loadPty = () => import('node-pty') } = {
       entry.requestId = requestId;
       const module = await loadPty();
       if (entry.requestId !== requestId || owner.isDestroyed()) return null;
-      const { shell, args, cwd, env, title } = entry.launch;
-      const pty = (module.default || module).spawn(shell, args, {
-        name: 'xterm-256color', cols: dimension(cols, 100), rows: dimension(rows, 30), cwd, env,
-      });
+      const prepared = prepareTerminalShell(entry.launch);
+      const { shell, args, cwd, env, title } = prepared;
+      entry.cleanup = prepared.cleanup;
+      let pty;
+      try {
+        pty = (module.default || module).spawn(shell, args, {
+          name: 'xterm-256color', cols: dimension(cols, 100), rows: dimension(rows, 30), cwd, env,
+        });
+      } catch (error) {
+        stopEntry(entry);
+        throw error;
+      }
       entry.pty = pty;
       const send = (channel, payload) => {
         if (entry.pty === pty && !owner.isDestroyed()) owner.send(channel, { requestId, ...payload });
@@ -101,7 +140,11 @@ export function createTerminalManager({ loadPty = () => import('node-pty') } = {
         pty.onData((data) => send('terminal:data', { data })),
         pty.onExit(({ exitCode }) => {
           send('terminal:exit', { exitCode });
-          if (entry.pty === pty) entry.pty = null;
+          if (entry.pty === pty) {
+            entry.pty = null;
+            entry.cleanup?.();
+            entry.cleanup = null;
+          }
         }),
       ];
       return { title, cwd, shell };

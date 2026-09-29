@@ -11185,10 +11185,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveLaunch: async ({ sessionId, action } = {}) => {
       assertUpdateWorkAllowed();
       const sessionRecord = getSessionRecord(sessionId);
-      if (action !== 'terminal') await waitForManagedRuntimesBeforeLocalSession();
+      await waitForManagedRuntimesBeforeLocalSession();
       assertUpdateWorkAllowed();
       await localTranscriptSync.refresh(sessionRecord);
-      const managedNode = getManagedRuntimeStatus().node;
+      const managedRuntimes = getManagedRuntimeStatus();
       return buildTerminalLaunch({
         action,
         session: sessionRecord,
@@ -11196,7 +11196,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         cliPath: app.isPackaged
           ? path.join(process.resourcesPath, 'cli', 'cli.js')
           : path.join(repoRoot, 'bin', 'cli.js'),
-        nodePath: managedNode.installed ? managedNode.path : null,
+        nodePath: managedRuntimes.node.installed ? managedRuntimes.node.path : null,
+        pythonPath: managedRuntimes.python.installed ? managedRuntimes.python.path : null,
+        mossHome: MOSS_HOME,
       });
     },
   });

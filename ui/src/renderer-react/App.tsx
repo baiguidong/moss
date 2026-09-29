@@ -2699,8 +2699,8 @@ export default function App() {
                 onForkSession={handleForkSession}
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
-                terminalActions={<SessionTerminalActions key={activeSessionId} session={activeDetail} />}
-                sessionInfo={<SessionInfoButton key={activeSessionId}
+                terminalActions={<SessionTerminalActions key={`terminal:${activeSessionId}`} session={activeDetail} />}
+                sessionInfo={<SessionInfoButton key={`info:${activeSessionId}`}
                   session={activeDetail?.id === activeSessionId ? activeDetail : null}
                   messages={chatMessages} childSessions={activeChildSessions}
                   backgroundTasks={backgroundTasks[activeSessionId] ?? []} />}

@@ -21,6 +21,8 @@ const watchedFiles = [
   path.join(uiRoot, 'src', 'main.mjs'),
   path.join(repoRoot, 'shared', 'workspace-preview.mjs'),
   path.join(uiRoot, 'src', 'preload.mjs'),
+  path.join(uiRoot, 'src', 'terminal-service.mjs'),
+  path.join(uiRoot, 'src', 'terminal-shell.mjs'),
   path.join(uiRoot, 'src', 'appearance-settings.mjs'),
   path.join(uiRoot, 'src', 'desktop-settings.mjs'),
   path.join(uiRoot, 'src', 'browser-agent-policy.mjs'),
