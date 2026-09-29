@@ -125,13 +125,15 @@ export class CloudSharesService {
       if (this.attempts.size >= 10000) fail(429, 'SHARE_RATE_LIMIT', '验证繁忙，请稍后重试')
       item = { count: 0, until: now + 10 * 60000 }; this.attempts.set(key, item)
     }
-    if (++item.count > maximum) fail(429, 'SHARE_RATE_LIMIT', '尝试次数过多，请 10 分钟后重试')
+    if (item.count >= maximum) fail(429, 'SHARE_RATE_LIMIT', '尝试次数过多，请 10 分钟后重试')
+    item.count++
+    return item
   }
   async verify(token: string, code: unknown, remote: string) {
     // Use the actual peer, never untrusted forwarded headers. Per-share limiting
     // remains effective when a reverse proxy multiplexes peer addresses.
-    this.attempt(`peer:${remote}`, 100)
-    this.attempt(`share:${hash(token)}`, 10)
+    const peerAttempt = this.attempt(`peer:${remote}`, 100)
+    const shareAttempt = this.attempt(`share:${hash(token)}`, 10)
     const { row } = await this.resolve(token)
     if (row.codeHash) {
       if (typeof code !== 'string' || !/^[a-zA-Z0-9]{4,12}$/.test(code)) fail(403, 'SHARE_CODE_INVALID', '分享码不正确')
@@ -148,6 +150,8 @@ export class CloudSharesService {
     if (this.sessions.size >= 10000) fail(429, 'SHARE_RATE_LIMIT', '验证繁忙，请稍后重试')
     const session = randomBytes(32).toString('base64url')
     this.sessions.set(hash(session), { tokenHash: row.tokenHash, until: Math.min(now + 30 * 60000, row.expiresAt ?? Infinity) })
+    // Successful recipients must not exhaust a popular share's failure budget.
+    peerAttempt.count--; shareAttempt.count--
     return session
   }
   sessionValid(row: ShareRow, session: string) {

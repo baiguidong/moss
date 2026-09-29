@@ -143,6 +143,10 @@ export async function verifyCloudShares(options: {
 
   const limited = await create({ fileId, requestKey: randomUUID(), expiresAt: null })
   const limitedUrl = new URL(limited.url, base).href
+  for (let index = 0; index < 12; index++) {
+    response = await fetch(`${limitedUrl}/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessCode: limited.accessCode }) })
+    assert.equal(response.status, 200, 'Successful recipients do not consume the failure budget')
+  }
   for (let index = 0; index < 11; index++) {
     response = await fetch(`${limitedUrl}/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessCode: 'wrong1' }) })
     assert.equal(response.status, index < 10 ? 403 : 429)
