@@ -90,6 +90,22 @@ export type SessionDetail = SessionSummary & {
   tasks?: SessionTask[];
 };
 
+export type SessionTokenTotals = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  requestCount: number;
+};
+
+export type SessionRecordedUsage = {
+  totals: SessionTokenTotals;
+  models: Array<SessionTokenTotals & { model: string }>;
+  firstRecordedAt: number;
+  lastRecordedAt: number;
+};
+
 export type SessionSearchResult = {
   sessionId: string;
   sessionTitle: string;
@@ -1765,6 +1781,7 @@ declare global {
       usage: {
         getOverview: () => Promise<UsageOverview>;
         getCloudOverview: () => Promise<CloudUsageOverview | null>;
+        getSession: (payload: { sessionId: string }) => Promise<SessionRecordedUsage | null>;
       };
       memory: {
         getCatalog: () => Promise<MemoryCatalog>;

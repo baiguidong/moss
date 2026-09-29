@@ -181,6 +181,7 @@ export function SessionTabBar({
   onJumpToOutlineItem,
   messages,
   terminalActions,
+  sessionInfo,
   childSessions,
   onReturnToParentSession,
   onOpenWorkers,
@@ -202,6 +203,7 @@ export function SessionTabBar({
   onJumpToOutlineItem: (messageId: string) => void;
   messages: TranscriptRenderMessage[];
   terminalActions?: React.ReactNode;
+  sessionInfo?: React.ReactNode;
   childSessions: SessionSummary[];
   onReturnToParentSession?: () => void;
   onOpenWorkers: () => void;
@@ -280,6 +282,7 @@ export function SessionTabBar({
 
         <div className="flex shrink-0 items-center gap-1">
           {terminalActions}
+          {sessionInfo}
           <div ref={outlineRef} className="relative inline-flex">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -2381,6 +2384,7 @@ export function ChatArea({
   forkingSession = false,
   forkDisabledReason,
   terminalActions,
+  sessionInfo,
   toolDisplayMode = "expanded",
   sessionToolDisplayMode = null,
   globalToolDisplayMode = "expanded",
@@ -2459,6 +2463,7 @@ export function ChatArea({
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
   terminalActions?: React.ReactNode;
+  sessionInfo?: React.ReactNode;
   toolDisplayMode?: ToolDisplayMode;
   sessionToolDisplayMode?: ToolDisplayMode | null;
   globalToolDisplayMode?: ToolDisplayMode;
@@ -2717,6 +2722,7 @@ export function ChatArea({
         onJumpToOutlineItem={handleJumpToOutlineItem}
         messages={messages}
         terminalActions={terminalActions}
+        sessionInfo={sessionInfo}
         childSessions={childSessions}
         onReturnToParentSession={onReturnToParentSession}
         onOpenWorkers={() => {

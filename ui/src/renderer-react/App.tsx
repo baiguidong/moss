@@ -9,6 +9,7 @@ import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
+import { SessionInfoButton } from '@/components/session-info';
 import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
@@ -2699,6 +2700,10 @@ export default function App() {
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
                 terminalActions={<SessionTerminalActions key={activeSessionId} session={activeDetail} />}
+                sessionInfo={<SessionInfoButton key={activeSessionId}
+                  session={activeDetail?.id === activeSessionId ? activeDetail : null}
+                  messages={chatMessages} childSessions={activeChildSessions}
+                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} />}
                 toolDisplayMode={activeToolDisplayMode}
                 sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
                 globalToolDisplayMode={globalToolDisplayMode}

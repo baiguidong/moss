@@ -128,6 +128,21 @@ export function createUsageLedger(db) {
     FROM usage_daily
     ORDER BY day ASC
   `);
+  const selectSessionModels = db.prepare(`
+    SELECT
+      model,
+      SUM(input_tokens) AS inputTokens,
+      SUM(output_tokens) AS outputTokens,
+      SUM(cache_read_tokens) AS cacheReadTokens,
+      SUM(cache_write_tokens) AS cacheWriteTokens,
+      COUNT(*) AS requestCount,
+      MIN(occurred_at) AS firstRecordedAt,
+      MAX(occurred_at) AS lastRecordedAt
+    FROM usage_events
+    WHERE session_id = ?
+    GROUP BY model
+    ORDER BY model ASC
+  `);
 
   return {
     record(event, context = {}) {
@@ -152,6 +167,35 @@ export function createUsageLedger(db) {
         toTokenCount(event.cacheWriteTokens),
       );
       return result.changes === 1;
+    },
+
+    getSession(sessionId) {
+      const rows = selectSessionModels.all(sessionId);
+      if (rows.length === 0) return null;
+      const models = rows.map((row) => ({
+        model: String(row.model),
+        inputTokens: Number(row.inputTokens),
+        outputTokens: Number(row.outputTokens),
+        cacheReadTokens: Number(row.cacheReadTokens),
+        cacheWriteTokens: Number(row.cacheWriteTokens),
+        totalTokens: Number(row.inputTokens) + Number(row.outputTokens)
+          + Number(row.cacheReadTokens) + Number(row.cacheWriteTokens),
+        requestCount: Number(row.requestCount),
+      }));
+      const totals = models.reduce((sum, row) => ({
+        inputTokens: sum.inputTokens + row.inputTokens,
+        outputTokens: sum.outputTokens + row.outputTokens,
+        cacheReadTokens: sum.cacheReadTokens + row.cacheReadTokens,
+        cacheWriteTokens: sum.cacheWriteTokens + row.cacheWriteTokens,
+        totalTokens: sum.totalTokens + row.totalTokens,
+        requestCount: sum.requestCount + row.requestCount,
+      }), { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, requestCount: 0 });
+      return {
+        totals,
+        models,
+        firstRecordedAt: Math.min(...rows.map((row) => Number(row.firstRecordedAt))),
+        lastRecordedAt: Math.max(...rows.map((row) => Number(row.lastRecordedAt))),
+      };
     },
 
     getOverview(options = {}) {

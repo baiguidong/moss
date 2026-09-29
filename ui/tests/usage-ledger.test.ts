@@ -17,6 +17,27 @@ function runScenario(source: string) {
 }
 
 describe('usage ledger', () => {
+  test('isolates session usage, groups models, and does not charge inherited fork requests twice', () => {
+    const result = runScenario(`
+      const record = (eventId, sessionId, model, inputTokens, occurredAt) => ledger.record({
+        eventId, model, inputTokens, occurredAt, outputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 5,
+      }, { sessionId });
+      record('a', 'parent', 'model-a', 100, 1000);
+      record('b', 'parent', 'model-b', 200, 2000);
+      record('a', 'fork', 'model-a', 100, 1000);
+      record('c', 'fork', 'model-a', 50, 3000);
+      record('d', 'worker', 'model-a', 999, 4000);
+      console.log(JSON.stringify({ parent: ledger.getSession('parent'), fork: ledger.getSession('fork'), empty: ledger.getSession('missing') }));
+    `);
+    expect(result.parent.totals).toEqual({ inputTokens: 300, outputTokens: 20, cacheReadTokens: 40, cacheWriteTokens: 10, totalTokens: 370, requestCount: 2 });
+    expect(result.parent.models.map((model: any) => [model.model, model.totalTokens])).toEqual([['model-a', 135], ['model-b', 235]]);
+    expect(result.parent.firstRecordedAt).toBe(1000);
+    expect(result.parent.lastRecordedAt).toBe(2000);
+    expect(result.fork.totals.totalTokens).toBe(85);
+    expect(result.fork.totals.requestCount).toBe(1);
+    expect(result.empty).toBeNull();
+  });
+
   test('deduplicates provider events and rolls up usage in the insert transaction', () => {
     const result = runScenario(`
       const start = new Date(2026, 8, 14, 12).getTime();

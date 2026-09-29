@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   usage: {
     getOverview: () => ipcRenderer.invoke('usage:get-overview'),
     getCloudOverview: () => ipcRenderer.invoke('usage:get-cloud-overview'),
+    getSession: (payload) => ipcRenderer.invoke('usage:get-session', payload),
   },
   memory: {
     getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),

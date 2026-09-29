@@ -12062,6 +12062,10 @@ ipcMain.handle('agent:mcp-clear-auth', async (_event, payload = {}) => {
 
 ipcMain.handle('usage:get-overview', () => usageLedger.getOverview());
 ipcMain.handle('usage:get-cloud-overview', () => getCloudUsageOverview());
+ipcMain.handle('usage:get-session', (_event, payload = {}) => {
+  const sessionRecord = getSessionRecord(payload.sessionId);
+  return sessionRecord.agentMode === 'remote-direct' ? null : usageLedger.getSession(sessionRecord.id);
+});
 ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
 ipcMain.handle('workflow:list', async (_event, payload = {}) => {
