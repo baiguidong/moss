@@ -132,12 +132,12 @@ function FileTreeNodeView({
     return (
       <div
         className={cn(
-          "group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+          "group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
           selectedFilePath === item.path
             ? "bg-primary/10 text-foreground"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         )}
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
+        style={{ paddingLeft: `min(${level * 16 + 8}px, 40%)` }}
         onClick={() => onSelectFile(item.path)}
         onContextMenu={(event) => {
           onFocusFile(item.path);
@@ -145,36 +145,36 @@ function FileTreeNodeView({
         }}
       >
         <Icon className={cn("h-4 w-4 shrink-0", className)} />
-        <span className="truncate">{item.name}</span>
+        <span className="min-w-0 flex-1 truncate" title={item.name}>{item.name}</span>
       </div>
     );
   }
 
   return (
-    <Collapsible open={isOpen} onOpenChange={() => onToggleFolder(item.path)}>
+    <Collapsible className="w-full min-w-0" open={isOpen} onOpenChange={() => onToggleFolder(item.path)}>
       <CollapsibleTrigger asChild>
         <div
           className={cn(
-            "group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors",
+            "group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors",
             "hover:bg-accent/50"
           )}
-          style={{ paddingLeft: `${level * 16 + 8}px` }}
+          style={{ paddingLeft: `min(${level * 16 + 8}px, 40%)` }}
         >
           <ChevronRight
             className={cn(
-              "h-4 w-4 text-muted-foreground transition-transform duration-200",
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
               isOpen && "rotate-90"
             )}
           />
           {isOpen ? (
-            <FolderOpen className="h-4 w-4 text-amber-500" />
+            <FolderOpen className="h-4 w-4 shrink-0 text-amber-500" />
           ) : (
-            <Folder className="h-4 w-4 text-amber-500" />
+            <Folder className="h-4 w-4 shrink-0 text-amber-500" />
           )}
-          <span className="truncate font-medium">{item.name}</span>
+          <span className="min-w-0 flex-1 truncate font-medium" title={item.name}>{item.name}</span>
         </div>
       </CollapsibleTrigger>
-      <CollapsibleContent>
+      <CollapsibleContent className="w-full min-w-0">
         {item.children?.map((child) => (
           <FileTreeNodeView
             key={child.id}
@@ -263,14 +263,16 @@ export function FileTree({
 
   return (
     <>
-      <div className="space-y-1">
-        <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-sm font-medium text-foreground">{title}</span>
+      <div className="w-full min-w-0 space-y-1">
+        <div className="flex w-full min-w-0 items-center justify-between gap-2 px-2 py-1">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={title}>{title}</span>
           {onRefresh && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              aria-label="刷新工作区文件"
+              title="刷新工作区文件"
+              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
               onClick={onRefresh}
             >
               <RefreshCw className="h-3.5 w-3.5" />

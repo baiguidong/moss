@@ -164,6 +164,8 @@ import { registerPreviewHistoryIpcHandlers } from './process/bridge/preview-hist
 import { registerPreviewIpcHandlers } from './process/bridge/preview-bridge.mjs';
 import { registerShellIpcHandlers } from './process/bridge/shell-bridge.mjs';
 import { registerWorkspaceIpcHandlers } from './process/bridge/workspace-bridge.mjs';
+import { createWorkspaceVersionService } from './workspace-versions/workspace-version-service.mjs';
+import { registerWorkspaceVersionIpcHandlers, workspacePathsOverlap } from './workspace-versions/workspace-version-bridge.mjs';
 import {
   BROWSER_PARTITION,
   createBrowserViewManager,
@@ -736,6 +738,30 @@ if (hasSingleInstanceLock) {
 }
 
 const sessions = new Map();
+const workspaceVersionService = createWorkspaceVersionService({
+  rootDir: path.join(MOSS_HOME, 'workspace-versions'),
+  assertIdle: workspace => {
+    const reason = workspaceVersionBusyReason(workspace);
+    if (reason) throw new Error(reason);
+  },
+});
+
+function workspaceVersionBusyReason(workspace) {
+  for (const record of sessions.values()) {
+    if (record.agentMode === 'remote-direct' || !workspacePathsOverlap(workspace, record.workspace)) continue;
+    if (record.busy || sessionSendQueues.has(record.id) || sessionPromptQueues.has(record.id)
+      || hasActiveAgentTeam(record) || snapshotBackgroundTasks(record).some(task => task.status === 'running')) {
+      return '有任务正在使用此工作区，请等待任务结束后再保存或恢复版本。';
+    }
+  }
+  return null;
+}
+
+function assertWorkspaceVersionIdle(record) {
+  if (record.agentMode !== 'remote-direct' && workspaceVersionService.isActive(record.workspace)) {
+    throw new Error('工作区正在保存或恢复版本，请稍后重试。');
+  }
+}
 const pendingQuestionRequests = new Map();
 const subAgentSessions = new Map(); // separate storage for sub-agent sessions (not shown in main list)
 const projectMemoryQueues = new Map();
@@ -5848,6 +5874,7 @@ async function runSessionPromptNow({
   retryEncryptedContentOnce = false,
   agentMailTurn = null,
 }) {
+  assertWorkspaceVersionIdle(sessionRecord);
   await localTranscriptSync.refresh(sessionRecord);
   if (resetRuntimeBeforePrompt) {
     await shutdownSessionAgentTeam(sessionRecord);
@@ -5887,6 +5914,19 @@ async function runSessionPromptNow({
     }
   }
 
+  if (sessionRecord.agentMode !== 'remote-direct' && sessionRecord.workspace) {
+    const versionNote = await workspaceVersionService.contextNote(sessionRecord.workspace).catch(error => {
+      mossLog('warn', 'workspace', 'Unable to read workspace version context', { error: error.message });
+      return '';
+    });
+    if (versionNote) {
+      const context = `[Workspace version]\n${versionNote}\n\n`;
+      runtimePrompt = typeof runtimePrompt === 'string'
+        ? context + runtimePrompt
+        : [{ type: 'text', text: context }, ...runtimePrompt];
+    }
+  }
+  assertWorkspaceVersionIdle(sessionRecord);
   beginSessionBusyTiming(sessionRecord);
   sessionRecord.busy = true;
   sessionRecord.updatedAt = Date.now();
@@ -10675,6 +10715,7 @@ async function uploadFileToRemoteSessionWorkspace(sessionRecord, {
 }
 
 async function writeWorkspaceFile(sessionRecord, filePath, content) {
+  assertWorkspaceVersionIdle(sessionRecord);
   if (sessionRecord.agentMode === 'remote-direct') {
     const config = await ensureRemoteSessionConnection(sessionRecord);
     const remoteFile = await writeRemoteDirectWorkspaceFile({
@@ -11292,6 +11333,31 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerWorkspaceIpcHandlers({
     getSessionRecord,
     writeWorkspaceFile,
+  });
+  registerWorkspaceVersionIpcHandlers({
+    ipcMain,
+    service: workspaceVersionService,
+    getSessionRecord,
+    readWorkspaceFile,
+    busyReason: workspaceVersionBusyReason,
+    onChanged: async (workspace, reason, result) => {
+      for (const record of sessions.values()) {
+        if (record.agentMode === 'remote-direct' || !workspacePathsOverlap(workspace, record.workspace)) continue;
+        if (reason !== 'version-saved') {
+          // Recreate the idle runtime on the next turn, clearing stale file caches.
+          if (!workspaceVersionBusyReason(record.workspace)) disposeRuntime(record);
+          if (result && !result.unchanged) {
+            pushSessionHistoryEvent(record, {
+              type: 'system', subtype: 'local_command',
+              content: `工作区已恢复到所选版本，并保存为 ${result.version.tag}「${result.version.label}」。恢复前的状态保留在历史版本中。`,
+              timestamp: Date.now(),
+            });
+            emitSessionHistory(record);
+          }
+        }
+        emitToRenderer('workspace:changed', { sessionId: record.id, workspace: record.workspace, reason });
+      }
+    },
   });
   browserViewManager = createBrowserViewManager({
     createView: (options) => new WebContentsView(options),
@@ -13795,6 +13861,7 @@ async function sendAgentPromptNow(event, {
 } = {}) {
   const sender = event?.sender || mainWindow?.webContents || null;
   const sessionRecord = getSessionRecord(sessionId);
+  assertWorkspaceVersionIdle(sessionRecord);
   if (sessionRecord.isSubAgent) {
     throw new Error('子会话记录为只读；请返回主会话继续协调或重新发起任务。');
   }

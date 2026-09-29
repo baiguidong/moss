@@ -182,12 +182,12 @@ type PreviewTabMetadata = Record<string, unknown> & {
 const LAYOUT_STORAGE_KEY = 'ui.panelLayout.v1';
 const DEFAULT_LAYOUT: LayoutState = {
   leftWidth: 224,
-  rightWidth: 280,
+  rightWidth: 320,
   leftCollapsed: false,
   rightCollapsed: false,
 };
 const LEFT_WIDTH_RANGE = { min: 210, max: 420 };
-const RIGHT_WIDTH_RANGE = { min: 280, max: 560 };
+const RIGHT_WIDTH_RANGE = { min: 320, max: 560 };
 
 function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): boolean {
   return ['markdown', 'html', 'text', 'code', 'diff', 'url', 'unsupported'].includes(contentType);
@@ -2873,7 +2873,7 @@ export default function App() {
 
             <div
               className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
-              style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth }}
+              style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth, minWidth: layout.rightCollapsed ? 0 : RIGHT_WIDTH_RANGE.min }}
             >
               <TaskPanel
                 collapsed={layout.rightCollapsed}
@@ -2899,6 +2899,11 @@ export default function App() {
                   }));
                 }}
                 onSaveFileToLibrary={handleSaveFileToLibrary}
+                workspace={activeDetail?.workspace}
+                workspaceRemote={activeDetail?.agentMode === 'remote-direct'}
+                workspaceBusy={Boolean(activeDetail?.busy)}
+                hasUnsavedEdits={previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
+                onVersionRestored={handleRefreshWorkspace}
               />
             </div>
           </>

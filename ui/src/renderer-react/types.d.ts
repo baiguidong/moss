@@ -1363,6 +1363,40 @@ export type PreviewSnapshotInfo = {
   filePath?: string;
 };
 
+export type WorkspaceVersion = {
+  id: string;
+  number: number;
+  tag: string;
+  alias: string;
+  label: string;
+  kind: 'manual' | 'backup' | 'restore';
+  createdAt: number;
+  fileCount: number;
+  changedFiles: number;
+  restoredFrom?: string;
+};
+export type WorkspaceVersionFile = { path: string; size: number; mode: string; oid: string };
+export type WorkspaceVersionChange = { path: string; status: 'added' | 'modified' | 'deleted' };
+export type WorkspaceVersionExclusion = { path: string; reason: string };
+export type WorkspaceVersionStatus = {
+  supported: boolean;
+  reason?: string;
+  workspace?: string;
+  versions?: WorkspaceVersion[];
+  nextTag?: string;
+  changes?: WorkspaceVersionChange[];
+  excluded?: WorkspaceVersionExclusion[];
+  fileCount?: number;
+  busyReason?: string | null;
+  interruptedRestore?: { backupId: string; targetId: string; createdAt: number } | null;
+};
+export type WorkspaceRestorePlan = {
+  version: WorkspaceVersion;
+  token: string;
+  changes: WorkspaceVersionChange[];
+  excluded: WorkspaceVersionExclusion[];
+};
+
 export type BrowserConnectorAuthContext = {
   connectorId: string;
   serverName: string;
@@ -2188,6 +2222,16 @@ declare global {
       };
       workspace: {
         writeFile: (payload: { sessionId: string; filePath: string; content: string }) => Promise<WorkspacePreviewData>;
+      };
+      workspaceVersions: {
+        status: (payload: { sessionId: string }) => Promise<WorkspaceVersionStatus>;
+        save: (payload: { sessionId: string; label?: string }) => Promise<
+          { created: true; version: WorkspaceVersion } | { created: false; reason: 'unchanged'; message: string }
+        >;
+        files: (payload: { sessionId: string; versionId: string }) => Promise<WorkspaceVersionFile[]>;
+        previewFile: (payload: { sessionId: string; versionId: string; filePath: string }) => Promise<WorkspacePreviewData>;
+        previewRestore: (payload: { sessionId: string; versionId: string }) => Promise<WorkspaceRestorePlan>;
+        restore: (payload: { sessionId: string; versionId: string; token: string }) => Promise<{ version: WorkspaceVersion; unchanged?: boolean; backupVersion?: WorkspaceVersion }>;
       };
       shell: {
         openFile: (filePath: string) => Promise<string>;

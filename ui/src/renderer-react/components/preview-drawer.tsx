@@ -120,7 +120,7 @@ function buildDirtyMetadata(file: WorkspacePreviewData, content: string): Previe
   };
 }
 
-function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
+export function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
   const metadata = getPreviewMetadata(file);
   const previewPath = typeof metadata.localPreviewPath === "string" && metadata.localPreviewPath
     ? metadata.localPreviewPath

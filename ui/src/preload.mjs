@@ -337,6 +337,14 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   workspace: {
     writeFile: (payload) => ipcRenderer.invoke('workspace.write-file', payload),
   },
+  workspaceVersions: {
+    status: (payload) => ipcRenderer.invoke('workspace-versions:status', payload),
+    save: (payload) => ipcRenderer.invoke('workspace-versions:save', payload),
+    files: (payload) => ipcRenderer.invoke('workspace-versions:files', payload),
+    previewFile: (payload) => ipcRenderer.invoke('workspace-versions:preview-file', payload),
+    previewRestore: (payload) => ipcRenderer.invoke('workspace-versions:preview-restore', payload),
+    restore: (payload) => ipcRenderer.invoke('workspace-versions:restore', payload),
+  },
   shell: {
     openFile: (filePath) => ipcRenderer.invoke('shell.open-file', filePath),
     openExternal: (url) => ipcRenderer.invoke('shell.open-external', url),
