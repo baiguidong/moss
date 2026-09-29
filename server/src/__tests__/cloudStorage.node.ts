@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyCloudShares } from './cloudShares.http.js'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -448,6 +449,16 @@ try {
     bobLogin.access_token,
     404,
   )
+  const persistentShare = await verifyCloudShares({ base, request, db, token: login.access_token,
+    other: bobLogin.access_token, foreign: foreignLogin.access_token, fileId: file.id, folderId: folder.id, size: input.size, store })
+  await moss.stop()
+  moss = await startServer(config, runtime, auth, undefined, undefined, undefined, store)
+  base = `http://127.0.0.1:${await moss.ready}`
+  const sharesAfterRestart = await j('/shares')
+  assert.equal(sharesAfterRestart.shares.find((item: any) => item.id === persistentShare.id).url, persistentShare.url)
+  const sharedAfterRestart = await fetch(new URL(persistentShare.url, base), { headers: { range: 'bytes=0-3' } })
+  assert.equal(sharedAfterRestart.status, 206)
+  assert.equal((await sharedAfterRestart.arrayBuffer()).byteLength, 4)
   const empty = await j('/uploads', 'POST', {
     name: 'empty',
     size: 0,
@@ -768,6 +779,17 @@ try {
     throw new Error('Transfer timed out')
   }
   const uploaded = await waitTask(transfer.transferId)
+  const hostShare = await host.handle('shares.create', {
+    fileId: uploaded.fileId, requestKey: randomUUID(), expiresAt: null, accessCode: null,
+  }, context)
+  assert.ok(hostShare.url.startsWith(base + '/s/'))
+  const hostShares = await host.handle('shares.list', { fileId: uploaded.fileId }, context)
+  assert.equal(hostShares.shares[0].id, hostShare.id)
+  const publicBytes = await fetch(hostShare.url, { headers: { range: 'bytes=0-3' } })
+  assert.equal(publicBytes.status, 206)
+  assert.equal((await publicBytes.arrayBuffer()).byteLength, 4)
+  assert.equal((await host.handle('shares.revoke', { shareId: hostShare.id }, context)).state, 'revoked')
+  assert.equal((await fetch(hostShare.url, { method: 'HEAD' })).status, 410)
   const dl = await host.handle(
     'downloads.start',
     { fileId: uploaded.fileId },

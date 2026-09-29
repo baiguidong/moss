@@ -58,3 +58,40 @@ test('metadata disk failure pauses a task before any upload and permits shutdown
     await host.close()
   } finally { await host.close();await rm(root,{recursive:true,force:true}) }
 })
+
+test('sharing requires its own permission and validates codes, expiration and private input fields', async () => {
+  const registry = new AppHostCapabilityRegistry()
+  registry.registerProtocol(createCloudStorageProtocolDefinition())
+  registry.registerHandler(MOSS_CLOUD_STORAGE_PROTOCOL, 'shares.list', async () => ({ shares: [], nextCursor: null }))
+  const request:any = { appId:'example.drive',instanceId:'default',requestId:'share-list',protocol:MOSS_CLOUD_STORAGE_PROTOCOL,
+    method:'shares.list',input:{},protocols:[MOSS_CLOUD_STORAGE_PROTOCOL],permissions:['cloud-storage:share'],grants:[],
+    owner:{scope:'host-local',key:'host-local'},principal:{scope:'host-local',key:'host-local'} }
+  await expect(registry.dispatch(request)).rejects.toMatchObject({code:'APP_PERMISSION_DENIED'})
+  expect(await registry.dispatch({...request,grants:['cloud-storage:share']})).toEqual({shares:[],nextCursor:null})
+  const settings = {fileId:'f',requestKey:'key',expiresAt:null}
+  expect(validateCloudStorageHostInput('shares.create',settings)).toEqual(settings)
+  for (const patch of [{accessCode:'a'}, {expiresAt:-1}, {ownerUserId:'other'}, {url:'https://other'}, {requestKey:''}])
+    expect(()=>validateCloudStorageHostInput('shares.create',{...settings,...patch})).toThrow()
+})
+
+test('Host normalizes public share URLs without exposing login credentials and reports old servers', async () => {
+  const { CloudStorageHost } = await import('../src/apps/cloud-storage.mjs')
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const root=await mkdtemp(join(tmpdir(),'moss-share-host-'))
+  const requests:any[]=[]
+  let old=false, user='u'
+  const host=new CloudStorageHost({directory:root,getSettings:()=>({remoteEnabled:true,remoteDirect:{serverUrl:'https://files.test',credentialMode:'api-key',apiKey:'private-key'}}),
+    resolveConnection:async()=>({serverUrl:'https://files.test',userId:user,orgId:'o',authToken:'private-token'}),
+    fetchImpl:async (url:any, init:any)=>{requests.push({url,init});return old ? Response.json({error:{code:'NOT_FOUND'}},{status:404}) : Response.json({shares:[{id:'s',url:'/s/public-token'}],nextCursor:null})},
+    pickFiles:async()=>[],pickDestination:async()=>null,authorizeApp:async()=>true})
+  try {
+    const result=await host.handle('shares.list',{}, {appId:'drive',instanceId:'default'})
+    expect(result.shares[0].url).toBe('https://files.test/s/public-token')
+    expect(JSON.stringify(result)).not.toContain('private-token')
+    expect(requests[0].init.headers.authorization).toBe('Bearer private-token')
+    old=true
+    await expect(host.handle('shares.list',{}, {appId:'drive',instanceId:'default'})).rejects.toMatchObject({code:'SHARING_UNSUPPORTED'})
+  } finally {await host.close();await rm(root,{recursive:true,force:true})}
+})

@@ -244,6 +244,21 @@ export class CloudStorageHost {
       this.tasks.set(t.id, t); this.changed(t); this.launch(t)
       return { transferId: t.id }
     }
+    if (method.startsWith('shares.')) {
+      let result
+      try {
+        if (method === 'shares.create') result = await this.json(binding, '/shares', 'POST', input)
+        else if (method === 'shares.list') result = await this.request(binding, `/shares?${new URLSearchParams(input)}`)
+        else if (method === 'shares.revoke') result = await this.json(binding, `/shares/${encodeURIComponent(input.shareId)}`, 'DELETE')
+        else error('UNKNOWN_METHOD', 'Unknown share method')
+      } catch (cause) {
+        if (cause.status === 404 && cause.code !== 'SHARE_NOT_FOUND') error('SHARING_UNSUPPORTED', 'Upgrade Moss Server to use file sharing')
+        throw cause
+      }
+      await this.connection(binding); await this.allowed(context, permission)
+      const normalize = share => ({ ...share, url: new URL(share.url, binding.serverUrl).href })
+      return method === 'shares.list' ? { ...result, shares: result.shares.map(normalize) } : normalize(result)
+    }
     const fileId = encodeURIComponent(input.fileId || '')
     if (method === 'quota.get') return this.request(binding, '/quota')
     if (method === 'files.list') return this.request(binding, `/files?${new URLSearchParams(Object.entries(input).filter(([, v]) => v != null))}`)

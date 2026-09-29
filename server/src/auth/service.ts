@@ -142,6 +142,16 @@ export class AuthService {
     }
   }
 
+  // Public shares outlive the owner's login token, but never their account or permission.
+  async requireSharingOwner(orgId: string, userId: string): Promise<void> {
+    const user = await this.db.getUserByIdAndOrg(userId, orgId)
+    const scopes = await this.getEffectiveScopes(userId)
+    if (!user || user.status !== 'active' || !(await this.db.getOrganization(orgId)) ||
+        !hasScope(scopes, 'cloud-storage:share') || !hasScope(scopes, 'cloud-storage:read')) {
+      throw new AuthServiceError(403, 'Sharing owner is unavailable')
+    }
+  }
+
   async requireAnyCurrentScope(auth: AuthContext, scopes: string[]): Promise<void> {
     for (const scope of scopes) {
       if (!hasScope(auth.scopes, scope)) continue

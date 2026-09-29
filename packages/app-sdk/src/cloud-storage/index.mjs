@@ -1,6 +1,7 @@
 import { AppServiceError, APP_ERROR_CODES } from '../protocol/index.mjs'
 export const MOSS_CLOUD_STORAGE_PROTOCOL = 'moss.cloud-storage/v1'
 export const CLOUD_STORAGE_HOST_METHOD_PERMISSIONS = Object.freeze({
+  'shares.create': 'cloud-storage:share', 'shares.list': 'cloud-storage:share', 'shares.revoke': 'cloud-storage:share',
   'status.get': 'cloud-storage:read', 'quota.get': 'cloud-storage:read',
   'files.list': 'cloud-storage:read', 'files.get': 'cloud-storage:read',
   'folders.create': 'cloud-storage:write', 'files.update': 'cloud-storage:write', 'files.delete': 'cloud-storage:delete',
@@ -12,6 +13,7 @@ export const CLOUD_STORAGE_HOST_METHODS = Object.freeze(Object.keys(CLOUD_STORAG
 export const CLOUD_STORAGE_EVENTS = Object.freeze(['transfers.progress', 'transfers.changed', 'storage.status-changed'])
 export const CLOUD_STORAGE_STATES = Object.freeze(['remote_disabled', 'unauthenticated', 'unconfigured', 'disabled', 'unsupported', 'unavailable', 'target_mismatch', 'forbidden', 'ready'])
 const fields = {
+  'shares.create': ['fileId', 'requestKey', 'expiresAt', 'accessCode'], 'shares.list': ['fileId', 'cursor', 'limit'], 'shares.revoke': ['shareId'],
   'status.get': [], 'quota.get': [], 'files.list': ['parentId', 'cursor', 'limit'], 'files.get': ['fileId'],
   'folders.create': ['parentId', 'name'], 'files.update': ['fileId', 'parentId', 'name'], 'files.delete': ['fileId'],
   'local-files.pick': [], 'uploads.start': ['handle', 'parentId', 'name'], 'downloads.start': ['fileId'],
@@ -23,11 +25,14 @@ export function validateCloudStorageHostInput(method, value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('Expected object')
   for (const key of Object.keys(value)) {
     if (!fields[method].includes(key)) fail(`Unexpected field: ${key}`)
-    if (key === 'limit') { if (!Number.isInteger(value[key]) || value[key] < 1 || value[key] > 200) fail('Invalid limit') }
+    if (key === 'expiresAt') { if (value[key] !== null && (!Number.isSafeInteger(value[key]) || value[key] <= 0)) fail('Invalid expiresAt') }
+    else if (key === 'accessCode') { if (value[key] !== null && (typeof value[key] !== 'string' || !/^[a-zA-Z0-9]{4,12}$/.test(value[key]))) fail('Invalid accessCode') }
+    else if (key === 'limit') { if (!Number.isInteger(value[key]) || value[key] < 1 || value[key] > 200) fail('Invalid limit') }
     else if (key === 'parentId' && value[key] === null) continue
     else if (typeof value[key] !== 'string' || !value[key].trim() || value[key].length > (key === 'name' ? 255 : 128)) fail(`Invalid ${key}`)
   }
-  for (const key of ['fileId', 'transferId', 'handle']) if (fields[method].includes(key) && !value[key]) fail(`Missing ${key}`)
+  for (const key of ['transferId', 'handle', 'requestKey', 'shareId', ...(method === 'shares.list' ? [] : ['fileId'])]) if (fields[method].includes(key) && !value[key]) fail(`Missing ${key}`)
+  if (method === 'shares.create' && !Object.hasOwn(value, 'expiresAt')) fail('Missing expiresAt')
   if (method === 'folders.create' && !value.name) fail('Missing name')
   return { ...value }
 }
@@ -42,6 +47,19 @@ export function validateCloudStorageHostOutput(method, value) {
   const transfer = v => {
     if (!v || !string(v.transferId) || !['upload','download'].includes(v.direction) || !['queued','running','paused','cancelled','completed'].includes(v.state) || !bytes(v.totalBytes) || !bytes(v.transferredBytes)) fail('Invalid cloud transfer', true)
   }
+  const share = v => {
+    if (!v || !['id','fileId','name','url'].every(k => string(v[k])) || !bytes(v.size) ||
+        !bytes(v.createdAt) || !(v.expiresAt === null || bytes(v.expiresAt)) || !(v.revokedAt === null || bytes(v.revokedAt)) ||
+        !(v.accessCode === null || (typeof v.accessCode === 'string' && /^[a-zA-Z0-9]{4,12}$/.test(v.accessCode))) ||
+        !['active','expired','revoked','unavailable'].includes(v.state)) fail('Invalid share', true)
+    try { const url = new URL(v.url); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) fail('Invalid share URL', true) }
+    catch { fail('Invalid share URL', true) }
+  }
+  if (method === 'shares.list') {
+    if (!Array.isArray(value.shares) || value.shares.length > 200 || !(value.nextCursor === null || string(value.nextCursor))) fail('Invalid share list', true)
+    value.shares.forEach(share)
+  }
+  if (method === 'shares.create' || method === 'shares.revoke') share(value)
   if (method === 'quota.get' && !['usedBytes','reservedBytes','limitBytes'].every(k => bytes(value[k]))) fail('Invalid quota', true)
   if (method === 'files.list') {
     if (!Array.isArray(value.files) || value.files.length > 200) fail('Invalid file list', true)

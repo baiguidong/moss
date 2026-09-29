@@ -40,7 +40,7 @@ try {
   await db.prepare('UPDATE model_schema SET version=1 WHERE id=1').run()
   await initializeDatabase(db)
   assert.ok(await sessions.getSession('source'))
-  assert.equal(Number((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())?.version), 4)
+  assert.equal(Number((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())?.version), 5)
   const repo = new CronRepository(db)
   const now = Date.parse('2026-09-24T00:00:00Z')
   assert.equal(nextCloudCronRun('0 9 * * *', now, 'Asia/Shanghai'), now + 3600000)

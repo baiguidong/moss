@@ -1,6 +1,6 @@
 # Moss App SDK
 
-当前 SDK 对应 Host API `2.2.0`，兼容要求 `^2.0.0` 的 App。
+当前 SDK 对应 Host API `2.3.0`，兼容要求 `^2.0.0` 的 App。
 
 App 安装后自动启用。`backend.protocols` 是 Backend 需要的 Host 协议字符串数组，例如：
 
@@ -15,3 +15,5 @@ App 安装后自动启用。`backend.protocols` 是 Backend 需要的 Host 协�
 如果缺少必填配置或密钥，App 保持启用，Backend 等待配置完成后运行。
 
 公共云端存储协议为 `moss.cloud-storage/v1`。契约、状态、错误和接入示例见 [云端存储文档](../../docs/cloud-storage.md)。
+
+Host API 2.3 的 `moss.cloud-storage/v1` 新增 `shares.create/list/revoke`，使用独立的 `cloud-storage:share` 权限；创建分享还需 Server 账号的读取权限。契约、分享码和浏览器入口见 [云端存储文档](../../docs/cloud-storage.md)。

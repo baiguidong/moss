@@ -1,4 +1,4 @@
-Moss 公共云端空间（Host API 2.2，协议 `moss.cloud-storage/v1`）。
+Moss 公共云端空间（Host API 2.3，协议 `moss.cloud-storage/v1`）。
 
 云端空间是一套独立的存储能力。App 的 KV、Backend dataDir、本地资料库、会话工作区和 OpenIM 存储继续使用原有接口。Agent 在本地还是远程执行，不改变文件保存的位置。
 
@@ -57,6 +57,7 @@ Manifest 声明 `hostApi: "^2.2.0"`，在 `backend.protocols` 中加入 `moss.cl
 | `cloud-storage:read` | 状态、配额、列表、详情、下载和任务查询/控制 |
 | `cloud-storage:write` | 文件选择、上传、建目录、移动和改名 |
 | `cloud-storage:delete` | 删除文件或空目录 |
+| `cloud-storage:share` | 创建、查询和撤销自己的文件分享（Host API 2.3） |
 
 任务控制还会检查任务自身的读/写权限。必须同时有 App 声明、安装授权和远程用户权限。普通用户/部门管理员初次升级获得这三个个人云端权限；已有显式 API Key 的 scopes 不会自动扩权，需要重新授权或使用登录凭证。
 
@@ -177,8 +178,36 @@ ui/node_modules/.bin/electron ui/tests/helpers/cloud-electron.cjs "$PWD/server/s
 
 部署测试只用于可重启、可恢复的测试安装，使用 `.env` 中的初始登录信息。测试文件会删除，测试用户会禁用；结果写入部署目录的 `verification/`。基础镜像代理及本机构建参数见 [部署说明](../deploy/server/README.md)。
 
-Host API 次版本提升到 2.2.0，兼容原有 `^2.0.0` / `^2.1.0` App。分享仍是后续独立阶段；本期已保留稳定文件 ID、内容版本、所有者和统一授权入口。
+Host API 次版本为 2.3.0，兼容原有 `^2.0.0` / `^2.1.0` / `^2.2.0` App。单文件分享见下文。
 
 2026-09-23 数据库重构后验证：SQLite 与真实 MySQL 服务端回归各 55 项、桌面回归 670 项、review 新增回归 12 项，以及 Server/Admin/桌面类型检查均通过。独立 Compose 部署使用本机源码编译的 ARM64 Server 镜像、MySQL 8.4.8 和指定 Silo，实际 HTTPS 网关的 2 GiB + 101 字节上传下载及重启后 SHA-256 校验通过。Node Host 与 Electron 40.8.3 各验证 35 MiB + 101 字节的进度、暂停、重建 Host 后续传及下载校验。
 
 停写备份后删除测试文件，再恢复数据库、对象、加密凭证和主密钥，内容校验通过；重复源码构建、部署和 Silo 初始化后的配置、凭证和文件保留也通过。验证报告位于部署目录 `verification/`。本轮为 macOS ARM64 / Docker Desktop 实测，未把 Linux AMD64 发布环境或完整网盘 GUI 标记为已测试。
+
+
+**单文件只读分享（Host API 2.3）**
+
+分享管理经 App → Desktop Host → Server；接收者直接访问 Server 的 `/s/:token`，无需登录 Moss，分享者退出 Desktop 后仍有效。文件留在原私有对象位置。
+
+| Host 方法 | 输入与返回 |
+| --- | --- |
+| `shares.create` | `{fileId, requestKey, expiresAt, accessCode?}` → `CloudShare` |
+| `shares.list` | `{fileId?, cursor?, limit?}` → `{shares, nextCursor}`；创建时间倒序，最多 200 条 |
+| `shares.revoke` | `{shareId}` → 已撤销的 `CloudShare`；重复撤销成功 |
+
+`CloudShare` 为 `{id,fileId,name,size,url,accessCode,createdAt,expiresAt,revokedAt,state}`，状态为 `active/expired/revoked/unavailable`。时间戳均为毫秒。`expiresAt: null` 表示永久；其余值必须是未来一年内时间。省略 `accessCode` 自动生成 6 位数字；传 `null` 不需要分享码，字符串接受 4–12 位大小写字母或数字。`requestKey` 在同一用户内幂等；重试须使用相同设置和同一键。
+
+管理 HTTP 为 `POST/GET /api/v1/cloud-storage/shares` 和 `DELETE /api/v1/cloud-storage/shares/:id`。均重新校验登录、当前权限和所有权；创建还要求 `cloud-storage:read`。既有内置普通用户/部门管理员角色如果已具有读取云端空间权限，数据库升级时添加分享权限一次；自定义角色、API Key 和 App 安装授权仍需显式授予。已有登录令牌需重新登录才能取得新增 scope。
+
+在 `server.json` 配置 `server.publicUrl: "https://files.example.com"`，使复制的链接采用接收者可访问的地址。未配置时 Server 返回相对路径，Host 使用当前服务器连接地址补齐。不要配置 S3 内网地址；公开域名及 TLS 由部署方配置。Nginx `/s/` 使用流式代理并关闭包含分享凭证的访问日志。
+
+- 无分享码：`GET /s/:token` 直接以附件下载；有分享码：先展示验证页，通过 `POST /s/:token/verify` 校验后获得限定路径的 HttpOnly/SameSite cookie，再访问 `/s/:token/download`。
+- 验证 cookie 最长 30 分钟，不超过分享有效期。服务重启后重新输入分享码；分享记录和链接不受影响。配置 HTTPS publicUrl 时设置 Secure cookie。接口与页面禁用缓存，页面设置 CSP 和 no-referrer。
+- 分享码按带盐 scrypt 校验，公开访问仅按 token 哈希检索。为了让所有者在“已分享”中再次复制链接和分享码，原始 token/码以绑定分享记录的 AES-GCM 密文保存；加密使用 Server 凭据主密钥，数据库和主密钥须共同备份。普通下载 API 继续要求登录凭证。
+- 每个分享 10 分钟最多 10 次验证，每个直接连接来源最多 100 次，最多 4 次并行分享码运算。反向代理不透传不可信来源作为限流身份；同代理的用户共享来源限额。限流和验证会话在内存中，适用于当前单 Server 部署。
+- 每次 GET/HEAD/Range 都检查分享、文件版本、原所有者状态和读取/分享权限；活动流每 2 秒重检，并与普通下载共享每用户 3 条、全局 24 条并发限制。撤销或过期后拒绝新请求，活动流最迟在下一次重检停止；已经下载的内容无法收回。
+- 分享绑定稳定文件 ID 和内容版本。改名/移动保持链接，删除或内容版本改变使分享失效；过期和已撤销记录仍可在所有者列表查看。同一文件可创建多个独立分享。
+
+数据模型升级到版本 5，SQLite 与 MySQL 都创建 `cloud_shares` 表。新增接口的集成回归位于 `server/src/__tests__/cloudShares.http.ts`，随 `cloudStorage.test.ts` 执行；覆盖幂等、隔离、分享码、下载、撤销/过期、版本变化、限流、活动流停止和 Server 重启。设置 `MOSS_SHARE_PLAYWRIGHT` 为已安装的 `@playwright/test/index.mjs` 绝对路径，可同时运行真实 Chrome 验证页与下载测试；`MOSS_SHARE_SCREENSHOTS` 可指定截图目录。
+
+2026-09-29 分享验证：SQLite 与真实 MySQL 8.4.8 服务端回归各 67 项、桌面回归 882 项通过；Server/Desktop 类型检查、Server 构建和 Compose 部署校验通过。Chrome 实际验证分享码并下载 33 MiB 文件；真实 Silo 验证分享访问、限流、下载途中撤销、备份恢复与 2 GiB + 101 字节传输 SHA-256。另验证真实 Host 创建/查询/撤销分享和浏览器 Range 下载。未执行生产部署或发布。

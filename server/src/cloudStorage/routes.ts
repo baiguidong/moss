@@ -3,7 +3,7 @@ import { pipeline } from 'node:stream/promises'
 import type { AuthContext } from '../auth/token.js'
 import { CloudError, CloudStorageService, fileInfo } from './service.js'
 
-function json(res: ServerResponse, status: number, body: unknown) {
+export function json(res: ServerResponse, status: number, body: unknown) {
   const data = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json',
@@ -12,7 +12,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   })
   res.end(data)
 }
-async function body(req: IncomingMessage, allowed: string[]) {
+export async function body(req: IncomingMessage, allowed: string[]) {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {

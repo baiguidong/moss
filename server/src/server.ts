@@ -53,6 +53,9 @@ import { AuthService, AuthServiceError } from './auth/service.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { UsageRepository } from './model/repositories/usage.js'
 import { UsageService } from './usageService.js'
+import { CloudSharesRepository } from './model/repositories/cloudShares.js'
+import { CloudSharesService } from './cloudStorage/shares.js'
+import { handleShareManagement, handlePublicShare } from './cloudStorage/shareRoutes.js'
 import { handleCloudStorageRoute } from './cloudStorage/routes.js'
 import type { ObjectStore } from './cloudStorage/s3.js'
 import { CloudStorageService } from './cloudStorage/service.js'
@@ -985,6 +988,8 @@ export function startServer(
     async (auth, scope) => await authService.requireCurrentScope(auth, scope),
     cloudObjectStore,
   )
+  const cloudShares = new CloudSharesService(new CloudSharesRepository(runtime.store.db), cloudStorage,
+    (orgId, userId) => authService.requireSharingOwner(orgId, userId))
   const oauthLoginService = new OAuthLoginService(authService)
   const cronStartup = importLegacyCloudCron(runtime.store.db, config).catch(error => logger.error(`Cron legacy import: ${String(error)}`))
   const cronRepository = new CronRepository(runtime.store.db)
@@ -1231,12 +1236,15 @@ export function startServer(
         return
       }
 
+      if (await handlePublicShare(req, res, url, cloudShares)) return
+
       const auth = await authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
 
       if (
+        await handleShareManagement(req, res, url, auth, cloudShares) ||
         await handleCloudStorageRoute({
           req,
           res,

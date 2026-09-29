@@ -161,7 +161,7 @@ export class CloudStorageService {
   }
   async check(
     auth: AuthContext,
-    permission: 'read' | 'write' | 'delete',
+    permission: 'read' | 'write' | 'delete' | 'share',
   ): Promise<void> {
     await this.authorize(auth, `cloud-storage:${permission}`)
   }
@@ -476,6 +476,7 @@ export class CloudStorageService {
     key: string,
     permission: 'read' | 'write',
     upstream?: AbortSignal,
+    revalidate?: () => Promise<unknown>,
   ) {
     const owner = JSON.stringify([auth.orgId, auth.userId])
     if (
@@ -495,7 +496,7 @@ export class CloudStorageService {
     const authTimer = setInterval(() => {
       if (checking) return
       checking = true
-      void this.check(auth, permission)
+      void (revalidate ? revalidate() : this.check(auth, permission))
         .catch(abort)
         .finally(() => {
           checking = false

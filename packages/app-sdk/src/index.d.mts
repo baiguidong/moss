@@ -578,7 +578,12 @@ export function createBackendTestHarness(actions?: Record<string, AppActionHandl
 
 /** Cloud storage is separate from App KV, local libraries and workspaces. */
 export const MOSS_CLOUD_STORAGE_PROTOCOL: 'moss.cloud-storage/v1'
-export type CloudStoragePermission = 'cloud-storage:read' | 'cloud-storage:write' | 'cloud-storage:delete'
+export interface CloudShare {
+  id: string; fileId: string; name: string; size: number; url: string; accessCode: string | null;
+  createdAt: number; expiresAt: number | null; revokedAt: number | null;
+  state: 'active' | 'expired' | 'revoked' | 'unavailable'
+}
+export type CloudStoragePermission = 'cloud-storage:share' | 'cloud-storage:read' | 'cloud-storage:write' | 'cloud-storage:delete'
 export type CloudStorageState = 'remote_disabled' | 'unauthenticated' | 'unconfigured' | 'disabled' | 'unsupported' | 'unavailable' | 'target_mismatch' | 'forbidden' | 'ready'
 export interface CloudFile {
   id: string; parentId: string | null; name: string; kind: 'file' | 'folder'; size: number;
@@ -590,6 +595,8 @@ export interface CloudTransfer {
   totalBytes: number; transferredBytes: number; error: string | null; createdAt: number; updatedAt: number
 }
 export interface CloudStorageInputMap {
+  'shares.create': { fileId: string; requestKey: string; expiresAt: number | null; accessCode?: string | null };
+  'shares.list': { fileId?: string; cursor?: string; limit?: number }; 'shares.revoke': { shareId: string };
   'status.get': Record<string, never>; 'quota.get': Record<string, never>;
   'files.list': { parentId?: string | null; cursor?: string; limit?: number };
   'files.get': { fileId: string }; 'folders.create': { name: string; parentId?: string | null };
@@ -601,6 +608,7 @@ export interface CloudStorageInputMap {
   'transfers.resume': { transferId: string }; 'transfers.cancel': { transferId: string };
 }
 export interface CloudStorageOutputMap {
+  'shares.create': CloudShare; 'shares.revoke': CloudShare; 'shares.list': { shares: CloudShare[]; nextCursor: string | null };
   'status.get': { state: CloudStorageState; version?: number };
   'quota.get': { usedBytes: number; reservedBytes: number; limitBytes: number };
   'files.list': { files: CloudFile[]; nextCursor: string | null };

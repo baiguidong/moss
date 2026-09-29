@@ -81,7 +81,7 @@ await test('initialization is repeatable; unrecognized databases are preserved a
     assert.equal(
       (await fresh.prepare('SELECT version FROM model_schema WHERE id=1').get())
         ?.version,
-      4,
+      5,
     )
     await fresh.prepare('UPDATE model_schema SET version=99 WHERE id=1').run()
     await assert.rejects(
@@ -484,4 +484,18 @@ await test('readiness fails when the database is unavailable while liveness stay
     await db.close()
     await rm(root, { recursive: true, force: true })
   }
+})
+
+
+test('version 4 upgrades to persistent shares and initialization remains repeatable', async () => {
+  const db = await openTestDatabase()
+  try {
+    await db.exec('DROP TABLE cloud_shares')
+    await db.prepare('UPDATE model_schema SET version=4 WHERE id=1').run()
+    await initializeDatabase(db)
+    assert.deepEqual(await db.prepare('SELECT id FROM cloud_shares').all(), [])
+    await requireSchema(db)
+    await initializeDatabase(db)
+    assert.equal((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())!.version, 5)
+  } finally { await db.close() }
 })
