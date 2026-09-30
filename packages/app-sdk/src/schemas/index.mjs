@@ -250,6 +250,23 @@ export function resolveBackendProtocols(backend) {
   return Array.isArray(backend?.protocols) ? [...backend.protocols] : []
 }
 
+// App Tools expose their declared schema unchanged as a model function input.
+// This root contract does not restrict ordinary Backend Action schemas.
+export function validateAppToolInputSchema(schema, fieldName = 'App Tool input schema') {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema) || schema.type !== 'object') {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `${fieldName} must describe an object`)
+  }
+  const unsupported = ['oneOf', 'anyOf', 'allOf', 'enum', 'const', 'not']
+    .filter((keyword) => Object.hasOwn(schema, keyword))
+  if (unsupported.length) {
+    throw new AppServiceError(
+      APP_ERROR_CODES.invalidManifest,
+      `${fieldName} must not declare top-level ${unsupported.join(', ')}; declare argument fields in properties and validate cross-field rules in the Backend`,
+    )
+  }
+  return schema
+}
+
 export function loadJsonSchema(packageRoot, relativePath, fieldName = 'schema') {
   const safePath = ensureSafeRelativePath(relativePath, fieldName)
   const absolutePath = path.resolve(packageRoot, safePath)

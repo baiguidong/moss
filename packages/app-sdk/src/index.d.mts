@@ -565,6 +565,7 @@ export function requireHostProtocol(protocols: string[], protocol: string): true
 export function requireHostPermission(permissions: string[], requiredPermission?: string | null, options?: { source?: 'declaration' | 'grant' }): true
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
 export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
+export function validateAppToolInputSchema(schema: unknown, fieldName?: string): Record<string, unknown> & { type: 'object' }
 export function resolveBackendProtocols(backend: AppManifestV2['backend']): AppBackendProtocol[]
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>
 export function compileJsonSchema(schema: unknown, options?: { removeAdditional?: boolean }): ((value: unknown) => boolean) & { errors?: unknown[] }
