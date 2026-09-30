@@ -463,9 +463,6 @@
   to { stroke-dashoffset: -28; }
 }
 
-.trace-row-cv { content-visibility: auto; contain-intrinsic-size: auto 34px; }
-.trace-message-cv { content-visibility: auto; contain-intrinsic-size: auto 120px; }
-.trace-list-row-cv { content-visibility: auto; contain-intrinsic-size: auto 56px; }
 
 .workflow-live-diagram path[style*="stroke-dasharray:8 6"],
 .workflow-live-diagram path[style*="stroke-dasharray: 8 6"] {

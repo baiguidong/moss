@@ -72,7 +72,7 @@ try {
       usage: { inputTokens: 5, outputTokens: 3 },
       request: { url: 'https://fixture.invalid/messages', headers: { authorization: 'Bearer private-fixture' }, body: { messages: [{ role: 'user', content: 'x'.repeat(5000) }] } },
       response: { status: 200, body: { content: [{ type: 'text', text: `${userId} answer` }] } },
-    }))
+    }, { captureEnabled: true }))
   for (const session of sessions) await capture(session.userId, session.sessionId)
   await capture('alice', 'alice-resumed')
   await capture('alice', 'orphan-session')
@@ -128,7 +128,8 @@ try {
   assert.equal(filtered.traces[0].sessionId, 'bob-session')
 
   // Scope is tied to the owner, not the actor or a process-global environment.
-  assert.equal((await json('/traces/settings')).enabled, true)
+  assert.equal((await json('/traces/settings')).enabled, false)
+  assert.equal((await json('/traces/settings', 'bob')).enabled, false)
   await Promise.all([json('/traces/settings', 'alice', 'PUT', { enabled: true }), json('/traces/settings', 'bob', 'PUT', { enabled: false })])
   assert.equal((await json('/traces/settings', 'alice')).enabled, true)
   assert.equal((await json('/traces/settings', 'bob')).enabled, false)

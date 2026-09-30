@@ -1,5 +1,7 @@
+import { setTraceCaptureFallback } from '../trace/traceOutput.js'
+import { shouldCaptureApiTrace } from './traceCapture.js'
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -15,18 +17,45 @@ import { createTraceFetch, drainTraceFetchForTests } from './traceFetch.js'
 import { TraceResponseCollector } from '../trace/responseCapture.js'
 
 let scope: string
-beforeEach(async () => { scope = await mkdtemp(join(tmpdir(), 'moss-trace-fetch-')) })
+beforeEach(async () => { setTraceCaptureFallback(() => shouldCaptureApiTrace() ? traceCaptureService : null); scope = await mkdtemp(join(tmpdir(), 'moss-trace-fetch-')) })
 afterEach(async () => {
   await drainTraceFetchForTests()
   await drainTraceCaptureForTests()
   clearTraceCaptureStateForTests()
+  setTraceCaptureFallback(undefined)
   await rm(scope, { recursive: true, force: true })
 })
 const request = { method: 'POST', body: JSON.stringify({ model: 'fixture-model', system: 'system prompt', messages: [{ role: 'user', content: 'hi' }] }) }
 const encoder = new TextEncoder()
 const frame = (data: unknown) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
 
+test('passes through model requests without capturing until explicitly enabled', async () => withTraceScope(scope, async () => {
+  let originalResponse: Response
+  const traced = createTraceFetch(async () => {
+    originalResponse = new Response('model response')
+    return originalResponse
+  }, { sessionId: 'opt-in' })
+  const response = await traced('https://model.invalid/messages', request)
+  expect(response).toBe(originalResponse!)
+  expect(await response.text()).toBe('model response')
+  await drainTraceFetchForTests()
+  await drainTraceCaptureForTests()
+  await expect(access(join(scope, 'traces'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+  await updateTraceCaptureSettings({ enabled: true })
+  expect(await (await traced('https://model.invalid/messages', request)).text()).toBe('model response')
+  await drainTraceFetchForTests()
+  const trace = await traceCaptureService.getSessionTrace('opt-in')
+  expect(trace.calls).toHaveLength(1)
+  expect(trace.calls[0]?.status).toBe('ok')
+  expect(trace.events.map(event => event.phase)).toEqual(['api_call_started', 'api_call_completed'])
+}))
+
 describe('model fetch trace lifecycle', () => {
+  beforeEach(async () => {
+    await withTraceScope(scope, () => updateTraceCaptureSettings({ enabled: true }))
+  })
+
   test.each([
     [{ max_tokens: 1024 }, 'max_tokens', 1024],
     [{ max_completion_tokens: 512 }, 'max_completion_tokens', 512],
@@ -208,9 +237,8 @@ describe('model fetch trace lifecycle', () => {
   }))
 
   test('capture persistence failures cannot reject a successful model response', async () => {
-    const invalid = join(scope, 'not-a-directory')
-    await writeFile(invalid, 'fixture')
-    await withTraceScope(invalid, async () => {
+    await writeFile(join(scope, 'traces'), 'not-a-directory')
+    await withTraceScope(scope, async () => {
       const traced = createTraceFetch(async () => new Response('unchanged'), { sessionId: 'unwritable' })
       expect(await (await traced('https://model.invalid/messages', request)).text()).toBe('unchanged')
       await drainTraceFetchForTests()

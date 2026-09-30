@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { configureTraceOutput } from '../../services/trace/traceOutput.js'
 import { drainTraceFetchForTests } from '../../services/api/traceFetch.js'
 import { clearTraceCaptureStateForTests, drainTraceCaptureForTests, traceCaptureService, withTraceScope } from '../../services/api/traceCapture.js'
 import { runWithSessionIdContext } from '../sessionIdContext.js'
@@ -36,6 +37,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await drainTraceFetchForTests()
+  await Promise.all(['alpha', 'beta'].map(id => configureTraceOutput(join(traceTestDirectory, id), null)))
   await drainTraceCaptureForTests()
   clearTraceCaptureStateForTests()
   restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
@@ -154,6 +156,7 @@ describe('Moss model auth token', () => {
       sessionId as SessionId,
       undefined,
       async () => {
+        await configureTraceOutput(join(traceTestDirectory, sessionId), { directory: join(traceTestDirectory, sessionId) })
         const client = await getAnthropicClient({
           apiKey: 'fixture-key', maxRetries: 0, source: 'trace-scope-fixture',
           fetchOverride: async () => new Response(JSON.stringify({

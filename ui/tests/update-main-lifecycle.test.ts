@@ -13,6 +13,7 @@ function fixture(extra: Record<string, any> = {}) {
     sessions: new Map([['chat', { id: 'chat' }]]), subAgentSessions: new Map([['child', { id: 'child' }]]),
     hasActiveAgentTeam: () => false, shutdownSessionAgentTeam: async () => true,
     agentTeamsService: { checkNow: async () => {}, stop: () => calls.push('teams-stop') },
+    appTraceHost: { close: async () => { calls.push('trace-close'); } },
     agentMailPoller: { stop: async () => { calls.push('mail-stop'); } },
     localAuditScanTimer: null, clearInterval,
     localAuditService: { close: () => calls.push('audit-close') },
@@ -41,6 +42,7 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
   expect(calls.indexOf('persist-child')).toBeLessThan(calls.indexOf('dispose-child'));
   expect(calls).toContain('apps-close');
   expect(calls).toContain('transcript-sync-stop');
+  expect(calls.indexOf('trace-close')).toBeLessThan(calls.indexOf('apps-close'));
   await shutdown(); expect(calls.filter(call => call === 'apps-close').length).toBe(1);
 });
 test('a failing component does not skip other cleanup or authorize installation', async () => {

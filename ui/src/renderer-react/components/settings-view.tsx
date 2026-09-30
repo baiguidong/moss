@@ -35,15 +35,14 @@ import {
   MOSS_TOOL_GROUPS,
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
-import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload, StoredApp } from '../types';
-import { TraceView } from './trace-view';
+import type { DesktopSettings, ManagedRuntimeStatus, StoredApp } from '../types';
 import { AssistantMessage } from '@/components/chat/assistant-message';
 import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced' | 'trace';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address' | 'trace';
+type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'workflows' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -63,9 +62,6 @@ type SettingsViewProps = {
   apps?: StoredApp[];
   workspace?: string;
   initialSection?: SectionId;
-  traceSessionId?: string;
-  traceTarget?: 'local' | 'remote';
-  onTraceBack?: () => void;
 };
 
 type SettingsSectionDefinition = {
@@ -275,11 +271,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         title: '工作流',
         keywords: ['workflow', 'workflows', '工作流', '编排', 'tool', '工具'],
       },
-      {
-        id: 'mcp',
-        title: 'MCP',
-        keywords: ['mcp', 'server', 'tool', '工具', '服务器', '上下文协议'],
-      },
     ],
   },
   {
@@ -334,14 +325,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         keywords: ['skillhub', 'skill', '专家中心', 'expert', 'experthub', 'market', 'api', '公网', '根地址'],
       },
     ],
-  },
-  {
-    id: 'trace',
-    title: 'Trace',
-    icon: Workflow,
-    iconGradientClassName: 'from-sky-400 to-indigo-600',
-    keywords: ['trace', '追踪', '模型请求', '响应', '排障'],
-    sections: [{ id: 'trace', title: 'Trace', keywords: ['trace', '追踪', '模型请求', '响应', '排障', '提示词'] }],
   },
 ];
 
@@ -700,454 +683,6 @@ function ThemePresetButton({ selected, themeId, themeName, onClick }: ThemePrese
   );
 }
 
-type McpTransport = 'stdio' | 'http' | 'sse';
-type KeyValueRow = { id: string; key: string; value: string };
-
-function createKeyValueRow(key = '', value = ''): KeyValueRow {
-  return { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, key, value };
-}
-
-function recordToRows(record?: Record<string, string>): KeyValueRow[] {
-  const entries = Object.entries(record ?? {});
-  return entries.length > 0 ? entries.map(([key, value]) => createKeyValueRow(key, value)) : [createKeyValueRow()];
-}
-
-function rowsToRecord(rows: KeyValueRow[]): Record<string, string> | undefined {
-  const result: Record<string, string> = {};
-  for (const row of rows) {
-    const key = row.key.trim();
-    if (!key) continue;
-    result[key] = row.value;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function splitArgs(value: string): string[] {
-  return value
-    .split('\n')
-    .map((arg) => arg.trim())
-    .filter(Boolean);
-}
-
-function getMcpTransport(config: McpServerConfig): McpTransport {
-  return (config.type ?? 'stdio') as McpTransport;
-}
-
-function KeyValueEditor({
-  rows,
-  onChange,
-  keyPlaceholder,
-  valuePlaceholder,
-}: {
-  rows: KeyValueRow[];
-  onChange: (rows: KeyValueRow[]) => void;
-  keyPlaceholder: string;
-  valuePlaceholder: string;
-}) {
-  const updateRow = (id: string, patch: Partial<KeyValueRow>) => {
-    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
-  };
-  const removeRow = (id: string) => {
-    const next = rows.filter((row) => row.id !== id);
-    onChange(next.length > 0 ? next : [createKeyValueRow()]);
-  };
-
-  return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <Input
-            className={FIELD_CLASS_NAME}
-            value={row.key}
-            onChange={(event) => updateRow(row.id, { key: event.target.value })}
-            placeholder={keyPlaceholder}
-          />
-          <Input
-            className={FIELD_CLASS_NAME}
-            value={row.value}
-            onChange={(event) => updateRow(row.id, { value: event.target.value })}
-            placeholder={valuePlaceholder}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-            onClick={() => removeRow(row.id)}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ))}
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-        onClick={() => onChange([...rows, createKeyValueRow()])}
-      >
-        添加一行
-      </Button>
-    </div>
-  );
-}
-
-function McpSettings() {
-  const [payload, setPayload] = React.useState<McpSettingsPayload | null>(null);
-  const [selectedName, setSelectedName] = React.useState<string>('');
-  const [draftName, setDraftName] = React.useState('');
-  const [draftEnabled, setDraftEnabled] = React.useState(true);
-  const [draftTransport, setDraftTransport] = React.useState<McpTransport>('stdio');
-  const [draftCommand, setDraftCommand] = React.useState('');
-  const [draftArgs, setDraftArgs] = React.useState('');
-  const [draftUrl, setDraftUrl] = React.useState('');
-  const [draftEnvRows, setDraftEnvRows] = React.useState<KeyValueRow[]>(() => [createKeyValueRow()]);
-  const [draftHeaderRows, setDraftHeaderRows] = React.useState<KeyValueRow[]>(() => [createKeyValueRow()]);
-  const [notice, setNotice] = React.useState('');
-  const [error, setError] = React.useState('');
-  const [loading, setLoading] = React.useState(false);
-
-  const servers = payload?.servers ?? [];
-  const selected = servers.find((server) => server.name === selectedName) ?? null;
-
-  const loadDraftFromConfig = (config: McpServerConfig) => {
-    const transport = getMcpTransport(config);
-    setDraftTransport(transport);
-    if (transport === 'stdio') {
-      const stdioConfig = config as Extract<McpServerConfig, { type?: 'stdio' }>;
-      setDraftCommand(stdioConfig.command ?? '');
-      setDraftArgs((stdioConfig.args ?? []).join('\n'));
-      setDraftUrl('');
-      setDraftEnvRows(recordToRows(stdioConfig.env));
-      setDraftHeaderRows([createKeyValueRow()]);
-    } else {
-      const remoteConfig = config as Extract<McpServerConfig, { type: 'http' | 'sse' }>;
-      setDraftCommand('');
-      setDraftArgs('');
-      setDraftUrl(remoteConfig.url ?? '');
-      setDraftEnvRows([createKeyValueRow()]);
-      setDraftHeaderRows(recordToRows(remoteConfig.headers));
-    }
-  };
-
-  const resetDraftForNewServer = React.useCallback((clearMessages = true) => {
-    setSelectedName('');
-    setDraftName('');
-    setDraftEnabled(true);
-    setDraftTransport('stdio');
-    setDraftCommand('');
-    setDraftArgs('');
-    setDraftUrl('');
-    setDraftEnvRows([createKeyValueRow()]);
-    setDraftHeaderRows([createKeyValueRow()]);
-    if (clearMessages) {
-      setNotice('');
-      setError('');
-    }
-  }, []);
-
-  const loadServers = React.useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const next = await window.agentDesktop.listMcpServers();
-      setPayload(next);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void loadServers();
-  }, [loadServers]);
-
-  const selectServer = (server: McpServerEntry) => {
-    setSelectedName(server.name);
-    setDraftName(server.name);
-    setDraftEnabled(server.enabled);
-    loadDraftFromConfig(server.config);
-    setNotice('');
-    setError('');
-  };
-
-  const createServer = () => {
-    resetDraftForNewServer();
-  };
-
-  const applyPayload = (next: McpSettingsPayload) => {
-    setPayload(next);
-    const reset = next.resetSessionCount ?? 0;
-    const skipped = next.skippedBusySessionCount ?? 0;
-    setNotice(`已保存，${reset} 个本地会话将在下次发送前重新加载 MCP${skipped ? `，${skipped} 个忙碌会话稍后生效` : ''}。`);
-  };
-
-  const saveServer = async () => {
-    setError('');
-    setNotice('');
-    const name = draftName.trim();
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      setError('名称只能包含字母、数字、连字符和下划线');
-      return;
-    }
-    let config: McpServerConfig;
-    if (draftTransport === 'stdio') {
-      if (!draftCommand.trim()) {
-        setError('stdio MCP server 需要 command');
-        return;
-      }
-      config = {
-        type: 'stdio',
-        command: draftCommand.trim(),
-        args: splitArgs(draftArgs),
-        ...(rowsToRecord(draftEnvRows) ? { env: rowsToRecord(draftEnvRows) } : {}),
-      };
-    } else {
-      if (!draftUrl.trim()) {
-        setError(`${draftTransport} MCP server 需要 URL`);
-        return;
-      }
-      config = {
-        type: draftTransport,
-        url: draftUrl.trim(),
-        ...(rowsToRecord(draftHeaderRows) ? { headers: rowsToRecord(draftHeaderRows) } : {}),
-      };
-    }
-
-    try {
-      if (draftTransport !== 'stdio') {
-        const parsed = new URL(draftUrl.trim());
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-          setError('URL 只支持 http 或 https');
-          return;
-        }
-      }
-    } catch {
-      setError('URL 格式不正确');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const next = await window.agentDesktop.upsertMcpServer({
-        previousName: selectedName && selected ? selected.name : undefined,
-        name,
-        enabled: draftEnabled,
-        config,
-      });
-      applyPayload(next);
-      resetDraftForNewServer(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleServer = async (server: McpServerEntry, enabled: boolean) => {
-    setError('');
-    setNotice('');
-    try {
-      setLoading(true);
-      const next = await window.agentDesktop.setMcpServerEnabled({ name: server.name, enabled });
-      applyPayload(next);
-      if (server.name === selectedName) {
-        setDraftEnabled(enabled);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const removeServer = async (name: string) => {
-    if (!name) return;
-    setError('');
-    setNotice('');
-    try {
-      setLoading(true);
-      const next = await window.agentDesktop.removeMcpServer({ name });
-      setPayload(next);
-      if (name === selectedName) {
-        resetDraftForNewServer(false);
-      }
-      setNotice('已删除 MCP server，后续会话会使用更新后的配置。');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <SettingsGroup>
-      <SettingsRow
-        title="MCP servers"
-        description="启用后会写入 agent MCP 配置，并重置空闲本地会话 runtime。当前发送中的会话会在下一次重建后生效。"
-        stacked
-      >
-        <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <div className="rounded-[18px] border border-sidebar-border bg-sidebar/45 p-2">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="px-2 text-xs text-muted-foreground">
-                {loading ? '加载中...' : `${servers.length} 个 server`}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-                onClick={createServer}
-              >
-                新增
-              </Button>
-            </div>
-            <div className="max-h-72 space-y-1 overflow-y-auto">
-              {servers.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-sidebar-border px-3 py-5 text-center text-xs text-muted-foreground">
-                  还没有 MCP server
-                </div>
-              ) : (
-                servers.map((server) => (
-                  <div
-                    key={server.name}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors',
-                      server.name === selectedName
-                        ? 'bg-sidebar-accent text-sidebar-foreground'
-                        : 'text-sidebar-foreground/75 hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      onClick={() => selectServer(server)}
-                    >
-                      <span className={cn('h-2 w-2 shrink-0 rounded-full', server.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/35')} />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">{server.name}</span>
-                    </button>
-                    <Toggle
-                      checked={server.enabled}
-                      onCheckedChange={(checked) => void toggleServer(server, checked)}
-                      label={`${server.enabled ? '禁用' : '启用'} ${server.name}`}
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 rounded-xl border-black/10 bg-white/90 p-0 dark:border-white/10 dark:bg-background/75"
-                      onClick={() => void removeServer(server.name)}
-                      disabled={loading}
-                      aria-label={`删除 ${server.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <Input
-                className={FIELD_CLASS_NAME}
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                placeholder="server_name"
-              />
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-sidebar-border bg-sidebar-accent/60 px-3">
-                <span className="text-xs text-muted-foreground">启用</span>
-                <Toggle
-                  checked={draftEnabled}
-                  onCheckedChange={setDraftEnabled}
-                  label="启用 MCP server"
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-              <select
-                className={SELECT_CLASS_NAME}
-                value={draftTransport}
-                onChange={(event) => setDraftTransport(event.target.value as McpTransport)}
-              >
-                <option value="stdio">stdio</option>
-                <option value="http">http</option>
-                <option value="sse">sse</option>
-              </select>
-              {draftTransport === 'stdio' ? (
-                <Input
-                  className={FIELD_CLASS_NAME}
-                  value={draftCommand}
-                  onChange={(event) => setDraftCommand(event.target.value)}
-                  placeholder="npx"
-                />
-              ) : (
-                <Input
-                  className={FIELD_CLASS_NAME}
-                  value={draftUrl}
-                  onChange={(event) => setDraftUrl(event.target.value)}
-                  placeholder={draftTransport === 'http' ? 'https://example.com/mcp' : 'https://example.com/sse'}
-                />
-              )}
-            </div>
-
-            {draftTransport === 'stdio' ? (
-              <>
-                <div>
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">参数</div>
-                  <Textarea
-                    className="min-h-[108px] rounded-[18px] border-sidebar-border bg-sidebar-accent/70 font-mono text-xs text-sidebar-foreground shadow-none placeholder:text-sidebar-foreground/45"
-                    value={draftArgs}
-                    onChange={(event) => setDraftArgs(event.target.value)}
-                    placeholder={'每行一个参数\n-y\n@modelcontextprotocol/server-filesystem\n~'}
-                    spellCheck={false}
-                  />
-                </div>
-                <div>
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">环境变量</div>
-                  <KeyValueEditor
-                    rows={draftEnvRows}
-                    onChange={setDraftEnvRows}
-                    keyPlaceholder="API_KEY"
-                    valuePlaceholder="value"
-                  />
-                </div>
-              </>
-            ) : (
-              <div>
-                <div className="mb-2 text-xs font-medium text-muted-foreground">Headers</div>
-                <KeyValueEditor
-                  rows={draftHeaderRows}
-                  onChange={setDraftHeaderRows}
-                  keyPlaceholder="Authorization"
-                  valuePlaceholder="Bearer ..."
-                />
-              </div>
-            )}
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0 text-xs text-muted-foreground">
-                {notice ? <span className="text-emerald-500">{notice}</span> : null}
-                {error ? <span className="text-destructive">{error}</span> : null}
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  size="sm"
-                  className="h-9 rounded-xl px-4"
-                  onClick={saveServer}
-                  disabled={loading}
-                >
-                  保存
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </SettingsRow>
-    </SettingsGroup>
-  );
-}
-
 function RuntimeStatusBadge({ runtime }: { runtime: { installed?: boolean; skipped?: boolean; resourceAvailable?: boolean } }) {
   if (runtime.skipped) {
     return (
@@ -1356,9 +891,6 @@ export function SettingsView({
   apps = [],
   workspace,
   initialSection = 'basic-info',
-  traceSessionId,
-  traceTarget,
-  onTraceBack,
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
@@ -1379,7 +911,6 @@ export function SettingsView({
     agents: null,
     tools: null,
     workflows: null,
-    mcp: null,
     appearance: null,
     buddy: null,
     permission: null,
@@ -1388,7 +919,6 @@ export function SettingsView({
     'tool-performance': null,
     prompt: null,
     'service-address': null,
-    trace: null,
   });
 
   const visibleNavigationGroups = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => {
@@ -1786,9 +1316,6 @@ export function SettingsView({
                 </div>
               </div>
 
-              {activeGroupId === 'trace' && !deferredSearchQuery ? (
-                <TraceView initialSessionId={traceSessionId} initialTarget={traceTarget} onBack={onTraceBack} />
-              ) : (
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
                   <div className="px-1">
@@ -1796,16 +1323,6 @@ export function SettingsView({
                       {deferredSearchQuery ? '搜索设置' : activeGroup.title}
                     </h1>
                   </div>
-
-                  {visibleSections.some(section => section.id === 'trace') ? (
-                    <SettingsSection id="trace" title="Trace" sectionRef={element => { sectionRefs.current.trace = element; }}>
-                      <SettingsGroup>
-                        <SettingsRow title="模型调用追踪" description="查看发送给模型的提示词、消息、工具定义，以及模型响应和错误。">
-                          <Button type="button" variant="outline" onClick={() => { setSearchQuery(''); setActiveGroupId('trace'); setActiveSection('trace'); }}>打开 Trace</Button>
-                        </SettingsRow>
-                      </SettingsGroup>
-                    </SettingsSection>
-                  ) : null}
 
                   {settingsDraft.settingsParseError ? (
                     <Surface className="border-amber-200/80 bg-amber-50/90 p-4 text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
@@ -2643,17 +2160,7 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'mcp') ? (
-                  <SettingsSection
-                    id="mcp"
-                    title="MCP"
-                    sectionRef={(element) => {
-                      sectionRefs.current.mcp = element;
-                    }}
-                  >
-                    <McpSettings />
-                  </SettingsSection>
-                ) : null}
+
 
                 {visibleSections.some((section) => section.id === 'service-address') ? (
                   <SettingsSection
@@ -3276,7 +2783,6 @@ export function SettingsView({
                 ) : null}
               </div>
             </div>
-              )}
           </div>
         </div>
       </div>

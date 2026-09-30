@@ -8,8 +8,8 @@ import {
   updateTraceCaptureSettings,
   withTraceScope,
   type TraceSessionSummary,
-} from '../../src/services/api/traceCapture.js'
-import { toTraceMessages } from '../../src/services/api/traceMessages.js'
+} from '../../packages/trace/src/traceCapture.js'
+import { toTraceMessages } from '../../packages/trace/src/traceMessages.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { getUserProfileDir } from './runtimePaths.js'
 import { loadSessionContextFromTranscript } from './transcript.js'

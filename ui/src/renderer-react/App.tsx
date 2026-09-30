@@ -9,7 +9,6 @@ import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { SessionInfoButton } from '@/components/session-info';
-import { SessionTraceButton } from '@/components/session-trace-button';
 import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
@@ -355,8 +354,7 @@ export default function App() {
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
-  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents' | 'trace'>('basic-info');
-  const [traceLaunch, setTraceLaunch] = React.useState<{ sessionId: string; target: 'local' | 'remote' } | null>(null);
+  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
@@ -2418,9 +2416,6 @@ export default function App() {
         ? activeDetail.workspace
         : undefined}
       initialSection={settingsInitialSection}
-      traceSessionId={settingsInitialSection === 'trace' ? traceLaunch?.sessionId : undefined}
-      traceTarget={settingsInitialSection === 'trace' ? traceLaunch?.target : undefined}
-      onTraceBack={settingsInitialSection === 'trace' && traceLaunch ? () => setActiveView('chat') : undefined}
     />
   );
 
@@ -2584,12 +2579,10 @@ export default function App() {
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
                 terminalActions={<SessionTerminalActions key={`terminal:${activeSessionId}`} session={activeDetail} />}
-                sessionInfo={<><SessionTraceButton session={activeDetail?.id === activeSessionId ? activeDetail : null}
-                  onOpen={(sessionId, target) => { setTraceLaunch({ sessionId, target }); setSettingsInitialSection('trace'); setActiveView('settings'); }} />
-                  <SessionInfoButton key={`info:${activeSessionId}`}
+                sessionInfo={<SessionInfoButton key={`info:${activeSessionId}`}
                   session={activeDetail?.id === activeSessionId ? activeDetail : null}
                   messages={chatMessages} childSessions={activeChildSessions}
-                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} /></>}
+                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} />}
                 toolDisplayMode={activeToolDisplayMode}
                 sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
                 globalToolDisplayMode={globalToolDisplayMode}
@@ -2677,7 +2670,7 @@ export default function App() {
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView />
+            <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
           ) : activeView === 'audit' ? (

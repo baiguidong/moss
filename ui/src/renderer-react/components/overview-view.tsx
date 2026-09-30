@@ -66,14 +66,16 @@ const OVERVIEW_TABS: Array<{
 
 export function OverviewTabs({
   activeTab,
+  sessionSummaryEnabled,
   onChange,
 }: {
   activeTab: OverviewTab;
+  sessionSummaryEnabled: boolean;
   onChange: (tab: OverviewTab) => void;
 }) {
   return (
     <div className="mt-5 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border/70" role="tablist" aria-label="概览内容">
-      {OVERVIEW_TABS.map(({ id, label, icon: Icon }) => (
+      {OVERVIEW_TABS.filter(({ id }) => id !== "session" || sessionSummaryEnabled).map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           type="button"
@@ -412,8 +414,9 @@ export function UsageOverviewContent({ local, cloud, onRefresh }: {
   );
 }
 
-export function OverviewView() {
-  const [activeTab, setActiveTab] = React.useState<OverviewTab>("usage");
+export function OverviewView({ sessionSummaryEnabled }: { sessionSummaryEnabled: boolean }) {
+  const [selectedTab, setActiveTab] = React.useState<OverviewTab>("usage");
+  const activeTab = selectedTab === "session" && !sessionSummaryEnabled ? "usage" : selectedTab;
   const [local, setLocal] = React.useState<UsageSource<UsageOverview>>({ data: null, loading: true, error: "" });
   const [cloud, setCloud] = React.useState<UsageSource<CloudUsageOverview>>({ data: null, loading: true, error: "" });
   const requestVersion = React.useRef(0);
@@ -481,7 +484,7 @@ export function OverviewView() {
           ) : null}
         </header>
 
-        <OverviewTabs activeTab={activeTab} onChange={setActiveTab} />
+        <OverviewTabs activeTab={activeTab} sessionSummaryEnabled={sessionSummaryEnabled} onChange={setActiveTab} />
 
         {activeTab === "resources" ? <ResourceMonitorView /> : activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />

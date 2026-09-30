@@ -9,6 +9,7 @@ import {
   drainTraceCaptureForTests,
   getTraceScope,
   readTraceCaptureSettings,
+  readTraceCaptureSettingsSync,
   traceCaptureService,
   trimTraceCallPreviews,
   updateTraceCaptureSettings,
@@ -29,7 +30,39 @@ afterEach(async () => {
   await rm(scope, { recursive: true, force: true })
 })
 
+describe('trace capture settings', () => {
+  test.each([
+    ['missing file', undefined, false],
+    ['malformed JSON', '{', false],
+    ['missing capture settings', '{}', false],
+    ['missing enabled flag', '{"traceCapture":{}}', false],
+    ['string flag', '{"traceCapture":{"enabled":"true"}}', false],
+    ['disabled', '{"traceCapture":{"enabled":false}}', false],
+    ['enabled', '{"traceCapture":{"enabled":true}}', true],
+  ] as const)('requires explicit opt-in: %s', async (_name, raw, enabled) => {
+    if (raw !== undefined) await writeFile(join(scope, 'trace-settings.json'), raw)
+    await withTraceScope(scope, async () => {
+      const settings = { enabled, storageDir: join(scope, 'traces') }
+      expect(readTraceCaptureSettingsSync()).toEqual(settings)
+      expect(await readTraceCaptureSettings()).toEqual(settings)
+    })
+  })
+
+  test('does not persist calls or events by default', async () => withTraceScope(scope, async () => {
+    expect(await traceCaptureService.recordCall({
+      sessionId: 'disabled', source: 'anthropic', request: { body: 'private request' },
+    })).toBeNull()
+    expect(await traceCaptureService.recordEvent({ sessionId: 'disabled', phase: 'completed' })).toBeNull()
+    await drainTraceCaptureForTests()
+    await expect(access(join(scope, 'traces'))).rejects.toMatchObject({ code: 'ENOENT' })
+  }))
+})
+
 describe('migrated trace persistence', () => {
+  beforeEach(async () => {
+    await withTraceScope(scope, () => updateTraceCaptureSettings({ enabled: true }))
+  })
+
   test('uses independent settings, preserves unknown fields and old disabled fixture', async () => {
     await writeFile(join(scope, 'settings.json'), '{"userOwned":true}')
     await writeFile(join(scope, 'trace-settings.json'), JSON.stringify({
@@ -51,6 +84,7 @@ describe('migrated trace persistence', () => {
     await Promise.all([scope, secondScope].map((directory, index) => withTraceScope(directory, async () => {
       await Promise.resolve()
       expect(getTraceScope()).toBe(directory)
+      await updateTraceCaptureSettings({ enabled: true })
       await traceCaptureService.recordCall({
         id: 'same-call', sessionId: 'same-session', source: 'anthropic',
         request: { body: { messages: [{ role: 'user', content: String(index) }] } },

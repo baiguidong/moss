@@ -85,8 +85,7 @@ export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope, sou
       ? { scope: "project", projectId: withHistory.id, kind: "history", sessionId: firstHistory.sessionId }
       : null;
   }
-  const first = catalog.sessions.find((session) => session.hasSummary && session.readable !== false)
-    || catalog.sessions.find((session) => !session.hasSummary && session.readable !== false);
+  const first = catalog.sessions.find((session) => session.hasSummary && session.readable !== false);
   return first ? { scope: "session", sessionId: first.id } : null;
 }
 
@@ -102,7 +101,7 @@ function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | nu
   }
   if (selection.scope === "session") {
     return catalog.sessions.some((entry) => (
-      entry.id === selection.sessionId && entry.readable !== false
+      entry.id === selection.sessionId && entry.hasSummary && entry.readable !== false
     ));
   }
   const project = catalog.projects.find((entry) => entry.id === selection.projectId);
@@ -394,10 +393,11 @@ export function SessionList({
   selected: string;
   onSelect: (selection: MemorySelection) => void;
 }) {
-  if (sessions.length === 0) return <CatalogEmpty icon={<MessageSquareText className="h-4 w-4" />} title="暂无会话记录" />;
+  const summaries = sessions.filter((session) => session.hasSummary);
+  if (summaries.length === 0) return <CatalogEmpty icon={<MessageSquareText className="h-4 w-4" />} title="暂无会话摘要" />;
   return (
     <div className="space-y-1">
-      {sessions.map((session) => (
+      {summaries.map((session) => (
         <MemoryListButton
           key={session.id}
           active={selected === `session:${session.id}`}
@@ -406,7 +406,7 @@ export function SessionList({
           description={session.projectName || (session.agentMode === "remote-direct" ? "Moss Server" : "普通会话")}
           meta={session.readable === false
             ? "超过大小限制"
-            : session.hasSummary ? formatDateTime(session.summaryUpdatedAt) : "未生成"}
+            : formatDateTime(session.summaryUpdatedAt)}
           disabled={session.readable === false}
           onClick={() => onSelect({ scope: "session", sessionId: session.id })}
         />
@@ -515,11 +515,13 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
       };
     }).filter((project) => matches(project.name, normalizedQuery) || project.history.length > 0);
   }, [catalog, normalizedQuery]);
+  const summarySessions = React.useMemo(() => (
+    catalog?.sessions.filter((entry) => entry.hasSummary) || []
+  ), [catalog]);
   const sessions = React.useMemo(() => {
-    const entries = catalog?.sessions || [];
-    if (!normalizedQuery) return entries;
-    return entries.filter((entry) => matches(`${entry.title} ${entry.projectName || ""}`, normalizedQuery));
-  }, [catalog, normalizedQuery]);
+    if (!normalizedQuery) return summarySessions;
+    return summarySessions.filter((entry) => matches(`${entry.title} ${entry.projectName || ""}`, normalizedQuery));
+  }, [summarySessions, normalizedQuery]);
 
   const selectedKey = selectionKey(selection);
   const selectedGlobal = selection?.scope === "global"
@@ -550,7 +552,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
     ? catalog.global.remoteStatus === "error" ? "云端记忆加载失败，请刷新重试" : "尚未连接云端记忆，请在设置中连接 Moss Server"
     : undefined;
   const projectLatest = latestTimestamp(catalog?.projects.map((entry) => entry.memoryUpdatedAt) || []);
-  const sessionLatest = latestTimestamp(catalog?.sessions.map((entry) => entry.summaryUpdatedAt) || []);
+  const sessionLatest = latestTimestamp(summarySessions.map((entry) => entry.summaryUpdatedAt));
   const metrics = scope === "global" ? [
     { label: "有效记忆", value: remoteUnavailable ? "—" : String(indexedGlobalEntries.length), detail: "仅统计当前来源 MEMORY.md 已索引内容" },
     { label: "未索引文件", value: remoteUnavailable ? "—" : String(unindexedGlobalEntries.length), detail: "当前来源中未被 MEMORY.md 引用的文件" },
@@ -560,8 +562,8 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
     { label: "会话沉淀", value: String(catalog?.projects.reduce((sum, entry) => sum + entry.history.length, 0) || 0), detail: "由项目会话完成时生成" },
     { label: "最近更新", value: projectLatest ? formatDateTime(projectLatest) : "暂无", detail: "仅在所属项目中使用" },
   ] : [
-    { label: "会话摘要", value: String(catalog?.sessions.filter((entry) => entry.hasSummary).length || 0), detail: `${catalog?.sessions.length || 0} 个可见会话` },
-    { label: "项目会话", value: String(catalog?.sessions.filter((entry) => entry.projectId).length || 0), detail: "与项目沉淀相互独立" },
+    { label: "会话摘要", value: String(summarySessions.length), detail: "仅展示已生成摘要的会话" },
+    { label: "项目会话", value: String(summarySessions.filter((entry) => entry.projectId).length), detail: "与项目沉淀相互独立" },
     { label: "最近更新", value: sessionLatest ? formatDateTime(sessionLatest) : "暂无", detail: "仅用于当前会话上下文" },
   ];
 
@@ -685,11 +687,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <CatalogEmpty icon={<FileText className="h-4 w-4" />} title={detailError} />
               ) : detail?.content.trim() ? (
                 <MarkdownRenderer content={detail.content} variant="document" sourceId={`memory:${selectedKey}`} />
-              ) : selectedSession && !selectedSession.hasSummary ? (
-                <CatalogEmpty
-                  icon={selectedSession.agentMode === "remote-direct" ? <HardDrive className="h-4 w-4" /> : <MessageSquareText className="h-4 w-4" />}
-                  title={selectedSession.agentMode === "remote-direct" ? "远程会话摘要尚未同步到本机" : "该会话尚未生成摘要"}
-                />
               ) : (
                 <CatalogEmpty icon={<BookOpenText className="h-4 w-4" />} title="请选择左侧记忆" />
               )}

@@ -72,7 +72,6 @@ type DirectSessionOptions = {
   onAppEvent?: (event: DirectAppEvent) => Promise<DirectAppEventResult>
   onUsage?: (event: ModelUsageEvent) => void
   agentMailEnabled?: boolean
-  libraryEnabled?: boolean
   maxTurns?: number
   thinkingConfig?: unknown
   coordinatorMode?: boolean
@@ -909,7 +908,6 @@ export class DirectEmbeddedBackend implements SessionBackend {
           !Object.prototype.hasOwnProperty.call(runtimeOptions, 'agentMailEnabled') ||
           runtimeOptions.agentMailEnabled === true
         ),
-      libraryEnabled: runtimeOptions.libraryEnabled === true,
     }
 
     let session: DirectSession

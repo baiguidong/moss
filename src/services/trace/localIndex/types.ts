@@ -1,1 +1,1 @@
-export type LocalIndexMode = 'off' | 'shadow' | 'on'
+export * from '../../../../packages/trace/src/localIndex/types.js'

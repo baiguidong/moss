@@ -1585,10 +1585,6 @@ declare global {
       authenticateRemoteServer: (payload: { serverUrl: string }) => Promise<DesktopSettings>;
       cancelRemoteServerAuthentication: () => Promise<{ canceled: boolean }>;
       getRemoteServerIdentity: () => Promise<{ userName: string; userEmail: string }>;
-      listMcpServers: () => Promise<McpSettingsPayload>;
-      upsertMcpServer: (payload: { previousName?: string; name: string; enabled: boolean; config: McpServerConfig }) => Promise<McpSettingsPayload>;
-      removeMcpServer: (payload: { name: string }) => Promise<McpSettingsPayload>;
-      setMcpServerEnabled: (payload: { name: string; enabled: boolean }) => Promise<McpSettingsPayload>;
       authenticateMcpServer: (payload: { name: string; sessionId?: string | null }) => Promise<McpSettingsPayload>;
       submitMcpAuthCallback: (payload: { name: string; callbackUrl: string }) => Promise<{ ok: boolean }>;
       clearMcpServerAuth: (payload: { name: string }) => Promise<McpSettingsPayload>;

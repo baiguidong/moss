@@ -12,9 +12,9 @@ import {
 import type { MemoryCatalog, MemoryGlobalEntry } from '../src/renderer-react/types';
 
 describe('overview memory navigation', () => {
-  test('keeps usage and all three memory scopes in one top tab bar', () => {
+  test('keeps usage and all three memory scopes in one top tab bar when session summaries are enabled', () => {
     const html = renderToStaticMarkup(
-      <OverviewTabs activeTab="project" onChange={() => {}} />,
+      <OverviewTabs activeTab="project" sessionSummaryEnabled onChange={() => {}} />,
     );
 
     expect(html).toContain('aria-label="概览内容"');

@@ -1,6 +1,8 @@
+import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
 import { resolveAppResourceFile } from './apps/app-resources.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
 import { createLocalFilesProtocolDefinition, createRuntimesProtocolDefinition, createLocalAppHostHandlers } from './apps/app-local-host.mjs';
+import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } from './apps/app-mcp-host.mjs';
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
@@ -138,7 +140,6 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
-import { registerTraceIpc } from './trace-ipc.mjs';
 import {
   createLocalAuditService,
   registerLocalAuditIpcHandlers,
@@ -255,7 +256,6 @@ import {
 import {
   isValidMcpServerName,
   normalizeMcpStore,
-  validateMcpServerConfig,
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
 import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
@@ -292,7 +292,6 @@ import {
   downloadRemoteDirectWorkspaceFile,
   parseRemoteDirectServerInput,
   setRemoteDirectFetchImplementation,
-  requestRemoteTrace,
 } from './remote-direct-client.mjs';
 import {
   applyRemoteSessionHistoryTitle,
@@ -691,6 +690,7 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+let appMcpHost = null;
 let cloudStorageHost = null;
 let appShutdownComplete = false;
 let agentTeamsService = null;
@@ -707,6 +707,7 @@ const updateGuardedAppIpc = {
     });
   },
 };
+let appTraceHost = null;
 let localAuditService = null;
 let localAuditScanTimer = null;
 let agentChannelController = null;
@@ -3826,6 +3827,7 @@ function getSessionMcpServers(sessionRecord, runtimeCredentialValues = {}) {
   }
   return {
     ...getEnabledDesktopMcpServers(),
+    ...appMcpHost?.enabledServers(),
     ...getConnectorMcpServers(
       connectorIds,
       runtimeCredentialValues,
@@ -4888,6 +4890,7 @@ function persistSessionRecord(sessionRecord, isSubAgent = false) {
   persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
   if (!sessionRecord.busy) syncSessionSearchIndexBestEffort(sessionRecord);
   persistSessionManifest(sessionRecord, isSubAgent);
+  void appTraceHost?.recordSession(sessionRecord).catch(error => mossLog('warn', 'trace', error.message));
 }
 
 function flushPendingSessionPersist(sessionRecord) {
@@ -10987,14 +10990,42 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       void appRuntime?.publishHostEvent(context.appId, context.instanceId, MOSS_CLOUD_STORAGE_PROTOCOL, name, data)?.catch?.(() => {});
     },
   });
+  appMcpHost = new AppMcpHost({
+    getRuntime: () => appRuntime,
+    readLegacy: readDesktopMcpStore,
+    clearLegacy: () => saveDesktopMcpStore({ version: 1, servers: {} }),
+    onChanged: resetLocalRuntimesForMcpReload,
+    reservedName: (name) => Boolean(findConnectorMcpServer(name)),
+    inspect: async (name, config, signal) => {
+      const runtime = await getClaudeRuntimeModule();
+      if (!runtime.inspectDesktopMcpServer) throw new Error('请更新本地运行时后检查 MCP 连接。');
+      return runtime.inspectDesktopMcpServer(name, config, signal);
+    },
+    authenticate: async (name, config, signal) => {
+      const authenticate = await getAuthenticateDesktopMcpServerFn();
+      try {
+        return await authenticate(name, config, {
+          signal, skipBrowserOpen: true,
+          onWaitingForCallback: (submit) => pendingMcpAuthCallbacks.set(name, { submit, createdAt: Date.now(), sessionId: null, displayName: name }),
+          onAuthorizationUrl: (url) => openConnectorAuthorizationUrl({ url, mcpAuth: { serverName: name, displayName: name } }, 'moss'),
+        });
+      } finally { pendingMcpAuthCallbacks.delete(name); }
+    },
+    clearAuth: async (name, config) => (await getClearDesktopMcpServerAuthFn())(name, config),
+  });
+  appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
+    getSessions: () => [...sessions.values(), ...subAgentSessions.values()], log: error => mossLog('warn', 'trace', error.message) });
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
+    beforeAppDeactivation: appId => appTraceHost.beforeDeactivation(appId),
     hostProtocols: [
+      createTraceProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
       createRuntimesProtocolDefinition(),
+      createMcpProtocolDefinition(),
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
       createPlatformProtocolDefinition(),
@@ -11002,7 +11033,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeStatus }),
+      [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
       [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
         method, (input, context) => cloudStorageHost.handle(method, input, context),
       ])),
@@ -11030,9 +11063,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
-      if (event.type === 'installation-changed' || event.type === 'app-uninstalled') {
+      const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
+      if (event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
+        void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
+      }
+      if (appLifecycleChanged) {
         void cloudStorageHost?.watch();
-        resetLocalRuntimesForMcpReload();
+      }
+      if (appLifecycleChanged || (event.type === 'instance-changed' && appMcpHost?.hasApp(event.appId))) {
+        void appMcpHost?.refresh().then(() => resetLocalRuntimesForMcpReload()).catch(error => {
+          mossLog('error', 'mcp', 'Unable to refresh App MCP registry', { error: error.message });
+          resetLocalRuntimesForMcpReload();
+        });
       }
       for (const state of appWindowStates.values()) {
         if (state.id !== event.appId || state.webContents?.isDestroyed()) continue;
@@ -11052,6 +11094,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       });
     });
   }
+  await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
   for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled)) {
     for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
       agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
@@ -11099,19 +11142,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
 
+  await appTraceHost.refresh();
+
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
-  registerTraceIpc({
-    ipcMain,
-    getWindow: () => mainWindow,
-    mossHome: MOSS_HOME,
-    getRuntime: getClaudeRuntimeModule,
-    getSessions: () => [...sessions.values(), ...subAgentSessions.values()],
-    getTranscriptPath: getLocalSessionTranscriptPath,
-    requestRemote: async (operation, payload) => requestRemoteTrace({
-      ...await resolveRemoteDirectConnection(), operation, payload,
-    }),
-  });
   registerResourceMonitorIpc({
     ipcMain, app, webContents, getWindow: () => mainWindow,
     getRuntime: () => appRuntime, getAppStates: () => appWindowStates.values(),
@@ -11307,6 +11341,7 @@ function shutdownDesktop() {
       await agentTeamsService?.checkNow();
     });
     await attempt(() => { agentTeamsService?.stop(); agentTeamsService = null; });
+    await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
     if (localAuditScanTimer) clearInterval(localAuditScanTimer);
     localAuditScanTimer = null;
@@ -11576,61 +11611,6 @@ ipcMain.handle('agent:remote-authenticate-cancel', async () => {
   void authentication.promise.catch(() => {});
   return { canceled: true };
 });
-ipcMain.handle('agent:mcp-list', () => getDesktopMcpPayload());
-ipcMain.handle('agent:mcp-upsert', (_event, payload = {}) => {
-  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
-  if (!isValidMcpServerName(name)) {
-    throw new Error('MCP server name can only contain letters, numbers, hyphens, and underscores.');
-  }
-
-  const config = validateMcpServerConfig(payload.config);
-  const store = readDesktopMcpStore();
-  const previousName = typeof payload.previousName === 'string' ? payload.previousName.trim() : '';
-  if (previousName && previousName !== name && isValidMcpServerName(previousName)) {
-    delete store.servers[previousName];
-  }
-  store.servers[name] = {
-    enabled: Boolean(payload.enabled),
-    config,
-    updatedAt: Date.now(),
-  };
-  saveDesktopMcpStore(store);
-  const reload = resetLocalRuntimesForMcpReload();
-  mossLog('info', 'mcp', 'Desktop MCP server saved', { name, enabled: Boolean(payload.enabled), ...reload });
-  return getDesktopMcpPayload(reload);
-});
-ipcMain.handle('agent:mcp-remove', (_event, payload = {}) => {
-  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
-  if (!isValidMcpServerName(name)) {
-    throw new Error('Invalid MCP server name.');
-  }
-
-  const store = readDesktopMcpStore();
-  delete store.servers[name];
-  saveDesktopMcpStore(store);
-  const reload = resetLocalRuntimesForMcpReload();
-  mossLog('info', 'mcp', 'Desktop MCP server removed', { name, ...reload });
-  return getDesktopMcpPayload(reload);
-});
-ipcMain.handle('agent:mcp-set-enabled', (_event, payload = {}) => {
-  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
-  if (!isValidMcpServerName(name)) {
-    throw new Error('Invalid MCP server name.');
-  }
-
-  const store = readDesktopMcpStore();
-  const entry = store.servers[name];
-  if (!entry) {
-    throw new Error(`Unknown MCP server: ${name}`);
-  }
-  entry.enabled = Boolean(payload.enabled);
-  entry.updatedAt = Date.now();
-  saveDesktopMcpStore(store);
-  const reload = resetLocalRuntimesForMcpReload();
-  mossLog('info', 'mcp', 'Desktop MCP server toggled', { name, enabled: entry.enabled, ...reload });
-  return getDesktopMcpPayload(reload);
-});
-
 function getConnectorMcpAuthFailureMessage(connectorServer, error, { authorizationUrlOpened = false } = {}) {
   const connectorName = connectorServer?.connectorName || connectorServer?.connectorId || '连接器';
   const detail = redactAuthFailureText(error?.message || String(error));
@@ -11689,7 +11669,8 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
   }
 
   const store = readDesktopMcpStore();
-  const entry = store.servers[name];
+  const appEntry = appMcpHost?.findServer(name);
+  const entry = store.servers[name] || appEntry;
   const connectorServer = entry ? null : findConnectorMcpServer(name);
   if (!entry && !connectorServer) {
     throw new Error(`Unknown MCP server: ${name}`);
@@ -11701,7 +11682,7 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
     throw new Error('Only http and sse MCP servers support browser authentication.');
   }
 
-  if (entry && !entry.enabled) {
+  if (entry && !entry.enabled && !appEntry) {
     entry.enabled = true;
     entry.updatedAt = Date.now();
     saveDesktopMcpStore(store);
@@ -11943,7 +11924,7 @@ ipcMain.handle('agent:mcp-clear-auth', async (_event, payload = {}) => {
   }
 
   const store = readDesktopMcpStore();
-  const entry = store.servers[name];
+  const entry = store.servers[name] || appMcpHost?.findServer(name);
   const connectorServer = entry ? null : findConnectorMcpServer(name);
   if (!entry && !connectorServer) {
     throw new Error(`Unknown MCP server: ${name}`);

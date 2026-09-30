@@ -75,6 +75,7 @@ function ownerStorageSegment(owner) {
 
 export class AppRuntimeHost {
   constructor(options) {
+    this.beforeAppDeactivation = options.beforeAppDeactivation || (() => {})
     this.rootDir = path.resolve(options.rootDir)
     this.appsDir = path.resolve(options.appsDir || path.join(this.rootDir, 'apps'))
     this.dataDir = path.resolve(options.dataDir || path.join(this.rootDir, 'apps-data'))
@@ -493,6 +494,7 @@ export class AppRuntimeHost {
     const runtimes = this.runtimes.list(appId)
     await this.installations.upsert(appId, { grants: nextGrants })
     try {
+      await this.beforeAppDeactivation(appId)
       for (const runtimeRecord of runtimes) {
         await this.supervisor.stop(runtimeRecord.key)
         await this.runtimes.bumpGeneration(runtimeRecord.key)
@@ -516,6 +518,7 @@ export class AppRuntimeHost {
     const previous = this.installations.get(appId)
     await this.installations.upsert(appId, { enabled: Boolean(enabled) })
     try {
+      if (!enabled) await this.beforeAppDeactivation(appId)
       await this.reconcileApp(appId)
     } catch (error) {
       await this.installations.upsert(appId, { enabled: previous.enabled })
@@ -625,6 +628,7 @@ export class AppRuntimeHost {
     }
     await this.instances.update(instanceId, { enabled: Boolean(enabled) })
     try {
+      if (!enabled) await this.beforeAppDeactivation(appId)
       await this.reconcileInstance(instanceId)
     } catch (error) {
       await this.instances.update(instanceId, { enabled: previous.enabled })
@@ -1027,6 +1031,7 @@ export class AppRuntimeHost {
       await this.packages.removeApp(appId)
       for (const key of this.packageCache.keys()) if (key.startsWith(`${appId}@`)) this.packageCache.delete(key)
     }
+    await this.beforeAppDeactivation(appId)
     if (options.deleteData) {
       await fsp.rm(this.appDataPath(this.dataDir, appId), { recursive: true, force: true })
       await fsp.rm(this.appDataPath(this.runtimeDir, appId), { recursive: true, force: true })

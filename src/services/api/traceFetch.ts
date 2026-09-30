@@ -1,11 +1,10 @@
 import type { ClientOptions } from '@anthropic-ai/sdk'
 import {
   createTraceBodySnapshot,
-  createTraceCallId,
-  shouldCaptureApiTrace,
-  traceCaptureService,
   type RecordTraceCallInput,
-} from './traceCapture.js'
+} from '../trace/traceRecord.js'
+import { randomUUID as createTraceCallId } from 'node:crypto'
+import { resolveTraceCapture } from '../trace/traceOutput.js'
 import { getTraceScope, withTraceScope } from '../trace/traceScope.js'
 import { TraceResponseCollector, traceUsageFromProtocol } from '../trace/responseCapture.js'
 import { createProtocolOutputBudget, type ProtocolTraceSummary } from '../trace/protocolTrace.js'
@@ -74,10 +73,10 @@ export function createTraceFetch(
   options: { sessionId: string | (() => string); querySource?: string },
 ): Fetch {
   return async (input, init) => {
-    let enabled = false
-    try { enabled = shouldCaptureApiTrace() } catch { /* Tracing is best effort. */ }
+    let capture: ReturnType<typeof resolveTraceCapture> = null
+    try { capture = resolveTraceCapture() } catch { /* Tracing is best effort. */ }
     const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
-    if (!enabled || method.toUpperCase() !== 'POST') return inner(input, init)
+    if (!capture || method.toUpperCase() !== 'POST') return inner(input, init)
 
     let sessionId: string
     let scope: string
@@ -121,10 +120,10 @@ export function createTraceFetch(
         id, sessionId, source: 'anthropic', querySource: options.querySource, model, startedAt,
         request: { method, url, headers, body: raw },
       }
-      await inScope(() => traceCaptureService.recordCall({
+      await inScope(() => capture!.recordCall({
         ...base, status: 'pending', metadata: { phase: 'api_call_started' },
       }, captureOptions))
-      await inScope(() => traceCaptureService.recordEvent({
+      await inScope(() => capture!.recordEvent({
         sessionId, callId: id, source: 'anthropic', model, timestamp: startedAt,
         phase: 'api_call_started', title: 'API call started', metadata: { url },
       }, captureOptions))
@@ -138,12 +137,12 @@ export function createTraceFetch(
       void background(async () => {
         const base = await pending
         if (!base) return
-        await inScope(() => traceCaptureService.recordCall({
+        await inScope(() => capture!.recordCall({
           ...base, status: 'error', error, completedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAtMs,
           metadata: { phase: 'api_call_failed', ...(signal?.aborted ? { aborted: true } : {}) },
         }, captureOptions))
-        await inScope(() => traceCaptureService.recordEvent({
+        await inScope(() => capture!.recordEvent({
           sessionId, callId: id, source: 'anthropic', model: base.model,
           phase: 'api_call_failed', severity: 'error', title: 'API call failed',
           message: error instanceof Error ? error.message : String(error),
@@ -182,7 +181,7 @@ export function createTraceFetch(
           ...(captured.firstByteAt === undefined ? {} : { firstByteMs: captured.firstByteAt - startedAtMs }),
           protocolTrace: captured.protocolTrace,
         }
-        await inScope(() => traceCaptureService.recordCall({
+        await inScope(() => capture!.recordCall({
           ...base, completedAt, durationMs,
           ...(recordedError ? { status: 'error' as const, error: recordedError } : {}),
           usage: traceUsageFromProtocol(captured.protocolTrace),
@@ -192,7 +191,7 @@ export function createTraceFetch(
           },
           metadata,
         }, captureOptions))
-        await inScope(() => traceCaptureService.recordEvent({
+        await inScope(() => capture!.recordEvent({
           sessionId, callId: id, source: 'anthropic', model: base.model, timestamp: completedAt,
           phase, severity: recordedError ? 'error' : response.ok ? 'info' : 'warning',
           title: recordedError ? 'API call interrupted' : 'API call completed',

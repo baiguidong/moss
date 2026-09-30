@@ -4,7 +4,7 @@ Host Capability API 是 App Backend 使用 Moss 能力的唯一受支持入口�
 Session 或数据库内部模块；它应在 Manifest 中声明版本化协议和权限，再通过 `@moss/app-sdk`
 发起受控请求。
 
-Host API 当前版本为 `2.1.0`，兼容要求 `^2.0.0` 的 App。Backend 进程协议仍为 App Service v1；
+Host API 当前版本为 `2.5.0`，兼容要求 `^2.0.0` 的 App。Backend 进程协议仍为 App Service v1；
 前者描述公开能力集合，后者描述 Node 子进程的传输 envelope。
 
 ## 内置协议
@@ -99,6 +99,8 @@ Agent 的方法、事件和幂等约束见 [Agent Host API](./agent-host-api.md)
 
 ## 本地文件与受管运行时
 
+Desktop 自 Host API 2.4 起还提供 `moss.mcp/v1`，供独立 MCP App 管理自己的服务、检查连接和发起授权。协议、权限与迁移规则见 [MCP App](./mcp-app.md)。
+
 Desktop 额外注册两个通用协议，使用现有 `context.host.request` 调用，无需扩展会话/项目上下文。
 
 | 协议 | 方法 | 输入 / 输出 | 安装权限 |
@@ -111,3 +113,7 @@ Desktop 额外注册两个通用协议，使用现有 `context.host.request` 调
 `python.get` 仅报告已有受管运行时，不下载运行时或安装 Python 包。各 App 随安装包准备自己的解析依赖。
 
 资源引用由 App 的 `contributes.resourceProviders` 声明 scheme 和 `resolveAction`。Desktop 的 `openAppResource(uri)` 与显式附件解析均先查找唯一已启用的 provider，再校验其返回的 `{ kind: 'file', path }` 位于该 App 实例数据目录。业务 ID、revision 和文档导出由 App 处理，Core 不解析知识库或 Wiki 的资源 ID。
+
+## Trace App（Host API 2.5）
+
+`moss.trace/v1` 仅支持 `status({})`，要求 `trace:capture` 授权，返回 enabled、queuedBytes、droppedRecords 和 error。Core 写入应用实例数据目录，App 独立管理读取与索引。采集由已安装 App 及其默认实例的启用状态决定，无第二个采集开关，不支持任意输出目录或采集结果查询。参见 [Trace App 架构](../../docs/trace-migration-plan.md)。

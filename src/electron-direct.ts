@@ -5,7 +5,8 @@
  */
 
 import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessionIdContext.js'
-export { withTraceScope, readTraceCaptureSettings, updateTraceCaptureSettings, traceCaptureService, trimTraceCallPreviews } from './services/api/traceCapture.js'
+export { inspectDesktopMcpServer } from './services/mcp/desktopProbe.js'
+export { configureTraceOutput, writeTraceSessionSnapshot, traceOutputStatus, drainTraceOutput } from './services/trace/traceOutput.js'
 export { toTraceMessages } from './services/api/traceMessages.js'
 import type { ImageSettings } from './services/imageGeneration.js'
 import { randomUUID, type UUID } from 'crypto'
@@ -371,6 +372,7 @@ export async function authenticateDesktopMcpServer(
     onAuthorizationUrl?: (url: string) => void
     onWaitingForCallback?: (submit: (callbackUrl: string) => void) => void
     skipBrowserOpen?: boolean
+    signal?: AbortSignal
   } = {},
 ): Promise<{ authorizationUrl?: string }> {
   const remoteConfig = assertRemoteMcpConfig(serverName, config)
@@ -378,7 +380,7 @@ export async function authenticateDesktopMcpServer(
   await performMCPOAuthFlow(serverName, remoteConfig, url => {
     authorizationUrl = url
     options.onAuthorizationUrl?.(url)
-  }, undefined, {
+  }, options.signal, {
     onWaitingForCallback: options.onWaitingForCallback,
     skipBrowserOpen: options.skipBrowserOpen,
   })
