@@ -84,7 +84,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
   );
 
   expect(html).not.toContain('回复会话');
-  expect(html).toContain('固定会话');
+  expect(html).toContain('按发件人固定会话');
   expect(html).toContain('新会话');
   expect(html).toContain('aria-label="协作邮箱会话模式"');
   expect(html).toContain('Moss User');

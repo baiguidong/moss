@@ -19,8 +19,6 @@ describe('collaborative mailbox renderer boundary', () => {
     expect(mainSource).not.toContain("ipcMain.handle('agent-mail:reply'")
     expect(preloadSource).not.toContain("ipcRenderer.invoke('agent-mail:reply'")
     expect(preloadSource).not.toContain("ipcRenderer.invoke('agent-mail:send'")
-    expect(mainSource).toContain('resetRuntimeBeforePrompt: fixedSession')
-    expect(mainSource).toContain('agentMailStore.getThreadContext(mailboxKey, threadId)')
     expect(mainSource).toContain('buildAgentMailMailboxKey(connection)')
     expect(mainSource).toContain('mailConnection: context.mailConnection || null')
     expect(mainSource).toContain('retryEncryptedContentOnce: true')

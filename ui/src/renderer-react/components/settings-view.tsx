@@ -1895,7 +1895,7 @@ export function SettingsView({
                         >
                           <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
                             <select
-                              className={cn(SELECT_CLASS_NAME, 'w-[132px]')}
+                              className={cn(SELECT_CLASS_NAME, 'w-[160px]')}
                               value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
                               disabled={
                                 !(settingsDraft.remoteEnabled ?? false) ||
@@ -1907,7 +1907,7 @@ export function SettingsView({
                                 sessionMode: event.target.value === 'new' ? 'new' : 'fixed',
                               })}
                             >
-                              <option value="fixed">固定会话</option>
+                              <option value="fixed">按发件人固定会话</option>
                               <option value="new">新会话</option>
                             </select>
                             <span className="hidden h-6 w-px bg-sidebar-border sm:block" />

@@ -6,7 +6,6 @@ import {
   buildAgentMailMailboxLabel,
   buildAgentMailReceivedSummary,
   buildAgentMailSessionTitle,
-  buildAgentMailThreadContext,
   isEncryptedContentVerificationError,
   normalizeAgentMailSessionMode,
 } from '../src/agent-mail-context.mjs';
@@ -53,7 +52,6 @@ describe('Agent Mail inference context', () => {
     ].join('\n'));
     expect(summary).not.toContain('thinking');
     expect(summary).not.toContain('tool_use');
-    expect(buildAgentMailThreadContext(summary)).toContain(JSON.stringify(summary));
   });
 
   test('bounds summaries and recognizes encrypted reasoning verification failures', () => {

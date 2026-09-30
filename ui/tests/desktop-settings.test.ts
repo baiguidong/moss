@@ -210,6 +210,8 @@ describe('desktop settings', () => {
         inboxSessionId: ' inbox-session ',
         inboxSessionIds: {
           'mailbox:abc': ' account-session ',
+          'mailbox:abc:sender:alice': ' alice-session ',
+          'mailbox:abc:sender:bob': ' bob-session ',
           legacy: 'ignored-session',
         },
       },
@@ -218,7 +220,11 @@ describe('desktop settings', () => {
       sessionMode: 'new',
       consumerId: 'x'.repeat(128),
       inboxSessionId: 'inbox-session',
-      inboxSessionIds: { 'mailbox:abc': 'account-session' },
+      inboxSessionIds: {
+        'mailbox:abc': 'account-session',
+        'mailbox:abc:sender:alice': 'alice-session',
+        'mailbox:abc:sender:bob': 'bob-session',
+      },
     });
     expect(normalizeDesktopSettings({
       remoteEnabled: false,
