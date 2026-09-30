@@ -5,7 +5,7 @@ import { FilePreview } from "@/components/file-preview";
 import { UserAvatar } from "@/components/user-avatar";
 import type { UserTextRenderMessage } from "@/lib/agent-transcript";
 
-export function UserMessage({ message }: { message: UserTextRenderMessage }) {
+export const UserMessage = React.memo(function UserMessage({ message }: { message: UserTextRenderMessage }) {
   const hasText = message.content.trim().length > 0;
   const attachments = message.attachments || [];
 
@@ -14,7 +14,7 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
       className="group flex flex-row-reverse justify-start gap-2"
       style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
     >
-      <UserAvatar />
+      <UserAvatar className="chat-message-icon" />
 
       <div
         data-message-shell="user"
@@ -35,7 +35,8 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
 
         {hasText && (
           <div
-            className="max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tr-[4px] bg-primary px-3 text-primary-foreground"
+            data-message-body="user"
+            className="max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tr-[4px] bg-[var(--color-surface-user-msg)] px-3 text-foreground select-text"
             style={{
               fontSize: "var(--chat-font-size, 14px)",
               lineHeight: "var(--chat-line-height, 1.55)",
@@ -48,4 +49,4 @@ export function UserMessage({ message }: { message: UserTextRenderMessage }) {
       </div>
     </div>
   );
-}
+});

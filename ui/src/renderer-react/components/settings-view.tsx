@@ -15,6 +15,7 @@ import {
   Trash2,
   TriangleAlert,
   Wrench,
+  Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -34,11 +35,15 @@ import {
   MOSS_TOOL_GROUPS,
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
-import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload } from '../types';
+import type { DesktopSettings, ManagedRuntimeStatus, McpServerConfig, McpServerEntry, McpSettingsPayload, StoredApp } from '../types';
+import { TraceView } from './trace-view';
+import { AssistantMessage } from '@/components/chat/assistant-message';
+import { UserMessage } from '@/components/chat/user-message';
+import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'library' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced' | 'trace';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'library' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address' | 'trace';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -55,8 +60,12 @@ type SettingsViewProps = {
   onAppearanceCommit: (patch: Partial<DesktopSettings['appearance']>) => void;
   buddyEnabled: boolean;
   onBuddyEnabledChange: (enabled: boolean) => void;
+  apps?: StoredApp[];
   workspace?: string;
   initialSection?: SectionId;
+  traceSessionId?: string;
+  traceTarget?: 'local' | 'remote';
+  onTraceBack?: () => void;
 };
 
 type SettingsSectionDefinition = {
@@ -156,8 +165,8 @@ const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 };
 
 const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
-  enabled: true,
-  compactEnabled: true,
+  enabled: false,
+  compactEnabled: false,
   minimumMessageTokensToInit: 10000,
   minimumTokensBetweenUpdate: 5000,
   toolCallsBetweenUpdates: 3,
@@ -199,10 +208,10 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
 const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
   {
     id: 'basic',
-    title: '基础设置',
+    title: '通用',
     icon: Monitor,
     iconGradientClassName: 'from-sky-400 to-blue-600',
-    keywords: ['基础', '基本', '常规'],
+    keywords: ['通用', 'general', '基础', '基本', '常规', '外观'],
     sections: [
       {
         id: 'basic-info',
@@ -218,6 +227,11 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         id: 'web-search',
         title: '网页搜索',
         keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'],
+      },
+      {
+        id: 'appearance',
+        title: '外观',
+        keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距', 'AI', '回复', '边框', '图标', '头像', 'border', 'avatar'],
       },
     ],
   },
@@ -281,11 +295,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     keywords: ['个性化', 'personalization', '外观', 'buddy'],
     sections: [
       {
-        id: 'appearance',
-        title: '外观',
-        keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距'],
-      },
-      {
         id: 'buddy',
         title: 'Buddy',
         keywords: ['buddy', 'pet', 'companion', '伴侣', '宠物'],
@@ -307,7 +316,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'memory',
         title: '记忆',
-        keywords: ['memory', 'session', 'compact', 'summary', '上下文', '压缩', 'dream', '提取', '纠正'],
+        keywords: ['memory', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'],
       },
       {
         id: 'agent-execution',
@@ -330,6 +339,14 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
         keywords: ['skillhub', 'skill', '专家中心', 'expert', 'experthub', 'market', 'api', '公网', '根地址'],
       },
     ],
+  },
+  {
+    id: 'trace',
+    title: 'Trace',
+    icon: Workflow,
+    iconGradientClassName: 'from-sky-400 to-indigo-600',
+    keywords: ['trace', '追踪', '模型请求', '响应', '排障'],
+    sections: [{ id: 'trace', title: 'Trace', keywords: ['trace', '追踪', '模型请求', '响应', '排障', '提示词'] }],
   },
 ];
 
@@ -493,6 +510,57 @@ export function ToolLoadingSettingsTable({
           ))}
         </table>
       </div>
+    </Surface>
+  );
+}
+
+export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
+  const groups = apps.filter(app => app.agentTools?.length);
+  return (
+    <Surface>
+      {groups.length === 0 ? (
+        <p className="px-4 py-5 text-xs text-muted-foreground">已安装的 App 暂未提供 AI 工具。</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] table-fixed text-left" aria-label="App 提供的工具">
+            <colgroup>
+              <col className="w-40" />
+              <col className="w-[180px]" />
+              <col />
+              <col className="w-24" />
+              <col className="w-28" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-sidebar-border bg-sidebar-accent/45 text-xs text-muted-foreground">
+                <th className="px-4 py-3 font-medium">App</th>
+                <th className="px-4 py-3 font-medium">工具</th>
+                <th className="px-4 py-3 font-medium">简短说明</th>
+                <th className="px-3 py-3 font-medium">加载方式</th>
+                <th className="px-3 py-3 font-medium">状态</th>
+              </tr>
+            </thead>
+            {groups.map(app => (
+              <tbody key={app.id || app.name} className="border-b border-sidebar-border last:border-b-0">
+                {app.agentTools!.map((tool, index) => (
+                  <tr key={tool.id} className="border-t border-sidebar-border first:border-t-0">
+                    {index === 0 && <th scope="rowgroup" rowSpan={app.agentTools!.length} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 align-middle text-xs font-semibold text-foreground">
+                      <span className="block break-words">{app.displayName || app.title || app.name}</span>
+                      <code className="mt-1 block break-all text-[11px] font-normal text-muted-foreground">{app.id || app.name}</code>
+                    </th>}
+                    <td className="px-4 py-3 text-xs">
+                      <span className="block break-words font-medium text-foreground">{tool.title}</span>
+                      <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
+                    </td>
+                    <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">{tool.description}</td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground">按需</td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground">{!app.enabled ? 'App 已停用' : tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            ))}
+          </table>
+        </div>
+      )}
     </Surface>
   );
 }
@@ -1290,8 +1358,12 @@ export function SettingsView({
   onAppearanceCommit,
   buddyEnabled,
   onBuddyEnabledChange,
+  apps = [],
   workspace,
   initialSection = 'basic-info',
+  traceSessionId,
+  traceTarget,
+  onTraceBack,
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
@@ -1322,6 +1394,7 @@ export function SettingsView({
     'tool-performance': null,
     prompt: null,
     'service-address': null,
+    trace: null,
   });
 
   const visibleNavigationGroups = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => {
@@ -1719,6 +1792,9 @@ export function SettingsView({
                 </div>
               </div>
 
+              {activeGroupId === 'trace' && !deferredSearchQuery ? (
+                <TraceView initialSessionId={traceSessionId} initialTarget={traceTarget} onBack={onTraceBack} />
+              ) : (
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
                   <div className="px-1">
@@ -1726,6 +1802,16 @@ export function SettingsView({
                       {deferredSearchQuery ? '搜索设置' : activeGroup.title}
                     </h1>
                   </div>
+
+                  {visibleSections.some(section => section.id === 'trace') ? (
+                    <SettingsSection id="trace" title="Trace" sectionRef={element => { sectionRefs.current.trace = element; }}>
+                      <SettingsGroup>
+                        <SettingsRow title="模型调用追踪" description="查看发送给模型的提示词、消息、工具定义，以及模型响应和错误。">
+                          <Button type="button" variant="outline" onClick={() => { setSearchQuery(''); setActiveGroupId('trace'); setActiveSection('trace'); }}>打开 Trace</Button>
+                        </SettingsRow>
+                      </SettingsGroup>
+                    </SettingsSection>
+                  ) : null}
 
                   {settingsDraft.settingsParseError ? (
                     <Surface className="border-amber-200/80 bg-amber-50/90 p-4 text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
@@ -2340,111 +2426,6 @@ export function SettingsView({
                     </div>
                     <SettingsGroup>
                       <SettingsRow
-                        title="初始化 token 阈值"
-                        description="会话上下文达到该规模后，才开始创建 session-memory/summary.md。调小后更容易测试。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={1000000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.minimumMessageTokensToInit ?? DEFAULT_SESSION_MEMORY_SETTINGS.minimumMessageTokensToInit}
-                          onChange={(event) => {
-                            const value = Number.parseInt(event.target.value || '1', 10);
-                            updateSessionMemorySettings({ minimumMessageTokensToInit: value });
-                          }}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="更新 token 间隔"
-                        description="距离上次提取新增的上下文 token 达到该值后，允许再次更新会话记忆。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={1000000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.minimumTokensBetweenUpdate ?? DEFAULT_SESSION_MEMORY_SETTINGS.minimumTokensBetweenUpdate}
-                          onChange={(event) => {
-                            const value = Number.parseInt(event.target.value || '1', 10);
-                            updateSessionMemorySettings({ minimumTokensBetweenUpdate: value });
-                          }}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="工具调用间隔"
-                        description="两次会话记忆更新之间至少需要的工具调用次数。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={10000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.toolCallsBetweenUpdates ?? DEFAULT_SESSION_MEMORY_SETTINGS.toolCallsBetweenUpdates}
-                          onChange={(event) => {
-                            const value = Number.parseInt(event.target.value || '1', 10);
-                            updateSessionMemorySettings({ toolCallsBetweenUpdates: value });
-                          }}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="压缩保留 token 下限"
-                        description="使用会话记忆压缩时，至少保留的近期上下文 token 数。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={1000000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.compactMinTokens ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMinTokens}
-                          onChange={(event) => updateSessionMemorySettings({
-                            compactMinTokens: Number.parseInt(event.target.value || '1', 10),
-                          })}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="压缩保留消息下限"
-                        description="使用会话记忆压缩时，至少保留的近期文本消息数。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={10000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.compactMinTextBlockMessages ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMinTextBlockMessages}
-                          onChange={(event) => updateSessionMemorySettings({
-                            compactMinTextBlockMessages: Number.parseInt(event.target.value || '1', 10),
-                          })}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="压缩保留 token 上限"
-                        description="使用会话记忆压缩时，近期上下文最多保留的 token 数。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={1000000}
-                          className={FIELD_CLASS_NAME}
-                          value={sessionMemoryDraft.compactMaxTokens ?? DEFAULT_SESSION_MEMORY_SETTINGS.compactMaxTokens}
-                          onChange={(event) => updateSessionMemorySettings({
-                            compactMaxTokens: Number.parseInt(event.target.value || '1', 10),
-                          })}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
                         title="历史上下文搜索"
                         description="允许 Agent 在需要时搜索长期记忆和当前会话的历史记录。"
                         controlClassName="sm:w-[56px]"
@@ -2529,32 +2510,19 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
-                        title="会话记忆"
-                        description="为每个会话维护独立摘要，用于长会话压缩和恢复当前上下文。"
+                        title="会话摘要"
+                        description="默认关闭。开启后由模型按需调用工具保存当前会话摘要，不按 token 或工具次数自动生成，也不用于上下文压缩。"
                         controlClassName="sm:w-[56px]"
                       >
                         <div className="flex justify-start sm:justify-end">
                           <Toggle
                             checked={Boolean(sessionMemoryDraft.enabled)}
                             onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
-                            label="会话记忆"
+                            label="会话摘要"
                           />
                         </div>
                       </SettingsRow>
 
-                      <SettingsRow
-                        title="压缩时使用会话记忆"
-                        description="开启后，/compact 和自动压缩会优先使用当前会话摘要。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(sessionMemoryDraft.compactEnabled)}
-                            onCheckedChange={(checked) => updateSessionMemorySettings({ compactEnabled: checked })}
-                            label="压缩时使用会话记忆"
-                          />
-                        </div>
-                      </SettingsRow>
                     </SettingsGroup>
 
                     <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
@@ -2636,8 +2604,9 @@ export function SettingsView({
                     }}
                     className="scroll-mt-6"
                   >
-                    <div className="mb-3 px-1 text-sm leading-6 text-muted-foreground">
-                      常驻工具会在每次请求中提供完整参数；按需工具只公布名称，首次命中时会按分组一起加载。
+                    <div className="mb-3 px-1">
+                      <h3 className="text-[15px] font-semibold text-foreground">Moss 内置工具</h3>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">常驻工具会在每次请求中提供完整参数；按需工具只公布名称，首次命中时会按分组一起加载。</p>
                     </div>
                     <ToolLoadingSettingsTable
                       value={toolLoadingDraft}
@@ -2647,6 +2616,11 @@ export function SettingsView({
                         workflows: settingsDraft?.workflows?.enabled === true,
                       }}
                     />
+                    <div className="mb-3 mt-8 px-1">
+                      <h3 className="text-[15px] font-semibold text-foreground">App 提供的工具</h3>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">统一按需加载，随 App 启停。请在 App 管理中启停应用或调整授权。</p>
+                    </div>
+                    <AppToolSettingsTable apps={apps} />
                   </section>
                 ) : null}
 
@@ -3251,6 +3225,53 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
+                        title="AI 回复边框"
+                        description="为 AI 回复添加细边框和内边距。"
+                        controlClassName="sm:w-auto"
+                      >
+                        <Toggle
+                          checked={settingsDraft.appearance.showAssistantMessageBorder ?? false}
+                          onCheckedChange={(checked) => onAppearanceCommit({ showAssistantMessageBorder: checked })}
+                          label="显示 AI 回复边框"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="消息图标"
+                        description="统一显示用户、AI、工具和思考图标。关闭后，消息会收回图标占用的空间。"
+                        controlClassName="sm:w-auto"
+                      >
+                        <Toggle
+                          checked={settingsDraft.appearance.showAssistantAvatar ?? true}
+                          onCheckedChange={(checked) => onAppearanceCommit({ showAssistantAvatar: checked })}
+                          label="显示消息图标"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow title="消息预览" stacked>
+                        <div
+                          aria-label="消息外观预览"
+                          className="pointer-events-none rounded-xl bg-muted/25 p-4 [&_button]:hidden"
+                          style={getChatAppearanceStyle(settingsDraft.appearance)}
+                        >
+                          <UserMessage message={{
+                            id: 'appearance-user-preview',
+                            timestamp: new Date(0),
+                            type: 'user_text',
+                            role: 'user',
+                            content: '看看消息的显示效果。',
+                          }} />
+                          <AssistantMessage message={{
+                            id: 'appearance-preview',
+                            timestamp: new Date(0),
+                            type: 'assistant_text',
+                            role: 'assistant',
+                            content: '这是一条 AI 回复预览。\n\n边框和图标会随上方的设置即时变化。',
+                          }} />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
                         title="工具展示"
                         description="控制工具调用在所有会话中的默认展示方式"
                         controlClassName="sm:w-auto"
@@ -3288,6 +3309,7 @@ export function SettingsView({
                 ) : null}
               </div>
             </div>
+              )}
           </div>
         </div>
       </div>

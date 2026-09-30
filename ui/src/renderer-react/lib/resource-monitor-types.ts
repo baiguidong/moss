@@ -39,6 +39,7 @@ export type ResourceAlert = {
   startedAt: number;
   detectedAt: number;
   endedAt: number | null;
+  endReason?: string;
   peakCpu: number | null;
 };
 

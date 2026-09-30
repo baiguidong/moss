@@ -94,6 +94,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
         if (!accepted) return;
         result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, version, acceptPermissions: true });
       }
+      if (result.canceled) return;
       if (!result.ok) throw new Error("App 安装未完成");
       await onInstalled();
       await loadCatalog(true);

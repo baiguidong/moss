@@ -132,6 +132,17 @@ describe('resource history and alerts', () => {
     resolve!([raw()]);
     await Promise.all([first, second]);
   });
+  test('ends an interrupted observation at the last valid sample without claiming CPU recovered', async () => {
+    const f = fixture();
+    await f.service.sample();
+    for (let i = 1; i <= 12; i++) await f.next(i * 5);
+    const high = await f.service.getSnapshot();
+    f.setFailure(true);
+    const failed = await f.next(65);
+    expect(failed.events[0].endReason).toBe('采样中断');
+    expect(failed.events[0].endedAt).toBe(high.lastSuccessAt);
+    expect(failed.cpuPercent).toBeNull();
+  });
   test('surfaces heartbeat timeout and crash loops even when CPU is low', async () => {
     const service = createResourceMonitor({ rootPid: 100, now: () => 1_000_000, readProcesses: async () => [raw()], getLabels: () => [
       { pid: 100, name: 'App', kind: 'app', state: 'running', lastHeartbeatAt: 800_000, healthCheckTimeoutMs: 65_000, recentCrashCount: 3 },
@@ -141,5 +152,65 @@ describe('resource history and alerts', () => {
     expect(snapshot.alerts.map(event => event.kind).sort()).toEqual(['crash', 'crash', 'heartbeat']);
     expect(snapshot.processCount).toBe(1);
     expect(snapshot.processes.find(row => row.name === 'Crashed')?.cpuPercent).toBeNull();
+  });
+  test('keeps an App crash alert through PID changes and updates its count and severity', async () => {
+    let clock = 1_000_000;
+    let rows = [raw()];
+    const label = { targetKey: '0:feishu', pid: null as number | null, kind: 'app', name: '飞书', state: 'error', recentCrashCount: 2 };
+    const events: any[] = [];
+    const service = createResourceMonitor({
+      rootPid: 100, now: () => clock, monotonic: () => clock,
+      readProcesses: async () => rows, getLabels: () => [label], onAlert: event => events.push(event),
+    });
+    const sample = async () => { clock += 5000; await service.sample(); return service.getSnapshot({ active: false }); };
+    const first = (await sample()).alerts.find(event => event.kind === 'crash')!;
+    label.pid = 200; label.state = 'running'; rows = [raw(), raw(200)];
+    const restarted = await sample();
+    expect(restarted.alerts.find(event => event.kind === 'crash')).toMatchObject({ id: first.id, processId: '200:boot:1', startedAt: first.startedAt });
+    expect(restarted.processes.find(row => row.pid === 200)?.cpuPercent).toBeNull();
+    label.pid = null; label.state = 'error'; label.recentCrashCount = 3; rows = [raw()];
+    expect((await sample()).alerts.find(event => event.kind === 'crash')).toMatchObject({ id: first.id, processId: 'app:0:feishu', message: '最近 5 分钟异常退出 3 次' });
+    label.state = 'crash-loop';
+    const loop = (await sample()).alerts.find(event => event.kind === 'crash');
+    expect(loop?.message).toBe('App 反复崩溃，已停止自动重启');
+    expect(loop?.peakCpu).toBeNull();
+    expect(events.filter(event => event.kind === 'crash').map(event => event.phase)).toEqual(['started']);
+    label.state = 'stopped'; label.recentCrashCount = 0;
+    expect((await sample()).alerts).toHaveLength(0);
+    expect(events.filter(event => event.kind === 'crash').map(event => event.phase)).toEqual(['started', 'ended']);
+  });
+  test.each([false, true])('allows heartbeats to resume after a sampling gap (collection failed: %s), but still detects a silent Backend', async failed => {
+    let clock = 1_000_000;
+    let failure = false;
+    const label = { pid: 100, kind: 'app', state: 'running', lastHeartbeatAt: clock, healthCheckTimeoutMs: 65_000 };
+    const service = createResourceMonitor({
+      rootPid: 100, now: () => clock, monotonic: () => clock, getLabels: () => [label],
+      readProcesses: async () => { if (failure) throw new Error('unavailable'); return [raw()]; },
+    });
+    await service.sample();
+    clock += 300_000;
+    if (failed) { failure = true; await service.sample(); failure = false; clock += 5000; }
+    await service.sample();
+    expect((await service.getSnapshot()).alerts).toHaveLength(0);
+    for (let i = 0; i < 13; i++) {
+      clock += 5000; await service.sample();
+      expect((await service.getSnapshot()).alerts).toHaveLength(0);
+    }
+    clock += 5000; await service.sample();
+    expect((await service.getSnapshot()).alerts.map(event => event.kind)).toEqual(['heartbeat']);
+    label.lastHeartbeatAt = clock;
+    clock += 5000; await service.sample();
+    expect((await service.getSnapshot()).alerts).toHaveLength(0);
+  });
+  test('honors the supervisor response deadline without inventing a heartbeat', async () => {
+    let clock = 1_000_000;
+    const label = { pid: 100, kind: 'app', state: 'running', lastHeartbeatAt: clock - 100_000, healthCheckTimeoutMs: 65_000, healthCheckDeadlineAt: clock + 5000 };
+    const service = createResourceMonitor({ rootPid: 100, now: () => clock, monotonic: () => clock, readProcesses: async () => [raw()], getLabels: () => [label] });
+    await service.sample();
+    const grace = await service.getSnapshot();
+    expect(grace.alerts).toHaveLength(0);
+    expect(grace.processes[0].lastHeartbeatAt).toBe(label.lastHeartbeatAt);
+    clock += 10_000; await service.sample();
+    expect((await service.getSnapshot()).alerts.map(event => event.kind)).toEqual(['heartbeat']);
   });
 });

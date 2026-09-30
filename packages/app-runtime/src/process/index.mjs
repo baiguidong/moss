@@ -15,6 +15,7 @@ import {
 } from '../../../app-sdk/src/index.mjs'
 import { redactAppValue } from '../logging/index.mjs'
 import { AppProcessLeases } from './lease.mjs'
+import { createAppWatchdog } from './watchdog.mjs'
 
 const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
 const MAX_HOST_REPLY_CACHE_ENTRIES = 128
@@ -33,7 +34,7 @@ function minimalEnvironment(extra = {}) {
 }
 
 function errorFromPayload(payload, secretValues) {
-  const error = redactAppValue(payload?.error || {}, secretValues)
+  const error = redactAppValue(serializeError(payload?.error), secretValues)
   return new AppServiceError(
     error.code || APP_ERROR_CODES.backendUnavailable,
     error.message || 'App Backend action failed',
@@ -129,6 +130,7 @@ export class AppProcessSupervisor {
       lifecycle: definition?.lifecycle || null,
       lastHeartbeatAt: hosted?.lastPongAt || null,
       healthCheckTimeoutMs: this.healthCheckTimeoutMs,
+      healthCheckDeadlineAt: hosted?.healthWatchdog?.deadlineAt || null,
       recentCrashCount: (this.failureHistory.get(key) || []).filter(time => Date.now() - time < this.crashLoopWindowMs).length,
       pendingActions: hosted?.pending?.size || 0,
       pendingHostEvents: hosted?.pendingHostEvents?.size || 0,
@@ -200,6 +202,8 @@ export class AppProcessSupervisor {
       stopping: false,
       failures: options.clearCrashLoop ? [] : current?.failures || this.failureHistory.get(key) || [],
       lastError: null,
+      failureReason: null,
+      healthWatchdog: null,
       idleTimer: null,
       pingTimer: null,
       restartTimer: null,
@@ -257,18 +261,26 @@ export class AppProcessSupervisor {
     child.once('error', (error) => this.handleSpawnError(key, hosted, error))
     child.once('exit', (code, signal) => this.handleExit(key, hosted, code, signal))
 
-    const timeout = setTimeout(() => hosted.readyReject(
-      new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend handshake timed out after ${this.handshakeTimeoutMs}ms`),
-    ), this.handshakeTimeoutMs)
+    const handshakeIntervalMs = Math.min(1_000, this.handshakeTimeoutMs)
+    const handshakeWatchdog = createAppWatchdog({ timeoutMs: this.handshakeTimeoutMs, intervalMs: handshakeIntervalMs })
+    const timeout = setInterval(() => {
+      if (handshakeWatchdog.expired()) hosted.readyReject(
+        new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend handshake timed out after ${this.handshakeTimeoutMs}ms`),
+      )
+    }, handshakeIntervalMs)
     try {
       await hosted.ready
       if (!isChildRunning(hosted.child) || this.processes.get(key) !== hosted || hosted.state === 'error' || hosted.state === 'crash-loop') {
         throw new AppServiceError(APP_ERROR_CODES.handshakeFailed, 'App Backend exited during handshake')
       }
       hosted.state = 'running'
+      hosted.lastPongAt = Date.now()
+      hosted.healthWatchdog = createAppWatchdog({ timeoutMs: this.healthCheckTimeoutMs, intervalMs: this.healthCheckIntervalMs })
       hosted.pingTimer = setInterval(() => {
-        if (Date.now() - hosted.lastPongAt > this.healthCheckTimeoutMs) {
-          hosted.lastError = 'App Backend health check timed out'
+        if (hosted.stopping) return
+        if (hosted.healthWatchdog.expired()) {
+          hosted.failureReason = hosted.lastError = 'App Backend health check timed out'
+          this.log(hosted, 'error', hosted.lastError, { pid: hosted.child.pid })
           void this.terminate(hosted).catch((error) => {
             hosted.lastError = `App Backend health termination failed: ${error.message}`
           })
@@ -281,13 +293,17 @@ export class AppProcessSupervisor {
       this.scheduleIdleStop(key, hosted)
       return this.status(key)
     } catch (error) {
-      hosted.lastError = error.message
+      if (isChildRunning(hosted.child)) {
+        hosted.failureReason = error.message
+        hosted.lastError = error.message
+        this.log(hosted, 'error', hosted.lastError, { pid: hosted.child.pid })
+      } else hosted.lastError ||= error.message
       if (hosted.state !== 'crash-loop') hosted.state = 'error'
       this.emitStatus(key)
       await this.terminate(hosted)
       throw error
     } finally {
-      clearTimeout(timeout)
+      clearInterval(timeout)
     }
   }
 
@@ -308,7 +324,7 @@ export class AppProcessSupervisor {
       message = validateEnvelope(raw, { allowedTypes: BACKEND_MESSAGE_TYPES })
     } catch (error) {
       this.log(hosted, 'error', error.message)
-      hosted.lastError = error.message
+      hosted.failureReason = hosted.lastError = error.message
       hosted.child?.kill('SIGTERM')
       return
     }
@@ -412,6 +428,7 @@ export class AppProcessSupervisor {
     }
     if (message.type === 'service.pong') {
       hosted.lastPongAt = Date.now()
+      hosted.healthWatchdog?.refresh()
       return
     }
     if (!['action.result', 'action.error'].includes(message.type)) return
@@ -916,7 +933,9 @@ export class AppProcessSupervisor {
     const now = Date.now()
     hosted.failures = [...hosted.failures.filter((timestamp) => now - timestamp < this.crashLoopWindowMs), now]
     this.failureHistory.set(key, hosted.failures)
-    hosted.lastError = `Backend exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`
+    const exitMessage = `Backend exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`
+    hosted.lastError = hosted.failureReason ? `${hosted.failureReason}; ${exitMessage}` : exitMessage
+    this.log(hosted, 'error', hosted.lastError, { pid: hosted.child?.pid, code, signal })
     hosted.state = hosted.failures.length >= this.crashLoopThreshold ? 'crash-loop' : 'error'
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, hosted.lastError))
     this.clearHostWork(hosted, hosted.lastError)

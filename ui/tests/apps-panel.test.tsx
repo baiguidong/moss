@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
+import { AppAgentTools, AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
@@ -54,6 +54,42 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 }
 
 describe('Apps management', () => {
+  test('shows tool names, purpose, effects and authorization independently of Backend actions', () => {
+    const app = {
+      ...settingsApp(), enabled: true, grants: [],
+      agentTools: [
+        { id: 'lookup', title: '查询记录', description: '查找应用中的记录', effect: 'read' as const },
+        { id: 'delete', title: '删除记录', description: '删除指定记录', effect: 'destructive' as const, permission: 'records:delete' },
+      ],
+    };
+    const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
+    expect(markup).toContain('AI 工具（2 个）');
+    expect(markup).toContain('查询记录');
+    expect(markup).toContain('查找应用中的记录');
+    expect(markup).toContain('只读');
+    expect(markup).toContain('已注册');
+    expect(markup).toContain('破坏性操作');
+    expect(markup).toContain('未授权');
+    const disabled = renderToStaticMarkup(<AppAgentTools app={{ ...app, enabled: false }} />);
+    expect(disabled).toContain('查询记录');
+    expect(disabled).toContain('App 已停用');
+    expect(disabled).not.toContain('已注册');
+  });
+
+  test('makes tool registration visible on the App card before opening management', () => {
+    const app = { ...settingsApp(), agentTools: [{ id: 'lookup', title: '查询', description: '查找记录', effect: 'read' as const }] };
+    const markup = renderToStaticMarkup(<AppsPanel apps={[app]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    expect(markup).toContain('提供 1 个 AI 工具');
+  });
+
+  test('does not present UI Backend actions as Agent tools', () => {
+    const app = { ...settingsApp(), backend: { lifecycle: 'on-demand' as const, actions: [{ name: 'request.send' }] }, agentTools: [] };
+    const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
+    expect(markup).toContain('此 App 未向 AI 助手提供工具');
+    expect(markup).not.toContain('request.send');
+    expect(markup).not.toContain('已注册');
+  });
+
   test('renders an accessible marketplace loading shell', () => {
     const markup = renderToStaticMarkup(
       <AppMarketplacePanel installedApps={[]} onBack={() => {}} onInstalled={async () => {}} />,

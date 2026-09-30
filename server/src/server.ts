@@ -83,6 +83,7 @@ import {
 } from './sessionWebSocketBridge.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { loadSessionContextFromTranscript } from './transcript.js'
+import { createTraceRoutes, TraceRouteError } from './traceRoutes.js'
 import type { ServerConfig, SessionRecord } from './types.js'
 
 type JsonBody = Record<string, unknown>
@@ -951,7 +952,7 @@ function writeError(
     return
   }
 
-  if (error instanceof AuthServiceError || error instanceof HttpError) {
+  if (error instanceof AuthServiceError || error instanceof HttpError || error instanceof TraceRouteError) {
     writeJson(res, error.statusCode, { error: error.message })
     return
   }
@@ -995,6 +996,14 @@ export function startServer(
   const cronRepository = new CronRepository(runtime.store.db)
   const cronScheduler = new CloudCronScheduler(cronRepository, runtime,
     owner => assertCronUserCanRun(runtime.store.db, owner), message => logger.error(message))
+  const handleTraceRoute = createTraceRoutes({
+    config,
+    getSession: id => runtime.getSession(id),
+    listSessions: filter => runtime.listSessionRecords(filter),
+    canAccessSession,
+    requireAnyScope: (auth, scopes) => authService.requireAnyScope(auth, scopes),
+    readJsonBody,
+  })
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -1241,6 +1250,12 @@ export function startServer(
       const auth = await authenticateRequest(req, authService)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
+      }
+
+      const traceResult = await handleTraceRoute(req, url, auth)
+      if (traceResult) {
+        writeNoStoreJson(res, traceResult.status, traceResult.body)
+        return
       }
 
       if (

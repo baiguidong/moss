@@ -51,6 +51,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
+import { ForkSessionButton } from "@/components/chat/fork-session-button";
 import {
   ToolDisplaySettingsProvider,
   type ToolDisplayMode,
@@ -2595,7 +2596,7 @@ export function ChatArea({
   React.useEffect(() => {
     if (!toolPermissionRequest) return;
     const timer = window.setTimeout(() => {
-      virtualListRef.current?.scrollToBottom("smooth");
+      virtualListRef.current?.scrollToBottom("smooth", { preserveSelection: true });
     }, 80);
     return () => window.clearTimeout(timer);
   }, [toolPermissionRequest?.requestId]);
@@ -2828,19 +2829,7 @@ export function ChatArea({
             focusedToolUseId={focusedToolUseId}
             contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
             latestMessageActions={onForkSession ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-                      onClick={onForkSession} disabled={forkingSession || Boolean(forkDisabledReason)}
-                      aria-label="从最新消息分叉">
-                      <GitFork className={cn("h-3.5 w-3.5", forkingSession && "animate-pulse")} />
-                      {forkingSession ? "正在分叉…" : "分叉"}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{forkDisabledReason || "从最新消息分叉"}</TooltipContent>
-              </Tooltip>
+              <ForkSessionButton onFork={onForkSession} forking={forkingSession} disabledReason={forkDisabledReason} />
             ) : undefined}
             footer={toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
               <ToolPermissionCard

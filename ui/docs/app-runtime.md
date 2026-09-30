@@ -13,6 +13,15 @@ Moss 只有一种可安装扩展：App。App 可以只有 UI、只有 Backend，
 
 Skill 从市场或本地包安装后同样默认启用。
 
+App 的 `backend.actions` 供页面调用；只有显式声明在 `contributes.tools` 中的能力才会加入 Moss
+AI 助手的工具列表。安装或更新包含 AI 工具的 App 时，安装确认会列出工具名称、用途及操作类型，
+即使 App 没有申请额外权限也会展示。Apps 管理页持续展示该列表，以及工具已注册、未授权或 App
+已停用的状态。开发工具与 HTTP 调试 App 仅提供页面功能，不注册 AI 工具。
+
+设置 → 工具也按 App 分组展示声明的 AI 工具，包括已停用或尚未授权的工具。此处仅展示，
+不提供逐工具的常驻、按需或关闭选项；App 工具统一按需加载，启停和授权仍由 App 管理控制。
+工具的按需加载与 Backend 的常驻或按需启动生命周期相互独立。
+
 导航位置统一由 Moss 决定，App 不声明 `contributes.views[].location`，也不提供手动加入侧栏功能。进入 App 时优先使用已授权 view 中 `order` 最小的页面路由；未声明 view 时打开 `ui.entry`。多个页面由 App 内部导航，旧包的位置字段会被忽略。
 
 ## App 包
@@ -66,6 +75,11 @@ example-app/
 
 `on-demand` Backend 在第一个 Action 时启动，无待处理 Action 后按空闲超时退出。`persistent` Backend
 在 App 启用且配置有效时常驻，退出 Moss 时有界停止。关闭 App 窗口不会停止 Backend。
+
+Backend 完成本地初始化后发送 `service.ready`，不等待互联网或远端服务连接。断网、服务端不可达和
+连接重试属于业务连接状态，通过 `service.status` 上报，并在原进程内重连；不得因此退出 Backend。
+`service.ping` / `service.pong` 只检查 Host 与本地 Backend 的 IPC 响应，不依赖远端请求成功。
+Host 采样在休眠或长时间阻塞后恢复时，启动握手和心跳检查会给予新的响应窗口，再判断进程是否卡死。
 
 Host 在 `apps-runtime/processes/` 持久化每个 App 的进程所有权：宿主 PID 与启动时间、子进程身份、
 本次启动的唯一标识。启动器先等待 Host 保存子进程记录，再加载 App 代码。不同 Host 不能同时持有

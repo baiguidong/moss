@@ -12,6 +12,8 @@ import {
 import { ThinkingBlock } from "@/components/chat/thinking-block";
 import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
+import { copyToClipboard } from "@/components/chat/clipboard";
+import { hasChatTextSelection, useChatTextSelection } from "@/components/chat/use-chat-text-selection";
 import { TurnChangeCard } from "@/components/chat/turn-change-card";
 import {
   buildConversationNavigationItems,
@@ -383,18 +385,20 @@ function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; token
   if (startTime != null) meta.push(formatLoadingElapsed(now - startTime));
   if (tokens > 0) meta.push(`↓ ${formatLoadingTokens(tokens)} tokens`);
   return (
-    <div className="flex justify-start gap-2">
+    <div className="assistant-message flex items-start justify-start gap-2">
       <img
         src="./build/icon.png"
         alt="Moss"
-        className="h-7 w-7 shrink-0 self-start rounded-sm object-contain animate-spin"
+        className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain animate-spin"
         style={{ animationDuration: "2s" }}
       />
-      <div className="flex items-center gap-2 rounded-[18px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)]">
-        <span role="status">working...</span>
-        {meta.length > 0 && (
-          <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
-        )}
+      <div className="assistant-message-body text-sm text-muted-foreground">
+        <div className="flex min-h-7 items-center gap-2">
+          <span role="status">working...</span>
+          {meta.length > 0 && (
+            <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -428,6 +432,7 @@ type MessageContextMenuState = {
   x: number;
   y: number;
   messageText: string;
+  selectionText: string;
 };
 
 function MessageContextMenu({
@@ -437,11 +442,11 @@ function MessageContextMenu({
   state: MessageContextMenuState;
   onClose: () => void;
 }) {
-  const selection = window.getSelection()?.toString() ?? "";
+  const selection = state.selectionText;
   const x = Math.min(state.x, window.innerWidth - 180);
   const y = Math.min(state.y, window.innerHeight - 96);
   const copy = (text: string) => {
-    if (text) void navigator.clipboard.writeText(text);
+    if (text) void copyToClipboard(text);
     onClose();
   };
   return (
@@ -456,7 +461,10 @@ function MessageContextMenu({
       <div
         className="absolute w-40 overflow-hidden rounded-lg border border-border/70 bg-card/95 py-1 text-xs shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur"
         style={{ left: x, top: y }}
-        onMouseDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          if (e.button === 0) e.preventDefault();
+        }}
       >
         <button
           type="button"
@@ -507,7 +515,7 @@ function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
 
 export type VirtualMessageListHandle = {
   scrollToTop: (behavior?: "auto" | "smooth") => void;
-  scrollToBottom: (behavior?: "auto" | "smooth") => void;
+  scrollToBottom: (behavior?: "auto" | "smooth", options?: { preserveSelection?: boolean }) => void;
   scrollToMessage: (messageId: string) => void;
   scrollToTool: (toolUseId: string) => void;
 };
@@ -581,6 +589,17 @@ export const VirtualMessageList = React.forwardRef<
   );
   const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
   const atBottomRef = React.useRef(true);
+  const contentCharacters = React.useMemo(
+    () => renderItems.reduce((sum, item) => sum + extractItemCopyText(item).length, 0),
+    [renderItems],
+  );
+  const { scrollerRef, isSelecting, selectionActive, increaseViewportBy, totalListHeightChanged } = useChatTextSelection(
+    renderItems.length, contentCharacters,
+  );
+  const followOutput = React.useCallback(
+    (isAtBottom: boolean) => isAtBottom && !isSelecting() ? "auto" as const : false,
+    [isSelecting],
+  );
   const renderItemsRef = React.useRef<RenderItem[]>(renderItems);
   renderItemsRef.current = renderItems;
   const [contextMenu, setContextMenu] = React.useState<MessageContextMenuState | null>(null);
@@ -657,13 +676,14 @@ export const VirtualMessageList = React.forwardRef<
     virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior });
   }, []);
 
-  const scrollToBottom = React.useCallback((behavior: "auto" | "smooth" = "smooth") => {
+  const scrollToBottom = React.useCallback((behavior: "auto" | "smooth" = "smooth", options?: { preserveSelection?: boolean }) => {
+    if (options?.preserveSelection && isSelecting()) return;
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
       align: "end",
       behavior,
     });
-  }, []);
+  }, [isSelecting]);
 
   const scrollToMessage = React.useCallback((messageId: string) => {
     let resolvedMessageId: string | null = null;
@@ -721,13 +741,13 @@ export const VirtualMessageList = React.forwardRef<
   // item's content without adding items, so keep following manually while the
   // user is at the bottom.
   React.useEffect(() => {
-    if (atBottomRef.current) {
+    if (atBottomRef.current && !isSelecting()) {
       const frame = window.requestAnimationFrame(() => {
-        if (atBottomRef.current) scrollToBottom("auto");
+        if (atBottomRef.current && !isSelecting()) scrollToBottom("auto");
       });
       return () => window.cancelAnimationFrame(frame);
     }
-  }, [messages, loading, footer, scrollToBottom]);
+  }, [messages, loading, footer, scrollToBottom, isSelecting]);
 
   if (renderItems.length === 0) {
     return (
@@ -765,7 +785,9 @@ export const VirtualMessageList = React.forwardRef<
           loadingTokens,
           contentClassName: resolvedContentClassName,
         }}
-        followOutput={(isAtBottom) => (isAtBottom ? "auto" : false)}
+        // Virtuoso's resize-follow path checks the prop itself against false;
+        // a callback returning false only disables item-count following.
+        followOutput={selectionActive || isSelecting() ? false : followOutput}
         atTopStateChange={onAtTopChange}
         atBottomThreshold={120}
         atBottomStateChange={(atBottom) => {
@@ -774,7 +796,9 @@ export const VirtualMessageList = React.forwardRef<
         }}
         rangeChanged={(range) => setVisibleStartIndex(range.startIndex)}
         initialTopMostItemIndex={Math.max(0, renderItems.length - 1)}
-        increaseViewportBy={{ top: 400, bottom: 400 }}
+        scrollerRef={scrollerRef}
+        increaseViewportBy={increaseViewportBy}
+        totalListHeightChanged={totalListHeightChanged}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
         itemContent={(index, item) => {
           const actions = index === renderItems.length - 1
@@ -817,7 +841,7 @@ export const VirtualMessageList = React.forwardRef<
               const messageText = extractItemCopyText(item);
               if (!selection && !messageText) return;
               e.preventDefault();
-              setContextMenu({ x: e.clientX, y: e.clientY, messageText });
+              setContextMenu({ x: e.clientX, y: e.clientY, messageText, selectionText: selection });
             }}
           >
             {renderedMessage}
@@ -868,7 +892,7 @@ export const MessageListPane = React.forwardRef<
     ref,
     () => ({
       scrollToTop: (behavior) => innerRef.current?.scrollToTop(behavior),
-      scrollToBottom: (behavior) => innerRef.current?.scrollToBottom(behavior),
+      scrollToBottom: (behavior, options) => innerRef.current?.scrollToBottom(behavior, options),
       scrollToMessage: (messageId) => innerRef.current?.scrollToMessage(messageId),
       scrollToTool: (toolUseId) => innerRef.current?.scrollToTool(toolUseId),
     }),
@@ -951,7 +975,7 @@ export function MessageList({
     if (scroller) {
       const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
       // User has scrolled up to read history — don't yank them back to the bottom.
-      if (distanceFromBottom > 160) return;
+      if (distanceFromBottom > 160 || hasChatTextSelection(scroller)) return;
     }
     bottom.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [bottomRef, messages]);

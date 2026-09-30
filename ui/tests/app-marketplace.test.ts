@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { confirmAppInstallation } from '../src/apps/app-tool-disclosure.mjs'
 import {
   createAppMarketplaceService,
   normalizeMarketplaceIndex,
@@ -10,6 +11,59 @@ import {
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
+
+it.each([0, 1].flatMap(response => [
+  { response, acceptPermissions: false, permissions: ['agent:turns:write'] },
+  { response, acceptPermissions: true, permissions: ['agent:turns:write'] },
+  { response, acceptPermissions: false, permissions: [] },
+]))('confirms verified marketplace tools even with no pending permissions (%o)', async ({ response, acceptPermissions, permissions }) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-tools-'))
+  roots.push(root)
+  const archive = Buffer.from('verified package with tools')
+  const latest = { ...version(archive), permissions }
+  const responses = new Map([
+    ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
+    ['https://example.com/example.app.json', Buffer.from(JSON.stringify(detail(latest)))],
+    [latest.artifact.downloadUrl, archive],
+  ])
+  let validated = false
+  let installs = 0
+  let registrations = 0
+  const prompts: any[] = []
+  const progress: any[] = []
+  const service = createAppMarketplaceService({
+    indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'), platform: 'darwin-arm64',
+    getInstalledApps: async () => [],
+    getRuntime: () => ({ getInstallation: () => null, registerInstalled: async () => { registrations++ } }),
+    download: async (url: string) => responses.get(url),
+    emitProgress: (value: any) => progress.push(value),
+    installArchive: async (_runtime: unknown, _archive: string, options: any) => options.installPackage('/verified-package'),
+    validatePackage: async () => {
+      validated = true
+      return {
+        manifest: { id: 'example.app', version: latest.version, displayName: 'Example', permissions, contributes: { tools: [{ id: 'lookup', title: '查询记录', description: '搜索应用记录', effect: 'read' }] } },
+        trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+      }
+    },
+    confirmInstallation: async (manifest: any, permissions: string[]) => {
+      expect(validated).toBe(true)
+      expect(installs).toBe(0)
+      expect(registrations).toBe(0)
+      return confirmAppInstallation({ showMessageBox: async (prompt: any) => { prompts.push(prompt); return { response } } }, manifest, permissions)
+    },
+    installPackage: async () => { installs++; return { id: 'example.app', currentVersion: latest.version } },
+  })
+  const result = await service.install({ appId: 'example.app', acceptPermissions })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0].detail).toContain('查询记录（lookup） · 只读')
+  expect(prompts[0].detail).toContain('搜索应用记录')
+  expect(prompts[0].detail.includes('agent:turns:write')).toBe(permissions.length > 0 && !acceptPermissions)
+  expect(installs).toBe(response)
+  expect(registrations).toBe(response)
+  expect(result.ok).toBe(response === 1)
+  expect(progress.at(-1).phase).toBe(response ? 'completed' : 'canceled')
+  if (!response) expect(result.canceled).toBe(true)
+})
 
 function version(archive: Buffer, versionNumber = '1.2.0') {
   return {

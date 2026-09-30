@@ -1,514 +1,57 @@
-/**
- * Session Memory automatically maintains a markdown file with notes about the current conversation.
- * It runs periodically in the background using a forked subagent to extract key information
- * without interrupting the main conversation flow.
- */
-
-import { writeFile } from 'fs/promises'
-import { AsyncLocalStorage } from 'node:async_hooks'
-import { getIsRemoteMode, getSessionId } from '../../bootstrap/state.js'
-import { getSystemPrompt } from '../../constants/prompts.js'
-import { getSystemContext, getUserContext } from '../../context.js'
-import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
-import type { Tool, ToolUseContext } from '../../Tool.js'
-import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
-import {
-  FileReadTool,
-  type Output as FileReadToolOutput,
-} from '../../tools/FileReadTool/FileReadTool.js'
-import type { Message } from '../../types/message.js'
-import { count } from '../../utils/array.js'
-import {
-  createCacheSafeParams,
-  createSubagentContext,
-} from '../../utils/forkedAgent.js'
-import { getFsImplementation } from '../../utils/fsOperations.js'
-import {
-  type REPLHookContext,
-  registerPostSamplingHook,
-} from '../../utils/hooks/postSamplingHooks.js'
-import {
-  createUserMessage,
-  hasToolCallsInLastAssistantTurn,
-} from '../../utils/messages.js'
-import {
-  getSessionMemoryDir,
-  getSessionMemoryPath,
-} from '../../utils/permissions/filesystem.js'
-import { sequential } from '../../utils/sequential.js'
-import { asSystemPrompt } from '../../utils/systemPromptType.js'
-import { getTokenUsage, tokenCountWithEstimation } from '../../utils/tokens.js'
-import { logEvent } from '../analytics/index.js'
+import { randomUUID } from 'node:crypto'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { getSessionMemoryPath } from '../../utils/permissions/filesystem.js'
 import { isSessionMemoryEnabled } from './config.js'
-import {
-  buildSessionMemoryUpdatePrompt,
-  loadSessionMemoryTemplate,
-} from './prompts.js'
-import {
-  getSessionMemoryConfig,
-  getToolCallsBetweenUpdates,
-  hasMetInitializationThreshold,
-  hasMetUpdateThreshold,
-  isSessionMemoryInitialized,
-  isSessionMemoryExtractionRunning,
-  tryStartSessionMemoryExtraction,
-  markSessionMemoryInitialized,
-  recordExtractionTokenCount,
-  setLastSummarizedMessageId,
-  setSessionMemoryConfig,
-} from './sessionMemoryUtils.js'
 
-// ============================================================================
-// Feature gate and per-session configuration
-// ============================================================================
+export const MAX_SESSION_SUMMARY_CHARS = 12_000
 
-import { errorMessage, getErrnoCode } from '../../utils/errors.js'
-import { logForDiagnosticsNoPII } from '../../utils/diagLogs.js'
-import { getSessionMemorySettings } from '../sessionMemorySettings.js'
-import { runMemoryUpdate } from './runMemoryUpdate.js'
+// Ownership lasts until the write settles, including during session disposal.
+// Different sessions can save independently; overlapping saves cannot overwrite
+// each other out of order. Atomic rename also keeps readers from seeing a partial file.
+const activeWrites = new Set<string>()
 
-// ============================================================================
-// Module State
-// ============================================================================
-
-const lastMemoryMessageUuidBySession = new Map<string, string | undefined>()
-const sessionMemoryQueues = new Map<string, {
-  run: (extract: () => Promise<void>) => Promise<void>
-  pending: number
-}>()
-
-/**
- * Reset the last memory message UUID (for testing)
- */
-export function resetLastMemoryMessageUuid(): void {
-  lastMemoryMessageUuidBySession.clear()
-}
-
-export function discardSessionMemoryRuntimeState(sessionId: string): void {
-  lastMemoryMessageUuidBySession.delete(sessionId)
-}
-
-function countToolCallsSince(
-  messages: Message[],
-  sinceUuid: string | undefined,
-): number {
-  let toolCallCount = 0
-  let foundStart = sinceUuid === null || sinceUuid === undefined
-
-  for (const message of messages) {
-    if (!foundStart) {
-      if (message.uuid === sinceUuid) {
-        foundStart = true
-      }
-      continue
-    }
-
-    if (message.type === 'assistant') {
-      const content = message.message.content
-      if (Array.isArray(content)) {
-        toolCallCount += count(content, block => block.type === 'tool_use')
-      }
-    }
-  }
-
-  return toolCallCount
-}
-
-export function shouldExtractMemory(messages: Message[]): boolean {
-  if (isSessionMemoryExtractionRunning()) return false
-  const sessionId = getSessionId()
-  const lastMemoryMessageUuid = lastMemoryMessageUuidBySession.get(sessionId)
-
-  // Check if we've met the initialization threshold
-  // Uses total context window tokens (same as autocompact) for consistent behavior
-  const currentTokenCount = tokenCountWithEstimation(messages)
-  const config = getSessionMemoryConfig()
-  if (!isSessionMemoryInitialized()) {
-    if (!hasMetInitializationThreshold(currentTokenCount)) {
-      logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
-        session_id: sessionId,
-        should_extract: false,
-        reason: 'initialization_threshold',
-        message_count: messages.length,
-        token_count: currentTokenCount,
-        minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
-        minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
-        tool_calls_between_updates: config.toolCallsBetweenUpdates,
-      })
-      return false
-    }
-    markSessionMemoryInitialized()
-  }
-
-  // Check if we've met the minimum tokens between updates threshold
-  // Uses context window growth since last extraction (same metric as init threshold)
-  const hasMetTokenThreshold = hasMetUpdateThreshold(currentTokenCount)
-
-  // Check if we've met the tool calls threshold
-  const toolCallsSinceLastUpdate = countToolCallsSince(
-    messages,
-    lastMemoryMessageUuid,
-  )
-  const hasMetToolCallThreshold =
-    toolCallsSinceLastUpdate >= getToolCallsBetweenUpdates()
-
-  // Check if the last assistant turn has no tool calls (safe to extract)
-  const hasToolCallsInLastTurn = hasToolCallsInLastAssistantTurn(messages)
-
-  // Trigger extraction when:
-  // 1. Both thresholds are met (tokens AND tool calls), OR
-  // 2. No tool calls in last turn AND token threshold is met
-  //    (to ensure we extract at natural conversation breaks)
-  //
-  // IMPORTANT: The token threshold (minimumTokensBetweenUpdate) is ALWAYS required.
-  // Even if the tool call threshold is met, extraction won't happen until the
-  // token threshold is also satisfied. This prevents excessive extractions.
-  const shouldExtract =
-    (hasMetTokenThreshold && hasMetToolCallThreshold) ||
-    (hasMetTokenThreshold && !hasToolCallsInLastTurn)
-
-  if (shouldExtract) {
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.uuid) {
-      lastMemoryMessageUuidBySession.set(sessionId, lastMessage.uuid)
-    }
-    logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
-      session_id: sessionId,
-      should_extract: true,
-      message_count: messages.length,
-      token_count: currentTokenCount,
-      tool_calls_since_last_update: toolCallsSinceLastUpdate,
-      has_tool_calls_in_last_turn: hasToolCallsInLastTurn,
-      minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
-      minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
-      tool_calls_between_updates: config.toolCallsBetweenUpdates,
-    })
-    return true
-  }
-
-  logForDiagnosticsNoPII('info', 'session_memory_gate_check', {
-    session_id: sessionId,
-    should_extract: false,
-    reason: 'update_threshold',
-    message_count: messages.length,
-    token_count: currentTokenCount,
-    tool_calls_since_last_update: toolCallsSinceLastUpdate,
-    has_tool_calls_in_last_turn: hasToolCallsInLastTurn,
-    minimum_message_tokens_to_init: config.minimumMessageTokensToInit,
-    minimum_tokens_between_update: config.minimumTokensBetweenUpdate,
-    tool_calls_between_updates: config.toolCallsBetweenUpdates,
-  })
-
-  return false
-}
-
-async function setupSessionMemoryFile(
-  toolUseContext: ToolUseContext,
-): Promise<{ memoryPath: string; currentMemory: string }> {
-  const fs = getFsImplementation()
-
-  // Set up directory and file
-  const sessionMemoryDir = getSessionMemoryDir()
-  await fs.mkdir(sessionMemoryDir, { mode: 0o700 })
-
-  const memoryPath = getSessionMemoryPath()
-
-  // Create the memory file if it doesn't exist (wx = O_CREAT|O_EXCL)
-  try {
-    await writeFile(memoryPath, '', {
-      encoding: 'utf-8',
-      mode: 0o600,
-      flag: 'wx',
-    })
-    // Only load template if file was just created
-    const template = await loadSessionMemoryTemplate()
-    await writeFile(memoryPath, template, {
-      encoding: 'utf-8',
-      mode: 0o600,
-    })
-  } catch (e: unknown) {
-    const code = getErrnoCode(e)
-    if (code !== 'EEXIST') {
-      throw e
-    }
-  }
-
-  // Drop any cached entry so FileReadTool's dedup doesn't return a
-  // file_unchanged stub — we need the actual content. The Read repopulates it.
-  toolUseContext.readFileState.delete(memoryPath)
-  const result = await FileReadTool.call(
-    { file_path: memoryPath },
-    toolUseContext,
-  )
-  let currentMemory = ''
-
-  const output = result.data as FileReadToolOutput
-  if (output.type === 'text') {
-    currentMemory = output.file.content
-  }
-
-  logEvent('tengu_session_memory_file_read', {
-    content_length: currentMemory.length,
-  })
-
-  return { memoryPath, currentMemory }
-}
-
-/**
- * Session memory post-sampling hook that extracts and updates session notes
- */
-// Track if we've logged the gate check failure this session (to avoid spam)
-let sessionMemoryHookRegistered = false
-
-const extractSessionMemory = async function (
-  context: REPLHookContext,
+/** Persist text supplied by the main model. Never starts a model or sampling hook. */
+export async function saveSessionSummary(
+  summary: string,
+  signal: AbortSignal,
 ): Promise<void> {
-  const { querySource } = context
-
-  // Only run session memory on main user-facing thread. Desktop embedded
-  // sessions go through QueryEngine and use querySource "sdk".
-  if (!querySource?.startsWith('repl_main_thread') && querySource !== 'sdk') {
-    // Don't log this - it's expected for subagents, teammates, etc.
-    return
-  }
-
-  // Restore the original sequential gate: check thresholds when a queued
-  // update gets its turn. Embedded sessions need independent queues.
-  const sessionId = getSessionId()
-  const queue = getSessionMemoryQueue(sessionId)
-  // sequential drains queued callbacks from the first caller's async context.
-  // Retain each caller's session settings and runtime context explicitly.
-  const runInContext = AsyncLocalStorage.snapshot()
-  queue.pending++
-  try {
-    await queue.run(() => runInContext(extractSessionMemoryNow, context))
-  } finally {
-    if (--queue.pending === 0) {
-      sessionMemoryQueues.delete(sessionId)
-    }
-  }
-}
-
-function getSessionMemoryQueue(sessionId: string) {
-  let queue = sessionMemoryQueues.get(sessionId)
-  if (!queue) {
-    queue = {
-      run: sequential(async (extract: () => Promise<void>) => extract()),
-      pending: 0,
-    }
-    sessionMemoryQueues.set(sessionId, queue)
-  }
-  return queue
-}
-
-async function extractSessionMemoryNow(context: REPLHookContext): Promise<void> {
-  const { messages, toolUseContext } = context
-  if (toolUseContext.abortController.signal.aborted) return
-
-  // Check gate lazily when hook runs (cached, non-blocking)
   if (!isSessionMemoryEnabled()) {
-    return
+    throw new Error('Session summaries are disabled.')
   }
-
-  const settings = getSessionMemorySettings()
-  setSessionMemoryConfig({
-    minimumMessageTokensToInit: settings.minimumMessageTokensToInit,
-    minimumTokensBetweenUpdate: settings.minimumTokensBetweenUpdate,
-    toolCallsBetweenUpdates: settings.toolCallsBetweenUpdates,
-  })
-
-  if (!shouldExtractMemory(messages)) {
-    return
+  if (!summary.trim() || summary.length > MAX_SESSION_SUMMARY_CHARS) {
+    throw new Error(`Summary must contain 1–${MAX_SESSION_SUMMARY_CHARS} characters of non-empty text.`)
   }
+  signal.throwIfAborted()
 
-  const releaseExtraction = tryStartSessionMemoryExtraction()
-  if (!releaseExtraction) return
-
+  // Resolve once in the current session scope; the model cannot choose a path.
+  const path = getSessionMemoryPath()
+  if (activeWrites.has(path)) {
+    throw new Error('A session summary save is already running. Retry after it finishes.')
+  }
+  activeWrites.add(path)
+  const temporaryPath = `${path}.${randomUUID()}.tmp`
+  let ownsTemporaryFile = false
   try {
-    // Consume the snapshot on start, including failed attempts, so the next
-    // sampling hook cannot retry the same unchanged context indefinitely.
-    recordExtractionTokenCount(tokenCountWithEstimation(messages))
-    // Create isolated context for setup to avoid polluting parent's cache
-    const setupContext = createSubagentContext(toolUseContext)
-
-    // Set up file system and read current state with isolated context
-    const { memoryPath, currentMemory } =
-      await setupSessionMemoryFile(setupContext)
-
-    // Create extraction message
-    const userPrompt = await buildSessionMemoryUpdatePrompt(
-      currentMemory,
-      memoryPath,
-    )
-
-    // Run session memory extraction using runForkedAgent for prompt caching
-    // runForkedAgent creates an isolated context to prevent mutation of parent state
-    // Pass setupContext.readFileState so the forked agent can edit the memory file
-    await runMemoryUpdate({
-      promptMessages: [createUserMessage({ content: userPrompt })],
-      cacheSafeParams: createCacheSafeParams(context),
-      canUseTool: createMemoryFileCanUseTool(memoryPath),
-      forkLabel: 'session_memory',
-      overrides: { readFileState: setupContext.readFileState },
-    })
-
-    // Log extraction event for tracking frequency
-    // Use the token usage from the last message in the conversation
-    const lastMessage = messages[messages.length - 1]
-    const usage = lastMessage ? getTokenUsage(lastMessage) : undefined
-    const config = getSessionMemoryConfig()
-    logEvent('tengu_session_memory_extraction', {
-      input_tokens: usage?.input_tokens,
-      output_tokens: usage?.output_tokens,
-      cache_read_input_tokens: usage?.cache_read_input_tokens ?? undefined,
-      cache_creation_input_tokens:
-        usage?.cache_creation_input_tokens ?? undefined,
-      config_min_message_tokens_to_init: config.minimumMessageTokensToInit,
-      config_min_tokens_between_update: config.minimumTokensBetweenUpdate,
-      config_tool_calls_between_updates: config.toolCallsBetweenUpdates,
-    })
-
-    logForDiagnosticsNoPII('info', 'session_memory_extraction_completed', {
-      session_id: getSessionId(),
-    })
-
-    // Update lastSummarizedMessageId after successful completion
-    updateLastSummarizedMessageIdIfSafe(messages)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    signal.throwIfAborted()
+    const file = await open(temporaryPath, 'wx', 0o600)
+    ownsTemporaryFile = true
+    try {
+      await file.writeFile(summary, { encoding: 'utf8', signal })
+    } finally {
+      await file.close()
+    }
+    signal.throwIfAborted()
+    if (!isSessionMemoryEnabled()) {
+      throw new Error('Session summaries are disabled.')
+    }
+    await rename(temporaryPath, path)
   } finally {
-    releaseExtraction()
-  }
-}
-
-/**
- * Initialize session memory by registering the post-sampling hook.
- * This is synchronous to avoid race conditions during startup.
- * The gate check and config loading happen lazily when the hook runs.
- */
-export function initSessionMemory(): void {
-  if (getIsRemoteMode()) return
-  if (sessionMemoryHookRegistered) return
-
-  // Register hook unconditionally - gate check happens lazily when hook runs
-  registerPostSamplingHook(extractSessionMemory)
-  sessionMemoryHookRegistered = true
-}
-
-export type ManualExtractionResult = {
-  success: boolean
-  memoryPath?: string
-  error?: string
-}
-
-/**
- * Manually trigger session memory extraction, bypassing threshold checks.
- * Used by the /summary command.
- */
-export async function manuallyExtractSessionMemory(
-  messages: Message[],
-  toolUseContext: ToolUseContext,
-): Promise<ManualExtractionResult> {
-  if (messages.length === 0) {
-    return { success: false, error: 'No messages to summarize' }
-  }
-  const releaseExtraction = tryStartSessionMemoryExtraction()
-  if (!releaseExtraction) {
-    return { success: false, error: 'A session memory update is already running.' }
-  }
-
-  try {
-    recordExtractionTokenCount(tokenCountWithEstimation(messages))
-    // Create isolated context for setup to avoid polluting parent's cache
-    const setupContext = createSubagentContext(toolUseContext)
-
-    // Set up file system and read current state with isolated context
-    const { memoryPath, currentMemory } =
-      await setupSessionMemoryFile(setupContext)
-
-    // Create extraction message
-    const userPrompt = await buildSessionMemoryUpdatePrompt(
-      currentMemory,
-      memoryPath,
-    )
-
-    // Get system prompt for cache-safe params
-    const { tools, mainLoopModel } = toolUseContext.options
-    const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
-      getSystemPrompt(tools, mainLoopModel),
-      getUserContext(),
-      getSystemContext(),
-    ])
-    const systemPrompt = asSystemPrompt(rawSystemPrompt)
-
-    // Run session memory extraction using runForkedAgent
-    await runMemoryUpdate({
-      promptMessages: [createUserMessage({ content: userPrompt })],
-      cacheSafeParams: {
-        systemPrompt,
-        userContext,
-        systemContext,
-        toolUseContext: setupContext,
-        forkContextMessages: messages,
-      },
-      canUseTool: createMemoryFileCanUseTool(memoryPath),
-      forkLabel: 'session_memory_manual',
-      overrides: { readFileState: setupContext.readFileState },
-    })
-
-    // Log manual extraction event
-    logEvent('tengu_session_memory_manual_extraction', {})
-
-    // Update lastSummarizedMessageId after successful completion
-    updateLastSummarizedMessageIdIfSafe(messages)
-
-    return { success: true, memoryPath }
-  } catch (error) {
-    return {
-      success: false,
-      error: errorMessage(error),
-    }
-  } finally {
-    releaseExtraction()
-  }
-}
-
-// Helper functions
-
-/**
- * Creates a canUseTool function that only allows Edit for the exact memory file.
- */
-export function createMemoryFileCanUseTool(memoryPath: string): CanUseToolFn {
-  return async (tool: Tool, input: unknown) => {
-    if (
-      tool.name === FILE_EDIT_TOOL_NAME &&
-      typeof input === 'object' &&
-      input !== null &&
-      'file_path' in input
-    ) {
-      const filePath = input.file_path
-      if (typeof filePath === 'string' && filePath === memoryPath) {
-        return { behavior: 'allow' as const, updatedInput: input }
-      }
-    }
-    return {
-      behavior: 'deny' as const,
-      message: `only ${FILE_EDIT_TOOL_NAME} on ${memoryPath} is allowed`,
-      decisionReason: {
-        type: 'other' as const,
-        reason: `only ${FILE_EDIT_TOOL_NAME} on ${memoryPath} is allowed`,
-      },
-    }
-  }
-}
-
-/**
- * Updates lastSummarizedMessageId after successful extraction.
- * Only sets it if the last message doesn't have tool calls (to avoid orphaned tool_results).
- */
-function updateLastSummarizedMessageIdIfSafe(messages: Message[]): void {
-  if (!hasToolCallsInLastAssistantTurn(messages)) {
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.uuid) {
-      setLastSummarizedMessageId(lastMessage.uuid)
+    try {
+      if (ownsTemporaryFile) await rm(temporaryPath, { force: true })
+    } finally {
+      activeWrites.delete(path)
     }
   }
 }

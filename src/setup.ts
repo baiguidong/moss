@@ -18,7 +18,6 @@ import {
   switchSession,
 } from './bootstrap/state.js'
 import { getCommands } from './commands.js'
-import { initSessionMemory } from './services/SessionMemory/sessionMemory.js'
 import { asSessionId } from './types/ids.js'
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js'
 import { checkAndRestoreTerminalBackup } from './utils/appleTerminalBackup.js'
@@ -267,7 +266,6 @@ export async function setup(
   // the await points above (startUdsMessaging, ~20ms) meant getCommands()
   // raced ahead and memoized an empty bundledSkills list.
   if (!isBareMode()) {
-    initSessionMemory() // Synchronous - registers hook, gate check happens lazily
   }
   logForDiagnosticsNoPII('info', 'setup_background_jobs_launched')
 

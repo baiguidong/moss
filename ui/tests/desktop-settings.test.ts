@@ -18,6 +18,23 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('keeps reply appearance choices across restarts and unrelated settings saves', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-reply-appearance-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify({ appearance: { themeMode: 'dark' } }));
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.value.appearance).toMatchObject({ showAssistantMessageBorder: false, showAssistantAvatar: true });
+    store.save({ appearance: { showAssistantMessageBorder: true, showAssistantAvatar: false } });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    expect(restarted.value.appearance).toMatchObject({ themeMode: 'dark', showAssistantMessageBorder: true, showAssistantAvatar: false });
+    restarted.save({ language: 'english' });
+    restarted.save({ appearance: { chatFontSize: 16 } });
+    expect(createDesktopSettingsStore({ settingsPath }).value.appearance).toMatchObject({
+      themeMode: 'dark', chatFontSize: 16, showAssistantMessageBorder: true, showAssistantAvatar: false,
+    });
+  });
+
   it('persists a user avatar across restarts and unrelated saves, and can restore the default', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-user-avatar-'));
     temporaryRoots.push(root);
@@ -322,7 +339,21 @@ describe('desktop settings', () => {
     });
   });
 
-  it('normalizes all Moss session-memory and compact settings', () => {
+  it('defaults session summaries off and preserves an explicit opt-in across restarts', () => {
+    expect(normalizeDesktopSettings({}).sessionMemory).toMatchObject({ enabled: false, compactEnabled: false });
+    expect(normalizeDesktopSettings({ sessionMemory: {} }).sessionMemory.enabled).toBe(false);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-session-summary-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.value.sessionMemory.enabled).toBe(false);
+    store.save({ sessionMemory: { enabled: true } });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    restarted.save({ language: 'english' });
+    expect(createDesktopSettingsStore({ settingsPath }).value.sessionMemory.enabled).toBe(true);
+  });
+
+  it('keeps legacy session-memory fields compatible with persisted settings', () => {
     expect(normalizeDesktopSettings({
       sessionMemory: {
         enabled: true,

@@ -54,6 +54,7 @@ import { TaskCreateTool } from './tools/TaskCreateTool/TaskCreateTool.js'
 import { TaskGetTool } from './tools/TaskGetTool/TaskGetTool.js'
 import { TaskUpdateTool } from './tools/TaskUpdateTool/TaskUpdateTool.js'
 import { TaskListTool } from './tools/TaskListTool/TaskListTool.js'
+import { SaveSessionSummaryTool } from './tools/SaveSessionSummaryTool/SaveSessionSummaryTool.js'
 import uniqBy from 'lodash-es/uniqBy.js'
 import { isToolSearchEnabledOptimistic } from './utils/toolSearch.js'
 // Dead code elimination: conditional import for CLAUDE_CODE_VERIFY_PLAN
@@ -159,6 +160,7 @@ export function getAllBaseTools(): Tools {
     TaskGetTool,
     TaskUpdateTool,
     TaskListTool,
+    SaveSessionSummaryTool,
     ...(isEnvTruthy(process.env.ENABLE_LSP_TOOL) ? [LSPTool] : []),
     ...(isWorktreeModeEnabled() ? [EnterWorktreeTool, ExitWorktreeTool] : []),
     getSendMessageTool(),

@@ -19,6 +19,8 @@ describe('desktop appearance settings', () => {
       chatFontSize: 16,
       chatLineHeight: 1.7,
       chatMessageSpacing: 14,
+      showAssistantMessageBorder: true,
+      showAssistantAvatar: false,
     };
 
     expect(normalizeAppearance(appearance)).toEqual(appearance);
@@ -36,6 +38,8 @@ describe('desktop appearance settings', () => {
       chatFontSize: 14,
       chatLineHeight: 1.55,
       chatMessageSpacing: 10,
+      showAssistantMessageBorder: false,
+      showAssistantAvatar: true,
     });
 
     expect(hasPersistedAppearance({
@@ -57,6 +61,23 @@ describe('desktop appearance settings', () => {
       chatFontSize: 18,
       chatLineHeight: 1.33,
       chatMessageSpacing: 4,
+    });
+  });
+
+  it('adds reply appearance defaults to old settings and preserves independent choices', () => {
+    const legacy = { themeMode: 'dark', chatFontSize: 16 };
+    expect(normalizeAppearance(legacy)).toMatchObject({
+      ...legacy, showAssistantMessageBorder: false, showAssistantAvatar: true,
+    });
+    const existing = normalizeAppearance({ showAssistantMessageBorder: true, showAssistantAvatar: false });
+    expect(normalizeAppearance({ chatFontSize: 18 }, existing)).toMatchObject({
+      chatFontSize: 18, showAssistantMessageBorder: true, showAssistantAvatar: false,
+    });
+    expect(normalizeAppearance({ showAssistantMessageBorder: false }, existing)).toMatchObject({
+      showAssistantMessageBorder: false, showAssistantAvatar: false,
+    });
+    expect(normalizeAppearance({ showAssistantMessageBorder: 'false', showAssistantAvatar: null }, existing)).toMatchObject({
+      showAssistantMessageBorder: true, showAssistantAvatar: false,
     });
   });
 });

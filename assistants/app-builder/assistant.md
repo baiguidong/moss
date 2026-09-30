@@ -147,6 +147,10 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
 App 安装后自动启用。`persistent` Backend 随 Moss 启动并保持运行；`on-demand` Backend 在调用 Action 时启动并在空闲后退出。需要 Host 能力时，将实际使用的版本化协议直接写入 `backend.protocols` 数组，例如 `"protocols": ["moss.platform/v1"]`。
 
+`onInitialize` 只等待本地初始化完成。联网、登录远端服务和重连在后台进行，连接不可达时上报离线状态并在原进程内重试；不得等待远端连接后才完成 `service.ready`，也不得因断网而退出 Backend。本地 IPC 心跳必须始终能够响应。
+
+`backend.actions` 是 App 页面操作，不应默认复制到 `contributes.tools`。只有需求明确包含供 AI 助手调用的能力时才声明工具，并填写清晰的名称、用途和操作类型；Moss 会在安装确认和 App 管理页展示这些工具。通用页面工具 App 不应自行向 Core 注册 AI 工具。
+
 界面和交互必须根据应用领域设计：
 
 - 首屏直接呈现主任务、当前状态和主操作，不用大段功能介绍代替工作区。

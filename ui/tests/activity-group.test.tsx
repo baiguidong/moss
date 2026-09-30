@@ -162,7 +162,7 @@ describe('merged activity group', () => {
     expect(markup).toContain('data-tool-call-chrome="row"');
     expect(markup).toContain('aria-label="工具调用"');
     expect(markup).toContain('h-7 w-7 shrink-0');
-    expect(markup).toContain('items-start gap-3');
+    expect(markup).toContain('items-center gap-2');
     expect(markup).toContain('lucide-wrench');
     expect(markup).not.toContain('lucide-file-plus-2');
   });
@@ -187,7 +187,7 @@ describe('merged activity group', () => {
     );
     expect(markup).toContain('data-row-tool-icon="true"');
     expect(markup).toContain('self-start');
-    expect(markup).toContain('items-start gap-3');
+    expect(markup).toContain('items-center gap-2');
     expect(markup).toContain('white-space:nowrap');
   });
 
@@ -210,7 +210,7 @@ describe('merged activity group', () => {
     expect(markup).toContain('aria-label="思考"');
     expect(markup).toContain('lucide-brain');
     expect(markup).toContain('h-7 w-7 shrink-0');
-    expect(markup).toContain('items-center gap-3');
+    expect(markup).toContain('items-center gap-2');
     expect(markup).not.toContain('lucide-wrench');
   });
 

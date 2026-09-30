@@ -100,9 +100,19 @@ export function validateEnvelope(raw, options = {}) {
 }
 
 export function serializeError(error, fallbackCode = APP_ERROR_CODES.backendUnavailable) {
+  // Native SDKs can reject with response objects instead of Error instances.
+  // Keep their diagnostic fields structured so the Host can redact them.
+  const message = [error?.message, error?.errDlt, error?.errMsg, error]
+    .find(value => typeof value === 'string' && value.trim())
+  const nativeDetails = error?.errCode !== undefined ? {
+    errCode: error.errCode,
+    errMsg: error.errMsg,
+    errDlt: error.errDlt,
+    operationID: error.operationID,
+  } : undefined
   return {
-    code: String(error?.code || fallbackCode),
-    message: String(error?.message || error || 'Unknown App Backend error'),
-    details: error?.details,
+    code: String(error?.code || error?.errCode || fallbackCode),
+    message: message || 'Unknown App Backend error',
+    details: error?.details ?? nativeDetails,
   }
 }

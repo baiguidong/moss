@@ -698,13 +698,13 @@ export const SettingsSchema = lazySchema(() =>
             .boolean()
             .optional()
             .describe(
-              'Enable per-session memory summaries for long-running sessions.',
+              'Expose SaveSessionSummary for optional model-authored session notes. Defaults to false.',
             ),
           compactEnabled: z
             .boolean()
             .optional()
             .describe(
-              'Use session memory summaries as the preferred source for conversation compaction.',
+              'Deprecated; ignored. Compaction does not consume saved session summaries.',
             ),
           minimumMessageTokensToInit: z
             .number()
@@ -712,7 +712,7 @@ export const SettingsSchema = lazySchema(() =>
             .positive()
             .optional()
             .describe(
-              'Minimum context-window tokens before creating session memory.',
+              'Deprecated; ignored. Session summaries are saved only through SaveSessionSummary.',
             ),
           minimumTokensBetweenUpdate: z
             .number()
@@ -720,7 +720,7 @@ export const SettingsSchema = lazySchema(() =>
             .positive()
             .optional()
             .describe(
-              'Minimum context-window token growth between session memory updates.',
+              'Deprecated; ignored. There is no automatic session summary extraction.',
             ),
           toolCallsBetweenUpdates: z
             .number()
@@ -728,14 +728,14 @@ export const SettingsSchema = lazySchema(() =>
             .positive()
             .optional()
             .describe(
-              'Minimum tool calls between session memory updates.',
+              'Deprecated; ignored. Tool counts do not trigger session summaries.',
             ),
           compactMinTokens: z.number().int().positive().optional(),
           compactMinTextBlockMessages: z.number().int().positive().optional(),
           compactMaxTokens: z.number().int().positive().optional(),
         })
         .optional()
-        .describe('Per-session memory behavior and extraction thresholds.'),
+        .describe('Optional model-authored session summaries; legacy thresholds are ignored.'),
       showThinkingSummaries: z
         .boolean()
         .optional()

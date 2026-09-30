@@ -130,7 +130,7 @@ describe('direct embedded backend model settings', () => {
       url: 'https://desktop.test', apiKey: 'desktop-key',
       maxTurns: 1, thinkingConfig: { type: 'disabled' },
       appendSystemPrompt: 'Keep session instructions',
-      environment: { MOSS_MODEL_AUTH_TOKEN: 'desktop-token', CONNECTOR_KEY: 'keep' },
+      environment: { MOSS_MODEL_AUTH_TOKEN: 'desktop-token', MOSS_TRACE_SCOPE: '/desktop/private-profile', CONNECTOR_KEY: 'keep' },
     }
     for (const resumeSessionId of [undefined, 'previous-session']) {
       const handle = await backend.spawn({
@@ -161,7 +161,7 @@ describe('direct embedded backend model settings', () => {
         url: 'https://server-model.test', apiKey: 'server-key',
         maxTurns: 55, thinkingConfig: { type: 'enabled', budgetTokens: 8192 },
         appendSystemPrompt: 'Keep session instructions',
-        environment: { CONNECTOR_KEY: 'keep' },
+        environment: { CONNECTOR_KEY: 'keep', MOSS_TRACE_SCOPE: join(tempRoot, 'profile') },
       })
       expect(options.environment).not.toHaveProperty('MOSS_MODEL_AUTH_TOKEN')
     }

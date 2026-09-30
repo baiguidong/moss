@@ -5,6 +5,8 @@ export const DEFAULT_APPEARANCE = Object.freeze({
   chatFontSize: 14,
   chatLineHeight: 1.55,
   chatMessageSpacing: 10,
+  showAssistantMessageBorder: false,
+  showAssistantAvatar: true,
 });
 
 const THEME_MODES = new Set(['light', 'dark', 'system']);
@@ -72,6 +74,16 @@ export function normalizeAppearance(input, existing = DEFAULT_APPEARANCE) {
       4,
       24,
     ),
+    showAssistantMessageBorder: typeof source.showAssistantMessageBorder === 'boolean'
+      ? source.showAssistantMessageBorder
+      : typeof fallback.showAssistantMessageBorder === 'boolean'
+        ? fallback.showAssistantMessageBorder
+        : DEFAULT_APPEARANCE.showAssistantMessageBorder,
+    showAssistantAvatar: typeof source.showAssistantAvatar === 'boolean'
+      ? source.showAssistantAvatar
+      : typeof fallback.showAssistantAvatar === 'boolean'
+        ? fallback.showAssistantAvatar
+        : DEFAULT_APPEARANCE.showAssistantAvatar,
   };
 }
 

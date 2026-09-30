@@ -94,7 +94,8 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
   const alerts = snapshot?.alerts || [];
   const alertIds = new Set(alerts.map(alert => alert.processId));
   const stale = Boolean(snapshot && (!snapshot.lastSuccessAt || now - snapshot.lastSuccessAt > 15_000));
-  const unavailable = stale || Boolean(error || snapshot?.error);
+  const unavailable = !snapshot || stale || Boolean(error || snapshot.error);
+  const observedAt = unavailable ? snapshot?.lastSuccessAt || now : now;
   const rows = (snapshot?.processes || []).filter(row => {
     if (!showStopped && row.state === 'stopped' && !alertIds.has(row.id)) return false;
     if (filter === 'apps') return Boolean(row.appId);
@@ -115,8 +116,8 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
     <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs text-muted-foreground">本机 Moss 及其进程 · CPU 100% 表示占满一个逻辑核</p>
       <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className={cn('h-1.5 w-1.5 rounded-full', unavailable ? 'bg-amber-500' : snapshot ? 'bg-emerald-500' : 'bg-muted-foreground')} />
-        {unavailable ? '等待恢复' : snapshot ? '每 2 秒刷新' : '正在采集'}
+        <span className={cn('h-1.5 w-1.5 rounded-full', !snapshot ? 'bg-muted-foreground' : unavailable ? 'bg-amber-500' : 'bg-emerald-500')} />
+        {!snapshot ? '正在采集' : unavailable ? '等待恢复' : '每 2 秒刷新'}
         {snapshot?.lastSuccessAt ? ` · ${new Date(snapshot.lastSuccessAt).toLocaleTimeString('zh-CN', { hour12: false })}` : ''}
       </span>
     </div>
@@ -124,7 +125,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
       <MetricCard icon={Cpu} label="Moss CPU" value={formatCpu(unavailable ? null : snapshot?.cpuPercent)} detail={`${snapshot?.cpuCount || '—'} 个逻辑核 · 可超过 100%`} />
       <MetricCard icon={MemoryStick} label="进程内存合计" value={formatMemory(unavailable ? null : snapshot?.memoryBytes)} detail="RSS / 工作集估算，含共享内存" />
-      <MetricCard icon={Activity} label="运行进程" value={snapshot ? `${snapshot.processCount}` : '—'} detail="主进程、App、界面及子进程" />
+      <MetricCard icon={Activity} label="运行进程" value={!unavailable ? `${snapshot.processCount}` : '—'} detail="主进程、App、界面及子进程" />
       <MetricCard icon={AlertTriangle} label="当前异常" value={unavailable ? '待采集' : `${alertIds.size} 个进程`} warning={alertIds.size > 0 || lagging}
         detail={unavailable ? '等待有效采样' : lagging ? `主线程出现 ${Math.round(snapshot!.loopDelayMs!)} ms 卡顿` : alertIds.size ? '下方可查看原因与持续时间' : '未检测到持续高负载或运行异常'} />
     </div>
@@ -160,9 +161,10 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
     </section>
 
     {(alerts.length > 0 || lagging) && <div className="mt-4 space-y-2 rounded-xl border border-amber-500/25 bg-amber-500/[.04] p-4">
+      {unavailable && <p className="text-xs text-muted-foreground">以下为上次有效采样的异常，当前状态待确认。</p>}
       {alerts.map(alert => <button type="button" key={alert.id} onClick={() => onSelect({ id: alert.processId, name: alert.name })} className="flex w-full items-start gap-2 text-left text-xs">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-        <span><span className="font-medium">{alert.name}</span><span className="text-muted-foreground"> · {alert.message} · 已持续 {formatDuration(now - alert.startedAt)}</span></span>
+        <span><span className="font-medium">{alert.name}</span><span className="text-muted-foreground"> · {alert.message} · 已持续 {formatDuration(observedAt - alert.startedAt)}</span></span>
       </button>)}
       {lagging && <p className="text-xs text-amber-700 dark:text-amber-400">主线程出现 {Math.round(snapshot!.loopDelayMs!)} ms 卡顿，可能影响界面操作和消息处理。</p>}
     </div>}
@@ -192,7 +194,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
               <p className="mt-1 truncate text-[10px] text-muted-foreground" title={row.appName || row.parentName}>{kindLabels[row.kind]}{row.lifecycle === 'persistent' ? ' · 常驻' : row.lifecycle === 'on-demand' ? ' · 按需' : ''}{row.appName && row.kind === 'child' ? ` · ${row.appName}` : ''} · PID {row.pid ?? '—'}</p>
             </td>
             <td className="whitespace-nowrap px-3 py-3"><span className={cn('inline-flex items-center gap-1.5', alertIds.has(row.id) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
-              <span className={cn('h-1.5 w-1.5 rounded-full', alertIds.has(row.id) ? 'bg-amber-500' : row.state === 'running' ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />{unavailable ? '待采集' : row.cpuHighSince != null ? '持续高负载' : row.orphaned ? '残留进程' : stateLabels[row.state] || row.state}</span>
+              <span className={cn('h-1.5 w-1.5 rounded-full', unavailable ? 'bg-muted-foreground/40' : alertIds.has(row.id) ? 'bg-amber-500' : row.state === 'running' ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />{unavailable ? '待采集' : row.cpuHighSince != null ? '持续高负载' : row.orphaned ? '父进程已退出' : stateLabels[row.state] || row.state}</span>
               {!!row.recentCrashCount && <p className="mt-1 text-[10px] text-muted-foreground">5 分钟内异常退出 {row.recentCrashCount} 次</p>}
             </td>
             <td className={cn('whitespace-nowrap px-3 py-3 text-right tabular-nums', row.cpuHighSince != null && 'font-medium text-amber-600 dark:text-amber-400')}>{formatCpu(unavailable ? null : row.cpuPercent)}</td>
@@ -219,7 +221,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
       <summary className="cursor-pointer text-xs text-muted-foreground">最近 15 分钟的异常记录（{snapshot.events.length}）</summary>
       <div className="mt-3 space-y-3">{[...snapshot.events].reverse().map(event => <button key={event.id} type="button" onClick={() => onSelect({ id: event.processId, name: event.name })} className="block w-full text-left text-xs">
         <span className="mr-2 tabular-nums text-muted-foreground">{new Date(event.startedAt).toLocaleTimeString()}</span><span className="font-medium">{event.name}</span>
-        <p className="mt-1 text-muted-foreground">{event.message} · {event.endedAt ? '已结束' : '持续中'} · {formatDuration((event.endedAt || now) - event.startedAt)}{event.kind === 'cpu' ? ` · 峰值 ${formatCpu(event.peakCpu)}` : ''}</p>
+        <p className="mt-1 text-muted-foreground">{event.message} · {event.endedAt ? event.endReason || '已结束' : unavailable ? '待确认' : '持续中'} · {formatDuration((event.endedAt || observedAt) - event.startedAt)}{event.kind === 'cpu' ? ` · 峰值 ${formatCpu(event.peakCpu)}` : ''}</p>
       </button>)}</div>
     </details>}
   </div>;

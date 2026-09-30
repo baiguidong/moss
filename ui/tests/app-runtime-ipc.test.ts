@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { registerAppRuntimeIpc } from '../src/apps/app-runtime-ipc.mjs'
 
-function createFixture({ response = 1, currentGrants = [] as string[], activationError = '' } = {}) {
+function createFixture({ response = 1, currentGrants = [] as string[], activationError = '', permissions = ['platform:files', 'agent:turns:write'], tools = [] as any[] } = {}) {
   const handlers = new Map<string, (...args: any[]) => any>()
   const registrations: Array<{ appId: string; version: string; options: { grants: string[] } }> = []
   const prompts: any[] = []
@@ -41,7 +41,8 @@ function createFixture({ response = 1, currentGrants = [] as string[], activatio
         id: 'example.app',
         version: '1.0.0',
         displayName: '示例 App',
-        permissions: ['platform:files', 'agent:turns:write'],
+        permissions,
+        contributes: { tools },
       },
     }),
     remote: {},
@@ -57,6 +58,27 @@ function createFixture({ response = 1, currentGrants = [] as string[], activatio
 }
 
 describe('App archive installation', () => {
+  it.each([0, 1])('discloses tools even without permissions before installing (response %s)', async response => {
+    const fixture = createFixture({ response, permissions: [], tools: [{
+      id: 'request', title: '发送请求', description: '从本机访问指定服务', effect: 'write', action: 'request.send',
+    }] })
+    const result = await fixture.install()
+    expect(fixture.prompts).toHaveLength(1)
+    expect(fixture.prompts[0].detail).toContain('AI 工具（1 个）')
+    expect(fixture.prompts[0].detail).toContain('发送请求（request） · 可修改数据')
+    expect(fixture.prompts[0].detail).toContain('从本机访问指定服务')
+    expect(fixture.prompts[0].detail).toContain('加入 Moss AI 助手的工具列表')
+    expect(fixture.packageInstallCount()).toBe(response)
+    expect(fixture.registrations).toHaveLength(response)
+    expect(result.ok).toBe(response === 1)
+  })
+
+  it('does not add an approval prompt to Apps with no tools or new permissions', async () => {
+    const fixture = createFixture({ permissions: [] })
+    expect((await fixture.install()).ok).toBe(true)
+    expect(fixture.prompts).toHaveLength(0)
+  })
+
   it('keeps configuration access without exposing Backend creation or deletion', () => {
     const { handlers } = createFixture()
     expect(handlers.has('app:list-instances')).toBe(true)

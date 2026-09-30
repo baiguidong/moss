@@ -62,6 +62,7 @@ export function createResourceMonitor({
   let events = [];
   const active = new Map();
   const highSince = new Map();
+  const heartbeatBaseline = new Map();
   let pending = null;
   let timer = null;
   let running = false;
@@ -72,14 +73,17 @@ export function createResourceMonitor({
     collectionMs: 0, error: '', alerts: [], events: [],
   };
 
-  function reconcileAlerts(conditions, time) {
+  function reconcileAlerts(conditions, time, interrupted = false) {
     const current = new Set();
-    for (const condition of conditions) {
-      const key = `${condition.processId}:${condition.kind}`;
+    for (const { targetKey, ...condition } of conditions) {
+      const key = `${targetKey ? `app:${targetKey}` : condition.processId}:${condition.kind}`;
       current.add(key);
       const existing = active.get(key);
       if (existing) {
-        existing.peakCpu = Math.max(existing.peakCpu || 0, condition.peakCpu || 0);
+        existing.processId = condition.processId;
+        existing.name = condition.name;
+        existing.message = condition.message;
+        if (validMetric(condition.peakCpu)) existing.peakCpu = Math.max(existing.peakCpu ?? 0, condition.peakCpu);
         continue;
       }
       const event = { ...condition, id: `${key}:${time}`, detectedAt: time, endedAt: null };
@@ -89,7 +93,8 @@ export function createResourceMonitor({
     }
     for (const [key, event] of active) {
       if (current.has(key)) continue;
-      event.endedAt = time;
+      event.endedAt = interrupted ? Math.max(event.startedAt, snapshot.lastSuccessAt) : time;
+      event.endReason = interrupted ? '采样中断' : '已结束';
       active.delete(key);
       try { onAlert({ ...event, phase: 'ended' }); } catch {}
     }
@@ -111,6 +116,7 @@ export function createResourceMonitor({
       const selected = selectMossProcesses(raw, labels, rootPid, previous);
       const conditions = [];
       const next = new Map();
+      const heartbeatIds = new Set();
       const processes = selected.map(row => {
         const old = previous.get(row.id);
         const cpuPercent = continuous && old && validMetric(row.cpuSeconds) && validMetric(old.cpuSeconds)
@@ -123,13 +129,22 @@ export function createResourceMonitor({
         const cpuHighSince = highAt !== undefined && time - highAt >= 60_000 ? highAt : null;
         const issue = (kind, message, startedAt = time) => conditions.push({
           processId: row.id, name: row.name, kind, message, startedAt, peakCpu: cpuPercent,
+          targetKey: row.kind === 'app' && !row.orphaned && ['crash', 'runtime', 'heartbeat'].includes(kind) ? row.targetKey : null,
         });
         if (cpuHighSince !== null) issue('cpu', 'CPU ≥ 80% 已持续至少 1 分钟', cpuHighSince);
         if (row.state === 'crash-loop') issue('crash', 'App 反复崩溃，已停止自动重启');
         else if (row.recentCrashCount >= 2) issue('crash', `最近 5 分钟异常退出 ${row.recentCrashCount} 次`);
         if (row.state === 'error') issue('runtime', row.lastError || 'App 运行异常');
-        if (row.state === 'running' && row.lastHeartbeatAt && time - row.lastHeartbeatAt > row.healthCheckTimeoutMs) {
-          issue('heartbeat', 'App 心跳超时');
+        if (row.state === 'running' && row.lastHeartbeatAt) {
+          const heartbeatId = row.targetKey || row.id;
+          heartbeatIds.add(heartbeatId);
+          if (!continuous && snapshot.lastSuccessAt) heartbeatBaseline.set(heartbeatId, time);
+          const heartbeatDeadline = Math.max(
+            row.lastHeartbeatAt + row.healthCheckTimeoutMs,
+            (heartbeatBaseline.get(heartbeatId) || 0) + row.healthCheckTimeoutMs,
+            row.healthCheckDeadlineAt || 0,
+          );
+          if (time > heartbeatDeadline) issue('heartbeat', 'App 心跳超时');
         }
         if (row.orphaned) issue('orphan', '父进程退出后仍在运行');
         const result = { ...row, cpuPercent, memoryBytes, cpuHighSince };
@@ -139,7 +154,8 @@ export function createResourceMonitor({
         return publicRow;
       });
       for (const id of highSince.keys()) if (!next.has(id)) highSince.delete(id);
-      reconcileAlerts(conditions, time);
+      for (const id of heartbeatBaseline.keys()) if (!heartbeatIds.has(id)) heartbeatBaseline.delete(id);
+      reconcileAlerts(conditions, time, !continuous);
       const live = processes.filter(row => row.pid);
       const sum = key => live.length && live.every(row => row[key] !== null)
         ? live.reduce((total, row) => total + row[key], 0) : null;
@@ -155,7 +171,7 @@ export function createResourceMonitor({
       previousMono = null;
       previousTime = null;
       highSince.clear();
-      reconcileAlerts([], time);
+      reconcileAlerts([], time, true);
       snapshot = {
         ...snapshot, sampledAt: time, cpuPercent: null, memoryBytes: null, loopDelayMs: null,
         collectionMs: monotonic() - begin, error: `进程采集失败：${error.message || String(error)}`,

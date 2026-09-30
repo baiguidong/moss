@@ -316,6 +316,52 @@ export async function fetchRemoteUsageOverview({ serverUrl, authToken, signal = 
   return data;
 }
 
+export async function requestRemoteTrace({ serverUrl, authToken, operation, payload = {} }) {
+  const id = encodeURIComponent(payload.sessionId || '');
+  const sessionPath = `/api/v1/sessions/${id}/trace`;
+  const query = new URLSearchParams();
+  let endpoint;
+  let method = 'GET';
+  if (operation === 'settings' || operation === 'update-settings') {
+    endpoint = '/api/v1/traces/settings';
+    if (operation === 'update-settings') method = 'PUT';
+  } else if (operation === 'list') {
+    endpoint = '/api/v1/traces';
+    if (payload.query) query.set('q', payload.query);
+    if (payload.limit !== undefined) query.set('limit', String(payload.limit));
+    if (payload.offset !== undefined) query.set('offset', String(payload.offset));
+  } else if (operation === 'revision') {
+    endpoint = `${sessionPath}/revision`;
+    if (payload.sinceRevision !== undefined) query.set('sinceRevision', String(payload.sinceRevision));
+    if (payload.sinceRevisionToken) query.set('sinceRevisionToken', payload.sinceRevisionToken);
+  } else if (operation === 'call') {
+    endpoint = `${sessionPath}/calls/${encodeURIComponent(payload.callId || '')}`;
+  } else if (operation === 'get' || operation === 'delete') {
+    endpoint = sessionPath;
+    if (operation === 'delete') method = 'DELETE';
+  } else {
+    throw new Error('不支持的 Trace 操作');
+  }
+  const response = await remoteDirectFetch(`${serverUrl}${endpoint}${query.size ? `?${query}` : ''}`, {
+    method,
+    signal: AbortSignal.timeout(20_000),
+    headers: { Authorization: `Bearer ${authToken}`, ...(method === 'PUT' ? { 'Content-Type': 'application/json' } : {}) },
+    ...(method === 'PUT' ? { body: JSON.stringify({ enabled: payload.enabled }) } : {}),
+  });
+  if (!response.ok) {
+    if (response.status === 404 && endpoint.startsWith('/api/v1/traces')) {
+      throw new Error('服务器尚不支持 Trace，请更新 Moss Server 后重试。');
+    }
+    throw new Error(await parseRemoteDirectError('无法读取服务器 Trace', response));
+  }
+  const data = await response.json();
+  if (operation === 'call') {
+    if (!data?.call?.id || !data.call.request) throw new Error('服务器 Trace 调用详情格式无效');
+    return data.call;
+  }
+  return data;
+}
+
 export async function fetchRemoteDirectSessions({ serverUrl, authToken }) {
   let response;
   try {

@@ -2,10 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { buildMemoryLines } from '../memdir/memdir.js'
 import { asSessionId } from '../types/ids.js'
 import { runWithSessionIdContext } from '../utils/sessionIdContext.js'
-import {
-  DEFAULT_SESSION_MEMORY_TEMPLATE_ZH,
-  getDefaultSessionMemoryTemplate,
-} from './SessionMemory/prompts.js'
 import { buildConsolidationPrompt } from './autoDream/consolidationPrompt.js'
 import { MOSS_RUNTIME_ADVANCED_SETTINGS_ENV } from './advancedSettings.js'
 import { buildExtractAutoOnlyPrompt } from './extractMemories/prompts.js'
@@ -34,9 +30,6 @@ describe('response language', () => {
       expect(getResponseLanguage()).toBe('chinese')
       expect(getMemoryLanguageInstruction()).toContain(
         'memory titles, descriptions, headings, index summaries, and body content in chinese',
-      )
-      expect(getDefaultSessionMemoryTemplate()).toBe(
-        DEFAULT_SESSION_MEMORY_TEMPLATE_ZH,
       )
     })
   })

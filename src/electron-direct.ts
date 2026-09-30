@@ -5,6 +5,8 @@
  */
 
 import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessionIdContext.js'
+export { withTraceScope, readTraceCaptureSettings, updateTraceCaptureSettings, traceCaptureService, trimTraceCallPreviews } from './services/api/traceCapture.js'
+export { toTraceMessages } from './services/api/traceMessages.js'
 import type { ImageSettings } from './services/imageGeneration.js'
 import { randomUUID, type UUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
@@ -177,10 +179,6 @@ import {
   headlessProfilerStartTurn,
   logHeadlessProfilerTurn,
 } from './utils/headlessProfiler.js'
-import {
-  discardSessionMemoryRuntimeState,
-  initSessionMemory,
-} from './services/SessionMemory/sessionMemory.js'
 import { initAutoDream } from './services/autoDream/autoDream.js'
 import {
   discardExtractMemoriesSessionState,
@@ -190,7 +188,6 @@ import {
   performMCPOAuthFlow,
   revokeServerTokens,
 } from './services/mcp/auth.js'
-import { discardSessionMemoryState } from './services/SessionMemory/sessionMemoryUtils.js'
 import { clearCACertsCache } from './utils/caCerts.js'
 import { clearMTLSCache } from './utils/mtls.js'
 import { clearProxyCache } from './utils/proxy.js'
@@ -224,7 +221,6 @@ function initLocalAgentRuntimeOnce(): void {
   enableConfigs()
   setQuestionPreviewFormat('markdown')
   if (localAgentRuntimeInitialized) return
-  initSessionMemory()
   initAutoDream()
   initExtractMemories()
   localAgentRuntimeInitialized = true
@@ -1728,8 +1724,6 @@ export class ClaudeSession {
     // Drop per-session state so long-lived desktop processes don't
     // accumulate records for disposed sessions.
     discardSessionStorageRecord(this.sessionId)
-    discardSessionMemoryRuntimeState(this.sessionId)
-    discardSessionMemoryState(this.sessionId)
     discardExtractMemoriesSessionState(this.sessionId)
     discardMicrocompactSessionState(this.sessionId)
     discardSessionCostState(this.sessionId)

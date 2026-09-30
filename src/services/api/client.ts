@@ -1,5 +1,8 @@
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
 import { randomUUID } from 'crypto'
+import { createTraceFetch } from './traceFetch.js'
+import { withTraceScope } from '../trace/traceScope.js'
+import { getSessionEnvironmentContext } from '../../utils/sessionIdContext.js'
 import type { GoogleAuth } from 'google-auth-library'
 import {
   getAnthropicApiKey,
@@ -23,6 +26,7 @@ import { getApiBaseUrl } from '../../constants/api.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import {
   getAWSRegion,
+  getMossConfigHomeDir,
   getVertexRegionForModel,
   isEnvTruthy,
 } from '../../utils/envUtils.js'
@@ -353,14 +357,17 @@ function buildFetch(
   source: string | undefined,
 ): ClientOptions['fetch'] {
   // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
-  const inner = fetchOverride ?? globalThis.fetch
+  const inner = createTraceFetch(fetchOverride ?? globalThis.fetch, {
+    sessionId: getSessionId,
+    querySource: source,
+  })
   // Only send to the first-party API — Bedrock/Vertex/Foundry don't log it
   // and unknown headers risk rejection by strict proxies (inc-4029 class).
   const injectClientRequestId =
     getAPIProvider() === 'firstParty' && isFirstPartyModelBaseUrl()
   return (input, init) => {
     // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
-    const headers = new Headers(init?.headers)
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
     // Generate a client-side request ID so timeouts (which return no server
     // request ID) can still be correlated with server logs by the API team.
     // Callers that want to track the ID themselves can pre-set the header.
@@ -377,6 +384,9 @@ function buildFetch(
     } catch {
       // never let logging crash the fetch
     }
-    return inner(input, { ...init, headers })
+    return withTraceScope(
+      getSessionEnvironmentContext()?.MOSS_TRACE_SCOPE ?? getMossConfigHomeDir(),
+      () => inner(input, { ...init, headers }),
+    )
   }
 }

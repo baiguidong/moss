@@ -9,7 +9,9 @@ import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
 import { installAppArchive } from './app-runtime.mjs'
+import { describeAppTools } from './app-tool-disclosure.mjs'
 
+const INSTALL_CANCELED = 'MOSS_APP_MARKET_INSTALL_CANCELED'
 const MARKET_CACHE_VERSION = 1
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000
 const MAX_CATALOG_BYTES = 5 * 1024 * 1024
@@ -318,7 +320,7 @@ export function createAppMarketplaceService(options = {}) {
       const declaredPermissions = new Set(version.permissions)
       const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
       const addedPermissions = version.permissions.filter((permission) => !currentGrants.includes(permission))
-      if (addedPermissions.length && !acceptPermissions) {
+      if (addedPermissions.length && !acceptPermissions && !options.confirmInstallation) {
         return { ok: false, requiresPermissionApproval: true, appId, version: version.version, permissions: addedPermissions }
       }
 
@@ -358,6 +360,14 @@ export function createAppMarketplaceService(options = {}) {
             ) {
               throw new Error(`Downloaded App signer mismatch: ${appId}@${version.version}`)
             }
+            const pendingPermissions = acceptPermissions ? [] : addedPermissions
+            if (pendingPermissions.length || describeAppTools(packageInfo.manifest).length) {
+              report({ phase: 'awaiting-permission' })
+              if (!options.confirmInstallation) throw new Error('安装此 App 前需要确认其 AI 工具列表')
+              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions)) {
+                throw Object.assign(new Error('App installation was canceled'), { code: INSTALL_CANCELED })
+              }
+            }
             report({ phase: 'installing' })
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
@@ -390,6 +400,10 @@ export function createAppMarketplaceService(options = {}) {
       if (result.ok) report({ phase: 'completed', version: result.version })
       return result
     }).catch((error) => {
+      if (error?.code === INSTALL_CANCELED) {
+        report({ phase: 'canceled' })
+        return { ok: false, canceled: true, appId, version: progress.version }
+      }
       report({ phase: 'error', error: error.message || String(error) })
       throw error
     }).finally(() => installLocks.delete(appId))

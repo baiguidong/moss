@@ -16,11 +16,6 @@ import {
   MOSS_SESSION_MEMORY_SETTINGS_ENV,
 } from './sessionMemorySettings.js'
 import {
-  getSessionMemoryConfig,
-  resetSessionMemoryState,
-  setSessionMemoryConfig,
-} from './SessionMemory/sessionMemoryUtils.js'
-import {
   persistExtractionState,
   readPersistedExtractionState,
 } from './extractMemories/extractMemories.js'
@@ -43,7 +38,6 @@ afterEach(async () => {
     else process.env[key] = value
   }
   resetSettingsCache()
-  resetSessionMemoryState()
   if (tempRoot) {
     await rm(tempRoot, { recursive: true, force: true })
     tempRoot = undefined
@@ -96,16 +90,6 @@ describe('Moss memory settings', () => {
     )
     expect(enforced.auto.dreamEnabled).toBe(false)
     expect(enforced.session.enabled).toBe(true)
-  })
-
-  test('keeps session-memory thresholds isolated by session', () => {
-    runWithSessionIdContext(asSessionId('session-a'), null, () => {
-      setSessionMemoryConfig({ minimumMessageTokensToInit: 111 })
-      expect(getSessionMemoryConfig().minimumMessageTokensToInit).toBe(111)
-    })
-    runWithSessionIdContext(asSessionId('session-b'), null, () => {
-      expect(getSessionMemoryConfig().minimumMessageTokensToInit).toBe(10_000)
-    })
   })
 
   test('persists automatic extraction cursor state across runtime lifetimes', async () => {

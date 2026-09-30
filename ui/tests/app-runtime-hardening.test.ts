@@ -104,7 +104,12 @@ process.on('message', (message) => {
   if (message.type === 'service.init') { token = message.payload.secrets.token; send('service.ready', {}, message.id) }
   if (message.type === 'service.ping') send('service.pong', {}, message.id)
   if (message.type === 'service.shutdown') process.exit(0)
-  if (message.type === 'action.invoke') send('action.error', { requestId: message.id, error: { code: 'APP_BACKEND_UNAVAILABLE', message: \`failed with \${token}\`, details: { token } } }, message.id)
+  if (message.type === 'action.invoke') {
+    const error = message.payload.input.native
+      ? { errCode: 10303, errMsg: \`failed with \${token}\`, operationID: 'native-operation' }
+      : { code: 'APP_BACKEND_UNAVAILABLE', message: \`failed with \${token}\`, details: { token } }
+    send('action.error', { requestId: message.id, error }, message.id)
+  }
 })
 send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOSS_APP_VERSION, apiVersion: 1, instanceId: process.env.MOSS_APP_INSTANCE_ID })
 `)
@@ -118,6 +123,12 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     try { await runtime.invoke(appId, instance.id, 'echo', {}) } catch (error) { failure = error }
     expect(JSON.stringify({ message: failure?.message, details: failure?.details })).not.toContain('literal-secret')
     expect(JSON.stringify({ message: failure?.message, details: failure?.details })).toContain('[REDACTED]')
+    const nativeFailure = await runtime.invoke(appId, instance.id, 'echo', { native: true }).catch(error => error)
+    expect(nativeFailure).toMatchObject({
+      code: '10303', message: 'failed with [REDACTED]',
+      details: { errCode: 10303, errMsg: 'failed with [REDACTED]', operationID: 'native-operation' },
+    })
+    expect(JSON.stringify(nativeFailure)).not.toContain('literal-secret')
     await runtime.shutdown()
   })
 
@@ -256,6 +267,8 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     const deadline = Date.now() + 500
     while (runtime.supervisor.status(key).state === 'running' && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
     expect(runtime.supervisor.status(key).state).toBe('error')
+    expect(runtime.supervisor.status(key).lastError).toContain('health check timed out')
+    expect(runtime.supervisor.status(key).lastError).toContain('(SIGKILL)')
     await runtime.shutdown()
     expect(() => process.kill(pid, 0)).toThrow()
   })

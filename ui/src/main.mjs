@@ -1,7 +1,7 @@
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
-const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createUsageLedger } from './usage-ledger.mjs';
 import { resolveRemoteWorkspaceFileUrl } from './remote-browser-file.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
@@ -119,6 +119,7 @@ import {
   MOSS_CLOUD_STORAGE_PROTOCOL,
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
+import { confirmAppInstallation, describeAppTools } from './apps/app-tool-disclosure.mjs';
 import {
   createAppPlatformHandlers,
   isAllowedAppMediaPermission,
@@ -134,6 +135,7 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
+import { registerTraceIpc } from './trace-ipc.mjs';
 import {
   createLocalAuditService,
   registerLocalAuditIpcHandlers,
@@ -294,6 +296,7 @@ import {
   downloadRemoteDirectWorkspaceFile,
   parseRemoteDirectServerInput,
   setRemoteDirectFetchImplementation,
+  requestRemoteTrace,
 } from './remote-direct-client.mjs';
 import {
   applyRemoteSessionHistoryTitle,
@@ -1501,6 +1504,7 @@ function saveDesktopSettings(nextSettings) {
   desktopSettingsState = snapshot.state;
   desktopSettings = snapshot.value;
   if (previousAppearance !== JSON.stringify(desktopSettings.appearance || {})) {
+    syncMainWindowAppearance();
     for (const state of appWindowStates.values()) {
       if (!state.webContents?.isDestroyed()) {
         state.webContents.send('app-ui:event:appearance', desktopSettings.appearance);
@@ -4109,6 +4113,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
     environment: {
+      MOSS_TRACE_SCOPE: MOSS_HOME,
       ...getConnectorCredentialEnv(getRuntimeSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
@@ -4230,7 +4235,8 @@ function createRemoteDirectRuntime({
           nativeCapability: undefined,
         },
         mcpServers: localRuntimeConfig.mcpServers,
-        environment: localRuntimeConfig.environment,
+        environment: Object.fromEntries(Object.entries(localRuntimeConfig.environment)
+          .filter(([key]) => key !== 'MOSS_TRACE_SCOPE')),
         libraryEnabled: localRuntimeConfig.libraryEnabled === true,
         coordinatorMode: coordinatorMode === true,
         agentMailEnabled: localRuntimeConfig.agentMailEnabled === true,
@@ -5186,7 +5192,7 @@ async function getClaudeRuntimeModule() {
   }
 
   installRuntimeMacros();
-  claudeRuntimeModulePromise = import(sdkPath)
+  claudeRuntimeModulePromise = import(pathToFileURL(sdkPath).href)
     .then((mod) => {
       // The bundle guards all config reads behind enableConfigs(); ClaudeSession.send()
       // reads config (session cost restore) and throws "Config accessed before allowed."
@@ -5204,6 +5210,12 @@ async function getClaudeRuntimeModule() {
     })
     .catch((error) => {
       claudeRuntimeModulePromise = null;
+      mossLog('error', 'runtime', 'Failed to load agent runtime', {
+        sdkPath,
+        platform: process.platform,
+        code: error?.code,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     });
 
@@ -6374,6 +6386,7 @@ async function generateProjectSessionFinalization(project, sessionRecord, memory
       addDirs: [],
       workspaceDirectories: getSessionWorkspaceDirectories(sessionRecord),
       environment: {
+        MOSS_TRACE_SCOPE: MOSS_HOME,
         MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
         MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }),
         MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
@@ -10412,6 +10425,28 @@ function closePreviewWindow() {
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close();
 }
 
+function getMainWindowAppearance() {
+  const themeMode = desktopSettings.appearance?.themeMode || 'light';
+  const dark = themeMode === 'dark' || (themeMode === 'system' && nativeTheme.shouldUseDarkColors);
+  // Keep these colors in sync with .moss-window-chrome-native in globals.css.
+  const color = dark ? '#09111c' : '#ffffff';
+  return {
+    backgroundColor: color,
+    titleBarOverlay: process.platform === 'darwin'
+      ? false
+      : { color, symbolColor: dark ? '#dbe4ea' : '#000000', height: 36 },
+  };
+}
+
+function syncMainWindowAppearance() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const { backgroundColor, titleBarOverlay } = getMainWindowAppearance();
+  mainWindow.setBackgroundColor(backgroundColor);
+  if (titleBarOverlay) mainWindow.setTitleBarOverlay(titleBarOverlay);
+}
+
+nativeTheme.on('updated', syncMainWindowAppearance);
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -10419,15 +10454,8 @@ function createWindow() {
     minWidth: 1220,
     minHeight: 780,
     title: 'Moss',
-    backgroundColor: '#09111c',
+    ...getMainWindowAppearance(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-    titleBarOverlay: process.platform === 'darwin'
-      ? false
-      : {
-          color: '#09111c',
-          symbolColor: '#dbe4ea',
-          height: 36,
-        },
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
@@ -11177,6 +11205,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       getRuntime: () => appRuntime,
       getInstalledApps: () => listAllStoredApps(),
       installPackage: installAppPackage,
+      confirmInstallation: (manifest, permissions) => confirmAppInstallation(dialog, manifest, permissions),
       rollbackPackage: async ({ appId, previousVersion }) => {
         if (previousVersion) rollbackAppToVersion(appId, previousVersion);
         else await deleteApp(appId);
@@ -11188,6 +11217,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
+  registerTraceIpc({
+    ipcMain,
+    getWindow: () => mainWindow,
+    mossHome: MOSS_HOME,
+    getRuntime: getClaudeRuntimeModule,
+    getSessions: () => [...sessions.values(), ...subAgentSessions.values()],
+    getTranscriptPath: getLocalSessionTranscriptPath,
+    requestRemote: async (operation, payload) => requestRemoteTrace({
+      ...await resolveRemoteDirectConnection(), operation, payload,
+    }),
+  });
   registerResourceMonitorIpc({
     ipcMain, app, webContents, getWindow: () => mainWindow,
     getRuntime: () => appRuntime, getAppStates: () => appWindowStates.values(),
@@ -13226,6 +13266,7 @@ ipcMain.handle('app:list', async () => {
       trust: runtimeState?.trust || null,
       grants: runtimeState?.installation?.grants || [],
       contributes: enabledAppContributions(manifest, runtimeState?.installation),
+      agentTools: describeAppTools(runtimeState?.manifest || manifest),
       enabled: packageReady && Boolean(runtimeState?.installation?.enabled),
       configuration: runtimeState?.configuration || null,
       instances,

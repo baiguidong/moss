@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { drainTraceFetchForTests } from '../../services/api/traceFetch.js'
+import { clearTraceCaptureStateForTests, drainTraceCaptureForTests, traceCaptureService, withTraceScope } from '../../services/api/traceCapture.js'
+import { runWithSessionIdContext } from '../sessionIdContext.js'
+import type { SessionId } from '../../types/ids.js'
 import { isProviderManagedEnvVar } from '../managedEnvConstants.js'
 import {
   applySessionMossModel,
@@ -12,6 +19,8 @@ import {
 import { subprocessEnv } from '../subprocessEnv.js'
 
 const originalMossAuthToken = process.env.MOSS_MODEL_AUTH_TOKEN
+const originalMossConfigDir = process.env.MOSS_CONFIG_DIR
+let traceTestDirectory: string
 const originalMossBaseUrl = process.env.MOSS_MODEL_BASE_URL
 const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY
 const originalSubprocessScrub = process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
@@ -20,7 +29,17 @@ const testGlobal = globalThis as typeof globalThis & {
 }
 const originalMacro = testGlobal.MACRO
 
-afterEach(() => {
+beforeEach(async () => {
+  traceTestDirectory = await mkdtemp(join(tmpdir(), 'moss-auth-trace-'))
+  process.env.MOSS_CONFIG_DIR = traceTestDirectory
+})
+
+afterEach(async () => {
+  await drainTraceFetchForTests()
+  await drainTraceCaptureForTests()
+  clearTraceCaptureStateForTests()
+  restoreEnv('MOSS_CONFIG_DIR', originalMossConfigDir)
+  await rm(traceTestDirectory, { recursive: true, force: true })
   restoreEnv('MOSS_MODEL_AUTH_TOKEN', originalMossAuthToken)
   restoreEnv('MOSS_MODEL_BASE_URL', originalMossBaseUrl)
   restoreEnv('ANTHROPIC_API_KEY', originalAnthropicApiKey)
@@ -124,6 +143,44 @@ describe('Moss model auth token', () => {
     expect(getSessionMossAuthToken()).toBeUndefined()
     expect(getSessionMossModel()).toBeUndefined()
     expect(getSessionMossFastModel()).toBeUndefined()
+  })
+
+  test('records each concurrent SDK request in its host-provided trace scope', async () => {
+    process.env.MOSS_MODEL_AUTH_TOKEN = 'fixture-token'
+    process.env.MOSS_MODEL_BASE_URL = 'https://moss.example.test'
+    testGlobal.MACRO = { VERSION: 'test' }
+    const { getAnthropicClient } = await import('../../services/api/client.js')
+    await Promise.all(['alpha', 'beta'].map(sessionId => runWithSessionIdContext(
+      sessionId as SessionId,
+      undefined,
+      async () => {
+        const client = await getAnthropicClient({
+          apiKey: 'fixture-key', maxRetries: 0, source: 'trace-scope-fixture',
+          fetchOverride: async () => new Response(JSON.stringify({
+            id: `${sessionId}-response`, type: 'message', role: 'assistant', model: 'fixture-model',
+            content: [{ type: 'text', text: sessionId }], stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }), { headers: { 'content-type': 'application/json' } }),
+        })
+        await client.messages.create({
+          model: 'fixture-model', max_tokens: 4, messages: [{ role: 'user', content: sessionId }],
+        })
+      },
+      undefined,
+      { MOSS_TRACE_SCOPE: join(traceTestDirectory, sessionId) },
+    )))
+    await drainTraceFetchForTests()
+    for (const sessionId of ['alpha', 'beta']) {
+      await withTraceScope(join(traceTestDirectory, sessionId), async () => {
+        const files = await traceCaptureService.listSessionTraceFiles()
+        expect(files.files.map(file => file.sessionId)).toEqual([sessionId])
+        const trace = await traceCaptureService.getSessionTrace(sessionId)
+        expect(trace.calls[0]).toMatchObject({
+          querySource: 'trace-scope-fixture', status: 'ok',
+          request: { headers: { authorization: '[redacted]', 'x-claude-code-session-id': sessionId } },
+        })
+      })
+    }
   })
 
   test('routes primary session requests to the configured Moss model', () => {

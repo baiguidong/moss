@@ -56,8 +56,8 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     disabled: ['verification'],
   },
   sessionMemory: {
-    enabled: true,
-    compactEnabled: true,
+    enabled: false,
+    compactEnabled: false,
     minimumMessageTokensToInit: 10000,
     minimumTokensBetweenUpdate: 5000,
     toolCallsBetweenUpdates: 3,

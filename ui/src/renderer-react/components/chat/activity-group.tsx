@@ -285,7 +285,7 @@ export function ActivityGroup({
     >
       <div
         data-activity-icon="true"
-        className="flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
+        className="chat-message-icon flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
         title="工具调用"
         role="img"
         aria-label="工具调用"
@@ -298,7 +298,7 @@ export function ActivityGroup({
           onClick={() => setPinnedExpanded(!expanded)}
           aria-expanded={expanded}
           title={summary}
-          className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] leading-[1.6] text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="-mx-2 flex min-h-7 w-[calc(100%+1rem)] items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] leading-[1.6] text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="min-w-0 flex-1 truncate">{summary}</span>
           <span className="flex shrink-0 items-center gap-2">

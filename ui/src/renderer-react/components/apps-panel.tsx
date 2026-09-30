@@ -300,6 +300,28 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
   );
 }
 
+export function AppAgentTools({ app }: { app: StoredApp }) {
+  const tools = app.agentTools || [];
+  const effectLabels = { read: "只读", write: "可修改数据", destructive: "破坏性操作" };
+  return <div className="mt-3 border-t border-border pt-3">
+    <div className="text-xs font-medium">AI 工具{tools.length ? `（${tools.length} 个）` : ""}</div>
+    <p className="mt-1 text-xs leading-5 text-muted-foreground">{tools.length
+      ? "这些工具会加入 Moss AI 助手的工具列表，可在对话中调用。停用 App 后不再提供。"
+      : "此 App 未向 AI 助手提供工具。"}</p>
+    {tools.length > 0 && <ul className="mt-2 grid gap-2">
+      {tools.map(tool => <li key={tool.id} className="rounded-md border border-border px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{tool.title}</span>
+          <span className="text-muted-foreground">{effectLabels[tool.effect]}</span>
+          <span className="ml-auto text-muted-foreground">{!app.enabled ? "App 已停用" : tool.permission && !app.grants?.includes(tool.permission) ? "未授权" : "已注册"}</span>
+        </div>
+        <p className="mt-1 break-words leading-5 text-muted-foreground">{tool.description}</p>
+        <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
+      </li>)}
+    </ul>}
+  </div>;
+}
+
 export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh }: {
   apps: StoredApp[];
   versionsByApp: Record<string, AppVersion[]>;
@@ -380,6 +402,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <span>v{app.currentVersion || "-"}</span>
+                    {Boolean(app.agentTools?.length) && <span>提供 {app.agentTools!.length} 个 AI 工具</span>}
                     <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
                     <span>{formatTimestamp(app.updatedAt)}</span>
@@ -422,6 +445,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                           </div>
                         </div>
                       ) : null}
+                      <AppAgentTools app={app} />
                       {displayedBackend?.actions?.length ? (
                         <div className="mt-3 border-t border-border pt-3">
                           <div className="mb-2 text-xs font-medium">应用能力</div>

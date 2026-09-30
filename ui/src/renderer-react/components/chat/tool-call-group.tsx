@@ -179,7 +179,7 @@ function ToolCallRun({
     <div className="flex min-w-0 items-start gap-2">
       <div
         data-tool-group-icon="true"
-        className="flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
+        className="chat-message-icon flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)] text-[color:var(--color-repl-muted)]"
         title="工具调用"
         role="img"
         aria-label="工具调用"

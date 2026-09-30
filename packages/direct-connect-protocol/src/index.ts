@@ -13,7 +13,10 @@ export type AutoMemorySettings = {
 }
 
 export type SessionMemorySettings = {
+  /** Expose SaveSessionSummary to the main model. Defaults to false. */
   enabled: boolean
+  // Legacy fields are retained for persisted settings and older clients only.
+  // They no longer schedule extraction or affect compaction.
   compactEnabled: boolean
   minimumMessageTokensToInit: number
   minimumTokensBetweenUpdate: number
@@ -85,8 +88,8 @@ export const DEFAULT_AUTO_MEMORY_SETTINGS: AutoMemorySettings = Object.freeze({
 })
 
 export const DEFAULT_SESSION_MEMORY_SETTINGS: SessionMemorySettings = Object.freeze({
-  enabled: true,
-  compactEnabled: true,
+  enabled: false,
+  compactEnabled: false,
   minimumMessageTokensToInit: 10_000,
   minimumTokensBetweenUpdate: 5_000,
   toolCallsBetweenUpdates: 3,

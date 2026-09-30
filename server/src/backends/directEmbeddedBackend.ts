@@ -859,6 +859,7 @@ export class DirectEmbeddedBackend implements SessionBackend {
       environment: {
         ...(runtimeOptions.environment || {}),
         MOSS_CONFIG_DIR: profileDir,
+        MOSS_TRACE_SCOPE: profileDir,
         ...(options.advancedSettings
           ? {
               MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify(

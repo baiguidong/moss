@@ -44,7 +44,9 @@
   --color-surface-container: color-mix(in oklab, var(--card) 88%, var(--muted));
   --color-surface-container-high: color-mix(in oklab, var(--card) 84%, var(--secondary));
   --color-surface-container-highest: color-mix(in oklab, var(--card) 76%, var(--secondary));
-  --color-surface-user-msg: color-mix(in oklab, var(--primary) 20%, white);
+  --color-surface-user-msg: oklch(0.935 0 0);
+  --color-selection-bg: #b8d7ff;
+  --color-selection-fg: #102a43;
   --color-surface-hover: color-mix(in oklab, var(--primary) 8%, var(--card));
   --color-text-primary: var(--foreground);
   --color-text-secondary: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground));
@@ -135,7 +137,9 @@
   --color-surface-container: color-mix(in oklab, var(--card) 74%, var(--muted));
   --color-surface-container-high: color-mix(in oklab, var(--card) 68%, var(--muted));
   --color-surface-container-highest: color-mix(in oklab, var(--card) 60%, var(--muted));
-  --color-surface-user-msg: color-mix(in oklab, var(--primary) 34%, var(--background));
+  --color-surface-user-msg: oklch(0.29 0 0);
+  --color-selection-bg: #365f91;
+  --color-selection-fg: #ffffff;
   --color-surface-hover: color-mix(in oklab, var(--primary) 12%, var(--card));
   --color-text-primary: var(--foreground);
   --color-text-secondary: color-mix(in oklab, var(--foreground) 82%, var(--muted-foreground));
@@ -271,6 +275,15 @@
     border-bottom: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
   }
 
+  /* Match the native Windows/Linux caption buttons, including their solid background. */
+  .moss-window-chrome-native {
+    background: #ffffff;
+  }
+
+  [data-theme='dark'] .moss-window-chrome-native {
+    background: #09111c;
+  }
+
   .moss-window-drag {
     -webkit-app-region: drag;
   }
@@ -280,7 +293,8 @@
   }
 
   ::selection {
-    background: color-mix(in oklab, var(--primary) 30%, transparent);
+    background: var(--color-selection-bg);
+    color: var(--color-selection-fg);
   }
 
   .tool-card-header {
@@ -307,6 +321,60 @@
     direction: ltr;
     -webkit-font-smoothing: antialiased;
   }
+}
+
+/* Keep the first text line centered beside the avatar at every chat density.
+   Edge paragraph margins belong between blocks, not above the message. */
+.assistant-message {
+  --assistant-first-line-height: calc(var(--chat-font-size, 14px) * var(--chat-line-height, 1.55));
+}
+
+.assistant-message-avatar {
+  display: var(--assistant-avatar-display, block);
+  margin-top: calc(var(--assistant-message-padding-y, 0px) + var(--assistant-message-border-width, 0px) + max(0px, (var(--assistant-first-line-height) - 28px) / 2));
+}
+
+.chat-message-icon {
+  display: var(--chat-icon-display, flex);
+}
+
+/* With a frame, align the action buttons to its edge. Without a frame,
+   align their 14px icons to the text, keeping the full 28px click targets. */
+.assistant-message-actions {
+  margin-left: var(--assistant-message-actions-offset, -7px);
+}
+
+.assistant-message-body {
+  border: var(--assistant-message-border-width, 0px) solid var(--border);
+  border-radius: 16px;
+  padding: var(--assistant-message-padding-y, 0px) var(--assistant-message-padding-x, 0px);
+  background: var(--assistant-message-background, transparent);
+}
+
+.assistant-message-body > .prose {
+  padding-top: max(0px, (var(--assistant-avatar-size, 28px) - var(--assistant-first-line-height)) / 2);
+}
+
+.assistant-message-body > .prose > :first-child,
+.assistant-message-body > .prose > :is(ul, ol):first-child > li:first-child,
+.assistant-message-body > .prose > :is(ul, ol):first-child > li:first-child > p:first-child {
+  margin-top: 0;
+}
+
+.assistant-message-body > .prose > :last-child {
+  margin-bottom: 0;
+}
+
+.assistant-message:has(.assistant-message-body > .prose > h1:first-child) {
+  --assistant-first-line-height: 30px;
+}
+
+.assistant-message:has(.assistant-message-body > .prose > h2:first-child) {
+  --assistant-first-line-height: 28px;
+}
+
+.assistant-message:has(.assistant-message-body > .prose > h3:first-child) {
+  --assistant-first-line-height: 24px;
 }
 
 @layer components {
@@ -394,6 +462,10 @@
 @keyframes workflow-edge-flow {
   to { stroke-dashoffset: -28; }
 }
+
+.trace-row-cv { content-visibility: auto; contain-intrinsic-size: auto 34px; }
+.trace-message-cv { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+.trace-list-row-cv { content-visibility: auto; contain-intrinsic-size: auto 56px; }
 
 .workflow-live-diagram path[style*="stroke-dasharray:8 6"],
 .workflow-live-diagram path[style*="stroke-dasharray: 8 6"] {

@@ -15,7 +15,7 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
   },
   {
     id: 'app',
-    label: 'App',
+    label: 'App 管理',
     tools: [
       { name: 'app_build', description: '构建工作区中的 Moss App', defaultMode: 'deferred' },
       { name: 'app_preview', description: '预览已构建的 App', defaultMode: 'deferred' },

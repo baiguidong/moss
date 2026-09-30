@@ -23,7 +23,7 @@ function shouldUseDocumentLayout(content: string, attachmentCount: number) {
   return paragraphs.length >= 2 || normalized.split("\n").filter((line) => line.trim()).length >= 8;
 }
 
-export function AssistantMessage({
+export const AssistantMessage = React.memo(function AssistantMessage({
   message,
   beforeContent,
   actions,
@@ -48,33 +48,30 @@ export function AssistantMessage({
       copyText={message.content}
       copyLabel="复制回复"
       align="start"
-      className="min-h-7 px-1"
+      className="min-h-7"
     />
   ) : null;
 
   return (
     <div
-      className="group flex justify-start gap-2"
+      className="assistant-message group flex items-start justify-start gap-2"
       style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
     >
       <img
         src="./build/icon.png"
         alt="Moss"
-        className="h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+        className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+        draggable={false}
       />
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? "document" : "bubble"}
-        className={
-          documentLayout
-            ? "relative flex w-full min-w-0 flex-col items-start gap-2"
-            : "relative flex w-full max-w-[88%] min-w-0 flex-col items-start gap-2 sm:max-w-[80%] lg:max-w-[72%]"
-        }
+        className="relative flex w-full min-w-0 flex-col items-start gap-2"
       >
         {beforeContent}
 
         {(hasText || attachments.length > 0) && (
-          <div className="w-full max-w-full rounded-[20px] rounded-tl-[8px] border border-border/70 bg-card/92 px-4 py-3 shadow-[0_18px_48px_-40px_rgba(0,0,0,0.75)] select-text">
+          <div data-message-body="assistant" className="assistant-message-body w-full min-w-0 max-w-full text-foreground select-text">
             {hasText && (
               <MarkdownRenderer
                 content={message.content}
@@ -121,13 +118,13 @@ export function AssistantMessage({
           </div>
         )}
 
-        {actions ? (
-          <div className="-mt-1 flex w-full items-center gap-1">
+        {actions || copyAction ? (
+          <div className="assistant-message-actions -mt-1 flex min-h-7 items-center gap-1">
             {actions}
             {copyAction}
           </div>
-        ) : copyAction}
+        ) : null}
       </div>
     </div>
   );
-}
+});

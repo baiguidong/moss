@@ -171,7 +171,7 @@ function RowToolIcon({ active }: {
   return (
     <span
       className={cn(
-        "flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)]",
+        "chat-message-icon flex h-7 w-7 shrink-0 self-start items-center justify-center rounded-sm border border-[color:var(--color-repl-border)] bg-[var(--color-repl-header-bg)]",
         active ? "text-primary" : "text-muted-foreground",
       )}
       data-row-tool-icon="true"
@@ -484,7 +484,7 @@ export function ToolCallBlock({
       <div
         className={cn(
           isRow
-            ? "-mx-2 flex min-h-7 w-[calc(100%+1rem)] min-w-0 items-start gap-3 rounded-md px-2 py-1 transition-colors hover:bg-muted/45"
+            ? "-mx-2 flex min-h-7 w-[calc(100%+1rem)] min-w-0 items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-muted/45"
             : TOOL_CALL_HEADER_CLASS_NAME,
           !isRow && hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}

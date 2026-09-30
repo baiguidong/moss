@@ -41,12 +41,12 @@ test('chat messages use aligned avatars and keep actions below Moss replies', ()
   expect(userHtml).not.toContain('复制消息');
   expect(userHtml).not.toContain('mb-5');
   expect(assistantHtml).toContain('var(--chat-line-height, 1.55)');
-  expect(assistantHtml).toContain('rounded-[20px]');
-  expect(assistantHtml).toContain('rounded-tl-[8px]');
-  expect(assistantHtml).toContain('px-4 py-3');
+  expect(assistantHtml).toContain('data-message-body="assistant"');
+  expect(assistantHtml).not.toContain('rounded-tl-[8px]');
+  expect(assistantHtml).not.toContain('max-w-[72%]');
   expect(assistantHtml).toContain('h-7 w-7 shrink-0 self-start rounded-sm object-contain');
   expect(assistantHtml).toContain('复制回复');
-  expect(assistantHtml).toContain('min-h-7 px-1');
+  expect(assistantHtml).toContain('assistant-message-actions');
   expect(assistantHtml).not.toContain('absolute top-0');
   expect(assistantHtml).not.toContain('leading-7');
 });

@@ -1,6 +1,7 @@
 import { installAppArchive } from './app-runtime.mjs'
 import path from 'node:path'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
+import { confirmAppInstallation, describeAppTools } from './app-tool-disclosure.mjs'
 
 const INSTALL_PERMISSION_CANCELLED = 'MOSS_APP_INSTALL_PERMISSION_CANCELLED'
 
@@ -56,19 +57,9 @@ export function registerAppRuntimeIpc(options) {
           const currentGrants = previousGrants.get(appId) || []
           const addedPermissions = (packageInfo.manifest.permissions || [])
             .filter((permission) => !currentGrants.includes(permission))
-          if (addedPermissions.length) {
+          if (addedPermissions.length || describeAppTools(packageInfo.manifest).length) {
             report({ phase: 'awaiting-permission' })
-            const confirmation = await dialog.showMessageBox({
-              type: 'question',
-              title: '安装 Moss App',
-              message: `“${packageInfo.manifest.displayName || appId}”需要以下权限`,
-              detail: addedPermissions.map((permission) => `• ${permission}`).join('\n'),
-              buttons: ['取消', '安装并授权'],
-              defaultId: 1,
-              cancelId: 0,
-              noLink: true,
-            })
-            if (confirmation.response !== 1) {
+            if (!await confirmAppInstallation(dialog, packageInfo.manifest, addedPermissions)) {
               throw Object.assign(new Error('App installation permission approval was canceled'), {
                 code: INSTALL_PERMISSION_CANCELLED,
               })

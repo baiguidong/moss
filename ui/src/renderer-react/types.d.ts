@@ -1064,6 +1064,8 @@ export type DesktopSettings = {
     chatFontSize: number;
     chatLineHeight: number;
     chatMessageSpacing: number;
+    showAssistantMessageBorder: boolean;
+    showAssistantAvatar: boolean;
   };
   mcp?: {
     version?: number;
@@ -1174,6 +1176,13 @@ export type StoredApp = {
     actions: Array<{ name: string }>;
   } | null;
   permissions?: string[];
+  agentTools?: Array<{
+    id: string;
+    title: string;
+    description: string;
+    effect: 'read' | 'write' | 'destructive';
+    permission?: string;
+  }>;
   contributes?: {
     views?: Array<{ id: string; title: string; route: string; icon?: string; order?: number; permission?: string }>;
     settings?: Array<Record<string, any>>;
@@ -2043,6 +2052,7 @@ declare global {
         install: (payload: { appId: string; version?: string; acceptPermissions?: boolean }) => Promise<{
           ok: boolean;
           alreadyInstalled?: boolean;
+          canceled?: boolean;
           requiresPermissionApproval?: boolean;
           permissions?: string[];
           appId: string;

@@ -1,5 +1,4 @@
 import { feature } from 'bun:bundle'
-import { markPostCompaction } from 'src/bootstrap/state.js'
 import { getSdkBetas } from '../../bootstrap/state.js'
 import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
@@ -14,8 +13,6 @@ import { logError } from '../../utils/log.js'
 import { tokenCountWithEstimation } from '../../utils/tokens.js'
 import { getAdvancedSetting } from '../advancedSettings.js'
 import { getMaxOutputTokensForModel } from '../api/claude.js'
-import { notifyCompaction } from '../api/promptCacheBreakDetection.js'
-import { setLastSummarizedMessageId } from '../SessionMemory/sessionMemoryUtils.js'
 import {
   type CompactionResult,
   compactConversation,
@@ -23,7 +20,6 @@ import {
   type RecompactionInfo,
 } from './compact.js'
 import { runPostCompactCleanup } from './postCompactCleanup.js'
-import { trySessionMemoryCompaction } from './sessionMemoryCompact.js'
 
 // Reserve this many tokens for output during compaction
 // Based on p99.99 of compact summary output being 17,387 tokens.
@@ -230,9 +226,6 @@ export async function shouldAutoCompact(
 
   // Reactive-only mode: suppress proactive autocompact, let reactive compact
   // catch the API's prompt-too-long. The helper also checks build support.
-  // Note: returning false here also means autoCompactIfNeeded never reaches
-  // trySessionMemoryCompaction in the query loop — the /compact call site
-  // still tries session memory first. Revisit if reactive-only graduates.
   if (usesReactiveCompactStrategy()) {
     return false
   }
@@ -297,36 +290,6 @@ export async function autoCompactIfNeeded(
     querySource,
   }
 
-  // EXPERIMENT: Try session memory compaction first
-  const sessionMemoryResult = await trySessionMemoryCompaction(
-    messages,
-    toolUseContext.agentId,
-    recompactionInfo.autoCompactThreshold,
-  )
-  if (sessionMemoryResult) {
-    // Reset lastSummarizedMessageId since session memory compaction prunes messages
-    // and the old message UUID will no longer exist after the REPL replaces messages
-    setLastSummarizedMessageId(undefined)
-    runPostCompactCleanup(querySource)
-    // Reset cache read baseline so the post-compact drop isn't flagged as a
-    // break. compactConversation does this internally; SM-compact doesn't.
-    // BQ 2026-03-01: missing this made 20% of tengu_prompt_cache_break events
-    // false positives (systemPromptChanged=true, timeSinceLastAssistantMsg=-1).
-    if (feature('PROMPT_CACHE_BREAK_DETECTION')) {
-      notifyCompaction(querySource ?? 'compact', toolUseContext.agentId)
-    }
-    markPostCompaction()
-    return {
-      wasCompacted: true,
-      compactionResult: sessionMemoryResult,
-      consecutiveFailures: nextConsecutiveFailures(
-        sessionMemoryResult,
-        recompactionInfo,
-        tracking,
-      ),
-    }
-  }
-
   try {
     const compactionResult = await compactConversation(
       messages,
@@ -338,9 +301,6 @@ export async function autoCompactIfNeeded(
       recompactionInfo,
     )
 
-    // Reset lastSummarizedMessageId since legacy compaction replaces all messages
-    // and the old message UUID will no longer exist in the new messages array
-    setLastSummarizedMessageId(undefined)
     runPostCompactCleanup(querySource)
 
     return {
@@ -406,7 +366,6 @@ export async function compactAfterPromptTooLong(
         querySource,
       },
     )
-    setLastSummarizedMessageId(undefined)
     runPostCompactCleanup(querySource)
     return compactionResult
   } catch (error) {

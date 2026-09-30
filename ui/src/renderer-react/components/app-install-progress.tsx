@@ -9,7 +9,7 @@ const phaseLabels: Record<AppInstallProgress["phase"], string> = {
   verifying: "正在校验安装包",
   extracting: "正在解压安装包",
   validating: "正在验证应用签名",
-  "awaiting-permission": "等待权限确认",
+  "awaiting-permission": "等待安装能力确认",
   installing: "正在安装应用文件",
   activating: "正在应用新版本",
   "rolling-back": "正在恢复原版本",

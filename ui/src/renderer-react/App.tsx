@@ -10,6 +10,7 @@ import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { SessionInfoButton } from '@/components/session-info';
+import { SessionTraceButton } from '@/components/session-trace-button';
 import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
@@ -25,6 +26,7 @@ import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
 import { SettingsView } from '@/components/settings-view';
 import { UserAvatarContext } from '@/components/user-avatar';
+import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { NotificationCenter, NotificationToast } from '@/components/notification-center';
@@ -360,7 +362,8 @@ export default function App() {
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
-  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
+  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents' | 'trace'>('basic-info');
+  const [traceLaunch, setTraceLaunch] = React.useState<{ sessionId: string; target: 'local' | 'remote' } | null>(null);
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
     sessionId: string;
@@ -458,6 +461,8 @@ export default function App() {
     chatFontSize: 14,
     chatLineHeight: 1.55,
     chatMessageSpacing: 10,
+    showAssistantMessageBorder: false,
+    showAssistantAvatar: true,
   });
   const committedAppearanceRef = React.useRef(appearanceRef.current);
   const appearanceSaveRequestRef = React.useRef(0);
@@ -1998,8 +2003,20 @@ export default function App() {
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
     agent?: DesktopAgentDefinition,
   ) => {
-    await submitPrompt(composerIntent, files, workspace, skills, agent);
-  }, [composerIntent, submitPrompt]);
+    try {
+      await submitPrompt(composerIntent, files, workspace, skills, agent);
+    } catch (error) {
+      const reason = cleanIpcErrorMessage(error);
+      showPermissionNotice(`消息发送失败：${reason}`, 'error', 6000);
+      pushAppNotification({
+        severity: 'error',
+        source: '会话',
+        title: '消息发送失败',
+        message: reason,
+        details: getErrorMessage(error),
+      });
+    }
+  }, [composerIntent, submitPrompt, showPermissionNotice, pushAppNotification]);
 
   const handleCreateWorkflowInChat = React.useCallback(() => {
     setActiveView('chat');
@@ -2505,6 +2522,7 @@ export default function App() {
 
   const renderSettingsView = () => (
     <SettingsView
+      apps={apps}
       settingsDraft={settingsDraft}
       setSettingsDraft={setSettingsDraft}
       settingsNotice={settingsNotice}
@@ -2528,6 +2546,9 @@ export default function App() {
         ? activeDetail.workspace
         : pendingNewSessionContext?.workspace}
       initialSection={settingsInitialSection}
+      traceSessionId={settingsInitialSection === 'trace' ? traceLaunch?.sessionId : undefined}
+      traceTarget={settingsInitialSection === 'trace' ? traceLaunch?.target : undefined}
+      onTraceBack={settingsInitialSection === 'trace' && traceLaunch ? () => setActiveView('chat') : undefined}
     />
   );
 
@@ -2538,17 +2559,9 @@ export default function App() {
     >
     <div
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
-      style={{
-        '--chat-font-size': `${desktopSettings?.appearance.chatFontSize ?? 14}px`,
-        '--chat-line-height': desktopSettings?.appearance.chatLineHeight ?? 1.55,
-        '--chat-message-spacing': `${desktopSettings?.appearance.chatMessageSpacing ?? 10}px`,
-        '--chat-bubble-padding-y': `${Math.max(
-          6,
-          Math.min(12, Math.round((desktopSettings?.appearance.chatMessageSpacing ?? 10) * 0.5 + 3)),
-        )}px`,
-      } as React.CSSProperties}
+      style={getChatAppearanceStyle(desktopSettings?.appearance)}
     >
-      <div className="moss-window-chrome relative shrink-0">
+      <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
         <div
           className="moss-window-drag h-9"
           style={{ paddingLeft: isMacOS ? 84 : 0 }}
@@ -2700,10 +2713,12 @@ export default function App() {
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
                 terminalActions={<SessionTerminalActions key={`terminal:${activeSessionId}`} session={activeDetail} />}
-                sessionInfo={<SessionInfoButton key={`info:${activeSessionId}`}
+                sessionInfo={<><SessionTraceButton session={activeDetail?.id === activeSessionId ? activeDetail : null}
+                  onOpen={(sessionId, target) => { setTraceLaunch({ sessionId, target }); setSettingsInitialSection('trace'); setActiveView('settings'); }} />
+                  <SessionInfoButton key={`info:${activeSessionId}`}
                   session={activeDetail?.id === activeSessionId ? activeDetail : null}
                   messages={chatMessages} childSessions={activeChildSessions}
-                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} />}
+                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} /></>}
                 toolDisplayMode={activeToolDisplayMode}
                 sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
                 globalToolDisplayMode={globalToolDisplayMode}

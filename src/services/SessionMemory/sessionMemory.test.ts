@@ -1,238 +1,205 @@
-import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
+import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import type { ToolUseContext } from '../../Tool.js'
 import { asSessionId } from '../../types/ids.js'
-import {
-  getSessionEnvironmentContext,
-  getSessionIdContext,
-  runWithSessionIdContext,
-} from '../../utils/sessionIdContext.js'
+import { runWithSessionIdContext, type SessionRuntime } from '../../utils/sessionIdContext.js'
+import * as settings from '../../utils/settings/settings.js'
+import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
+import { getSessionMemoryPath } from '../../utils/permissions/filesystem.js'
+import { MAX_SESSION_SUMMARY_CHARS } from './sessionMemory.js'
+import { getSessionMemoryContent } from './sessionMemoryUtils.js'
+import { SaveSessionSummaryTool as tool } from '../../tools/SaveSessionSummaryTool/SaveSessionSummaryTool.js'
 
 mock.module('color-diff-napi', () => ({
   ColorDiff: {}, ColorFile: {}, getSyntaxTheme: () => ({}),
 }))
-
-const { createAssistantMessage, createUserMessage } = await import('../../utils/messages.js')
-const { initSessionMemory, manuallyExtractSessionMemory, resetLastMemoryMessageUuid, shouldExtractMemory } =
-  await import('./sessionMemory.js')
-const {
-  discardSessionMemoryState, isSessionMemoryExtractionRunning,
-  recordExtractionTokenCount, resetSessionMemoryState, setSessionMemoryConfig,
-  tryStartSessionMemoryExtraction,
-} = await import('./sessionMemoryUtils.js')
-const { tokenCountWithEstimation } = await import('../../utils/tokens.js')
-const { createFileStateCacheWithSizeLimit } = await import('../../utils/fileStateCache.js')
+const { getTools, getToolsForDefaultPreset, assembleToolPool } = await import('../../tools.js')
+const { getEmptyToolPermissionContext } = await import('../../Tool.js')
+const { filterToolsForAgent } = await import('../../tools/AgentTool/agentToolUtils.js')
+const { applyChatToolFilter, applyCoordinatorToolFilter } = await import('../../utils/toolPool.js')
+const { isDeferredTool } = await import('../../tools/ToolSearchTool/prompt.js')
 const { executePostSamplingHooks } = await import('../../utils/hooks/postSamplingHooks.js')
-const { FileReadTool } = await import('../../tools/FileReadTool/FileReadTool.js')
-const updateModule = await import('./runMemoryUpdate.js')
+const { createAssistantMessage, createUserMessage } = await import('../../utils/messages.js')
+const forkedAgent = await import('../../utils/forkedAgent.js')
 
-const releases: Array<() => void> = []
-function acquire() {
-  const release = tryStartSessionMemoryExtraction()
-  if (release) releases.push(release)
-  return release
-}
-const inSession = <T>(id: string, run: () => T) => runWithSessionIdContext(asSessionId(id), null, run)
-function snapshot() {
-  const answer = createAssistantMessage({ content: 'Filesystem ...' })
-  answer.message.model = 'test-model'
-  answer.message.usage.input_tokens = 200
-  return [createUserMessage({ content: 'df' }), answer]
-}
+let root: string
+const originalEnvironment = Object.fromEntries([
+  'MOSS_CONFIG_DIR', 'MOSS_SESSION_MEMORY_SETTINGS', 'MOSS_RUNTIME_SESSION_MEMORY_SETTINGS', 'CLAUDE_CODE_SIMPLE',
+].map(key => [key, process.env[key]]))
 
-afterEach(() => {
-  for (const release of releases.splice(0)) release()
-  resetSessionMemoryState()
-  resetLastMemoryMessageUuid()
+beforeEach(async () => {
+  root = await fs.mkdtemp(join(tmpdir(), 'moss-session-summary-'))
+  process.env.MOSS_CONFIG_DIR = root
+  delete process.env.MOSS_SESSION_MEMORY_SETTINGS
+  delete process.env.MOSS_RUNTIME_SESSION_MEMORY_SETTINGS
+  delete process.env.CLAUDE_CODE_SIMPLE
+  resetSettingsCache()
+  spyOn(settings, 'getInitialSettings').mockReturnValue({})
+})
+afterEach(async () => {
+  mock.restore()
+  for (const [key, value] of Object.entries(originalEnvironment)) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  resetSettingsCache()
+  await fs.rm(root, { recursive: true, force: true })
 })
 
-describe('session memory writer ownership', () => {
-  test('admits only one concurrent writer per session while other sessions remain independent', async () => {
-    const claims = await Promise.all(Array.from({ length: 20 }, () =>
-      Promise.resolve().then(() => inSession('same-session', acquire)),
-    ))
-    expect(claims.filter(Boolean)).toHaveLength(1)
-    expect(inSession('other-session', acquire)).toBeFunction()
-    expect(inSession('same-session', isSessionMemoryExtractionRunning)).toBe(true)
-    claims.find(Boolean)!()
-    expect(inSession('same-session', acquire)).toBeFunction()
-  })
+function session<T>(id: string, run: () => T, enabled?: boolean, runtime?: SessionRuntime): T {
+  return runWithSessionIdContext(asSessionId(id), root, run, undefined, {
+    MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(enabled === undefined ? {} : {
+      enabled, compactEnabled: true, minimumMessageTokensToInit: 1,
+      minimumTokensBetweenUpdate: 1, toolCallsBetweenUpdates: 1,
+    }),
+  }, runtime)
+}
+function context(controller = new AbortController()): ToolUseContext {
+  return { abortController: controller } as ToolUseContext
+}
 
-  test('blocks automatic and manual updates while the same session has a writer', async () => {
-    await inSession('busy-session', async () => {
-      setSessionMemoryConfig({ minimumMessageTokensToInit: 100, minimumTokensBetweenUpdate: 50, toolCallsBetweenUpdates: 3 })
-      const messages = snapshot()
-      expect(shouldExtractMemory(messages)).toBe(true)
-      const release = acquire()!
-      expect(shouldExtractMemory(messages)).toBe(false)
-      // The busy check must return before filesystem access or model setup.
-      const manual = await manuallyExtractSessionMemory(messages, {} as never)
-      expect(manual).toEqual({ success: false, error: 'A session memory update is already running.' })
-      release()
-      expect(shouldExtractMemory(messages)).toBe(true)
-    })
-  })
+const permissions = getEmptyToolPermissionContext()
 
-  test('does not retry an unchanged snapshot after a failed extraction', () => {
-    inSession('failed-session', () => {
-      setSessionMemoryConfig({ minimumMessageTokensToInit: 100, minimumTokensBetweenUpdate: 50, toolCallsBetweenUpdates: 3 })
-      const messages = snapshot()
-      expect(shouldExtractMemory(messages)).toBe(true)
-      const release = acquire()!
-      recordExtractionTokenCount(tokenCountWithEstimation(messages))
-      release()
-      expect(shouldExtractMemory(messages)).toBe(false)
-      messages[1]!.message.usage!.input_tokens += 100
-      expect(shouldExtractMemory(messages)).toBe(true)
-    })
-  })
-
-  test('keeps ownership through state disposal and ignores a stale release', () => {
-    inSession('recreated-session', () => {
-      const releaseFirst = acquire()!
-      discardSessionMemoryState('recreated-session')
-      expect(acquire()).toBeUndefined()
-      releaseFirst()
-      const releaseSecond = acquire()!
-      releaseFirst()
-      expect(acquire()).toBeUndefined()
-      releaseSecond()
-      expect(isSessionMemoryExtractionRunning()).toBe(false)
-    })
-  })
-
-  test('the actual sampling hook queues duplicate snapshots and rechecks the threshold after failure', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'moss-memory-hook-'))
-    const parent = new AbortController()
-    let enter!: () => void, finish!: () => void
-    const entered = new Promise<void>(resolve => { enter = resolve })
-    const pending = new Promise<void>(resolve => { finish = resolve })
-    const update = spyOn(updateModule, 'runMemoryUpdate').mockImplementation(async () => {
-      enter()
-      await pending
-      throw new Error('Summary edit failed')
-    })
-    const read = spyOn(FileReadTool, 'call').mockResolvedValue({
-      data: { type: 'text', file: { content: 'Existing notes' } },
-    } as never)
-    const messages = snapshot()
-    const context = {
-      abortController: parent,
-      readFileState: createFileStateCacheWithSizeLimit(10),
-      getAppState: () => ({ toolPermissionContext: {} }),
-      options: { tools: [], mainLoopModel: 'test-model' },
-      messages,
-    } as never
-    const scoped = <T>(run: () => T) => runWithSessionIdContext(
-      asSessionId('sampling-session'), root, run, undefined,
-      { MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({
-        enabled: true, minimumMessageTokensToInit: 100,
-        minimumTokensBetweenUpdate: 50, toolCallsBetweenUpdates: 3,
-      }) },
-    )
-    const sample = () => scoped(() => executePostSamplingHooks(messages, [] as never, {}, {}, context, 'sdk'))
-    let first: Promise<void> | undefined
-    let second: Promise<void> | undefined
-    try {
-      initSessionMemory()
-      first = sample()
-      await entered
-      let secondSettled = false
-      second = sample().then(() => { secondSettled = true })
-      await new Promise(resolve => setImmediate(resolve))
-      expect(secondSettled).toBe(false)
-      expect(update).toHaveBeenCalledTimes(1)
-      expect(scoped(isSessionMemoryExtractionRunning)).toBe(true)
-      expect((await scoped(() => manuallyExtractSessionMemory(messages, context))).success).toBe(false)
-      finish()
-      await Promise.all([first, second])
-      expect(scoped(isSessionMemoryExtractionRunning)).toBe(false)
-      await sample()
-      expect(update).toHaveBeenCalledTimes(1)
-    } finally {
-      finish()
-      await Promise.all([first, second])
-      parent.abort()
-      read.mockRestore()
-      update.mockRestore()
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  test('runs queued newer snapshots in their own context and keeps other sessions independent', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'moss-memory-queue-'))
-    const parent = new AbortController()
-    const cancelled = new AbortController()
-    let enter!: () => void, finish!: () => void
-    const entered = new Promise<void>(resolve => { enter = resolve })
-    const pending = new Promise<void>(resolve => { finish = resolve })
-    const seen: Array<{ session: string | undefined; marker: string | undefined; tokens: number }> = []
-    const update = spyOn(updateModule, 'runMemoryUpdate').mockImplementation(async params => {
-      const messages = params.cacheSafeParams.forkContextMessages
-      seen.push({
-        session: getSessionIdContext(),
-        marker: getSessionEnvironmentContext()?.MOSS_TEST_QUEUE_MARKER,
-        tokens: tokenCountWithEstimation(messages),
-      })
-      if (seen.length === 1) {
-        enter()
-        await pending
-        throw new Error('First summary failed')
+describe('model-authored session summaries', () => {
+  test('unconfigured and disabled sessions omit the tool; enabled CLI, desktop, and server pools include it', () => {
+    for (const enabled of [undefined, false, true]) {
+      for (const runtime of [undefined, { executionEnvironment: 'desktop' as const }, { executionEnvironment: 'server' as const }]) {
+        session('availability', () => {
+          const expected = enabled === true
+          expect(getTools(permissions).some(t => t.name === tool.name)).toBe(expected)
+          expect(getToolsForDefaultPreset().includes(tool.name)).toBe(expected)
+          expect(assembleToolPool(permissions, []).some(t => t.name === tool.name)).toBe(expected)
+        }, enabled, runtime)
       }
-    })
-    const read = spyOn(FileReadTool, 'call').mockResolvedValue({
-      data: { type: 'text', file: { content: 'Existing notes' } },
-    } as never)
-    const context = {
-      abortController: parent,
-      readFileState: createFileStateCacheWithSizeLimit(10),
-      getAppState: () => ({ toolPermissionContext: {} }),
-      options: { tools: [], mainLoopModel: 'test-model' },
     }
-    const sample = (session: string, marker: string, tokens: number, controller = parent) => {
-      const messages = snapshot()
-      messages[1]!.message.usage!.input_tokens = tokens
-      return runWithSessionIdContext(asSessionId(session), root, () =>
-        executePostSamplingHooks(messages, [] as never, {}, {}, {
-          ...context, messages, abortController: controller,
-        } as never, 'sdk'), undefined, {
-          MOSS_TEST_QUEUE_MARKER: marker,
-          MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({
-            enabled: true, minimumMessageTokensToInit: 100,
-            minimumTokensBetweenUpdate: 50, toolCallsBetweenUpdates: 3,
-          }),
-        },
-      )
+    expect(isDeferredTool(tool)).toBe(false)
+  })
+
+  test('honors explicit settings, per-session overrides, global policy, and deny rules', () => {
+    spyOn(settings, 'getInitialSettings').mockReturnValue({ sessionMemory: { enabled: true } })
+    session('configured', () => expect(tool.isEnabled()).toBe(true))
+    session('disabled', () => expect(tool.isEnabled()).toBe(false), false)
+    process.env.MOSS_SESSION_MEMORY_SETTINGS = JSON.stringify({ enabled: false })
+    session('policy', () => expect(tool.isEnabled()).toBe(false), true)
+    delete process.env.MOSS_SESSION_MEMORY_SETTINGS
+    session('denied', () => {
+      expect(getTools({ ...permissions, alwaysDenyRules: { session: [tool.name] } })
+        .some(t => t.name === tool.name)).toBe(false)
+    }, true)
+  })
+
+  test('keeps the tool in Chat and Boss but excludes built-in, custom, and async subagents', async () => {
+    expect(applyChatToolFilter([tool], false)).toContain(tool)
+    expect(applyCoordinatorToolFilter([tool])).toContain(tool)
+    for (const isBuiltIn of [true, false]) {
+      for (const isAsync of [true, false]) {
+        expect(filterToolsForAgent({ tools: [tool], isBuiltIn, isAsync })).toEqual([])
+      }
     }
-    const calls: Promise<void>[] = []
-    try {
-      initSessionMemory()
-      calls.push(sample('queue-a', 'first', 200))
-      await entered
-      calls.push(sample('queue-a', 'newer', 400))
-      calls.push(sample('queue-a', 'cancelled', 600, cancelled))
-      cancelled.abort()
-      // A different session must complete while queue-a's first update is held.
-      await sample('queue-b', 'other-session', 200)
-      expect(seen.map(entry => entry.marker)).toEqual(['first', 'other-session'])
-      finish()
-      await Promise.all(calls)
-      expect(seen).toEqual([
-        { session: 'queue-a', marker: 'first', tokens: 200 },
-        { session: 'queue-b', marker: 'other-session', tokens: 200 },
-        { session: 'queue-a', marker: 'newer', tokens: 400 },
-      ])
-      // An empty queue can be recreated without retaining its old context.
-      await sample('queue-a', 'later', 600)
-      expect(seen.at(-1)).toEqual({ session: 'queue-a', marker: 'later', tokens: 600 })
-    } finally {
-      finish()
-      await Promise.all(calls)
-      parent.abort()
-      read.mockRestore()
-      update.mockRestore()
-      await rm(root, { recursive: true, force: true })
+    await session('child', async () => {
+      await expect(tool.call({ summary: 'child notes' }, { ...context(), agentId: 'child' } as ToolUseContext))
+        .rejects.toThrow('Only the main conversation')
+      expect(await getSessionMemoryContent()).toBeNull()
+    }, true)
+  })
+
+  test('saves exactly the supplied text, replaces earlier notes, and returns no duplicate content or extra model call', async () => {
+    const fork = spyOn(forkedAgent, 'runForkedAgent').mockRejectedValue(new Error('Unexpected model request'))
+    const fetch = spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'))
+    await session('save', async () => {
+      const summary = '# 当前任务\n已确认：压缩使用原始对话。\n待完成：验证工具。\n'
+      const result = await tool.call({ summary }, context())
+      expect(result.data).toEqual({ saved: true })
+      expect(await getSessionMemoryContent()).toBe(summary)
+      const file = getSessionMemoryPath()
+      expect(file).toBe(join(root, 'save/session-memory/summary.md'))
+      expect((await fs.stat(file)).mode & 0o777).toBe(0o600)
+      expect((await fs.stat(dirname(file))).mode & 0o777).toBe(0o700)
+      expect(tool.mapToolResultToToolResultBlockParam(result.data, 'save-1').content)
+        .toBe('Session summary saved.')
+      await tool.call({ summary: 'Updated progress' }, context())
+      expect(await getSessionMemoryContent()).toBe('Updated progress')
+      expect(await fs.readdir(dirname(file))).toEqual(['summary.md'])
+    }, true)
+    expect(fork).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('rejects stale disabled calls, blank/oversized summaries, and arbitrary paths without writing', async () => {
+    await session('disabled', async () => {
+      await expect(tool.call({ summary: 'notes' }, context())).rejects.toThrow('disabled')
+      expect(await getSessionMemoryContent()).toBeNull()
+    }, false)
+    await session('invalid', async () => {
+      for (const input of [
+        { summary: '' }, { summary: ' \n\t' }, { summary: 'x'.repeat(MAX_SESSION_SUMMARY_CHARS + 1) },
+        { summary: 'notes', path: '/tmp/other-session.md' },
+      ]) {
+        await expect(tool.call(input, context())).rejects.toThrow()
+      }
+      expect(await getSessionMemoryContent()).toBeNull()
+    }, true)
+  })
+
+  test('rejects overlapping saves in one session and allows separate sessions to save independently', async () => {
+    await session('first', async () => {
+      const first = tool.call({ summary: 'First session' }, context())
+      await expect(tool.call({ summary: 'Overlapping save' }, context())).rejects.toThrow('already running')
+      await session('second', () => tool.call({ summary: 'Second session' }, context()), true)
+      await first
+      expect(await getSessionMemoryContent()).toBe('First session')
+      expect(await session('second', getSessionMemoryContent, true)).toBe('Second session')
+      await tool.call({ summary: 'Later save' }, context())
+      expect(await getSessionMemoryContent()).toBe('Later save')
+    }, true)
+  })
+
+  test('cancellation and failed writes preserve the old file and release writer ownership', async () => {
+    await session('failure', async () => {
+      await tool.call({ summary: 'Keep me' }, context())
+      const controller = new AbortController()
+      controller.abort()
+      await expect(tool.call({ summary: 'Cancelled' }, context(controller))).rejects.toThrow()
+      const originalOpen = fs.open
+      const duringWrite = new AbortController()
+      const open = spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+        const file = await originalOpen(...args)
+        duringWrite.abort()
+        return file
+      })
+      await expect(tool.call({ summary: 'Cancelled mid-write' }, context(duringWrite))).rejects.toThrow()
+      open.mockRestore()
+      const rename = spyOn(fs, 'rename').mockRejectedValue(new Error('Commit failed'))
+      await expect(tool.call({ summary: 'Failed' }, context())).rejects.toThrow('Commit failed')
+      rename.mockRestore()
+      expect(await getSessionMemoryContent()).toBe('Keep me')
+      expect(await fs.readdir(dirname(getSessionMemoryPath()))).toEqual(['summary.md'])
+      await tool.call({ summary: 'Retry succeeds' }, context())
+      expect(await getSessionMemoryContent()).toBe('Retry succeeds')
+    }, true)
+  })
+
+  test('a greeting or a large tool-heavy conversation never starts automatic summary extraction after sampling', async () => {
+    const fork = spyOn(forkedAgent, 'runForkedAgent').mockRejectedValue(new Error('Unexpected summary model'))
+    const answer = createAssistantMessage({ content: '你好！' })
+    answer.message.model = 'claude-sonnet-4-6'
+    answer.message.usage.input_tokens = 100_000
+    const greeting = [createUserMessage({ content: '你好啊' }), answer]
+    const tools = createAssistantMessage({ content: Array.from({ length: 20 }, (_, i) => ({
+      type: 'tool_use' as const, id: `tool-${i}`, name: 'Read', input: { file_path: 'sample.txt' },
+    })) })
+    for (const enabled of [false, true]) {
+      for (const querySource of ['sdk', 'repl_main_thread'] as const) {
+        await session(`sampling-${enabled}-${querySource}`, async () => {
+          for (const messages of [greeting, [...greeting, tools, answer]]) {
+            await executePostSamplingHooks(messages, [] as never, {}, {}, context(), querySource)
+          }
+          expect(await getSessionMemoryContent()).toBeNull()
+        }, enabled)
+      }
     }
+    expect(fork).not.toHaveBeenCalled()
   })
 })
