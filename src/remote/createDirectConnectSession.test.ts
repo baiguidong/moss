@@ -66,7 +66,6 @@ describe('createDirectConnectSession', () => {
       },
       runtimeOptions: {
         appendSystemPrompt: 'Session instructions',
-        libraryEnabled: true,
       },
     })
 
@@ -110,7 +109,6 @@ describe('createDirectConnectSession', () => {
       },
       runtimeOptions: {
         appendSystemPrompt: 'Session instructions',
-        libraryEnabled: true,
       },
     })
     expect(created.workDir).toBe('/srv/moss/sessions/remote-session/workspace')

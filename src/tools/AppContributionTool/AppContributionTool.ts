@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { z } from 'zod/v4'
+import { validateAppToolInputSchema } from '../../../packages/app-sdk/src/index.mjs'
 import {
   buildTool,
   getGlobalAppEventBridge,
@@ -60,12 +61,7 @@ export function createAppContributionTool(
   if (!['read', 'write', 'destructive'].includes(descriptor.effect)) {
     throw new Error(`App Tool contribution has an invalid effect: ${descriptor.id}`)
   }
-  if (
-    !descriptor.inputSchemaDocument
-    || descriptor.inputSchemaDocument.type !== 'object'
-  ) {
-    throw new Error(`App Tool contribution input schema must describe an object: ${descriptor.id}`)
-  }
+  validateAppToolInputSchema(descriptor.inputSchemaDocument, `App Tool ${descriptor.id} input schema`)
 
   const ajv = new Ajv2020({ allErrors: true, strict: false })
   const validate = ajv.compile(descriptor.inputSchemaDocument)

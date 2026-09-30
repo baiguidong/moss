@@ -1,3 +1,4 @@
+import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
 import { getSearchMessageId } from '../../session-search-index.mjs';
 
@@ -92,6 +93,8 @@ export type ToolResultRenderMessage = TranscriptRenderMessageBase & {
   toolName: string;
   content: string;
   rawContent?: unknown;
+  // Only the SDK/transcript side channel, never parsed from model-facing text.
+  structuredResult?: unknown;
   isError?: boolean;
   attachments?: TranscriptAttachment[];
 };
@@ -492,7 +495,7 @@ function attachmentsFromResources(resources?: Array<Record<string, unknown>> | n
   if (!Array.isArray(resources)) return undefined;
   const attachments = resources.flatMap((resource) => {
     const uri = typeof resource?.uri === 'string' ? resource.uri.trim() : '';
-    if (!uri.startsWith('moss-library://')) return [];
+    if (!isAppResourceUri(uri)) return [];
     return [{
       kind: 'file' as const,
       path: uri,
@@ -882,6 +885,7 @@ function addToolResultMessage(
   timestamp: Date,
   block: any,
   rawContent?: unknown,
+  structuredResult?: unknown,
 ) {
   const toolUseId = String(block?.tool_use_id || '').trim();
   const toolUse = toolUseId ? state.toolUsesById.get(toolUseId) : undefined;
@@ -923,6 +927,7 @@ function addToolResultMessage(
     toolName,
     content,
     rawContent: rawContent ?? block?.content,
+    structuredResult,
     isError: Boolean(block?.is_error),
     attachments,
   });
@@ -1207,10 +1212,9 @@ export function buildTranscriptRenderMessages(
       for (let resultIndex = 0; resultIndex < resultBlocks.length; resultIndex += 1) {
         const block = resultBlocks[resultIndex];
         const eventToolResult = event?.tool_use_result ?? event?.toolUseResult;
-        const rawContent = resultBlocks.length === 1 && eventToolResult !== undefined
-          ? eventToolResult
-          : block?.content;
-        addToolResultMessage(state, turn, timestamp, block, rawContent);
+        // A single event-level result cannot be assigned to multiple calls.
+        const structuredResult = resultBlocks.length === 1 ? eventToolResult : undefined;
+        addToolResultMessage(state, turn, timestamp, block, structuredResult ?? block?.content, structuredResult);
       }
       continue;
     }

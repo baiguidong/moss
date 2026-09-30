@@ -4,7 +4,6 @@ import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { LocalAuditView } from '@/components/local-audit-view';
 import { OverviewView } from '@/components/overview-view';
-import { LibraryView } from '@/components/library-view';
 import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
@@ -68,7 +67,6 @@ import type {
   FileTreeNode,
   InstalledConnector,
   InstalledAssistant,
-  LibraryResource,
   PermissionMode,
   Project,
   SessionDetail,
@@ -149,11 +147,6 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 type ThemeMode = 'dark' | 'light' | 'system';
 type ComposerIntent = 'chat' | 'boss';
 type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
-type PendingNewSessionContext = {
-  workspace: string;
-  title: string;
-  draftPrompt: string;
-};
 type QueuedMessage = {
   id: string;
   prompt: string;
@@ -514,7 +507,6 @@ export default function App() {
   const permissionModeSettingRequestRef = React.useRef<string | null>(null);
   const [agentTeamsBySession, setAgentTeamsBySession] = React.useState<Record<string, AgentTeamsSessionState>>({});
   const [input, setInput] = React.useState('');
-  const [pendingNewSessionContext, setPendingNewSessionContext] = React.useState<PendingNewSessionContext | null>(null);
   const [backgroundTasks, setBackgroundTasks] = React.useState<Record<string, BackgroundTaskInfo[]>>({});
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
   const [questionRequests, setQuestionRequests] = React.useState<AskUserQuestionRequest[]>([]);
@@ -568,7 +560,6 @@ export default function App() {
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
-  const libraryEnabled = desktopSettings?.library?.enabled === true;
   const workflowsEnabled = desktopSettings?.workflows?.enabled === true;
   const agentMailEnabled =
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
@@ -800,7 +791,6 @@ export default function App() {
     activeDetailRef.current = null;
     setActiveSessionId(null);
     setActiveDetail(null);
-    setPendingNewSessionContext(null);
     setNewSessionAgentMode('local');
     void refreshAssistants('local');
     clearSessionWorkspaceState();
@@ -1059,12 +1049,6 @@ export default function App() {
       }
     }
   }, [activeView, apps, embeddedAppName, selectedAppName]);
-
-  React.useEffect(() => {
-    if (!libraryEnabled && activeView === 'library') {
-      setActiveView('chat');
-    }
-  }, [activeView, libraryEnabled]);
 
   React.useEffect(() => {
     if (!workflowsEnabled && activeView === 'workflows') {
@@ -1587,7 +1571,6 @@ export default function App() {
   }, []);
 
   const handleNewSession = React.useCallback(async () => {
-    setPendingNewSessionContext(null);
     navigateToHome({ resetInput: true, resetApp: true });
   }, [navigateToHome]);
 
@@ -1947,21 +1930,18 @@ export default function App() {
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
     if (!sessionId) {
-      const preparedSession = pendingNewSessionContext && workspace === pendingNewSessionContext.workspace
-        ? pendingNewSessionContext
-        : null;
       // Reuse an in-flight creation so a re-entrant submit (double-send or a
       // retry after an errored first turn) binds to the SAME session/workspace
       // instead of spawning a second directory.
       if (!creatingSessionRef.current) {
         setPreparingNewSession(true);
         creatingSessionRef.current = createAndOpenSession(
-          preparedSession?.title,
+          undefined,
           workspace,
           selectedAssistant?.name,
           draftConnectorIds,
           newSessionPermissionMode,
-          preparedSession ? 'local' : newSessionAgentMode,
+          newSessionAgentMode,
         ).finally(() => {
           creatingSessionRef.current = null;
           setPreparingNewSession(false);
@@ -1969,7 +1949,6 @@ export default function App() {
         sessionJustCreated = true;
       }
       sessionId = await creatingSessionRef.current;
-      if (sessionId && preparedSession) setPendingNewSessionContext(null);
     }
     if (!sessionId) return;
 
@@ -1995,7 +1974,7 @@ export default function App() {
     }
 
     await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, pendingNewSessionContext, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2041,113 +2020,6 @@ export default function App() {
     setInput(workflowUsePrompt(workflow));
   }, []);
 
-  const handleUseLibraryResource = React.useCallback((resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => {
-    setComposerAttachments((current) => current.some((item) => item.path === resource.uri)
-      ? current
-      : [...current, {
-          name: resource.title,
-          path: resource.uri,
-          resource: {
-            uri: resource.uri,
-            resourceId: resource.id,
-            kind: 'resource',
-            selection: 'full-file',
-            displayName: resource.title,
-            revision: (() => {
-              try { return new URL(resource.uri).searchParams.get('revision'); } catch { return null; }
-            })(),
-          },
-        }]);
-    setActiveView('chat');
-    showPermissionNotice(`已将“${resource.title}”加入对话`, 'info', 2500);
-  }, [showPermissionNotice]);
-
-  const handleUseLibraryScope = React.useCallback((scope: {
-    id: string;
-    uri: string;
-    name: string;
-    kind: 'collection' | 'source';
-  }) => {
-    setComposerAttachments((current) => current.some((item) => item.path === scope.uri)
-      ? current
-      : [...current, {
-          name: scope.name,
-          path: scope.uri,
-          resource: {
-            uri: scope.uri,
-            resourceId: scope.id,
-            kind: scope.kind,
-            selection: 'search-scope',
-            displayName: scope.name,
-            revision: null,
-          },
-        }]);
-    setActiveView('chat');
-    showPermissionNotice(`已将“${scope.name}”作为检索范围加入对话`, 'info', 2500);
-  }, [showPermissionNotice]);
-
-  const handlePrepareLibraryDirectoryImport = React.useCallback(async (payload: {
-    selectionId: string;
-    collectionId: string;
-  }) => {
-    const prepared = await window.agentDesktop.library.prepareDirectoryImport(payload);
-    const draftPrompt = typeof prepared.draftPrompt === 'string' ? prepared.draftPrompt.trim() : '';
-    if (!draftPrompt) throw new Error('资料整理任务准备失败，请重启 Moss 后重新选择目录。');
-    const previousDraftKey = draftSessionKeyRef.current;
-    composerDraftsRef.current[previousDraftKey] = {
-      text: inputDraftRef.current,
-      files: composerAttachmentsRef.current,
-    };
-    composerDraftsRef.current.home = { text: draftPrompt, files: [] };
-    draftSessionKeyRef.current = 'home';
-    openSessionRequestIdRef.current += 1;
-    activeSessionIdRef.current = null;
-    activeDetailRef.current = null;
-    setAuditFocusTarget(null);
-    setActiveView('chat');
-    setActiveSessionId(null);
-    setActiveDetail(null);
-    setComposerIntent('chat');
-    setPendingNewSessionContext(prepared);
-    setSelectedAssistant(null);
-    setDraftConnectorIds([]);
-    setSelectedAppName('');
-    setInput(draftPrompt);
-    setComposerAttachments([]);
-    clearSessionWorkspaceState();
-  }, [clearSessionWorkspaceState]);
-
-  const handleHomeWorkspaceChange = React.useCallback((workspace?: string) => {
-    if (!pendingNewSessionContext || workspace === pendingNewSessionContext.workspace) return;
-    setPendingNewSessionContext(null);
-    if (inputDraftRef.current === pendingNewSessionContext.draftPrompt) {
-      composerDraftsRef.current.home = { text: '', files: [] };
-      setInput('');
-    }
-  }, [pendingNewSessionContext]);
-
-  const handleSaveFileToLibrary = React.useCallback(async (
-    filePath: string,
-    target?: 'personal' | 'project',
-  ) => {
-    const sessionId = activeSessionIdRef.current;
-    if (!sessionId) return;
-    try {
-      const result = await window.agentDesktop.library.saveTaskArtifact({
-        sessionId,
-        path: filePath,
-        target: target || (activeDetailRef.current?.projectId ? 'project' : 'personal'),
-      });
-      showPermissionNotice(
-        `已将“${result.name}”保存到${result.target === 'project' ? '当前项目' : '个人资料库'}`,
-        'info',
-        3000,
-      );
-    } catch (error) {
-      showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000);
-      throw error;
-    }
-  }, [showPermissionNotice]);
 
   const handleApprovePlan = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -2544,7 +2416,7 @@ export default function App() {
       }}
       workspace={activeDetail && activeDetail.agentMode !== 'remote-direct'
         ? activeDetail.workspace
-        : pendingNewSessionContext?.workspace}
+        : undefined}
       initialSection={settingsInitialSection}
       traceSessionId={settingsInitialSection === 'trace' ? traceLaunch?.sessionId : undefined}
       traceTarget={settingsInitialSection === 'trace' ? traceLaunch?.target : undefined}
@@ -2610,7 +2482,6 @@ export default function App() {
             searchQuery={sessionSearchQuery}
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
-            libraryEnabled={libraryEnabled}
             workflowsEnabled={workflowsEnabled}
             agentMailEnabled={agentMailEnabled}
             onChangeView={(view) => {
@@ -2769,7 +2640,6 @@ export default function App() {
                 hasActiveSession={false}
                 sessionTitle=""
                 sessionWorkspace={undefined}
-                homeWorkspace={pendingNewSessionContext?.workspace}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
                 leftCollapsed={effectiveLeftCollapsed}
@@ -2785,7 +2655,6 @@ export default function App() {
                 onApprovePlan={handleApprovePlan}
                 onRejectPlan={handleRejectPlan}
                 onSend={handleSend}
-                onHomeWorkspaceChange={handleHomeWorkspaceChange}
                 onStop={handleStop}
                 onOpenChildSession={(sessionId) => { void openSession(sessionId); }}
                 installedAssistants={installedAssistants}
@@ -2802,8 +2671,8 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={pendingNewSessionContext ? false : (desktopSettings?.remoteEnabled ?? false)}
-                newSessionMode={pendingNewSessionContext ? 'local' : newSessionAgentMode}
+                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                newSessionMode={newSessionAgentMode}
                 onNewSessionModeChange={handleNewSessionModeChange}
               />
             )
@@ -2813,12 +2682,6 @@ export default function App() {
             <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
           ) : activeView === 'audit' ? (
             <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
-          ) : activeView === 'library' && libraryEnabled ? (
-            <LibraryView
-              onUseResource={handleUseLibraryResource}
-              onUseScope={handleUseLibraryScope}
-              onPrepareDirectoryImport={handlePrepareLibraryDirectoryImport}
-            />
           ) : activeView === 'workflows' && workflowsEnabled ? (
             <WorkflowLibraryView
               onCreateInChat={handleCreateWorkflowInChat}
@@ -2854,7 +2717,6 @@ export default function App() {
               onActiveProjectChange={setActiveProjectId}
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
-              onUseLibraryResource={handleUseLibraryResource}
             />
           ) : activeView === 'apps' ? (
             <AppsPanel
@@ -2913,7 +2775,6 @@ export default function App() {
                     rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
                   }));
                 }}
-                onSaveFileToLibrary={handleSaveFileToLibrary}
                 workspace={activeDetail?.workspace}
                 workspaceRemote={activeDetail?.agentMode === 'remote-direct'}
                 workspaceBusy={Boolean(activeDetail?.busy)}

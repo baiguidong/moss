@@ -96,3 +96,18 @@ backend.agent.on('turn.completed', async (event) => {
 
 Agent 的方法、事件和幂等约束见 [Agent Host API](./agent-host-api.md)，安装与进程模型见
 [App Runtime](./app-runtime.md)。
+
+## 本地文件与受管运行时
+
+Desktop 额外注册两个通用协议，使用现有 `context.host.request` 调用，无需扩展会话/项目上下文。
+
+| 协议 | 方法 | 输入 / 输出 | 安装权限 |
+| --- | --- | --- | --- |
+| `moss.runtimes/v1` | `python.get` | `{}` → `{ available, path, version }`；不可用时 path 为 null | 无 |
+| `moss.local-files/v1` | `pick` | `{ kind?: 'file' \| 'directory', multiple?: boolean }` → `{ paths: string[] }`，取消为空数组 | `local-files:pick` |
+| `moss.local-files/v1` | `open` / `reveal` | `{ path: 绝对路径 }` → `{ opened: true }` / `{ revealed: true }` | `local-files:open` |
+
+`pick` 返回用户选择的原始路径，不复制大型目录。App 自己管理导入及副本；`open/reveal` 校验 realpath，只接受调用 App 实例数据目录内的普通文件，拒绝越界链接。
+`python.get` 仅报告已有受管运行时，不下载运行时或安装 Python 包。各 App 随安装包准备自己的解析依赖。
+
+资源引用由 App 的 `contributes.resourceProviders` 声明 scheme 和 `resolveAction`。Desktop 的 `openAppResource(uri)` 与显式附件解析均先查找唯一已启用的 provider，再校验其返回的 `{ kind: 'file', path }` 位于该 App 实例数据目录。业务 ID、revision 和文档导出由 App 处理，Core 不解析知识库或 Wiki 的资源 ID。

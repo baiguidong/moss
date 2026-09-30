@@ -43,7 +43,6 @@ import type {
   ProjectDecision,
   ProjectEvent,
   ProjectMemory,
-  LibraryResource,
   ProjectTask,
 } from '@/types';
 
@@ -56,7 +55,6 @@ type ProjectWorkspaceProps = {
   onActiveProjectChange: (projectId: string | null) => void;
   onProjectsChange: () => Promise<void>;
   onOpenSession: (sessionId: string) => void;
-  onUseLibraryResource: (resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => void;
 };
 
 type ProjectFormState = {
@@ -893,73 +891,14 @@ function ProjectAssetsTab({
   projectId,
   assets,
   onReload,
-  onUseLibraryResource,
 }: {
   projectId: string;
   assets: ProjectAsset[];
   onReload: () => Promise<void>;
-  onUseLibraryResource: (resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => void;
 }) {
   const [error, setError] = React.useState('');
   const [busyAssetId, setBusyAssetId] = React.useState<string | null>(null);
-  const [librarySynced, setLibrarySynced] = React.useState(false);
-  const [libraryResources, setLibraryResources] = React.useState<LibraryResource[]>([]);
-  const [librarySourceId, setLibrarySourceId] = React.useState<string | null>(null);
   const [assetQuery, setAssetQuery] = React.useState('');
-  const [matchingResourceIds, setMatchingResourceIds] = React.useState<Set<string> | null>(null);
-
-  const loadLibraryState = React.useCallback(async () => {
-    const sources = await window.agentDesktop.library.listSources({ scopeKind: 'projects' });
-    const source = sources.find((entry) => (
-      entry.providerKind === 'project-assets'
-      && entry.scope.kind === 'project'
-      && entry.scope.projectId === projectId
-    ));
-    setLibrarySourceId(source?.id || null);
-    setLibrarySynced(Boolean(source));
-    setLibraryResources(source
-      ? await window.agentDesktop.library.listResources({ sourceId: source.id, projectId })
-      : []);
-  }, [projectId]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    void window.agentDesktop.library.addProjectSource({ projectId })
-      .then(() => !cancelled && loadLibraryState())
-      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : String(err)));
-    const unsubscribe = window.agentDesktop.library.onChanged(() => {
-      void loadLibraryState().catch(() => {});
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [assets, loadLibraryState, projectId]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      if (!assetQuery.trim() || !librarySourceId) {
-        if (!cancelled) setMatchingResourceIds(null);
-        return;
-      }
-      try {
-        const hits = await window.agentDesktop.library.search({
-          query: assetQuery.trim(),
-          projectId,
-          sourceId: librarySourceId,
-          limit: 100,
-        });
-        if (!cancelled) setMatchingResourceIds(new Set(hits.map((hit) => hit.resourceId)));
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      }
-    }, 220);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [assetQuery, librarySourceId, projectId]);
 
   const upload = async () => {
     setBusyAssetId('upload');
@@ -1002,30 +941,9 @@ function ProjectAssetsTab({
       setError(err instanceof Error ? err.message : String(err));
     }
   };
-
-  const syncToLibrary = async () => {
-    setBusyAssetId('library');
-    setError('');
-    try {
-      await window.agentDesktop.library.addProjectSource({ projectId });
-      await loadLibraryState();
-      setLibrarySynced(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyAssetId(null);
-    }
-  };
-
-  const resourceByAssetId = new Map(libraryResources.map((resource) => [
-    typeof resource.metadata.assetId === 'string' ? resource.metadata.assetId : '',
-    resource,
-  ]));
   const visibleAssets = assets.filter((asset) => {
     if (!assetQuery.trim()) return true;
-    const resource = resourceByAssetId.get(asset.id);
-    return asset.name.toLocaleLowerCase().includes(assetQuery.trim().toLocaleLowerCase())
-      || Boolean(resource && matchingResourceIds?.has(resource.id));
+    return asset.name.toLocaleLowerCase().includes(assetQuery.trim().toLocaleLowerCase());
   });
 
   return (
@@ -1036,12 +954,7 @@ function ProjectAssetsTab({
           <Input value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} placeholder={`${assets.length} 个资产中搜索`} className="pl-8" />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={syncToLibrary} disabled={busyAssetId !== null}>
-            {busyAssetId === 'library'
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <BookOpen className="h-4 w-4" />}
-            {librarySynced ? '已同步资料库' : '同步到资料库'}
-          </Button>
+
           <Button onClick={upload} disabled={busyAssetId !== null}>
             {busyAssetId === 'upload'
               ? <Loader2 className="h-4 w-4 animate-spin" />
@@ -1052,40 +965,24 @@ function ProjectAssetsTab({
       </div>
       {error ? <div className="text-sm text-destructive">{error}</div> : null}
       <div className="overflow-hidden rounded-lg border border-border">
-        <div className="hidden grid-cols-[minmax(0,1fr)_100px_110px_100px_120px] border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:grid">
+        <div className="hidden grid-cols-[minmax(0,1fr)_100px_110px_120px] border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:grid">
           <div>名称</div>
           <div>大小</div>
           <div>更新</div>
-          <div>索引</div>
           <div className="text-right">操作</div>
         </div>
         {visibleAssets.length > 0 ? visibleAssets.map((asset) => {
-          const resource = resourceByAssetId.get(asset.id);
-          return (
-          <div key={asset.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-border/70 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_100px_110px_100px_120px] md:gap-0 md:py-2">
+                return (
+          <div key={asset.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-border/70 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_100px_110px_120px] md:gap-0 md:py-2">
             <div className="col-span-2 min-w-0 md:col-span-1">
               <div className="truncate font-medium text-foreground">{asset.name}</div>
               <div className="truncate text-xs text-muted-foreground">{asset.relativePath || asset.fileName || asset.name}</div>
             </div>
             <div className="hidden text-xs text-muted-foreground md:block">{formatBytes(asset.size)}</div>
             <div className="hidden text-xs text-muted-foreground md:block">{formatTime(asset.updatedAt)}</div>
-            <div>
-              <Badge variant={resource?.status === 'failed' ? 'destructive' : 'outline'}>
-                {resource?.status === 'ready' ? '已索引' : resource?.status === 'stale' ? '待刷新' : resource?.status === 'failed' ? '失败' : resource?.status === 'unsupported' ? '仅收录' : '排队中'}
-              </Badge>
-            </div>
+
             <div className="flex justify-end gap-1">
-              {resource ? (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => onUseLibraryResource(resource)}
-                  title="加入当前对话"
-                  aria-label={`在对话中使用资产：${asset.name}`}
-                >
-                  <MessageSquarePlus className="h-4 w-4" />
-                </Button>
-              ) : null}
+
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -1127,7 +1024,6 @@ function ProjectDetail({
   onProjectSaved,
   onProjectsChange,
   onOpenSession,
-  onUseLibraryResource,
 }: {
   project: Project;
   refreshSignal: number;
@@ -1135,7 +1031,6 @@ function ProjectDetail({
   onProjectSaved: (project: Project) => void;
   onProjectsChange: () => Promise<void>;
   onOpenSession: (sessionId: string) => void;
-  onUseLibraryResource: (resource: Pick<LibraryResource, 'id' | 'title' | 'uri'>) => void;
 }) {
   const [activeTab, setActiveTab] = React.useState<ProjectTab>('activity');
   const [detail, setDetail] = React.useState<Project>(project);
@@ -1349,7 +1244,6 @@ function ProjectDetail({
                 projectId={detail.id}
                 assets={assets}
                 onReload={reload}
-                onUseLibraryResource={onUseLibraryResource}
               />
             )}
           </div>
@@ -1376,7 +1270,6 @@ export function ProjectWorkspace({
   onActiveProjectChange,
   onProjectsChange,
   onOpenSession,
-  onUseLibraryResource,
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = React.useState('');
   const [dialogOpen, setDialogOpen] = React.useState(false);
@@ -1402,7 +1295,6 @@ export function ProjectWorkspace({
           }}
           onProjectsChange={onProjectsChange}
           onOpenSession={onOpenSession}
-          onUseLibraryResource={onUseLibraryResource}
         />
       ) : (
         <ProjectList

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { BashTool } from './BashTool.js'
 
-describe('Library import read-only Bash boundary', () => {
-  test('accepts directory inspection commands used by the Library agent', () => {
+describe('Document inspection read-only Bash boundary', () => {
+  test('accepts directory inspection commands used for document inspection', () => {
     for (const command of [
       'ls -la',
       'find . -maxdepth 2 -type f',

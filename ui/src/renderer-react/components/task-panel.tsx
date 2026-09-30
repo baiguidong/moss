@@ -183,7 +183,6 @@ export function TaskPanel({
   projectName,
   browserOpenSignal,
   onBrowserOpen,
-  onSaveFileToLibrary,
   workspace,
   workspaceRemote = false,
   workspaceBusy = false,
@@ -206,7 +205,6 @@ export function TaskPanel({
   projectName?: string | null;
   browserOpenSignal?: number;
   onBrowserOpen?: () => void;
-  onSaveFileToLibrary?: (path: string, target?: 'personal' | 'project') => Promise<void>;
   workspace?: string;
   workspaceRemote?: boolean;
   workspaceBusy?: boolean;
@@ -325,8 +323,6 @@ export function TaskPanel({
                 onFocusFile={onFocusFile}
                 onToggleFolder={onToggleFolder}
                 onSelectFile={onSelectFile}
-                onSaveToLibrary={onSaveFileToLibrary}
-                projectName={projectName}
               />
             </div>
           </ScrollArea>

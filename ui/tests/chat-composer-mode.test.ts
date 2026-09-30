@@ -87,7 +87,7 @@ describe('chat composer mode placement', () => {
 
   test('defaults new sessions to local and forwards the selected mode at creation', () => {
     expect(appSource).toContain("React.useState<'local' | 'remote-direct'>('local')");
-    expect(appSource).toContain("preparedSession ? 'local' : newSessionAgentMode");
+    expect(appSource).toContain("          newSessionAgentMode,");
     expect(appSource).toContain('agentMode: \'local\' | \'remote-direct\' = \'local\'');
     expect(mainSource).toContain('agentMode: payload.agentMode');
   });

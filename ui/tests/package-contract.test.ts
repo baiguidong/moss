@@ -80,46 +80,13 @@ describe('desktop package contract', () => {
     expect(statSync(winRipgrep).size).toBeGreaterThan(1_000_000);
   });
 
-  test('runs Library agent tools in-process without a bundled MCP server', () => {
+  test('delegates knowledge tools and resources to Apps', () => {
     const mainSource = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
     const agentRuntimeSource = readFileSync(path.join(repoRoot, 'src', 'electron-direct.ts'), 'utf8');
-    const libraryToolsSource = readFileSync(
-      path.join(repoRoot, 'src', 'tools', 'LibraryTool', 'LibraryTools.ts'),
-      'utf8',
-    );
-    const verifierSource = readFileSync(path.join(uiRoot, 'scripts', 'verify-package.mjs'), 'utf8');
-
-    expect(mainSource).toContain("libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService)");
-    expect(mainSource).toContain('handleLibraryAgentToolEvent');
-    expect(libraryToolsSource).toContain('LibraryWriteTool');
-    expect(libraryToolsSource).toContain('user has confirmed which files should be added');
-    const directoryDraftSource = mainSource.slice(
-      mainSource.indexOf('function buildLibraryDirectoryImportDraft'),
-      mainSource.indexOf('function remoteSessionTimestamp'),
-    );
-    expect(directoryDraftSource).toContain('draftPrompt: buildLibraryDirectoryImportDraft');
-    expect(directoryDraftSource).not.toContain('createSessionRecord');
-    expect(directoryDraftSource).not.toContain('runSessionPrompt');
-    expect(directoryDraftSource).not.toContain("sessionKind: 'library-import'");
-    expect(directoryDraftSource).toContain('请按以下 Markdown 结构回复');
-    expect(directoryDraftSource).not.toContain('`Glob`');
-    expect(directoryDraftSource).not.toContain('`Bash`');
-    expect(mainSource).not.toContain('LIBRARY_DIRECTORY_AGENT_PROMPT_PATH');
-    expect(mainSource).not.toContain("sessionKind === 'library-import'");
-    expect(mainSource).not.toContain('libraryDirectorySystemPrompt');
-    expect(mainSource).not.toContain('librarySystemPrompt');
-    expect(agentRuntimeSource).toContain("import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'");
-    expect(agentRuntimeSource).toContain('applyChatToolFilter(assembled)');
-    expect(agentRuntimeSource).toContain('Chat 模式不能创建或控制 worker');
-    expect(mainSource).not.toContain('MOSS_LIBRARY_DB_PATH');
-    expect(mainSource).not.toContain('MOSS_LIBRARY_CORE');
-    expect(verifierSource).not.toContain('library_mcp_server.mjs');
-    expect(verifierSource).not.toContain("skills', 'local-kb'");
-    expect(mainSource).toContain("RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb'])");
-    expect(existsSync(path.join(repoRoot, 'skills', 'local-kb'))).toBe(false);
-    expect(existsSync(path.join(uiRoot, 'resources', 'library', 'library_mcp_server.mjs'))).toBe(false);
-    expect(existsSync(path.join(uiRoot, 'resources', 'library', 'prompts', 'personal-directory-import-agent.md'))).toBe(false);
-    expect(verifierSource).not.toContain('personal-directory-import-agent.md');
+    expect(mainSource).toContain('resolveAppResourceFile');
+    expect(agentRuntimeSource).toContain('createAppContributionTools');
+    expect(existsSync(path.join(uiRoot, 'src', 'library'))).toBe(false);
+    expect(existsSync(path.join(uiRoot, 'resources', 'library'))).toBe(false);
   });
 
   test('exposes only chat and boss as desktop conversation modes', () => {

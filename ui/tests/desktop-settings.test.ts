@@ -183,23 +183,6 @@ describe('desktop settings', () => {
     ).agentSettings).toEqual({ disabled: ['verification', 'Explore'] });
   });
 
-  it('keeps Library Agent tools opt-in and normalizes the persisted switch', () => {
-    expect(normalizeDesktopSettings({}).library).toEqual({
-      enabled: false,
-      extensionGuideAcknowledged: false,
-    });
-    expect(normalizeDesktopSettings({ library: { enabled: true } }).library)
-      .toEqual({ enabled: true, extensionGuideAcknowledged: false });
-    expect(normalizeDesktopSettings(
-      { model: 'next-model' },
-      { library: { enabled: true } },
-    ).library).toEqual({ enabled: true, extensionGuideAcknowledged: false });
-    expect(normalizeDesktopSettings(
-      { library: { extensionGuideAcknowledged: true } },
-      { library: { enabled: true, extensionGuideAcknowledged: false } },
-    ).library).toEqual({ enabled: true, extensionGuideAcknowledged: true });
-  });
-
   it('keeps Workflow tools opt-in and normalizes the persisted switch', () => {
     expect(normalizeDesktopSettings({}).workflows).toEqual({ enabled: false });
     expect(normalizeDesktopSettings({ workflows: { enabled: true } }).workflows)

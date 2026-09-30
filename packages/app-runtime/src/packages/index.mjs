@@ -8,6 +8,7 @@ import {
   AppServiceError,
   loadJsonSchema,
   validateAppManifest,
+  validateAppToolInputSchema,
 } from '../../../app-sdk/src/index.mjs'
 
 export const DEFAULT_PACKAGE_LIMITS = Object.freeze({
@@ -192,12 +193,6 @@ function ensureConfigurationSchemaShape(schema, fieldName, options = {}) {
   }
 }
 
-function ensureToolInputSchemaShape(schema, fieldName) {
-  if (schema?.type !== 'object') {
-    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `${fieldName} must describe an object`)
-  }
-}
-
 export async function createPackageChecksums(packageRoot) {
   const checksums = {}
   for (const file of await listPackageFiles(packageRoot)) {
@@ -252,9 +247,9 @@ export async function validateAppPackage(packageRoot, options = {}) {
     if (command.inputSchema) loadJsonSchema(root, command.inputSchema, `command ${command.id} inputSchema`)
   }
   for (const tool of manifest.contributes?.tools || []) {
-    ensureToolInputSchemaShape(
+    validateAppToolInputSchema(
       loadJsonSchema(root, tool.inputSchema, `tool ${tool.id} inputSchema`),
-      `tool ${tool.id} inputSchema`,
+      `App ${manifest.id} tool ${tool.id} inputSchema (${tool.inputSchema})`,
     )
     if (tool.outputSchema) loadJsonSchema(root, tool.outputSchema, `tool ${tool.id} outputSchema`)
   }

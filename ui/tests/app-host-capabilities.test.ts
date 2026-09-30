@@ -26,8 +26,10 @@ async function tick() {
 }
 
 describe('App Host Capability API', () => {
-  it('generates stable, bounded, collision-resistant Agent tool names', () => {
-    expect(appToolName('example-a', 'search')).not.toBe(appToolName('example.a', 'search'))
+  it('generates readable Agent tool names without hash suffixes', () => {
+    expect(['search', 'read', 'list'].map(id => appToolName('moss.library', id)))
+      .toEqual(['app__moss_library__search', 'app__moss_library__read', 'app__moss_library__list'])
+    expect(appToolName('example-a', 'search')).toBe('app__example_a__search')
     expect(appToolName('a'.repeat(80), 'b'.repeat(64))).toHaveLength(64)
     expect(appToolName('example.app', 'search')).toMatch(/^[a-zA-Z0-9_]{1,64}$/)
   })
@@ -250,7 +252,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       effect: 'read',
       inputSchemaDocument: { type: 'object' },
     })
-    expect(tools[0].name).toMatch(/^app__fixture_host_capability__echo__[0-9a-f]{12}$/)
+    expect(tools[0].name).toBe('app__fixture_host_capability__echo')
     expect(tools[0].name.length).toBeLessThanOrEqual(64)
     await expect(runtime.invokeToolContribution(`${appId}/echo`, { text: 'tool' }))
       .resolves.toEqual({ echoed: 'tool' })

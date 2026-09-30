@@ -29,12 +29,12 @@ describe('desktop chat tool pool', () => {
       'TeamDelete',
       'Read',
       'Bash',
-      'library_write',
+      'example_app_action',
     ), false)
     expect(filtered.map(tool => tool.name)).toEqual([
       'Read',
       'Bash',
-      'library_write',
+      'example_app_action',
     ])
   })
 

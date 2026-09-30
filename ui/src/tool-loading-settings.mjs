@@ -43,17 +43,6 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
     ],
   },
   {
-    id: 'library',
-    label: '资料库',
-    feature: 'library',
-    tools: [
-      { name: 'library_list', description: '列出资料库集合、来源和资源', defaultMode: 'deferred' },
-      { name: 'library_search', description: '检索资料库中的已索引内容', defaultMode: 'deferred' },
-      { name: 'library_read', description: '读取资料库资源的索引内容', defaultMode: 'deferred' },
-      { name: 'library_write', description: '将工作区文件写入资料库', defaultMode: 'deferred' },
-    ],
-  },
-  {
     id: 'workflows',
     label: '工作流',
     feature: 'workflows',

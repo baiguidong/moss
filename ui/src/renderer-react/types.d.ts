@@ -1,5 +1,9 @@
 import type { AppNotification, NewAppNotification } from './lib/app-notifications';
 
+export type OutputFileResolution =
+  | { inputPath: string; file: { path: string; name: string; size: number; relativePath?: string } }
+  | { inputPath: string; error: string };
+
 export type PendingPlanApproval = {
   kind: 'plan';
   originalPrompt: string;
@@ -528,209 +532,6 @@ export type ProjectAsset = {
   updatedAt: number;
 };
 
-export type LibraryCollection = {
-  id: string;
-  uri: string;
-  name: string;
-  description: string;
-  config: Record<string, unknown>;
-  scope: { kind: 'personal' } | { kind: 'project'; projectId: string };
-  sourceCount: number;
-  resourceCount: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type LibrarySourceStatus = 'idle' | 'indexing' | 'ready' | 'stale' | 'failed';
-
-export type LibrarySource = {
-  id: string;
-  uri: string;
-  providerKind: 'local-path' | 'project-assets' | 'task-artifacts' | 'managed-files';
-  capabilities: Array<'list' | 'search' | 'read' | 'write' | 'move' | 'delete' | 'watch' | 'version'>;
-  scope: { kind: 'personal' } | { kind: 'project'; projectId: string };
-  name: string;
-  location: string;
-  config: Record<string, unknown>;
-  enabled: boolean;
-  status: LibrarySourceStatus;
-  error: string;
-  revision: string | null;
-  indexedRevision: string | null;
-  resourceCount: number;
-  readyCount: number;
-  errorCount: number;
-  createdAt: number;
-  updatedAt: number;
-  indexedAt: number | null;
-};
-
-export type LibraryResourceStatus = 'discovered' | 'ready' | 'stale' | 'failed' | 'missing' | 'unsupported';
-
-export type LibraryResource = {
-  id: string;
-  sourceId: string;
-  provider: LibrarySource['providerKind'];
-  capabilities: LibrarySource['capabilities'];
-  uri: string;
-  title: string;
-  name: string;
-  parentId: string | null;
-  kind: 'file';
-  displayPath: string;
-  relativePath: string;
-  extension: string;
-  mimeType: string;
-  size: number;
-  status: LibraryResourceStatus;
-  error: string;
-  indexStatus: 'unindexed' | 'queued' | 'indexing' | 'ready' | 'stale' | 'error' | 'unsupported';
-  indexError: string | null;
-  revision: string | null;
-  indexedRevision: string | null;
-  metadata: Record<string, unknown>;
-  contentHash: string | null;
-  sourceSessionId: string | null;
-  provenance: Array<{ sourceSessionId: string | null; sourcePath: string | null; recordedAt: number }>;
-  sourceName: string;
-  providerKind: LibrarySource['providerKind'];
-  scope: LibrarySource['scope'];
-  createdAt: number;
-  updatedAt: number;
-  indexedAt: number | null;
-};
-
-export type LibrarySearchResult = {
-  chunkId: number;
-  resourceId: string;
-  sourceId: string;
-  uri: string;
-  title: string;
-  relativePath: string;
-  sourceName: string;
-  providerKind: LibrarySource['providerKind'];
-  scope: LibrarySource['scope'];
-  extension: string;
-  revision: string;
-  chunkIndex: number;
-  blockIndex: number;
-  heading: string | null;
-  page: number | null;
-  startLine: number | null;
-  endLine: number | null;
-  locationKind: 'line' | 'page' | 'paragraph' | 'slide' | 'sheet' | 'row' | null;
-  content: string;
-  matchedChunk: string;
-  context: string;
-  contextChunkIndexes: number[];
-  snippet: string;
-  score: number;
-  rank: {
-    final: number;
-    fts: number;
-    fusion: number;
-    boost: number;
-    matchedFields: Array<'title' | 'path' | 'heading' | 'body'>;
-    exactPhrase: boolean;
-    fallbackMode: 'all' | 'any' | 'literal';
-    queryTerms: string[];
-    queryCoverage: number;
-  };
-};
-
-export type LibrarySearchDiagnostics = {
-  queryTerms: string[];
-  requestedMode: 'auto' | 'all' | 'any';
-  ftsQueries?: Partial<Record<'all' | 'any', string>>;
-  candidateCounts: Partial<Record<'all' | 'any' | 'literal', number>>;
-  candidateLimit: number;
-  coverageRejectedCount: number;
-  coverageRejected?: Array<{
-    chunkId: number;
-    resourceId: string;
-    title: string;
-    queryCoverage: number;
-    fallbackMode: 'any';
-  }>;
-  selectedCount: number;
-  fallbackUsed: boolean;
-  scopedResourceCount: number;
-  durationMs: number;
-  reason: 'empty-query' | 'no-indexable-terms' | 'no-scoped-content' | 'coverage-filtered' | 'no-lexical-match' | 'results';
-  candidates: Array<{
-    chunkId: number;
-    resourceId: string;
-    title: string;
-    heading: string | null;
-    selected: boolean;
-    final: number;
-    fts: number;
-    fusion: number;
-    boost: number;
-    matchedFields: LibrarySearchResult['rank']['matchedFields'];
-    exactPhrase: boolean;
-    fallbackMode: 'all' | 'any' | 'literal';
-    queryCoverage: number;
-  }>;
-};
-
-export type LibraryEvaluationCase = {
-  id: string;
-  name: string;
-  query: string;
-  expectedResourceId: string | null;
-  expectedResourceTitle: string | null;
-  expectedHeading: string | null;
-  collectionId: string | null;
-  sourceId: string | null;
-  scopeKind: 'personal' | 'projects' | 'task-artifacts';
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type LibraryEvaluationSummary = {
-  cases: number;
-  positiveCases: number;
-  negativeCases: number;
-  passedCases: number;
-  hitAt1: number;
-  hitAt5: number;
-  mrr: number;
-  negativeAccuracy: number;
-  noResultRate: number;
-  latencyP50Ms: number;
-  latencyP95Ms: number;
-  citationCompleteness: number;
-  duplicateEvidenceRate: number;
-  contextCharacterCount: number;
-};
-
-export type LibraryEvaluationRun = {
-  id: string;
-  summary: LibraryEvaluationSummary;
-  details?: Array<{
-    caseId: string;
-    name: string;
-    query: string;
-    expectedResourceId: string | null;
-    expectedResourceTitle: string | null;
-    expectedNoResult: boolean;
-    passed: boolean;
-    resultRank: number | null;
-    resultCount: number;
-    durationMs: number;
-    reason: LibrarySearchDiagnostics['reason'];
-    topResults: Array<{ resourceId: string; title: string; heading: string | null; score: number }>;
-  }>;
-  createdAt: number;
-};
-
-export type LibraryEvaluationOverview = {
-  cases: LibraryEvaluationCase[];
-  latestRun: LibraryEvaluationRun | null;
-  recentRuns: LibraryEvaluationRun[];
-};
-
 export type ComposerResourceRef = {
   uri: string;
   resourceId: string;
@@ -739,83 +540,6 @@ export type ComposerResourceRef = {
   displayName: string;
   revision: string | null;
   quote?: { text: string; heading?: string; page?: number };
-};
-
-export type LibraryJob = {
-  id: string;
-  sourceId: string | null;
-  kind: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  progress: {
-    phase?: string;
-    discovered?: number;
-    indexed?: number;
-    skipped?: number;
-    failed?: number;
-    currentResourceId?: string;
-    currentTitle?: string;
-  };
-  error: string;
-  errorCode: string | null;
-  attemptCount: number;
-  createdAt: number;
-  startedAt: number | null;
-  completedAt: number | null;
-};
-
-export type LibraryMigrationPreview = {
-  available: boolean;
-  migratedAt?: number | null;
-  sourceCount?: number;
-  error?: string;
-  knowledgeBases: Array<{
-    id: string;
-    name: string;
-    paths: Array<{ path: string; exists: boolean }>;
-  }>;
-};
-
-export type LibraryOverview = {
-  defaultCollectionId: string;
-  stats: { collections: number; sources: number; resources: number; chunks: number; errors: number };
-  supportedExtensions: string[];
-  featureFlags: { core: boolean; projectAssets: boolean; composerResources: boolean; migration: boolean };
-  engine: { status: 'ready' | 'installing' | 'unavailable'; runtime: 'managed-python'; protocolVersion: number };
-  providers: Array<{ kind: LibrarySource['providerKind']; capabilities: LibrarySource['capabilities'] }>;
-  diagnostics: {
-    operations: Array<{
-      kind: string;
-      count: number;
-      averageDurationMs: number;
-      maximumDurationMs: number;
-      p50DurationMs: number;
-      p95DurationMs: number;
-      resultCount: number;
-      noResultCount: number;
-    }>;
-    parseCache: { entries: number; bytes: number; hits: number; maxEntries: number; maxBytes: number };
-  };
-  activeJobs: LibraryJob[];
-  migration: LibraryMigrationPreview;
-};
-
-export type LibraryExtensionStatus = {
-  status: 'not-installed' | 'partial' | 'installing' | 'ready' | 'error' | 'unavailable';
-  runtimeAvailable: boolean;
-  pythonVersion: string;
-  installedAt: number | null;
-  error: string;
-  repairJobId?: string | null;
-  guideAcknowledged?: boolean;
-  background?: boolean;
-  packages: Array<{
-    id: string;
-    label: string;
-    description: string;
-    spec: string;
-    installed: boolean;
-    version: string | null;
-  }>;
 };
 
 export type ProjectEvent = {
@@ -1080,10 +804,6 @@ export type DesktopSettings = {
   };
   expertHub?: {
     baseUrl?: string;
-  };
-  library?: {
-    enabled?: boolean;
-    extensionGuideAcknowledged?: boolean;
   };
   workflows?: {
     enabled?: boolean;
@@ -1909,55 +1629,6 @@ declare global {
         task: { prompt: string };
       }) => Promise<{ task: ProjectTask; session: SessionSummary }>;
       getProjectTask: (payload: { projectId: string; taskId: string }) => Promise<ProjectTask | null>;
-      library: {
-        getOverview: () => Promise<LibraryOverview>;
-        getExtensionStatus: () => Promise<LibraryExtensionStatus>;
-        acknowledgeExtensionGuide: () => Promise<{ acknowledged: boolean }>;
-        installExtensions: (payload: { packageIds: string[] }) => Promise<LibraryExtensionStatus>;
-        listCollections: () => Promise<LibraryCollection[]>;
-        createCollection: (payload: { name: string; description?: string; scope?: LibraryCollection['scope'] }) => Promise<LibraryCollection>;
-        updateCollection: (payload: { id: string; name?: string; description?: string }) => Promise<LibraryCollection>;
-        deleteCollection: (payload: { id: string }) => Promise<{ ok: boolean }>;
-        listSources: (payload?: { collectionId?: string; scopeKind?: 'personal' | 'projects' | 'task-artifacts' }) => Promise<LibrarySource[]>;
-        pickSources: (payload: {
-          collectionId: string;
-          kind: 'files';
-        }) => Promise<LibrarySource[]>;
-        selectDirectory: () => Promise<{ selectionId: string; name: string; path: string } | null>;
-        prepareDirectoryImport: (payload: {
-          collectionId: string;
-          selectionId: string;
-        }) => Promise<{
-          workspace: string;
-          title: string;
-          draftPrompt: string;
-        }>;
-        addProjectSource: (payload: { collectionId?: string; projectId: string; name?: string }) => Promise<LibrarySource>;
-        removeSource: (payload: { sourceId: string; collectionId?: string }) => Promise<{
-          ok: boolean;
-          deleted: boolean;
-          detached: boolean;
-        }>;
-        refreshSource: (payload: { sourceId: string; full?: boolean }) => Promise<LibraryJob>;
-        listResources: (payload?: { collectionId?: string; sourceId?: string; query?: string; projectId?: string; personalOnly?: boolean; scopeKind?: 'personal' | 'projects' | 'task-artifacts'; extensions?: string[]; limit?: number; offset?: number }) => Promise<LibraryResource[]>;
-        getResource: (payload: { resourceId: string; chunkLimit?: number }) => Promise<LibraryResource & { chunks: Array<{ id: number; index: number; blockIndex: number; heading: string | null; page: number | null; startLine: number | null; endLine: number | null; locationKind: LibrarySearchResult['locationKind']; content: string }> }>;
-        search: (payload: { query: string; collectionId?: string; sourceId?: string; projectId?: string; personalOnly?: boolean; scopeKind?: 'personal' | 'projects' | 'task-artifacts'; mode?: 'auto' | 'all' | 'any'; extensions?: string[]; limit?: number; includeContext?: boolean; contextBudget?: number }) => Promise<LibrarySearchResult[]>;
-        diagnoseSearch: (payload: { query: string; collectionId?: string; sourceId?: string; projectId?: string; personalOnly?: boolean; scopeKind?: 'personal' | 'projects' | 'task-artifacts'; mode?: 'auto' | 'all' | 'any'; extensions?: string[]; limit?: number }) => Promise<{ items: LibrarySearchResult[]; diagnostics: LibrarySearchDiagnostics }>;
-        getEvaluationOverview: () => Promise<LibraryEvaluationOverview>;
-        saveEvaluationCase: (payload: { id?: string; name?: string; query: string; expectedResourceId?: string | null; expectedHeading?: string | null; collectionId?: string | null; sourceId?: string | null; scopeKind?: 'personal' | 'projects' | 'task-artifacts' }) => Promise<LibraryEvaluationCase>;
-        deleteEvaluationCase: (payload: { id: string }) => Promise<{ ok: boolean }>;
-        runEvaluation: (payload?: { caseIds?: string[] }) => Promise<LibraryEvaluationRun>;
-        openResource: (payload: { resourceId: string }) => Promise<{ ok: boolean }>;
-        showResourceInFolder: (payload: { resourceId: string }) => Promise<{ ok: boolean }>;
-        listJobs: (payload?: { sourceId?: string; limit?: number }) => Promise<LibraryJob[]>;
-        cancelJob: (payload: { jobId: string }) => Promise<{ ok: boolean }>;
-        repairIndex: () => Promise<LibraryJob>;
-        saveTaskArtifact: (payload: { sessionId: string; path: string; name?: string; collectionId?: string; target?: 'personal' | 'project' }) => Promise<{ sourceId: string; job: LibraryJob; name: string; target: 'personal' | 'project' }>;
-        getMigrationPreview: () => Promise<LibraryMigrationPreview>;
-        migrateLegacy: () => Promise<{ migrated: boolean; collections: number; sources: number; skipped: number }>;
-        dismissLegacyMigration: () => Promise<{ ok: boolean }>;
-        onChanged: (callback: (payload: { reason: string; [key: string]: unknown }) => void) => () => void;
-      };
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
@@ -2086,6 +1757,7 @@ declare global {
       installAppArchive: () => Promise<{ ok: boolean; canceled?: boolean; app?: StoredApp; error?: string }>;
       getAppInstallProgress: () => Promise<AppInstallProgress[]>;
       onAppInstallProgress: (callback: (progress: AppInstallProgress) => void) => () => void;
+      openAppResource: (uri: string) => Promise<{ opened: boolean }>;
       getAppRuntimeState: (payload: { appId: string }) => Promise<any>;
       listAppContributions: (payload?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean }) => Promise<Record<string, any[]>>;
       invokeAppContribution: (payload: { kind: 'commands' | 'resourceProviders'; id: string; input?: unknown; instanceId?: string; requestId?: string; timeoutMs?: number }) => Promise<unknown>;
@@ -2121,6 +1793,7 @@ declare global {
         getContent: (payload: { target: PreviewHistoryTarget; snapshotId: string }) => Promise<{ snapshot: PreviewSnapshotInfo; content: string } | null>;
       };
       preview: {
+        resolveFiles: (payload: { sessionId: string; paths: string[] }) => Promise<OutputFileResolution[]>;
         readFile: (payload: { sessionId?: string; filePath: string }) => Promise<WorkspacePreviewData>;
         open: (payload: PreviewOpenPayload) => Promise<{ ok: boolean }>;
         sync: (payload: { files: WorkspacePreviewData[] }) => Promise<{ ok: boolean }>;

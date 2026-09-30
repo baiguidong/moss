@@ -12,7 +12,7 @@ test('tool loading settings renders grouped resident and deferred radio choices'
     <ToolLoadingSettingsTable
       value={{ ...DEFAULT_MOSS_TOOL_LOADING, app_build: 'always' }}
       onChange={() => {}}
-      featureEnabled={{ library: false, workflows: true }}
+      featureEnabled={{ workflows: true }}
     />,
   );
 
@@ -26,17 +26,14 @@ test('tool loading settings renders grouped resident and deferred radio choices'
   expect(html).toContain('App 管理');
   expect(html).toContain('连接器');
   expect(html).toContain('图片');
-  expect(html).toContain('资料库');
   expect(html).toContain('工作流');
   expect(html).toContain('rowSpan="8"');
   expect(html).toContain('rowSpan="7"');
   expect(html.match(/>浏览器</g)).toHaveLength(1);
   expect(html.match(/>App 管理</g)).toHaveLength(1);
-  expect(html.match(/type="radio"/g)).toHaveLength(81);
+  expect(html.match(/type="radio"/g)).toHaveLength(69);
   expect(html).toMatch(/aria-label="app_build 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="image_generate 按需"[^>]*checked=""[^>]*value="deferred"/);
-  expect(html).toMatch(/aria-label="library_search 关闭"[^>]*name="tool-loading-library_search"[^>]*checked=""/);
-  expect(html).toMatch(/type="radio" disabled="" aria-label="library_search 常驻"/);
   expect(html).toMatch(/aria-label="WorkflowRun 按需"[^>]*checked=""/);
 });
 

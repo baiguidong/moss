@@ -111,10 +111,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   expertHub: {
     baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
-  library: {
-    enabled: false,
-    extensionGuideAcknowledged: false,
-  },
   workflows: {
     enabled: false,
   },
@@ -717,27 +713,6 @@ export function normalizeDesktopSettings(input, existing = {}) {
         : existingManagedRuntimes.git !== undefined
           ? Boolean(existingManagedRuntimes.git)
           : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.git,
-  };
-
-  const sourceLibrary = source.library && typeof source.library === 'object'
-    ? source.library
-    : {};
-  const existingLibrary = result.library && typeof result.library === 'object'
-    ? result.library
-    : {};
-  result.library = {
-    enabled:
-      sourceLibrary.enabled !== undefined
-        ? Boolean(sourceLibrary.enabled)
-        : existingLibrary.enabled !== undefined
-          ? Boolean(existingLibrary.enabled)
-          : DEFAULT_DESKTOP_SETTINGS.library.enabled,
-    extensionGuideAcknowledged:
-      sourceLibrary.extensionGuideAcknowledged !== undefined
-        ? Boolean(sourceLibrary.extensionGuideAcknowledged)
-        : existingLibrary.extensionGuideAcknowledged !== undefined
-          ? Boolean(existingLibrary.extensionGuideAcknowledged)
-          : DEFAULT_DESKTOP_SETTINGS.library.extensionGuideAcknowledged,
   };
 
   const sourceWorkflows = source.workflows && typeof source.workflows === 'object'

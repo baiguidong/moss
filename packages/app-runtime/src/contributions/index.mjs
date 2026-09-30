@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/index.mjs'
 
 export const APP_CONTRIBUTION_KINDS = Object.freeze([
@@ -16,10 +15,8 @@ export function contributionId(appId, localId) {
 
 export function appToolName(appId, localId) {
   const normalize = (value) => String(value).replace(/[^a-zA-Z0-9_]/g, '_')
-  const qualifiedId = contributionId(appId, localId)
-  const digest = createHash('sha256').update(qualifiedId).digest('hex').slice(0, 12)
-  const readable = `app__${normalize(appId)}__${normalize(localId)}`
-  return `${readable.slice(0, 50)}__${digest}`
+  // Core rejects duplicate names before registering the model's tool set.
+  return `app__${normalize(appId)}__${normalize(localId)}`.slice(0, 64)
 }
 
 export function collectManifestContributions(manifest, options = {}) {

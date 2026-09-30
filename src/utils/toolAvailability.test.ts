@@ -4,7 +4,6 @@ import type { ToolUseContext } from '../Tool.js'
 import { getDefaultAppState } from '../state/AppStateStore.js'
 import { assembleToolPool } from '../tools.js'
 import { createAppContributionTools } from '../tools/AppContributionTool/AppContributionTool.js'
-import { LibraryTools } from '../tools/LibraryTool/LibraryTools.js'
 import { MossMailTool } from '../tools/MossMailTool/MossMailTool.js'
 import { MossTools } from '../tools/MossTool/MossTool.js'
 import { ToolSearchTool } from '../tools/ToolSearchTool/ToolSearchTool.js'
@@ -18,7 +17,7 @@ const workflowTools = [WorkflowRunTool, ...WorkflowCatalogTools]
 const workflowNames = workflowTools.map(tool => tool.name)
 const denied = [
   'app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions',
-  'library_write', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload',
+  'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload',
   'connector_cli_setup', 'connector_mcp_authenticate', 'example_app_action',
   ...workflowNames,
 ]
@@ -30,7 +29,7 @@ const appTools = createAppContributionTools([{
 const state = getDefaultAppState()
 const assembleWorker = () => assembleToolPool(state.toolPermissionContext, [])
 const assembleMain = () => mergeAndFilterTools(
-  [...MossTools, ...LibraryTools, MossMailTool, ...appTools, ...workflowTools], assembleWorker(), state.toolPermissionContext.mode,
+  [...MossTools, MossMailTool, ...appTools, ...workflowTools], assembleWorker(), state.toolPermissionContext.mode,
 )
 const scope = <T>(environment: SessionRuntime['executionEnvironment'], fn: () => T) =>
   runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image })
@@ -47,7 +46,6 @@ describe('session tool availability', () => {
         expect(names).toContain('image_edit')
       }
       expect(assembleMain().map(tool => tool.name)).toContain(MossMailTool.name)
-      expect(assembleMain().map(tool => tool.name)).toContain('library_read')
     })
     scope('desktop', () => {
       const names = assembleMain().map(tool => tool.name)
@@ -64,7 +62,7 @@ describe('session tool availability', () => {
       for (const pool of [assembleMain(), assembleMain(), assembleWorker()]) {
         const context = { options: { tools: pool }, getAppState: () => state } as ToolUseContext
         for (const query of [
-          'select:app_build,library_write,example_app_action', 'app build publish',
+          'select:app_build,example_app_action', 'app build publish',
           `select:${workflowNames.join(',')}`, 'workflow create edit manage run',
         ]) {
           const result = await ToolSearchTool.call({ query, max_results: 10 }, context)
@@ -106,7 +104,7 @@ describe('session tool availability', () => {
 test('unattended cloud sessions and workers exclude desktop-dependent tools', async () => {
   await runWithSessionIdContext(asSessionId('cloud-cron'), null, async () => {
     for (const pool of [assembleMain(), assembleWorker()]) {
-      expect(pool.map(tool => tool.name).filter(name => ['browser_open','library_list','library_search','library_read','MossMail'].includes(name))).toEqual([])
+      expect(pool.map(tool => tool.name).filter(name => ['browser_open','MossMail'].includes(name))).toEqual([])
       expect(pool.map(tool => tool.name)).toContain('image_generate')
     }
     const worker = runWithSessionContextOverridesGenerator({ environment: {} }, async function* () {

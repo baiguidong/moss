@@ -43,7 +43,7 @@ import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced' | 'trace';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'library' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address' | 'trace';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'workflows' | 'mcp' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address' | 'trace';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -271,11 +271,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     keywords: ['扩展', '集成', 'integration'],
     sections: [
       {
-        id: 'library',
-        title: '资料库',
-        keywords: ['library', '资料库', '知识库', '检索', 'tool', '工具'],
-      },
-      {
         id: 'workflows',
         title: '工作流',
         keywords: ['workflow', 'workflows', '工作流', '编排', 'tool', '工具'],
@@ -420,7 +415,7 @@ export function ToolLoadingSettingsTable({
 }: {
   value: Record<string, MossToolLoadingMode>;
   onChange: (name: string, mode: MossToolLoadingMode) => void;
-  featureEnabled?: Partial<Record<'library' | 'workflows', boolean>>;
+  featureEnabled?: Partial<Record<'workflows', boolean>>;
 }) {
   return (
     <Surface>
@@ -1383,7 +1378,6 @@ export function SettingsView({
     'web-search': null,
     agents: null,
     tools: null,
-    library: null,
     workflows: null,
     mcp: null,
     appearance: null,
@@ -2612,7 +2606,6 @@ export function SettingsView({
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
                       featureEnabled={{
-                        library: settingsDraft?.library?.enabled === true,
                         workflows: settingsDraft?.workflows?.enabled === true,
                       }}
                     />
@@ -2622,32 +2615,6 @@ export function SettingsView({
                     </div>
                     <AppToolSettingsTable apps={apps} />
                   </section>
-                ) : null}
-
-                {visibleSections.some((section) => section.id === 'library') ? (
-                  <SettingsSection
-                    id="library"
-                    title="资料库"
-                    sectionRef={(element) => {
-                      sectionRefs.current.library = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="启用资料库"
-                        description="允许 Agent 在对话中检索已索引的资料。关闭后保留已有资料和索引。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={settingsDraft.library?.enabled === true}
-                            onCheckedChange={(enabled) => updateSetting('library', { enabled })}
-                            label="启用资料库"
-                          />
-                        </div>
-                      </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
                 ) : null}
 
                 {visibleSections.some((section) => section.id === 'workflows') ? (

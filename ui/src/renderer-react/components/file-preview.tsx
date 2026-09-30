@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { X, FileText, Image as ImageIcon } from "lucide-react";
+import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { cn } from "@/lib/utils";
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
@@ -28,15 +29,15 @@ interface FilePreviewProps {
 
 export function FilePreview({ path, name, onRemove, readonly = false }: FilePreviewProps) {
   const isImage = isImageFile(path);
-  const isLibraryResource = path.startsWith('moss-library://');
+  const appResource = isAppResourceUri(path);
   const isRemoteWorkspaceFile = path.startsWith('moss-remote-workspace://');
-  let libraryName = '';
-  if (isLibraryResource) {
+  let resourceName = '';
+  if (appResource) {
     try {
-      libraryName = new URL(path).searchParams.get('name') || '';
+      resourceName = new URL(path).searchParams.get('name') || '';
     } catch {}
   }
-  const fileName = name || libraryName || (isLibraryResource ? '资料库资源' : path.split(/[\\/]/).pop()) || '';
+  const fileName = name || resourceName || (appResource ? 'App 文档' : path.split(/[\\/]/).pop()) || '';
   const fileExt = fileName.includes('.') ? fileName.split('.').pop()?.toUpperCase() || '' : '';
   const [imageUrl, setImageUrl] = React.useState<string>('');
   const [fileSize, setFileSize] = React.useState<string>('');
@@ -48,6 +49,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: FilePrev
       if (isImage) setImageUrl(path);
       return () => { cancelled = true; };
     }
+    if (appResource) return () => { cancelled = true; };
     window.agentDesktop.fs.getFileMetadata(path)
       .then((metadata: any) => {
         if (!cancelled && metadata?.size) setFileSize(formatFileSize(metadata.size));
@@ -63,7 +65,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: FilePrev
         .catch(() => { /* 忽略图片加载失败 */ });
     }
     return () => { cancelled = true; };
-  }, [path, isImage, isRemoteWorkspaceFile]);
+  }, [path, isImage, isRemoteWorkspaceFile, appResource]);
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();

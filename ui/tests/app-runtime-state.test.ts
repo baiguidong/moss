@@ -155,7 +155,15 @@ describe('App package and state stores', () => {
       .toThrow(/Invalid App configuration/)
   })
 
-  it('requires App Tool input schemas to describe objects', async () => {
+  it.each([
+    ['array', { type: 'array', items: { type: 'string' } }, 'must describe an object'],
+    ['oneOf', { type: 'object', oneOf: [{ required: ['query'] }] }, 'must not declare top-level oneOf'],
+    ['anyOf', { type: 'object', anyOf: [{ required: ['query'] }] }, 'must not declare top-level anyOf'],
+    ['allOf', { type: 'object', allOf: [{ required: ['query'] }] }, 'must not declare top-level allOf'],
+    ['enum', { type: 'object', enum: [{}] }, 'must not declare top-level enum'],
+    ['const', { type: 'object', const: {} }, 'must not declare top-level const'],
+    ['not', { type: 'object', not: { required: ['query'] } }, 'must not declare top-level not'],
+  ] as const)('rejects invalid App Tool input schemas before installation: %s', async (_label, schema, message) => {
     const root = await tempRoot()
     const source = path.join(root, 'source')
     await fs.cp(path.join(fixtureRoot, 'persistent-configured'), source, { recursive: true })
@@ -174,14 +182,21 @@ describe('App package and state stores', () => {
     }
     await fs.writeFile(
       path.join(source, 'schemas/tool-input.schema.json'),
-      JSON.stringify({ type: 'array', items: { type: 'string' } }),
+      JSON.stringify(schema),
     )
     await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     await writePackageChecksums(source)
 
-    await expect(validateAppPackage(source)).rejects.toThrow(
-      /tool echo inputSchema must describe an object/,
-    )
+    const expected = `App ${manifest.id} tool echo inputSchema (schemas/tool-input.schema.json) ${message}`
+    await expect(validateAppPackage(source)).rejects.toThrow(expected)
+    const store = new AppPackageStore({ appsDir: path.join(root, 'apps') })
+    await expect(store.installFromDirectory(source)).rejects.toThrow(expected)
+
+    // The same schema remains valid for an Action that is not exposed as a Tool.
+    delete manifest.contributes
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writePackageChecksums(source)
+    expect((await validateAppPackage(source)).manifest.id).toBe(manifest.id)
   })
 
   it('loads only current runtime record fields', async () => {

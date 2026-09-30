@@ -1,137 +1,142 @@
-import { marked, type Token } from "marked";
-import type { TranscriptRenderMessage, ToolResultRenderMessage } from "./agent-transcript";
-import type { TurnChangeSummary } from "../types";
+import type { TranscriptRenderMessage, ToolResultRenderMessage, ToolUseRenderMessage } from "./agent-transcript";
+import type { OutputFileResolution } from "../types";
 
-export type AssistantOutputFile = { path: string; name: string; subtitle: string; type: string };
+type FileOperation = "create" | "update";
+export type OutputCandidate = {
+  turnId: string;
+  toolUseId: string;
+  toolName: string;
+  operation: FileOperation;
+  target: { kind: "local"; path: string };
+};
+export type AssistantOutputFile = {
+  path: string;
+  name: string;
+  subtitle: string;
+  type: string;
+  operation: FileOperation;
+  toolUseId: string;
+  sourcePaths: string[];
+};
 
-const artifactExtensions = new Set("md markdown mdx txt html htm pdf doc docx odt rtf pages xls xlsx xlsm ods numbers csv tsv ppt pptx odp key png jpg jpeg gif webp avif svg bmp mp3 wav m4a mp4 mov webm zip".split(" "));
-const sourceExtensions = new Set("ts tsx js jsx json yaml yml py go rs java css scss sh sql c cpp h vue svelte".split(" "));
-const extensionOf = (path: string) => path.split("/").at(-1)?.split(".").at(-1)?.toLowerCase() || "";
+type ToolFile = { path: string; operation: FileOperation };
+type OutputAdapter = (result: Record<string, unknown>) => ToolFile | null;
 
-export function normalizeOutputPath(value: string, workspace = ""): string | null {
-  let path = value.trim();
-  if (/^file:\/\//i.test(path)) {
-    try {
-      const url = new URL(path);
-      if (url.hostname && url.hostname !== "localhost") return null;
-      path = decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
-    } catch { return null; }
-  } else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[A-Za-z]:[\\/]/.test(path)) {
-    return null;
-  }
-  path = path.replace(/\\/g, "/").replace(/^～\//, "~/").replace(/(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/i, "");
-  if (!path || /[\n\r<>\u0000]/.test(path) || path.endsWith("/")) return null;
-  if (!path.startsWith("/") && !path.startsWith("~/") && !/^[A-Za-z]:\//.test(path)) {
-    if (!workspace) return null;
-    path = `${workspace.replace(/\\/g, "/").replace(/\/$/, "")}/${path}`;
-  }
-  const prefix = path.match(/^(?:[A-Za-z]:\/|~\/|\/\/|\/)/)?.[0] || "";
-  const parts: string[] = [];
-  for (const part of path.slice(prefix.length).split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") { parts.pop(); continue; }
-    parts.push(part);
-  }
-  return prefix + parts.join("/");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function isOutputInsideWorkspace(path: string, workspace: string): boolean {
-  if (!workspace.trim()) return false;
-  const root = normalizeOutputPath(`${workspace.replace(/[\\/]$/, "")}/.`, "");
-  if (!root) return false;
-  const normalizedRoot = root.replace(/\/$/, "");
-  return path.startsWith(`${normalizedRoot}/`);
+function isPatch(value: unknown): boolean {
+  return Array.isArray(value) && value.every((hunk) => isRecord(hunk)
+    && [hunk.oldStart, hunk.oldLines, hunk.newStart, hunk.newLines].every(Number.isInteger)
+    && Array.isArray(hunk.lines) && hunk.lines.every((line) => typeof line === "string"));
 }
 
-function describeOutputFile(path: string, workspace: string): AssistantOutputFile {
-  const ext = extensionOf(path);
-  return {
-    path,
-    name: path.split("/").at(-1) || path,
-    subtitle: isOutputInsideWorkspace(path, workspace) ? path.slice(workspace.replace(/\\/g, "/").replace(/\/$/, "").length + 1) : path,
-    type: ["md", "mdx", "markdown"].includes(ext) ? "MARKDOWN" : ext.toUpperCase() || "FILE",
-  };
+// These are exact runtime tool identities, not humanized display names.
+// New tools must explicitly validate their own result contract here.
+const adapters = new Map<string, OutputAdapter>([
+  ["Write", (result) => {
+    if (typeof result.filePath !== "string" || !isPatch(result.structuredPatch)
+      || (result.type !== "create" && result.type !== "update")
+      || typeof result.content !== "string"
+      || (result.originalFile !== null && typeof result.originalFile !== "string")) return null;
+    return { path: result.filePath, operation: result.type };
+  }],
+  ["Edit", (result) => {
+    if (typeof result.filePath !== "string" || !isPatch(result.structuredPatch)
+      || typeof result.oldString !== "string" || typeof result.newString !== "string"
+      || typeof result.originalFile !== "string" || typeof result.userModified !== "boolean"
+      || typeof result.replaceAll !== "boolean") return null;
+    return { path: result.filePath, operation: "update" };
+  }],
+]);
+
+function adaptToolFile(toolName: string, value: unknown): ToolFile | null {
+  const adapter = adapters.get(toolName);
+  if (!adapter || !isRecord(value)) return null;
+  const file = adapter(value);
+  if (!file) return null;
+  // Preserve the actual filename (including spaces, punctuation and colons).
+  // The host applies the local OS path rules; never infer a working directory.
+  if (!/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(file.path) || /[\u0000\r\n]/.test(file.path)) return null;
+  return file;
 }
 
-// The Markdown lexer skips fenced code and resolves reference links and escaped
-// destinations; snippets and external URLs must not become generated files.
-export function extractOutputFileReferences(content: string): string[] {
-  const paths: string[] = [];
-  const visit = (tokens: Token[]) => {
-    for (const token of tokens) {
-      if (token.type === "code" || token.type === "html") continue;
-      if (token.type === "link" || token.type === "image") { paths.push(token.href); continue; }
-      if (token.type === "codespan") { paths.push(token.text); continue; }
-      if (token.type === "table") {
-        for (const cell of [...token.header, ...token.rows.flat()]) visit(cell.tokens);
-      } else if (token.type === "list") {
-        for (const item of token.items) visit(item.tokens);
-      } else if ("tokens" in token && token.tokens) visit(token.tokens);
-      else if (token.type === "text") {
-        for (const match of token.text.matchAll(/(?:https?:\/\/|file:\/\/|[A-Za-z]:[\\/]|[~～]?[\\/]|\.{1,2}[\\/])?[^\s`<>"'，。；：、！？（）【】\[\]()]+\.[a-zA-Z\d]{1,12}(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)?/g)) paths.push(match[0]);
-      }
-    }
-  };
-  visit(marked.lexer(content));
-  return paths;
-}
-
-export function extractAssistantOutputFiles(content: string, workspace: string, changedFiles: string[] = [], attachments: string[] = []): AssistantOutputFile[] {
-  const changed = [...new Set(changedFiles.map((path) => normalizeOutputPath(path, workspace)).filter((path): path is string => Boolean(path)))];
-  const paths = new Set<string>();
-  for (const reference of extractOutputFileReferences(content)) {
-    let path = normalizeOutputPath(reference, workspace);
-    if (!path) continue;
-    const ext = extensionOf(path);
-    if (!artifactExtensions.has(ext) && !sourceExtensions.has(ext)) continue;
-    // Bare filenames are common in final replies. Use a unique actual write
-    // before resolving them against the workspace. Never guess between matches.
-    if (!/^(?:[~～]?[\\/]|[A-Za-z]:|file:)/i.test(reference)) {
-      const suffix = reference.replace(/\\/g, "/").replace(/^\.\//, "").replace(/(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/i, "");
-      const matches = changed.filter((file) => file.endsWith(`/${suffix}`));
-      if (matches.length > 1) continue;
-      if (matches.length === 1) path = matches[0];
-    }
-    if (sourceExtensions.has(ext) && !changed.includes(path)) continue;
-    paths.add(path);
-  }
-  for (const path of changed) if (artifactExtensions.has(extensionOf(path))) paths.add(path);
-  for (const attachment of attachments) {
-    const path = normalizeOutputPath(attachment, workspace);
-    if (path) paths.add(path);
-  }
-  return [...paths].map((path) => describeOutputFile(path, workspace));
-}
-
-// Only the final assistant reply in a turn owns its file strip. Tool inputs
-// supply live/replayed writes while checkpoints add files missing from the prose.
-export function buildAssistantOutputFiles(messages: TranscriptRenderMessage[], workspace: string, turnChanges = new Map<string, TurnChangeSummary>()): Map<string, AssistantOutputFile[]> {
-  const results = new Map<string, ToolResultRenderMessage>();
-  for (const message of messages) if (message.type === "tool_result") results.set(message.toolUseId, message);
-  const turns = new Map<string, { owner?: Extract<TranscriptRenderMessage, { type: "assistant_text" }>; paths: string[]; attachments: string[] }>();
+// Both live and replayed transcripts use this pure projection. No assistant
+// prose, inputs, generic attachments, checkpoints, or result text are sources.
+export function collectAssistantOutputCandidates(messages: TranscriptRenderMessage[]): Map<string, OutputCandidate[]> {
+  const uses = new Map<string, { call: ToolUseRenderMessage; turnId: string }[]>();
+  const results = new Map<string, { result: ToolResultRenderMessage; turnId: string; index: number }[]>();
+  const turns = new Map<string, { owner: Extract<TranscriptRenderMessage, { type: "assistant_text" }>; index: number }>();
   let currentTurn = "initial";
-  for (const message of messages) {
+  messages.forEach((message, index) => {
     if (message.type === "user_text") currentTurn = message.turnId || message.id;
     const turnId = message.turnId || currentTurn;
-    let turn = turns.get(turnId);
-    if (!turn) { turn = { paths: [], attachments: [] }; turns.set(turnId, turn); }
-    if (message.type === "assistant_text") {
-      turn.owner = message;
-      turn.attachments.push(...(message.attachments || []).filter((file) => file.kind !== "image").map((file) => file.path));
+    if (message.type === "assistant_text") turns.set(turnId, { owner: message, index });
+    if (message.type === "tool_use") {
+      const entries = uses.get(message.toolUseId) || [];
+      entries.push({ call: message, turnId });
+      uses.set(message.toolUseId, entries);
     }
-    if (message.type === "tool_use" && /^(?:write|edit|multiedit|notebookedit)$/i.test(message.toolName) && message.status === "success" && !results.get(message.toolUseId)?.isError) {
-      const input = message.input as Record<string, unknown> | undefined;
-      const path = input?.file_path || input?.path || input?.notebook_path;
-      if (typeof path === "string") turn.paths.push(path);
+    if (message.type === "tool_result") {
+      const entries = results.get(message.toolUseId) || [];
+      entries.push({ result: message, turnId, index });
+      results.set(message.toolUseId, entries);
     }
-    if (message.type === "tool_result" && !message.isError) turn.attachments.push(...(message.attachments || []).filter((file) => file.kind !== "image").map((file) => file.path));
+  });
+
+  const candidates = new Map<string, OutputCandidate[]>();
+  for (const [toolUseId, calls] of uses) {
+    // Duplicated call identities, nested agents and missing results are not
+    // enough evidence to assign a file to this local turn.
+    if (!toolUseId || calls.length !== 1) continue;
+    const { call, turnId } = calls[0];
+    const turn = turns.get(turnId);
+    const matchingResults = results.get(toolUseId);
+    if (call.parentToolUseId || call.status !== "success" || !turn || turn.owner.streaming || !matchingResults?.length) continue;
+    const files = matchingResults.map(({ result, turnId: resultTurn, index }) => {
+      if (resultTurn !== turnId || index >= turn.index || result.isError !== false
+        || result.parentToolUseId || result.toolName !== call.toolName) return null;
+      return adaptToolFile(call.toolName, result.structuredResult);
+    });
+    const file = files[0];
+    // Identical replayed results are harmless; conflicting results fail closed.
+    if (!file || files.some((entry) => !entry || entry.path !== file.path || entry.operation !== file.operation)) continue;
+    const entries = candidates.get(turn.owner.id) || [];
+    entries.push({ turnId, toolUseId, toolName: call.toolName, operation: file.operation, target: { kind: "local", path: file.path } });
+    candidates.set(turn.owner.id, entries);
   }
-  const files = new Map<string, AssistantOutputFile[]>();
-  for (const [id, turn] of turns) {
-    if (!turn.owner || turn.owner.streaming) continue;
-    const changed = [...turn.paths, ...(turnChanges.get(id)?.files.map((file) => file.filePath) || [])];
-    const imagePaths = new Set((turn.owner.attachments || []).filter((file) => file.kind === "image").map((file) => normalizeOutputPath(file.path, workspace)));
-    files.set(turn.owner.id, extractAssistantOutputFiles(turn.owner.content, workspace, changed, turn.attachments).filter((file) => !imagePaths.has(file.path)));
+  return candidates;
+}
+
+export type ResolveOutputFiles = (payload: { sessionId: string; paths: string[] }) => Promise<OutputFileResolution[]>;
+
+export async function resolveAssistantOutputFiles(
+  candidates: Map<string, OutputCandidate[]>,
+  sessionId: string,
+  resolveFiles: ResolveOutputFiles,
+): Promise<Map<string, AssistantOutputFile[]>> {
+  const output = new Map<string, AssistantOutputFile[]>();
+  const paths = [...new Set([...candidates.values()].flatMap((entries) => entries.map((entry) => entry.target.path)))];
+  if (!sessionId || paths.length === 0) return output;
+  const resolved = new Map((await resolveFiles({ sessionId, paths })).map((entry) => [entry.inputPath, entry]));
+  for (const [ownerId, entries] of candidates) {
+    const files = new Map<string, AssistantOutputFile>();
+    for (const candidate of entries) {
+      const resolution = resolved.get(candidate.target.path);
+      if (!resolution || !("file" in resolution)) continue;
+      const { path, name, relativePath } = resolution.file;
+      const previous = files.get(path);
+      const extension = name.includes(".") ? name.split(".").at(-1)!.toLowerCase() : "";
+      files.set(path, {
+        path, name, subtitle: relativePath || path,
+        type: ["md", "mdx", "markdown"].includes(extension) ? "MARKDOWN" : extension.toUpperCase() || "FILE",
+        operation: previous?.operation === "create" ? "create" : candidate.operation,
+        toolUseId: candidate.toolUseId,
+        sourcePaths: [...new Set([...(previous?.sourcePaths || []), candidate.target.path])],
+      });
+    }
+    if (files.size) output.set(ownerId, [...files.values()]);
   }
-  return files;
+  return output;
 }

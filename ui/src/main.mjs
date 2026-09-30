@@ -1,3 +1,6 @@
+import { resolveAppResourceFile } from './apps/app-resources.mjs';
+import { isAppResourceUri } from './shared/app-resource-uri.mjs';
+import { createLocalFilesProtocolDefinition, createRuntimesProtocolDefinition, createLocalAppHostHandlers } from './apps/app-local-host.mjs';
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
@@ -145,13 +148,6 @@ import {
   collectTurnChanges,
   truncateHistoryBeforeUserMessage,
 } from './shared/turn-changes.mjs';
-import {
-  createLibraryService,
-  resolveLibraryParserPath,
-} from './library/library-service.mjs';
-import { handleLibraryAgentToolEvent } from './library/library-agent-tools.mjs';
-import { createLibraryExtensionManager } from './library/library-extensions.mjs';
-import { registerLibraryIpcHandlers } from './library/library-ipc.mjs';
 import {
   applyManagedRuntimeEnv,
   ensureManagedRuntimes,
@@ -406,18 +402,10 @@ const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
 const workspaceCatalog = createWorkspaceCatalog(DESKTOP_DATA_PATHS.workspacesRoot);
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
-const MOSS_LIBRARY_DIR = DESKTOP_DATA_PATHS.libraryRoot;
-const LIBRARY_DB_PATH = DESKTOP_DATA_PATHS.libraryDbPath;
-const LIBRARY_FEATURE_FLAGS = Object.freeze({
-  projectAssets: process.env.MOSS_LIBRARY_PROJECT_ASSETS !== '0',
-  composerResources: process.env.MOSS_LIBRARY_COMPOSER_RESOURCES !== '0',
-  migration: process.env.MOSS_LIBRARY_MIGRATION !== '0',
-});
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const WEB_SEARCH_CAPABILITIES_PATH = path.join(MOSS_HOME, 'web-search-capabilities.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
-const RETIRED_BUNDLED_SKILL_NAMES = Object.freeze(['local-kb']);
 const MOSS_REPO_SKILLS_DIR = path.join(repoRoot, 'skills');
 const MOSS_REPO_APP_MARKET_DIR = path.join(uiRoot, 'resources', 'app-market');
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
@@ -720,8 +708,6 @@ const updateGuardedAppIpc = {
   },
 };
 let localAuditService = null;
-let libraryService = null;
-let libraryExtensionManager = null;
 let localAuditScanTimer = null;
 let agentChannelController = null;
 let appDecisionBroker = null;
@@ -793,7 +779,6 @@ const pendingMcpAuthCallbacks = new Map();
 fs.mkdirSync(MOSS_HOME, { recursive: true });
 fs.mkdirSync(MOSS_SESSIONS_DIR, { recursive: true });
 fs.mkdirSync(MOSS_PROJECTS_DIR, { recursive: true });
-fs.mkdirSync(MOSS_LIBRARY_DIR, { recursive: true });
 fs.mkdirSync(MOSS_APP_DATA_DIR, { recursive: true });
 allowMediaRoot(MOSS_PROJECTS_DIR);
 allowMediaRoot(MOSS_SESSIONS_DIR);
@@ -1616,20 +1601,6 @@ function getProjectWorkspaceDir(projectId) {
   return DESKTOP_DATA_PATHS.projectWorkspaceDir(normalizeProjectId(projectId));
 }
 
-function queueProjectLibraryRefresh(projectId) {
-  if (!libraryService || !LIBRARY_FEATURE_FLAGS.projectAssets) return;
-  const project = readProjectSync(projectId);
-  const refresh = project && !project.archivedAt
-    ? libraryService.addProjectSource({ projectId })
-    : Promise.resolve(libraryService.refreshProjectSource(projectId));
-  void refresh.catch((error) => {
-    mossLog('warn', 'library', 'Unable to queue project Library refresh', {
-      projectId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
-}
-
 function getProjectAssetsDir(projectId) {
   return getProjectWorkspaceDir(projectId);
 }
@@ -2417,7 +2388,6 @@ async function archiveProject(projectId) {
       resolvedAt: stoppedAt,
     }, { expectedStatus: 'pending' }).catch(() => {});
   }
-  queueProjectLibraryRefresh(next.id);
   return enrichProjectBestEffort(next);
 }
 
@@ -2728,7 +2698,6 @@ async function addProjectAssetUnlocked(projectId, payload = {}) {
     metadata: { sourceSessionId: asset.sourceSessionId },
   });
   emitToRenderer('project:changed', { projectId: project.id, reason: 'assets' });
-  queueProjectLibraryRefresh(project.id);
   return asset;
 }
 
@@ -2773,7 +2742,6 @@ async function removeProjectAssetUnlocked(projectId, assetId) {
     });
   }
   emitToRenderer('project:changed', { projectId: id, reason: 'assets' });
-  queueProjectLibraryRefresh(id);
   return { ok: true };
 }
 
@@ -3811,15 +3779,6 @@ async function buildProjectResourceManifest(sessionRecord) {
       overviewPath: memory.overviewPath,
       overview: memory.overview.slice(0, 20000),
     },
-    libraryResources: Array.isArray(previousManifest?.libraryResources)
-      ? previousManifest.libraryResources
-      : [],
-    libraryScopes: Array.isArray(previousManifest?.libraryScopes)
-      ? previousManifest.libraryScopes
-      : [],
-    libraryQuotes: Array.isArray(previousManifest?.libraryQuotes)
-      ? previousManifest.libraryQuotes
-      : [],
   };
   sessionRecord.projectSkillInfos = skillInfos;
   sessionRecord.projectExpertInfos = expertInfos;
@@ -4102,7 +4061,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     apiKey: desktopSettings.apiKey || undefined,
     webSearch: getRuntimeWebSearchSettings(),
     mcpServers,
-    libraryEnabled: Boolean(desktopSettings.library?.enabled === true && libraryService),
     appTools,
     addDirs: getSessionAddDirs(sessionRecord),
     disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
@@ -4237,7 +4195,6 @@ function createRemoteDirectRuntime({
         mcpServers: localRuntimeConfig.mcpServers,
         environment: Object.fromEntries(Object.entries(localRuntimeConfig.environment)
           .filter(([key]) => key !== 'MOSS_TRACE_SCOPE')),
-        libraryEnabled: localRuntimeConfig.libraryEnabled === true,
         coordinatorMode: coordinatorMode === true,
         agentMailEnabled: localRuntimeConfig.agentMailEnabled === true,
       };
@@ -7627,26 +7584,6 @@ function buildSessionTitle(prompt) {
  * Initialize bundled skills from repo/package resources to ~/.moss/skills.
  */
 async function initializeBundledSkills() {
-  // These names were previously owned and overwritten by the bundled-skill
-  // installer on every launch, so removing their stale installed copies does
-  // not affect user-created skills.
-  for (const skillName of RETIRED_BUNDLED_SKILL_NAMES) {
-    const retiredPath = path.join(MOSS_SKILLS_DIR, skillName);
-    if (!fs.existsSync(retiredPath)) continue;
-    try {
-      await fsp.rm(retiredPath, { recursive: true, force: true });
-      mossLog('info', 'skill', 'Retired bundled skill removed', {
-        name: skillName,
-        target: retiredPath,
-      });
-    } catch (error) {
-      mossLog('warn', 'skill', 'Unable to remove retired bundled skill', {
-        name: skillName,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   await copyBundledDirectoryEntries({
     resourceName: 'skill',
     sourceDir: getBundledResourceDir('skills', MOSS_REPO_SKILLS_DIR),
@@ -8736,56 +8673,6 @@ function createSessionRecord({
   return sessionRecord;
 }
 
-function buildLibraryDirectoryImportDraft({ collection, directoryName }) {
-  return [
-    '请整理当前目录中适合进入 Moss 本地资料库（知识库）的文档。',
-    '',
-    `目标资料集：“${collection.name}”`,
-    `当前目录：“${directoryName}”`,
-    `说明：“${collection.name}”只是资料库中的保存位置名称，不能作为文件主题、分类或价值判断依据。`,
-    '',
-    '执行要求：',
-    '1. 使用简体中文检查当前目录，覆盖根目录和各级子目录；不要读取目录外路径，不跟随符号链接，也不要修改、移动或删除原文件。',
-    '2. 默认只建议收录具有长期检索价值的文档，例如方案、报告、笔记、制度、手册、合同和个人档案。',
-    '3. 原始数据、行情记录、批量导出、日志、源码、依赖、构建产物、临时文件和程序控制文件默认排除。',
-    '4. 先根据文件名和相对路径判断；名称无法说明用途时，再读取足够判断用途的少量内容，不需要读取全文。',
-    '5. 支持格式不等于建议收录。可解析格式包括 txt、md、markdown、pdf、docx、pptx、xlsx、csv、json、xml、yaml、yml、html、htm 以及常见源码和配置文本。',
-    '6. 给出完整、可核对的分类建议；分类可使用工作与项目、学习与研究、财务与票据、个人档案、生活资料、创作与收藏、参考资料或其他资料，并可增加简短二级分类。',
-    '7. 现在不要写入资料库，等我确认或调整后再导入。',
-    '',
-    '请按以下 Markdown 结构回复：',
-    '# 资料库整理建议',
-    `> 目标资料集：${collection.name}；当前目录：${directoryName}；状态：仅生成建议，尚未写入资料库`,
-    '## 扫描概览',
-    '| 项目 | 结果 |',
-    '| --- | --- |',
-    '| 已检查范围 | 根目录和子目录范围 |',
-    '| 支持格式候选 | 数量 |',
-    '| 建议收录 | 数量 |',
-    '| 待确认 | 数量 |',
-    '| 明确排除 | 数量或整目录范围 |',
-    '## 建议收录',
-    '| 分类 | 相对路径 | 类型 | 建议理由 |',
-    '| --- | --- | --- | --- |',
-    '## 待确认',
-    '| 相对路径 | 需要确认的问题 |',
-    '| --- | --- |',
-    '## 已排除',
-    '| 文件或目录范围 | 排除原因 |',
-    '| --- | --- |',
-    '## 请确认',
-    '请提示我回复“确认”按建议导入，或直接说明需要增加、删除和调整的文件或分类。',
-  ].join('\n');
-}
-
-function prepareLibraryDirectoryImport({ directoryPath, directoryName, collection }) {
-  return {
-    workspace: directoryPath,
-    title: `资料库整理 · ${directoryName}`,
-    draftPrompt: buildLibraryDirectoryImportDraft({ collection, directoryName }),
-  };
-}
-
 function remoteSessionTimestamp(value, fallback = Date.now()) {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : fallback;
@@ -9679,14 +9566,7 @@ async function handleMossHostEvent(event, sessionRecord) {
     });
     return { ok: true };
   }
-  const libraryResult = await handleLibraryAgentToolEvent({
-    event,
-    libraryService,
-    enabled: desktopSettings.library?.enabled === true,
-    projectId: sessionRecord?.projectId || '',
-    sessionId: sessionRecord?.id || '',
-  });
-  if (libraryResult) return libraryResult;
+
   if (isBrowserAutomationAction(event?.type)) {
     if (!browserViewManager) return { ok: false, error: 'Moss browser is not ready.' };
     if (!sessionRecord?.id) return { ok: false, error: 'Browser automation requires a desktop session.' };
@@ -11113,6 +10993,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
     hostProtocols: [
+      createLocalFilesProtocolDefinition(),
+      createRuntimesProtocolDefinition(),
       createAccountProtocolDefinition(),
       createAgentProtocolDefinition(),
       createPlatformProtocolDefinition(),
@@ -11120,6 +11002,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      ...createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeStatus }),
       [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
         method, (input, context) => cloudStorageHost.handle(method, input, context),
       ])),
@@ -11189,6 +11072,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   };
   ipcMain.handle('app:get-install-progress', () => [...appInstallProgress.values()]);
   registerAppRuntimeIpc({
+    shell,
     ipcMain: updateGuardedAppIpc,
     dialog,
     getRuntime: () => appRuntime,
@@ -11288,64 +11172,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onChanged: (payload) => emitToRenderer('audit:changed', payload),
   });
   registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
-  libraryExtensionManager = createLibraryExtensionManager({
-    libraryRoot: MOSS_LIBRARY_DIR,
-    pythonRuntimeRoot: path.join(MOSS_HOME, 'runtimes', 'python'),
-    pythonVersion: MANAGED_RUNTIME_VERSIONS.python,
-    getPythonPath: () => {
-      const runtime = getManagedRuntimeStatus().python;
-      return runtime.installed ? runtime.path : null;
-    },
-    onChanged: (payload) => emitToRenderer('library:changed', {
-      reason: 'extensions-changed',
-      ...payload,
-    }),
-  });
-  libraryService = createLibraryService({
-    libraryRoot: MOSS_LIBRARY_DIR,
-    dbPath: LIBRARY_DB_PATH,
-    parserPath: resolveLibraryParserPath({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      uiRoot,
-    }),
-    pythonPath: process.env.MOSS_PYTHON_PATH,
-    getPythonModulePaths: () => libraryExtensionManager?.getModulePaths() || [],
-    requireManagedRuntime: app.isPackaged,
-    getEngineStatus: () => getManagedRuntimeStatus().python,
-    getProject: (projectId) => readProjectSync(projectId),
-    getProjectAssets: (projectId) => listProjectAssets(projectId),
-    getSessionRecord,
-    commitProjectAsset: (projectId, payload) => addProjectAsset(projectId, payload),
-    getSessionResourceManifestPath: (session) => getLocalSessionResourceManifestPath(session.id),
-    watchSources: true,
-    featureFlags: LIBRARY_FEATURE_FLAGS,
-    onChanged: (payload) => emitToRenderer('library:changed', payload),
-    log: mossLog,
-  });
-  registerLibraryIpcHandlers({
-    ipcMain,
-    dialog,
-    shell,
-    getWindow: () => mainWindow,
-    service: libraryService,
-    extensions: libraryExtensionManager,
-    prepareDirectoryImport: prepareLibraryDirectoryImport,
-    getExtensionGuideAcknowledged: () => (
-      desktopSettings.library?.extensionGuideAcknowledged === true
-    ),
-    acknowledgeExtensionGuide: () => {
-      if (desktopSettings.library?.extensionGuideAcknowledged === true) return;
-      saveDesktopSettings({
-        ...desktopSettings,
-        library: {
-          ...desktopSettings.library,
-          extensionGuideAcknowledged: true,
-        },
-      });
-    },
-    log: mossLog,
-  });
   startLocalAuditScanner();
   startMossCronScheduler();
   await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
@@ -11485,8 +11311,6 @@ function shutdownDesktop() {
     if (localAuditScanTimer) clearInterval(localAuditScanTimer);
     localAuditScanTimer = null;
     await attempt(() => { localAuditService?.close?.(); localAuditService = null; });
-    await attempt(() => { libraryService?.close?.(); libraryService = null; });
-    await attempt(() => { libraryExtensionManager?.dispose?.(); libraryExtensionManager = null; });
     for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
       await attempt(() => {
         schedulePersistSession(record, true);
@@ -13923,23 +13747,14 @@ async function sendAgentPromptNow(event, {
   let filePaths = Array.isArray(files)
     ? files.map((filePath) => typeof filePath === 'string' ? filePath.trim() : '').filter(Boolean)
     : [];
-  if (Array.isArray(resources) && resources.length > 0 && !libraryService) {
-    throw new Error('Library is not available.');
+  const appResources = Array.isArray(resources) ? resources : [];
+  for (const resource of appResources) {
+    if (resource.selection !== 'full-file' || !isAppResourceUri(resource.uri)) throw new Error('请选择 App 文档文件作为附件。');
+    if (!filePaths.includes(resource.uri)) filePaths.push(resource.uri);
   }
-  const libraryResources = Array.isArray(resources) && resources.length > 0
-    ? await libraryService.prepareComposerResources(sessionRecord, resources)
-    : [];
-  filePaths.push(...libraryResources
-    .filter((resource) => resource.selection === 'full-file')
-    .map((resource) => resource.uri));
-  let visibleAttachmentReferences = filePaths.map((filePath) => (
-    filePath.startsWith('moss-library://') ? filePath : null
-  ));
-
-  if (filePaths.some((filePath) => filePath.startsWith('moss-library://'))) {
-    if (!libraryService) throw new Error('Library is not available.');
-    filePaths = await libraryService.resolveAttachmentUris(sessionRecord, filePaths);
-  }
+  let visibleAttachmentReferences = filePaths.map(filePath => isAppResourceUri(filePath) ? filePath : null);
+  filePaths = await Promise.all(filePaths.map(async filePath => isAppResourceUri(filePath)
+    ? (await resolveAppResourceFile(appRuntime, filePath)).path : filePath));
   filePaths = await localizeProjectSessionAttachments(sessionRecord, filePaths);
   let remoteInlineSources = new Map();
   if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
@@ -13951,7 +13766,7 @@ async function sendAgentPromptNow(event, {
     ));
   }
 
-  if (!trimmedPrompt && filePaths.length === 0 && libraryResources.length === 0) {
+  if (!trimmedPrompt && filePaths.length === 0) {
     throw new Error('Prompt is required.');
   }
 
@@ -14059,20 +13874,6 @@ async function sendAgentPromptNow(event, {
     attachmentSuffix = lines.join('\n');
   }
 
-  const libraryContextInstruction = libraryResources
-    .filter((resource) => resource.selection !== 'full-file')
-    .map((resource) => {
-      if (resource.selection === 'quote') {
-        return `- Quoted from ${resource.displayName} (${resource.uri}):\n${resource.quote?.text || ''}`;
-      }
-      return resource.kind === 'collection'
-        ? `- Search collection "${resource.displayName}" by passing collection=${JSON.stringify(resource.resourceId)} to library_search.`
-        : `- Search source "${resource.displayName}" by passing sourceId=${JSON.stringify(resource.resourceId)} to library_search.`;
-    });
-  const libraryContextSuffix = libraryContextInstruction.length > 0
-    ? `\n\n[Library retrieval references]\n${libraryContextInstruction.join('\n')}`
-    : '';
-
   const bashContextPrefix = isPlanOnly ? '' : consumePendingBashContexts(sessionRecord);
   const effectiveSkills = skills;
   const selectedSkillsInstruction = isPlanOnly
@@ -14092,7 +13893,7 @@ async function sendAgentPromptNow(event, {
       selectedSkillsInstruction,
       explicitAgentInstruction,
       agentTeamRecovery?.instruction || '',
-      effectivePrompt + attachmentSuffix + libraryContextSuffix,
+      effectivePrompt + attachmentSuffix,
     ].filter(Boolean).join('\n\n');
 
   // The embedded runtime's processUserInput natively accepts content-block
@@ -14137,7 +13938,7 @@ async function sendAgentPromptNow(event, {
       runtimePrompt,
       visibleUserPrompt,
       attachments: visibleAttachments,
-      resources: libraryResources,
+      resources: appResources,
       runtimeSystemPrompt,
       reopenCompletedProjectSession: Boolean(sessionRecord.projectId),
     });

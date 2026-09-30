@@ -25,18 +25,7 @@ does not fall back to `~/.moss/app-projects` or legacy project files.
       <internal-run-id>/
 ```
 
-Library data is stored beside, not inside, project directories:
-
-```text
-~/.moss/library/
-  library.db
-  artifacts/
-    <task-artifact-source-id>/
-```
-
-`library.db` is the Library catalog, job state, and rebuildable FTS5 index.
-Project resources remain authoritative in each project's `workspace/` and
-`assets.json`; Library stores only provider projections for them.
+Knowledge collections are managed by installed Apps in their instance data directories, independently of project assets. Projects do not register or filter knowledge sources automatically.
 
 - `project.json` is the canonical project configuration and carries
   `kind: "moss-project"` plus the current `layoutVersion`.
@@ -67,9 +56,6 @@ Project resources remain authoritative in each project's `workspace/` and
     outputs/                # project sessions only
     .moss/
       project-assets/
-      library-resources/
-        manifest.json
-        <resource-id>/
   runtime/
     resource-manifest.json
     engine/
@@ -93,9 +79,6 @@ Project resources remain authoritative in each project's `workspace/` and
   contains final publish candidates.
 - `.moss/project-assets/` is a read-only-style session snapshot of project
   assets. It is not durable project storage.
-- `.moss/library-resources/` contains send-time snapshots of explicitly
-  attached Library Resources and a manifest of their stable Resource URIs. It
-  is session input, not a Library source of truth.
 - `runtime/resource-manifest.json` is the resource snapshot used by that
   session. It is never a project-level source of truth.
 - `runtime/engine/` owns the raw transcript and engine runtime state.

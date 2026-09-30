@@ -145,12 +145,12 @@ describe("agent transcript tool rendering", () => {
     expect(toolCall?.type === "tool_use" ? toolCall.duration : undefined).toBe(3_000);
   });
 
-  it("replays structured Library references with their stable display names", () => {
+  it("replays structured App references with their stable display names", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "user",
       prompt: "对比这些资料",
       resources: [{
-        uri: "moss-library://collection/collection-123?name=Research",
+        uri: "example-notes://document/document-123?name=Research",
         resourceId: "collection-123",
         kind: "collection",
         selection: "search-scope",
@@ -163,7 +163,7 @@ describe("agent transcript tool rendering", () => {
       type: "user_text",
       attachments: [{
         kind: "file",
-        path: "moss-library://collection/collection-123?name=Research",
+        path: "example-notes://document/document-123?name=Research",
         name: "客户研究资料",
       }],
     }));

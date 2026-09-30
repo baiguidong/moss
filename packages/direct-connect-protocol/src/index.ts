@@ -72,7 +72,6 @@ export type SessionRuntimeOptions = {
   webSearch?: SessionWebSearchSettings
   mcpServers?: Record<string, Record<string, unknown>>
   environment?: Record<string, string>
-  libraryEnabled?: boolean
   coordinatorMode?: boolean
   agentMailEnabled?: boolean
 }
@@ -207,7 +206,6 @@ export const sessionRuntimeOptionsSchema = lazySchema(() =>
     environment: z
       .record(z.string().min(1).max(256), z.string().max(1_000_000))
       .optional(),
-    libraryEnabled: z.boolean().optional(),
     coordinatorMode: z.boolean().optional(),
     agentMailEnabled: z.boolean().optional(),
   }),

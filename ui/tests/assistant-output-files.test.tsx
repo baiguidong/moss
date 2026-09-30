@@ -1,120 +1,216 @@
 import { expect, test } from "bun:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAssistantOutputFiles, extractAssistantOutputFiles, isOutputInsideWorkspace, normalizeOutputPath } from "../src/renderer-react/lib/assistant-output-files";
+import { collectAssistantOutputCandidates, resolveAssistantOutputFiles, type ResolveOutputFiles } from "../src/renderer-react/lib/assistant-output-files";
+import { buildMainChatRenderMessagesFromHistory as renderHistory, type TranscriptRenderMessage, type ToolResultRenderMessage } from "../src/renderer-react/lib/agent-transcript";
 import { AssistantMessage } from "../src/renderer-react/components/chat/assistant-message";
 import { openAssistantOutputFile } from "../src/renderer-react/components/chat/assistant-output-file-card";
-import type { TranscriptRenderMessage } from "../src/renderer-react/lib/agent-transcript";
-
-test("generated Markdown files use the actual writes and are deduplicated against prose", () => {
-  const files = extractAssistantOutputFiles("已生成 `WELCOME.md` 和 [欢迎](WELCOME.md)。", "/workspace", ["/workspace/docs/WELCOME.md", "/workspace/.memory/user_beginner.md", "/workspace/.memory/MEMORY.md", "/workspace/src/app.ts"]);
-  expect(files.map((file) => file.path)).toEqual(["/workspace/docs/WELCOME.md", "/workspace/.memory/user_beginner.md", "/workspace/.memory/MEMORY.md"]);
-  expect(files[0]).toMatchObject({ name: "WELCOME.md", subtitle: "docs/WELCOME.md", type: "MARKDOWN" });
-});
-
-test("Markdown links, reference links, plain paths and paths containing spaces are supported", () => {
-  const content = '[报告](<./我的 报告.pdf>)，另一个文件：/tmp/report.docx:12\n\n[下载][report]\n\n[report]: file:///workspace/%E5%AF%BC%E5%87%BA.xlsx';
-  expect(extractAssistantOutputFiles(content, "/workspace").map((file) => file.path)).toEqual(["/workspace/我的 报告.pdf", "/tmp/report.docx", "/workspace/导出.xlsx"]);
-});
-
-test("code samples, external URLs, and unmodified source files do not generate cards", () => {
-  expect(extractAssistantOutputFiles('```md\n[示例](demo.md)\n```\n\nhttps://example.com/report.pdf\n\n[下载](https://example.com/report.pdf)\n\n`src/app.ts`', "/workspace")).toEqual([]);
-});
-
-test("ambiguous basenames never pick the wrong generated file", () => {
-  const files = extractAssistantOutputFiles("`report.pdf`", "/workspace", ["/workspace/a/report.pdf", "/workspace/b/report.pdf"]);
-  expect(files.map((file) => file.path)).toEqual(["/workspace/a/report.pdf", "/workspace/b/report.pdf"]);
-  expect(extractAssistantOutputFiles("`/tmp/report.pdf`", "/workspace", ["/workspace/report.pdf"])[0].path).toBe("/tmp/report.pdf");
-});
-
-test("paths normalize line references and Windows separators without accepting URL schemes", () => {
-  expect(normalizeOutputPath('C:\\work\\docs\\..\\report.md:12:4')).toBe('C:/work/report.md');
-  expect(normalizeOutputPath('file:///C:/work/report.md')).toBe('C:/work/report.md');
-  expect(normalizeOutputPath('～/report.md')).toBe('~/report.md');
-  expect(normalizeOutputPath('javascript:alert(1)', '/workspace')).toBeNull();
-  expect(normalizeOutputPath('relative.md')).toBeNull();
-  expect(isOutputInsideWorkspace('/workspace/report.md', '')).toBe(false);
-  expect(isOutputInsideWorkspace('/workspace-other/report.md', '/workspace')).toBe(false);
-});
 
 const timestamp = new Date(0);
-const history: TranscriptRenderMessage[] = [
-  { id: 'user-1', type: 'user_text', role: 'user', content: '生成文档', timestamp },
-  { id: 'progress', type: 'assistant_text', role: 'assistant', content: '正在生成', timestamp },
-  { id: 'write', type: 'tool_use', role: 'assistant', toolUseId: 'write-1', toolName: 'Write', displayName: 'Write', status: 'success', input: { file_path: '/workspace/WELCOME.md' }, timestamp },
-  { id: 'failed', type: 'tool_use', role: 'assistant', toolUseId: 'write-2', toolName: 'Write', displayName: 'Write', status: 'error', input: { file_path: '/workspace/failed.md' }, timestamp },
-  { id: 'final', type: 'assistant_text', role: 'assistant', content: '文件已生成。', timestamp },
-];
+const writeResult = (filePath = "/workspace/report.md") => ({ type: "create", filePath, content: "# Report", originalFile: null, structuredPatch: [] });
+const editResult = (filePath = "/workspace/report.md") => ({ filePath, oldString: "Report", newString: "Updated", originalFile: "# Report", userModified: false, replaceAll: false, structuredPatch: [] });
+const user: TranscriptRenderMessage = { id: "user-1", turnId: "turn-1", type: "user_text", role: "user", content: "生成文档", timestamp };
+const reply = { id: "final", turnId: "turn-1", type: "assistant_text", role: "assistant", content: "已完成。", timestamp } as const;
 
-test("only the last reply owns successful outputs, scoped to its turn", () => {
-  const files = buildAssistantOutputFiles([...history, { id: 'user-2', type: 'user_text', role: 'user', content: '你好', timestamp }, { id: 'reply-2', type: 'assistant_text', role: 'assistant', content: '你好', timestamp }], '/workspace');
-  expect(files.has('progress')).toBe(false);
-  expect(files.get('final')?.map((file) => file.name)).toEqual(['WELCOME.md']);
-  expect(files.get('reply-2')).toEqual([]);
+function operation(id = "write-1", name = "Write", result: unknown = writeResult()): TranscriptRenderMessage[] {
+  return [
+    { id, turnId: "turn-1", type: "tool_use", role: "assistant", toolUseId: id, toolName: name, displayName: "Write", input: { file_path: "/wrong-input.md" }, status: "success", timestamp },
+    { id: `${id}-result`, turnId: "turn-1", type: "tool_result", role: "assistant", toolUseId: id, toolName: name, content: "File created successfully at /wrong-text.md", rawContent: result, structuredResult: result, isError: false, timestamp },
+  ];
+}
+const history = () => [user, ...operation(), reply];
+const candidates = (messages = history()) => collectAssistantOutputCandidates(messages);
+const acceptFiles: ResolveOutputFiles = async ({ paths }) => paths.map((inputPath) => ({ inputPath, file: {
+  path: inputPath, name: inputPath.split("/").at(-1)!, size: 8, relativePath: inputPath.startsWith("/workspace/") ? inputPath.slice(11) : undefined,
+} }));
+const resolve = (messages = history(), resolver = acceptFiles) => resolveAssistantOutputFiles(candidates(messages), "local", resolver);
+
+test("only matched, successful built-in structured outputs supply paths and operation labels", async () => {
+  const messages = [user, ...operation(), ...operation("edit", "Edit", editResult("/workspace/src/main.ts")), reply];
+  expect([...candidates(messages).values()].flat().map((entry) => [entry.target.path, entry.operation]))
+    .toEqual([["/workspace/report.md", "create"], ["/workspace/src/main.ts", "update"]]);
+  expect((await resolve(messages)).get("final")?.map((file) => [file.path, file.operation]))
+    .toEqual([["/workspace/report.md", "create"], ["/workspace/src/main.ts", "update"]]);
 });
 
-test("streaming replies wait for completion and checkpoints supply unmentioned files", () => {
-  expect(buildAssistantOutputFiles([...history.slice(0, -1), { ...history.at(-1)!, streaming: true } as TranscriptRenderMessage], '/workspace').has('final')).toBe(false);
-  const changes = new Map([['user-1', { userMessageId: 'user-1', files: [{ filePath: '/workspace/checkpoint.pdf', isNewFile: true, structuredPatch: [], additions: 1, deletions: 0 }], stats: { filesChanged: 1, additions: 1, deletions: 0 }, hasUnverifiedChanges: false }]]);
-  expect(buildAssistantOutputFiles(history, '/workspace', changes).get('final')?.map((file) => file.name)).toEqual(['WELCOME.md', 'checkpoint.pdf']);
+test("the reported lookup, Markdown, code and attachment paths cannot generate output cards", async () => {
+  const lookup = { ...reply, content: '**《报告-优化版.pdf》**\n\n`/tmp/报告-优化版.pdf`\n[下载](/tmp/报告-优化版.pdf)\n```\n/tmp/报告-优化版.pdf\n```', attachments: [{ kind: "file" as const, path: "/tmp/报告-优化版.pdf" }] };
+  const messages = [user, ...operation("library", "app__moss_library__documents_read", { data: { uri: "moss-knowledge://resource/id", metadata: { origin: "/tmp/报告-优化版.pdf" } } }), lookup];
+  let checked = false;
+  const files = await resolve(messages, async () => { checked = true; return []; });
+  expect(files.size).toBe(0);
+  expect(checked).toBe(false);
+  const markup = renderToStaticMarkup(<AssistantMessage message={{ ...lookup, attachments: [] }} outputFiles={files.get("final")} />);
+  expect(markup).not.toContain('aria-label="文件：');
 });
 
-test("assistant output cards sit under the response and before message actions", () => {
-  const message = history.at(-1)! as Extract<TranscriptRenderMessage, { type: 'assistant_text' }>;
-  const markup = renderToStaticMarkup(<AssistantMessage message={{ ...message, attachments: [{ kind: 'file', path: './WELCOME.md' }] }} outputFiles={buildAssistantOutputFiles(history, '/workspace').get('final')} sessionId="s1" workspace="/workspace" />);
-  expect(markup.indexOf('文件已生成')).toBeLessThan(markup.indexOf('生成的文件：WELCOME.md'));
-  expect(markup.indexOf('生成的文件：WELCOME.md')).toBeLessThan(markup.indexOf('复制回复'));
-  expect(markup).toContain('MARKDOWN');
-  expect(markup).toContain('打开方式');
-  expect(markup).not.toContain('max-w-[150px]');
+test("external tools, Read, Bash and display-name lookalikes do not match the adapter allowlist", () => {
+  for (const name of ["Read", "Bash", "MultiEdit", "NotebookEdit", "write", "app__example__Write", "mcp__files__Write"]) {
+    expect(candidates([user, ...operation("tool", name), reply]).size).toBe(0);
+  }
 });
 
-test("default opening always uses Moss preview, including files outside the workspace", async () => {
+test("missing, failed, text-only, malformed and ambiguously associated results fail closed", () => {
+  const [call, result] = operation();
+  const rejected: TranscriptRenderMessage[][] = [
+    [call], [result], [call, { ...result, isError: true } as ToolResultRenderMessage],
+    [{ ...call, status: "running" } as TranscriptRenderMessage, result],
+    [call, { ...result, structuredResult: undefined } as ToolResultRenderMessage],
+    [call, { ...result, structuredResult: JSON.stringify(writeResult()) } as ToolResultRenderMessage],
+    [call, { ...result, toolUseId: "other" } as ToolResultRenderMessage],
+    [call, { ...result, toolName: "Edit" } as ToolResultRenderMessage],
+    [call, { ...result, turnId: "another-turn" } as ToolResultRenderMessage],
+    [call, call, result],
+    [{ ...call, parentToolUseId: "agent" } as TranscriptRenderMessage, result],
+  ];
+  for (const entries of rejected) expect(candidates([user, ...entries, reply]).size).toBe(0);
+  for (const value of [{ filePath: "/workspace/report.md" }, { ...writeResult(), type: "unknown" }, { ...writeResult(), structuredPatch: [{}] }, { ...editResult(), replaceAll: "false" }]) {
+    expect(candidates([user, ...operation("bad", "Write", value), reply]).size).toBe(0);
+  }
+});
+
+test("paths are never guessed or cleaned up, including legitimate punctuation in filenames", () => {
+  for (const filePath of ["report.md", "./report.md", "~/report.md", "～/report.md", "file:///tmp/report.md", "moss-knowledge://resource/id", "/tmp/bad\u0000.md"]) {
+    expect(candidates([user, ...operation("write", "Write", writeResult(filePath)), reply]).size).toBe(0);
+  }
+  for (const filePath of ["/tmp/《报告》.pdf", "/tmp/report.md:12", "/tmp/空 格.md ", "C:\\Downloads\\报告.md"]) {
+    expect(candidates([user, ...operation("write", "Write", writeResult(filePath)), reply]).get("final")?.[0].target.path).toBe(filePath);
+  }
+});
+
+test("identical repeated results are deduplicated while conflicting results reject the call", () => {
+  const [call, result] = operation();
+  expect(candidates([user, call, result, result, reply]).get("final")).toHaveLength(1);
+  const conflict = { ...result, structuredResult: writeResult("/other.md") } as ToolResultRenderMessage;
+  expect(candidates([user, call, result, conflict, reply]).size).toBe(0);
+});
+
+test("only the final reply after the tool result owns files, scoped to its turn", async () => {
+  const progress = { ...reply, id: "progress", content: "正在生成" };
+  expect(candidates([user, progress, ...operation()]).size).toBe(0);
+  expect(candidates([user, ...operation(), { ...reply, streaming: true }]).size).toBe(0);
+  const messages = [user, progress, ...operation(), reply, { ...user, id: "user-2", turnId: "turn-2" }, { ...reply, id: "final-2", turnId: "turn-2" }];
+  expect([...(await resolve(messages)).keys()]).toEqual(["final"]);
+});
+
+test("no cards are available before validation or for rejected files", async () => {
+  let finish!: (value: Awaited<ReturnType<ResolveOutputFiles>>) => void;
+  let completed = false;
+  const pending = resolve(history(), () => new Promise((resolve) => { finish = resolve; })).then((files) => { completed = true; return files; });
+  await Promise.resolve();
+  expect(completed).toBe(false);
+  finish([{ inputPath: "/workspace/report.md", error: "ENOENT" }]);
+  expect((await pending).size).toBe(0);
+  expect((await resolveAssistantOutputFiles(candidates(), "", acceptFiles)).size).toBe(0);
+});
+
+test("canonical paths deduplicate aliases per turn without merging different same-named files", async () => {
+  const messages = [user, ...operation(), ...operation("edit", "Edit", editResult("/alias/report.md")), ...operation("other", "Write", writeResult("/other/report.md")), reply];
+  const files = (await resolve(messages, async ({ paths }) => paths.map((inputPath) => ({ inputPath, file: {
+    path: inputPath === "/alias/report.md" ? "/workspace/report.md" : inputPath, name: "report.md", size: 8,
+  } })))).get("final")!;
+  expect(files.map((file) => file.path)).toEqual(["/workspace/report.md", "/other/report.md"]);
+  expect(files[0].sourcePaths).toEqual(["/workspace/report.md", "/alias/report.md"]);
+  expect(files[0].operation).toBe("create");
+  const nextTurn = [
+    { ...user, id: "user-2", turnId: "turn-2" },
+    ...operation("edit-2", "Edit", editResult()).map((entry) => ({ ...entry, turnId: "turn-2" })),
+    { ...reply, id: "final-2", turnId: "turn-2" },
+  ];
+  expect([...(await resolve([...messages, ...nextTurn])).keys()]).toEqual(["final", "final-2"]);
+});
+
+function runtimeHistory(field = "tool_use_result", value: unknown = writeResult()) {
+  return [
+    { type: "user", uuid: "turn-1", message: { role: "user", content: "生成文档" } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "write-1", name: "Write", input: { file_path: "/workspace/report.md", content: "# Report" } }] } },
+    { type: "user", [field]: value, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "write-1", content: "File created successfully at /workspace/report.md" }] } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "完成" }] } },
+    { type: "result", subtype: "success" },
+  ];
+}
+
+test("live SDK and persisted transcript side channels produce the same candidates", () => {
+  const live = renderHistory(runtimeHistory());
+  const replay = renderHistory(runtimeHistory("toolUseResult"));
+  expect([...candidates(live)]).toEqual([...candidates(replay)]);
+  expect([...candidates(live).values()].flat()).toHaveLength(1);
+  expect(live.find((entry) => entry.type === "tool_result")?.structuredResult).toEqual(writeResult());
+});
+
+test("plain tool-result JSON and multi-result envelopes never become structured evidence", () => {
+  const plain = runtimeHistory("unused");
+  (plain[2].message!.content as any[])[0].content = JSON.stringify(writeResult());
+  expect(candidates(renderHistory(plain)).size).toBe(0);
+  const multiple = runtimeHistory();
+  (multiple[2].message!.content as any[]).push({ type: "tool_result", tool_use_id: "other", content: "done" });
+  expect(candidates(renderHistory(multiple)).size).toBe(0);
+});
+
+test("rendering, validation and replay leave model messages and compaction records unchanged", async () => {
+  const events = [{ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 100 } }, ...runtimeHistory()];
+  const before = JSON.stringify(events);
+  const modelMessages = () => JSON.stringify(events.flatMap((event) => "message" in event && event.message ? [event.message] : []));
+  const requestBefore = modelMessages();
+  const freeze = (value: any) => { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } };
+  freeze(events);
+  for (let replay = 0; replay < 2; replay++) {
+    expect((await resolve(renderHistory(events))).size).toBe(1);
+    expect(JSON.stringify(events)).toBe(before);
+    expect(modelMessages()).toBe(requestBefore);
+  }
+});
+
+test("verified output cards render operation labels and replace exact duplicate attachments", async () => {
+  const files = (await resolve()).get("final")!;
+  const markup = renderToStaticMarkup(<AssistantMessage message={{ ...reply, attachments: [{ kind: "file", path: "/workspace/report.md" }] }} outputFiles={files} sessionId="local" />);
+  expect(markup.match(/aria-label="文件：/g)).toHaveLength(1);
+  expect(markup).toContain("已创建");
+  expect(markup).toContain("MARKDOWN");
+  expect(markup).toContain("打开方式");
+  expect(markup.indexOf("已完成。")).toBeLessThan(markup.indexOf('aria-label="文件：'));
+  expect(markup.indexOf('aria-label="文件：')).toBeLessThan(markup.indexOf("复制回复"));
+});
+
+function openHost(resolver: ResolveOutputFiles = acceptFiles, previewError?: string) {
   const calls: unknown[] = [];
   const host = {
     preview: {
-      readFile: async (payload: unknown) => { calls.push(['read', payload]); return { path: '/workspace/report.md', content: '# report', relativePath: 'report.md', contentType: 'markdown', metadata: { remote: true } }; },
-      open: async (payload: unknown) => { calls.push(['preview', payload]); },
+      resolveFiles: resolver,
+      readFile: async (payload: unknown) => { calls.push(["read", payload]); if (previewError) throw new Error(previewError); return { path: "/workspace/report.md", content: "# Report", contentType: "markdown", metadata: {} }; },
+      open: async (payload: unknown) => { calls.push(["preview", payload]); },
     },
-    shell: { openFile: async (path: string) => { calls.push(['system', path]); return ''; }, showItemInFolder: async (path: string) => { calls.push(['reveal', path]); } },
-    fs: { getHomeDir: async () => '/home/test' },
-  } as unknown as Window['agentDesktop'];
-  const file = extractAssistantOutputFiles('`report.md`', '/workspace')[0];
-  await openAssistantOutputFile(file, 'preview', 's1', '/workspace', false, host);
-  expect(calls[0]).toEqual(['read', { sessionId: 's1', filePath: '/workspace/report.md' }]);
-  expect((calls[1] as any)[1].file.metadata).toEqual({ remote: true, sessionId: 's1', workspace: '/workspace', originalContent: '# report', dirty: false });
-  calls.length = 0;
-  await openAssistantOutputFile({ ...file, path: '/tmp/report.md' }, 'preview', 's1', '/workspace', false, host);
-  expect(calls[0]).toEqual(['read', { sessionId: 's1', filePath: '/tmp/report.md' }]);
-  expect((calls[1] as any)[0]).toBe('preview');
-  calls.length = 0;
-  await openAssistantOutputFile(file, 'system', 's1', '/workspace', false, host);
-  expect(calls).toEqual([['system', '/workspace/report.md']]);
-  calls.length = 0;
-  await openAssistantOutputFile(file, 'preview', undefined, '', false, host);
-  expect((calls[1] as any)[0]).toBe('preview');
-  calls.length = 0;
-  await openAssistantOutputFile(file, 'preview', 'remote', '/workspace', true, host);
-  expect((calls[0] as any)[0]).toBe('read');
-  await expect(openAssistantOutputFile(file, 'system', 'remote', '/workspace', true, host)).rejects.toThrow('远程');
-  await expect(openAssistantOutputFile(file, 'preview', undefined, '/workspace', true, host)).rejects.toThrow('远程会话');
-  calls.length = 0;
-  await openAssistantOutputFile({ ...file, path: '~/report.md' }, 'reveal', 's1', '/workspace', false, host);
-  expect(calls).toEqual([['reveal', '/home/test/report.md']]);
+    shell: { openFile: async (path: string) => { calls.push(["system", path]); return ""; }, showItemInFolder: async (path: string) => { calls.push(["reveal", path]); } },
+  } as unknown as Window["agentDesktop"];
+  return { host, calls };
+}
+
+test("all open actions revalidate the canonical path, with no preview fallback", async () => {
+  const file = (await resolve()).get("final")![0];
+  const { host, calls } = openHost();
+  await openAssistantOutputFile(file, "preview", "local", "/workspace", false, host);
+  expect(calls[0]).toEqual(["read", { sessionId: "local", filePath: file.path }]);
+  expect((calls[1] as any)[0]).toBe("preview");
+  for (const action of ["system", "reveal"] as const) {
+    calls.length = 0;
+    await openAssistantOutputFile(file, action, "local", "/workspace", false, host);
+    expect(calls).toEqual([[action, file.path]]);
+  }
+  const failing = openHost(acceptFiles, "Invalid document");
+  await expect(openAssistantOutputFile(file, "preview", "local", "", false, failing.host)).rejects.toThrow("Invalid document");
+  expect(failing.calls).toHaveLength(1);
 });
 
-test("system open errors propagate for visible feedback and retry", async () => {
-  const file = extractAssistantOutputFiles('`/tmp/report.md`', '/workspace')[0];
-  await expect(openAssistantOutputFile(file, 'system', 's1', '/workspace', false, { shell: { openFile: async () => 'File does not exist' } } as any)).rejects.toThrow('File does not exist');
-});
-
-test("preview failures remain visible and never fall back to a system application", async () => {
-  let systemOpened = false;
-  const host = {
-    preview: { readFile: async () => { throw new Error('File does not exist'); } },
-    shell: { openFile: async () => { systemOpened = true; return ''; } },
-  } as any;
-  const file = extractAssistantOutputFiles('`/tmp/report.md`', '/workspace')[0];
-  await expect(openAssistantOutputFile(file, 'preview', 's1', '/workspace', false, host)).rejects.toThrow('File does not exist');
-  expect(systemOpened).toBe(false);
+test("deleted files, redirected symlinks, missing sessions and remote cards cannot open local substitutes", async () => {
+  const file = (await resolve()).get("final")![0];
+  const unavailable = openHost(async ({ paths }) => paths.map((inputPath) => ({ inputPath, error: "ENOENT" })));
+  const moved = openHost(async ({ paths }) => paths.map((inputPath) => ({ inputPath, file: { path: "/other/report.md", name: "report.md", size: 8 } })));
+  for (const action of ["preview", "system", "reveal"] as const) {
+    await expect(openAssistantOutputFile(file, action, "local", "", false, unavailable.host)).rejects.toThrow("无法读取");
+    await expect(openAssistantOutputFile(file, action, "local", "", false, moved.host)).rejects.toThrow("位置已变化");
+    await expect(openAssistantOutputFile(file, action, undefined, "", false, unavailable.host)).rejects.toThrow("所属的会话");
+    await expect(openAssistantOutputFile(file, action, "remote", "", true, unavailable.host)).rejects.toThrow("远程");
+  }
+  expect(unavailable.calls).toEqual([]);
+  expect(moved.calls).toEqual([]);
 });

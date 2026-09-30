@@ -14,6 +14,64 @@ export function registerFileSystemIpcHandlers({
   maxReadTextBytes,
   uploadRemoteWorkspaceFile,
 }) {
+  // UI-only metadata lookup. Paths must already come from an approved tool
+  // adapter; this endpoint does not discover files or resolve relative paths.
+  ipcMain.handle('preview:resolve-files', async (_event, { sessionId, paths } = {}) => {
+    if (!Array.isArray(paths) || paths.some((value) => typeof value !== 'string')) {
+      throw new Error('Invalid file paths');
+    }
+    const uniquePaths = [...new Set(paths)];
+    let sessionRecord;
+    try { sessionRecord = sessionId ? getSessionRecord(sessionId) : null; } catch { /* Missing session. */ }
+    if (!sessionRecord || sessionRecord.agentMode !== 'local') {
+      return uniquePaths.map((inputPath) => ({ inputPath, error: 'NOT_LOCAL_SESSION' }));
+    }
+    const workspace = sessionRecord.workspace
+      ? await fsp.realpath(sessionRecord.workspace).catch(() => null)
+      : null;
+    const results = [];
+    // Bound open handles even for long replayed conversations.
+    for (const inputPath of uniquePaths) {
+      // On Windows, /foo and \foo still depend on the current drive.
+      const absolute = path.isAbsolute(inputPath)
+        && (process.platform !== 'win32' || /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(inputPath));
+      if (!absolute || /[\u0000\r\n]/.test(inputPath)) {
+        results.push({ inputPath, error: 'INVALID_PATH' });
+        continue;
+      }
+      let handle;
+      try {
+        const targetPath = await fsp.realpath(inputPath);
+        if (!(await fsp.stat(targetPath)).isFile()) {
+          results.push({ inputPath, error: 'NOT_FILE' });
+          continue;
+        }
+        // A nonblocking open also avoids hanging on a FIFO/device. Symlinks
+        // have already been resolved; do not follow a newly replaced leaf.
+        handle = await fsp.open(targetPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0));
+        const stats = await handle.stat();
+        if (!stats.isFile()) {
+          results.push({ inputPath, error: 'NOT_FILE' });
+          continue;
+        }
+        const relative = workspace ? path.relative(workspace, targetPath) : null;
+        const insideWorkspace = relative !== null && relative !== '..'
+          && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+        results.push({ inputPath, file: {
+          path: targetPath,
+          name: path.basename(targetPath),
+          size: stats.size,
+          ...(insideWorkspace ? { relativePath: relative } : {}),
+        } });
+      } catch (error) {
+        results.push({ inputPath, error: error.code || 'FILE_UNAVAILABLE' });
+      } finally {
+        await handle?.close();
+      }
+    }
+    return results;
+  });
+
   // An explicit file-card preview may target a generated file outside the
   // session workspace. Keep that preview read-only; workspace reads/writes
   // retain their existing session boundary.

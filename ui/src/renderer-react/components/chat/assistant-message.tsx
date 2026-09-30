@@ -6,7 +6,7 @@ import { MessageActionBar } from "@/components/chat/message-action-bar";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import type { AssistantTextRenderMessage } from "@/lib/agent-transcript";
 import { AssistantOutputFileCard } from "@/components/chat/assistant-output-file-card";
-import { normalizeOutputPath, type AssistantOutputFile } from "@/lib/assistant-output-files";
+import type { AssistantOutputFile } from "@/lib/assistant-output-files";
 
 function shouldUseDocumentLayout(content: string, attachmentCount: number) {
   const normalized = content.trim();
@@ -40,7 +40,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   workspace?: string;
   remote?: boolean;
 }) {
-  const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === normalizeOutputPath(attachment.path, workspace)));
+  const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === attachment.path || file.sourcePaths.includes(attachment.path)));
   const hasText = message.content.trim().length > 0;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length + outputFiles.length);
   const copyAction = hasText ? (
@@ -113,7 +113,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
         )}
 
         {!message.streaming && outputFiles.length > 0 && (
-          <div className="flex w-full flex-col gap-2" aria-label="生成的文件">
+          <div className="flex w-full flex-col gap-2" aria-label="文件">
             {outputFiles.map((file) => <AssistantOutputFileCard key={file.path} file={file} sessionId={sessionId} workspace={workspace} remote={remote} />)}
           </div>
         )}

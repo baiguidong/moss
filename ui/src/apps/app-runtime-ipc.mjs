@@ -1,3 +1,4 @@
+import { resolveAppResourceFile } from './app-resources.mjs'
 import { installAppArchive } from './app-runtime.mjs'
 import path from 'node:path'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
@@ -88,6 +89,12 @@ export function registerAppRuntimeIpc(options) {
       report({ phase: 'error', error: error.message || String(error) })
       throw error
     }
+  })
+  ipcMain.handle('app:open-resource', async (_event, { uri }) => {
+    const file = await resolveAppResourceFile(runtime(), uri)
+    const error = await options.shell.openPath(file.path)
+    if (error) throw new Error(error)
+    return { opened: true }
   })
   ipcMain.handle('app:get-runtime-state', (_event, { appId }) => runtime().getApp(appId))
   ipcMain.handle('app:list-contributions', (_event, options = {}) => runtime().listContributions(options))

@@ -29,7 +29,8 @@ import type {
   TranscriptRenderMessage,
 } from "@/lib/agent-transcript";
 import type { TurnChangeSummary, TurnChangesPayload } from "../../types";
-import { buildAssistantOutputFiles, type AssistantOutputFile } from "@/lib/assistant-output-files";
+import type { AssistantOutputFile } from "@/lib/assistant-output-files";
+import { useAssistantOutputFiles } from "./use-assistant-output-files";
 
 type RenderItem =
   | {
@@ -640,10 +641,7 @@ export const VirtualMessageList = React.forwardRef<
     return result;
   }, [renderItems]);
 
-  const outputFilesByMessage = React.useMemo(
-    () => buildAssistantOutputFiles(messages, workspace || "", turnChanges),
-    [messages, workspace, turnChanges],
-  );
+  const outputFilesByMessage = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
     renderItems.flatMap((item, renderIndex) => (
@@ -955,18 +953,22 @@ export function MessageList({
   emptyState,
   workspace,
   loading,
+  sessionId,
+  agentMode,
 }: {
   messages: TranscriptRenderMessage[];
   bottomRef?: React.RefObject<HTMLDivElement | null>;
   emptyState?: React.ReactNode;
   workspace?: string;
   loading?: boolean;
+  sessionId?: string;
+  agentMode?: 'local' | 'remote-direct';
 }) {
   const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
     () => buildRenderModel(messages),
     [messages],
   );
-  const outputFilesByMessage = React.useMemo(() => buildAssistantOutputFiles(messages, workspace || ""), [messages, workspace]);
+  const outputFilesByMessage = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
 
   React.useEffect(() => {
     const bottom = bottomRef?.current;
@@ -985,7 +987,7 @@ export function MessageList({
     <div className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
       {renderItems.length > 0 ? (
         renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent, undefined, false, undefined,
-          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, undefined, workspace))
+          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, sessionId, workspace, agentMode === 'remote-direct'))
       ) : (
         emptyState || (
           <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">

@@ -68,8 +68,73 @@ describe('explicit file-card preview', () => {
       maxImageBase64Bytes: 1024,
       maxReadTextBytes: 1024,
     });
-    return { tempDir, workspace, sessions, calls, preview: handlers.get('preview:read-file')! };
+    return { tempDir, workspace, sessions, calls, preview: handlers.get('preview:read-file')!, resolveFiles: handlers.get('preview:resolve-files')! };
   }
+
+  it('resolves readable files with exact names and canonical paths, including files outside the workspace', async () => {
+    const { tempDir, workspace, resolveFiles } = await setup();
+    const fileName = process.platform === 'win32' ? '《报告》 空格.md' : '《报告》 空格.md:12';
+    const filePath = path.join(workspace, fileName);
+    const outside = path.join(tempDir, 'outside.md');
+    const alias = path.join(tempDir, 'alias.md');
+    await fsp.writeFile(filePath, '# report');
+    await fsp.writeFile(outside, '# outside');
+    await fsp.symlink(filePath, alias);
+    const results = await resolveFiles(null, { sessionId: 'local', paths: [filePath, alias, outside, filePath] });
+    expect(results).toHaveLength(3);
+    expect(results[0]).toEqual({ inputPath: filePath, file: {
+      path: await fsp.realpath(filePath), name: fileName, size: 8, relativePath: fileName,
+    } });
+    expect(results[1].file).toEqual(results[0].file);
+    expect(results[2].file.path).toBe(await fsp.realpath(outside));
+    expect(results[2].file.relativePath).toBeUndefined();
+  });
+
+  it('rejects relative paths, URIs, directories, missing files and unreadable files without guessing', async () => {
+    const { workspace, resolveFiles } = await setup();
+    const filePath = path.join(workspace, 'exists.md');
+    await fsp.writeFile(filePath, '# report');
+    const invalid = ['exists.md', './exists.md', '~/exists.md', `file://${filePath}`, 'moss-knowledge://resource/id', '/tmp/bad\0.md'];
+    if (process.platform === 'win32') invalid.push('/exists.md', '\\exists.md', 'C:exists.md');
+    const results = await resolveFiles(null, { sessionId: 'local', paths: [...invalid, workspace, path.join(workspace, 'missing.md')] });
+    expect(results.slice(0, invalid.length).every((result: any) => result.error === 'INVALID_PATH')).toBe(true);
+    expect(results[invalid.length].error).toBe('NOT_FILE');
+    expect(results.at(-1).error).toBe('ENOENT');
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      await fsp.chmod(filePath, 0);
+      try {
+        expect((await resolveFiles(null, { sessionId: 'local', paths: [filePath] }))[0].error).toBe('EACCES');
+      } finally { await fsp.chmod(filePath, 0o600); }
+    }
+  });
+
+  it('rejects remote, unknown and missing sessions even when the path exists locally', async () => {
+    const { workspace, resolveFiles } = await setup();
+    const filePath = path.join(workspace, 'exists.md');
+    await fsp.writeFile(filePath, '# report');
+    for (const sessionId of ['remote', 'missing', undefined]) {
+      expect(await resolveFiles(null, { sessionId, paths: [filePath] })).toEqual([{ inputPath: filePath, error: 'NOT_LOCAL_SESSION' }]);
+    }
+  });
+
+  it('handles non-regular files without waiting for a writer', async () => {
+    if (process.platform === 'win32') return;
+    const { workspace, resolveFiles } = await setup();
+    const fifo = path.join(workspace, 'pipe.md');
+    const processResult = Bun.spawnSync(['mkfifo', fifo]);
+    expect(processResult.exitCode).toBe(0);
+    expect(await resolveFiles(null, { sessionId: 'local', paths: [fifo] })).toEqual([{ inputPath: fifo, error: 'NOT_FILE' }]);
+  });
+
+  it('rechecks availability after a file is deleted', async () => {
+    const { workspace, resolveFiles } = await setup();
+    const filePath = path.join(workspace, 'report.md');
+    await fsp.writeFile(filePath, '# report');
+    const resolved = await resolveFiles(null, { sessionId: 'local', paths: [filePath] });
+    expect(resolved[0].file).toBeDefined();
+    await fsp.unlink(filePath);
+    expect((await resolveFiles(null, { sessionId: 'local', paths: [resolved[0].file.path] }))[0].error).toBe('ENOENT');
+  });
 
   it('previews files outside the workspace without enabling workspace edits', async () => {
     const { tempDir, workspace, preview, calls, sessions } = await setup();

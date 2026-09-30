@@ -10,10 +10,12 @@ import type { AssistantOutputFile } from "@/lib/assistant-output-files";
 type FileAction = "preview" | "system" | "reveal";
 
 export async function openAssistantOutputFile(file: AssistantOutputFile, action: FileAction, sessionId: string | undefined, workspace: string, remote: boolean, host = window.agentDesktop) {
-  let path = file.path;
-  if (!remote && path.startsWith("~/")) path = `${await host.fs.getHomeDir()}/${path.slice(2)}`;
-  if (remote && action !== "preview") throw new Error("请在远程会话中预览此文件。");
-  if (remote && !sessionId) throw new Error("请先打开此文件所属的远程会话。");
+  if (remote) throw new Error("暂不支持远程文件卡片。");
+  if (!sessionId) throw new Error("请先打开此文件所属的会话。");
+  const [resolution] = await host.preview.resolveFiles({ sessionId, paths: [file.path] });
+  if (!resolution || !("file" in resolution)) throw new Error("文件已不存在或无法读取。");
+  if (resolution.file.path !== file.path) throw new Error("文件位置已变化，请重新打开会话后重试。");
+  const path = resolution.file.path;
   if (action === "reveal") {
     await host.shell.showItemInFolder(path);
   } else if (action === "preview") {
@@ -52,7 +54,7 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
   }
   return (
     <div>
-      <section aria-label={`生成的文件：${file.name}`} className="flex w-full items-center overflow-hidden rounded-2xl border border-border/70 bg-muted/35 shadow-sm">
+      <section aria-label={`文件：${file.name}`} className="flex w-full items-center overflow-hidden rounded-2xl border border-border/70 bg-muted/35 shadow-sm">
         <button type="button" disabled={busy} onClick={() => void act("preview")} aria-label={`在 Moss 中预览 ${file.name}`}
           className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-muted-foreground"><FileIcon type={file.type} /></span>
@@ -60,6 +62,7 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="truncate text-sm font-semibold" title={file.name}>{file.name}</span>
               <span className="rounded-full border border-border/70 bg-background/50 px-2 py-0.5 text-[10px] font-medium tracking-wider text-muted-foreground">{file.type}</span>
+              <span className="text-xs text-muted-foreground">{file.operation === "create" ? "已创建" : "已更新"}</span>
             </span>
             {file.subtitle !== file.name && <span className="truncate text-xs text-muted-foreground" title={file.path}>{file.subtitle}</span>}
           </span>

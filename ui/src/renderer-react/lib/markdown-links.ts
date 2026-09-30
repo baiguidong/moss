@@ -1,8 +1,8 @@
 import { defaultUrlTransform } from 'react-markdown';
-import { parseLibraryResourceUri } from '../../library/library-resource-uri.mjs';
+import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 
 export function markdownUrlTransform(url: string, key: string) {
-  if (key === 'href' && url.startsWith('moss-library://')) return url;
+  if (key === 'href' && isAppResourceUri(url)) return url;
   if (/^(moss-image|moss-media|file):/i.test(url) || url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url) || /^[~～][\\/]/.test(url)) {
     return url;
   }
@@ -10,7 +10,7 @@ export function markdownUrlTransform(url: string, key: string) {
 }
 
 type LinkHost = {
-  library: Pick<Window['agentDesktop']['library'], 'openResource'>;
+  openAppResource: Window['agentDesktop']['openAppResource'];
   shell: Pick<Window['agentDesktop']['shell'], 'openExternal'>;
 };
 
@@ -19,11 +19,9 @@ export async function handleMarkdownLinkClick(
   href: string | undefined,
   host: LinkHost,
 ): Promise<void> {
-  if (href?.startsWith('moss-library://')) {
+  if (href && isAppResourceUri(href)) {
     event.preventDefault();
-    const reference = parseLibraryResourceUri(href);
-    if (!reference) throw new Error('Invalid Library resource reference.');
-    await host.library.openResource({ resourceId: reference.resourceId });
+    await host.openAppResource(href);
   } else if (href && /^https?:/i.test(href)) {
     event.preventDefault();
     await host.shell.openExternal(href);

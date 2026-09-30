@@ -16,8 +16,6 @@ function fixture(extra: Record<string, any> = {}) {
     agentMailPoller: { stop: async () => { calls.push('mail-stop'); } },
     localAuditScanTimer: null, clearInterval,
     localAuditService: { close: () => calls.push('audit-close') },
-    libraryService: { close: () => calls.push('library-close') },
-    libraryExtensionManager: { dispose: () => calls.push('extension-close') },
     schedulePersistSession: (record: { id: string }, immediate: boolean) => { expect(immediate).toBe(true); calls.push(`persist-${record.id}`); },
     closeWorkspaceWatcher: () => {}, disposeRuntime: (record: { id: string }) => calls.push(`dispose-${record.id}`),
     cloudStorageHost: { close: async () => { calls.push('cloud-close'); } },
@@ -47,8 +45,8 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
 });
 test('a failing component does not skip other cleanup or authorize installation', async () => {
   let failed = true;
-  const { shutdown, context, calls } = fixture({ libraryService: { close: () => { if (failed) throw new Error('library close failed'); } } });
-  await expect(shutdown()).rejects.toThrow('library close failed');
+  const { shutdown, context, calls } = fixture({ localAuditService: { close: () => { if (failed) throw new Error('audit close failed'); } } });
+  await expect(shutdown()).rejects.toThrow('audit close failed');
   expect(context.appShutdownComplete).toBe(false);
   expect(calls).toContain('apps-close'); expect(calls).toContain('persist-child');
   failed = false; await shutdown(); expect(context.appShutdownComplete).toBe(true);

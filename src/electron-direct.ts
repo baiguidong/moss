@@ -19,7 +19,6 @@ import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TASK_TYPE_TAG, TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
-import { LibraryTools } from './tools/LibraryTool/LibraryTools.js'
 import {
   createAppContributionTools,
   type AppToolContributionDescriptor,
@@ -497,8 +496,6 @@ export interface ClaudeSessionOptions {
   onUsage?: (event: ModelUsageEvent) => void
   /** Dynamically expose authenticated Moss Server Agent Mail operations. */
   agentMailEnabled?: boolean
-  /** Expose Moss Library as first-party in-process tools. */
-  libraryEnabled?: boolean
   /** Tools contributed by enabled Apps. */
   appTools?: AppToolContributionDescriptor[]
   /** Restrict Bash to commands accepted by the core read-only validator. */
@@ -552,7 +549,6 @@ type ResolvedClaudeSessionOptions = {
   coordinatorMode: boolean
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   agentMailEnabled: boolean
-  libraryEnabled: boolean
   appTools: AppToolContributionDescriptor[]
   readOnlyBashOnly: boolean
   sessionId?: string
@@ -842,7 +838,6 @@ export class ClaudeSession {
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
       agentMailEnabled: opts.agentMailEnabled === true,
-      libraryEnabled: opts.libraryEnabled === true,
       appTools: Array.isArray(opts.appTools) ? [...opts.appTools] : [],
       readOnlyBashOnly: opts.readOnlyBashOnly === true,
       sessionId: opts.sessionId,
@@ -1141,7 +1136,6 @@ export class ClaudeSession {
           : applyChatToolFilter(assembled)
         const dynamicTools = [
           ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
-          ...(this.#opts.libraryEnabled ? LibraryTools : []),
           ...appTools,
         ]
         const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)

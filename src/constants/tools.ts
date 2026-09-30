@@ -29,7 +29,6 @@ import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/Synthet
 import { ENTER_WORKTREE_TOOL_NAME } from '../tools/EnterWorktreeTool/constants.js'
 import { EXIT_WORKTREE_TOOL_NAME } from '../tools/ExitWorktreeTool/constants.js'
 import { WORKFLOW_TOOL_NAMES } from '../tools/WorkflowTool/constants.js'
-import { LIBRARY_TOOL_NAMES } from '../tools/LibraryTool/constants.js'
 import { TEAM_CREATE_TOOL_NAME } from '../tools/TeamCreateTool/constants.js'
 import { TEAM_DELETE_TOOL_NAME } from '../tools/TeamDeleteTool/constants.js'
 import {
@@ -117,7 +116,6 @@ export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
   TASK_STOP_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
   SYNTHETIC_OUTPUT_TOOL_NAME,
-  ...LIBRARY_TOOL_NAMES,
   ...(feature('WORKFLOW_SCRIPTS') ? WORKFLOW_TOOL_NAMES : []),
 ])
 

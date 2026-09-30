@@ -71,24 +71,21 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "workflows" | "overview" | "library" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "workflows" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "library" | "workflows" | "mail" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "overview" | "workflows" | "mail" | "cron" | "audit">;
 
 export function getSidebarMoreViews({
-  libraryEnabled,
   workflowsEnabled,
   remoteEnabled,
   agentMailEnabled,
 }: {
-  libraryEnabled: boolean;
   workflowsEnabled: boolean;
   remoteEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
-    ...(libraryEnabled ? ["library" as const] : []),
     ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
     "audit",
@@ -115,7 +112,6 @@ export function getSidebarMoreApps(apps: StoredApp[]) {
 
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
   overview: { label: "概览", icon: ChartNoAxesCombined },
-  library: { label: "资料库", icon: BookOpen },
   workflows: { label: "工作流", icon: GitFork },
   mail: { label: "协作邮箱", icon: Mail },
   audit: { label: "审计中心", icon: ShieldCheck },
@@ -134,7 +130,6 @@ interface AppSidebarProps {
   searchQuery: string;
   localEnabled?: boolean;
   remoteEnabled?: boolean;
-  libraryEnabled?: boolean;
   workflowsEnabled?: boolean;
   agentMailEnabled?: boolean;
   onChangeView: (view: MainView) => void;
@@ -310,7 +305,6 @@ export function AppSidebar({
   searchQuery,
   localEnabled = true,
   remoteEnabled = false,
-  libraryEnabled = false,
   workflowsEnabled = false,
   agentMailEnabled = false,
   onChangeView,
@@ -348,7 +342,6 @@ export function AppSidebar({
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
   const moreViews = getSidebarMoreViews({
-    libraryEnabled,
     workflowsEnabled,
     remoteEnabled,
     agentMailEnabled,
