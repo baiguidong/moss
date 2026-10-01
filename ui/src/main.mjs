@@ -6,6 +6,7 @@ import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } fr
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
+import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
 const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -395,7 +396,10 @@ const remoteDirectTrustStore = createRemoteDirectTrustStore({
 const remoteDirectCertificateVerifyProc = (request, callback) => {
   remoteDirectTrustStore.verifyCertificate(request, callback);
 };
-const remoteDirectNetFetch = (input, init) => net.fetch(input, init);
+const remoteDirectNetFetch = createOfflineAwareFetch({
+  fetchImpl: (input, init) => net.fetch(input, init),
+  isOnline: () => net.isOnline(),
+});
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
@@ -4663,6 +4667,7 @@ function refreshDesktopSettings(payload = {}) {
     Object.prototype.hasOwnProperty.call(payload, 'remoteDirect') ||
     Object.keys(payload).some((key) => key.startsWith('remoteDirect'))
   ) {
+    remoteDirectNetFetch.reset(nextServerUrl);
     agentMailPoller?.refresh();
     cloudStorageHost?.invalidate();
   }
@@ -6149,9 +6154,7 @@ async function runSessionPromptNow({
         tasks: snapshotSessionTasks(sessionRecord),
       });
       emitSessionHistory(sessionRecord);
-      if (sessionRecord.agentMode === 'remote-direct') {
-        emitWorkspaceChanged(sessionRecord, 'remote-turn-completed', sessionRecord.remoteWorkspace);
-      }
+      emitWorkspaceChanged(sessionRecord, 'turn-completed', getSessionWorkspaceRoot(sessionRecord));
       if (applyPendingMcpRuntimeReload(
         sessionRecord,
         disposeRuntime,
@@ -9364,16 +9367,12 @@ async function collectDirectories(rootPath, limit = WORKSPACE_WATCH_DIRECTORY_LI
     }
     for (const entry of dirents) {
       if (!entry.isDirectory()) continue;
-      if (entry.name === '.' || entry.name === '..') continue;
+      if (entry.name.startsWith('.')) continue;
       pending.push(path.join(current, entry.name));
-    }
-    if (directories.length + pending.length > limit) {
-      truncated = true;
-      break;
     }
   }
   return {
-    directories: truncated ? [rootPath] : directories,
+    directories,
     truncated,
   };
 }
@@ -9396,10 +9395,39 @@ async function syncWorkspaceWatcher(sessionRecord) {
   const root = getSessionWorkspaceRoot(sessionRecord);
   if (!isAccessibleDirectory(root)) return;
 
+  // Modern Electron supports recursive watches on macOS, Windows and Linux.
+  // A single recursive watch also covers newly created subdirectories and does
+  // not silently drop nested changes when a workspace exceeds 512 directories.
+  if (watcherState.recursiveRoot === root && watcherState.watchers.has(root)) return;
+  if (!watcherState.recursiveUnavailable) {
+    try {
+      const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
+        if (watcherState.closed) return;
+        emitWorkspaceChanged(sessionRecord, eventType, filename ? path.join(root, filename.toString()) : root);
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        if (watcherState.closed) return;
+        watcherState.watchers.delete(root);
+        watcherState.recursiveRoot = null;
+        watcherState.recursiveUnavailable = true;
+        void syncWorkspaceWatcher(sessionRecord);
+      });
+      watcher.unref?.();
+      for (const previous of watcherState.watchers.values()) previous.close();
+      watcherState.watchers.clear();
+      watcherState.watchers.set(root, watcher);
+      watcherState.recursiveRoot = root;
+      return;
+    } catch {
+      watcherState.recursiveUnavailable = true;
+    }
+  }
+
   const { directories, truncated } = await collectDirectories(root);
   if (watcherState.closed) return;
   if (truncated && !watcherState.truncated) {
-    mossLog('warn', 'workspace', 'Workspace watcher limited to root directory', {
+    mossLog('warn', 'workspace', 'Workspace watcher reached directory limit', {
       sessionId: sessionRecord.id,
       root,
       limit: WORKSPACE_WATCH_DIRECTORY_LIMIT,
@@ -9420,6 +9448,7 @@ async function syncWorkspaceWatcher(sessionRecord) {
     if (watcherState.watchers.has(dirPath)) continue;
     try {
       const watcher = fs.watch(dirPath, (eventType, filename) => {
+        if (watcherState.closed) return;
         const changedPath = filename ? path.join(dirPath, filename.toString()) : dirPath;
         emitWorkspaceChanged(sessionRecord, eventType, changedPath);
         if (sessionRecord.workspaceWatcherSyncTimer) {
@@ -9429,6 +9458,10 @@ async function syncWorkspaceWatcher(sessionRecord) {
           sessionRecord.workspaceWatcherSyncTimer = null;
           void syncWorkspaceWatcher(sessionRecord);
         }, 150);
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        if (watcherState.watchers.get(dirPath) === watcher) watcherState.watchers.delete(dirPath);
       });
       watcher.unref?.();
       watcherState.watchers.set(dirPath, watcher);
@@ -10230,8 +10263,10 @@ function createPreviewWindow() {
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
   });
-  previewWindow.webContents.on('did-start-loading', () => {
-    previewWindowReady = false;
+  // HTML previews load in subframes. Only a navigation of the preview app
+  // itself replaces the renderer listeners and requires another ready signal.
+  previewWindow.webContents.on('did-start-navigation', ({ isSameDocument, isMainFrame }) => {
+    if (isMainFrame && !isSameDocument) previewWindowReady = false;
   });
 
   if (rendererDevServerUrl) {
@@ -11539,6 +11574,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   const rawServerUrl = typeof payload.serverUrl === 'string' ? payload.serverUrl.trim() : '';
   if (!rawServerUrl) throw new Error('请先填写 Moss Server 地址。');
   const parsed = parseRemoteDirectServerInput(rawServerUrl);
+  remoteDirectNetFetch.reset(parsed.serverUrl);
   const controller = new AbortController();
   mossLog('info', 'remote-auth', 'Moss Server authentication started');
   const promise = (async () => {
@@ -12385,6 +12421,21 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
   } finally {
     sessionForksInProgress.delete(sourceSession.id);
   }
+});
+
+ipcMain.handle('agent:get-model-context', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  // A remote session's limits belong to its server and arrive in modelUsage.
+  if (sessionRecord.agentMode === 'remote-direct') return null;
+  if (sessionRecord.runtime?.getModelContext) {
+    return sessionRecord.runtime.getModelContext();
+  }
+  const mod = await getClaudeRuntimeModule();
+  return mod.resolveDesktopModelContext({
+    model: desktopSettings.model,
+    url: desktopSettings.url,
+    apiKey: desktopSettings.apiKey,
+  });
 });
 
 ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {

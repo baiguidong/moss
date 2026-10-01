@@ -27,6 +27,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   message,
   beforeContent,
   actions,
+  showCopyButton = true,
   outputFiles = [],
   sessionId,
   workspace,
@@ -35,6 +36,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   message: AssistantTextRenderMessage;
   beforeContent?: React.ReactNode;
   actions?: React.ReactNode;
+  showCopyButton?: boolean;
   outputFiles?: AssistantOutputFile[];
   sessionId?: string;
   workspace?: string;
@@ -43,7 +45,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === attachment.path || file.sourcePaths.includes(attachment.path)));
   const hasText = message.content.trim().length > 0;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length + outputFiles.length);
-  const copyAction = hasText ? (
+  const copyAction = showCopyButton && hasText ? (
     <MessageActionBar
       copyText={message.content}
       copyLabel="复制回复"

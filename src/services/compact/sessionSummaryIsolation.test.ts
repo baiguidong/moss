@@ -20,6 +20,10 @@ const microCompact = await import('./microCompact.js')
 const prompts = await import('../../constants/prompts.js')
 const contexts = await import('../../context.js')
 const config = await import('../../utils/config.js')
+const forkedAgent = await import('../../utils/forkedAgent.js')
+const hooks = await import('../../utils/hooks.js')
+const sessionStart = await import('../../utils/sessionStart.js')
+const sessionStorage = await import('../../utils/sessionStorage.js')
 const { createAssistantMessage, createUserMessage } = await import('../../utils/messages.js')
 const { autoCompactIfNeeded, compactAfterPromptTooLong } = await import('./autoCompact.js')
 const { call: manualCompact } = await import('../../commands/compact/compact.js')
@@ -67,8 +71,15 @@ function fixture() {
   const context = {
     messages,
     abortController: new AbortController(),
-    getAppState: () => ({ toolPermissionContext: { additionalWorkingDirectories: new Map() } }),
-    options: { tools: [], mainLoopModel: 'claude-sonnet-4-6', mcpClients: [], verbose: true },
+    readFileState: new Map(),
+    getAppState: () => ({
+      tasks: {},
+      toolPermissionContext: { mode: 'default', additionalWorkingDirectories: new Map() },
+    }),
+    options: {
+      tools: [], mainLoopModel: 'claude-sonnet-4-6', mcpClients: [], verbose: true,
+      agentDefinitions: { activeAgents: [], allAgents: [] },
+    },
   } as unknown as ToolUseContext
   const cache = { toolUseContext: context, forkContextMessages: messages } as CacheSafeParams
   const result = {
@@ -116,4 +127,39 @@ describe('compaction ignores optional session summaries', () => {
       expect(read).not.toHaveBeenCalled()
     })
   })
+})
+
+describe('full conversation compaction', () => {
+  for (const mode of ['automatic', 'manual', 'prompt-too-long'] as const) {
+    test(`${mode} reaches the summary model and produces a compact boundary`, async () => {
+      await session(async () => {
+        spyOn(hooks, 'executePreCompactHooks').mockResolvedValue({})
+        spyOn(hooks, 'executePostCompactHooks').mockResolvedValue({})
+        spyOn(sessionStart, 'processSessionStartHooks').mockResolvedValue([])
+        spyOn(sessionStorage, 'reAppendSessionMetadata').mockImplementation(() => {})
+        const { messages, context, cache } = fixture()
+        const summary = createAssistantMessage({ content: 'Continue the migration and retain compatibility.' })
+        const fork = spyOn(forkedAgent, 'runForkedAgent').mockResolvedValue({
+          messages: [summary], totalUsage: summary.message.usage,
+        } as Awaited<ReturnType<typeof forkedAgent.runForkedAgent>>)
+
+        let result: CompactionResult | null | undefined
+        if (mode === 'automatic') {
+          result = (await autoCompactIfNeeded(messages, context, cache, 'sdk')).compactionResult
+        } else if (mode === 'manual') {
+          const response = await manualCompact('', context as never)
+          expect(response.type).toBe('compact')
+          if (response.type === 'compact') result = response.compactionResult
+        } else {
+          result = await compactAfterPromptTooLong(messages, context, cache, 'sdk')
+        }
+
+        expect(fork).toHaveBeenCalledTimes(1)
+        expect(fork.mock.calls[0]![0].cacheSafeParams.forkContextMessages).toEqual(messages)
+        expect(result?.boundaryMarker.subtype).toBe('compact_boundary')
+        expect(result?.summaryMessages[0]?.message.content).toContain('Continue the migration and retain compatibility.')
+        expect(result?.truePostCompactTokenCount).toBeLessThan(result!.preCompactTokenCount!)
+      })
+    })
+  }
 })

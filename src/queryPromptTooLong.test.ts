@@ -26,7 +26,14 @@ describe('query prompt-too-long recovery', () => {
     })
     let modelCalls = 0
     let compactCalls = 0
+    let capabilitiesLoaded = false
     const deps = {
+      async loadModelCapabilities(model, signal) {
+        expect(model).toBe('gpt-5.5')
+        expect(signal).toBe(context.abortController.signal)
+        await Bun.sleep(10)
+        capabilitiesLoaded = true
+      },
       async *callModel() {
         modelCalls += 1
         yield modelCalls === 1
@@ -37,9 +44,11 @@ describe('query prompt-too-long recovery', () => {
           : createAssistantMessage({ content: 'review complete' })
       },
       async microcompact(messages) {
+        expect(capabilitiesLoaded).toBe(true)
         return { messages }
       },
       async autocompact() {
+        expect(capabilitiesLoaded).toBe(true)
         return { wasCompacted: false }
       },
       async compactAfterPromptTooLong() {

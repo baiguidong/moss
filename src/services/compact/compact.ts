@@ -433,7 +433,7 @@ export async function compactConversation(
       summaryResponse = await streamCompactSummary({
         messages: messagesToSummarize,
         summaryRequest,
-        appState,
+        appState: context.getAppState(),
         context,
         preCompactTokenCount,
         cacheSafeParams: retryCacheSafeParams,

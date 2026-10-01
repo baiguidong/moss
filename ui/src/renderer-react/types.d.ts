@@ -94,6 +94,12 @@ export type SessionDetail = SessionSummary & {
   tasks?: SessionTask[];
 };
 
+export type ModelContextInfo = {
+  model: string;
+  contextWindow: number;
+  isDefault: boolean;
+};
+
 export type SessionTokenTotals = {
   inputTokens: number;
   outputTokens: number;
@@ -1632,6 +1638,7 @@ declare global {
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      getModelContext: (payload: { sessionId: string }) => Promise<ModelContextInfo | null>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
       previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;

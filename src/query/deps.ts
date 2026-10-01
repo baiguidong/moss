@@ -5,6 +5,7 @@ import {
   compactAfterPromptTooLong,
 } from '../services/compact/autoCompact.js'
 import { microcompactMessages } from '../services/compact/microCompact.js'
+import { loadModelCapabilities } from '../utils/model/modelCapabilities.js'
 
 // -- deps
 
@@ -19,11 +20,12 @@ import { microcompactMessages } from '../services/compact/microCompact.js'
 // already importing query.ts (which imports everything), so there's no
 // new module-graph cost.
 //
-// Scope is intentionally narrow (5 deps) to prove the pattern. Followup
+// Scope is intentionally narrow. Followup
 // PRs can add runTools, handleStopHooks, logEvent, queue ops, etc.
 export type QueryDeps = {
   // -- model
   callModel: typeof queryModelWithStreaming
+  loadModelCapabilities?: typeof loadModelCapabilities
 
   // -- compaction
   microcompact: typeof microcompactMessages
@@ -37,6 +39,7 @@ export type QueryDeps = {
 export function productionDeps(): QueryDeps {
   return {
     callModel: queryModelWithStreaming,
+    loadModelCapabilities,
     microcompact: microcompactMessages,
     autocompact: autoCompactIfNeeded,
     compactAfterPromptTooLong,
