@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Use a finite source mapping: renderer input must never become an IPC channel.
+function cronPrefix(source) {
+  if (source === 'local') return 'agent:cron';
+  if (source === 'cloud') return 'agent:cloud-cron';
+  throw new Error('Unknown cron source.');
+}
+
 contextBridge.exposeInMainWorld('agentDesktop', {
   // 通用 IPC 调用方法
   ipcInvoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
@@ -14,6 +21,39 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   ipcOff: (channel, handler) => {
     ipcRenderer.removeListener(channel, handler);
+  },
+
+  skillHub: {
+    getInstalled: () => ipcRenderer.invoke('public-skillhub:get-installed-skills'),
+    fetchCategories: () => ipcRenderer.invoke('public-skillhub:fetch-categories'),
+    fetchSkills: (payload) => ipcRenderer.invoke('public-skillhub:fetch-skills', payload),
+    fetchDetail: (payload) => ipcRenderer.invoke('public-skillhub:fetch-detail', payload),
+    install: (payload) => ipcRenderer.invoke('public-skillhub:install-skill', payload),
+    uninstall: (payload) => ipcRenderer.invoke('public-skillhub:uninstall-skill', payload),
+    openImportDialog: () => ipcRenderer.invoke('public-skillhub:open-import-dialog'),
+    importLocal: (payload) => ipcRenderer.invoke('public-skillhub:import-local', payload),
+  },
+  expertHub: {
+    getInstalled: () => ipcRenderer.invoke('public-experthub:get-installed-experts'),
+    fetchCategories: (payload) => ipcRenderer.invoke('public-experthub:fetch-categories', payload),
+    fetchExperts: (payload) => ipcRenderer.invoke('public-experthub:fetch-experts', payload),
+    fetchFeatured: (payload) => ipcRenderer.invoke('public-experthub:fetch-featured-experts', payload),
+    fetchScenes: (payload) => ipcRenderer.invoke('public-experthub:fetch-scenes', payload),
+    fetchDetail: (payload) => ipcRenderer.invoke('public-experthub:fetch-detail', payload),
+    install: (payload) => ipcRenderer.invoke('public-experthub:install-expert', payload),
+    uninstall: (payload) => ipcRenderer.invoke('public-experthub:uninstall-expert', payload),
+  },
+  getInstalledSkills: () => ipcRenderer.invoke('skill-store:getInstalledSkills'),
+  sessionCron: {
+    list: (source) => ipcRenderer.invoke(`${cronPrefix(source)}-list`),
+    toggle: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-toggle`, payload),
+    remove: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-remove`, payload),
+    runNow: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-run-now`, payload),
+  },
+  onConnectorsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('connector-hub:changed', handler);
+    return () => ipcRenderer.off('connector-hub:changed', handler);
   },
 
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
@@ -262,20 +302,10 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('browser:external-url', handler);
     },
   },
-  audit: {
-    getDashboard: () => ipcRenderer.invoke('audit:get-dashboard'),
-    getEvent: (payload) => ipcRenderer.invoke('audit:get-event', payload),
-    getPendingAlerts: () => ipcRenderer.invoke('audit:get-pending-alerts'),
-    run: (payload) => ipcRenderer.invoke('audit:run', payload),
-    updateRule: (payload) => ipcRenderer.invoke('audit:update-rule', payload),
-    updateFinding: (payload) => ipcRenderer.invoke('audit:update-finding', payload),
-    updateFindings: (payload) => ipcRenderer.invoke('audit:update-findings', payload),
-    markReported: (payload) => ipcRenderer.invoke('audit:mark-reported', payload),
-    onChanged: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('audit:changed', handler);
-      return () => ipcRenderer.off('audit:changed', handler);
-    },
+  onAppOpenSession: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:open-session', handler);
+    return () => ipcRenderer.off('app:open-session', handler);
   },
   notifications: {
     list: () => ipcRenderer.invoke('notification:list'),

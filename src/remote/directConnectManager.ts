@@ -101,6 +101,8 @@ export class DirectConnectSessionManager {
   private pongReceived = true
   private lastPingTickAt = 0
   private manuallyDisconnected = false
+  // Invalidate in-flight attach/import work when a connection is canceled or replaced.
+  private connectionGeneration = 0
   private hasEverConnected = false
   private isBunWs = false
   private readonly pendingControlRequests = new Map<string, PendingControlRequest>()
@@ -115,17 +117,21 @@ export class DirectConnectSessionManager {
       return
     }
     this.manuallyDisconnected = false
+    const generation = ++this.connectionGeneration
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    void this.openSocket().catch(error => this.handleOpenFailure(error))
+    void this.openSocket().catch(error => {
+      if (generation === this.connectionGeneration) this.handleOpenFailure(error)
+    })
   }
 
   private async openSocket(): Promise<void> {
     if (this.state === 'connected' || this.state === 'connecting') {
       return
     }
+    const generation = this.connectionGeneration
 
     const wasReconnecting =
       this.state === 'reconnecting' || this.reconnectAttempts > 0
@@ -159,6 +165,7 @@ export class DirectConnectSessionManager {
     }
 
     const { default: WS } = await import('ws')
+    if (generation !== this.connectionGeneration || this.manuallyDisconnected) return
     const ws = new WS(this.config.wsUrl, {
       headers,
       agent: getWebSocketProxyAgent(this.config.wsUrl),
@@ -218,6 +225,7 @@ export class DirectConnectSessionManager {
   }
 
   private handleOpen(): void {
+    if (this.manuallyDisconnected || this.state === 'closed') return
     const wasReconnecting = this.hasEverConnected
 
     this.state = 'connected'
@@ -399,9 +407,11 @@ export class DirectConnectSessionManager {
       DEFAULT_MAX_RECONNECT_ATTEMPTS,
     )
 
+    const generation = this.connectionGeneration
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       void this.reattachAndReconnect().catch(error => {
+        if (generation !== this.connectionGeneration || this.manuallyDisconnected) return
         const err =
           error instanceof Error
             ? error
@@ -419,11 +429,13 @@ export class DirectConnectSessionManager {
   }
 
   private async reattachAndReconnect(): Promise<void> {
+    const generation = this.connectionGeneration
     const attached = await attachDirectConnectSession({
       serverUrl: this.config.serverUrl,
       sessionId: this.config.sessionId,
       authToken: this.config.authToken,
     })
+    if (generation !== this.connectionGeneration || this.manuallyDisconnected) return
 
     if (attached.session.desiredState !== 'active') {
       throw new DirectConnectError(
@@ -661,6 +673,7 @@ export class DirectConnectSessionManager {
   }
 
   disconnect(): void {
+    this.connectionGeneration++
     this.manuallyDisconnected = true
     this.state = 'closed'
 
@@ -682,6 +695,7 @@ export class DirectConnectSessionManager {
     logForDebugging(
       `[DirectConnect] Giving up on session ${this.config.sessionId}: ${error.message}`,
     )
+    this.connectionGeneration++
     this.state = 'closed'
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)

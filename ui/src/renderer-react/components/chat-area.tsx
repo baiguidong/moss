@@ -630,7 +630,7 @@ function ComposerPanel({
     skillsLoadedRef.current = true;
     setSkillsLoading(true);
     try {
-      const res = await window.agentDesktop.ipcInvoke("skill-store:getInstalledSkills") as
+      const res = await window.agentDesktop.getInstalledSkills() as
         { success?: boolean; data?: SkillMentionItem[] } | undefined;
       if (res?.success && Array.isArray(res.data)) {
         setSkillItems(res.data);

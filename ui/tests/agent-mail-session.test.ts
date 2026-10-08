@@ -88,6 +88,8 @@ function createHarness(sessionMode = 'fixed') {
     clearSessionBusyTiming: noop,
     emitSessionMeta: noop,
     emitSessionHistory: noop,
+    emitWorkspaceChanged: noop,
+    getSessionWorkspaceRoot: (record: any) => record.workspace || '/fixture',
     emitToRenderer: noop,
     getSessionSummary: () => ({}),
     snapshotSessionTasks: () => [],

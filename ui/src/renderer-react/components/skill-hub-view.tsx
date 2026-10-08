@@ -401,7 +401,7 @@ export function SkillHubView() {
   const loadInstalled = React.useCallback(async () => {
     setInstalledLoading(true);
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:get-installed-skills") as { success?: boolean; data?: InstalledSkill[]; error?: string };
+      const res = await window.agentDesktop.skillHub.getInstalled() as { success?: boolean; data?: InstalledSkill[]; error?: string };
       if (!res?.success) throw new Error(res?.error || "读取已安装技能失败");
       setInstalledSkills(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
@@ -414,7 +414,7 @@ export function SkillHubView() {
 
   const loadCategories = React.useCallback(async () => {
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:fetch-categories") as { success?: boolean; data?: SkillCategory[]; error?: string };
+      const res = await window.agentDesktop.skillHub.fetchCategories() as { success?: boolean; data?: SkillCategory[]; error?: string };
       if (res?.success && Array.isArray(res.data)) {
         setCategories(res.data.filter((item) => item.active !== false));
       }
@@ -428,7 +428,7 @@ export function SkillHubView() {
     setLoading(true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:fetch-skills", {
+      const res = await window.agentDesktop.skillHub.fetchSkills({
         page: nextPage,
         pageSize: 18,
         query: deferredQuery,
@@ -477,7 +477,7 @@ export function SkillHubView() {
     setBusy(key, true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:install-skill", { skill }) as { success?: boolean; error?: string };
+      const res = await window.agentDesktop.skillHub.install({ skill }) as { success?: boolean; error?: string };
       if (!res?.success) throw new Error(res?.error || "安装失败");
       flashNotice(`已安装 ${displayText(skill.displayName) || displayText(skill.name)}`);
       await loadInstalled();
@@ -493,7 +493,7 @@ export function SkillHubView() {
     setBusy(key, true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:uninstall-skill", { sourcePath: skill.source }) as { success?: boolean; error?: string };
+      const res = await window.agentDesktop.skillHub.uninstall({ sourcePath: skill.source }) as { success?: boolean; error?: string };
       if (!res?.success) throw new Error(res?.error || "卸载失败");
       flashNotice(`已卸载 ${displayText(skill.displayName) || displayText(skill.name)}`);
       await loadInstalled();
@@ -507,9 +507,9 @@ export function SkillHubView() {
   const importLocal = React.useCallback(async () => {
     setError("");
     try {
-      const picked = await window.agentDesktop.ipcInvoke("public-skillhub:open-import-dialog") as { success?: boolean; data?: { filePath?: string }; error?: string };
+      const picked = await window.agentDesktop.skillHub.openImportDialog() as { success?: boolean; data?: { filePath?: string }; error?: string };
       if (!picked?.success || !picked.data?.filePath) return;
-      const res = await window.agentDesktop.ipcInvoke("public-skillhub:import-local", { sourcePath: picked.data.filePath }) as { success?: boolean; error?: string };
+      const res = await window.agentDesktop.skillHub.importLocal({ sourcePath: picked.data.filePath }) as { success?: boolean; error?: string };
       if (!res?.success) throw new Error(res?.error || "导入失败");
       flashNotice("技能已导入");
       await loadInstalled();

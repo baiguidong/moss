@@ -1,3 +1,23 @@
+import { createProjectStore } from './project-store.mjs';
+import { createSessionPaths, normalizeSessionDirName } from './session-paths.mjs';
+import { createSessionPersistence } from './session-persistence.mjs';
+import { createSessionHistoryService } from './session-history-service.mjs';
+import { createProjectId, normalizeOptionalProjectId, normalizeProjectId, normalizeProjectMemoryIndex, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
+import { normalizeStringList } from './shared/string-list.mjs';
+import { runInKeyedQueue } from './shared/keyed-queue.mjs';
+import { readJsonFileAsync, writeTextFileAtomicAsync, writeJsonFileAtomicAsync } from './shared/json-files.mjs';
+import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode } from './shared/session-normalization.mjs';
+import { deriveSessionPreview, derivePendingPlanApproval, extractTextFromAssistantMessage, isDisplayTranscriptEntry, normalizePreviewText } from './shared/session-history-display.mjs';
+import { prepareSessionStatements } from './session-database.mjs';
+import { createWorkspaceWatcherService } from './workspace-watcher.mjs';
+import { createWorkspaceFileService } from './workspace-files.mjs';
+import { createProjectAssetService } from './project-assets.mjs';
+import { createSessionTaskService } from './session-task-service.mjs';
+import { createRemoteRuntimeFactory } from './remote-session-runtime.mjs';
+import { createSessionPromptPreparation } from './session-prompt-preparation.mjs';
+import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
+import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
+import { registerSessionControlIpc } from './session-control-ipc.mjs';
 import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
 import { resolveAppResourceFile } from './apps/app-resources.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
@@ -8,8 +28,6 @@ import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
 import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
 const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -25,17 +43,9 @@ import {
   installRemoteWorkspaceProtocol,
   REMOTE_WORKSPACE_SCHEME,
   toRemoteWorkspaceUrl,
-  parseRemoteWorkspaceUrl,
 } from './remote-workspace-protocol.mjs';
 import { createSessionSearchIndex } from './session-search-index.mjs';
 import { createWorkspaceCatalog } from './workspace-catalog.mjs';
-import {
-  decodeWorkspaceTextBuffer,
-  getWorkspaceFilePreviewInfo,
-  isBinaryPreviewContentType,
-  isLikelyBinaryBuffer,
-  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
-} from '../../shared/workspace-preview.mjs';
 import { getInstalledSkills, registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerPublicSkillHubIpcHandlers } from './public-skillhub-ipc.mjs';
 import {
@@ -141,12 +151,8 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
+import { AppAuditHost, createAuditProtocolDefinition, AUDIT_PROTOCOL } from './apps/app-audit-host.mjs';
 import {
-  createLocalAuditService,
-  registerLocalAuditIpcHandlers,
-} from './local-audit-service.mjs';
-import {
-  backfillVisibleUserMessageIds,
   collectTurnChanges,
   truncateHistoryBeforeUserMessage,
 } from './shared/turn-changes.mjs';
@@ -192,10 +198,6 @@ import {
   clearSessionBusyTiming,
   getSessionBusyStartedAt,
 } from './shared/session-busy-timing.mjs';
-import {
-  mergeInterruptedSessionHistory,
-  shouldAdoptSessionHistory,
-} from './shared/session-history-reconcile.mjs';
 import {
   cloneSessionTranscriptJsonl,
   getUniqueForkTitle,
@@ -260,22 +262,14 @@ import {
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
 import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
-import { createLocalTranscriptSync, readTranscriptHistory } from './local-transcript-sync.mjs';
 import {
-  compareTaskIds,
   createRemoteSessionTaskSync,
-  normalizeSessionTask,
-  snapshotRemoteSessionTasks,
 } from './session-tasks.mjs';
 import {
   createDesktopDataPaths,
   DESKTOP_PROJECT_KIND,
   DESKTOP_PROJECT_LAYOUT_VERSION,
-  DESKTOP_SESSION_KIND,
-  DESKTOP_SESSION_LAYOUT_VERSION,
   getProjectSessionWorkspaceDirectories,
-  isDesktopProjectRecord,
-  withDesktopProjectLayout,
 } from './desktop-data-layout.mjs';
 import { configureDesktopProfile, MOSS_HOME } from './moss-home.mjs';
 import {
@@ -290,7 +284,6 @@ import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import {
   createRemoteDirectClient,
-  downloadRemoteDirectWorkspaceFile,
   parseRemoteDirectServerInput,
   setRemoteDirectFetchImplementation,
 } from './remote-direct-client.mjs';
@@ -306,7 +299,7 @@ import {
   createRemoteDirectTrustStore,
   ensureRemoteDirectTrustWithConfirmation,
 } from './remote-direct-tls.mjs';
-import { createMossCronScheduler, migrateCronSessionIndex } from './moss-cron-scheduler.mjs';
+import { createMossCronScheduler } from './moss-cron-scheduler.mjs';
 import {
   deleteAgentMail,
   fetchAgentMailCapabilities,
@@ -388,7 +381,6 @@ const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS ==
 const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const REMOTE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), `moss-remote-preview-${process.pid}`);
-const WORKSPACE_WATCH_DIRECTORY_LIMIT = 512;
 const REMOTE_DIRECT_TRUST_DIR = path.join(MOSS_HOME, 'certificates', 'remote-direct');
 const remoteDirectTrustStore = createRemoteDirectTrustStore({
   trustDir: REMOTE_DIRECT_TRUST_DIR,
@@ -401,6 +393,8 @@ const remoteDirectNetFetch = createOfflineAwareFetch({
   isOnline: () => net.isOnline(),
 });
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
+const sessionPaths = createSessionPaths({ DESKTOP_DATA_PATHS });
+const { getLocalSessionDir, getLocalSessionEngineDir, getLocalSessionResourceManifestPath, getLocalSessionTranscriptPath } = sessionPaths;
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
 const workspaceCatalog = createWorkspaceCatalog(DESKTOP_DATA_PATHS.workspacesRoot);
@@ -419,18 +413,7 @@ const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
-const AUDIT_DB_PATH = path.join(MOSS_HOME, 'audit.db');
-const LOCAL_AUDIT_SCAN_INTERVAL_MS = 30_000;
 const APP_STORAGE_FILENAME = 'storage.json';
-const PROJECT_FILE_NAME = 'project.json';
-const PROJECT_ASSET_INDEX_NAME = 'assets.json';
-const PROJECT_EVENT_INDEX_NAME = 'events.json';
-const PROJECT_DECISION_INDEX_NAME = 'decisions.json';
-const PROJECT_MEMORY_INDEX_NAME = 'index.json';
-const PROJECT_MEMORY_OVERVIEW_NAME = 'overview.md';
-const PROJECT_TASK_STATUSES = new Set(['working', 'waiting_for_user', 'completed', 'failed', 'stopped']);
-const PROJECT_RUNTIME_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const PROJECT_RUNTIME_RUN_LIMIT = 50;
 const PROJECT_TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'stage-review-meeting',
@@ -452,210 +435,10 @@ const PROJECT_TEMPLATES = Object.freeze([
   }),
 ]);
 
-function normalizeSessionDirName(sessionId) {
-  const id = typeof sessionId === 'string' ? sessionId.trim() : '';
-  if (!/^[a-zA-Z0-9_-]{1,120}$/.test(id)) {
-    throw new Error('Invalid session id.');
-  }
-  return id;
-}
-
-function getLocalSessionDir(sessionId) {
-  return DESKTOP_DATA_PATHS.sessionDir(normalizeSessionDirName(sessionId));
-}
-
-function getLocalSessionRuntimeDir(sessionId) {
-  return DESKTOP_DATA_PATHS.sessionRuntimeDir(normalizeSessionDirName(sessionId));
-}
-
-function getLocalSessionEngineDir(sessionId) {
-  return DESKTOP_DATA_PATHS.sessionEngineDir(normalizeSessionDirName(sessionId));
-}
-
-function getLocalSessionResourceManifestPath(sessionId) {
-  return DESKTOP_DATA_PATHS.sessionResourceManifestPath(normalizeSessionDirName(sessionId));
-}
-
-function getLocalSessionTranscriptPath(sessionRecord) {
-  if (!sessionRecord?.id || !sessionRecord?.underlyingSessionId) return null;
-  return DESKTOP_DATA_PATHS.sessionTranscriptPath(
-    normalizeSessionDirName(sessionRecord.id),
-    normalizeSessionDirName(sessionRecord.underlyingSessionId),
-  );
-}
-
-function extractDisplayTextFromTranscriptEntry(entry) {
-  const content = entry?.message?.content;
-  if (typeof content === 'string') {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content
-      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-      .map((block) => block.text)
-      .join('\n');
-  }
-  if (typeof entry?.content === 'string') {
-    return entry.content;
-  }
-  if (typeof entry?.prompt === 'string') {
-    return entry.prompt;
-  }
-  return '';
-}
-
-function isDisplayTranscriptEntry(entry) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (entry.isSidechain) return false;
-  if (entry.type === 'user') {
-    if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
-    const text = extractDisplayTextFromTranscriptEntry(entry).trim();
-    if (text.startsWith('<local-command-caveat>')) return false;
-    if (text.startsWith('<command-name>')) return false;
-    return true;
-  }
-  if (entry.type === 'assistant') return true;
-  if (entry.type === 'system') {
-    return entry.subtype === 'compact_boundary'
-      || entry.subtype === 'local_command'
-      || entry.subtype === 'connector_auth';
-  }
-  if (entry.type === 'tool_progress' || entry.type === 'tool_use_summary') return true;
-  return false;
-}
-
-function isVisibleUserTextEntry(entry) {
-  if (!entry || entry.type !== 'user') return false;
-  if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
-  const text = extractDisplayTextFromTranscriptEntry(entry).trim();
-  if (!text) return false;
-  if (text.startsWith('<local-command-caveat>')) return false;
-  if (text.startsWith('<command-name>')) return false;
-  return true;
-}
-
-function hasAssistantTextEntry(entry) {
-  if (!entry || entry.type !== 'assistant') return false;
-  return extractTextFromAssistantMessage(entry).trim().length > 0;
-}
-
-function historyCompletenessScore(history) {
-  if (!Array.isArray(history)) return 0;
-  return history.reduce((score, entry) => {
-    if (isVisibleUserTextEntry(entry)) return score + 1;
-    if (hasAssistantTextEntry(entry)) return score + 1;
-    return score;
-  }, 0);
-}
-
 function sleepMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-async function loadDisplayHistoryFromLocalTranscript(sessionRecord, { requireComplete = false } = {}) {
-  const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
-  if (!transcriptPath) return null;
-  return readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
-}
-
-const localTranscriptSync = createLocalTranscriptSync({
-  getPath: record => record.agentMode === 'remote-direct' || record.isSubAgent
-    ? null : getLocalSessionTranscriptPath(record),
-  readHistory: record => loadDisplayHistoryFromLocalTranscript(record, { requireComplete: true }),
-  canSync: record => !record.busy && !record.syncingLocalTranscript && !hasActiveAgentTeam(record)
-    && !Object.values(record.runtime?.getAppState?.()?.tasks || {}).some(task => task?.status === 'running'),
-  invalidateRuntime: record => disposeRuntime(record),
-  applyHistory: (record, history, { modifiedAt }) => {
-    const filtered = applyPendingConversationRewind(record, history);
-    syncSessionRecordHistory(record, filtered.history, { allowReplacement: true });
-    record.updatedAt = Math.max(record.updatedAt || 0, modifiedAt);
-    schedulePersistSession(record, true);
-    emitSessionMeta(record);
-    emitSessionHistory(record, { replaceHistory: true });
-  },
-  onError: (error, record) => mossLog('warn', 'session', 'Unable to synchronize local transcript', {
-    sessionId: record.id, error: error.message,
-  }),
-});
-
-async function findLatestLocalTranscriptSessionId(sessionRecord) {
-  if (!sessionRecord?.id || sessionRecord.agentMode === 'remote-direct') return null;
-
-  let entries;
-  try {
-    entries = await fsp.readdir(getLocalSessionEngineDir(sessionRecord.id), {
-      withFileTypes: true,
-    });
-  } catch {
-    return null;
-  }
-
-  const candidates = await Promise.all(entries
-    .filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'))
-    .map(async (entry) => {
-      const engineSessionId = entry.name.slice(0, -'.jsonl'.length);
-      try {
-        normalizeSessionDirName(engineSessionId);
-        const transcriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(
-          normalizeSessionDirName(sessionRecord.id),
-          engineSessionId,
-        );
-        const stats = await fsp.stat(transcriptPath);
-        return { engineSessionId, modifiedAt: stats.mtimeMs };
-      } catch {
-        return null;
-      }
-    }));
-
-  return candidates
-    .filter(Boolean)
-    .sort((left, right) => (
-      right.modifiedAt - left.modifiedAt ||
-      right.engineSessionId.localeCompare(left.engineSessionId)
-    ))[0]?.engineSessionId || null;
-}
-
-async function recoverInterruptedLocalSession(sessionRecord) {
-  if (
-    !sessionRecord ||
-    sessionRecord.agentMode === 'remote-direct' ||
-    sessionRecord.underlyingSessionId
-  ) {
-    return false;
-  }
-
-  const recoveredSessionId = await findLatestLocalTranscriptSessionId(sessionRecord);
-  if (!recoveredSessionId) return false;
-
-  sessionRecord.underlyingSessionId = recoveredSessionId;
-  const candidateHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
-  if (!Array.isArray(candidateHistory) || candidateHistory.length === 0) {
-    sessionRecord.underlyingSessionId = null;
-    return false;
-  }
-
-  const mergedHistory = mergeInterruptedSessionHistory(
-    sessionRecord.history,
-    candidateHistory,
-  );
-  if (mergedHistory === sessionRecord.history) {
-    sessionRecord.underlyingSessionId = null;
-    return false;
-  }
-
-  syncSessionRecordHistory(sessionRecord, mergedHistory, {
-    sessionId: recoveredSessionId,
-  });
-  schedulePersistSession(sessionRecord, true);
-  emitSessionMeta(sessionRecord);
-  mossLog('info', 'session', 'Recovered interrupted local session transcript', {
-    sessionId: sessionRecord.id,
-    underlyingSessionId: recoveredSessionId,
-    recoveredEntries: candidateHistory.length,
-  });
-  return true;
 }
 
 // Direct embed should behave like the local-agent launcher, not Claude Desktop.
@@ -712,8 +495,7 @@ const updateGuardedAppIpc = {
   },
 };
 let appTraceHost = null;
-let localAuditService = null;
-let localAuditScanTimer = null;
+let appAuditHost = null;
 let agentChannelController = null;
 let appDecisionBroker = null;
 let remoteSessionSyncPromise = null;
@@ -761,8 +543,33 @@ const subAgentSessions = new Map(); // separate storage for sub-agent sessions (
 const projectMemoryQueues = new Map();
 const projectEventQueues = new Map();
 const projectDecisionQueues = new Map();
+// Shared by project settings, assets, decisions and finalizer commits.
 const projectRecordQueues = new Map();
-const projectAssetQueues = new Map();
+const {
+  ensureProjectStructure,
+  getProjectAssetIndexPath,
+  getProjectAssetsDir,
+  getProjectDecisionIndexPath,
+  getProjectDir,
+  getProjectEventIndexPath,
+  getProjectMemory,
+  linkSessionToProject,
+  unlinkSessionFromProject,
+  getProjectMemoryIndexPath,
+  getProjectMemoryOverviewPath,
+  getProjectRunsDir,
+  getProjectSessionFinalizerResultPath,
+  getProjectSessionFinalizerResultSync,
+  getProjectSessionMemoryPath,
+  getProjectSessionsDir,
+  getProjectWorkspaceDir,
+  mutateProjectRecord,
+  pruneProjectRuntimeRuns,
+  readProject,
+  readProjectSync,
+  touchProjectBestEffort,
+  writeProject,
+} = createProjectStore({ DESKTOP_DATA_PATHS, projectRecordQueues, mossLog });
 const projectCoordinatorTaskRuns = new Map();
 const projectTaskCancellationRequests = new Set();
 const sessionPromptQueues = new Map();
@@ -846,318 +653,7 @@ let agentMailStatus = {
   serverUrl: '',
   pendingManual: 0,
 };
-const persistSessionStmt = (() => {
-  // Migration: add columns if table exists but columns are missing
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_sub_agent INTEGER NOT NULL DEFAULT 0`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN worker_summaries_json TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'local'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN permission_mode TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN remote_workspace TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN assistant_name TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_coordinator_mode INTEGER NOT NULL DEFAULT 0`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN connector_ids_json TEXT NOT NULL DEFAULT '[]'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN session_kind TEXT NOT NULL DEFAULT 'chat'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN origin_channel TEXT NOT NULL DEFAULT 'desktop'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_app_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_instance_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN channel_runtime_policy_json TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN source_session_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN cron_task_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN parent_session_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN session_role TEXT NOT NULL DEFAULT 'chat'`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN subagent_status TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_task_status TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_task_prompt TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_task_error TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN project_task_completed_at INTEGER`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN auto_collapse_tool_calls INTEGER`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN tool_display_mode TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN rewind_message_id TEXT`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  try {
-    sessionDb.exec(`ALTER TABLE sessions ADD COLUMN rewind_created_at INTEGER`);
-  } catch {
-    // Column may already exist or table doesn't exist yet
-  }
-  sessionDb.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      workspace TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      message_count INTEGER NOT NULL,
-      preview TEXT NOT NULL,
-      agent_mode TEXT NOT NULL DEFAULT 'local',
-      permission_mode TEXT,
-      is_coordinator_mode INTEGER NOT NULL DEFAULT 0,
-      remote_workspace TEXT,
-      underlying_session_id TEXT,
-      history_json TEXT NOT NULL DEFAULT '[]',
-      is_sub_agent INTEGER NOT NULL DEFAULT 0,
-      worker_summaries_json TEXT,
-      assistant_name TEXT,
-      project_id TEXT,
-      origin_channel TEXT NOT NULL DEFAULT 'desktop',
-      connector_ids_json TEXT NOT NULL DEFAULT '[]',
-      session_kind TEXT NOT NULL DEFAULT 'chat',
-      source_session_id TEXT,
-      cron_task_id TEXT,
-      parent_session_id TEXT,
-      session_role TEXT NOT NULL DEFAULT 'chat',
-      subagent_status TEXT,
-      project_task_status TEXT,
-      project_task_prompt TEXT,
-      project_task_error TEXT,
-      project_task_completed_at INTEGER,
-      auto_collapse_tool_calls INTEGER,
-      tool_display_mode TEXT,
-      rewind_message_id TEXT,
-      rewind_created_at INTEGER,
-      channel_app_id TEXT,
-      channel_instance_id TEXT,
-      channel_runtime_policy_json TEXT
-    )
-  `);
-  migrateCronSessionIndex(sessionDb);
-  return sessionDb.prepare(`
-    INSERT INTO sessions (
-      id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json
-    ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-    )
-    ON CONFLICT(id) DO UPDATE SET
-      title = excluded.title,
-      workspace = excluded.workspace,
-      created_at = excluded.created_at,
-      updated_at = excluded.updated_at,
-      message_count = excluded.message_count,
-      preview = excluded.preview,
-      agent_mode = excluded.agent_mode,
-      permission_mode = excluded.permission_mode,
-      is_coordinator_mode = excluded.is_coordinator_mode,
-      remote_workspace = excluded.remote_workspace,
-      underlying_session_id = excluded.underlying_session_id,
-      history_json = excluded.history_json,
-      is_sub_agent = excluded.is_sub_agent,
-      worker_summaries_json = excluded.worker_summaries_json,
-      assistant_name = excluded.assistant_name,
-      project_id = excluded.project_id,
-      origin_channel = excluded.origin_channel,
-      connector_ids_json = excluded.connector_ids_json,
-      session_kind = excluded.session_kind,
-      source_session_id = excluded.source_session_id,
-      cron_task_id = excluded.cron_task_id,
-      parent_session_id = excluded.parent_session_id,
-      session_role = excluded.session_role,
-      subagent_status = excluded.subagent_status,
-      project_task_status = excluded.project_task_status,
-      project_task_prompt = excluded.project_task_prompt,
-      project_task_error = excluded.project_task_error,
-      project_task_completed_at = excluded.project_task_completed_at,
-      auto_collapse_tool_calls = excluded.auto_collapse_tool_calls,
-      tool_display_mode = excluded.tool_display_mode,
-      rewind_message_id = excluded.rewind_message_id,
-      rewind_created_at = excluded.rewind_created_at,
-      channel_app_id = excluded.channel_app_id,
-      channel_instance_id = excluded.channel_instance_id,
-      channel_runtime_policy_json = excluded.channel_runtime_policy_json
-  `);
-})();
-const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
-const loadSessionsStmt = sessionDb.prepare(`
-  SELECT
-    id,
-    title,
-    workspace,
-    created_at,
-    updated_at,
-    message_count,
-    preview,
-    agent_mode,
-    permission_mode,
-    is_coordinator_mode,
-    remote_workspace,
-    underlying_session_id,
-    history_json,
-    is_sub_agent,
-    worker_summaries_json,
-    assistant_name,
-    project_id,
-    origin_channel,
-    connector_ids_json,
-    session_kind,
-    source_session_id,
-    cron_task_id,
-    parent_session_id,
-    session_role,
-    subagent_status,
-    project_task_status,
-    project_task_prompt,
-    project_task_error,
-    project_task_completed_at,
-    auto_collapse_tool_calls,
-    tool_display_mode,
-    rewind_message_id,
-    rewind_created_at,
-    channel_app_id,
-    channel_instance_id,
-    channel_runtime_policy_json
-  FROM sessions
-  WHERE is_sub_agent = 0
-  ORDER BY updated_at DESC
-`);
-const loadSubAgentSessionsStmt = sessionDb.prepare(`
-  SELECT
-    id,
-    title,
-    workspace,
-    created_at,
-    updated_at,
-    message_count,
-    preview,
-    agent_mode,
-    permission_mode,
-    is_coordinator_mode,
-    remote_workspace,
-    underlying_session_id,
-    history_json,
-    is_sub_agent,
-    worker_summaries_json,
-    assistant_name,
-    project_id,
-    origin_channel,
-    connector_ids_json,
-    session_kind,
-    source_session_id,
-    cron_task_id,
-    parent_session_id,
-    session_role,
-    subagent_status,
-    project_task_status,
-    project_task_prompt,
-    project_task_error,
-    project_task_completed_at,
-    auto_collapse_tool_calls,
-    tool_display_mode,
-    rewind_message_id,
-    rewind_created_at,
-    channel_app_id,
-    channel_instance_id,
-    channel_runtime_policy_json
-  FROM sessions
-  WHERE is_sub_agent = 1
-  ORDER BY created_at ASC
-`);
+const { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt } = prepareSessionStatements(sessionDb);
 
 const desktopSettingsStore = createDesktopSettingsStore({
   settingsPath: DESKTOP_SETTINGS_PATH,
@@ -1279,9 +775,6 @@ const syncRemoteSessionTasks = createRemoteSessionTaskSync({
 });
 
 const remoteSkillSyncPromises = new Map();
-const remoteAttachmentSources = new Map();
-const MAX_REMOTE_ATTACHMENT_SOURCE_BYTES = 64 * 1024 * 1024;
-let remoteAttachmentSourceBytes = 0;
 
 async function getRemoteMemoryCatalogForDesktop() {
   if (!(desktopSettings.remoteEnabled ?? false) || !getRemoteDirectSettings().serverUrl) {
@@ -1329,26 +822,55 @@ async function syncRemoteSkillsForConnection(connection) {
   return operation;
 }
 
-function remoteAttachmentKey(sessionRecord, remoteReference) {
-  return `${sessionRecord.id}\0${remoteReference}`;
-}
 
-function rememberRemoteAttachmentSource(sessionRecord, remoteReference, source) {
-  const key = remoteAttachmentKey(sessionRecord, remoteReference);
-  const previous = remoteAttachmentSources.get(key);
-  remoteAttachmentSourceBytes -= previous?.data?.byteLength || 0;
-  remoteAttachmentSources.delete(key);
-  remoteAttachmentSources.set(key, source);
-  remoteAttachmentSourceBytes += source?.data?.byteLength || 0;
-}
+const { persistSessionRecord, schedulePersistSession, deletePersistedSession, hydratePersistedSessions } = createSessionPersistence({
+  statements: { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt },
+  sessions, subAgentSessions, DESKTOP_DATA_PATHS, sessionPaths,
+  sessionSearchIndex, remoteSessionDeletions, getDesktopAgentMode, mossLog,
+  getSettings: () => desktopSettings, getTraceHost: () => appTraceHost,
+});
+const { localTranscriptSync, loadDisplayHistoryFromLocalTranscript, recoverInterruptedLocalSession, syncSessionRecordHistory, loadSessionHistoryFromSource, refreshSessionHistoryFromTranscriptAfterTurn } = createSessionHistoryService({
+  DESKTOP_DATA_PATHS, sessionPaths, disposeRuntime, emitSessionHistory, emitSessionMeta,
+  fetchRemoteDirectSessionContext, getLoadClaudeSessionSnapshotFn, hasActiveAgentTeam,
+  isRemoteDirectSessionNotFoundError, mossLog, resolveRemoteDirectConnection, schedulePersistSession,
+});
 
-function takeRemoteAttachmentSource(sessionRecord, remoteReference) {
-  const key = remoteAttachmentKey(sessionRecord, remoteReference);
-  const source = remoteAttachmentSources.get(key);
-  remoteAttachmentSources.delete(key);
-  remoteAttachmentSourceBytes -= source?.data?.byteLength || 0;
-  return source;
-}
+// Compose Desktop services once. Session/runtime state stays with Main; each
+// service owns only its private caches and declares the callbacks it needs.
+const { closeWorkspaceWatcher, startWorkspaceWatcher, syncWorkspaceWatcher, emitWorkspaceChanged } = createWorkspaceWatcherService({
+  emitToRenderer, mossLog,
+});
+const sessionTaskService = createSessionTaskService({
+  MOSS_HOME, emitToRenderer, getLocalSessionEngineDir, getSessionRecord,
+  scheduleSubAgentSessionSync, sessions, subAgentSessions,
+});
+const { attachBackgroundTaskWatcher, attachSessionTaskWatcher, getClaudeTempDirForLookup, snapshotBackgroundTasks, snapshotSessionTasks } = sessionTaskService;
+const { addProjectAsset, collectProjectWorkspaceFiles, listProjectAssets, removeProjectAsset } = createProjectAssetService({
+  appendProjectEvent, emitToRenderer, ensureProjectStructure, getProjectAssetIndexPath,
+  getProjectAssetsDir, getProjectDir, getProjectWorkspaceDir, invalidateProjectSessionRuntimes,
+  normalizeProjectId, projectRecordQueues, readJsonFileAsync, readProject,
+  runInKeyedQueue, writeJsonFileAtomicAsync, writeProject,
+});
+const { createRemoteDirectRuntime } = createRemoteRuntimeFactory({
+  getSettings: () => desktopSettings,
+  buildClaudeSessionConfig, emitSessionMeta, fetchRemoteDirectSessionInfo,
+  getClaudeRuntimeModule, isRemoteDirectSessionNotFoundError, mossLog,
+  normalizePermissionDecision, prepareAssistantContextForSessionStart,
+  resolveRemoteDirectConnection, resumeRemoteDirectSession, schedulePersistSession,
+  startWorkspaceWatcher, syncRemoteSkillsForConnection,
+});
+const { ensureRemoteSessionConnection, fetchRemoteWorkspaceProtocolContent, listDirectoryEntries, readWorkspaceFile, uploadFileToRemoteSessionWorkspace, writeWorkspaceFile, takeRemoteAttachmentSource } = createWorkspaceFileService({
+  MAX_IMAGE_BASE64_BYTES, REMOTE_PREVIEW_CACHE_DIR, allowMediaRoot,
+  assertWorkspaceVersionIdle, emitWorkspaceChanged, ensureRuntime,
+  fetchRemoteDirectWorkspaceContent, fetchRemoteDirectWorkspaceDir, fetchRemoteDirectWorkspaceFile,
+  mossLog, resolveRemoteDirectConnection, uploadRemoteDirectWorkspaceData,
+  uploadRemoteDirectWorkspaceFile, writeRemoteDirectWorkspaceFile,
+});
+const { buildInlineImageBlocks, buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePendingBashContexts, localizeProjectSessionAttachments, maybeSpillLargePromptToWorkspace, prepareRemoteFileAttachments, runDirectBashCommand } = createSessionPromptPreparation({
+  emitSessionMeta, emitToRenderer, emitWorkspaceChanged, ensureRemoteSessionConnection,
+  schedulePersistSession, takeRemoteAttachmentSource, uploadFileToRemoteSessionWorkspace,
+  uploadRemoteDirectWorkspaceData,
+});
 
 function getDesktopSettingsPayload(extra = {}) {
   const fingerprint = getCurrentWebSearchCapabilityFingerprint();
@@ -1510,290 +1032,6 @@ function invalidateEmbeddedSettingsCache() {
     .catch(() => {});
 }
 
-function readJsonFile(filePath, fallbackValue) {
-  try {
-    if (!fs.existsSync(filePath)) return fallbackValue;
-    const raw = fs.readFileSync(filePath, 'utf8');
-    if (!raw.trim()) return fallbackValue;
-    return JSON.parse(raw);
-  } catch {
-    return fallbackValue;
-  }
-}
-
-async function readJsonFileAsync(filePath, fallbackValue) {
-  try {
-    const raw = await fsp.readFile(filePath, 'utf8');
-    if (!raw.trim()) return fallbackValue;
-    return JSON.parse(raw);
-  } catch {
-    return fallbackValue;
-  }
-}
-
-async function writeJsonFileAsync(filePath, value) {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-}
-
-async function writeTextFileAtomicAsync(filePath, content) {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  try {
-    await fsp.writeFile(tempPath, content, 'utf8');
-    await fsp.rename(tempPath, filePath);
-  } finally {
-    await fsp.rm(tempPath, { force: true }).catch(() => {});
-  }
-}
-
-async function writeJsonFileAtomicAsync(filePath, value) {
-  await writeTextFileAtomicAsync(filePath, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function normalizeStringList(value) {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set();
-  const result = [];
-  for (const entry of value) {
-    const text = typeof entry === 'string' ? entry.trim() : '';
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    result.push(text);
-  }
-  return result;
-}
-
-function normalizeProjectId(projectId) {
-  const id = typeof projectId === 'string' ? projectId.trim() : '';
-  if (!/^[a-zA-Z0-9_-]{1,120}$/.test(id)) {
-    throw new Error('Invalid project id.');
-  }
-  return id;
-}
-
-function normalizeOptionalProjectId(projectId) {
-  if (projectId === null || projectId === undefined || projectId === '') return null;
-  try {
-    return normalizeProjectId(projectId);
-  } catch {
-    return null;
-  }
-}
-
-function slugifyProjectName(name) {
-  const slug = String(name || 'project')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
-  return slug || 'project';
-}
-
-function createProjectId(name) {
-  return `${slugifyProjectName(name)}-${randomUUID().slice(0, 8)}`;
-}
-
-function getProjectDir(projectId) {
-  return DESKTOP_DATA_PATHS.projectDir(normalizeProjectId(projectId));
-}
-
-function getProjectFilePath(projectId) {
-  return path.join(getProjectDir(projectId), PROJECT_FILE_NAME);
-}
-
-function getProjectWorkspaceDir(projectId) {
-  return DESKTOP_DATA_PATHS.projectWorkspaceDir(normalizeProjectId(projectId));
-}
-
-function getProjectAssetsDir(projectId) {
-  return getProjectWorkspaceDir(projectId);
-}
-
-function getProjectAssetIndexPath(projectId) {
-  return path.join(getProjectDir(projectId), PROJECT_ASSET_INDEX_NAME);
-}
-
-function getProjectEventIndexPath(projectId) {
-  return path.join(getProjectDir(projectId), PROJECT_EVENT_INDEX_NAME);
-}
-
-function getProjectDecisionIndexPath(projectId) {
-  return path.join(getProjectDir(projectId), PROJECT_DECISION_INDEX_NAME);
-}
-
-function getProjectMemoryDir(projectId) {
-  return path.join(getProjectDir(projectId), 'memory');
-}
-
-function getProjectMemoryIndexPath(projectId) {
-  return path.join(getProjectMemoryDir(projectId), PROJECT_MEMORY_INDEX_NAME);
-}
-
-function getProjectMemoryOverviewPath(projectId) {
-  return path.join(getProjectMemoryDir(projectId), PROJECT_MEMORY_OVERVIEW_NAME);
-}
-
-function getProjectMemorySessionsDir(projectId) {
-  return path.join(getProjectMemoryDir(projectId), 'sessions');
-}
-
-function getProjectSessionMemoryPath(projectId, sessionId) {
-  return path.join(getProjectMemorySessionsDir(projectId), `${sessionId}.md`);
-}
-
-function getProjectSessionFinalizerResultPath(projectId, sessionId) {
-  return path.join(getProjectMemorySessionsDir(projectId), `${sessionId}.json`);
-}
-
-function getProjectRunsDir(projectId) {
-  return DESKTOP_DATA_PATHS.projectRunsDir(normalizeProjectId(projectId));
-}
-
-async function pruneProjectRuntimeRuns(projectId, now = Date.now()) {
-  const runsDir = getProjectRunsDir(projectId);
-  let entries = [];
-  try {
-    entries = await fsp.readdir(runsDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  const runs = (await Promise.all(entries
-    .filter((entry) => entry.isDirectory())
-    .map(async (entry) => {
-      const runPath = path.join(runsDir, entry.name);
-      const stat = await fsp.stat(runPath).catch(() => null);
-      return stat ? { path: runPath, mtimeMs: stat.mtimeMs } : null;
-    })))
-    .filter(Boolean)
-    .sort((left, right) => right.mtimeMs - left.mtimeMs);
-  await Promise.all(runs
-    .filter((run, index) => (
-      index >= PROJECT_RUNTIME_RUN_LIMIT || now - run.mtimeMs > PROJECT_RUNTIME_RUN_RETENTION_MS
-    ))
-    .map((run) => fsp.rm(run.path, { recursive: true, force: true })));
-}
-
-function getProjectSessionsDir(projectId) {
-  return path.join(getProjectDir(projectId), 'sessions');
-}
-
-function normalizeProjectRecord(raw, fallbackId = '') {
-  if (!isDesktopProjectRecord(raw)) return null;
-  let id;
-  try {
-    id = normalizeProjectId(raw.id || fallbackId);
-  } catch {
-    return null;
-  }
-  const name = typeof raw.name === 'string' && raw.name.trim()
-    ? raw.name.trim()
-    : '未命名项目';
-  const now = Date.now();
-  return {
-    kind: DESKTOP_PROJECT_KIND,
-    layoutVersion: DESKTOP_PROJECT_LAYOUT_VERSION,
-    id,
-    name,
-    instructions: typeof raw.instructions === 'string' ? raw.instructions : '',
-    templateId: typeof raw.templateId === 'string' && raw.templateId.trim() ? raw.templateId.trim() : null,
-    connectorIds: normalizeStringList(raw.connectorIds),
-    expertIds: normalizeStringList(raw.expertIds),
-    skillIds: normalizeStringList(raw.skillIds),
-    decisionPolicy: normalizeProjectDecisionPolicy(raw.decisionPolicy),
-    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
-    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
-    archivedAt: Number.isFinite(raw.archivedAt) ? raw.archivedAt : null,
-  };
-}
-
-function readProjectSync(projectId) {
-  try {
-    const id = normalizeProjectId(projectId);
-    return normalizeProjectRecord(readJsonFile(getProjectFilePath(id), null), id);
-  } catch {
-    return null;
-  }
-}
-
-async function readProject(projectId) {
-  const id = normalizeProjectId(projectId);
-  return normalizeProjectRecord(await readJsonFileAsync(getProjectFilePath(id), null), id);
-}
-
-async function writeProject(project) {
-  const next = withDesktopProjectLayout(project);
-  await writeJsonFileAtomicAsync(getProjectFilePath(next.id), next);
-  return next;
-}
-
-async function ensureProjectStructure(projectId) {
-  const projectDir = getProjectDir(projectId);
-  await Promise.all([
-    fsp.mkdir(projectDir, { recursive: true }),
-    fsp.mkdir(getProjectMemoryDir(projectId), { recursive: true }),
-    fsp.mkdir(getProjectMemorySessionsDir(projectId), { recursive: true }),
-    fsp.mkdir(getProjectAssetsDir(projectId), { recursive: true }),
-    fsp.mkdir(getProjectSessionsDir(projectId), { recursive: true }),
-    fsp.mkdir(getProjectRunsDir(projectId), { recursive: true }),
-  ]);
-}
-
-async function runInKeyedQueue(queue, key, operation) {
-  const previous = queue.get(key) || Promise.resolve();
-  const current = previous.catch(() => {}).then(operation);
-  queue.set(key, current);
-  try {
-    return await current;
-  } finally {
-    if (queue.get(key) === current) queue.delete(key);
-  }
-}
-
-async function mutateProjectRecord(projectId, mutation) {
-  const id = normalizeProjectId(projectId);
-  return runInKeyedQueue(projectRecordQueues, id, async () => {
-    const existing = await readProject(id);
-    if (!existing) throw new Error('Project not found.');
-    const next = normalizeProjectRecord(await mutation(existing), id);
-    if (!next) throw new Error('Invalid project update.');
-    await writeProject(next);
-    return next;
-  });
-}
-
-async function touchProject(projectId, timestamp = Date.now()) {
-  return mutateProjectRecord(projectId, (project) => ({
-    ...project,
-    updatedAt: Math.max(project.updatedAt || 0, timestamp),
-  }));
-}
-
-async function touchProjectBestEffort(projectId, timestamp = Date.now(), reason = 'update') {
-  try {
-    return await touchProject(projectId, timestamp);
-  } catch (error) {
-    mossLog('warn', 'project', 'Unable to update project timestamp after primary write', {
-      projectId,
-      reason,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
-
-function normalizeProjectMemoryIndex(raw) {
-  const source = raw && typeof raw === 'object' ? raw : {};
-  return {
-    version: Number.isFinite(source.version) ? Math.max(0, Math.floor(source.version)) : 0,
-    updatedAt: Number.isFinite(source.updatedAt) ? source.updatedAt : null,
-    lastSessionId: typeof source.lastSessionId === 'string' ? source.lastSessionId : null,
-    finalizedSessionCount: Number.isFinite(source.finalizedSessionCount)
-      ? Math.max(0, Math.floor(source.finalizedSessionCount))
-      : 0,
-  };
-}
-
 async function validateAuthorizedConnectorIds(connectorIds) {
   const ids = normalizeStringList(connectorIds);
   if (ids.length === 0) return ids;
@@ -1808,33 +1046,6 @@ async function validateAuthorizedConnectorIds(connectorIds) {
     throw new Error(`以下连接器尚未完成个人授权：${unauthorized.join('、')}`);
   }
   return ids;
-}
-
-async function getProjectMemory(projectId) {
-  const id = normalizeProjectId(projectId);
-  await ensureProjectStructure(id);
-  const index = normalizeProjectMemoryIndex(await readJsonFileAsync(getProjectMemoryIndexPath(id), null));
-  let overview = '';
-  try {
-    overview = (await fsp.readFile(getProjectMemoryOverviewPath(id), 'utf8')).trim();
-  } catch {}
-  return {
-    ...index,
-    overview,
-    overviewPath: getProjectMemoryOverviewPath(id),
-  };
-}
-
-function getProjectSessionFinalizerResultSync(projectId, sessionId) {
-  const raw = readJsonFile(getProjectSessionFinalizerResultPath(projectId, sessionId), null);
-  if (!raw || typeof raw !== 'object') return null;
-  return {
-    completedAt: Number.isFinite(raw.completedAt) ? raw.completedAt : null,
-    conclusion: typeof raw.conclusion === 'string' ? raw.conclusion : '',
-    memoryVersion: Number.isFinite(raw.memoryVersion) ? raw.memoryVersion : 0,
-    assetIds: normalizeStringList(raw.assetIds),
-    result: raw.result && typeof raw.result === 'object' ? raw.result : null,
-  };
 }
 
 function isProjectTaskRootSession(sessionRecord) {
@@ -2396,366 +1607,6 @@ async function archiveProject(projectId) {
   return enrichProjectBestEffort(next);
 }
 
-function normalizeProjectAsset(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
-  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
-  const filePath = typeof raw.path === 'string' && raw.path.trim() ? raw.path.trim() : '';
-  if (!id || !name || !filePath) return null;
-  return {
-    id,
-    name,
-    fileName: typeof raw.fileName === 'string' && raw.fileName.trim() ? raw.fileName.trim() : name,
-    path: filePath,
-    relativePath: typeof raw.relativePath === 'string' ? raw.relativePath : '',
-    size: Number.isFinite(raw.size) ? raw.size : 0,
-    mimeType: typeof raw.mimeType === 'string' ? raw.mimeType : '',
-    sourceType: typeof raw.sourceType === 'string' && raw.sourceType.trim() ? raw.sourceType.trim() : 'upload',
-    sourceSessionId: typeof raw.sourceSessionId === 'string' && raw.sourceSessionId.trim() ? raw.sourceSessionId.trim() : null,
-    sourcePath: typeof raw.sourcePath === 'string' && raw.sourcePath.trim() ? raw.sourcePath.trim() : null,
-    contentHash: typeof raw.contentHash === 'string' && /^[a-f0-9]{64}$/i.test(raw.contentHash)
-      ? raw.contentHash.toLowerCase()
-      : null,
-    provenance: Array.isArray(raw.provenance)
-      ? raw.provenance.filter((entry) => entry && typeof entry === 'object').slice(-100).map((entry) => ({
-        sourceSessionId: typeof entry.sourceSessionId === 'string' && entry.sourceSessionId.trim()
-          ? entry.sourceSessionId.trim()
-          : null,
-        sourcePath: typeof entry.sourcePath === 'string' && entry.sourcePath.trim()
-          ? entry.sourcePath.trim()
-          : null,
-        recordedAt: Number.isFinite(entry.recordedAt) ? entry.recordedAt : Date.now(),
-      }))
-      : [],
-    description: typeof raw.description === 'string' ? raw.description : '',
-    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now(),
-    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : Date.now(),
-  };
-}
-
-async function calculateFileSha256(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', reject);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-  });
-}
-
-async function collectProjectWorkspaceFiles(rootDir, options = {}) {
-  const root = path.resolve(rootDir);
-  const files = [];
-  const pending = [root];
-  const maxFiles = Number.isInteger(options.maxFiles) ? options.maxFiles : 10_000;
-  while (pending.length > 0 && files.length < maxFiles) {
-    const current = pending.pop();
-    let entries = [];
-    try {
-      entries = await fsp.readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-      const target = path.join(current, entry.name);
-      if (!isPathInsideDirectory(root, target)) continue;
-      if (entry.isDirectory()) {
-        pending.push(target);
-      } else if (entry.isFile()) {
-        try {
-          const stat = await fsp.stat(target);
-          files.push({ path: target, stat });
-        } catch {}
-      }
-      if (files.length >= maxFiles) break;
-    }
-  }
-  return {
-    files,
-    truncated: files.length >= maxFiles,
-  };
-}
-
-async function listProjectAssetsUnlocked(projectId) {
-  const id = normalizeProjectId(projectId);
-  await ensureProjectStructure(id);
-  const raw = await readJsonFileAsync(getProjectAssetIndexPath(id), []);
-  const indexed = Array.isArray(raw) ? raw.map(normalizeProjectAsset).filter(Boolean) : [];
-  const workspace = getProjectWorkspaceDir(id);
-  const { files, truncated } = await collectProjectWorkspaceFiles(workspace);
-  const indexedByPath = new Map(indexed.map((asset) => [path.resolve(asset.path), asset]));
-  let changed = false;
-  const assets = [];
-  for (const file of files) {
-    const resolvedPath = path.resolve(file.path);
-    const existing = indexedByPath.get(resolvedPath);
-    if (existing) {
-      const updatedAt = file.stat.mtimeMs || existing.updatedAt;
-      const changedOnDisk = existing.size !== file.stat.size || existing.updatedAt !== updatedAt;
-      const contentHash = !existing.contentHash || changedOnDisk
-        ? await calculateFileSha256(resolvedPath).catch(() => null)
-        : existing.contentHash;
-      assets.push({
-        ...existing,
-        path: resolvedPath,
-        relativePath: path.relative(getProjectDir(id), resolvedPath),
-        size: file.stat.size,
-        contentHash,
-        updatedAt,
-      });
-      if (
-        contentHash !== existing.contentHash ||
-        file.stat.size !== existing.size ||
-        updatedAt !== existing.updatedAt
-      ) changed = true;
-      indexedByPath.delete(resolvedPath);
-      continue;
-    }
-    changed = true;
-    const relativePath = path.relative(workspace, resolvedPath);
-    assets.push({
-      id: `asset-file-${createHash('sha1').update(relativePath).digest('hex').slice(0, 12)}`,
-      name: path.basename(resolvedPath),
-      fileName: path.basename(resolvedPath),
-      path: resolvedPath,
-      relativePath: path.relative(getProjectDir(id), resolvedPath),
-      size: file.stat.size,
-      mimeType: '',
-      sourceType: 'project_workspace',
-      sourceSessionId: null,
-      sourcePath: null,
-      contentHash: await calculateFileSha256(resolvedPath).catch(() => null),
-      provenance: [],
-      description: '',
-      createdAt: file.stat.birthtimeMs || file.stat.ctimeMs || Date.now(),
-      updatedAt: file.stat.mtimeMs || Date.now(),
-    });
-  }
-  if (truncated) {
-    for (const asset of indexedByPath.values()) {
-      if (
-        isPathInsideDirectory(workspace, asset.path) &&
-        fs.existsSync(asset.path)
-      ) {
-        assets.push(asset);
-      } else {
-        changed = true;
-      }
-    }
-  } else if (indexedByPath.size > 0) {
-    changed = true;
-  }
-  assets.sort((a, b) => b.updatedAt - a.updatedAt);
-  if (changed) await writeProjectAssets(id, assets);
-  return assets;
-}
-
-async function listProjectAssets(projectId) {
-  const id = normalizeProjectId(projectId);
-  return runInKeyedQueue(projectAssetQueues, id, () => listProjectAssetsUnlocked(id));
-}
-
-async function writeProjectAssets(projectId, assets) {
-  const unique = [];
-  const paths = new Set();
-  for (const raw of assets) {
-    const asset = normalizeProjectAsset(raw);
-    if (!asset) continue;
-    const resolvedPath = path.resolve(asset.path);
-    if (paths.has(resolvedPath)) continue;
-    paths.add(resolvedPath);
-    unique.push({ ...asset, path: resolvedPath });
-  }
-  await writeJsonFileAtomicAsync(getProjectAssetIndexPath(projectId), unique);
-}
-
-async function commitActiveProjectAssets(projectId, assets, updatedAt = Date.now()) {
-  const id = normalizeProjectId(projectId);
-  return runInKeyedQueue(projectRecordQueues, id, async () => {
-    const project = await readProject(id);
-    if (!project || project.archivedAt) throw new Error('Project not found.');
-    await writeProjectAssets(id, assets);
-    await writeProject({
-      ...project,
-      updatedAt: Math.max(project.updatedAt || 0, updatedAt),
-    });
-  });
-}
-
-async function createUniqueAssetPath(projectId, fileName) {
-  const safeName = String(fileName || 'asset').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'asset';
-  const parsed = path.parse(safeName);
-  let candidate = path.join(getProjectAssetsDir(projectId), safeName);
-  let index = 1;
-  while (fs.existsSync(candidate)) {
-    const nextName = `${parsed.name || 'asset'}-${index}${parsed.ext || ''}`;
-    candidate = path.join(getProjectAssetsDir(projectId), nextName);
-    index += 1;
-  }
-  return candidate;
-}
-
-function isPathInsideDirectory(rootDir, targetPath) {
-  const relative = path.relative(path.resolve(rootDir), path.resolve(targetPath));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-async function addProjectAssetUnlocked(projectId, payload = {}) {
-  const project = await readProject(projectId);
-  if (!project || project.archivedAt) {
-    throw new Error('Project not found.');
-  }
-  const sourcePath = typeof payload.sourcePath === 'string' ? payload.sourcePath.trim() : '';
-  if (!sourcePath) {
-    throw new Error('Asset source path is required.');
-  }
-  const stat = await fsp.stat(sourcePath);
-  if (!stat.isFile()) {
-    throw new Error('Asset source must be a file.');
-  }
-  await ensureProjectStructure(project.id);
-  const contentHash = await calculateFileSha256(sourcePath);
-  const assets = await listProjectAssetsUnlocked(project.id);
-  const now = Date.now();
-  const provenanceEntry = {
-    sourceSessionId: typeof payload.sourceSessionId === 'string' && payload.sourceSessionId.trim()
-      ? payload.sourceSessionId.trim()
-      : null,
-    sourcePath,
-    recordedAt: now,
-  };
-  let existingAsset = assets.find((asset) => asset.contentHash === contentHash && asset.size === stat.size);
-  if (!existingAsset) {
-    for (const candidate of assets.filter((asset) => asset.size === stat.size && !asset.contentHash)) {
-      const candidateHash = await calculateFileSha256(candidate.path).catch(() => null);
-      if (candidateHash === contentHash) {
-        existingAsset = { ...candidate, contentHash: candidateHash };
-        break;
-      }
-    }
-  }
-  if (existingAsset) {
-    const currentProject = await readProject(project.id);
-    if (!currentProject || currentProject.archivedAt) {
-      throw new Error('项目已删除，停止添加资产。');
-    }
-    const provenance = [...existingAsset.provenance];
-    if (!provenance.some((entry) => (
-      entry.sourceSessionId === provenanceEntry.sourceSessionId &&
-      entry.sourcePath === provenanceEntry.sourcePath
-    ))) provenance.push(provenanceEntry);
-    const updated = normalizeProjectAsset({
-      ...existingAsset,
-      contentHash,
-      provenance: provenance.slice(-100),
-      updatedAt: now,
-    });
-    await commitActiveProjectAssets(
-      project.id,
-      assets.map((asset) => asset.id === updated.id ? updated : asset),
-      now,
-    );
-    return updated;
-  }
-  const destPath = await createUniqueAssetPath(project.id, payload.fileName || path.basename(sourcePath));
-  await fsp.copyFile(sourcePath, destPath);
-  const destStat = await fsp.stat(destPath);
-  const asset = {
-    id: `asset-${randomUUID().slice(0, 12)}`,
-    name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : path.basename(destPath),
-    fileName: path.basename(destPath),
-    path: destPath,
-    relativePath: path.relative(getProjectDir(project.id), destPath),
-    size: destStat.size,
-    mimeType: '',
-    sourceType: typeof payload.sourceType === 'string' && payload.sourceType.trim()
-      ? payload.sourceType.trim()
-      : 'upload',
-    sourceSessionId: typeof payload.sourceSessionId === 'string' && payload.sourceSessionId.trim()
-      ? payload.sourceSessionId.trim()
-      : null,
-    sourcePath,
-    contentHash,
-    provenance: [provenanceEntry],
-    description: typeof payload.description === 'string' ? payload.description : '',
-    createdAt: now,
-    updatedAt: now,
-  };
-  const currentProject = await readProject(project.id);
-  if (!currentProject || currentProject.archivedAt) {
-    await fsp.rm(destPath, { force: true });
-    throw new Error('项目已删除，停止添加资产。');
-  }
-  try {
-    await commitActiveProjectAssets(project.id, [asset, ...assets], now);
-  } catch (error) {
-    await fsp.rm(destPath, { force: true }).catch(() => {});
-    throw error;
-  }
-  invalidateProjectSessionRuntimes(project.id);
-  await appendProjectEvent(project.id, {
-    type: asset.sourceType === 'session_output' ? 'asset.generated' : 'asset.uploaded',
-    summary: `${asset.sourceType === 'session_output' ? '生成' : '上传'}资产：${asset.name}`,
-    actor: asset.sourceType === 'session_output' ? 'agent' : 'user',
-    targetType: 'asset',
-    targetId: asset.id,
-    metadata: { sourceSessionId: asset.sourceSessionId },
-  });
-  emitToRenderer('project:changed', { projectId: project.id, reason: 'assets' });
-  return asset;
-}
-
-async function addProjectAsset(projectId, payload = {}) {
-  const id = normalizeProjectId(projectId);
-  return runInKeyedQueue(projectAssetQueues, id, () => addProjectAssetUnlocked(id, payload));
-}
-
-async function removeProjectAssetUnlocked(projectId, assetId) {
-  const id = normalizeProjectId(projectId);
-  const project = await readProject(id);
-  if (!project || project.archivedAt) throw new Error('Project not found.');
-  const assets = await listProjectAssetsUnlocked(id);
-  const asset = assets.find((entry) => entry.id === assetId);
-  if (!asset) return { ok: true };
-  const next = assets.filter((entry) => entry.id !== assetId);
-  const removedAt = Date.now();
-  await runInKeyedQueue(projectRecordQueues, id, async () => {
-    const currentProject = await readProject(id);
-    if (!currentProject || currentProject.archivedAt) throw new Error('Project not found.');
-    if (asset.path && isPathInsideDirectory(getProjectWorkspaceDir(id), asset.path)) {
-      try {
-        await fsp.unlink(asset.path);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') throw error;
-      }
-    }
-    await writeProjectAssets(id, next);
-    await writeProject({
-      ...currentProject,
-      updatedAt: Math.max(currentProject.updatedAt || 0, removedAt),
-    });
-  });
-  invalidateProjectSessionRuntimes(id);
-  if (asset) {
-    await appendProjectEvent(id, {
-      type: 'asset.removed',
-      summary: `移除资产：${asset.name}`,
-      actor: 'user',
-      targetType: 'asset',
-      targetId: asset.id,
-    });
-  }
-  emitToRenderer('project:changed', { projectId: id, reason: 'assets' });
-  return { ok: true };
-}
-
-async function removeProjectAsset(projectId, assetId) {
-  const id = normalizeProjectId(projectId);
-  return runInKeyedQueue(projectAssetQueues, id, () => removeProjectAssetUnlocked(id, assetId));
-}
-
-// A project task is a root Project Coordinator session.
 function getProjectWorkerTasks(sessionRecord) {
   try {
     return Object.values(sessionRecord.runtime?.getAppState?.()?.tasks || {}).filter((task) => (
@@ -3106,21 +1957,6 @@ async function recoverInterruptedProjectCoordinatorTasks() {
     }
   }
 }
-
-async function linkSessionToProject(projectId, sessionRecord) {
-  await ensureProjectStructure(projectId);
-  await writeJsonFileAsync(path.join(getProjectSessionsDir(projectId), `${sessionRecord.id}.json`), {
-    sessionId: sessionRecord.id,
-    boundAt: Date.now(),
-  });
-}
-
-async function unlinkSessionFromProject(projectId, sessionId) {
-  try {
-    await fsp.unlink(path.join(getProjectSessionsDir(projectId), `${sessionId}.json`));
-  } catch {}
-}
-
 
 function readDesktopMcpStore() {
   return normalizeMcpStore(desktopSettings.mcp);
@@ -4131,447 +2967,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
 }
 
 
-function createRemoteDirectRuntime({
-  sessionRecord,
-  onPermissionRequest,
-  onAppEvent,
-  onSessionCreated,
-  coordinatorMode = false,
-  runtimeSystemPrompt = '',
-}) {
-  const shouldPersistSessionRecord = Boolean(
-    sessionRecord &&
-    typeof sessionRecord.id === 'string' &&
-    Array.isArray(sessionRecord.history),
-  );
-  let disposed = false;
-  let activeManager = null;
-  let managerConnectPromise = null;
-  let rejectManagerConnection = null;
-  let currentTurn = null;
-  let sessionPromise = null;
-
-  const ensureSessionConfig = async () => {
-    if (sessionPromise) {
-      return sessionPromise;
-    }
-    if (sessionRecord.deleting || sessionRecord.deleted) {
-      throw new Error('会话正在删除，无法连接服务器。');
-    }
-
-    sessionPromise = (async () => {
-      const mod = await getClaudeRuntimeModule();
-      if (
-        typeof mod.createDirectConnectSession !== 'function' ||
-        typeof mod.DirectConnectSessionManager !== 'function'
-      ) {
-        throw new Error(
-          'electron-direct.mjs did not export direct-connect runtime helpers.',
-        );
-      }
-
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      try {
-        await syncRemoteSkillsForConnection({ serverUrl, authToken });
-      } catch (error) {
-        // Skill synchronization is additive. A stale/older Server or one bad
-        // local skill must not make the entire remote chat unavailable.
-        mossLog('warn', 'remote-skills', 'Unable to synchronize desktop skills; continuing without the update', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-      await prepareAssistantContextForSessionStart(sessionRecord);
-      const localRuntimeConfig = await buildClaudeSessionConfig(
-        sessionRecord.workspace,
-        sessionRecord,
-        runtimeSystemPrompt,
-      );
-      const runtimeOptions = {
-        ...(localRuntimeConfig.customSystemPrompt
-          ? { customSystemPrompt: localRuntimeConfig.customSystemPrompt }
-          : {}),
-        ...(localRuntimeConfig.appendSystemPrompt
-          ? { appendSystemPrompt: localRuntimeConfig.appendSystemPrompt }
-          : {}),
-        webSearch: {
-          ...localRuntimeConfig.webSearch,
-          // Capability was probed with the desktop model, not the server model.
-          nativeCapability: undefined,
-        },
-        mcpServers: localRuntimeConfig.mcpServers,
-        environment: Object.fromEntries(Object.entries(localRuntimeConfig.environment)
-          .filter(([key]) => key !== 'MOSS_TRACE_SCOPE')),
-        coordinatorMode: coordinatorMode === true,
-        agentMailEnabled: localRuntimeConfig.agentMailEnabled === true,
-      };
-      let created;
-
-      if (sessionRecord.underlyingSessionId) {
-        try {
-          const remoteSession = await fetchRemoteDirectSessionInfo({
-            serverUrl,
-            authToken,
-            sessionId: sessionRecord.underlyingSessionId,
-          });
-          const desiredState = typeof remoteSession?.session?.desiredState === 'string'
-            ? remoteSession.session.desiredState
-            : 'active';
-
-          created = desiredState === 'active'
-            ? await mod.attachDirectConnectSession({
-                serverUrl,
-                authToken,
-                sessionId: sessionRecord.underlyingSessionId,
-              })
-            : await resumeRemoteDirectSession({
-                serverUrl,
-                authToken,
-                sessionId: sessionRecord.underlyingSessionId,
-              });
-        } catch (error) {
-          if (!isRemoteDirectSessionNotFoundError(error)) {
-            throw error;
-          }
-          mossLog('warn', 'session', 'Remote Direct session missing on send', {
-            sessionId: sessionRecord.id,
-            underlyingSessionId: sessionRecord.underlyingSessionId,
-          });
-          sessionRecord.underlyingSessionId = null;
-          sessionRecord.historyLoadedFromSource = false;
-        }
-      }
-
-      if (!created) {
-        created = await mod.createDirectConnectSession({
-          serverUrl,
-          authToken,
-          permissionMode: normalizePermissionMode(
-            sessionRecord.permissionMode,
-            desktopSettings.permissionMode,
-          ),
-          dangerouslySkipPermissions:
-            normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
-              === 'bypassPermissions',
-          assistantName: sessionRecord.assistantName,
-          advancedSettings: {
-            ...desktopSettings.advanced,
-            moss_response_language: desktopSettings.language,
-            moss_tool_loading: desktopSettings.toolLoading,
-            moss_workflows_enabled: desktopSettings.workflows?.enabled === true,
-          },
-          autoMemory: desktopSettings.autoMemory,
-          sessionMemory: desktopSettings.sessionMemory,
-          runtimeOptions,
-        });
-      }
-
-      sessionRecord.agentMode = 'remote-direct';
-      sessionRecord.resumeReadOnlyReason = null;
-      if (created?.config?.sessionId) {
-        sessionRecord.underlyingSessionId = created.config.sessionId;
-      }
-      const workspaceChanged = applyRemoteSessionWorkspace(
-        sessionRecord,
-        created?.workDir,
-      );
-      if (workspaceChanged && isAccessibleDirectory(getSessionWorkspaceRoot(sessionRecord))) {
-        void startWorkspaceWatcher(sessionRecord);
-      }
-      if (shouldPersistSessionRecord) {
-        sessionRecord.updatedAt = Date.now();
-        schedulePersistSession(sessionRecord, true);
-        emitSessionMeta(sessionRecord);
-      }
-      onSessionCreated?.(created);
-      return {
-        mod,
-        config: created.config,
-        workDir: created.workDir,
-      };
-    })().catch((error) => {
-      sessionPromise = null;
-      throw error;
-    });
-
-    return sessionPromise;
-  };
-
-  return {
-    kind: 'remote-direct',
-    coordinatorMode,
-    ensureSession: ensureSessionConfig,
-    waitForSessionCreation: () => sessionPromise,
-    async *send(prompt) {
-      if (sessionRecord.deleting || sessionRecord.deleted) {
-        throw new Error('会话正在删除，无法发送消息。');
-      }
-      if (disposed) {
-        throw new Error('Remote runtime has been disposed.');
-      }
-      if (currentTurn) {
-        throw new Error('Remote runtime is already processing a request.');
-      }
-
-      const queue = [];
-      let pendingResolve = null;
-      let pendingReject = null;
-      let settled = false;
-      let pendingError = null;
-
-      const flushMessage = (message) => {
-        if (pendingResolve) {
-          const resolve = pendingResolve;
-          pendingResolve = null;
-          pendingReject = null;
-          resolve(message);
-          return;
-        }
-        queue.push(message);
-      };
-
-      const fail = (error) => {
-        if (settled) return;
-        settled = true;
-        pendingError = error instanceof Error ? error : new Error(String(error));
-        if (pendingReject) {
-          const reject = pendingReject;
-          pendingResolve = null;
-          pendingReject = null;
-          reject(pendingError);
-        }
-      };
-
-      const nextMessage = () =>
-        new Promise((resolve, reject) => {
-          if (queue.length > 0) {
-            resolve(queue.shift());
-            return;
-          }
-          if (pendingError) {
-            reject(pendingError);
-            return;
-          }
-          pendingResolve = resolve;
-          pendingReject = reject;
-        });
-
-      let rejectBeforePrompt;
-      const beforePromptAbort = new Promise((_, reject) => {
-        rejectBeforePrompt = reject;
-      });
-      const turn = {
-        finished: false,
-        promptSent: false,
-        abortRequested: false,
-        flushMessage,
-        fail,
-        abortBeforePrompt(error) {
-          if (turn.promptSent || turn.abortRequested) return;
-          turn.abortRequested = true;
-          rejectBeforePrompt(error);
-        },
-      };
-      currentTurn = turn;
-
-      const beforePrompt = (promise) => Promise.race([promise, beforePromptAbort]);
-
-      const ensureManager = async (mod, config) => {
-        if (activeManager?.isConnected?.()) {
-          return activeManager;
-        }
-
-        if (managerConnectPromise) {
-          await managerConnectPromise;
-          if (!activeManager?.isConnected?.()) {
-            throw new Error('Remote session failed to connect.');
-          }
-          return activeManager;
-        }
-
-        if (activeManager) {
-          throw new Error(
-            'Remote session is reconnecting. Wait for it to reconnect before sending a new message.',
-          );
-        }
-
-        managerConnectPromise = new Promise((resolve, reject) => {
-          rejectManagerConnection = reject;
-          const manager = new mod.DirectConnectSessionManager(config, {
-            onConnected: () => {
-              managerConnectPromise = null;
-              rejectManagerConnection = null;
-              resolve();
-            },
-            onMessage: (message) => {
-              if (!currentTurn) {
-                return;
-              }
-              currentTurn.flushMessage(message);
-              if (message?.type === 'result') {
-                currentTurn.finished = true;
-              }
-            },
-            onPermissionRequest: async (request, requestId) => {
-              try {
-                const decision = normalizePermissionDecision(
-                  await onPermissionRequest?.(request.tool_name, request.input, {
-                    suggestions: request.permission_suggestions,
-                    blockedPath: request.blocked_path,
-                  }),
-                );
-                manager.respondToPermissionRequest(requestId, decision);
-              } catch (error) {
-                manager.respondToPermissionRequest(requestId, {
-                  behavior: 'deny',
-                  message: error instanceof Error ? error.message : String(error),
-                });
-              }
-            },
-            onAppEvent,
-            onReconnecting: () => {
-              const turn = currentTurn;
-              if (turn && !turn.finished) {
-                turn.fail(new Error(
-                  'Remote connection was interrupted. The active turn was canceled; reconnect before sending it again.',
-                ));
-              }
-            },
-            onDisconnected: () => {
-              const turn = currentTurn;
-              activeManager = null;
-              const rejectConnection = rejectManagerConnection;
-              rejectManagerConnection = null;
-              managerConnectPromise = null;
-              rejectConnection?.(new Error('Remote session disconnected before connecting.'));
-              if (turn && !turn.finished) {
-                turn.fail(new Error('Remote session disconnected before completion.'));
-              }
-            },
-            onError: (error) => {
-              const turn = currentTurn;
-              if (managerConnectPromise) {
-                managerConnectPromise = null;
-                rejectManagerConnection = null;
-                reject(error);
-              }
-              if (turn) {
-                turn.fail(error);
-              }
-            },
-          });
-
-          activeManager = manager;
-
-          try {
-            manager.connect();
-          } catch (error) {
-            activeManager = null;
-            managerConnectPromise = null;
-            rejectManagerConnection = null;
-            reject(error);
-          }
-        });
-
-        await managerConnectPromise;
-        return activeManager;
-      };
-
-      try {
-        const { mod, config } = await beforePrompt(ensureSessionConfig());
-        if (turn.abortRequested) throw new Error('Request interrupted by user.');
-        const manager = await beforePrompt(ensureManager(mod, config));
-        await beforePrompt(manager.setPermissionMode?.(
-          normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
-        ));
-        if (turn.abortRequested) throw new Error('Request interrupted by user.');
-        const sent = manager.sendMessage(prompt);
-        if (!sent) {
-          throw new Error('Failed to send prompt to remote session.');
-        }
-        turn.promptSent = true;
-
-        while (true) {
-          const message = await nextMessage();
-          yield message;
-          if (message?.type === 'result') {
-            break;
-          }
-        }
-        if (pendingError) {
-          throw pendingError;
-        }
-      } finally {
-        if (currentTurn === turn) currentTurn = null;
-      }
-    },
-    async abort() {
-      const turn = currentTurn;
-      if (!turn) return;
-      const interrupted = new Error('Request interrupted by user.');
-      if (!turn.promptSent) {
-        turn.abortBeforePrompt(interrupted);
-        if (activeManager) {
-          try {
-            activeManager.disconnect?.();
-          } catch {}
-          activeManager = null;
-        }
-        const rejectConnection = rejectManagerConnection;
-        rejectManagerConnection = null;
-        managerConnectPromise = null;
-        rejectConnection?.(interrupted);
-        turn.fail(interrupted);
-        return;
-      }
-      if (!activeManager?.isConnected?.()) {
-        try {
-          activeManager?.disconnect?.();
-        } catch {}
-        activeManager = null;
-        turn.fail(interrupted);
-        return;
-      }
-      try {
-        const result = await activeManager.sendInterrupt();
-        if (result?.interrupted === false) {
-          // The prompt was still waiting in the Server-side turn queue. Close
-          // this attachment so that queued work is discarded before reconnect.
-          activeManager.disconnect();
-          activeManager = null;
-          turn.fail(interrupted);
-        }
-      } catch {
-        // Closing the socket makes the Server interrupt any active turn and
-        // prevents a late result from being attributed to the next prompt.
-        try {
-          activeManager?.disconnect?.();
-        } catch {}
-        activeManager = null;
-        turn.fail(interrupted);
-      }
-    },
-    async setPermissionMode(mode) {
-      if (activeManager?.isConnected?.()) {
-        await activeManager.setPermissionMode(mode);
-      }
-    },
-    dispose() {
-      disposed = true;
-      const error = new Error('Remote runtime has been disposed.');
-      const rejectConnection = rejectManagerConnection;
-      rejectManagerConnection = null;
-      managerConnectPromise = null;
-      rejectConnection?.(error);
-      currentTurn?.abortBeforePrompt?.(error);
-      currentTurn?.fail?.(error);
-      try {
-        activeManager?.disconnect?.();
-      } catch {}
-      activeManager = null;
-      currentTurn = null;
-    },
-  };
-}
 
 function refreshDesktopSettings(payload = {}) {
   const sourcePayload = payload && typeof payload === 'object' ? payload : {};
@@ -4704,403 +3099,6 @@ function refreshDesktopSettings(payload = {}) {
   return getDesktopSettingsPayload({
     skippedSessionCount,
   });
-}
-
-function normalizeSessionKind(value) {
-  if (value === 'cron') return 'cron';
-  if (value === 'agent-mail') return 'agent-mail';
-  return 'chat';
-}
-
-function normalizeOriginChannel(value, sessionKind) {
-  if (value === 'agent-mail' || sessionKind === 'agent-mail') return 'agent-mail';
-  if (value === 'cron' || sessionKind === 'cron') return 'cron';
-  if (typeof value === 'string' && /^(?:app:)?[a-z0-9][a-z0-9._-]{0,79}$/.test(value)) return value;
-  return 'desktop';
-}
-
-function normalizeToolDisplayMode(value, legacyAutoCollapse = null) {
-  if (value === 'expanded' || value === 'collapsed' || value === 'merged') return value;
-  if (typeof legacyAutoCollapse === 'boolean') {
-    return legacyAutoCollapse ? 'collapsed' : 'expanded';
-  }
-  return null;
-}
-
-function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
-  return [
-    sessionRecord.id,
-    sessionRecord.title,
-    sessionRecord.workspace,
-    sessionRecord.createdAt,
-    sessionRecord.updatedAt,
-    sessionRecord.messageCount,
-    sessionRecord.preview || '',
-    sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
-    normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
-    sessionRecord.isCoordinatorMode ? 1 : 0,
-    sessionRecord.remoteWorkspace || null,
-    sessionRecord.underlyingSessionId,
-    serializeSessionHistory(sessionRecord.history),
-    isSubAgent ? 1 : 0,
-    sessionRecord.workerSummariesJson || null,
-    sessionRecord.assistantName || null,
-    sessionRecord.projectId || null,
-    normalizeOriginChannel(sessionRecord.originChannel, sessionRecord.sessionKind),
-    JSON.stringify(normalizeStringList(sessionRecord.connectorIds)),
-    normalizeSessionKind(sessionRecord.sessionKind),
-    sessionRecord.sourceSessionId || null,
-    sessionRecord.cronTaskId || null,
-    sessionRecord.parentSessionId || null,
-    sessionRecord.sessionRole || 'chat',
-    sessionRecord.subagentStatus || null,
-    PROJECT_TASK_STATUSES.has(sessionRecord.projectTaskStatus) ? sessionRecord.projectTaskStatus : null,
-    sessionRecord.projectTaskPrompt || null,
-    sessionRecord.projectTaskError || null,
-    Number.isFinite(sessionRecord.projectTaskCompletedAt) ? sessionRecord.projectTaskCompletedAt : null,
-    typeof sessionRecord.autoCollapseToolCalls === 'boolean'
-      ? (sessionRecord.autoCollapseToolCalls ? 1 : 0)
-      : null,
-    normalizeToolDisplayMode(sessionRecord.toolDisplayMode),
-    sessionRecord.rewindMessageId || null,
-    Number.isFinite(sessionRecord.rewindCreatedAt) ? sessionRecord.rewindCreatedAt : null,
-    sessionRecord.channelAppId || null,
-    sessionRecord.channelInstanceId || null,
-    sessionRecord.channelRuntimePolicy && typeof sessionRecord.channelRuntimePolicy === 'object'
-      ? JSON.stringify(sessionRecord.channelRuntimePolicy)
-      : null,
-  ];
-}
-
-function serializeSessionHistory(history) {
-  try {
-    return JSON.stringify(Array.isArray(history) ? history : []);
-  } catch {
-    return '[]';
-  }
-}
-
-function parsePersistedSessionHistory(value) {
-  if (typeof value !== 'string' || !value.trim()) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function parsePersistedStringList(value) {
-  if (Array.isArray(value)) return normalizeStringList(value);
-  if (typeof value !== 'string' || !value.trim()) return [];
-  try {
-    return normalizeStringList(JSON.parse(value));
-  } catch {
-    return [];
-  }
-}
-
-function parsePersistedObject(value) {
-  if (!value || typeof value !== 'string') return null;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function toSessionManifest(sessionRecord, isSubAgent = false) {
-  return {
-    kind: DESKTOP_SESSION_KIND,
-    layoutVersion: DESKTOP_SESSION_LAYOUT_VERSION,
-    id: sessionRecord.id,
-    title: sessionRecord.sessionKind === 'agent-mail' && sessionRecord.title === 'Agent Mail'
-      ? '协作邮箱'
-      : sessionRecord.title,
-    workspace: sessionRecord.workspace,
-    remoteWorkspace: sessionRecord.remoteWorkspace || null,
-    agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
-    permissionMode: normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
-    isCoordinatorMode: Boolean(sessionRecord.isCoordinatorMode),
-    createdAt: sessionRecord.createdAt,
-    updatedAt: sessionRecord.updatedAt,
-    messageCount: sessionRecord.messageCount,
-    preview: sessionRecord.preview || '',
-    underlyingSessionId: sessionRecord.underlyingSessionId || null,
-    isSubAgent: Boolean(isSubAgent),
-    assistantName: sessionRecord.assistantName || null,
-    projectId: sessionRecord.projectId || null,
-    connectorIds: normalizeStringList(sessionRecord.connectorIds),
-    sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
-    originChannel: normalizeOriginChannel(sessionRecord.originChannel, sessionRecord.sessionKind),
-    channelAppId: sessionRecord.channelAppId || null,
-    channelInstanceId: sessionRecord.channelInstanceId || null,
-    channelRuntimePolicy: sessionRecord.channelRuntimePolicy || null,
-    sourceSessionId: sessionRecord.sourceSessionId || null,
-    sourceSessionTitle: sessionRecord.sourceSessionId
-      ? sessions.get(sessionRecord.sourceSessionId)?.title || null
-      : null,
-    cronTaskId: sessionRecord.cronTaskId || null,
-    parentSessionId: sessionRecord.parentSessionId || null,
-    sessionRole: sessionRecord.sessionRole || 'chat',
-    subagentStatus: sessionRecord.subagentStatus || null,
-    workerName: sessionRecord.workerName || null,
-    projectTaskStatus: PROJECT_TASK_STATUSES.has(sessionRecord.projectTaskStatus)
-      ? sessionRecord.projectTaskStatus
-      : null,
-    projectTaskPrompt: sessionRecord.projectTaskPrompt || '',
-    projectTaskError: sessionRecord.projectTaskError || '',
-    projectTaskCompletedAt: Number.isFinite(sessionRecord.projectTaskCompletedAt)
-      ? sessionRecord.projectTaskCompletedAt
-      : null,
-    toolDisplayMode: normalizeToolDisplayMode(
-      sessionRecord.toolDisplayMode,
-      sessionRecord.autoCollapseToolCalls,
-    ),
-  };
-}
-
-function persistSessionManifest(sessionRecord, isSubAgent = false) {
-  try {
-    const sessionDir = getLocalSessionDir(sessionRecord.id);
-    fs.mkdirSync(sessionDir, { recursive: true });
-    fs.mkdirSync(getLocalSessionEngineDir(sessionRecord.id), { recursive: true });
-    fs.writeFileSync(
-      path.join(sessionDir, 'session.json'),
-      `${JSON.stringify(toSessionManifest(sessionRecord, isSubAgent), null, 2)}\n`,
-      'utf8',
-    );
-  } catch (error) {
-    mossLog('warn', 'session', 'Failed to persist session manifest', {
-      sessionId: sessionRecord?.id,
-      error: error?.message || String(error),
-    });
-  }
-}
-
-function syncSessionSearchIndexBestEffort(sessionRecord) {
-  try {
-    sessionSearchIndex.syncSession(sessionRecord);
-  } catch (error) {
-    mossLog('warn', 'session-search', 'Failed to update session search index', {
-      sessionId: sessionRecord?.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-function persistSessionRecord(sessionRecord, isSubAgent = false) {
-  if (sessionRecord?.deleted) return;
-  persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
-  if (!sessionRecord.busy) syncSessionSearchIndexBestEffort(sessionRecord);
-  persistSessionManifest(sessionRecord, isSubAgent);
-  void appTraceHost?.recordSession(sessionRecord).catch(error => mossLog('warn', 'trace', error.message));
-}
-
-function flushPendingSessionPersist(sessionRecord) {
-  if (sessionRecord.persistTimer) {
-    clearTimeout(sessionRecord.persistTimer);
-    sessionRecord.persistTimer = null;
-  }
-  persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
-}
-
-function schedulePersistSession(sessionRecord, immediate = false) {
-  if (sessionRecord?.deleted) return;
-  if (immediate) {
-    flushPendingSessionPersist(sessionRecord);
-    return;
-  }
-  if (sessionRecord.persistTimer) return;
-  sessionRecord.persistTimer = setTimeout(() => {
-    sessionRecord.persistTimer = null;
-    persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
-  }, 200);
-}
-
-function deletePersistedSession(sessionId) {
-  deleteSessionStmt.run(sessionId);
-  try {
-    sessionSearchIndex.deleteSession(sessionId);
-  } catch (error) {
-    mossLog('warn', 'session-search', 'Failed to delete session search index entry', {
-      sessionId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-function inferPersistedSessionAgentMode(row) {
-  if (row?.agent_mode === 'remote-direct') {
-    return 'remote-direct';
-  }
-  if (row?.agent_mode === 'local') {
-    return 'local';
-  }
-  if (getDesktopAgentMode() !== 'remote-direct') {
-    return 'local';
-  }
-
-  const sessionId = typeof row?.underlying_session_id === 'string'
-    ? row.underlying_session_id.trim()
-    : '';
-  const uiSessionId = typeof row?.id === 'string' ? row.id.trim() : '';
-  if (!uiSessionId || !sessionId) {
-    return 'local';
-  }
-
-  const transcriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(uiSessionId, sessionId);
-  return transcriptPath && hasFile(transcriptPath) ? 'local' : 'remote-direct';
-}
-
-function hydratePersistedSessions() {
-  const rows = loadSessionsStmt.all();
-  for (const row of rows) {
-    const agentMode = inferPersistedSessionAgentMode(row);
-    if (agentMode === 'remote-direct' && remoteSessionDeletions.has(row.underlying_session_id)) continue;
-    const history = parsePersistedSessionHistory(row.history_json);
-    const preview = row.preview || deriveSessionPreview(history) || '';
-    const messageCount = Number(row.message_count) || 0;
-    const sessionRecord = {
-      id: row.id,
-      title: row.title,
-      workspace: row.workspace,
-      remoteWorkspace: agentMode === 'remote-direct'
-        ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
-          ? row.remote_workspace.trim()
-          : null)
-        : null,
-      agentMode,
-      permissionMode: normalizePermissionMode(row.permission_mode, desktopSettings.permissionMode),
-      sessionDir: getLocalSessionDir(row.id),
-      isCoordinatorMode: Boolean(row.is_coordinator_mode || row.project_id),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      busy: false,
-      busyStartedAt: null,
-      messageCount,
-      preview,
-      underlyingSessionId: row.underlying_session_id || null,
-      pendingPlanApproval: derivePendingPlanApproval(history),
-      history,
-      historyLoadedFromSource: false,
-      workerSummariesJson: row.worker_summaries_json || null,
-      runtime: null,
-      pendingMcpRuntimeReload: false,
-      resumeReadOnlyReason: null,
-      workspaceWatcher: null,
-      workspaceWatcherSyncTimer: null,
-      subagentDirWatcher: null,
-      subagentDirWatcherPath: null,
-      persistTimer: null,
-      isSubAgent: false,
-      assistantName: row.assistant_name || null,
-      assistantSystemPrompt: '',
-      projectId: normalizeOptionalProjectId(row.project_id),
-      connectorIds: parsePersistedStringList(row.connector_ids_json),
-      sessionKind: normalizeSessionKind(row.session_kind),
-      originChannel: normalizeOriginChannel(row.origin_channel, row.session_kind),
-      sourceSessionId: row.source_session_id || null,
-      cronTaskId: row.cron_task_id || null,
-      parentSessionId: row.parent_session_id || null,
-      sessionRole: row.session_role || 'chat',
-      subagentStatus: row.subagent_status || null,
-      projectTaskStatus: PROJECT_TASK_STATUSES.has(row.project_task_status)
-        ? row.project_task_status
-        : row.project_id && !row.parent_session_id ? 'working' : null,
-      projectTaskPrompt: typeof row.project_task_prompt === 'string' ? row.project_task_prompt : '',
-      projectTaskError: typeof row.project_task_error === 'string' ? row.project_task_error : '',
-      projectTaskCompletedAt: Number.isFinite(row.project_task_completed_at)
-        ? row.project_task_completed_at
-        : null,
-      toolDisplayMode: normalizeToolDisplayMode(
-        row.tool_display_mode,
-        row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
-      ),
-      rewindMessageId: row.rewind_message_id || null,
-      rewindCreatedAt: Number.isFinite(row.rewind_created_at) ? row.rewind_created_at : null,
-      channelAppId: row.channel_app_id || null,
-      channelInstanceId: row.channel_instance_id || null,
-      channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
-    };
-    if (agentMode === 'remote-direct') {
-      applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
-      applyRemoteSessionHistoryTitle(sessionRecord);
-    }
-    sessions.set(sessionRecord.id, sessionRecord);
-    syncSessionSearchIndexBestEffort(sessionRecord);
-  }
-
-  // Load sub-agent sessions
-  const subAgentRows = loadSubAgentSessionsStmt.all();
-  for (const row of subAgentRows) {
-    const agentMode = inferPersistedSessionAgentMode(row);
-    const history = parsePersistedSessionHistory(row.history_json);
-    const preview = row.preview || deriveSessionPreview(history) || '';
-    const messageCount = Number(row.message_count) || 0;
-    const sessionRecord = {
-      id: row.id,
-      title: row.title,
-      workspace: row.workspace,
-      remoteWorkspace: agentMode === 'remote-direct'
-        ? (typeof row.remote_workspace === 'string' && row.remote_workspace.trim()
-          ? row.remote_workspace.trim()
-          : null)
-        : null,
-      agentMode,
-      permissionMode: normalizePermissionMode(row.permission_mode, desktopSettings.permissionMode),
-      sessionDir: getLocalSessionDir(row.id),
-      isCoordinatorMode: false,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      busy: false,
-      busyStartedAt: null,
-      messageCount,
-      preview,
-      underlyingSessionId: row.underlying_session_id || null,
-      pendingPlanApproval: derivePendingPlanApproval(history),
-      history,
-      historyLoadedFromSource: false,
-      workerSummariesJson: row.worker_summaries_json || null,
-      runtime: null,
-      pendingMcpRuntimeReload: false,
-      resumeReadOnlyReason: '子会话记录为只读，请返回主会话继续协调。',
-      workspaceWatcher: null,
-      workspaceWatcherSyncTimer: null,
-      persistTimer: null,
-      isSubAgent: true,
-      assistantName: row.assistant_name || null,
-      assistantSystemPrompt: '',
-      projectId: normalizeOptionalProjectId(row.project_id),
-      connectorIds: parsePersistedStringList(row.connector_ids_json),
-      sessionKind: normalizeSessionKind(row.session_kind),
-      originChannel: normalizeOriginChannel(row.origin_channel, row.session_kind),
-      sourceSessionId: row.source_session_id || null,
-      cronTaskId: row.cron_task_id || null,
-      parentSessionId: row.parent_session_id || null,
-      sessionRole: row.session_role || 'chat',
-      subagentStatus: row.subagent_status || 'completed',
-      projectTaskStatus: null,
-      projectTaskPrompt: '',
-      projectTaskError: '',
-      projectTaskCompletedAt: null,
-      toolDisplayMode: normalizeToolDisplayMode(
-        row.tool_display_mode,
-        row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
-      ),
-      rewindMessageId: null,
-      rewindCreatedAt: null,
-      channelAppId: row.channel_app_id || null,
-      channelInstanceId: row.channel_instance_id || null,
-      channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
-    };
-    if (agentMode === 'remote-direct') {
-      applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
-    }
-    subAgentSessions.set(sessionRecord.id, sessionRecord);
-    syncSessionSearchIndexBestEffort(sessionRecord);
-  }
 }
 
 hydratePersistedSessions();
@@ -5308,14 +3306,6 @@ function createDefaultWorkspacePath(sessionId) {
   return DESKTOP_DATA_PATHS.sessionWorkspaceDir(normalizeSessionDirName(sessionId));
 }
 
-function hasFile(filePath) {
-  try {
-    return fs.existsSync(filePath);
-  } catch {
-    return false;
-  }
-}
-
 function getSessionSummary(sessionRecord) {
   const workspace = sessionRecord.agentMode === 'remote-direct'
     ? sessionRecord.remoteWorkspace || sessionRecord.workspace
@@ -5380,21 +3370,6 @@ function getSessionSummary(sessionRecord) {
     subagentStatus: sessionRecord.subagentStatus || null,
     workerName: sessionRecord.workerName || null,
   };
-}
-
-function normalizePreviewText(value, maxLength = 120) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
-}
-
-function extractTextFromAssistantMessage(message) {
-  if (!Array.isArray(message?.message?.content)) return '';
-  return message.message.content
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
 }
 
 const AUTOMATIC_COMPACT_PROMPT = '/compact';
@@ -5488,301 +3463,6 @@ function appendVisibleUserEvent(sessionRecord, sender, userEvent) {
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
   emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: userEvent });
-}
-
-function extractPreviewFromAssistantMessage(message) {
-  const text = extractTextFromAssistantMessage(message);
-  if (text) return normalizePreviewText(text);
-  return '';
-}
-
-function extractPreviewFromStreamEvent(message) {
-  const event = message?.event;
-  if (!event || typeof event !== 'object') return '';
-
-  if (
-    event.type === 'content_block_delta' &&
-    event.delta?.type === 'text_delta' &&
-    typeof event.delta.text === 'string'
-  ) {
-    return normalizePreviewText(event.delta.text);
-  }
-
-  return '';
-}
-
-function deriveSessionPreview(history) {
-  if (!Array.isArray(history) || history.length === 0) return '';
-
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const entry = history[index];
-    if (!entry || typeof entry !== 'object') continue;
-
-    if (entry.type === 'assistant') {
-      const preview = extractPreviewFromAssistantMessage(entry);
-      if (preview) return preview;
-      continue;
-    }
-
-    if (entry.type === 'stream_event') {
-      const preview = extractPreviewFromStreamEvent(entry);
-      if (preview) return preview;
-      continue;
-    }
-
-    if (entry.type === 'user' && typeof entry.prompt === 'string') {
-      const preview = normalizePreviewText(entry.prompt);
-      if (preview) return preview;
-      continue;
-    }
-
-    if (entry.type === 'error' && typeof entry.message === 'string') {
-      const preview = normalizePreviewText(entry.message);
-      if (preview) return preview;
-    }
-
-    if (entry.type === 'system' && entry.subtype === 'connector_auth' && typeof entry.content === 'string') {
-      const preview = normalizePreviewText(entry.content);
-      if (preview) return preview;
-    }
-  }
-
-  return '';
-}
-
-function derivePendingPlanApproval(history) {
-  if (!Array.isArray(history)) return null;
-
-  let pending = null;
-  for (const entry of history) {
-    if (!entry || entry.type !== 'app_plan_state' || entry.kind !== 'plan') continue;
-
-    if (entry.state === 'awaiting_approval') {
-      pending = {
-        kind: 'plan',
-        originalPrompt: typeof entry.originalPrompt === 'string' ? entry.originalPrompt : '',
-        plan: typeof entry.plan === 'string' ? entry.plan : '',
-        requestedAt: typeof entry.timestamp === 'number' ? entry.timestamp : Date.now(),
-      };
-      continue;
-    }
-
-    if (entry.state === 'approved' || entry.state === 'rejected') {
-      pending = null;
-    }
-  }
-
-  return pending;
-}
-
-function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
-  const nextHistory = Array.isArray(history) ? history : [];
-  if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
-    const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, nextHistory);
-    if (enrichedHistory !== sessionRecord.history) {
-      sessionRecord.history = enrichedHistory;
-      sessionRecord.messageCount = countSessionMessages(enrichedHistory);
-    }
-    sessionRecord.historyLoadedFromSource = true;
-    mossLog('warn', 'session', 'Ignored non-append-only session history refresh', {
-      sessionId: sessionRecord.id,
-      currentMessageCount: countSessionMessages(sessionRecord.history),
-      candidateMessageCount: countSessionMessages(nextHistory),
-      underlyingSessionId: sessionRecord.underlyingSessionId,
-    });
-    return false;
-  }
-  sessionRecord.history = nextHistory;
-  sessionRecord.historyLoadedFromSource = true;
-  sessionRecord.messageCount = countSessionMessages(nextHistory);
-  sessionRecord.pendingPlanApproval = derivePendingPlanApproval(nextHistory);
-
-  const derivedPreview = deriveSessionPreview(nextHistory);
-  if (derivedPreview) {
-    sessionRecord.preview = derivedPreview;
-  }
-
-  if (typeof metadata.sessionId === 'string' && metadata.sessionId.trim()) {
-    sessionRecord.underlyingSessionId = metadata.sessionId.trim();
-  }
-  if (typeof metadata.customTitle === 'string' && metadata.customTitle.trim()) {
-    sessionRecord.title = metadata.customTitle.trim();
-  }
-  if (sessionRecord.agentMode === 'remote-direct') {
-    applyRemoteSessionHistoryTitle(sessionRecord);
-  }
-  if (typeof metadata.remoteWorkspace === 'string' && metadata.remoteWorkspace.trim()) {
-    if (sessionRecord.agentMode === 'remote-direct') {
-      applyRemoteSessionWorkspace(sessionRecord, metadata.remoteWorkspace);
-    } else {
-      sessionRecord.remoteWorkspace = metadata.remoteWorkspace.trim();
-    }
-  }
-  return true;
-}
-
-function applyPendingConversationRewind(sessionRecord, history) {
-  const userMessageId = typeof sessionRecord?.rewindMessageId === 'string'
-    ? sessionRecord.rewindMessageId.trim()
-    : '';
-  if (!userMessageId) return { history, pending: false };
-
-  const truncated = truncateHistoryBeforeUserMessage(history, userMessageId);
-  if (truncated) return { history: truncated, pending: true };
-
-  // The active transcript branch no longer contains the removed message,
-  // which means a post-rewind turn has already been persisted.
-  sessionRecord.rewindMessageId = null;
-  sessionRecord.rewindCreatedAt = null;
-  schedulePersistSession(sessionRecord, true);
-  return { history, pending: false };
-}
-
-async function loadSessionHistoryFromSource(sessionRecord) {
-  if (sessionRecord?.isSubAgent) {
-    sessionRecord.historyLoadedFromSource = true;
-    return Array.isArray(sessionRecord.history) ? sessionRecord.history : [];
-  }
-  if (!sessionRecord?.underlyingSessionId) {
-    if (!(await recoverInterruptedLocalSession(sessionRecord))) {
-      return sessionRecord.history;
-    }
-  }
-
-  if (sessionRecord.agentMode !== 'remote-direct' && await localTranscriptSync.refresh(sessionRecord)) {
-    return sessionRecord.history;
-  }
-
-  if (sessionRecord.runtime) {
-    return sessionRecord.history;
-  }
-
-  if (sessionRecord.historyLoadedFromSource) {
-    return sessionRecord.history;
-  }
-
-  if (sessionRecord.busy && Array.isArray(sessionRecord.history) && sessionRecord.history.length > 0) {
-    return sessionRecord.history;
-  }
-
-  if (sessionRecord.agentMode === 'remote-direct') {
-    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-    let context;
-    try {
-      context = await fetchRemoteDirectSessionContext({
-        serverUrl,
-        authToken,
-        sessionId: sessionRecord.underlyingSessionId,
-      });
-    } catch (error) {
-      if (!isRemoteDirectSessionNotFoundError(error)) {
-        throw error;
-      }
-      mossLog('warn', 'session', 'Remote Direct session missing on server', {
-        sessionId: sessionRecord.id,
-        underlyingSessionId: sessionRecord.underlyingSessionId,
-      });
-      sessionRecord.underlyingSessionId = null;
-      sessionRecord.historyLoadedFromSource = true;
-      sessionRecord.resumeReadOnlyReason = null;
-      schedulePersistSession(sessionRecord, true);
-      emitSessionMeta(sessionRecord);
-      return sessionRecord.history;
-    }
-    const history = Array.isArray(context?.context?.messages) ? context.context.messages : [];
-    syncSessionRecordHistory(sessionRecord, history, {
-      sessionId: typeof context?.session?.sessionId === 'string'
-        ? context.session.sessionId
-        : sessionRecord.underlyingSessionId,
-      customTitle: typeof context?.context?.customTitle === 'string'
-        ? context.context.customTitle
-        : undefined,
-      mode: typeof context?.context?.mode === 'string'
-        ? context.context.mode
-        : undefined,
-      remoteWorkspace: typeof context?.session?.workDir === 'string'
-        ? context.session.workDir
-        : undefined,
-    });
-    schedulePersistSession(sessionRecord);
-    emitSessionMeta(sessionRecord);
-    return sessionRecord.history;
-  }
-
-  const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
-  if (Array.isArray(displayHistory)) {
-    const filtered = applyPendingConversationRewind(sessionRecord, displayHistory);
-    syncSessionRecordHistory(sessionRecord, filtered.history, {
-      allowReplacement: filtered.pending,
-    });
-    schedulePersistSession(sessionRecord);
-    emitSessionMeta(sessionRecord);
-    return sessionRecord.history;
-  }
-
-  const loadClaudeSessionSnapshot = await getLoadClaudeSessionSnapshotFn();
-  const snapshot = await loadClaudeSessionSnapshot(sessionRecord.underlyingSessionId, {
-    sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
-    cwdHint: sessionRecord.workspace,
-  });
-  if (!snapshot) {
-    throw new Error(`无法从 Claude transcript 恢复会话：${sessionRecord.underlyingSessionId}`);
-  }
-
-  const filteredSnapshot = applyPendingConversationRewind(sessionRecord, snapshot.messages);
-  syncSessionRecordHistory(sessionRecord, filteredSnapshot.history, {
-    sessionId: snapshot.metadata.sourceSessionId || snapshot.metadata.sessionId,
-    customTitle: snapshot.metadata.customTitle,
-    mode: snapshot.metadata.mode,
-    allowReplacement: filteredSnapshot.pending,
-  });
-  schedulePersistSession(sessionRecord);
-  emitSessionMeta(sessionRecord);
-  return sessionRecord.history;
-}
-
-async function refreshSessionHistoryFromTranscriptAfterTurn(sessionRecord) {
-  if (!sessionRecord?.underlyingSessionId) return false;
-  if ((sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local') !== 'local') return false;
-
-  const currentScore = historyCompletenessScore(sessionRecord.history);
-  let bestHistory = null;
-  let bestScore = -1;
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const displayHistory = await loadDisplayHistoryFromLocalTranscript(sessionRecord);
-    if (Array.isArray(displayHistory)) {
-      const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, displayHistory);
-      if (enrichedHistory !== sessionRecord.history) {
-        sessionRecord.history = enrichedHistory;
-        sessionRecord.messageCount = countSessionMessages(enrichedHistory);
-      }
-      const filtered = applyPendingConversationRewind(sessionRecord, displayHistory);
-      const candidateHistory = filtered.history;
-      const score = historyCompletenessScore(candidateHistory);
-      if (score > bestScore) {
-        bestHistory = candidateHistory;
-        bestScore = score;
-      }
-      if (score >= currentScore) {
-        break;
-      }
-    }
-    if (attempt < 3) {
-      await sleepMs(75);
-    }
-  }
-
-  if (!Array.isArray(bestHistory)) return false;
-  if (bestScore < currentScore) {
-    return false;
-  }
-
-  if (!syncSessionRecordHistory(sessionRecord, bestHistory)) {
-    return false;
-  }
-  schedulePersistSession(sessionRecord, true);
-  return true;
 }
 
 function pushSessionHistoryEvent(sessionRecord, event, sender = null) {
@@ -8043,482 +5723,7 @@ async function previewAppBuild(buildDir) {
   }
 }
 
-const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
-const WORKFLOW_TASK_EMIT_DELAY_MS = 50;
-const SESSION_TASK_EMIT_DELAY_MS = 150;
-
-function loadPersistedWorkflowTasks(sessionRecord) {
-  const sessionIds = [
-    sessionRecord.id,
-    sessionRecord.runtime?.sessionId,
-    sessionRecord.underlyingSessionId,
-  ].filter((value, index, values) => value && values.indexOf(value) === index);
-  const historyKey = sessionIds.join(':');
-  if (
-    sessionRecord.workflowTaskHistoryKey === historyKey &&
-    Array.isArray(sessionRecord.workflowTaskHistory)
-  ) {
-    return sessionRecord.workflowTaskHistory;
-  }
-  const tasks = [];
-  const projectsRoot = path.join(MOSS_HOME, 'projects');
-  const workflowDirs = new Set();
-  if (sessionRecord.id) {
-    const engineDir = getLocalSessionEngineDir(sessionRecord.id);
-    for (const sessionId of sessionIds) {
-      workflowDirs.add(path.join(engineDir, sessionId, 'workflows'));
-    }
-    // Older runs used the transient engine session id. Scan only this desktop
-    // session's private engine directory so those runs remain visible after a
-    // runtime replacement or app restart.
-    try {
-      for (const entry of fs.readdirSync(engineDir, { withFileTypes: true })) {
-        if (entry.isDirectory()) workflowDirs.add(path.join(engineDir, entry.name, 'workflows'));
-      }
-    } catch {}
-  }
-  let projects = [];
-  try {
-    projects = fs.readdirSync(projectsRoot, { withFileTypes: true });
-  } catch {}
-  for (const project of projects) {
-    if (!project.isDirectory()) continue;
-    for (const sessionId of sessionIds) {
-      workflowDirs.add(path.join(projectsRoot, project.name, sessionId, 'workflows'));
-    }
-  }
-  for (const workflowsDir of workflowDirs) {
-    let files = [];
-    try {
-      files = fs.readdirSync(workflowsDir);
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith('.run.json')) continue;
-      try {
-        const runPath = path.join(workflowsDir, file);
-        if (fs.statSync(runPath).size > 8 * 1024 * 1024) continue;
-        const raw = JSON.parse(fs.readFileSync(runPath, 'utf8'));
-        if (
-          raw?.version !== 3 ||
-          !raw?.taskId ||
-          !raw?.workflowRunId ||
-          raw?.definition?.version !== 3 ||
-          raw?.definition?.kind !== 'state-machine' ||
-          raw?.graph?.version !== 3
-        ) continue;
-        const durableProgress = Array.isArray(raw.workflowProgress)
-          ? raw.workflowProgress
-          : [];
-        const savedLogs = Array.isArray(raw.logs)
-          ? raw.logs
-            .filter((message) => typeof message === 'string')
-            .map((message) => ({ type: 'workflow_log', message }))
-          : [];
-        tasks.push({
-          id: raw.taskId,
-          description: raw.summary || raw.description || '',
-          command: '',
-          kind: 'workflow',
-          status: raw.status || 'completed',
-          isBackgrounded: true,
-          startTime: raw.startTime ?? null,
-          endTime: raw.endTime ?? null,
-          exitCode: null,
-          workflowName: raw.workflowName || null,
-          workflowId: raw.workflowId || null,
-          workflowRevision: Number(raw.workflowRevision) || null,
-          runMode: raw.runMode === 'test' ? 'test' : 'run',
-          workflowRunId: raw.workflowRunId,
-          definition: raw.definition || null,
-          definitionPath: raw.definitionPath || null,
-          args: raw.args,
-          graph: raw.graph || null,
-          mermaid: raw.mermaid || '',
-          graphError: raw.graphError || null,
-          nodeEvents: Array.isArray(raw.workflowNodeEvents) ? raw.workflowNodeEvents : [],
-          progress: [...durableProgress, ...savedLogs],
-          agentCount: Number(raw.agentCount) || 0,
-          totalTokens: Number(raw.totalTokens) || 0,
-          totalToolCalls: Number(raw.totalToolCalls) || 0,
-          result: raw.result,
-          error: raw.error || null,
-        });
-      } catch {}
-    }
-  }
-  sessionRecord.workflowTaskHistoryKey = historyKey;
-  sessionRecord.workflowTaskHistory = tasks;
-  return tasks;
-}
-
-function snapshotBackgroundTasks(sessionRecord) {
-  try {
-    const state = sessionRecord.runtime?.getAppState?.();
-    const liveTasks = state?.tasks ? Object.values(state.tasks)
-      .filter((t) => t && (t.type === 'local_bash' || t.type === 'local_workflow'))
-      .map((t) => {
-        if (t.type === 'local_workflow') {
-          return {
-            id: t.id,
-            description: t.summary || t.description || '',
-            command: '',
-            kind: 'workflow',
-            status: t.status,
-            isBackgrounded: true,
-            startTime: t.startTime ?? null,
-            endTime: t.endTime ?? null,
-            exitCode: null,
-            workflowName: t.workflowName || null,
-            workflowId: t.workflowId || null,
-            workflowRevision: Number(t.workflowRevision) || null,
-            runMode: t.runMode === 'test' ? 'test' : 'run',
-            workflowRunId: t.workflowRunId || null,
-            definition: t.definition || null,
-            definitionPath: t.definitionPath || null,
-            args: t.args,
-            graph: t.graph || null,
-            mermaid: t.mermaid || '',
-            graphError: t.graphError || null,
-            nodeEvents: Array.isArray(t.workflowNodeEvents) ? t.workflowNodeEvents : [],
-            progress: Array.isArray(t.workflowProgress) ? t.workflowProgress : [],
-            agentCount: Number(t.agentCount) || 0,
-            totalTokens: Number(t.totalTokens) || 0,
-            totalToolCalls: Number(t.totalToolCalls) || 0,
-            result: t.result,
-            error: t.error || null,
-          };
-        }
-        return {
-          id: t.id,
-          description: t.description || '',
-          command: typeof t.command === 'string' ? t.command : '',
-          kind: t.kind === 'monitor' ? 'monitor' : 'shell',
-          status: t.status,
-          isBackgrounded: t.isBackgrounded !== false,
-          startTime: t.startTime ?? null,
-          endTime: t.endTime ?? null,
-          exitCode: t.result?.code ?? null,
-        };
-      }) : [];
-    const taskKey = (task) => task.kind === 'workflow' && task.workflowRunId
-      ? `workflow:${task.workflowRunId}`
-      : `task:${task.id}`;
-    const merged = new Map(
-      loadPersistedWorkflowTasks(sessionRecord).map((task) => [taskKey(task), task]),
-    );
-    // A resumed workflow keeps its run id but gets a new task id. Keying by
-    // run id lets the live retry replace the prior snapshot instead of showing
-    // both. It also refreshes the in-memory history before a runtime restart.
-    for (const task of liveTasks) merged.set(taskKey(task), task);
-    const snapshot = [...merged.values()].sort(
-      (left, right) => (left.startTime ?? 0) - (right.startTime ?? 0),
-    );
-    sessionRecord.workflowTaskHistory = snapshot.filter((task) => (
-      task.kind === 'workflow' && task.status !== 'running' && task.status !== 'pending'
-    ));
-    return snapshot;
-  } catch {
-    return [];
-  }
-}
-
-function attachBackgroundTaskWatcher(sessionRecord) {
-  const runtime = sessionRecord?.runtime;
-  if (!runtime || typeof runtime.subscribe !== 'function') return;
-  if (sessionRecord.backgroundTaskWatcherRuntime === runtime) return;
-  sessionRecord.backgroundTaskUnsubscribe?.();
-
-  let lastJson = '';
-  let timer = null;
-  let runningWorkflowTaskIds = new Set();
-  const emitSnapshot = () => {
-    timer = null;
-    if (sessionRecord.runtime !== runtime) return;
-    const tasks = snapshotBackgroundTasks(sessionRecord);
-    const json = JSON.stringify(tasks);
-    if (json === lastJson) return;
-    lastJson = json;
-    emitToRenderer('agent:background-tasks', { sessionId: sessionRecord.id, tasks });
-  };
-  const unsubscribe = runtime.subscribe(() => {
-    scheduleSubAgentSessionSync(sessionRecord);
-    const nextRunningWorkflowTaskIds = new Set(
-      Object.values(runtime.getAppState?.()?.tasks || {})
-        .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')
-        .map((task) => task.id),
-    );
-    const workflowLifecycleChanged =
-      nextRunningWorkflowTaskIds.size !== runningWorkflowTaskIds.size ||
-      [...nextRunningWorkflowTaskIds].some((taskId) => !runningWorkflowTaskIds.has(taskId));
-    runningWorkflowTaskIds = nextRunningWorkflowTaskIds;
-    if (workflowLifecycleChanged) {
-      if (timer) clearTimeout(timer);
-      emitSnapshot();
-      return;
-    }
-    if (!timer) {
-      timer = setTimeout(
-        emitSnapshot,
-        runningWorkflowTaskIds.size > 0
-          ? WORKFLOW_TASK_EMIT_DELAY_MS
-          : BACKGROUND_TASK_EMIT_DELAY_MS,
-      );
-    }
-  });
-  sessionRecord.backgroundTaskWatcherRuntime = runtime;
-  sessionRecord.backgroundTaskUnsubscribe = () => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    try {
-      unsubscribe?.();
-    } catch {}
-    sessionRecord.backgroundTaskWatcherRuntime = null;
-    sessionRecord.backgroundTaskUnsubscribe = null;
-  };
-}
-
-function sanitizeTaskPathComponent(input) {
-  return String(input || '').replace(/[^a-zA-Z0-9_-]/g, '-');
-}
-
-function resolveTaskScopeOwnerSession(sessionRecord) {
-  // Sub-agents inherit their root session's taskScope, so task files live under
-  // the owning root session id. Walk up parentSessionId to that root.
-  let current = sessionRecord;
-  const seen = new Set();
-  while (current?.parentSessionId && !seen.has(current.id)) {
-    seen.add(current.id);
-    const parent =
-      sessions.get(current.parentSessionId) ||
-      subAgentSessions.get(current.parentSessionId);
-    if (!parent) break;
-    current = parent;
-  }
-  return current;
-}
-
-function getSessionTaskListId(sessionRecord) {
-  try {
-    const runtimeTaskListId = sessionRecord.runtime?.getTaskListId?.();
-    if (typeof runtimeTaskListId === 'string' && runtimeTaskListId.trim()) {
-      return runtimeTaskListId.trim();
-    }
-  } catch {}
-  // Tasks are keyed by taskScope (buildClaudeSessionConfig), derived from the
-  // moss session id / project id — never underlyingSessionId. Project sessions
-  // are session-scoped (`project-<projectId>__session-<rootSessionId>`) so
-  // sibling sessions don't share one checklist. Mirror the engine's
-  // getTaskListIdForScope so reads without a live runtime hit the same directory
-  // the writes used.
-  const owner = resolveTaskScopeOwnerSession(sessionRecord);
-  if (owner.projectId) {
-    return `project-${owner.projectId}__session-${owner.id}`;
-  }
-  return owner.id;
-}
-
-function getSessionTasksDir(sessionRecord) {
-  return path.join(
-    MOSS_HOME,
-    'tasks',
-    sanitizeTaskPathComponent(getSessionTaskListId(sessionRecord)),
-  );
-}
-
-function snapshotSessionTasks(sessionRecord) {
-  if (sessionRecord.agentMode === 'remote-direct') {
-    return snapshotRemoteSessionTasks(sessionRecord);
-  }
-  const dir = getSessionTasksDir(sessionRecord);
-  let files = [];
-  try {
-    files = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-
-  const tasks = [];
-  for (const file of files) {
-    if (!file.endsWith('.json') || file.startsWith('.')) continue;
-    const filePath = path.join(dir, file);
-    try {
-      const rawTask = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      if (rawTask?.metadata?._internal) continue;
-      const task = normalizeSessionTask(rawTask);
-      if (task) tasks.push(task);
-    } catch {}
-  }
-  return tasks.sort(compareTaskIds);
-}
-
-function attachSessionTaskWatcher(sessionRecord) {
-  if (sessionRecord?.agentMode === 'remote-direct') return;
-  const runtime = sessionRecord?.runtime;
-  if (!runtime || typeof runtime.subscribe !== 'function') return;
-  if (sessionRecord.sessionTaskWatcherRuntime === runtime) return;
-  sessionRecord.sessionTaskUnsubscribe?.();
-
-  let lastJson = JSON.stringify(snapshotSessionTasks(sessionRecord));
-  let watchedDir = null;
-  let fsWatcher = null;
-  let timer = null;
-
-  const scheduleSnapshot = () => {
-    if (!timer) {
-      timer = setTimeout(emitSnapshot, SESSION_TASK_EMIT_DELAY_MS);
-    }
-  };
-
-  const syncFileWatcher = () => {
-    const nextDir = getSessionTasksDir(sessionRecord);
-    if (nextDir === watchedDir && fsWatcher) return;
-    try {
-      fsWatcher?.close();
-    } catch {}
-    fsWatcher = null;
-    watchedDir = nextDir;
-    if (!fs.existsSync(nextDir)) return;
-    try {
-      fsWatcher = fs.watch(nextDir, scheduleSnapshot);
-      fsWatcher.unref?.();
-    } catch {
-      fsWatcher = null;
-    }
-  };
-
-  function emitSnapshot() {
-    timer = null;
-    if (sessionRecord.runtime !== runtime) return;
-    syncFileWatcher();
-    const tasks = snapshotSessionTasks(sessionRecord);
-    const json = JSON.stringify(tasks);
-    if (json === lastJson) return;
-    lastJson = json;
-    emitToRenderer('agent:state', { sessionId: sessionRecord.id, tasks });
-  }
-
-  const unsubscribe = runtime.subscribe(scheduleSnapshot);
-  syncFileWatcher();
-  sessionRecord.sessionTaskWatcherRuntime = runtime;
-  sessionRecord.sessionTaskUnsubscribe = () => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    try {
-      fsWatcher?.close();
-    } catch {}
-    fsWatcher = null;
-    watchedDir = null;
-    try {
-      unsubscribe?.();
-    } catch {}
-    sessionRecord.sessionTaskWatcherRuntime = null;
-    sessionRecord.sessionTaskUnsubscribe = null;
-  };
-}
-
-// Task output files live at <claudeTmp>/<sanitized-cwd>/<engineSessionId>/tasks/<taskId>.output.
-// The sanitized-cwd segment is version-dependent, so locate it by scanning the
-// project dirs for the known engine session id instead of reconstructing it.
-const taskOutputPathCache = new Map();
-
-function getClaudeTempDirForLookup() {
-  if (process.platform === 'win32') {
-    return path.join(process.env.CLAUDE_CODE_TMPDIR || os.tmpdir(), 'claude');
-  }
-  let base = process.env.CLAUDE_CODE_TMPDIR || '/tmp';
-  try {
-    base = fs.realpathSync(base);
-  } catch {}
-  return path.join(base, `claude-${process.getuid?.() ?? 0}`);
-}
-
-function findTaskOutputPath(sessionRecord, taskId) {
-  if (!/^[\w.-]+$/.test(String(taskId))) return null;
-  const cached = taskOutputPathCache.get(taskId);
-  if (cached && fs.existsSync(cached)) return cached;
-
-  const engineSessionIds = [
-    sessionRecord.runtime?.sessionId,
-    sessionRecord.underlyingSessionId,
-  ].filter(Boolean);
-  const claudeTmp = getClaudeTempDirForLookup();
-  let projectDirs = [];
-  try {
-    projectDirs = fs.readdirSync(claudeTmp);
-  } catch {
-    return null;
-  }
-  for (const dir of projectDirs) {
-    for (const sid of engineSessionIds) {
-      const candidate = path.join(claudeTmp, dir, sid, 'tasks', `${taskId}.output`);
-      if (fs.existsSync(candidate)) {
-        taskOutputPathCache.set(taskId, candidate);
-        return candidate;
-      }
-    }
-  }
-  return null;
-}
-
-async function readTaskOutputTail(filePath, maxBytes = 16 * 1024) {
-  const handle = await fsp.open(filePath, 'r');
-  try {
-    const { size } = await handle.stat();
-    const start = Math.max(0, size - maxBytes);
-    const length = size - start;
-    if (length === 0) return { content: '', truncated: false, size };
-    const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, start);
-    return { content: buffer.toString('utf8'), truncated: start > 0, size };
-  } finally {
-    await handle.close();
-  }
-}
-
-ipcMain.handle('agent:list-background-tasks', async (_event, { sessionId }) => {
-  const sessionRecord = getSessionRecord(sessionId);
-  return { tasks: snapshotBackgroundTasks(sessionRecord) };
-});
-
-ipcMain.handle('agent:task-output', async (_event, { sessionId, taskId, maxBytes }) => {
-  const sessionRecord = getSessionRecord(sessionId);
-  const filePath = findTaskOutputPath(sessionRecord, taskId);
-  if (!filePath) return { content: '', truncated: false };
-  try {
-    return await readTaskOutputTail(filePath, Number(maxBytes) > 0 ? Number(maxBytes) : undefined);
-  } catch {
-    return { content: '', truncated: false };
-  }
-});
-
-ipcMain.handle('agent:kill-task', async (_event, { sessionId, taskId }) => {
-  const sessionRecord = getSessionRecord(sessionId);
-  const state = sessionRecord.runtime?.getAppState?.();
-  const task = state?.tasks?.[taskId];
-  if (!task || task.status !== 'running') {
-    return { ok: false, error: 'Task is not running.' };
-  }
-  try {
-    if (typeof sessionRecord.runtime?.stopTask === 'function') {
-      await sessionRecord.runtime.stopTask(taskId);
-      return { ok: true };
-    }
-    if (task.type === 'local_workflow') {
-      task.abortController?.abort(new Error('Workflow stopped by user'));
-      return { ok: true };
-    }
-    if (task.type !== 'local_bash') {
-      return { ok: false, error: 'Task cannot be stopped here.' };
-    }
-    task.shellCommand?.kill();
-    task.shellCommand?.cleanup?.();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err?.message || err) };
-  }
-});
+sessionTaskService.registerIpc(ipcMain);
 
 function disposeSessionRuntime(sessionRecord) {
   if (sessionRecord?.runtime) {
@@ -8535,46 +5740,6 @@ function disposeSessionRuntime(sessionRecord) {
   }
 }
 
-function ensureInsideRoot(rootPath, targetPath) {
-  const resolvedRoot = path.resolve(rootPath);
-  const resolvedTarget = path.resolve(targetPath);
-  const relative = path.relative(resolvedRoot, resolvedTarget);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Path is outside the active workspace.');
-  }
-  return resolvedTarget;
-}
-
-function getSessionWorkspaceRoot(sessionRecord) {
-  const candidate = sessionRecord.agentMode === 'remote-direct'
-    ? sessionRecord.remoteWorkspace
-    : sessionRecord.workspace;
-  return typeof candidate === 'string' && candidate.trim()
-    ? path.resolve(candidate.trim())
-    : null;
-}
-
-function applyRemoteSessionWorkspace(sessionRecord, workspace) {
-  if (typeof workspace !== 'string' || !workspace.trim()) {
-    return false;
-  }
-  const normalized = workspace.trim();
-  const changed =
-    sessionRecord.workspace !== normalized ||
-    sessionRecord.remoteWorkspace !== normalized;
-  sessionRecord.workspace = normalized;
-  sessionRecord.remoteWorkspace = normalized;
-  return changed;
-}
-
-function isAccessibleDirectory(dirPath) {
-  if (!dirPath) return false;
-  try {
-    return fs.statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 function createSessionRecord({
   workspace,
@@ -8867,18 +6032,6 @@ function getLocalAuditSessionSnapshots() {
         history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
       };
     });
-}
-
-function startLocalAuditScanner() {
-  if (localAuditScanTimer) clearInterval(localAuditScanTimer);
-  localAuditScanTimer = setInterval(() => {
-    if (!localAuditService || localAuditService.isRunning()) return;
-    void localAuditService.runIncrementalAudit().catch((error) => {
-      mossLog('warn', 'audit', 'Automatic incremental audit failed', {
-        error: error?.message || String(error),
-      });
-    });
-  }, LOCAL_AUDIT_SCAN_INTERVAL_MS);
 }
 
 function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
@@ -9328,146 +6481,6 @@ async function shutdownSessionAgentTeam(sessionRecord) {
   });
 }
 
-function closeWorkspaceWatcher(sessionRecord) {
-  if (!sessionRecord.workspaceWatcher) return;
-  sessionRecord.workspaceWatcher.closed = true;
-  for (const watcher of sessionRecord.workspaceWatcher.watchers.values()) {
-    try {
-      watcher.close();
-    } catch {}
-  }
-  sessionRecord.workspaceWatcher.watchers.clear();
-  sessionRecord.workspaceWatcher = null;
-  if (sessionRecord.workspaceWatcherSyncTimer) {
-    clearTimeout(sessionRecord.workspaceWatcherSyncTimer);
-    sessionRecord.workspaceWatcherSyncTimer = null;
-  }
-  if (sessionRecord.persistTimer) {
-    clearTimeout(sessionRecord.persistTimer);
-    sessionRecord.persistTimer = null;
-  }
-}
-
-async function collectDirectories(rootPath, limit = WORKSPACE_WATCH_DIRECTORY_LIMIT) {
-  const directories = [];
-  const pending = [rootPath];
-  let truncated = false;
-  while (pending.length > 0) {
-    if (directories.length >= limit) {
-      truncated = true;
-      break;
-    }
-    const current = pending.pop();
-    directories.push(current);
-    let dirents = [];
-    try {
-      dirents = await fsp.readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of dirents) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name.startsWith('.')) continue;
-      pending.push(path.join(current, entry.name));
-    }
-  }
-  return {
-    directories,
-    truncated,
-  };
-}
-
-function emitWorkspaceChanged(sessionRecord, eventType, changedPath) {
-  const workspace = getSessionWorkspaceRoot(sessionRecord) || sessionRecord.workspace;
-  emitToRenderer('workspace:changed', {
-    sessionId: sessionRecord.id,
-    workspace,
-    eventType,
-    path: changedPath,
-    timestamp: Date.now(),
-  });
-}
-
-async function syncWorkspaceWatcher(sessionRecord) {
-  const watcherState = sessionRecord.workspaceWatcher;
-  if (!watcherState || watcherState.closed) return;
-
-  const root = getSessionWorkspaceRoot(sessionRecord);
-  if (!isAccessibleDirectory(root)) return;
-
-  // Modern Electron supports recursive watches on macOS, Windows and Linux.
-  // A single recursive watch also covers newly created subdirectories and does
-  // not silently drop nested changes when a workspace exceeds 512 directories.
-  if (watcherState.recursiveRoot === root && watcherState.watchers.has(root)) return;
-  if (!watcherState.recursiveUnavailable) {
-    try {
-      const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
-        if (watcherState.closed) return;
-        emitWorkspaceChanged(sessionRecord, eventType, filename ? path.join(root, filename.toString()) : root);
-      });
-      watcher.on('error', () => {
-        watcher.close();
-        if (watcherState.closed) return;
-        watcherState.watchers.delete(root);
-        watcherState.recursiveRoot = null;
-        watcherState.recursiveUnavailable = true;
-        void syncWorkspaceWatcher(sessionRecord);
-      });
-      watcher.unref?.();
-      for (const previous of watcherState.watchers.values()) previous.close();
-      watcherState.watchers.clear();
-      watcherState.watchers.set(root, watcher);
-      watcherState.recursiveRoot = root;
-      return;
-    } catch {
-      watcherState.recursiveUnavailable = true;
-    }
-  }
-
-  const { directories, truncated } = await collectDirectories(root);
-  if (watcherState.closed) return;
-  if (truncated && !watcherState.truncated) {
-    mossLog('warn', 'workspace', 'Workspace watcher reached directory limit', {
-      sessionId: sessionRecord.id,
-      root,
-      limit: WORKSPACE_WATCH_DIRECTORY_LIMIT,
-    });
-  }
-  watcherState.truncated = truncated;
-  const nextPaths = new Set(directories);
-
-  for (const watchedPath of watcherState.watchers.keys()) {
-    if (nextPaths.has(watchedPath)) continue;
-    try {
-      watcherState.watchers.get(watchedPath)?.close();
-    } catch {}
-    watcherState.watchers.delete(watchedPath);
-  }
-
-  for (const dirPath of directories) {
-    if (watcherState.watchers.has(dirPath)) continue;
-    try {
-      const watcher = fs.watch(dirPath, (eventType, filename) => {
-        if (watcherState.closed) return;
-        const changedPath = filename ? path.join(dirPath, filename.toString()) : dirPath;
-        emitWorkspaceChanged(sessionRecord, eventType, changedPath);
-        if (sessionRecord.workspaceWatcherSyncTimer) {
-          clearTimeout(sessionRecord.workspaceWatcherSyncTimer);
-        }
-        sessionRecord.workspaceWatcherSyncTimer = setTimeout(() => {
-          sessionRecord.workspaceWatcherSyncTimer = null;
-          void syncWorkspaceWatcher(sessionRecord);
-        }, 150);
-      });
-      watcher.on('error', () => {
-        watcher.close();
-        if (watcherState.watchers.get(dirPath) === watcher) watcherState.watchers.delete(dirPath);
-      });
-      watcher.unref?.();
-      watcherState.watchers.set(dirPath, watcher);
-    } catch {}
-  }
-}
 
 /**
  * Handler for MossTool app events from agent runtime.
@@ -10055,15 +7068,6 @@ function initializeAgentMail() {
   agentMailPoller.start();
 }
 
-async function startWorkspaceWatcher(sessionRecord) {
-  closeWorkspaceWatcher(sessionRecord);
-  sessionRecord.workspaceWatcher = {
-    closed: false,
-    truncated: false,
-    watchers: new Map(),
-  };
-  await syncWorkspaceWatcher(sessionRecord);
-}
 
 async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
   if (!hasFile(sdkPath)) {
@@ -10554,349 +7558,6 @@ function initializeAutoUpdater() {
   Menu.setApplicationMenu(menu);
 }
 
-async function ensureRemoteSessionConnection(sessionRecord) {
-  if (sessionRecord.agentMode !== 'remote-direct') {
-    throw new Error('Session is not using Remote Direct mode.');
-  }
-  const runtime = await ensureRuntime(sessionRecord);
-  if (typeof runtime?.ensureSession !== 'function') {
-    throw new Error('Remote session runtime is not ready.');
-  }
-  const prepared = await runtime.ensureSession();
-  if (!prepared?.config?.sessionId) {
-    throw new Error('Remote session did not provide a session id.');
-  }
-  return prepared.config;
-}
-
-function getRemoteWorkspacePreviewUrls(sessionRecord, remoteFile) {
-  const relativePath = String(remoteFile?.relativePath || '').replace(/\\/g, '/');
-  if (!relativePath) return {};
-  const directory = path.posix.dirname(relativePath);
-  return {
-    remoteContentUrl: toRemoteWorkspaceUrl(sessionRecord.id, relativePath),
-    previewBaseUrl: toRemoteWorkspaceUrl(
-      sessionRecord.id,
-      directory === '.' ? '' : directory,
-      { directory: true },
-    ),
-  };
-}
-
-function decorateRemoteWorkspaceFile(sessionRecord, remoteFile) {
-  return {
-    ...remoteFile,
-    metadata: {
-      ...(remoteFile?.metadata || {}),
-      ...getRemoteWorkspacePreviewUrls(sessionRecord, remoteFile),
-      remote: true,
-    },
-  };
-}
-
-async function fetchRemoteWorkspaceProtocolContent(sessionRecord, filePath, request) {
-  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-  const range = request.headers.get('range');
-  return fetchRemoteDirectWorkspaceContent({
-    serverUrl,
-    authToken,
-    sessionId: sessionRecord.underlyingSessionId,
-    filePath,
-    headers: range ? { range } : {},
-  });
-}
-
-function pruneRemoteAttachmentSources() {
-  while (
-    remoteAttachmentSources.size > 100 ||
-    remoteAttachmentSourceBytes > MAX_REMOTE_ATTACHMENT_SOURCE_BYTES
-  ) {
-    const key = remoteAttachmentSources.keys().next().value;
-    if (typeof key !== 'string') break;
-    const source = remoteAttachmentSources.get(key);
-    remoteAttachmentSources.delete(key);
-    remoteAttachmentSourceBytes -= source?.data?.byteLength || 0;
-  }
-}
-
-async function uploadFileToRemoteSessionWorkspace(sessionRecord, {
-  sourcePath,
-  fileName,
-  data,
-}) {
-  const config = await ensureRemoteSessionConnection(sessionRecord);
-  const remoteFile = data === undefined
-    ? await uploadRemoteDirectWorkspaceFile({
-        ...config,
-        sourcePath,
-        fileName: fileName || path.basename(sourcePath),
-      })
-    : await uploadRemoteDirectWorkspaceData({
-        ...config,
-        fileName,
-        data,
-      });
-  const displayPath = toRemoteWorkspaceUrl(sessionRecord.id, remoteFile.relativePath);
-  rememberRemoteAttachmentSource(sessionRecord, displayPath, data === undefined
-    ? { sourcePath }
-    : { data: Buffer.isBuffer(data) ? data : Buffer.from(data || []) });
-  pruneRemoteAttachmentSources();
-  emitWorkspaceChanged(sessionRecord, 'upload', remoteFile.path);
-  return {
-    ...remoteFile,
-    path: displayPath,
-    remotePath: remoteFile.path,
-  };
-}
-
-async function writeWorkspaceFile(sessionRecord, filePath, content) {
-  assertWorkspaceVersionIdle(sessionRecord);
-  if (sessionRecord.agentMode === 'remote-direct') {
-    const config = await ensureRemoteSessionConnection(sessionRecord);
-    const remoteFile = await writeRemoteDirectWorkspaceFile({
-      ...config,
-      filePath,
-      content,
-    });
-    emitWorkspaceChanged(sessionRecord, 'change', remoteFile.path);
-    return decorateRemoteWorkspaceFile(sessionRecord, remoteFile);
-  }
-  const targetPath = ensureInsideRoot(sessionRecord.workspace, filePath);
-  await fsp.writeFile(targetPath, String(content ?? ''), 'utf8');
-  return readWorkspaceFile(sessionRecord, targetPath);
-}
-
-async function listDirectoryEntries(sessionRecord, dirPath) {
-  if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
-    try {
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      return await fetchRemoteDirectWorkspaceDir({
-        serverUrl,
-        authToken,
-        sessionId: sessionRecord.underlyingSessionId,
-        dirPath,
-      });
-    } catch (error) {
-      mossLog('warn', 'workspace', 'Remote workspace list failed', {
-        sessionId: sessionRecord.id,
-        underlyingSessionId: sessionRecord.underlyingSessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  const root = getSessionWorkspaceRoot(sessionRecord);
-  if (sessionRecord.agentMode === 'remote-direct' && !isAccessibleDirectory(root)) {
-    const remoteRoot = sessionRecord.remoteWorkspace || '(remote workspace)';
-    return {
-      root: remoteRoot,
-      path: remoteRoot,
-      relativePath: '.',
-      items: [],
-      remote: true,
-      message: 'Remote Direct mode does not support browsing the remote workspace from this UI yet.',
-    };
-  }
-
-  if (!root) {
-    throw new Error('Session workspace is required.');
-  }
-  const targetPath = ensureInsideRoot(root, dirPath || root);
-  const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
-
-  const items = dirents
-    .filter((entry) => !entry.name.startsWith('.'))
-    .map((entry) => {
-      const fullPath = path.join(targetPath, entry.name);
-      return {
-        name: entry.name,
-        path: fullPath,
-        relativePath: path.relative(root, fullPath) || entry.name,
-        type: entry.isDirectory() ? 'directory' : 'file',
-      };
-    })
-    .sort((a, b) => {
-      if (a.type !== b.type) {
-        return a.type === 'directory' ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-  return {
-    root,
-    path: targetPath,
-    relativePath: path.relative(root, targetPath) || '.',
-    items,
-  };
-}
-
-async function readWorkspaceTextPrefix(targetPath, size) {
-  const handle = await fsp.open(targetPath, 'r');
-  try {
-    const buffer = Buffer.alloc(Math.min(size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readWorkspaceFile(sessionRecord, filePath) {
-  if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
-    try {
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-      const remoteFile = await fetchRemoteDirectWorkspaceFile({
-        serverUrl,
-        authToken,
-        sessionId: sessionRecord.underlyingSessionId,
-        filePath,
-      });
-      const decoratedRemoteFile = decorateRemoteWorkspaceFile(sessionRecord, remoteFile);
-      const metadata = decoratedRemoteFile.metadata;
-      if (isBinaryPreviewContentType(remoteFile.contentType)) {
-        if (remoteFile.contentType === 'image' && remoteFile.size > MAX_IMAGE_BASE64_BYTES) {
-          return {
-            ...decoratedRemoteFile,
-            contentType: 'unsupported',
-            language: 'binary',
-            metadata: { ...metadata, previewReason: 'too-large' },
-            content: `Image is too large to preview (${remoteFile.size} bytes).`,
-          };
-        }
-        const sourcePath = String(remoteFile.path || filePath);
-        const rawExtension = path.extname(sourcePath);
-        const extension = /^\.[a-z0-9]{1,12}$/i.test(rawExtension) ? rawExtension.toLowerCase() : '';
-        const cacheKey = createHash('sha256')
-          .update(`${sessionRecord.underlyingSessionId}\0${filePath}\0${remoteFile.size || 0}\0${metadata.modifiedAt || 0}`)
-          .digest('hex');
-        const localPreviewPath = path.join(REMOTE_PREVIEW_CACHE_DIR, `${cacheKey}${extension}`);
-        let cached = false;
-        try {
-          const localStat = await fsp.stat(localPreviewPath);
-          cached = localStat.isFile() && localStat.size === remoteFile.size;
-        } catch {}
-        if (!cached) {
-          await downloadRemoteDirectWorkspaceFile({
-            serverUrl,
-            authToken,
-            sessionId: sessionRecord.underlyingSessionId,
-            filePath,
-            destinationPath: localPreviewPath,
-          });
-        }
-        metadata.localPreviewPath = localPreviewPath;
-      }
-      return { ...decoratedRemoteFile, metadata };
-    } catch (error) {
-      mossLog('warn', 'workspace', 'Remote workspace read failed', {
-        sessionId: sessionRecord.id,
-        underlyingSessionId: sessionRecord.underlyingSessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw new Error(
-        `Failed to read remote workspace file: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-  }
-
-  const root = getSessionWorkspaceRoot(sessionRecord);
-  if (sessionRecord.agentMode === 'remote-direct' && !isAccessibleDirectory(root)) {
-    throw new Error('Remote Direct mode does not support reading remote workspace files from this UI yet.');
-  }
-  if (!root) {
-    throw new Error('Session workspace is required.');
-  }
-
-  const targetPath = ensureInsideRoot(root, filePath);
-  const [realRoot, realTargetPath] = await Promise.all([
-    fsp.realpath(root),
-    fsp.realpath(targetPath),
-  ]);
-  ensureInsideRoot(realRoot, realTargetPath);
-  allowMediaRoot(realRoot);
-  const stat = await fsp.stat(targetPath);
-  if (!stat.isFile()) {
-    throw new Error('Target is not a file.');
-  }
-  const previewInfo = getWorkspaceFilePreviewInfo(targetPath);
-  const baseResult = {
-    path: targetPath,
-    relativePath: path.relative(root, targetPath),
-    size: stat.size,
-    truncated: false,
-    contentType: previewInfo.contentType,
-    language: previewInfo.language,
-    mimeType: previewInfo.mimeType,
-    metadata: {
-      modifiedAt: stat.mtimeMs,
-      ...(previewInfo.previewEngine ? { previewEngine: previewInfo.previewEngine } : {}),
-      ...(previewInfo.previewFamily ? { previewFamily: previewInfo.previewFamily } : {}),
-      ...(previewInfo.previewCapability ? { previewCapability: previewInfo.previewCapability } : {}),
-      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false ? { ofvText: true } : {}),
-    },
-  };
-
-  if (previewInfo.contentType === 'image' && stat.size > MAX_IMAGE_BASE64_BYTES) {
-    return {
-      ...baseResult,
-      contentType: 'unsupported',
-      language: 'binary',
-      metadata: {
-        ...baseResult.metadata,
-        previewEditable: false,
-        previewSaveable: false,
-        previewReason: 'too-large',
-      },
-      content: `Image is too large to preview (${stat.size} bytes).`,
-    };
-  }
-
-  const isBinaryPreview = typeof previewInfo.binary === 'boolean'
-    ? previewInfo.binary
-    : isBinaryPreviewContentType(previewInfo.contentType);
-  if (isBinaryPreview) {
-    return {
-      ...baseResult,
-      metadata: {
-        ...baseResult.metadata,
-        previewEditable: false,
-        previewSaveable: false,
-      },
-      content: '',
-    };
-  }
-
-  const buffer = await readWorkspaceTextPrefix(targetPath, stat.size);
-  if (isLikelyBinaryBuffer(buffer)) {
-    return {
-      ...baseResult,
-      contentType: 'unsupported',
-      language: 'binary',
-      metadata: {
-        ...baseResult.metadata,
-        previewEditable: false,
-        previewSaveable: false,
-        previewReason: 'binary',
-      },
-      content: 'Binary file preview is not supported in this app.',
-    };
-  }
-
-  return {
-    ...baseResult,
-    truncated: stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
-    metadata: stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES
-      ? {
-          ...baseResult.metadata,
-          previewEditable: false,
-          previewSaveable: false,
-          previewReason: 'truncated',
-        }
-      : baseResult.metadata,
-    content: decodeWorkspaceTextBuffer(buffer, stat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES),
-  };
-}
 const {
   hostId: desktopCronHostId,
   removeTasksForSession: removeCronTasksForSession,
@@ -11050,14 +7711,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
     getSessions: () => [...sessions.values(), ...subAgentSessions.values()], log: error => mossLog('warn', 'trace', error.message) });
+  appAuditHost = new AppAuditHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime,
+    getSessions: getLocalAuditSessionSnapshots,
+    openSession: input => emitToRenderer('app:open-session', input),
+    notify: (input, options) => appNotificationBroker.create(input, options),
+  });
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
-    beforeAppDeactivation: appId => appTraceHost.beforeDeactivation(appId),
+    beforeAppDeactivation: async appId => {
+      await appTraceHost.beforeDeactivation(appId);
+      await appAuditHost.beforeDeactivation(appId);
+    },
     hostProtocols: [
       createTraceProtocolDefinition(),
+      createAuditProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
       createRuntimesProtocolDefinition(),
       createMcpProtocolDefinition(),
@@ -11068,6 +7738,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      [AUDIT_PROTOCOL]: Object.fromEntries(Object.keys(createAuditProtocolDefinition().methods).map(method => [
+        method, (input, context) => appAuditHost.handle(method, input, context),
+      ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeStatus }),
       [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
@@ -11099,6 +7772,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
+      if (event.appId === 'moss.audit' && (appLifecycleChanged || event.type === 'instance-changed')) appAuditHost?.refresh();
       if (event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
       }
@@ -11235,13 +7909,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     syncSessions: syncRemoteDirectSessionsFromServer,
     findSession: findRemoteDirectSessionRecord,
   });
-  localAuditService = createLocalAuditService({
-    dbPath: AUDIT_DB_PATH,
-    getLocalSessions: getLocalAuditSessionSnapshots,
-    onChanged: (payload) => emitToRenderer('audit:changed', payload),
-  });
-  registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
-  startLocalAuditScanner();
   startMossCronScheduler();
   await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
@@ -11378,9 +8045,7 @@ function shutdownDesktop() {
     await attempt(() => { agentTeamsService?.stop(); agentTeamsService = null; });
     await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
-    if (localAuditScanTimer) clearInterval(localAuditScanTimer);
-    localAuditScanTimer = null;
-    await attempt(() => { localAuditService?.close?.(); localAuditService = null; });
+    await attempt(async () => { await appAuditHost?.close(); });
     for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
       await attempt(() => {
         schedulePersistSession(record, true);
@@ -12543,10 +9208,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     }
 
     const revertedHistory = sessionRecord.history.slice(nextHistory.length);
-    if (!localAuditService) {
-      throw new Error('本地审计服务尚未就绪，不能执行整轮撤销。');
-    }
-    const auditEvent = localAuditService.recordEvent({
+    const auditEvent = await appAuditHost?.recordEvent({
       sessionId: sessionRecord.id,
       eventType: 'turn_reverted',
       userMessageId: targetId,
@@ -12570,13 +9232,10 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
       removedRuntimeMessages = await runtime.rewindConversation(targetId);
     } catch (error) {
       try {
-        localAuditService.updateEvent({
-          id: auditEvent.id,
-          details: {
-            status: 'failed',
-            expectedFiles: preview.filesChanged || [],
-            error: error instanceof Error ? error.message : String(error),
-          },
+        await appAuditHost?.updateEvent(auditEvent, {
+          status: 'failed',
+          expectedFiles: preview.filesChanged || [],
+          error: error instanceof Error ? error.message : String(error),
         });
       } catch {}
       throw error;
@@ -12590,19 +9249,16 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     sessionRecord.preview = deriveSessionPreview(nextHistory);
     schedulePersistSession(sessionRecord, true);
 
-    let auditRecorded = true;
+    let auditRecorded = false;
     try {
-      localAuditService.updateEvent({
-        id: auditEvent.id,
-        details: {
+      auditRecorded = await appAuditHost?.updateEvent(auditEvent, {
           status: 'completed',
           restoredFiles,
           removedHistoryEvents,
           removedRuntimeMessages,
           checkpointInsertions: preview.insertions || 0,
           checkpointDeletions: preview.deletions || 0,
-        },
-      });
+      }) === true;
     } catch (error) {
       mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
         sessionId: sessionRecord.id,
@@ -12985,87 +9641,18 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
   };
 });
 
-ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
-  const sessionRecord = getSessionRecord(sessionId);
-  const runtime = sessionRecord.runtime;
-  const runningWorkflowIds = Object.values(runtime?.getAppState?.()?.tasks || {})
-    .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')
-    .map((task) => task.id);
-  if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
-    projectTaskCancellationRequests.add(sessionRecord.id);
-  }
-  await Promise.resolve(runtime?.abort?.());
-  if (typeof runtime?.stopTask === 'function') {
-    await Promise.all(runningWorkflowIds.map((taskId) => runtime.stopTask(taskId).catch(() => {})));
-  }
-  if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
-    await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
-      status: 'stopped',
-      completedAt: Date.now(),
-      error: '用户已停止任务。',
-    }).catch(() => {});
-    await appendProjectEvent(sessionRecord.projectId, {
-      type: 'task.stopped',
-      summary: `已停止任务：${sessionRecord.title}`,
-      actor: 'user',
-      targetType: 'task',
-      targetId: sessionRecord.id,
-    }).catch(() => {});
-  }
-  await rejectPendingQuestionRequestsForSession(
-    sessionRecord.id,
-    'Question canceled because the session was aborted.',
-  );
-  schedulePersistSession(sessionRecord, true);
-  return { ok: true };
-});
-
-ipcMain.handle('agent:answer-question', async (_event, { requestId, sessionId, answers, annotations }) => {
-  const pending = pendingQuestionRequests.get(requestId);
-  if (!pending) {
-    throw new Error('Question request is no longer pending.');
-  }
-  if (pending.sessionId !== sessionId) {
-    throw new Error('Question request does not belong to this session.');
-  }
-
-  const result = await respondToPendingQuestionRequest(pending, {
-    allowed: true,
-    source: 'desktop',
-    resolutionAnswers: isPlainObject(answers) ? answers : {},
-    permissionDecision: {
-      behavior: 'allow',
-      updatedInput: buildAskUserQuestionUpdatedInput(pending.input, answers, annotations),
-    },
-  });
-  if (!pending.appDecisionId && result?.behavior !== 'allow') {
-    throw new Error(result?.message || 'Question was not executed.');
-  }
-
-  return { ok: true };
-});
-
-ipcMain.handle('agent:reject-question', async (_event, { requestId, sessionId, message }) => {
-  const pending = pendingQuestionRequests.get(requestId);
-  if (!pending) {
-    return { ok: true };
-  }
-  if (pending.sessionId !== sessionId) {
-    throw new Error('Question request does not belong to this session.');
-  }
-
-  await respondToPendingQuestionRequest(pending, {
-    allowed: false,
-    source: 'desktop',
-    permissionDecision: {
-      behavior: 'deny',
-      message: typeof message === 'string' && message.trim()
-        ? message.trim()
-        : 'User declined to answer questions',
-    },
-  });
-
-  return { ok: true };
+registerSessionControlIpc({
+  ipcMain,
+  getSessionRecord,
+  projectTaskCancellationRequests,
+  updateProjectRootTaskLifecycle,
+  appendProjectEvent,
+  rejectPendingQuestionRequestsForSession,
+  schedulePersistSession,
+  pendingQuestionRequests,
+  respondToPendingQuestionRequest,
+  isPlainObject,
+  buildAskUserQuestionUpdatedInput,
 });
 
 ipcMain.handle('workspace:list-dir', async (_event, { sessionId, dirPath }) => {
@@ -13448,286 +10035,6 @@ registerFileSystemIpcHandlers({
   uploadRemoteWorkspaceFile: uploadFileToRemoteSessionWorkspace,
 });
 
-const execAsync = promisify(exec);
-const BASH_MODE_TIMEOUT_MS = 120 * 1000;
-const BASH_MODE_MAX_OUTPUT_CHARS = 200 * 1024;
-const BASH_MODE_CONTEXT_CHARS = 8 * 1024;
-
-// "!" prefix runs the command directly in the session workspace (CLI REPL
-// bash mode). The result is shown in the UI and injected as context into the
-// next model turn instead of querying the model now.
-async function runDirectBashCommand(sessionRecord, sender, command) {
-  let output = '';
-  let exitCode = 0;
-  try {
-    const { stdout, stderr } = await execAsync(command, {
-      cwd: sessionRecord.workspace,
-      timeout: BASH_MODE_TIMEOUT_MS,
-      maxBuffer: 5 * 1024 * 1024,
-      windowsHide: true,
-    });
-    output = [stdout, stderr].filter(Boolean).join('\n');
-  } catch (err) {
-    exitCode = typeof err?.code === 'number' ? err.code : 1;
-    output = [err?.stdout, err?.stderr].filter(Boolean).join('\n') || String(err?.message || err);
-    if (err?.killed) {
-      output += '\n(命令超时，已终止)';
-    }
-  }
-  if (output.length > BASH_MODE_MAX_OUTPUT_CHARS) {
-    output = `${output.slice(0, BASH_MODE_MAX_OUTPUT_CHARS)}\n…(输出已截断)`;
-  }
-
-  const bashEvent = {
-    type: 'bash_command',
-    command,
-    output,
-    exitCode,
-    timestamp: Date.now(),
-  };
-  sessionRecord.history.push(bashEvent);
-  sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
-  sessionRecord.updatedAt = Date.now();
-  sessionRecord.preview = `$ ${command}`;
-  if (!Array.isArray(sessionRecord.pendingBashContexts)) {
-    sessionRecord.pendingBashContexts = [];
-  }
-  sessionRecord.pendingBashContexts.push({
-    command,
-    output: output.slice(0, BASH_MODE_CONTEXT_CHARS),
-    exitCode,
-  });
-  schedulePersistSession(sessionRecord, true);
-  emitSessionMeta(sessionRecord);
-  emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: bashEvent });
-  return { ok: true, bash: true, exitCode };
-}
-
-function consumePendingBashContexts(sessionRecord) {
-  const pending = sessionRecord.pendingBashContexts;
-  if (!Array.isArray(pending) || pending.length === 0) return '';
-  sessionRecord.pendingBashContexts = [];
-  const blocks = pending.map(({ command, output, exitCode }) => {
-    const body = output?.trim() ? output : '(no output)';
-    const exit = exitCode ? `\n(exit code: ${exitCode})` : '';
-    return `$ ${command}\n${body}${exit}`;
-  });
-  return `[Shell commands the user ran directly in the workspace]\n${blocks.join('\n\n')}\n\n---\n\n`;
-}
-
-const INLINE_IMAGE_MEDIA_TYPES = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-};
-// Anthropic API rejects oversized images; the runtime downsamples inline
-// blocks, but reading huge files into memory is wasteful — fall back to the
-// Read tool (which streams with a token budget) beyond this size.
-const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
-const DEFAULT_LARGE_PROMPT_SPILL_CHARS = 120_000;
-const MIN_LARGE_PROMPT_SPILL_CHARS = 10_000;
-
-function getLargePromptSpillThreshold() {
-  const parsed = Number.parseInt(String(process.env.MOSS_LARGE_PROMPT_SPILL_CHARS || ''), 10);
-  if (Number.isFinite(parsed) && parsed >= MIN_LARGE_PROMPT_SPILL_CHARS) {
-    return parsed;
-  }
-  return DEFAULT_LARGE_PROMPT_SPILL_CHARS;
-}
-
-async function prepareRemoteFileAttachments(sessionRecord, filePaths) {
-  const runtimePaths = [];
-  const visiblePaths = [];
-  const inlineSources = new Map();
-
-  for (const filePath of filePaths) {
-    if (filePath.startsWith(`${REMOTE_WORKSPACE_SCHEME}:`)) {
-      const parsed = parseRemoteWorkspaceUrl(filePath);
-      if (parsed.sessionId !== sessionRecord.id) {
-        throw new Error('Remote workspace attachment belongs to a different session.');
-      }
-      const source = takeRemoteAttachmentSource(sessionRecord, filePath);
-      runtimePaths.push(parsed.filePath);
-      visiblePaths.push(filePath);
-      if (source) inlineSources.set(parsed.filePath, source);
-      continue;
-    }
-
-    let localFile = false;
-    try {
-      localFile = (await fsp.stat(filePath)).isFile();
-    } catch {}
-    if (!localFile) {
-      runtimePaths.push(filePath);
-      visiblePaths.push(filePath);
-      continue;
-    }
-
-    const uploaded = await uploadFileToRemoteSessionWorkspace(sessionRecord, {
-      sourcePath: filePath,
-      fileName: path.basename(filePath),
-    });
-    const runtimePath = uploaded.remotePath || uploaded.relativePath;
-    runtimePaths.push(runtimePath);
-    visiblePaths.push(uploaded.path);
-    const source = takeRemoteAttachmentSource(sessionRecord, uploaded.path);
-    if (source) inlineSources.set(runtimePath, source);
-  }
-
-  return { runtimePaths, visiblePaths, inlineSources };
-}
-
-async function buildInlineImageBlocks(filePaths, sourceByPath = new Map()) {
-  const blocks = [];
-  const inlinedPaths = new Set();
-  for (const filePath of filePaths) {
-    const source = sourceByPath.get(filePath);
-    const sourcePath = source?.sourcePath || filePath;
-    const mediaType = INLINE_IMAGE_MEDIA_TYPES[path.extname(sourcePath).toLowerCase()];
-    if (!mediaType) continue;
-    try {
-      let data;
-      if (source?.data) {
-        data = Buffer.isBuffer(source.data) ? source.data : Buffer.from(source.data);
-      } else {
-        const stat = await fsp.stat(sourcePath);
-        if (!stat.isFile() || stat.size === 0 || stat.size > MAX_INLINE_IMAGE_BYTES) continue;
-        data = await fsp.readFile(sourcePath);
-      }
-      if (data.byteLength === 0 || data.byteLength > MAX_INLINE_IMAGE_BYTES) continue;
-      blocks.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: mediaType,
-          data: data.toString('base64'),
-        },
-      });
-      inlinedPaths.add(filePath);
-    } catch (err) {
-      console.warn('[agent:send] Failed to inline image attachment:', sourcePath, err?.message || err);
-    }
-  }
-  return { blocks, inlinedPaths };
-}
-
-function formatLargePromptCharCount(value) {
-  return new Intl.NumberFormat('en-US').format(value);
-}
-
-function buildLargePromptFileContent(prompt, createdAt) {
-  return [
-    '# Large User Prompt',
-    '',
-    `Created: ${createdAt}`,
-    `Characters: ${formatLargePromptCharCount(prompt.length)}`,
-    '',
-    'The desktop client saved this prompt to a file because it was too large to inline safely in the model request.',
-    '',
-    '---',
-    '',
-    prompt,
-    '',
-  ].join('\n');
-}
-
-async function maybeSpillLargePromptToWorkspace(sessionRecord, prompt) {
-  const threshold = getLargePromptSpillThreshold();
-  if (typeof prompt !== 'string' || prompt.length <= threshold) {
-    return null;
-  }
-
-  const createdAt = new Date().toISOString();
-  const safeTimestamp = createdAt.replace(/[:.]/g, '-');
-  const fileName = `user-prompt-${safeTimestamp}-${randomUUID().slice(0, 8)}.md`;
-  if (sessionRecord.agentMode === 'remote-direct') {
-    const config = await ensureRemoteSessionConnection(sessionRecord);
-    const remoteFile = await uploadRemoteDirectWorkspaceData({
-      ...config,
-      fileName,
-      data: Buffer.from(buildLargePromptFileContent(prompt, createdAt), 'utf8'),
-    });
-    emitWorkspaceChanged(sessionRecord, 'upload', remoteFile.path);
-    return {
-      filePath: remoteFile.path,
-      charCount: prompt.length,
-      threshold,
-    };
-  }
-
-  const promptDir = path.join(sessionRecord.workspace, '.moss', 'large-prompts');
-  const filePath = path.join(promptDir, fileName);
-
-  await fsp.mkdir(promptDir, { recursive: true });
-  await fsp.writeFile(filePath, buildLargePromptFileContent(prompt, createdAt), 'utf8');
-
-  return {
-    filePath,
-    charCount: prompt.length,
-    threshold,
-  };
-}
-
-function buildLargePromptRuntimePrompt(spill) {
-  return [
-    '[Large user prompt saved to workspace]',
-    '',
-    `The user sent a prompt with ${formatLargePromptCharCount(spill.charCount)} characters, which is too large to inline safely in the model request.`,
-    `The full prompt is saved at: ${spill.filePath}`,
-    '',
-    'Read that file first, then continue based on the user request in that file.',
-    'Do not treat this message as a request to summarize the file unless the saved prompt asks for that.',
-  ].join('\n');
-}
-
-function buildLargePromptVisiblePrompt(spill) {
-  return [
-    `用户发送了一段较长内容（${formatLargePromptCharCount(spill.charCount)} 字符），已自动保存到：`,
-    spill.filePath,
-    '',
-    '请读取该文件后继续处理。',
-  ].join('\n');
-}
-
-async function localizeProjectSessionAttachments(sessionRecord, filePaths) {
-  if (!sessionRecord.projectId || sessionRecord.agentMode === 'remote-direct') return filePaths;
-  const workspace = path.resolve(sessionRecord.workspace);
-  const realWorkspace = await fsp.realpath(workspace).catch(() => workspace);
-  const inputsDir = path.join(workspace, 'inputs');
-  await fsp.mkdir(inputsDir, { recursive: true });
-  const localized = [];
-  for (const filePath of filePaths) {
-    const resolvedSource = path.resolve(filePath);
-    const realSource = await fsp.realpath(resolvedSource);
-    const stat = await fsp.stat(realSource);
-    if (!stat.isFile()) throw new Error(`附件不是文件：${path.basename(resolvedSource)}`);
-    if (
-      isPathInsideDirectory(workspace, resolvedSource) &&
-      isPathInsideDirectory(realWorkspace, realSource)
-    ) {
-      localized.push(resolvedSource);
-      continue;
-    }
-    const rawName = path.basename(resolvedSource);
-    const safeName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'attachment';
-    const parsed = path.parse(safeName);
-    let targetPath = path.join(inputsDir, safeName);
-    let suffix = 1;
-    let sourceHash = null;
-    while (fs.existsSync(targetPath)) {
-      sourceHash ||= await calculateFileSha256(realSource);
-      const targetHash = await calculateFileSha256(targetPath).catch(() => null);
-      if (sourceHash === targetHash) break;
-      targetPath = path.join(inputsDir, `${parsed.name || 'attachment'}-${suffix}${parsed.ext || ''}`);
-      suffix += 1;
-    }
-    if (!fs.existsSync(targetPath)) await fsp.copyFile(realSource, targetPath);
-    localized.push(targetPath);
-  }
-  return localized;
-}
 
 async function sendAgentPromptNow(event, {
   sessionId,

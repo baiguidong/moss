@@ -1,3 +1,9 @@
+import type {
+  SendRequest, SendResult, SessionRequest, ControlResult, PlanDecisionResult,
+  AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
+  SessionHistoryEvent, ConnectorsChangedEvent, SkillHubApi, ExpertHubApi,
+  SessionCronApi, MarketplaceResponse,
+} from './lib/desktop-api-types';
 import type { AppNotification, NewAppNotification } from './lib/app-notifications';
 
 export type OutputFileResolution =
@@ -1373,155 +1379,6 @@ export type WorkflowProgressEvent =
       error?: string;
     };
 
-export type AuditSeverity = 'low' | 'medium' | 'high' | 'critical';
-export type AuditFindingStatus = 'open' | 'acknowledged' | 'resolved' | 'false_positive';
-
-export type AuditSessionRecord = {
-  id: string;
-  title: string;
-  workspace: string;
-  projectId: string | null;
-  assistantName: string | null;
-  sessionKind: 'chat' | 'cron' | 'agent-mail';
-  isSubAgent: boolean;
-  sourceCreatedAt: number;
-  sourceUpdatedAt: number;
-  auditedAt: number;
-  latestRunId: string;
-  eventCount: number;
-  toolCallCount: number;
-  findingCount: number;
-  completeness: 'complete' | 'partial';
-  sourcePresent: boolean;
-};
-
-export type AuditToolCallRecord = {
-  id: string;
-  sessionId: string;
-  sessionTitle: string;
-  toolUseId: string;
-  parentToolUseId: string | null;
-  toolName: string;
-  input: unknown;
-  result: string;
-  status: 'success' | 'error' | 'unknown';
-  isError: boolean;
-  startedAt: number | null;
-  completedAt: number | null;
-  orderIndex: number;
-};
-
-export type AuditFindingRecord = {
-  id: string;
-  runId: string;
-  sessionId: string;
-  sessionTitle: string;
-  toolCallId: string | null;
-  toolName: string | null;
-  toolUseId: string | null;
-  toolInput: unknown;
-  toolResult: string;
-  toolStatus: 'success' | 'error' | 'unknown' | null;
-  ruleId: string;
-  ruleName: string;
-  ruleVersion: number;
-  severity: AuditSeverity;
-  title: string;
-  detail: string;
-  evidence: unknown;
-  status: AuditFindingStatus;
-  fingerprint: string;
-  createdAt: number;
-  reportedAt: number | null;
-};
-
-export type AuditAlert = {
-  findingId: string;
-  fingerprint: string;
-  severity: 'high' | 'critical';
-  title: string;
-  detail: string;
-  sessionId: string;
-  sessionTitle: string;
-  toolUseId: string | null;
-  toolName: string | null;
-  ruleName: string;
-  createdAt: number;
-};
-
-export type AuditRuleRecord = {
-  id: string;
-  name: string;
-  description: string;
-  severity: AuditSeverity;
-  enabled: boolean;
-  config: { patterns?: string[]; minimumFailures?: number; allowedPaths?: string[] };
-  version: number;
-  updatedAt: number;
-};
-
-export type AuditRunRecord = {
-  id: string;
-  status: 'running' | 'completed' | 'failed';
-  scope: { kind?: string; sessionIds?: string[] };
-  ruleSnapshot: AuditRuleRecord[];
-  startedAt: number;
-  completedAt: number | null;
-  sessionCount: number;
-  toolCallCount: number;
-  findingCount: number;
-  error: string | null;
-};
-
-export type AuditEventRecord = {
-  id: string;
-  sessionId: string;
-  eventType: string;
-  userMessageId: string | null;
-  details: Record<string, unknown>;
-  messageCount: number;
-  toolCallCount: number;
-  createdAt: number;
-};
-
-export type AuditEventDetail = AuditEventRecord & {
-  history: AgentEvent[];
-  tools: Array<{
-    id: string;
-    eventId: string;
-    sessionId: string;
-    toolUseId: string;
-    parentToolUseId: string | null;
-    toolName: string;
-    input: unknown;
-    result: string;
-    status: 'success' | 'error' | 'unknown';
-    isError: boolean;
-    orderIndex: number;
-  }>;
-};
-
-export type AuditDashboardPayload = {
-  summary: {
-    sessionCount: number;
-    toolCallCount: number;
-    findingCount: number;
-    openFindingCount: number;
-    criticalFindingCount: number;
-    incompleteSessionCount: number;
-    latestCompletedAt: number;
-    rulesStale: boolean;
-    running: boolean;
-    eventCount: number;
-  };
-  sessions: AuditSessionRecord[];
-  tools: AuditToolCallRecord[];
-  findings: AuditFindingRecord[];
-  rules: AuditRuleRecord[];
-  runs: AuditRunRecord[];
-  events: AuditEventRecord[];
-};
-
 declare global {
   interface Window {
     mossTerminal: {
@@ -1534,6 +1391,7 @@ declare global {
     };
     agentDesktop: {
       // 通用 IPC 方法
+      /** @deprecated Renderer code should use named methods below. Kept for compatibility. */
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
       ipcOn: (channel: string, callback: (payload: any) => void) => any;
       ipcOff: (channel: string, handler: any) => void;
@@ -1696,30 +1554,18 @@ declare global {
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
       openWorkspace: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
-      send: (payload: {
-        sessionId: string;
-        prompt: string;
-        skills?: Array<{ name: string; displayName?: string; source?: string }>;
-        agentType?: string;
-        mode?: 'chat' | 'boss';
-        appName?: string;
-        files?: string[];
-        resources?: ComposerResourceRef[];
-      }) => Promise<any>;
-      approvePlan: (payload: { sessionId: string }) => Promise<any>;
-      rejectPlan: (payload: { sessionId: string }) => Promise<any>;
-      answerQuestion: (payload: {
-        requestId: string;
-        sessionId: string;
-        answers: Record<string, string>;
-        annotations?: AskUserQuestionAnnotations;
-      }) => Promise<{ ok: boolean }>;
-      rejectQuestion: (payload: {
-        requestId: string;
-        sessionId: string;
-        message?: string;
-      }) => Promise<{ ok: boolean }>;
-      abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      /** Resolves after the turn completes; transport/runtime errors reject. */
+      send: (payload: SendRequest) => Promise<SendResult>;
+      approvePlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
+      rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
+      answerQuestion: (payload: AnswerQuestionRequest) => Promise<ControlResult>;
+      rejectQuestion: (payload: RejectQuestionRequest) => Promise<ControlResult>;
+      abort: (payload: SessionRequest) => Promise<ControlResult>;
+      skillHub: SkillHubApi;
+      expertHub: ExpertHubApi;
+      sessionCron: SessionCronApi;
+      getInstalledSkills: () => Promise<MarketplaceResponse<unknown[]>>;
+      onConnectorsChanged: (callback: (payload: ConnectorsChangedEvent) => void) => () => void;
       appMarketplace: {
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
@@ -1849,42 +1695,7 @@ declare global {
         onAuthNavigation: (callback: (payload: BrowserAuthNavigation) => void) => () => void;
         onExternalUrl: (callback: (payload: { sessionId?: string; tabId?: string; url: string }) => void) => () => void;
       };
-      audit: {
-        getDashboard: () => Promise<AuditDashboardPayload>;
-        getEvent: (payload: { id: string }) => Promise<AuditEventDetail>;
-        getPendingAlerts: () => Promise<AuditAlert[]>;
-        run: (payload?: { sessionIds?: string[] }) => Promise<{
-          ok: boolean;
-          runId: string;
-          sessionCount: number;
-          toolCallCount: number;
-          findingCount: number;
-        }>;
-        updateRule: (payload: {
-          id: string;
-          enabled?: boolean;
-          severity?: AuditSeverity;
-          config?: AuditRuleRecord['config'];
-        }) => Promise<AuditRuleRecord>;
-        updateFinding: (payload: { id: string; status: AuditFindingStatus }) => Promise<{ ok: boolean }>;
-        updateFindings: (payload: { ids: string[]; status: AuditFindingStatus }) => Promise<{
-          ok: boolean;
-          updatedCount: number;
-        }>;
-        markReported: (payload: { fingerprints: string[] }) => Promise<{
-          ok: boolean;
-          updatedCount: number;
-        }>;
-        onChanged: (callback: (payload: {
-          reason: string;
-          runId?: string;
-          scope?: { kind?: string; sessionIds?: string[] };
-          completed?: number;
-          total?: number;
-          error?: string;
-          alerts?: AuditAlert[];
-        }) => void) => () => void;
-      };
+      onAppOpenSession: (callback: (payload: { sessionId: string; toolUseId?: string }) => void) => () => void;
       notifications: {
         list: () => Promise<AppNotification[]>;
         create: (notification: NewAppNotification, options?: { id?: string; now?: number }) => Promise<AppNotification>;
@@ -1937,19 +1748,14 @@ declare global {
       getTaskOutput: (payload: { sessionId: string; taskId: string; maxBytes?: number }) => Promise<{ content: string; truncated: boolean }>;
       killTask: (payload: { sessionId: string; taskId: string }) => Promise<{ ok: boolean; error?: string }>;
       onBackgroundTasks: (callback: (payload: { sessionId: string; tasks: BackgroundTaskInfo[] }) => void) => () => void;
-      onEvent: (callback: (payload: any) => void) => () => void;
-      onState: (callback: (payload: any) => void) => () => void;
-      onPermission: (callback: (payload: any) => void) => () => void;
+      onEvent: (callback: (payload: SessionEvent) => void) => () => void;
+      onState: (callback: (payload: SessionStateEvent) => void) => () => void;
+      /** Legacy channel without an active producer; current approvals use onQuestionRequest. */
+      onPermission: (callback: (payload: unknown) => void) => () => void;
       onQuestionRequest: (callback: (payload: AskUserQuestionRequest) => void) => () => void;
       onQuestionResolved: (callback: (payload: { requestId: string; sessionId: string }) => void) => () => void;
       onSessionMeta: (callback: (payload: SessionSummary) => void) => () => void;
-      onSessionHistory: (callback: (payload: {
-        replaceHistory?: boolean;
-        sessionId: string;
-        summary?: SessionSummary;
-        history?: AgentEvent[];
-        tasks?: SessionTask[];
-      }) => void) => () => void;
+      onSessionHistory: (callback: (payload: SessionHistoryEvent) => void) => () => void;
       onSessionRemoved: (callback: (payload: { sessionId: string }) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;

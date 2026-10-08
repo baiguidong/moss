@@ -96,7 +96,7 @@ describe('desktop package contract', () => {
       'utf8',
     );
     const rendererTypes = readFileSync(
-      path.join(uiRoot, 'src', 'renderer-react', 'types.d.ts'),
+      path.join(uiRoot, 'src', 'renderer-react', 'lib', 'desktop-api-types.ts'),
       'utf8',
     );
 

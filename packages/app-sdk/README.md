@@ -1,6 +1,6 @@
 # Moss App SDK
 
-当前 SDK 对应 Host API `2.3.0`，兼容要求 `^2.0.0` 的 App。
+当前 SDK 对应 Host API `2.6.0`，兼容要求 `^2.0.0` 的 App。
 
 App 安装后自动启用。`backend.protocols` 是 Backend 需要的 Host 协议字符串数组，例如：
 

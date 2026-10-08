@@ -1,4 +1,9 @@
-type ResourceIpcInvoke = (channel: string, payload?: unknown) => Promise<unknown>;
+import type { SkillHubApi, ExpertHubApi } from './desktop-api-types';
+
+export type ProjectMarketplaceApi = {
+  skillHub: Pick<SkillHubApi, 'getInstalled' | 'fetchDetail' | 'install'>;
+  expertHub: Pick<ExpertHubApi, 'getInstalled' | 'install'>;
+};
 
 type SyncProjectMarketplaceResourcesInput = {
   skillIds: string[];
@@ -85,7 +90,7 @@ function responseError(response: ResourceResponse, fallback: string) {
 
 export async function syncProjectMarketplaceResources(
   input: SyncProjectMarketplaceResourcesInput,
-  ipcInvoke: ResourceIpcInvoke = (channel, payload) => window.agentDesktop.ipcInvoke(channel, payload),
+  api: ProjectMarketplaceApi = window.agentDesktop,
 ) {
   const skillIds = uniqueIds(input.skillIds);
   const expertIds = uniqueIds(input.expertIds);
@@ -93,8 +98,8 @@ export async function syncProjectMarketplaceResources(
 
   input.onProgress?.('正在检查本地技能和专家...');
   const [installedSkillResult, installedExpertResult] = await Promise.all([
-    ipcInvoke('public-skillhub:get-installed-skills') as Promise<ResourceResponse>,
-    ipcInvoke('public-experthub:get-installed-experts') as Promise<ResourceResponse>,
+    api.skillHub.getInstalled(),
+    api.expertHub.getInstalled(),
   ]);
   if (!installedSkillResult?.success) {
     throw new Error(responseError(installedSkillResult, '读取本地技能失败'));
@@ -111,13 +116,13 @@ export async function syncProjectMarketplaceResources(
   for (const [index, skillId] of missingSkillIds.entries()) {
     input.onProgress?.(`正在安装技能 ${index + 1}/${missingSkillIds.length}...`);
     const coordinate = parseSkillCoordinate(skillId);
-    const detailResult = await ipcInvoke('public-skillhub:fetch-detail', coordinate) as ResourceResponse;
+    const detailResult = await api.skillHub.fetchDetail(coordinate);
     const detailData = record(detailResult?.data);
     const skill = record(detailData?.skill);
     if (!detailResult?.success || !skill) {
       throw new Error(`技能“${skillId}”信息获取失败：${responseError(detailResult, '市场中未找到该技能')}`);
     }
-    const installResult = await ipcInvoke('public-skillhub:install-skill', { skill }) as ResourceResponse;
+    const installResult = await api.skillHub.install({ skill });
     if (!installResult?.success) {
       throw new Error(`技能“${skillId}”安装失败：${responseError(installResult, '未知错误')}`);
     }
@@ -126,7 +131,7 @@ export async function syncProjectMarketplaceResources(
 
   for (const [index, expertId] of missingExpertIds.entries()) {
     input.onProgress?.(`正在安装专家 ${index + 1}/${missingExpertIds.length}...`);
-    const installResult = await ipcInvoke('public-experthub:install-expert', { expertId }) as ResourceResponse;
+    const installResult = await api.expertHub.install({ expertId });
     if (!installResult?.success) {
       throw new Error(`专家“${expertId}”安装失败：${responseError(installResult, '未知错误')}`);
     }

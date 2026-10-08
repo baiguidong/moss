@@ -1,12 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { runInNewContext } from 'node:vm';
-
-const main = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
-const source = main.slice(main.indexOf('function closeWorkspaceWatcher('), main.indexOf('/**\n * Handler for MossTool'))
-  + main.slice(main.indexOf('async function startWorkspaceWatcher('), main.indexOf('async function ensureRuntime('));
+import { createWorkspaceWatcherService } from '../src/workspace-watcher.mjs';
 
 function setup(recursiveSupported = true) {
   const emitted: any[] = [];
@@ -18,8 +12,7 @@ function setup(recursiveSupported = true) {
     close() { this.closed = true; }
     unref() {}
   }
-  const api = runInNewContext(`${source}\n({startWorkspaceWatcher, closeWorkspaceWatcher, syncWorkspaceWatcher});`, {
-    path,
+  const api = createWorkspaceWatcherService({
     fs: { watch: (directory: string, options: any, callback: any) => {
       const recursive = options?.recursive === true;
       if (recursive && !recursiveSupported) throw new Error('Recursive watches unavailable');
@@ -37,7 +30,7 @@ function setup(recursiveSupported = true) {
     getSessionWorkspaceRoot: (record: any) => record.workspace,
     isAccessibleDirectory: () => true,
     emitToRenderer: (_channel: string, payload: any) => emitted.push(payload),
-    mossLog() {}, setTimeout, clearTimeout,
+    mossLog() {},
   });
   const record = { id: 'session', workspace: '/workspace', workspaceWatcher: null, workspaceWatcherSyncTimer: null };
   return { api, record, emitted, watches, get directoryReads() { return directoryReads; } };

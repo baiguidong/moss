@@ -11,61 +11,54 @@ describe('project resource synchronization', () => {
   });
 
   it('installs only selected skills and experts missing locally', async () => {
-    const calls: Array<{ channel: string; payload?: unknown }> = [];
-    const ipcInvoke = async (channel: string, payload?: unknown) => {
-      calls.push({ channel, payload });
-      if (channel === 'public-skillhub:get-installed-skills') {
-        return { success: true, data: [{ id: '@team/existing', slug: 'existing', namespace: { handle: 'team' } }] };
-      }
-      if (channel === 'public-experthub:get-installed-experts') {
-        return { success: true, data: [{ id: 'installed-expert' }] };
-      }
-      if (channel === 'public-skillhub:fetch-detail') {
-        return {
-          success: true,
-          data: {
-            skill: {
-              id: '@team/new-skill',
-              slug: 'new-skill',
-              name: 'new-skill',
-              namespace: { handle: 'team' },
-            },
-          },
-        };
-      }
-      return { success: true };
+    const calls: Array<{ method: string; payload?: unknown }> = [];
+    const api = {
+      skillHub: {
+        getInstalled: async () => ({ success: true, data: [{ id: '@team/existing', slug: 'existing', namespace: { handle: 'team' } }] }),
+        fetchDetail: async (payload: unknown) => {
+          calls.push({ method: 'skillHub.fetchDetail', payload });
+          return { success: true, data: { skill: { id: '@team/new-skill', slug: 'new-skill', namespace: { handle: 'team' } } } };
+        },
+        install: async (payload: unknown) => { calls.push({ method: 'skillHub.install', payload }); return { success: true }; },
+      },
+      expertHub: {
+        getInstalled: async () => ({ success: true, data: [{ id: 'installed-expert' }] }),
+        install: async (payload: unknown) => { calls.push({ method: 'expertHub.install', payload }); return { success: true }; },
+      },
     };
 
     await syncProjectMarketplaceResources({
       skillIds: ['@team/existing', '@team/new-skill'],
       expertIds: ['installed-expert', 'new-expert'],
-    }, ipcInvoke);
+    }, api);
 
-    expect(calls.filter((call) => call.channel === 'public-skillhub:fetch-detail')).toEqual([
-      { channel: 'public-skillhub:fetch-detail', payload: { slug: 'new-skill', namespace: 'team' } },
+    expect(calls.filter((call) => call.method === 'skillHub.fetchDetail')).toEqual([
+      { method: 'skillHub.fetchDetail', payload: { slug: 'new-skill', namespace: 'team' } },
     ]);
-    expect(calls.filter((call) => call.channel === 'public-skillhub:install-skill')).toHaveLength(1);
-    expect(calls.filter((call) => call.channel === 'public-experthub:install-expert')).toEqual([
-      { channel: 'public-experthub:install-expert', payload: { expertId: 'new-expert' } },
+    expect(calls.filter((call) => call.method === 'skillHub.install')).toHaveLength(1);
+    expect(calls.filter((call) => call.method === 'expertHub.install')).toEqual([
+      { method: 'expertHub.install', payload: { expertId: 'new-expert' } },
     ]);
   });
 
   it('surfaces installation failures to stop project creation', async () => {
-    const ipcInvoke = async (channel: string) => {
-      if (channel === 'public-skillhub:get-installed-skills') return { success: true, data: [] };
-      if (channel === 'public-experthub:get-installed-experts') return { success: true, data: [] };
-      if (channel === 'public-skillhub:fetch-detail') {
-        return { success: true, data: { skill: { id: 'missing-skill', slug: 'missing-skill' } } };
-      }
-      if (channel === 'public-skillhub:install-skill') {
-        return { success: false, error: 'download unavailable' };
-      }
-      return { success: true };
+    let expertInstalls = 0;
+    const api = {
+      skillHub: {
+        getInstalled: async () => ({ success: true, data: [] }),
+        fetchDetail: async () => ({ success: true, data: { skill: { id: 'missing-skill', slug: 'missing-skill' } } }),
+        install: async () => ({ success: false, error: 'download unavailable' }),
+      },
+      expertHub: {
+        getInstalled: async () => ({ success: true, data: [] }),
+        install: async () => { expertInstalls++; return { success: true }; },
+      },
     };
 
     await expect(syncProjectMarketplaceResources({
       skillIds: ['missing-skill'],
-      expertIds: [],
-    }, ipcInvoke)).rejects.toThrow('技能“missing-skill”安装失败：download unavailable');
+      expertIds: ['must-not-install'],
+    }, api)).rejects.toThrow('技能“missing-skill”安装失败：download unavailable');
+    expect(expertInstalls).toBe(0);
   });
 });

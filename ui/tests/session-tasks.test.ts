@@ -1,3 +1,4 @@
+import { createSessionTaskService } from '../src/session-task-service.mjs';
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -145,17 +146,23 @@ test('desktop snapshots and the task IPC use cloud data without reading the loca
   const source = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
   const h = harness();
   await h.sync(h.record);
-  const snapshotSource = source.slice(source.indexOf('function snapshotSessionTasks('), source.indexOf('function attachSessionTaskWatcher('));
+  const { snapshotSessionTasks } = createSessionTaskService({
+    MOSS_HOME: '/must-not-read-local-tasks',
+    sessions: new Map(), subAgentSessions: new Map(),
+    emitToRenderer() {}, scheduleSubAgentSessionSync() {},
+    getSessionRecord: () => h.record,
+    getLocalSessionEngineDir: () => { throw new Error('Cloud task snapshot used local storage'); },
+  });
   const ipcStart = source.indexOf("ipcMain.handle('agent:list-session-tasks'");
   let handler!: (...args: any[]) => Promise<any>;
   const context: any = {
-    snapshotRemoteSessionTasks,
+    snapshotSessionTasks,
     getSessionTasksDir: () => { throw new Error('Cloud task snapshot used local storage'); },
     getSessionRecord: () => h.record,
     syncRemoteSessionTasks: h.sync,
     ipcMain: { handle: (_name, callback) => { handler = callback; } },
   };
-  runInNewContext(snapshotSource + source.slice(ipcStart, source.indexOf('function getTurnRewindSupport(', ipcStart)), context);
+  runInNewContext(source.slice(ipcStart, source.indexOf('function getTurnRewindSupport(', ipcStart)), context);
   expect(context.snapshotSessionTasks(h.record)[0].subject).toBe('分析任务');
   expect((await handler(null, { sessionId: 'desktop-id' })).tasks[0].subject).toBe('分析任务');
 });

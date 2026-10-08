@@ -2,7 +2,6 @@ import * as React from 'react';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
-import { LocalAuditView } from '@/components/local-audit-view';
 import { OverviewView } from '@/components/overview-view';
 import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
@@ -60,7 +59,6 @@ import type {
   AgentEvent,
   AgentTeamsSessionState,
   AppVersion,
-  AuditAlert,
   BackgroundTaskInfo,
   ComposerResourceRef,
   DesktopAgentDefinition,
@@ -359,12 +357,12 @@ export default function App() {
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
-  const [auditFocusTarget, setAuditFocusTarget] = React.useState<{
+  const [toolFocusTarget, setToolFocusTarget] = React.useState<{
     sessionId: string;
     toolUseId: string;
     requestId: number;
   } | null>(null);
-  const auditFocusRequestIdRef = React.useRef(0);
+  const toolFocusRequestIdRef = React.useRef(0);
   const getSystemTheme = (): 'dark' | 'light' => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   };
@@ -405,34 +403,6 @@ export default function App() {
     void window.agentDesktop.notifications.create(notification).catch(() => {
       setAppNotifications((current) => appendAppNotification(current, notification));
     });
-  }, []);
-
-  const deliverAuditAlerts = React.useCallback(async (alerts: AuditAlert[]) => {
-    const validAlerts = Array.isArray(alerts)
-      ? alerts.filter((alert) => alert?.fingerprint && (alert.severity === 'high' || alert.severity === 'critical'))
-      : [];
-    if (validAlerts.length === 0) return;
-
-    for (const alert of validAlerts) {
-      const context = [alert.ruleName, alert.sessionTitle, alert.toolName].filter(Boolean).join(' · ');
-      await window.agentDesktop.notifications.create({
-        severity: alert.severity === 'critical' ? 'error' : 'warning',
-        source: '审计中心',
-        title: alert.title,
-        message: context,
-        details: alert.detail,
-      }, {
-        id: `audit:${alert.fingerprint}`,
-        now: alert.createdAt,
-      });
-    }
-    try {
-      await window.agentDesktop.audit.markReported({
-        fingerprints: [...new Set(validAlerts.map((alert) => alert.fingerprint))],
-      });
-    } catch {
-      // A stable notification ID makes a later delivery retry harmless.
-    }
   }, []);
 
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
@@ -949,16 +919,6 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  React.useEffect(() => {
-    const unsubscribe = window.agentDesktop.audit.onChanged((event) => {
-      if (event.alerts?.length) void deliverAuditAlerts(event.alerts);
-    });
-    void window.agentDesktop.audit.getPendingAlerts()
-      .then((alerts) => deliverAuditAlerts(alerts))
-      .catch(() => {});
-    return unsubscribe;
-  }, [deliverAuditAlerts]);
-
   React.useEffect(() => () => {
     if (permissionNoticeTimerRef.current) {
       window.clearTimeout(permissionNoticeTimerRef.current);
@@ -1388,7 +1348,7 @@ export default function App() {
       void refreshAssistants();
     });
 
-    const connectorChangedHandler = window.agentDesktop.ipcOn('connector-hub:changed', () => {
+    const offConnectorsChanged = window.agentDesktop.onConnectorsChanged(() => {
       void refreshConnectors();
     });
 
@@ -1406,7 +1366,7 @@ export default function App() {
       offSettingsChanged();
       offProjectsChanged();
       offAssistantsChanged();
-      window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
+      offConnectorsChanged();
     };
   }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
@@ -1606,7 +1566,7 @@ export default function App() {
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
-    setAuditFocusTarget(null);
+    setToolFocusTarget(null);
     setMessageFocusTarget(null);
     const opened = await openSession(sessionId);
     if (!opened) return;
@@ -2290,43 +2250,13 @@ export default function App() {
     });
   }, [pushAppNotification, showPermissionNotice]);
 
-  const handleAuditError = React.useCallback((error: {
-    title: string;
-    message: string;
-    details?: string;
-  }) => {
-    const reason = cleanIpcErrorMessage(error.message);
-    showPermissionNotice(`${error.title}：${reason}`, 'error', 6000);
-    pushAppNotification({
-      severity: 'error',
-      source: '审计中心',
-      title: error.title,
-      message: reason,
-      details: [error.details || '', `原始错误：${error.message}`].filter(Boolean).join('\n'),
-    });
-  }, [pushAppNotification, showPermissionNotice]);
-
-  const handleAuditNotice = React.useCallback((message: string) => {
-    showPermissionNotice(message, 'info', 4500);
-  }, [showPermissionNotice]);
-
-  const handleLocateAuditTool = React.useCallback(async (sessionId: string, toolUseId: string) => {
-    const opened = await openSession(sessionId);
-    if (!opened) {
-      handleAuditError({
-        title: '定位工具调用失败',
-        message: '对应会话不存在或当前无法打开。',
-        details: `会话：${sessionId}\n工具调用：${toolUseId}`,
-      });
-      return;
-    }
-    auditFocusRequestIdRef.current += 1;
-    setAuditFocusTarget({
-      sessionId,
-      toolUseId,
-      requestId: auditFocusRequestIdRef.current,
-    });
-  }, [handleAuditError, openSession]);
+  React.useEffect(() => window.agentDesktop.onAppOpenSession(({ sessionId, toolUseId }) => {
+    void openSession(sessionId).then(opened => {
+      if (!opened) { showPermissionNotice('对应会话不存在或当前无法打开。', 'error', 6000); return; }
+      toolFocusRequestIdRef.current += 1;
+      setToolFocusTarget(toolUseId ? { sessionId, toolUseId, requestId: toolFocusRequestIdRef.current } : null);
+    }).catch(error => showPermissionNotice(String(error.message || error), 'error', 6000));
+  }), [openSession, showPermissionNotice]);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
@@ -2587,8 +2517,8 @@ export default function App() {
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 sessionAgentMode={activeDetail?.agentMode || sessionAgentModes.get(activeSessionId) || 'local'}
-                focusedToolUseId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.toolUseId : undefined}
-                focusedToolRequestId={auditFocusTarget?.sessionId === activeSessionId ? auditFocusTarget.requestId : undefined}
+                focusedToolUseId={toolFocusTarget?.sessionId === activeSessionId ? toolFocusTarget.toolUseId : undefined}
+                focusedToolRequestId={toolFocusTarget?.sessionId === activeSessionId ? toolFocusTarget.requestId : undefined}
                 focusedMessageId={messageFocusTarget?.sessionId === activeSessionId ? messageFocusTarget.messageId : undefined}
                 focusedMessageRequestId={messageFocusTarget?.sessionId === activeSessionId ? messageFocusTarget.requestId : undefined}
                 pendingPlanApproval={activeDetail?.pendingPlanApproval || null}
@@ -2707,8 +2637,6 @@ export default function App() {
             <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
-          ) : activeView === 'audit' ? (
-            <LocalAuditView onOpenSession={handleSelectSession} onLocateTool={handleLocateAuditTool} onNotice={handleAuditNotice} onError={handleAuditError} />
           ) : activeView === 'workflows' && workflowsEnabled ? (
             <WorkflowLibraryView
               onCreateInChat={handleCreateWorkflowInChat}
