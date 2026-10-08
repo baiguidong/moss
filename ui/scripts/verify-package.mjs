@@ -15,6 +15,7 @@ import {
   RUNTIME_ARTIFACTS,
 } from '../src/runtime/runtime-manifest.mjs';
 import { sha256File } from './download-runtimes.mjs';
+import { verifyComputerUseSdk } from './verify-computer-use.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const uiRoot = path.resolve(path.dirname(__filename), '..');
@@ -252,6 +253,13 @@ function verifyUnsignedPackage(platform, paths, installerFiles) {
   if (platform === 'darwin') {
     const details = commandResult('codesign', ['-dv', '--verbose=4', paths.appDir]);
     const output = `${details.stdout || ''}${details.stderr || ''}`;
+    const identity = process.env.MOSS_MAC_SIGNING_IDENTITY?.trim();
+    if (identity) {
+      if (!output.includes(`Authority=${identity}`)) throw new Error('macOS package signing identity mismatch.');
+      run('codesign', ['--verify', '--deep', '--strict', paths.appDir]);
+      if (process.env.MOSS_MAC_NOTARIZE === 'true') run('xcrun', ['stapler', 'validate', paths.appDir]);
+      return;
+    }
     if (/^Authority=/m.test(output) || /TeamIdentifier=(?!not set)/.test(output)) {
       throw new Error(`macOS app unexpectedly contains a distribution signature:\n${output.trim()}`);
     }
@@ -376,8 +384,9 @@ async function main() {
     throw new Error('Packaged renderer is missing Open File Viewer plugin code.');
   }
   const rootPackage = JSON.parse(await fsp.readFile(path.resolve(uiRoot, '..', 'package.json'), 'utf8'));
-  if (appPackage.version !== rootPackage.version) {
-    throw new Error(`Desktop/root version mismatch: ${appPackage.version} != ${rootPackage.version}`);
+  const expectedVersion = process.env.MOSS_PACKAGE_VERSION || rootPackage.version;
+  if (appPackage.version !== expectedVersion) {
+    throw new Error(`Desktop/expected version mismatch: ${appPackage.version} != ${expectedVersion}`);
   }
   const updateSource = extractAsarFile('/src/update-ipc.mjs').toString('utf8');
   if (!updateSource.includes("const DEFAULT_REPO = 'baiguidong/moss';")) {
@@ -475,6 +484,7 @@ async function main() {
   }
   await verifyUpdateMetadata(platform, paths, installerFiles, appPackage.version);
   verifyUnsignedPackage(platform, paths, installerFiles);
+  const computerUse = verifyComputerUseSdk(paths.executable, paths.resourcesDir, target);
 
   console.log(JSON.stringify({
     ok: true,
@@ -484,7 +494,8 @@ async function main() {
     ripgrepVersion,
     sharp: sharpOutput,
     ...runtimeVersions,
-    unsigned: true,
+    unsigned: !(platform === 'darwin' && process.env.MOSS_MAC_SIGNING_IDENTITY),
+    computerUse,
     installerFiles,
   }, null, 2));
 }

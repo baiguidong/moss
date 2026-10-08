@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
@@ -2429,6 +2430,7 @@ export default function App() {
           className="min-h-0 shrink-0 overflow-hidden"
           style={{ width: effectiveLeftCollapsed ? 68 : layout.leftWidth }}
         >
+          <ComputerUseControl />
           <AppSidebar
             sessions={sidebarSessions}
             apps={apps}

@@ -2,6 +2,7 @@
 // with Main; these handlers preserve the existing IPC responses and ordering.
 export function registerSessionControlIpc({
   ipcMain,
+  stopComputerUse = async () => {},
   getSessionRecord,
   projectTaskCancellationRequests,
   updateProjectRootTaskLifecycle,
@@ -15,6 +16,7 @@ export function registerSessionControlIpc({
 }) {
   ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
     const sessionRecord = getSessionRecord(sessionId);
+    await stopComputerUse(sessionId);
     const runtime = sessionRecord.runtime;
     const runningWorkflowIds = Object.values(runtime?.getAppState?.()?.tasks || {})
       .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')

@@ -18,12 +18,14 @@ test('closing the last macOS window preserves cron runtimes and their workers', 
   ]);
   const disposed: string[] = [];
   const shutdown: string[] = [];
+  const controlStops: string[] = [];
   let onClose!: () => void;
   let teamsChecked!: () => void;
   const complete = new Promise<void>(resolve => { teamsChecked = resolve; });
   runInNewContext(source.slice(start, end), {
     app: { on: (_name: string, callback: () => void) => { onClose = callback; }, quit: () => { throw new Error('Unexpected quit'); } },
     process: { platform: 'darwin' }, sessions, subAgentSessions,
+    computerUseService: { stop: async (reason: string) => { controlStops.push(reason); } },
     shutdownSessionAgentTeam: async (record: { id: string }) => { shutdown.push(record.id); },
     closeWorkspaceWatcher: () => {},
     disposeRuntime: (record: { id: string }) => disposed.push(record.id),
@@ -33,4 +35,5 @@ test('closing the last macOS window preserves cron runtimes and their workers', 
   await complete;
   expect(disposed.sort()).toEqual(['chat', 'chat-child']);
   expect(shutdown).toEqual(['chat']);
+  expect(controlStops).toEqual(['window-closed']);
 });

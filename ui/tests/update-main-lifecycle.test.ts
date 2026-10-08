@@ -10,6 +10,7 @@ function fixture(extra: Record<string, any> = {}) {
     Promise, Error, appShutdownComplete: false, desktopShutdownPromise: null,
     stopMossCronScheduler: () => calls.push('cron-stop'),
     localTranscriptSync: { dispose: () => calls.push('transcript-sync-stop') },
+    computerUseService: { stop: async () => { calls.push('computer-use-stop'); } },
     sessions: new Map([['chat', { id: 'chat' }]]), subAgentSessions: new Map([['child', { id: 'child' }]]),
     hasActiveAgentTeam: () => false, shutdownSessionAgentTeam: async () => true,
     agentTeamsService: { checkNow: async () => {}, stop: () => calls.push('teams-stop') },
@@ -41,6 +42,7 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
   expect(calls.indexOf('persist-child')).toBeLessThan(calls.indexOf('dispose-child'));
   expect(calls).toContain('apps-close');
   expect(calls).toContain('transcript-sync-stop');
+  expect(calls.indexOf('computer-use-stop')).toBeLessThan(calls.indexOf('apps-close'));
   expect(calls.indexOf('trace-close')).toBeLessThan(calls.indexOf('apps-close'));
   await shutdown(); expect(calls.filter(call => call === 'apps-close').length).toBe(1);
 });
@@ -58,6 +60,7 @@ test('Windows installation blockers include queued work, teams, terminals, App r
     sessionPromptQueues: new Map(), sessionSendQueues: new Map(), projectCoordinatorTaskRuns: new Map(),
     isSessionBusyForRenderer: (record: any) => record.busy, hasActiveAgentTeam: () => true,
     terminalManager: { hasOpenTerminals: () => true }, activeAppUpdateOperations: 0,
+    computerUseService: { owner: null, inFlight: false },
     appRuntime: { supervisor: { listStatuses: () => [{ pendingActions: 1 }] } }, managedRuntimeInstallPromise: Promise.resolve(),
   });
   expect(getBlockers()).toEqual(['会话或后台任务', 'Agent Team', '终端窗口', 'App 操作', '运行时安装']);

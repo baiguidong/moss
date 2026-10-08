@@ -18,6 +18,7 @@ import { createSessionPromptPreparation } from './session-prompt-preparation.mjs
 import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
 import { registerSessionControlIpc } from './session-control-ipc.mjs';
+import { createComputerUseFeature } from './computer-use/ipc.mjs';
 import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
 import { resolveAppResourceFile } from './apps/app-resources.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
@@ -27,7 +28,7 @@ import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
 import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
-const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents } = electron;
+const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents, powerMonitor } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -666,6 +667,14 @@ const webSearchCapabilityStore = createWebSearchCapabilityStore({
 const localSettingsAuthConfig = desktopSettingsStore.authConfig;
 let desktopSettingsState = desktopSettingsStore.state;
 let desktopSettings = desktopSettingsStore.value;
+const computerUseService = createComputerUseFeature({
+  app, ipcMain, shell, powerMonitor, getMainWindow: () => mainWindow,
+  resourcesRoot: app.isPackaged ? path.join(process.resourcesPath, 'computer-use') : path.join(uiRoot, 'resources', 'computer-use'),
+  expectedBundleId: app.isPackaged ? 'com.moss.ai' : 'com.github.Electron',
+  getSettings: () => desktopSettings.computerUse,
+  saveSettings: computerUse => { refreshDesktopSettings({ computerUse }); },
+  publish: status => emitToRenderer('computer-use:changed', status),
+});
 let webSearchProbePromise = null;
 let webSearchProbeFingerprint = null;
 let webSearchProbeTimer = null;
@@ -2914,6 +2923,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       : [],
     environment: {
       MOSS_TRACE_SCOPE: MOSS_HOME,
+      MOSS_COMPUTER_USE_ENABLED: desktopSettings.computerUse?.enabled && process.platform === 'darwin' && process.arch === 'arm64' && sessionRecord?.sessionKind === 'chat' && sessionRecord?.originChannel === 'desktop' ? '1' : '0',
       ...getConnectorCredentialEnv(getRuntimeSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
@@ -3575,6 +3585,7 @@ async function runSessionPromptNow({
   }
   assertWorkspaceVersionIdle(sessionRecord);
   beginSessionBusyTiming(sessionRecord);
+  computerUseService.beginTurn(sessionRecord.id);
   sessionRecord.busy = true;
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
@@ -3805,6 +3816,7 @@ async function runSessionPromptNow({
     }
     throw error;
   } finally {
+    await computerUseService.finish(sessionRecord.id).catch(error => mossLog('warn', 'computer-use', 'Control cleanup failed', { error: error.message }));
     if (agentMailTurn && sessionRecord.activeAgentMailTurn === agentMailTurn) {
       sessionRecord.activeAgentMailTurn = null;
     }
@@ -5726,6 +5738,7 @@ async function previewAppBuild(buildDir) {
 sessionTaskService.registerIpc(ipcMain);
 
 function disposeSessionRuntime(sessionRecord) {
+  void computerUseService.stop('runtime-disposed', sessionRecord.id).catch(() => {});
   if (sessionRecord?.runtime) {
     try {
       sessionRecord.backgroundTaskUnsubscribe?.();
@@ -6434,6 +6447,7 @@ function ensureSubAgentDirWatcher(sessionRecord, subagentDir) {
 }
 
 function disposeRuntime(sessionRecord) {
+  void computerUseService.stop('runtime-disposed', sessionRecord.id).catch(() => {});
   sessionRecord.pendingMcpRuntimeReload = false;
   closeSubAgentDirWatcher(sessionRecord);
   if (!sessionRecord.runtime) return;
@@ -6586,6 +6600,10 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  if (event?.type === 'computer_use') {
+    try { return { ok: true, result: await computerUseService.invoke(event.input, sessionRecord, event.signal) }; }
+    catch (error) { return { ok: false, error: error?.inner?.reason || error.message || String(error) }; }
+  }
   if (event?.type === 'app_tool_invoke') {
     if (sessionRecord?.agentMode === 'remote-direct') {
       return { ok: false, error: 'This session cannot invoke App Tools.' };
@@ -8018,6 +8036,7 @@ function getInstallBlockers() {
   if (terminalManager?.hasOpenTerminals()) blockers.push('终端窗口');
   if (activeAppUpdateOperations || appRuntime?.supervisor?.listStatuses().some(status => status.pendingActions || status.pendingHostRequests || status.pendingHostEvents)) blockers.push('App 操作');
   if (managedRuntimeInstallPromise) blockers.push('运行时安装');
+  if (computerUseService.owner || computerUseService.inFlight) blockers.push('电脑操控');
   return blockers;
 }
 
@@ -8036,6 +8055,7 @@ function shutdownDesktop() {
     const attempt = async (operation) => {
       try { await operation(); } catch (error) { errors.push(error); }
     };
+    await attempt(() => computerUseService.stop('quit'));
     await attempt(async () => {
       const activeTeams = [...sessions.values()].filter(hasActiveAgentTeam);
       const results = await Promise.all(activeTeams.map(shutdownSessionAgentTeam));
@@ -8063,6 +8083,7 @@ function shutdownDesktop() {
 }
 
 app.on('window-all-closed', () => {
+  void computerUseService.stop('window-closed').catch(() => {});
   if (process.platform !== 'darwin') {
     app.quit();
     return;
@@ -8125,7 +8146,10 @@ ipcMain.handle('agent:get-remote-identity', async () => {
   }
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
-ipcMain.handle('agent:update-settings', (_event, payload = {}) => refreshDesktopSettings(payload));
+ipcMain.handle('agent:update-settings', (_event, payload = {}) => {
+  if (Object.prototype.hasOwnProperty.call(payload, 'computerUse')) throw new Error('请通过电脑操控设置调整授权。');
+  return refreshDesktopSettings(payload);
+});
 ipcMain.handle('agent:agents-list', (_event, payload = {}) => getDesktopAgentCatalog(payload));
 ipcMain.handle('agent:agents-read', (_event, payload = {}) => desktopAgentStore.read({
   ...payload,
@@ -9477,6 +9501,7 @@ async function deleteSessionRecordById(sessionId) {
   // Mark the record before aborting. Runtime abort completion runs asynchronous
   // cleanup that must not publish a final state for a session being deleted.
   sessionRecord.deleted = true;
+  await computerUseService.disposeSession(sessionRecord.id);
   localTranscriptSync.forget(sessionRecord);
   try {
     await Promise.resolve(sessionRecord.runtime?.abort?.());
@@ -9642,6 +9667,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 });
 
 registerSessionControlIpc({
+  stopComputerUse: id => computerUseService.stop('abort', id),
   ipcMain,
   getSessionRecord,
   projectTaskCancellationRequests,

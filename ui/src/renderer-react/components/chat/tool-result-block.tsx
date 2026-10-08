@@ -26,6 +26,19 @@ function ResultBody({
 }) {
   const shell = extractShellResult(result.rawContent);
   const text = extractTextContent(result.rawContent ?? result.content).trim() || result.content;
+  if (result.toolName === 'computer_use') {
+    const blocks = Array.isArray(result.rawContent) ? result.rawContent : [];
+    const images = blocks.filter((item: any) => item?.type === 'image' && item.source?.type === 'base64'
+      && /^image\/(png|jpeg|webp|gif)$/.test(item.source.media_type));
+    let state: any = {};
+    try { state = JSON.parse(blocks.find((item: any) => item?.type === 'text')?.text || '{}'); } catch {}
+    return <div className="space-y-3">
+      <p className="text-sm">{result.isError ? text : state.app_name || state.summary || '电脑操控结果'}</p>
+      {state.effect === 'unverifiable' && <p className="text-xs text-muted-foreground">动作已投递，需要读取新界面确认结果。</p>}
+      {images.map((item: any, index: number) => <img key={index} src={`data:${item.source.media_type};base64,${item.source.data}`} alt="应用窗口截图" className="max-h-96 max-w-full rounded-lg border object-contain" />)}
+      <details><summary className="cursor-pointer text-xs text-muted-foreground">查看详情</summary><CodeViewer code={text} language="json" maxLines={8} /></details>
+    </div>;
+  }
   const filePath =
     typeof toolCall?.input === "object" && toolCall?.input && "file_path" in toolCall.input
       ? typeof (toolCall.input as Record<string, unknown>).file_path === "string"

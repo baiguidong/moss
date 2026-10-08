@@ -14,6 +14,14 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
     ],
   },
   {
+    id: 'computer',
+    label: '电脑操控',
+    feature: 'computerUse',
+    tools: [
+      { name: 'computer_use', description: '读取应用界面、截图并执行点击和输入', defaultMode: 'always' },
+    ],
+  },
+  {
     id: 'app',
     label: 'App 管理',
     tools: [

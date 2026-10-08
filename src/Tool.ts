@@ -309,6 +309,7 @@ export type ToolUseContext = {
 
 /** App event types for MossTool */
 export type MossAppEvent =
+  | { type: 'computer_use'; input: Record<string, unknown>; signal?: AbortSignal }
   | { type: 'app_build'; input: MossAppBuildInput }
   | { type: 'app_preview'; input: MossAppPreviewInput }
   | { type: 'app_publish'; input: MossAppPublishInput }

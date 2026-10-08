@@ -56,6 +56,18 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     return () => ipcRenderer.off('connector-hub:changed', handler);
   },
 
+  computerUse: {
+    status: () => ipcRenderer.invoke('computer-use:status'),
+    enable: (enabled) => ipcRenderer.invoke('computer-use:enable', { enabled }),
+    check: () => ipcRenderer.invoke('computer-use:check'),
+    requestPermissions: () => ipcRenderer.invoke('computer-use:request-permissions'),
+    revealHostApp: () => ipcRenderer.invoke('computer-use:reveal-host-app'),
+    openSettings: (permission) => ipcRenderer.invoke('computer-use:open-settings', { permission }),
+    stop: () => ipcRenderer.invoke('computer-use:stop'),
+    revoke: (bundleId) => ipcRenderer.invoke('computer-use:revoke', { bundleId }),
+    decide: (id, decision) => ipcRenderer.invoke('computer-use:decide', { id, decision }),
+    onChanged: (callback) => { const handler = (_event, status) => callback(status); ipcRenderer.on('computer-use:changed', handler); return () => ipcRenderer.off('computer-use:changed', handler); },
+  },
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
   getManagedRuntimeStatus: () => ipcRenderer.invoke('agent:get-managed-runtime-status'),
   ensureManagedRuntimes: (payload) => ipcRenderer.invoke('agent:ensure-managed-runtimes', payload),

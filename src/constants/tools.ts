@@ -38,6 +38,7 @@ import {
 } from '../tools/ScheduleCronTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
+  'computer_use',
   SAVE_SESSION_SUMMARY_TOOL_NAME,
   TASK_OUTPUT_TOOL_NAME,
   EXIT_PLAN_MODE_V2_TOOL_NAME,
@@ -111,6 +112,8 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
  * Tools allowed in coordinator mode - only output and agent management tools for the coordinator
  */
 export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
+  // Desktop control stays in the attended main session, even in Boss mode.
+  'computer_use',
   SAVE_SESSION_SUMMARY_TOOL_NAME,
   AGENT_TOOL_NAME,
   TASK_STOP_TOOL_NAME,

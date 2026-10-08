@@ -13,6 +13,7 @@ export const MOSS_TOOL_GROUPS = {
     'browser_wait',
     'browser_reload',
   ],
+  computer: ['computer_use'],
   app: [
     'app_build',
     'app_preview',
@@ -47,6 +48,7 @@ export const DEFAULT_MOSS_TOOL_LOADING = {
   browser_scroll: 'deferred',
   browser_wait: 'deferred',
   browser_reload: 'deferred',
+  computer_use: 'always',
   app_build: 'deferred',
   app_preview: 'deferred',
   app_publish: 'deferred',

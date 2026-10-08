@@ -1,3 +1,12 @@
+export type ComputerUseStatus = {
+  version: string; supported: boolean; enabled: boolean; phase: string; error: string; captureVerified: boolean;
+  permissions: { accessibility: boolean; screenRecording: boolean; hostIdentity: boolean; bundleId: string } | null;
+  permissionNotice?: string;
+  apps: Array<{ name: string; bundleId: string }>;
+  sessionApps: Array<{ sessionId: string; bundleId: string }>;
+  active: { sessionId: string; title: string; app?: { name: string; bundleId: string }; action?: string; foreground: boolean } | null;
+  requests: Array<{ id: string; sessionId: string; sessionTitle: string; app: { name: string; bundleId: string }; foreground: boolean }>;
+};
 import type {
   SendRequest, SendResult, SessionRequest, ControlResult, PlanDecisionResult,
   AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
@@ -708,6 +717,7 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  computerUse?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
@@ -1390,6 +1400,18 @@ declare global {
       onExit: (callback: (payload: { requestId: string; exitCode: number }) => void) => () => void;
     };
     agentDesktop: {
+      computerUse: {
+        status: () => Promise<ComputerUseStatus>;
+        enable: (enabled: boolean) => Promise<ComputerUseStatus>;
+        check: () => Promise<ComputerUseStatus>;
+        requestPermissions: () => Promise<ComputerUseStatus>;
+        revealHostApp: () => Promise<void>;
+        openSettings: (permission: 'accessibility' | 'screen') => Promise<void>;
+        stop: () => Promise<ComputerUseStatus>;
+        revoke: (bundleId: string) => Promise<ComputerUseStatus>;
+        decide: (id: string, decision: 'session' | 'always' | 'deny') => Promise<void>;
+        onChanged: (callback: (status: ComputerUseStatus) => void) => () => void;
+      };
       // 通用 IPC 方法
       /** @deprecated Renderer code should use named methods below. Kept for compatibility. */
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
