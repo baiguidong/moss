@@ -67,9 +67,9 @@ describe('app sidebar more menu', () => {
 
   test('builds menu entries from feature availability', () => {
     expect(getSidebarMoreViews({ workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
-      .toEqual(['overview', 'audit', 'cron']);
+      .toEqual(['overview', 'cron']);
     expect(getSidebarMoreViews({ workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['overview', 'workflows', 'mail', 'audit', 'cron']);
+      .toEqual(['overview', 'workflows', 'mail', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {

@@ -140,10 +140,7 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
-import {
-  createLocalAuditService,
-  registerLocalAuditIpcHandlers,
-} from './local-audit-service.mjs';
+import { AppAuditHost, createAuditProtocolDefinition, AUDIT_PROTOCOL } from './apps/app-audit-host.mjs';
 import {
   backfillVisibleUserMessageIds,
   collectTurnChanges,
@@ -415,8 +412,6 @@ const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
 const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
-const AUDIT_DB_PATH = path.join(MOSS_HOME, 'audit.db');
-const LOCAL_AUDIT_SCAN_INTERVAL_MS = 30_000;
 const APP_STORAGE_FILENAME = 'storage.json';
 const PROJECT_FILE_NAME = 'project.json';
 const PROJECT_ASSET_INDEX_NAME = 'assets.json';
@@ -708,8 +703,7 @@ const updateGuardedAppIpc = {
   },
 };
 let appTraceHost = null;
-let localAuditService = null;
-let localAuditScanTimer = null;
+let appAuditHost = null;
 let agentChannelController = null;
 let appDecisionBroker = null;
 let remoteSessionSyncPromise = null;
@@ -8866,18 +8860,6 @@ function getLocalAuditSessionSnapshots() {
     });
 }
 
-function startLocalAuditScanner() {
-  if (localAuditScanTimer) clearInterval(localAuditScanTimer);
-  localAuditScanTimer = setInterval(() => {
-    if (!localAuditService || localAuditService.isRunning()) return;
-    void localAuditService.runIncrementalAudit().catch((error) => {
-      mossLog('warn', 'audit', 'Automatic incremental audit failed', {
-        error: error?.message || String(error),
-      });
-    });
-  }, LOCAL_AUDIT_SCAN_INTERVAL_MS);
-}
-
 function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
   return {
     ...getSessionSummary(sessionRecord),
@@ -11015,14 +10997,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
     getSessions: () => [...sessions.values(), ...subAgentSessions.values()], log: error => mossLog('warn', 'trace', error.message) });
+  appAuditHost = new AppAuditHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime,
+    getSessions: getLocalAuditSessionSnapshots,
+    openSession: input => emitToRenderer('app:open-session', input),
+    notify: (input, options) => appNotificationBroker.create(input, options),
+  });
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
-    beforeAppDeactivation: appId => appTraceHost.beforeDeactivation(appId),
+    beforeAppDeactivation: async appId => {
+      await appTraceHost.beforeDeactivation(appId);
+      await appAuditHost.beforeDeactivation(appId);
+    },
     hostProtocols: [
       createTraceProtocolDefinition(),
+      createAuditProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
       createRuntimesProtocolDefinition(),
       createMcpProtocolDefinition(),
@@ -11033,6 +11024,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      [AUDIT_PROTOCOL]: Object.fromEntries(Object.keys(createAuditProtocolDefinition().methods).map(method => [
+        method, (input, context) => appAuditHost.handle(method, input, context),
+      ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeStatus }),
       [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
@@ -11064,6 +11058,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
+      if (event.appId === 'moss.audit' && (appLifecycleChanged || event.type === 'instance-changed')) appAuditHost?.refresh();
       if (event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
       }
@@ -11200,13 +11195,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     syncSessions: syncRemoteDirectSessionsFromServer,
     findSession: findRemoteDirectSessionRecord,
   });
-  localAuditService = createLocalAuditService({
-    dbPath: AUDIT_DB_PATH,
-    getLocalSessions: getLocalAuditSessionSnapshots,
-    onChanged: (payload) => emitToRenderer('audit:changed', payload),
-  });
-  registerLocalAuditIpcHandlers({ ipcMain, service: localAuditService });
-  startLocalAuditScanner();
   startMossCronScheduler();
   await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
@@ -11343,9 +11331,7 @@ function shutdownDesktop() {
     await attempt(() => { agentTeamsService?.stop(); agentTeamsService = null; });
     await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
-    if (localAuditScanTimer) clearInterval(localAuditScanTimer);
-    localAuditScanTimer = null;
-    await attempt(() => { localAuditService?.close?.(); localAuditService = null; });
+    await attempt(async () => { await appAuditHost?.close(); });
     for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
       await attempt(() => {
         schedulePersistSession(record, true);
@@ -12492,10 +12478,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     }
 
     const revertedHistory = sessionRecord.history.slice(nextHistory.length);
-    if (!localAuditService) {
-      throw new Error('本地审计服务尚未就绪，不能执行整轮撤销。');
-    }
-    const auditEvent = localAuditService.recordEvent({
+    const auditEvent = await appAuditHost?.recordEvent({
       sessionId: sessionRecord.id,
       eventType: 'turn_reverted',
       userMessageId: targetId,
@@ -12519,13 +12502,10 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
       removedRuntimeMessages = await runtime.rewindConversation(targetId);
     } catch (error) {
       try {
-        localAuditService.updateEvent({
-          id: auditEvent.id,
-          details: {
-            status: 'failed',
-            expectedFiles: preview.filesChanged || [],
-            error: error instanceof Error ? error.message : String(error),
-          },
+        await appAuditHost?.updateEvent(auditEvent, {
+          status: 'failed',
+          expectedFiles: preview.filesChanged || [],
+          error: error instanceof Error ? error.message : String(error),
         });
       } catch {}
       throw error;
@@ -12539,19 +12519,16 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
     sessionRecord.preview = deriveSessionPreview(nextHistory);
     schedulePersistSession(sessionRecord, true);
 
-    let auditRecorded = true;
+    let auditRecorded = false;
     try {
-      localAuditService.updateEvent({
-        id: auditEvent.id,
-        details: {
+      auditRecorded = await appAuditHost?.updateEvent(auditEvent, {
           status: 'completed',
           restoredFiles,
           removedHistoryEvents,
           removedRuntimeMessages,
           checkpointInsertions: preview.insertions || 0,
           checkpointDeletions: preview.deletions || 0,
-        },
-      });
+      }) === true;
     } catch (error) {
       mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
         sessionId: sessionRecord.id,

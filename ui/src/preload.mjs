@@ -261,20 +261,10 @@ contextBridge.exposeInMainWorld('agentDesktop', {
       return () => ipcRenderer.off('browser:external-url', handler);
     },
   },
-  audit: {
-    getDashboard: () => ipcRenderer.invoke('audit:get-dashboard'),
-    getEvent: (payload) => ipcRenderer.invoke('audit:get-event', payload),
-    getPendingAlerts: () => ipcRenderer.invoke('audit:get-pending-alerts'),
-    run: (payload) => ipcRenderer.invoke('audit:run', payload),
-    updateRule: (payload) => ipcRenderer.invoke('audit:update-rule', payload),
-    updateFinding: (payload) => ipcRenderer.invoke('audit:update-finding', payload),
-    updateFindings: (payload) => ipcRenderer.invoke('audit:update-findings', payload),
-    markReported: (payload) => ipcRenderer.invoke('audit:mark-reported', payload),
-    onChanged: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('audit:changed', handler);
-      return () => ipcRenderer.off('audit:changed', handler);
-    },
+  onAppOpenSession: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:open-session', handler);
+    return () => ipcRenderer.off('app:open-session', handler);
   },
   notifications: {
     list: () => ipcRenderer.invoke('notification:list'),

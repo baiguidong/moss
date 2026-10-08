@@ -24,7 +24,6 @@ import {
   FolderKanban,
   ChartNoAxesCombined,
   Plug,
-  ShieldCheck,
   GitFork,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -71,9 +70,9 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "workflows" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "audit" | "embedded-app";
+export type MainView = "chat" | "projects" | "workflows" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "workflows" | "mail" | "cron" | "audit">;
+export type SidebarMoreView = Extract<MainView, "overview" | "workflows" | "mail" | "cron">;
 
 export function getSidebarMoreViews({
   workflowsEnabled,
@@ -88,7 +87,6 @@ export function getSidebarMoreViews({
     "overview",
     ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
-    "audit",
     "cron",
   ];
 }
@@ -114,7 +112,6 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
   overview: { label: "概览", icon: ChartNoAxesCombined },
   workflows: { label: "工作流", icon: GitFork },
   mail: { label: "协作邮箱", icon: Mail },
-  audit: { label: "审计中心", icon: ShieldCheck },
   cron: { label: "定时任务", icon: AlarmClock },
 };
 
