@@ -5,7 +5,7 @@ import { CuaDriverHost } from './driver-host.mjs';
 import { ComputerUseService } from './service.mjs';
 
 export function createComputerUseFeature({ app, ipcMain, shell, powerMonitor, getMainWindow,
-  resourcesRoot, getSettings, saveSettings, publish, expectedBundleId, sdkLoader }) {
+  resourcesRoot, getSettings, saveSettings, publish, expectedBundleId, sdkLoader, platform = process.platform }) {
   const pending = new Map();
   let permissionNotice = '';
   const hostApplicationPath = /^(.*\.app)\/Contents\//.exec(app.getPath?.('exe') || process.execPath)?.[1] || '';
@@ -49,7 +49,7 @@ export function createComputerUseFeature({ app, ipcMain, shell, powerMonitor, ge
   });
   register('check', async () => { permissionNotice = ''; await service.check({ restart: true }); return status(); });
   register('request-permissions', async () => {
-    if (!service.settings().enabled || process.platform !== 'darwin') throw new Error('请先开启电脑操控。');
+    if (!service.settings().enabled || platform !== 'darwin') throw new Error('请先开启电脑操控。');
     if (service.owner || service.inFlight) throw new Error('请先结束当前控制，再申请系统权限。');
     permissionNotice = '';
     await app.whenReady();

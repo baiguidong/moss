@@ -94,7 +94,7 @@ test('settings and approval IPC reject webviews and subframes', async () => {
   assert.equal(handler({ sender, senderFrame: mainFrame }).enabled, false);
 });
 
-function permissionFixture(permissions) {
+function permissionFixture(permissions, { platform = 'darwin', enabled = true } = {}) {
   const handlers = new Map(); const mainFrame = {}; const sender = { mainFrame };
   const opened = []; const revealed = []; const calls = [];
   const service = createComputerUseFeature({
@@ -102,7 +102,7 @@ function permissionFixture(permissions) {
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) }, powerMonitor: { on() {} },
     shell: { openExternal: async url => opened.push(url), showItemInFolder: file => revealed.push(file) },
     getMainWindow: () => ({ isDestroyed: () => false, webContents: sender }), resourcesRoot: '/unused',
-    getSettings: () => ({ enabled: true }), saveSettings: () => {}, publish: () => {},
+    getSettings: () => ({ enabled }), saveSettings: () => {}, publish: () => {}, platform,
     sdkLoader: async entry => { calls.push(entry); return { requestMacOSPermissions: () => { calls.push('request'); } }; },
   });
   service.check = async options => { calls.push(options); service.permissions = permissions; };
@@ -133,4 +133,20 @@ test('permission request cannot restart the driver during active control', async
   service.owner = { id: 'active' };
   await assert.rejects(invoke('request-permissions'), /先结束当前控制/);
   assert.equal(calls.length, 0);
+});
+
+for (const platform of ['linux', 'win32']) {
+  test(`permission request is rejected on ${platform} before loading the macOS SDK`, async () => {
+    const { invoke, calls, opened } = permissionFixture(null, { platform });
+    await assert.rejects(invoke('request-permissions'), /请先开启电脑操控/);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(opened, []);
+  });
+}
+
+test('permission request is rejected when Computer Use is disabled', async () => {
+  const { invoke, calls, opened } = permissionFixture(null, { enabled: false });
+  await assert.rejects(invoke('request-permissions'), /请先开启电脑操控/);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(opened, []);
 });
