@@ -103,7 +103,7 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   type: 'system';
   role: 'system';
   content: string;
-  variant?: 'local_command' | 'plan' | 'connector_auth';
+  variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact';
   status?: 'pending' | 'success' | 'failed';
 };
 
@@ -1371,6 +1371,17 @@ export function buildTranscriptRenderMessages(
     }
 
     if (event?.type === 'system') {
+      if (event.subtype === 'compact_boundary') {
+        finalizeAssistantTurn(state, { complete: true });
+        const metadata = event.compactMetadata ?? event.compact_metadata;
+        const trigger = metadata?.trigger === 'auto' ? '自动' : metadata?.trigger === 'manual' ? '手动' : '';
+        const preTokens = metadata?.preTokens ?? metadata?.pre_tokens;
+        const count = typeof preTokens === 'number' && Number.isFinite(preTokens) && preTokens > 0
+          ? `（压缩前约 ${Math.round(preTokens).toLocaleString('en-US')} tokens）`
+          : '';
+        addSystemRenderMessage(state, timestamp, `已${trigger}压缩上下文${count}`, undefined, 'compact');
+        continue;
+      }
       const isLocalCommand = event.subtype === 'local_command';
       const isConnectorAuth = event.subtype === 'connector_auth';
       const content = isLocalCommand

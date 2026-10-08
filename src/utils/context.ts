@@ -4,7 +4,7 @@ import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
 
-// Model context window size (200k tokens for all models right now)
+// Fallback when the configured provider does not publish a context window.
 export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 
 // Maximum output tokens for compact operations

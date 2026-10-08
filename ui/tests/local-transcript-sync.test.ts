@@ -2,9 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { appendFile, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
 import { createLocalTranscriptSync, readTranscriptHistory } from '../src/local-transcript-sync.mjs';
+import { createSessionHistoryService } from '../src/session-history-service.mjs';
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -36,14 +35,18 @@ async function fixture(intervalMs = 60_000) {
 
 describe('local transcript synchronization', () => {
   it('reloads an already cached, live Desktop session from its transcript when opened again', async () => {
-    const { record, sync } = await fixture();
+    const { record } = await fixture();
     Object.assign(record, { underlyingSessionId: 'engine-session', historyLoadedFromSource: true });
+    const service = createSessionHistoryService({
+      sessionPaths: { getLocalSessionTranscriptPath: (record: any) => record.file },
+      disposeRuntime: (record: any) => { record.runtime = null; },
+      hasActiveAgentTeam: () => false,
+      schedulePersistSession() {}, emitSessionMeta() {}, emitSessionHistory() {}, mossLog() {},
+    });
+    cleanups.push(() => service.localTranscriptSync.dispose());
+    await service.localTranscriptSync.acknowledge(record);
     await appendFile(record.file, jsonl([user('CLI turn after the Desktop cache was loaded')]));
-    const source = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
-    const start = source.indexOf('async function loadSessionHistoryFromSource');
-    const end = source.indexOf('async function refreshSessionHistoryFromTranscriptAfterTurn', start);
-    const load = runInNewContext(`${source.slice(start, end)}; loadSessionHistoryFromSource`, { localTranscriptSync: sync });
-    expect(await load(record)).toEqual([user('desktop prompt'), user('CLI turn after the Desktop cache was loaded')]);
+    expect(await service.loadSessionHistoryFromSource(record)).toEqual([user('desktop prompt'), user('CLI turn after the Desktop cache was loaded')]);
     expect(record.runtime).toBeNull();
   });
 
@@ -141,5 +144,61 @@ describe('local transcript synchronization', () => {
     await writeFile(record.file, raw + jsonl([user('restored')]));
     await sync.refresh(record);
     expect(record.history).toHaveLength(2);
+  });
+
+  for (const action of ['dispose', 'path-change', 'acknowledge'] as const) {
+    it(`discards a pending history read after ${action}`, async () => {
+      const { record } = await fixture();
+      let resolveRead!: (history: unknown[]) => void;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => { started = resolve; });
+      const published: unknown[] = [];
+      const sync = createLocalTranscriptSync({
+        getPath: (record: any) => record.file,
+        readHistory: () => { started(); return new Promise(resolve => { resolveRead = resolve; }); },
+        invalidateRuntime: () => { throw new Error('Stale history must not invalidate the runtime'); },
+        applyHistory: (_record: unknown, history: unknown[]) => published.push(history),
+        intervalMs: 60_000,
+      });
+      cleanups.push(() => sync.dispose());
+      const pending = sync.refresh(record);
+      await ready;
+      if (action === 'dispose') sync.dispose();
+      if (action === 'path-change') {
+        record.file = path.join(path.dirname(record.file), 'new-session.jsonl');
+        await writeFile(record.file, jsonl([user('new transcript')]));
+      }
+      if (action === 'acknowledge') await sync.acknowledge(record);
+      resolveRead([user('stale snapshot')]);
+      expect(await pending).toBe(false);
+      expect(published).toEqual([]);
+    });
+  }
+
+  it('does not let an old read replace history after the same record is forgotten and reopened', async () => {
+    const { record } = await fixture();
+    const reads: Array<(history: unknown[]) => void> = [];
+    let started!: () => void;
+    let ready = new Promise<void>(resolve => { started = resolve; });
+    const published: unknown[] = [];
+    const sync = createLocalTranscriptSync({
+      getPath: (record: any) => record.file,
+      readHistory: () => { started(); return new Promise(resolve => reads.push(resolve)); },
+      invalidateRuntime: () => {},
+      applyHistory: (_record: unknown, history: unknown[]) => published.push(history),
+      intervalMs: 60_000,
+    });
+    cleanups.push(() => sync.dispose());
+    const oldRead = sync.refresh(record);
+    await ready;
+    sync.forget(record);
+    ready = new Promise<void>(resolve => { started = resolve; });
+    const newRead = sync.refresh(record);
+    await ready;
+    reads[1]!([user('current history')]);
+    expect(await newRead).toBe(true);
+    reads[0]!([user('old history')]);
+    expect(await oldRead).toBe(false);
+    expect(published).toEqual([[user('current history')]]);
   });
 });

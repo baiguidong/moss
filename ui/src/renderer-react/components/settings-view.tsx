@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ComputerUseSettings } from '@/components/computer-use';
 import {
   Blocks,
   Bot,
@@ -255,7 +256,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'tools',
         title: '工具',
-        keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需'],
+        keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'],
       },
     ],
   },
@@ -398,7 +399,7 @@ export function ToolLoadingSettingsTable({
 }: {
   value: Record<string, MossToolLoadingMode>;
   onChange: (name: string, mode: MossToolLoadingMode) => void;
-  featureEnabled?: Partial<Record<'workflows', boolean>>;
+  featureEnabled?: Partial<Record<'workflows' | 'computerUse', boolean>>;
 }) {
   return (
     <Surface>
@@ -2115,6 +2116,7 @@ export function SettingsView({
                     }}
                     className="scroll-mt-6"
                   >
+                    <div className="mb-8"><ComputerUseSettings /></div>
                     <div className="mb-3 px-1">
                       <h3 className="text-[15px] font-semibold text-foreground">Moss 内置工具</h3>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground">常驻工具会在每次请求中提供完整参数；按需工具只公布名称，首次命中时会按分组一起加载。</p>
@@ -2124,6 +2126,7 @@ export function SettingsView({
                       onChange={updateToolLoading}
                       featureEnabled={{
                         workflows: settingsDraft?.workflows?.enabled === true,
+                        computerUse: settingsDraft?.computerUse?.enabled === true,
                       }}
                     />
                     <div className="mb-3 mt-8 px-1">

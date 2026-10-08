@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RUNTIME_ARTIFACTS } from '../src/runtime/runtime-manifest.mjs';
+import { verifyComputerUseResources } from './verify-computer-use.mjs';
+import { CUA_ARTIFACTS } from '../src/computer-use/manifest.mjs';
 
 const ELECTRON_BUILDER_ARCHES = Object.freeze([
   'ia32',
@@ -40,6 +42,8 @@ export default async function afterPack(context) {
   if (!artifacts) throw new Error(`Unsupported package target: ${target}`);
 
   const resourcesDir = resourcesDirectory(context);
+  if (CUA_ARTIFACTS[target]) verifyComputerUseResources(resourcesDir, target, { verifyHashes: true });
+  else await fsp.rm(path.join(resourcesDir, 'computer-use'), { recursive: true, force: true });
   await requireFile(path.join(resourcesDir, 'cli', 'cli.js'), 'Moss terminal CLI');
   if (platform === 'darwin') {
     const ptyRoot = path.join(resourcesDir, 'app.asar.unpacked', 'node_modules', 'node-pty');

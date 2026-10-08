@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Use a finite source mapping: renderer input must never become an IPC channel.
+function cronPrefix(source) {
+  if (source === 'local') return 'agent:cron';
+  if (source === 'cloud') return 'agent:cloud-cron';
+  throw new Error('Unknown cron source.');
+}
+
 contextBridge.exposeInMainWorld('agentDesktop', {
   // 通用 IPC 调用方法
   ipcInvoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
@@ -16,6 +23,51 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     ipcRenderer.removeListener(channel, handler);
   },
 
+  skillHub: {
+    getInstalled: () => ipcRenderer.invoke('public-skillhub:get-installed-skills'),
+    fetchCategories: () => ipcRenderer.invoke('public-skillhub:fetch-categories'),
+    fetchSkills: (payload) => ipcRenderer.invoke('public-skillhub:fetch-skills', payload),
+    fetchDetail: (payload) => ipcRenderer.invoke('public-skillhub:fetch-detail', payload),
+    install: (payload) => ipcRenderer.invoke('public-skillhub:install-skill', payload),
+    uninstall: (payload) => ipcRenderer.invoke('public-skillhub:uninstall-skill', payload),
+    openImportDialog: () => ipcRenderer.invoke('public-skillhub:open-import-dialog'),
+    importLocal: (payload) => ipcRenderer.invoke('public-skillhub:import-local', payload),
+  },
+  expertHub: {
+    getInstalled: () => ipcRenderer.invoke('public-experthub:get-installed-experts'),
+    fetchCategories: (payload) => ipcRenderer.invoke('public-experthub:fetch-categories', payload),
+    fetchExperts: (payload) => ipcRenderer.invoke('public-experthub:fetch-experts', payload),
+    fetchFeatured: (payload) => ipcRenderer.invoke('public-experthub:fetch-featured-experts', payload),
+    fetchScenes: (payload) => ipcRenderer.invoke('public-experthub:fetch-scenes', payload),
+    fetchDetail: (payload) => ipcRenderer.invoke('public-experthub:fetch-detail', payload),
+    install: (payload) => ipcRenderer.invoke('public-experthub:install-expert', payload),
+    uninstall: (payload) => ipcRenderer.invoke('public-experthub:uninstall-expert', payload),
+  },
+  getInstalledSkills: () => ipcRenderer.invoke('skill-store:getInstalledSkills'),
+  sessionCron: {
+    list: (source) => ipcRenderer.invoke(`${cronPrefix(source)}-list`),
+    toggle: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-toggle`, payload),
+    remove: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-remove`, payload),
+    runNow: (source, payload) => ipcRenderer.invoke(`${cronPrefix(source)}-run-now`, payload),
+  },
+  onConnectorsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('connector-hub:changed', handler);
+    return () => ipcRenderer.off('connector-hub:changed', handler);
+  },
+
+  computerUse: {
+    status: () => ipcRenderer.invoke('computer-use:status'),
+    enable: (enabled) => ipcRenderer.invoke('computer-use:enable', { enabled }),
+    check: () => ipcRenderer.invoke('computer-use:check'),
+    requestPermissions: () => ipcRenderer.invoke('computer-use:request-permissions'),
+    revealHostApp: () => ipcRenderer.invoke('computer-use:reveal-host-app'),
+    openSettings: (permission) => ipcRenderer.invoke('computer-use:open-settings', { permission }),
+    stop: () => ipcRenderer.invoke('computer-use:stop'),
+    revoke: (bundleId) => ipcRenderer.invoke('computer-use:revoke', { bundleId }),
+    decide: (id, decision) => ipcRenderer.invoke('computer-use:decide', { id, decision }),
+    onChanged: (callback) => { const handler = (_event, status) => callback(status); ipcRenderer.on('computer-use:changed', handler); return () => ipcRenderer.off('computer-use:changed', handler); },
+  },
   getStatus: () => ipcRenderer.invoke('agent:get-status'),
   getManagedRuntimeStatus: () => ipcRenderer.invoke('agent:get-managed-runtime-status'),
   ensureManagedRuntimes: (payload) => ipcRenderer.invoke('agent:ensure-managed-runtimes', payload),
@@ -88,6 +140,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
   openTerminal: (payload) => ipcRenderer.invoke('terminal:open', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
+  getModelContext: (payload) => ipcRenderer.invoke('agent:get-model-context', payload),
   listSessionTasks: (payload) => ipcRenderer.invoke('agent:list-session-tasks', payload),
   getTurnChanges: (payload) => ipcRenderer.invoke('agent:get-turn-changes', payload),
   previewTurnRewind: (payload) => ipcRenderer.invoke('agent:preview-turn-rewind', payload),

@@ -13,6 +13,7 @@ export function getChatAppearanceStyle(appearance?: Partial<DesktopSettings["app
     "--assistant-avatar-display": showAvatar ? "block" : "none",
     "--chat-icon-display": showAvatar ? "flex" : "none",
     "--assistant-avatar-size": showAvatar ? "28px" : "0px",
+    "--assistant-content-inset": showAvatar ? "36px" : "0px",
     "--assistant-message-border-width": bordered ? "1px" : "0px",
     "--assistant-message-padding-x": bordered ? "16px" : "0px",
     "--assistant-message-padding-y": bordered ? "10px" : "0px",

@@ -4,6 +4,7 @@ import * as React from "react";
 import { X, FileText, Image as ImageIcon } from "lucide-react";
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { cn } from "@/lib/utils";
+import { LocalImage } from "@/components/local-image";
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
 
@@ -77,7 +78,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: FilePrev
       <div className="relative inline-block">
         <div className="overflow-hidden rounded-lg border border-border/70">
           {imageUrl ? (
-            <img src={imageUrl} alt={fileName} className="h-16 w-16 object-cover cursor-pointer" />
+            <LocalImage src={imageUrl} alt={fileName} className="h-16 w-16 object-cover" />
           ) : (
             <div className="h-16 w-16 bg-muted flex items-center justify-center">
               <ImageIcon className="h-6 w-6 text-muted-foreground" />

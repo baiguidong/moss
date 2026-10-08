@@ -105,6 +105,7 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
   const resultMap = new Map<string, ToolResultRenderMessage>();
   const childToolCallsByParent = new Map<string, ToolUseRenderMessage[]>();
   const toolUseIds = new Set<string>();
+  let latestCopyMessageId: string | undefined;
   let activeToolGroup: Extract<RenderItem, { kind: "tool_group" }> | null = null;
 
   const beginToolGroup = (id: string, mergeable: boolean) => {
@@ -207,13 +208,16 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
     if (message.type === "tool_result") continue;
 
     activeToolGroup = null;
+    if (message.type === "assistant_text" && message.content.trim()) {
+      latestCopyMessageId = message.id;
+    }
     renderItems.push({
       kind: "message",
       message,
     });
   }
 
-  return { renderItems, resultMap, childToolCallsByParent };
+  return { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId };
 }
 
 export function isMergeableActivityTool(toolCall: ToolUseRenderMessage) {
@@ -311,6 +315,7 @@ function renderTranscriptItem(
   sessionId?: string,
   workspace?: string,
   remote?: boolean,
+  showCopyButton = false,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -333,7 +338,7 @@ function renderTranscriptItem(
     return <UserMessage key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
-    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} />;
+    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
   }
   if (message.type === "thinking") {
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
@@ -584,7 +589,7 @@ export const VirtualMessageList = React.forwardRef<
   },
   ref,
 ) {
-  const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
+  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = React.useMemo(
     () => buildRenderModel(messages),
     [messages],
   );
@@ -815,6 +820,7 @@ export const VirtualMessageList = React.forwardRef<
             sessionId,
             workspace,
             agentMode === 'remote-direct',
+            getRenderItemId(item) === latestCopyMessageId,
           );
           const turnId = getRenderItemTurnId(item);
           const turnChange = turnId ? turnChanges.get(turnId) : undefined;
@@ -964,7 +970,7 @@ export function MessageList({
   sessionId?: string;
   agentMode?: 'local' | 'remote-direct';
 }) {
-  const { renderItems, resultMap, childToolCallsByParent } = React.useMemo(
+  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = React.useMemo(
     () => buildRenderModel(messages),
     [messages],
   );
@@ -987,7 +993,7 @@ export function MessageList({
     <div className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
       {renderItems.length > 0 ? (
         renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent, undefined, false, undefined,
-          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, sessionId, workspace, agentMode === 'remote-direct'))
+          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, sessionId, workspace, agentMode === 'remote-direct', getRenderItemId(item) === latestCopyMessageId))
       ) : (
         emptyState || (
           <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">

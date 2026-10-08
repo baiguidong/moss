@@ -267,6 +267,10 @@ async function* queryLoop(
     skipCacheWrite,
   } = params
   const deps = params.deps ?? productionDeps()
+  await deps.loadModelCapabilities?.(
+    params.toolUseContext.options.mainLoopModel,
+    params.toolUseContext.abortController.signal,
+  )
 
   // Mutable cross-iteration state. The loop body destructures this at the top
   // of each iteration so reads stay bare-name (`messages`, `toolUseContext`).

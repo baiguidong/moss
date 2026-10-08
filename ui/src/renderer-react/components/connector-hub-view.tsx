@@ -358,12 +358,10 @@ export function ConnectorHubView({
   }, [payload?.installed]);
 
   React.useEffect(() => {
-    const handler = window.agentDesktop.ipcOn("connector-hub:changed", () => {
+    const unsubscribe = window.agentDesktop.onConnectorsChanged(() => {
       void loadConnectors();
     });
-    return () => {
-      window.agentDesktop.ipcOff("connector-hub:changed", handler);
-    };
+    return unsubscribe;
   }, [loadConnectors]);
 
   const flashNotice = React.useCallback((text: string) => {

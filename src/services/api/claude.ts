@@ -2751,6 +2751,56 @@ export function cleanupStream(
 }
 
 /**
+ * Some Anthropic-compatible gateways explicitly carry OpenAI billing usage.
+ * OpenAI input totals already include cached tokens; our internal Anthropic
+ * usage keeps uncached input and cache reads separate. Use the explicit raw
+ * usage rather than guessing the accounting convention from the model name.
+ */
+function getOpenAIBillingInputUsage(usage: unknown): Pick<
+  NonNullableUsage,
+  'input_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens'
+> | undefined {
+  const rawUsage = usage as {
+    cache_read_input_tokens?: number
+    billing_usage?: {
+      semantic?: string
+      openai_usage?: {
+        prompt_tokens?: number
+        prompt_tokens_details?: { cached_tokens?: number } | null
+        input_tokens?: number
+        input_tokens_details?: { cached_tokens?: number } | null
+      }
+    }
+  } | null | undefined
+  const billing = rawUsage?.billing_usage
+  const openai = billing?.openai_usage
+  if (billing?.semantic !== 'openai' || !openai) return undefined
+
+  // Gateways may include both shapes, with zero placeholders for the unused one.
+  const isChatUsage =
+    typeof openai.prompt_tokens === 'number' &&
+    (openai.prompt_tokens > 0 || !openai.input_tokens)
+  const total = isChatUsage ? openai.prompt_tokens : openai.input_tokens
+  const details = isChatUsage
+    ? openai.prompt_tokens_details
+    : openai.input_tokens_details
+  const cached = details?.cached_tokens ?? rawUsage?.cache_read_input_tokens ?? 0
+  if (
+    typeof total !== 'number' ||
+    !Number.isSafeInteger(total) || total < 0 ||
+    !Number.isSafeInteger(cached) || cached < 0 || cached > total
+  ) {
+    return undefined
+  }
+
+  return {
+    input_tokens: total - cached,
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: 0,
+  }
+}
+
+/**
  * Updates usage statistics with new values from streaming API events.
  * Note: Anthropic's streaming API provides cumulative usage totals, not incremental deltas.
  * Each event contains the complete usage up to that point in the stream.
@@ -2758,7 +2808,8 @@ export function cleanupStream(
  * Input-related tokens (input_tokens, cache_creation_input_tokens, cache_read_input_tokens)
  * are typically set in message_start and remain constant. message_delta events may send
  * explicit 0 values for these fields, which should not overwrite the values from message_start.
- * We only update these fields if they have a non-null, non-zero value.
+ * We only update these fields if they have a non-null, non-zero value, unless
+ * explicit provider billing metadata supplies an authoritative input breakdown.
  */
 export function updateUsage(
   usage: Readonly<NonNullableUsage>,
@@ -2768,21 +2819,23 @@ export function updateUsage(
   if (!partUsage) {
     return previous
   }
+  const billingInput = getOpenAIBillingInputUsage(partUsage)
   return {
-    input_tokens:
-      partUsage.input_tokens !== null && partUsage.input_tokens > 0
+    // Authoritative billing input can be zero for a fully cached request.
+    input_tokens: billingInput?.input_tokens ??
+      (partUsage.input_tokens !== null && partUsage.input_tokens > 0
         ? partUsage.input_tokens
-        : previous.input_tokens,
-    cache_creation_input_tokens:
-      partUsage.cache_creation_input_tokens !== null &&
+        : previous.input_tokens),
+    cache_creation_input_tokens: billingInput?.cache_creation_input_tokens ??
+      (partUsage.cache_creation_input_tokens !== null &&
       partUsage.cache_creation_input_tokens > 0
         ? partUsage.cache_creation_input_tokens
-        : previous.cache_creation_input_tokens,
-    cache_read_input_tokens:
-      partUsage.cache_read_input_tokens !== null &&
+        : previous.cache_creation_input_tokens),
+    cache_read_input_tokens: billingInput?.cache_read_input_tokens ??
+      (partUsage.cache_read_input_tokens !== null &&
       partUsage.cache_read_input_tokens > 0
         ? partUsage.cache_read_input_tokens
-        : previous.cache_read_input_tokens,
+        : previous.cache_read_input_tokens),
     output_tokens: partUsage.output_tokens ?? previous.output_tokens,
     server_tool_use: {
       web_search_requests:
@@ -2829,10 +2882,13 @@ export function updateUsage(
 function normalizeUsageFields(
   usage: Readonly<Partial<NonNullableUsage>> | undefined,
 ): NonNullableUsage {
+  const billingInput = getOpenAIBillingInputUsage(usage)
   return {
-    input_tokens: usage?.input_tokens ?? 0,
-    cache_creation_input_tokens: usage?.cache_creation_input_tokens ?? 0,
-    cache_read_input_tokens: usage?.cache_read_input_tokens ?? 0,
+    input_tokens: billingInput?.input_tokens ?? usage?.input_tokens ?? 0,
+    cache_creation_input_tokens:
+      billingInput?.cache_creation_input_tokens ?? usage?.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens:
+      billingInput?.cache_read_input_tokens ?? usage?.cache_read_input_tokens ?? 0,
     output_tokens: usage?.output_tokens ?? 0,
     server_tool_use: {
       web_search_requests: usage?.server_tool_use?.web_search_requests ?? 0,

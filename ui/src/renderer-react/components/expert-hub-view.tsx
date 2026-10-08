@@ -616,7 +616,7 @@ export function ExpertHubView() {
   const loadInstalled = React.useCallback(async () => {
     setInstalledLoading(true);
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:get-installed-experts") as { success?: boolean; data?: InstalledExpert[]; error?: string };
+      const res = await window.agentDesktop.expertHub.getInstalled() as { success?: boolean; data?: InstalledExpert[]; error?: string };
       if (!res?.success) throw new Error(res?.error || "读取已安装专家失败");
       setInstalledExperts(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
@@ -629,7 +629,7 @@ export function ExpertHubView() {
 
   const loadCategories = React.useCallback(async (forceRefresh = false) => {
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-categories", { forceRefresh }) as { success?: boolean; data?: { categories?: ExpertCategory[] }; error?: string };
+      const res = await window.agentDesktop.expertHub.fetchCategories({ forceRefresh }) as { success?: boolean; data?: { categories?: ExpertCategory[] }; error?: string };
       if (res?.success && Array.isArray(res.data?.categories)) {
         setCategories(res.data.categories);
       }
@@ -643,7 +643,7 @@ export function ExpertHubView() {
     setLoading(true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-experts", {
+      const res = await window.agentDesktop.expertHub.fetchExperts({
         page: nextPage,
         pageSize: HUB_EXPERT_PAGE_SIZE,
         query: deferredQuery,
@@ -674,7 +674,7 @@ export function ExpertHubView() {
     setFeaturedLoading(true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-featured-experts", {
+      const res = await window.agentDesktop.expertHub.fetchFeatured({
         page: nextPage,
         pageSize: FEATURED_EXPERT_PAGE_SIZE,
         query: deferredQuery,
@@ -707,7 +707,7 @@ export function ExpertHubView() {
   const loadScenes = React.useCallback(async (forceRefresh = false) => {
     setScenesLoading(true);
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-scenes", {
+      const res = await window.agentDesktop.expertHub.fetchScenes({
         page: 1,
         pageSize: FEATURED_SCENE_PAGE_SIZE,
         forceRefresh,
@@ -762,7 +762,7 @@ export function ExpertHubView() {
       error: "",
     });
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:fetch-detail", { expertId: id }) as { success?: boolean; data?: RemoteExpert; error?: string };
+      const res = await window.agentDesktop.expertHub.fetchDetail({ expertId: id }) as { success?: boolean; data?: RemoteExpert; error?: string };
       if (!res?.success || !res.data) throw new Error(res?.error || "获取专家详情失败");
       setDetail((current) => (
         current?.expertId === id
@@ -799,7 +799,7 @@ export function ExpertHubView() {
     setError("");
     try {
       const res = await withTimeout(
-        window.agentDesktop.ipcInvoke("public-experthub:install-expert", { expertId: expert.id }) as Promise<{ success?: boolean; error?: string }>,
+        window.agentDesktop.expertHub.install({ expertId: expert.id }) as Promise<{ success?: boolean; error?: string }>,
         EXPERT_INSTALL_UI_TIMEOUT_MS,
         "安装仍在等待网络响应。请稍后刷新“我安装的”，如果未安装成功再重试。",
       );
@@ -818,7 +818,7 @@ export function ExpertHubView() {
     setBusy(key, true);
     setError("");
     try {
-      const res = await window.agentDesktop.ipcInvoke("public-experthub:uninstall-expert", { sourcePath: expert.source }) as { success?: boolean; error?: string };
+      const res = await window.agentDesktop.expertHub.uninstall({ sourcePath: expert.source }) as { success?: boolean; error?: string };
       if (!res?.success) throw new Error(res?.error || "卸载失败");
       flashNotice(`已卸载 ${expert.displayName || expert.name}`);
       await loadInstalled();

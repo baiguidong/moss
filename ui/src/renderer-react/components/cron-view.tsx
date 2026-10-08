@@ -11,27 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-
-type CronTaskInfo = {
-  id: string;
-  cron: string;
-  prompt: string;
-  recurring: boolean;
-  createdAt: number | null;
-  lastFiredAt: number | null;
-  enabled: boolean;
-  orphaned: boolean;
-  ownerSessionId: string | null;
-  ownerSessionTitle: string | null;
-  executionSessionId: string | null;
-  executionSessionTitle: string | null;
-  nextRunAt: number | null;
-  durable?: boolean;
-  status?: 'idle' | 'running' | 'failed';
-  lastError?: string | null;
-  lastCompletedAt?: number | null;
-  timezone?: string;
-};
+import type { CronTaskInfo } from '@/lib/desktop-api-types';
 
 function formatCronTime(ms: number | null, timezone?: string) {
   if (!ms) return "—";
@@ -62,8 +42,6 @@ export function CronView(props: CronViewProps) {
 }
 
 function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronViewProps & { source: 'local' | 'cloud' }) {
-  const channel = source === 'cloud' ? 'cloud-cron' : 'cron';
-  const request = React.useCallback((action: string, payload?: unknown) => window.agentDesktop.ipcInvoke(`agent:${channel}-${action}`, payload), [channel]);
   const [tasks, setTasks] = React.useState<CronTaskInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState("");
@@ -74,7 +52,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
     setLoading(true);
     try {
       if (source === 'cloud' && !remoteEnabled) throw new Error('请先在设置中启用云端连接。');
-      const res = await request('list') as { tasks?: CronTaskInfo[] } | undefined;
+      const res = await window.agentDesktop.sessionCron.list(source);
       setTasks(Array.isArray(res?.tasks) ? res.tasks : []);
       setLoadError("");
     } catch (error) {
@@ -82,7 +60,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
     } finally {
       setLoading(false);
     }
-  }, [request, source, remoteEnabled]);
+  }, [source, remoteEnabled]);
 
   React.useEffect(() => {
     void refresh();
@@ -97,7 +75,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
 
   const handleToggle = async (task: CronTaskInfo) => {
     try {
-      const res = await request('toggle', { taskId: task.id, enabled: !task.enabled }) as { ok?: boolean; error?: string } | undefined;
+      const res = await window.agentDesktop.sessionCron.toggle(source, { taskId: task.id, enabled: !task.enabled });
       if (!res?.ok) throw new Error(res?.error || "任务状态未更新");
       void refresh();
     } catch (error) {
@@ -107,7 +85,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
 
   const handleRemove = async (task: CronTaskInfo) => {
     try {
-      const res = await request('remove', { taskId: task.id }) as { ok?: boolean; error?: string } | undefined;
+      const res = await window.agentDesktop.sessionCron.remove(source, { taskId: task.id });
       if (!res?.ok) throw new Error(res?.error || "任务未删除");
       flashNotice("任务已删除");
       void refresh();
@@ -119,7 +97,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
   const handleRunNow = async (task: CronTaskInfo) => {
     setPendingRuns(current => new Set(current).add(task.id));
     try {
-      const res = await request('run-now', { taskId: task.id }) as { ok?: boolean; error?: string; sessionId?: string } | undefined;
+      const res = await window.agentDesktop.sessionCron.runNow(source, { taskId: task.id });
       flashNotice(res?.ok ? (source === 'cloud' ? "已提交执行" : "执行完成") : `执行失败：${res?.error || "未知错误"}`);
       if (res?.ok && res.sessionId) onOpenSession?.(res.sessionId);
     } catch (error) {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
@@ -6,6 +7,8 @@ import { OverviewView } from '@/components/overview-view';
 import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
+import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
+import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { SessionInfoButton } from '@/components/session-info';
 import { GlobalSessionSearch } from '@/components/global-session-search';
@@ -64,6 +67,7 @@ import type {
   FileTreeNode,
   InstalledConnector,
   InstalledAssistant,
+  ModelContextInfo,
   PermissionMode,
   Project,
   SessionDetail,
@@ -533,13 +537,23 @@ export default function App() {
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
-  const workspaceRefreshTimerRef = React.useRef<number | null>(null);
+  const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
   const openSessionRequestIdRef = React.useRef(0);
+  const workspaceDirectoryLoader = React.useMemo(() => createWorkspaceDirectoryLoader({
+    getScope: () => {
+      const detail = activeDetailRef.current;
+      return detail?.id === activeSessionIdRef.current
+        ? { sessionId: detail.id, workspace: detail.workspace }
+        : null;
+    },
+    readDirectory: (payload) => window.agentDesktop.listWorkspaceDir(payload),
+    applyDirectory: (dirPath, data) => setDirectoryCache((previous) => new Map(previous).set(dirPath, data)),
+  }), []);
 
   React.useEffect(() => {
     if (!activeSessionId) {
@@ -552,12 +566,16 @@ export default function App() {
   // first turn. Holds the id of the session created in-flight.
   const creatingSessionRef = React.useRef<Promise<string | undefined> | null>(null);
   const clearSessionWorkspaceState = React.useCallback(() => {
+    workspaceDirectoryLoader.reset();
+    workspaceRefreshRequestIdRef.current++;
+    expandedDirsRef.current = new Set();
+    previewTabsRef.current = [];
     setDirectoryCache(new Map());
     setExpandedDirs(new Set());
     setSelectedFilePath(null);
     setPreviewTabs([]);
     setWorkspaceQuery('');
-  }, []);
+  }, [workspaceDirectoryLoader]);
 
   const persistPinned = React.useCallback((next: Set<string>) => {
     setPinnedIds(next);
@@ -702,33 +720,33 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeSessionId]);
 
-  // Latest context usage derived from the newest main-thread assistant
-  // message (input + cache read/write + output ≈ current context footprint).
-  // Result events are deliberately skipped: their usage is summed across all
-  // API calls of the turn and vastly overstates the live context size.
+  const [contextCapacity, setContextCapacity] = React.useState<{
+    sessionId: string;
+    settings: DesktopSettings;
+    value: ModelContextInfo | null;
+  } | null>(null);
+  const contextSessionId = activeDetail?.id;
+  const contextAgentMode = activeDetail?.agentMode;
+  React.useEffect(() => {
+    if (!contextSessionId || !desktopSettings || contextAgentMode === 'remote-direct') return;
+    let cancelled = false;
+    void window.agentDesktop.getModelContext({ sessionId: contextSessionId })
+      .catch(() => null)
+      .then((value) => {
+        if (!cancelled) setContextCapacity({ sessionId: contextSessionId, settings: desktopSettings, value });
+      });
+    return () => { cancelled = true; };
+  }, [contextSessionId, contextAgentMode, desktopSettings, activeDetail?.busy]);
+
   const contextUsage = React.useMemo(() => {
-    const history = activeDetail?.history;
-    if (!Array.isArray(history)) return null;
-    for (let i = history.length - 1; i >= 0; i -= 1) {
-      const ev = history[i] as any;
-      if (ev?.type !== 'assistant' || ev?.parent_tool_use_id != null) continue;
-      const usage = ev?.message?.usage;
-      if (usage && typeof usage.input_tokens === 'number') {
-        const inputTokens = usage.input_tokens ?? 0;
-        const cacheRead = usage.cache_read_input_tokens ?? 0;
-        const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-        const outputTokens = usage.output_tokens ?? 0;
-        return {
-          used: inputTokens + cacheRead + cacheWrite + outputTokens,
-          inputTokens,
-          cacheRead,
-          cacheWrite,
-          outputTokens,
-        };
-      }
-    }
-    return null;
-  }, [activeDetail?.history]);
+    const remote = contextAgentMode === 'remote-direct';
+    const resolved = contextCapacity?.sessionId === contextSessionId && contextCapacity?.settings === desktopSettings;
+    return deriveContextUsage(
+      activeDetail?.history,
+      remote ? getRemoteModelContext(activeDetail?.history) : resolved ? contextCapacity!.value : null,
+      !remote && !resolved,
+    );
+  }, [activeDetail?.history, contextSessionId, contextAgentMode, contextCapacity, desktopSettings]);
 
   // Cumulative output tokens produced since the last human prompt — mirrors the
   // REPL's live "↓ N tokens" counter shown while a turn is in flight.
@@ -787,13 +805,15 @@ export default function App() {
     if (requestId !== openSessionRequestIdRef.current) {
       return false;
     }
+    const workspaceChanged = activeDetailRef.current?.id !== sessionId
+      || activeDetailRef.current?.workspace !== detail.workspace;
     setActiveView('chat');
     activeSessionIdRef.current = sessionId;
     activeDetailRef.current = detail;
     setActiveSessionId(sessionId);
     setComposerIntent(restoreComposerIntent(detail));
     setActiveDetail(detail);
-    clearSessionWorkspaceState();
+    if (workspaceChanged) clearSessionWorkspaceState();
     return true;
   }, [clearSessionWorkspaceState]);
 
@@ -853,14 +873,11 @@ export default function App() {
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
-      const data = await window.agentDesktop.listWorkspaceDir({ sessionId, dirPath: workspace });
-      // 会话在请求返回前已切换则丢弃, 避免用旧会话的目录树覆盖当前会话
-      if (activeSessionIdRef.current !== sessionId) return;
-      setDirectoryCache(new Map([[workspace, data]]));
+      await workspaceDirectoryLoader.load({ sessionId, workspace }, workspace);
     } catch {
       /* 忽略目录加载失败 */
     }
-  }, []);
+  }, [workspaceDirectoryLoader]);
 
   React.useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -1015,48 +1032,39 @@ export default function App() {
   }, [activeView, workflowsEnabled]);
 
   React.useEffect(() => {
+    workspaceDirectoryLoader.reset();
+    setDirectoryCache(new Map());
     if (!activeDetail?.workspace || !activeSessionId) {
-      setDirectoryCache(new Map());
       return;
     }
     void ensureRootDirectory(activeSessionId, activeDetail.workspace);
-  }, [activeDetail?.workspace, activeSessionId, ensureRootDirectory]);
+  }, [activeDetail?.workspace, activeSessionId, ensureRootDirectory, workspaceDirectoryLoader]);
 
   const refreshWorkspaceSnapshot = React.useCallback(async () => {
     const sessionId = activeSessionIdRef.current;
     const detail = activeDetailRef.current;
-    if (!sessionId || !detail?.workspace) return;
+    if (!sessionId || detail?.id !== sessionId || !detail.workspace) return;
+    const requestId = ++workspaceRefreshRequestIdRef.current;
+    const isCurrent = () => requestId === workspaceRefreshRequestIdRef.current
+      && activeSessionIdRef.current === sessionId
+      && activeDetailRef.current?.workspace === detail.workspace;
 
     const validExpandedDirs = Array.from(expandedDirsRef.current).filter((p) =>
-      p.startsWith(detail.workspace)
+      p.startsWith(`${detail.workspace.replace(/[\\/]+$/, '')}/`)
+      || p.startsWith(`${detail.workspace.replace(/[\\/]+$/, '')}\\`)
     );
     const pathsToRefresh = [detail.workspace, ...validExpandedDirs];
-    const refreshedEntries = await Promise.all(
-      pathsToRefresh.map(async (dirPath) => {
-        try {
-          const data = await window.agentDesktop.listWorkspaceDir({
-            sessionId,
-            dirPath,
-          });
-          return [dirPath, data] as const;
-        } catch {
-          return [dirPath, null] as const;
-        }
-      })
+    await Promise.all(
+      pathsToRefresh.map((dirPath) => workspaceDirectoryLoader
+        .load({ sessionId, workspace: detail.workspace }, dirPath)
+        .catch(() => undefined))
     );
 
-    setDirectoryCache(() => {
-      const next = new Map<string, any>();
-      for (const [dirPath, data] of refreshedEntries) {
-        if (data) next.set(dirPath, data);
-      }
-      return next;
-    });
+    if (!isCurrent() || previewTabsRef.current.length === 0) return;
 
-    if (previewTabsRef.current.length === 0) return;
-
+    const originalTabs = previewTabsRef.current;
     const refreshedTabs = await Promise.all(
-      previewTabsRef.current.map(async (tab) => {
+      originalTabs.map(async (tab) => {
         const metadata = getPreviewTabMetadata(tab);
         if (metadata.dirty) {
           return tab;
@@ -1068,16 +1076,58 @@ export default function App() {
           });
           return enrichWorkspacePreviewFile(refreshed, sessionId, detail.workspace, tab);
         } catch {
-          return null;
+          return tab;
         }
       })
     );
 
-    const nextTabs = refreshedTabs.filter(Boolean) as WorkspacePreviewData[];
+    if (!isCurrent()) return;
+    const updates = new Map(originalTabs.map((tab, index) => [tab, refreshedTabs[index]]));
+    const nextTabs = previewTabsRef.current.map((tab) => updates.get(tab) ?? tab);
+    previewTabsRef.current = nextTabs;
     setPreviewTabs(nextTabs);
     void previewIpc.sync({ files: nextTabs }).catch(() => undefined);
     setSelectedFilePath((prev) => (prev && nextTabs.some((tab) => tab.path === prev) ? prev : null));
-  }, []);
+  }, [workspaceDirectoryLoader]);
+
+  React.useEffect(() => {
+    let timer: number | null = null;
+    let running = false;
+    let pending = false;
+    let disposed = false;
+    const scheduleRefresh = () => {
+      // Bound the delay even while a tool continuously writes files.
+      if (disposed) return;
+      if (running) {
+        pending = true;
+        return;
+      }
+      if (timer !== null) return;
+      timer = window.setTimeout(async () => {
+        timer = null;
+        running = true;
+        try {
+          await refreshWorkspaceSnapshot();
+        } finally {
+          running = false;
+          if (pending) {
+            pending = false;
+            scheduleRefresh();
+          }
+        }
+      }, 120);
+    };
+    const unsubscribe = window.agentDesktop.onWorkspaceChanged((payload) => {
+      if (payload?.sessionId === activeSessionIdRef.current) scheduleRefresh();
+    });
+    window.addEventListener('focus', scheduleRefresh);
+    return () => {
+      disposed = true;
+      if (timer !== null) window.clearTimeout(timer);
+      unsubscribe();
+      window.removeEventListener('focus', scheduleRefresh);
+    };
+  }, [refreshWorkspaceSnapshot]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1285,17 +1335,6 @@ export default function App() {
       void refreshApps();
     });
 
-    const offWorkspaceChanged = window.agentDesktop.onWorkspaceChanged((payload) => {
-      if (payload?.sessionId !== activeSessionIdRef.current) return;
-      if (workspaceRefreshTimerRef.current) {
-        window.clearTimeout(workspaceRefreshTimerRef.current);
-      }
-      workspaceRefreshTimerRef.current = window.setTimeout(() => {
-        workspaceRefreshTimerRef.current = null;
-        void refreshWorkspaceSnapshot();
-      }, 120);
-    });
-
     const offSettingsChanged = window.agentDesktop.onSettingsChanged((payload) => {
       applyDesktopSettings(payload);
     });
@@ -1310,15 +1349,11 @@ export default function App() {
       void refreshAssistants();
     });
 
-    const connectorChangedHandler = window.agentDesktop.ipcOn('connector-hub:changed', () => {
+    const offConnectorsChanged = window.agentDesktop.onConnectorsChanged(() => {
       void refreshConnectors();
     });
 
     return () => {
-      if (workspaceRefreshTimerRef.current) {
-        window.clearTimeout(workspaceRefreshTimerRef.current);
-        workspaceRefreshTimerRef.current = null;
-      }
       offEvent();
       offState();
       offBackgroundTasks();
@@ -1329,13 +1364,12 @@ export default function App() {
       offSessionHistory();
       offRemoved();
       offAppsChanged();
-      offWorkspaceChanged();
       offSettingsChanged();
       offProjectsChanged();
       offAssistantsChanged();
-      window.agentDesktop.ipcOff('connector-hub:changed', connectorChangedHandler);
+      offConnectorsChanged();
     };
-  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, refreshWorkspaceSnapshot, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -2059,13 +2093,12 @@ export default function App() {
     const dir = await window.agentDesktop.pickDirectory();
     if (!dir) return;
     const detail = await window.agentDesktop.setSessionWorkspace({ sessionId: activeSessionId, workspace: dir });
+    if (activeSessionIdRef.current !== detail.id) return;
+    activeDetailRef.current = detail;
     setActiveDetail(detail);
     setSummaries((prev) => prev.map((entry) => (entry.id === detail.id ? detail : entry)));
-    setDirectoryCache(new Map());
-    setExpandedDirs(new Set());
-    setSelectedFilePath(null);
-    setPreviewTabs([]);
-  }, [activeSessionId]);
+    clearSessionWorkspaceState();
+  }, [activeSessionId, clearSessionWorkspaceState]);
 
   const handleRefreshWorkspace = React.useCallback(async () => {
     await refreshWorkspaceSnapshot();
@@ -2077,28 +2110,30 @@ export default function App() {
   }, [activeSessionId]);
 
   const handleToggleFolder = React.useCallback(async (path: string) => {
-    const next = new Set(expandedDirs);
+    const detail = activeDetailRef.current;
+    if (!detail || detail.id !== activeSessionIdRef.current) return;
+    const next = new Set(expandedDirsRef.current);
     if (next.has(path)) {
       next.delete(path);
+      expandedDirsRef.current = next;
       setExpandedDirs(next);
       return;
     }
     next.add(path);
+    expandedDirsRef.current = next;
     setExpandedDirs(next);
     try {
-      const data = await window.agentDesktop.listWorkspaceDir({
-        sessionId: activeSessionId,
-        dirPath: path,
-      });
-      setDirectoryCache((prev) => new Map(prev).set(path, data));
+      await workspaceDirectoryLoader.load({ sessionId: detail.id, workspace: detail.workspace }, path);
     } catch {
+      if (activeSessionIdRef.current !== detail.id || activeDetailRef.current?.workspace !== detail.workspace) return;
       setExpandedDirs((prev) => {
         const rolled = new Set(prev);
         rolled.delete(path);
+        expandedDirsRef.current = rolled;
         return rolled;
       });
     }
-  }, [activeSessionId, expandedDirs]);
+  }, [workspaceDirectoryLoader]);
 
   const handleSelectFile = React.useCallback(async (path: string) => {
     if (!activeSessionId) return;
@@ -2395,6 +2430,7 @@ export default function App() {
           className="min-h-0 shrink-0 overflow-hidden"
           style={{ width: effectiveLeftCollapsed ? 68 : layout.leftWidth }}
         >
+          <ComputerUseControl />
           <AppSidebar
             sessions={sidebarSessions}
             apps={apps}

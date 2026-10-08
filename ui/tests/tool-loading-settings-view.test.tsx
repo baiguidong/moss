@@ -12,7 +12,7 @@ test('tool loading settings renders grouped resident and deferred radio choices'
     <ToolLoadingSettingsTable
       value={{ ...DEFAULT_MOSS_TOOL_LOADING, app_build: 'always' }}
       onChange={() => {}}
-      featureEnabled={{ workflows: true }}
+      featureEnabled={{ workflows: true, computerUse: true }}
     />,
   );
 
@@ -31,7 +31,8 @@ test('tool loading settings renders grouped resident and deferred radio choices'
   expect(html).toContain('rowSpan="7"');
   expect(html.match(/>浏览器</g)).toHaveLength(1);
   expect(html.match(/>App 管理</g)).toHaveLength(1);
-  expect(html.match(/type="radio"/g)).toHaveLength(69);
+  expect(html.match(/type="radio"/g)).toHaveLength(72);
+  expect(html).toMatch(/aria-label="computer_use 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="app_build 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="image_generate 按需"[^>]*checked=""[^>]*value="deferred"/);
   expect(html).toMatch(/aria-label="WorkflowRun 按需"[^>]*checked=""/);
@@ -96,6 +97,8 @@ test('Settings Tools includes the current App catalog alongside the built-in loa
   />);
   expect(html).toContain('Moss 内置工具');
   expect(html).toContain('app_build');
+  expect(html).toContain('computer_use');
+  expect(html).toMatch(/aria-label="computer_use 关闭"[^>]*checked=""/);
   expect(html).toContain('App 提供的工具');
   expect(html).toContain('查询目录');
   expect(html).toContain('搜索笔记');

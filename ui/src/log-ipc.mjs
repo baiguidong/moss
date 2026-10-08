@@ -2,6 +2,7 @@ import electron from 'electron';
 const { ipcMain, dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { MOSS_HOME } from './moss-home.mjs';
 

@@ -1,3 +1,4 @@
+import { normalizeComputerUseSettings } from './computer-use/service.mjs';
 import fs from 'node:fs';
 import { normalizeUserAvatar } from './user-avatar-settings.mjs';
 
@@ -271,6 +272,7 @@ function loadLocalSettingsAuthConfig(settingsPath) {
 export function normalizeDesktopSettings(input, existing = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
+  result.computerUse = normalizeComputerUseSettings(source.computerUse ?? existing.computerUse);
   result.userAvatar = normalizeUserAvatar(source.userAvatar ?? result.userAvatar);
   const sourceModels = objectField(source, 'models');
   const sourceText = objectField(sourceModels, 'text');

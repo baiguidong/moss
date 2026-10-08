@@ -13,7 +13,7 @@ import {
 describe('Moss tool loading settings', () => {
   it('defines every split host tool exactly once', () => {
     const names = MOSS_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => tool.name));
-    expect(names).toHaveLength(23);
+    expect(names).toHaveLength(24);
     expect(new Set(names).size).toBe(names.length);
     expect(Object.keys(DEFAULT_MOSS_TOOL_LOADING)).toEqual(names);
   });
@@ -29,7 +29,7 @@ describe('Moss tool loading settings', () => {
     expect(DEFAULT_MOSS_TOOL_LOADING).toEqual(RUNTIME_DEFAULT_MOSS_TOOL_LOADING);
   });
 
-  it('keeps the four core browser tools resident and defaults everything else to deferred', () => {
+  it('keeps core browser and computer tools resident and defaults the others to deferred', () => {
     const always = Object.entries(DEFAULT_MOSS_TOOL_LOADING)
       .filter(([, mode]) => mode === 'always')
       .map(([name]) => name);
@@ -38,6 +38,7 @@ describe('Moss tool loading settings', () => {
       'browser_snapshot',
       'browser_click',
       'browser_type',
+      'computer_use',
     ]);
     expect(DEFAULT_MOSS_TOOL_LOADING).toMatchObject({
       WorkflowRun: 'deferred',

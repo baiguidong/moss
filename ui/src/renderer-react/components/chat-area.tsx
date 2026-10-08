@@ -34,6 +34,7 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { contextUsagePresentation, formatTokenCount, type ContextUsageInfo } from "@/lib/context-usage";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -629,7 +630,7 @@ function ComposerPanel({
     skillsLoadedRef.current = true;
     setSkillsLoading(true);
     try {
-      const res = await window.agentDesktop.ipcInvoke("skill-store:getInstalledSkills") as
+      const res = await window.agentDesktop.getInstalledSkills() as
         { success?: boolean; data?: SkillMentionItem[] } | undefined;
       if (res?.success && Array.isArray(res.data)) {
         setSkillItems(res.data);
@@ -2066,24 +2067,9 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   killed: "已停止",
 };
 
-export type ContextUsageInfo = {
-  used: number;
-  inputTokens: number;
-  cacheRead: number;
-  cacheWrite: number;
-  outputTokens: number;
-};
-
-const CONTEXT_WINDOW_TOKENS = 200_000;
-
-function formatTokenCount(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n);
-}
-
 function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
-  const pct = Math.min(1, usage.used / CONTEXT_WINDOW_TOKENS);
+  const { pct: resolvedPct, summary, details } = contextUsagePresentation(usage);
+  const pct = resolvedPct ?? 0;
   const colorClass = pct >= 0.9
     ? "text-destructive"
     : pct >= 0.7
@@ -2094,7 +2080,7 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className={cn("flex cursor-default items-center", colorClass)}>
+        <div className={cn("flex cursor-default items-center", colorClass)} aria-label={summary}>
           <svg width="18" height="18" viewBox="0 0 18 18" className="-rotate-90">
             <circle cx="9" cy="9" r={radius} fill="none" strokeWidth="2.5" className="stroke-border" />
             <circle
@@ -2112,10 +2098,10 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
         <div>
-          上下文已用 {formatTokenCount(usage.used)} / {formatTokenCount(CONTEXT_WINDOW_TOKENS)}（{Math.round(pct * 100)}%）
+          {summary}
         </div>
         <div className="mt-0.5 text-background/70">
-          输入 {formatTokenCount(usage.inputTokens)} · 缓存读 {formatTokenCount(usage.cacheRead)} · 缓存写 {formatTokenCount(usage.cacheWrite)} · 输出 {formatTokenCount(usage.outputTokens)}
+          {details}
         </div>
       </TooltipContent>
     </Tooltip>

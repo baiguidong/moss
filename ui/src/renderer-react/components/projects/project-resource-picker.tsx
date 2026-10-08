@@ -81,7 +81,7 @@ async function loadAuthorizedConnectors(query: string, page: number): Promise<Pr
 }
 
 async function loadMarketSkills(query: string, page: number): Promise<ProjectResourcePage> {
-  const response = await window.agentDesktop.ipcInvoke('public-skillhub:fetch-skills', {
+  const response = await window.agentDesktop.skillHub.fetchSkills({
     page,
     pageSize: PAGE_SIZE,
     query,
@@ -114,7 +114,7 @@ async function loadMarketSkills(query: string, page: number): Promise<ProjectRes
 }
 
 async function loadMarketExperts(query: string, page: number): Promise<ProjectResourcePage> {
-  const response = await window.agentDesktop.ipcInvoke('public-experthub:fetch-experts', {
+  const response = await window.agentDesktop.expertHub.fetchExperts({
     page,
     pageSize: PAGE_SIZE,
     query,

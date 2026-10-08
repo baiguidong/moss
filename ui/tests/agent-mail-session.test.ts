@@ -25,6 +25,7 @@ function createHarness(sessionMode = 'fixed') {
   const noop = () => {};
   const context: any = {
     ...mailContext,
+    computerUseService: { beginTurn: () => {}, finish: async () => {} },
     sessions,
     desktopSettings: { agentMail: { sessionMode, inboxSessionIds: {} } },
     saveDesktopSettings: (settings: unknown) => { context.desktopSettings = settings; },

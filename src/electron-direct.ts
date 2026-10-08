@@ -12,6 +12,8 @@ import type { ImageSettings } from './services/imageGeneration.js'
 import { randomUUID, type UUID } from 'crypto'
 import { enableConfigs } from './utils/config.js'
 import { normalizeMossBaseUrl } from './utils/model/modelBaseUrl.js'
+import { resolveDesktopModelContext } from './utils/model/desktopModelContext.js'
+export { resolveDesktopModelContext } from './utils/model/desktopModelContext.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
 import { createStore } from './state/store.js'
@@ -774,6 +776,10 @@ export class ClaudeSession {
 
   get coordinatorMode(): boolean {
     return this.#opts.coordinatorMode
+  }
+
+  getModelContext() {
+    return resolveDesktopModelContext(this.#opts)
   }
 
   constructor(opts: ClaudeSessionOptions = {}) {

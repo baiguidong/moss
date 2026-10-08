@@ -1,3 +1,18 @@
+export type ComputerUseStatus = {
+  version: string; supported: boolean; enabled: boolean; phase: string; error: string; captureVerified: boolean;
+  permissions: { accessibility: boolean; screenRecording: boolean; hostIdentity: boolean; bundleId: string } | null;
+  permissionNotice?: string;
+  apps: Array<{ name: string; bundleId: string }>;
+  sessionApps: Array<{ sessionId: string; bundleId: string }>;
+  active: { sessionId: string; title: string; app?: { name: string; bundleId: string }; action?: string; foreground: boolean } | null;
+  requests: Array<{ id: string; sessionId: string; sessionTitle: string; app: { name: string; bundleId: string }; foreground: boolean }>;
+};
+import type {
+  SendRequest, SendResult, SessionRequest, ControlResult, PlanDecisionResult,
+  AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
+  SessionHistoryEvent, ConnectorsChangedEvent, SkillHubApi, ExpertHubApi,
+  SessionCronApi, MarketplaceResponse,
+} from './lib/desktop-api-types';
 import type { AppNotification, NewAppNotification } from './lib/app-notifications';
 
 export type OutputFileResolution =
@@ -92,6 +107,12 @@ export type SessionDetail = SessionSummary & {
   history: AgentEvent[];
   workerSummariesJson: string | null;
   tasks?: SessionTask[];
+};
+
+export type ModelContextInfo = {
+  model: string;
+  contextWindow: number;
+  isDefault: boolean;
 };
 
 export type SessionTokenTotals = {
@@ -696,6 +717,7 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  computerUse?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
@@ -1378,7 +1400,20 @@ declare global {
       onExit: (callback: (payload: { requestId: string; exitCode: number }) => void) => () => void;
     };
     agentDesktop: {
+      computerUse: {
+        status: () => Promise<ComputerUseStatus>;
+        enable: (enabled: boolean) => Promise<ComputerUseStatus>;
+        check: () => Promise<ComputerUseStatus>;
+        requestPermissions: () => Promise<ComputerUseStatus>;
+        revealHostApp: () => Promise<void>;
+        openSettings: (permission: 'accessibility' | 'screen') => Promise<void>;
+        stop: () => Promise<ComputerUseStatus>;
+        revoke: (bundleId: string) => Promise<ComputerUseStatus>;
+        decide: (id: string, decision: 'session' | 'always' | 'deny') => Promise<void>;
+        onChanged: (callback: (status: ComputerUseStatus) => void) => () => void;
+      };
       // 通用 IPC 方法
+      /** @deprecated Renderer code should use named methods below. Kept for compatibility. */
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
       ipcOn: (channel: string, callback: (payload: any) => void) => any;
       ipcOff: (channel: string, handler: any) => void;
@@ -1483,6 +1518,7 @@ declare global {
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      getModelContext: (payload: { sessionId: string }) => Promise<ModelContextInfo | null>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
       previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;
@@ -1540,30 +1576,18 @@ declare global {
       setSessionWorkspace: (payload: { sessionId: string; workspace: string }) => Promise<SessionDetail>;
       openWorkspace: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
       copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
-      send: (payload: {
-        sessionId: string;
-        prompt: string;
-        skills?: Array<{ name: string; displayName?: string; source?: string }>;
-        agentType?: string;
-        mode?: 'chat' | 'boss';
-        appName?: string;
-        files?: string[];
-        resources?: ComposerResourceRef[];
-      }) => Promise<any>;
-      approvePlan: (payload: { sessionId: string }) => Promise<any>;
-      rejectPlan: (payload: { sessionId: string }) => Promise<any>;
-      answerQuestion: (payload: {
-        requestId: string;
-        sessionId: string;
-        answers: Record<string, string>;
-        annotations?: AskUserQuestionAnnotations;
-      }) => Promise<{ ok: boolean }>;
-      rejectQuestion: (payload: {
-        requestId: string;
-        sessionId: string;
-        message?: string;
-      }) => Promise<{ ok: boolean }>;
-      abort: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      /** Resolves after the turn completes; transport/runtime errors reject. */
+      send: (payload: SendRequest) => Promise<SendResult>;
+      approvePlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
+      rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
+      answerQuestion: (payload: AnswerQuestionRequest) => Promise<ControlResult>;
+      rejectQuestion: (payload: RejectQuestionRequest) => Promise<ControlResult>;
+      abort: (payload: SessionRequest) => Promise<ControlResult>;
+      skillHub: SkillHubApi;
+      expertHub: ExpertHubApi;
+      sessionCron: SessionCronApi;
+      getInstalledSkills: () => Promise<MarketplaceResponse<unknown[]>>;
+      onConnectorsChanged: (callback: (payload: ConnectorsChangedEvent) => void) => () => void;
       appMarketplace: {
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
@@ -1746,19 +1770,14 @@ declare global {
       getTaskOutput: (payload: { sessionId: string; taskId: string; maxBytes?: number }) => Promise<{ content: string; truncated: boolean }>;
       killTask: (payload: { sessionId: string; taskId: string }) => Promise<{ ok: boolean; error?: string }>;
       onBackgroundTasks: (callback: (payload: { sessionId: string; tasks: BackgroundTaskInfo[] }) => void) => () => void;
-      onEvent: (callback: (payload: any) => void) => () => void;
-      onState: (callback: (payload: any) => void) => () => void;
-      onPermission: (callback: (payload: any) => void) => () => void;
+      onEvent: (callback: (payload: SessionEvent) => void) => () => void;
+      onState: (callback: (payload: SessionStateEvent) => void) => () => void;
+      /** Legacy channel without an active producer; current approvals use onQuestionRequest. */
+      onPermission: (callback: (payload: unknown) => void) => () => void;
       onQuestionRequest: (callback: (payload: AskUserQuestionRequest) => void) => () => void;
       onQuestionResolved: (callback: (payload: { requestId: string; sessionId: string }) => void) => () => void;
       onSessionMeta: (callback: (payload: SessionSummary) => void) => () => void;
-      onSessionHistory: (callback: (payload: {
-        replaceHistory?: boolean;
-        sessionId: string;
-        summary?: SessionSummary;
-        history?: AgentEvent[];
-        tasks?: SessionTask[];
-      }) => void) => () => void;
+      onSessionHistory: (callback: (payload: SessionHistoryEvent) => void) => () => void;
       onSessionRemoved: (callback: (payload: { sessionId: string }) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: any) => void) => () => void;
       onAppsChanged: (callback: (payload: any) => void) => () => void;
