@@ -307,7 +307,7 @@ api.runAppearanceChecks = async () => {
         }
         assert(copy.getBoundingClientRect().height >= 28, "copy click target is too small");
         if (hasFork) {
-          const fork = document.querySelector<HTMLButtonElement>('button[aria-label="从最新消息分叉"]')!;
+          const fork = document.querySelector<HTMLButtonElement>('button[aria-label="从此处打开新会话"]')!;
           assert(Math.abs(fork.getBoundingClientRect().top - copy.getBoundingClientRect().top) < 1, "fork and copy buttons are not level");
           api.forkClicked = false;
           fork.click();

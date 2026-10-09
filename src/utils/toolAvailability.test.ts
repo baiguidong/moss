@@ -11,9 +11,12 @@ import { mergeAndFilterTools } from './toolPool.js'
 import { getSessionRuntimeContext, runWithSessionIdContext, runWithSessionIdContextGenerator, runWithSessionContextOverridesGenerator, type SessionRuntime } from './sessionIdContext.js'
 
 const workflowNames = ['WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage']
+const removedBrowserTools = [
+  'browser_open',
+  'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload',
+]
 const denied = [
   'app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions',
-  'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload',
   'connector_cli_setup', 'connector_mcp_authenticate', 'example_app_action',
   ...workflowNames,
 ]
@@ -31,12 +34,26 @@ const scope = <T>(environment: SessionRuntime['executionEnvironment'], fn: () =>
   runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image })
 
 describe('session tool availability', () => {
+  test.each(['desktop', 'server'] as const)('%s registers only moss_browser_open and cannot rediscover removed native tools', async environment => {
+    await scope(environment, async () => {
+      for (const pool of [getAllBaseTools(), assembleMain(), assembleWorker()]) {
+        expect(pool.filter(tool => /^(moss_)?browser_/.test(tool.name)).map(tool => tool.name))
+          .toEqual(['moss_browser_open'])
+        const result = await ToolSearchTool.call({
+          query: `select:${removedBrowserTools.join(',')}`,
+          max_results: 10,
+        }, { options: { tools: pool }, getAppState: () => state } as ToolUseContext)
+        expect(result.data.matches).toEqual([])
+      }
+    })
+  })
+
   test('filters main and independently assembled worker pools, including dynamic extras', () => {
     scope('server', () => {
       for (const pool of [assembleMain(), assembleWorker()]) {
         const names = pool.map(tool => tool.name)
         expect(names.filter(name => denied.includes(name))).toEqual([])
-        expect(names).toContain('browser_open')
+        expect(names).toContain('moss_browser_open')
         expect(names).toContain('Read')
         expect(names).toContain('image_generate')
         expect(names).toContain('image_edit')
@@ -63,8 +80,8 @@ describe('session tool availability', () => {
           const result = await ToolSearchTool.call({ query, max_results: 10 }, context)
           expect(result.data.matches.filter(name => denied.includes(name))).toEqual([])
         }
-        const result = await ToolSearchTool.call({ query: 'select:browser_open', max_results: 10 }, context)
-        expect(result.data.matches).toEqual(['browser_open'])
+        const result = await ToolSearchTool.call({ query: 'select:moss_browser_open', max_results: 10 }, context)
+        expect(result.data.matches).toEqual(['moss_browser_open'])
       }
     })
   })
@@ -99,11 +116,11 @@ describe('session tool availability', () => {
 test('unattended cloud sessions and workers exclude desktop-dependent tools', async () => {
   await runWithSessionIdContext(asSessionId('cloud-cron'), null, async () => {
     for (const pool of [assembleMain(), assembleWorker()]) {
-      expect(pool.map(tool => tool.name).filter(name => ['browser_open','MossMail'].includes(name))).toEqual([])
+      expect(pool.map(tool => tool.name).filter(name => ['moss_browser_open','MossMail'].includes(name))).toEqual([])
       expect(pool.map(tool => tool.name)).toContain('image_generate')
     }
     const worker = runWithSessionContextOverridesGenerator({ environment: {} }, async function* () {
-      yield assembleMain().some(tool => tool.name === 'browser_open')
+      yield assembleMain().some(tool => tool.name === 'moss_browser_open')
     })
     expect((await worker.next()).value).toBe(false)
     await worker.next()

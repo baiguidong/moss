@@ -31,10 +31,11 @@ const PROMPT_TAIL = ` Until activated, only the name is known — there is no pa
 
 Query forms:
 - "select:Read,Edit,Grep" — fetch these exact tools by name
+- "browser_navigate" — find an MCP tool by its original name
 - "notebook jupyter" — keyword search, up to max_results best matches
 - "+slack send" — require "slack" in the name, rank by remaining terms
 
-The result lists the activated tool names. Tools in the same configured settings group may be activated together to avoid repeated schema changes. Wait for the next model turn before calling them.`
+The result lists the activated tool names. Matching a Moss built-in tool activates its configured settings group; matching an MCP tool activates all available tools from the same MCP server; matching an App contribution activates all available tools from that App. max_results limits search matches before group expansion, so the activated list can be larger. Activated tools stay available in the current conversation, including after context compaction. Wait for the next model turn before calling them.`
 
 /**
  * Check if a tool should be deferred (requires ToolSearch to load).

@@ -421,6 +421,7 @@ export function createBrowserViewManager({
   }
 
   function openFailedUrlExternally(session, tab, rawUrl) {
+    if (!tab.allowExternalFallback) return;
     const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
     if (!/^https?:\/\//i.test(url) || tab.externalFallbackUrl === url) return;
     tab.externalFallbackUrl = url;
@@ -675,6 +676,7 @@ export function createBrowserViewManager({
       view,
       attachedWindow: null,
       closing: false,
+      allowExternalFallback: options.allowExternalFallback !== false,
       externalFallbackUrl: null,
       navigationGeneration: 0,
       automationSnapshot: null,
@@ -1112,6 +1114,8 @@ export function createBrowserViewManager({
         connectorAuth,
         mcpAuth,
         deferLoad: true,
+        // Tool-triggered opens must stay in Moss, including load failures.
+        allowExternalFallback: false,
       });
       session.tabs.push(tab);
       session.activeTabId = tab.id;

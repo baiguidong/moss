@@ -71,6 +71,7 @@ export function createAppContributionTool(
 
   return buildTool({
     name: descriptor.name,
+    appInfo: { appId: descriptor.appId },
     supportedEnvironments: ['desktop'],
     searchHint: `${descriptor.title} from ${appLabel}`.slice(0, 160),
     maxResultSizeChars: 100_000,

@@ -7,29 +7,16 @@ import { runWithSessionIdContext } from '../../utils/sessionIdContext.js'
 import { isDeferredTool } from '../ToolSearchTool/prompt.js'
 import {
   AppBuildTool,
-  BrowserClickTool,
-  BrowserOpenTool,
-  BrowserSnapshotTool,
+  MossBrowserOpenTool,
   ConnectorMcpAuthenticateTool,
   MossTools,
 } from './MossTool.js'
 import { MOSS_TOOL_GROUPS } from './toolLoading.js'
 
-function contextWith(handler: (event: MossAppEvent) => Promise<any>): ToolUseContext {
-  return { emitAppEvent: handler } as unknown as ToolUseContext
-}
-
 describe('split Moss host tools', () => {
   test('registers one named tool per action', () => {
     expect(MossTools.map(tool => tool.name)).toEqual([
-      'browser_open',
-      'browser_snapshot',
-      'browser_click',
-      'browser_type',
-      'browser_press',
-      'browser_scroll',
-      'browser_wait',
-      'browser_reload',
+      'moss_browser_open',
       'app_build',
       'app_preview',
       'app_publish',
@@ -46,16 +33,17 @@ describe('split Moss host tools', () => {
   })
 
   test('uses action-specific schemas with required fields', () => {
-    expect(BrowserClickTool.inputSchema.safeParse({ snapshot_id: 's1', ref: 'e1' }).success).toBe(true)
-    expect(BrowserClickTool.inputSchema.safeParse({ snapshot_id: 's1' }).success).toBe(false)
     expect(AppBuildTool.inputSchema.safeParse({ name: 'demo' }).success).toBe(true)
     expect(AppBuildTool.inputSchema.safeParse({ name: 'demo', action: 'app_build' }).success).toBe(false)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero', out_path: 'hero.png' }).success).toBe(true)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero' }).success).toBe(false)
-    expect(BrowserOpenTool.inputSchema.safeParse({}).success).toBe(false)
+    expect(MossBrowserOpenTool.inputSchema.safeParse({}).success).toBe(false)
     expect(
-      BrowserOpenTool.inputSchema.safeParse({ url: 'https://example.com' }).success,
+      MossBrowserOpenTool.inputSchema.safeParse({ url: 'https://example.com' }).success,
     ).toBe(true)
+    expect(
+      MossBrowserOpenTool.inputSchema.safeParse({ url: 'https://example.com', target: 'chrome' }).success,
+    ).toBe(false)
     expect(ConnectorMcpAuthenticateTool.inputSchema.safeParse({}).success).toBe(false)
     expect(
       ConnectorMcpAuthenticateTool.inputSchema.safeParse({ connector_id: 'example' }).success,
@@ -82,37 +70,6 @@ describe('split Moss host tools', () => {
     }
   })
 
-  test('forwards a browser snapshot and never inlines image bytes', async () => {
-    let emitted: MossAppEvent | null = null
-    const input = { tab_id: 'tab-1', full_page: true }
-    expect((await BrowserSnapshotTool.checkPermissions(input)).behavior).toBe('ask')
-
-    const result = await BrowserSnapshotTool.call(input, contextWith(async event => {
-      emitted = event
-      return {
-        ok: true,
-        browser: { snapshotId: 'snapshot-1', elements: [{ ref: 'e1' }] },
-        fileKind: 'image',
-        filePath: '/workspace/screenshots/browser.png',
-        filePaths: ['/workspace/screenshots/browser.png'],
-        previewUrl: 'moss-media://local/browser.png',
-        previewMarkdown: '![browser screenshot](moss-media://local/browser.png)',
-        imageBase64: 'cG5n',
-        imageMediaType: 'image/png',
-      }
-    }))
-
-    expect(emitted).toEqual({
-      type: 'browser_snapshot',
-      input: { tab_id: 'tab-1', full_page: true },
-    })
-    expect(result.data.filePath).toBe('/workspace/screenshots/browser.png')
-    expect(JSON.stringify(result.data)).not.toContain('cG5n')
-    const block = BrowserSnapshotTool.mapToolResultToToolResultBlockParam(result.data, 'tool-1')
-    expect(typeof block.content).toBe('string')
-    expect(block.content).not.toContain('cG5n')
-  })
-
   test('deduplicates repeated browser opens and aborts a same-turn loop', async () => {
     const emitted: MossAppEvent[] = []
     const abortController = new AbortController()
@@ -126,13 +83,13 @@ describe('split Moss host tools', () => {
     } as unknown as ToolUseContext
     const input = { url: 'https://www.baidu.com' }
 
-    const first = await BrowserOpenTool.call(input, context)
-    const second = await BrowserOpenTool.call(input, context)
+    const first = await MossBrowserOpenTool.call(input, context)
+    const second = await MossBrowserOpenTool.call(input, context)
 
     expect(first.data.ok).toBe(true)
     expect(second.data.message).toContain('already succeeded')
-    expect(emitted).toHaveLength(1)
-    await expect(BrowserOpenTool.call(input, context)).rejects.toThrow(
+    expect(emitted).toEqual([{ type: 'browser_open', input }])
+    await expect(MossBrowserOpenTool.call(input, context)).rejects.toThrow(
       'stopped a repeated tool-call loop',
     )
     expect(abortController.signal.aborted).toBe(true)
@@ -151,14 +108,14 @@ describe('split Moss host tools', () => {
       },
     } as unknown as ToolUseContext
 
-    const first = await BrowserOpenTool.call({ url: 'https://example.com' }, context)
-    const second = await BrowserOpenTool.call({ url: 'https://example.com/' }, context)
+    const first = await MossBrowserOpenTool.call({ url: 'https://example.com' }, context)
+    const second = await MossBrowserOpenTool.call({ url: 'https://example.com/' }, context)
 
     expect(first.data).toMatchObject({ ok: false, error: 'page load failed' })
     expect(second.data).toMatchObject({ ok: false, error: 'page load failed' })
     expect(emitted).toHaveLength(2)
     await expect(
-      BrowserOpenTool.call({ url: 'HTTPS://EXAMPLE.COM:443/' }, context),
+      MossBrowserOpenTool.call({ url: 'HTTPS://EXAMPLE.COM:443/' }, context),
     ).rejects.toThrow('stopped a repeated tool-call loop')
     expect(abortController.signal.aborted).toBe(true)
     expect(emitted).toHaveLength(2)
@@ -180,8 +137,8 @@ describe('split Moss host tools', () => {
       },
     } as unknown as ToolUseContext
 
-    const first = BrowserOpenTool.call({ url: 'https://www.baidu.com' }, context)
-    const second = BrowserOpenTool.call({ url: 'HTTPS://WWW.BAIDU.COM:443/' }, context)
+    const first = MossBrowserOpenTool.call({ url: 'https://www.baidu.com' }, context)
+    const second = MossBrowserOpenTool.call({ url: 'HTTPS://WWW.BAIDU.COM:443/' }, context)
     expect(emitted).toHaveLength(1)
     finishOpen?.({ ok: true, previewUrl: 'https://www.baidu.com/' })
 
@@ -192,29 +149,26 @@ describe('split Moss host tools', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  test('keeps screenshot and generated-image intents separate', async () => {
-    expect(await BrowserSnapshotTool.prompt()).toContain('Never use image_generate')
-    expect(await BrowserSnapshotTool.prompt()).toContain('without inlining image bytes')
-    expect(await BrowserSnapshotTool.prompt()).toContain('resized/compressed')
+  test('keeps generated-image intents separate from screenshots', async () => {
     expect(await ImageGenerateTool.prompt()).toContain('Never use this tool to recreate or approximate')
   })
 
-  test('applies defaults and per-session loading overrides', () => {
-    expect(isDeferredTool(BrowserOpenTool)).toBe(false)
+  test.each(['moss_browser_open', 'browser_open'])('applies defaults and per-session loading overrides from %s', browserSettingName => {
+    expect(isDeferredTool(MossBrowserOpenTool)).toBe(false)
     expect(isDeferredTool(AppBuildTool)).toBe(true)
 
     runWithSessionIdContext(
       asSessionId('tool-loading-test'),
       undefined,
       () => {
-        expect(isDeferredTool(BrowserOpenTool)).toBe(true)
+        expect(isDeferredTool(MossBrowserOpenTool)).toBe(true)
         expect(isDeferredTool(AppBuildTool)).toBe(false)
       },
       undefined,
       {
         [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
           moss_tool_loading: {
-            browser_open: 'deferred',
+            [browserSettingName]: 'deferred',
             app_build: 'always',
           },
         }),

@@ -186,6 +186,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     install: (payload) => ipcRenderer.invoke('app-market:install', payload),
   },
   listApps: () => ipcRenderer.invoke('app:list'),
+  inspectAppMcpTools: (payload) => ipcRenderer.invoke('app:inspect-mcp-tools', payload),
   resourceMonitor: {
     getSnapshot: (payload) => ipcRenderer.invoke('resource-monitor:snapshot', payload),
   },

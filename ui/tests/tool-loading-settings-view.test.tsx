@@ -30,11 +30,15 @@ test('tool loading settings renders grouped resident and deferred radio choices'
   for (const name of ['WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage']) {
     expect(html).not.toContain(name);
   }
-  expect(html).toContain('rowSpan="8"');
+  expect(html).toContain('moss_browser_open');
+  for (const name of ['browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload']) {
+    expect(html).not.toContain(name);
+  }
+  expect(html).toContain('rowSpan="1"');
   expect(html).toContain('rowSpan="7"');
-  expect(html.match(/>浏览器</g)).toHaveLength(1);
+  expect(html.match(/>内置浏览器</g)).toHaveLength(1);
   expect(html.match(/>App 管理</g)).toHaveLength(1);
-  expect(html.match(/type="radio"/g)).toHaveLength(60);
+  expect(html.match(/type="radio"/g)).toHaveLength(39);
   expect(html).toMatch(/aria-label="computer_use 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="app_build 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="image_generate 按需"[^>]*checked=""[^>]*value="deferred"/);
@@ -109,3 +113,23 @@ test('Settings Tools includes the current App catalog alongside the built-in loa
   expect(html).toContain('搜索笔记');
   expect(html).toContain('统一按需加载，随 App 启停');
 });
+
+test('Settings shows dynamically discovered MCP tools alongside static tools, including exclusions and service states', () => {
+  const service = { appId: 'moss.mcp', instanceId: 'mcp-default', name: 'playwright-cdp', runtimeName: 'playwright-cdp', revision: 'v1', status: 'connected' as const,
+    tools: [{ name: 'browser_click', description: 'Click an element', disabled: false }, { name: 'browser_close', description: 'Close browser', disabled: true }] }
+  const app = { id: 'moss.mcp', name: 'moss.mcp', displayName: 'MCP', enabled: true, agentTools: [], mcpServices: [service] } as StoredApp
+  const html = renderToStaticMarkup(<AppToolSettingsTable apps={[...toolApps, app]} />)
+  expect(html).toContain('playwright-cdp')
+  expect(html).toContain('browser_click')
+  expect(html).toContain('browser_close')
+  expect(html).toContain('已排除')
+  expect(html).toContain('可用')
+  expect(html).toContain('查询目录')
+  expect(html).not.toContain('暂未提供 AI 工具')
+  for (const [status, label] of [['unchecked', '正在加载工具'], ['disabled', '服务已停用'], ['unauthorized', '未授权'], ['needs-auth', '需要授权'], ['failed', '加载失败']] as const) {
+    const pending = renderToStaticMarkup(<AppToolSettingsTable apps={[{ ...app, mcpServices: [{ ...service, status, tools: [] }] }]} />)
+    expect(pending).toContain('playwright-cdp')
+    expect(pending).toContain(label)
+    expect(pending).not.toContain('暂未提供 AI 工具')
+  }
+})

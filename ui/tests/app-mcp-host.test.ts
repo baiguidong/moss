@@ -36,6 +36,22 @@ async function fixture(legacy: any = { version: 1, servers: {} }) {
 }
 const config = { type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer fixture-secret' }, disabledTools: ['remove'], oauth: { clientId: 'client', callbackPort: 4444 } }
 
+test('portable stdio paths stay on disk and resolve identically for sessions and checks after restart', async () => {
+  const f = await fixture()
+  const portable = { type: 'stdio', command: '~/bin/mcp', args: ['--output-dir', '~/.moss/artifacts/playwright'] }
+  const resolved = { ...portable, command: path.join(os.homedir(), 'bin/mcp'), args: ['--output-dir', path.join(os.homedir(), '.moss/artifacts/playwright')] }
+  await f.host.handle('servers.save', { name: 'browser', enabled: true, config: portable }, f.context)
+  expect(f.host.enabledServers().browser).toEqual(resolved)
+  expect(f.host.findServer('browser')?.config).toEqual(resolved)
+  const checked = await f.host.handle('servers.inspect', { name: 'browser' }, f.context)
+  expect(f.calls[0].config).toEqual(resolved)
+  expect(checked.servers[0].config).toEqual(portable)
+  const stored = JSON.parse(await fs.readFile(path.join(f.context.dataDir, 'mcp-servers.json'), 'utf8'))
+  expect(stored.servers.browser.config).toEqual(portable)
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.enabledServers().browser).toEqual(resolved)
+})
+
 test('migrates legacy services once, preserves names and tool options, and encrypts credentials', async () => {
   const f = await fixture({ version: 1, servers: { docs: { enabled: true, config, updatedAt: 1 }, local: { enabled: false, config: { command: 'node', env: { API_KEY: 'local-fixture-secret' } } } } })
   await f.host.refresh()
@@ -130,4 +146,85 @@ test('bounds large tool catalogs without losing service metadata or the requeste
   expect(result.servers).toHaveLength(2)
   expect(result.servers[1].check.tools.length).toBeGreaterThan(0)
   expect(result.servers[1].check.truncated).toBe(true)
+})
+
+test('desktop MCP catalog discovers real tools without static contributions or exposing launch secrets', async () => {
+  const f = await fixture()
+  let notifications = 0
+  f.host.onCatalogChanged = () => { notifications++ }
+  f.host.inspect = async (name: string, resolved: any) => {
+    f.calls.push({ name, config: resolved })
+    return { state: 'connected', tools: [{ name: 'search', description: 'Find things', disabled: false }, { name: 'remove', description: 'Remove things', disabled: true }], checkedAt: 10 }
+  }
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  const initial = f.host.toolCatalog('moss.mcp')[0]
+  expect(initial).toMatchObject({ name: 'docs', status: 'unchecked', tools: [] })
+  const reloads = f.reloads()
+  const result = await f.host.inspectTools({ appId: initial.appId, instanceId: initial.instanceId, name: initial.name, revision: initial.revision })
+  expect(result).toMatchObject({ status: 'connected', tools: [{ name: 'search', disabled: false }, { name: 'remove', disabled: true }] })
+  expect(f.calls[0].config.headers.Authorization).toBe(config.headers.Authorization)
+  expect(JSON.stringify(result)).not.toContain('fixture-secret')
+  expect(result).not.toHaveProperty('config')
+  expect(f.reloads()).toBe(reloads)
+  expect(notifications).toBe(2)
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.toolCatalog('moss.mcp')[0].status).toBe('unchecked')
+})
+
+test('desktop catalog preserves disabled services and prevents probing without grants, credentials, or enabled instances', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  const request = () => {
+    const { appId, instanceId, name, revision } = f.host.toolCatalog('moss.mcp')[0]
+    return { appId, instanceId, name, revision }
+  }
+  const installation = f.installations.get('moss.mcp'), instance = f.instances.get(f.context.instanceId)
+  installation.enabled = false
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('app-disabled')
+  await expect(f.host.inspectTools(request())).rejects.toThrow('停用')
+  installation.enabled = true; instance.enabled = false
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('instance-disabled')
+  await expect(f.host.inspectTools(request())).rejects.toThrow('停用')
+  instance.enabled = true; installation.grants = ['mcp:read']
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('unauthorized')
+  await expect(f.host.inspectTools(request())).rejects.toThrow('未授权')
+  installation.grants = ['mcp:manage', 'mcp:connect']
+  await f.runtime.credentials.remove(f.context.appId, f.context.instanceId); await f.host.refresh()
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('credentials-missing')
+  await expect(f.host.inspectTools(request())).rejects.toThrow('凭据')
+  await f.host.handle('servers.set-enabled', { name: 'docs', enabled: false }, f.context)
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('disabled')
+  await expect(f.host.inspectTools(request())).rejects.toThrow('停用')
+  expect(f.calls).toHaveLength(0)
+})
+
+test('an inspection finishing after a service toggle cannot repopulate the cleared catalog', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  let release!: (value: any) => void, started!: () => void
+  const ready = new Promise<void>(resolve => { started = resolve })
+  f.host.inspect = () => { started(); return new Promise(resolve => { release = resolve }) }
+  const pending = f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  await ready
+  const old = f.host.toolCatalog('moss.mcp')[0]
+  await f.host.handle('servers.set-enabled', { name: 'docs', enabled: false }, f.context)
+  release({ state: 'connected', tools: [{ name: 'old-tool' }], checkedAt: 10 })
+  await expect(pending).rejects.toThrow('配置已变化')
+  expect(f.host.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'disabled', tools: [] })
+  await f.host.handle('servers.set-enabled', { name: 'docs', enabled: true }, f.context)
+  await expect(f.host.inspectTools({ appId: old.appId, instanceId: old.instanceId, name: old.name, revision: old.revision })).rejects.toThrow('配置已变化')
+})
+
+test('a queued desktop discovery rechecks enabled state before starting the transport', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  const { appId, instanceId, name, revision } = f.host.toolCatalog('moss.mcp')[0]
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const blocker = f.host.serial(() => gate)
+  const disabled = f.host.handle('servers.set-enabled', { name: 'docs', enabled: false }, f.context)
+  const inspect = f.host.inspectTools({ appId, instanceId, name, revision })
+  release(); await blocker; await disabled
+  await expect(inspect).rejects.toThrow('启用状态已变化')
+  expect(f.calls).toHaveLength(0)
 })

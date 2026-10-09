@@ -192,7 +192,7 @@ describe('browser URL and bounds normalization', () => {
 });
 
 describe('BrowserViewManager', () => {
-  it('waits for agent-opened pages and reports navigation failures', async () => {
+  it('waits for agent-opened pages and reports failures without opening the system browser', async () => {
     const { manager, views } = createHarness();
     await expect(manager.openTabAndWait({
       sessionId: 'session-agent-open',
@@ -217,6 +217,10 @@ describe('BrowserViewManager', () => {
       sessionId: 'session-agent-open',
       url: 'https://example.com/fail',
     })).rejects.toThrow('load failed');
+    expect(failing.externalUrls).toEqual([]);
+    failing.views[1]!.view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://example.com/fail', true);
+    expect(failing.externalUrls).toEqual([]);
+    expect(failing.events.some(event => event.channel === 'browser:external-url')).toBe(false);
   });
 
   it('owns tab navigation and attaches only the active WebContentsView', async () => {

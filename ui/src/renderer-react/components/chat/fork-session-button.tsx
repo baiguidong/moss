@@ -18,18 +18,18 @@ export function ForkSessionButton({
         <span className="inline-flex">
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 px-[7px] has-[>svg]:px-[7px] text-xs text-muted-foreground"
+            size="icon-sm"
+            className="size-7 text-muted-foreground"
             onClick={onFork}
             disabled={forking || Boolean(disabledReason)}
-            aria-label="从最新消息分叉"
+            aria-label="从此处打开新会话"
+            aria-busy={forking}
           >
             <GitFork className={cn("size-3.5", forking && "animate-pulse")} />
-            {forking ? "正在分叉…" : "分叉"}
           </Button>
         </span>
       </TooltipTrigger>
-      <TooltipContent>{disabledReason || "从最新消息分叉"}</TooltipContent>
+      <TooltipContent>{disabledReason || "从此处打开新会话"}</TooltipContent>
     </Tooltip>
   );
 }

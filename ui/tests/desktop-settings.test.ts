@@ -117,11 +117,7 @@ describe('desktop settings', () => {
   it('uses recommended tool loading defaults and accepts per-tool choices', () => {
     const defaults = normalizeDesktopSettings({}).toolLoading;
     expect(defaults).toMatchObject({
-      browser_open: 'always',
-      browser_snapshot: 'always',
-      browser_click: 'always',
-      browser_type: 'always',
-      browser_scroll: 'deferred',
+      moss_browser_open: 'always',
       app_build: 'deferred',
       app_launch: 'deferred',
       connector_cli_setup: 'deferred',
@@ -131,15 +127,20 @@ describe('desktop settings', () => {
     const customized = normalizeDesktopSettings({
       toolLoading: {
         browser_open: 'deferred',
+        browser_snapshot: 'always',
+        browser_click: 'always',
         app_build: 'always',
         image_generate: 'invalid',
         unknown_tool: 'always',
       },
     }).toolLoading;
-    expect(customized.browser_open).toBe('deferred');
+    expect(customized.moss_browser_open).toBe('deferred');
     expect(customized.app_build).toBe('always');
     expect(customized.image_generate).toBe('deferred');
     expect(customized).not.toHaveProperty('unknown_tool');
+    expect(customized).not.toHaveProperty('browser_snapshot');
+    expect(customized).not.toHaveProperty('browser_click');
+    expect(customized).not.toHaveProperty('browser_open');
   });
 
   it('defaults replies and newly generated memories to Chinese', () => {
@@ -562,21 +563,20 @@ describe('desktop settings', () => {
     store.save({
       ...store.value,
       toolLoading: {
-        browser_open: 'deferred',
+        moss_browser_open: 'deferred',
         app_build: 'always',
       },
     });
 
     const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    expect(persisted.toolLoading.browser_open).toBe('deferred');
+    expect(persisted.toolLoading.moss_browser_open).toBe('deferred');
     expect(persisted.toolLoading.app_build).toBe('always');
     expect(persisted.toolLoading.image_generate).toBe('deferred');
 
     const reloaded = createDesktopSettingsStore({ settingsPath });
     expect(reloaded.value.toolLoading).toMatchObject({
-      browser_open: 'deferred',
+      moss_browser_open: 'deferred',
       app_build: 'always',
-      browser_snapshot: 'always',
       image_generate: 'deferred',
     });
   });

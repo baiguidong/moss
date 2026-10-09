@@ -7718,6 +7718,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     readLegacy: readDesktopMcpStore,
     clearLegacy: () => saveDesktopMcpStore({ version: 1, servers: {} }),
     onChanged: resetLocalRuntimesForMcpReload,
+    onCatalogChanged: () => emitToRenderer('app:changed', { action: 'mcp-tools', timestamp: Date.now() }),
     reservedName: (name) => Boolean(findConnectorMcpServer(name)),
     inspect: async (name, config, signal) => {
       const runtime = await getClaudeRuntimeModule();
@@ -7910,6 +7911,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     ipcMain: updateGuardedAppIpc,
     dialog,
     getRuntime: () => appRuntime,
+    getMcpHost: () => appMcpHost,
     emitChanged: emitAppsChanged,
     emitProgress: emitAppInstallProgress,
     installArchivePackage: installAppPackage,
@@ -9775,6 +9777,7 @@ ipcMain.handle('app:list', async () => {
       grants: runtimeState?.installation?.grants || [],
       contributes: enabledAppContributions(manifest, runtimeState?.installation),
       agentTools: describeAppTools(runtimeState?.manifest || manifest),
+      mcpServices: appMcpHost?.toolCatalog(stored.id) || [],
       enabled: packageReady && Boolean(runtimeState?.installation?.enabled),
       configuration: runtimeState?.configuration || null,
       instances,

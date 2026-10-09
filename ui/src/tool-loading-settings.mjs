@@ -1,16 +1,9 @@
 export const MOSS_TOOL_GROUPS = Object.freeze([
   {
     id: 'browser',
-    label: '浏览器',
+    label: '内置浏览器',
     tools: [
-      { name: 'browser_open', description: '打开网址或搜索内容', defaultMode: 'always' },
-      { name: 'browser_snapshot', description: '读取页面并保存真实截图', defaultMode: 'always' },
-      { name: 'browser_click', description: '点击页面元素', defaultMode: 'always' },
-      { name: 'browser_type', description: '向页面输入文字', defaultMode: 'always' },
-      { name: 'browser_press', description: '发送键盘按键', defaultMode: 'deferred' },
-      { name: 'browser_scroll', description: '滚动当前页面', defaultMode: 'deferred' },
-      { name: 'browser_wait', description: '等待页面内容或地址变化', defaultMode: 'deferred' },
-      { name: 'browser_reload', description: '重新加载当前页面', defaultMode: 'deferred' },
+      { name: 'moss_browser_open', description: '在 Moss 内置浏览器中打开网址或搜索内容，供手动浏览', defaultMode: 'always' },
     ],
   },
   {
@@ -60,7 +53,10 @@ export function normalizeMossToolLoading(value, existing = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const previous = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
   return Object.fromEntries(Object.entries(DEFAULT_MOSS_TOOL_LOADING).map(([name, fallback]) => {
-    const candidate = source[name] ?? previous[name];
+    const candidate = source[name]
+      ?? (name === 'moss_browser_open' ? source.browser_open : undefined)
+      ?? previous[name]
+      ?? (name === 'moss_browser_open' ? previous.browser_open : undefined);
     return [name, candidate === 'always' || candidate === 'deferred' ? candidate : fallback];
   }));
 }

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { writePrivateFileAtomic } from '../../../shared/security/credential-crypto.mjs'
 import { isValidMcpServerName, normalizeMcpStore, validateMcpServerConfig } from '../desktop-mcp-settings.mjs'
+import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
 
 export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
@@ -65,8 +66,8 @@ function safeError(error, configs) {
 
 /** Host-owned registry. MCP transport and tool execution remain in the agent runtime. */
 export class AppMcpHost {
-  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, inspect, authenticate, clearAuth, reservedName = () => false }) {
-    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, inspect, authenticate, clearAuth, reservedName })
+  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, reservedName = () => false }) {
+    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, reservedName })
     this.providers = new Map()
     this.checks = new Map()
     this.queue = Promise.resolve()
@@ -168,6 +169,7 @@ export class AppMcpHost {
         }
       }
       for (const id of this.providers.keys()) if (!current.has(id)) this.providers.delete(id)
+      this.onCatalogChanged?.()
     })
   }
   enabledServers() {
@@ -176,7 +178,7 @@ export class AppMcpHost {
       if (!this.active(provider)) continue
       for (const [name, entry] of Object.entries(provider.document.servers)) {
         const config = restoreConfig(entry, provider.secrets)
-        if (entry.enabled && config) result[runtimeName(provider.appId, name)] = config
+        if (entry.enabled && config) result[runtimeName(provider.appId, name)] = resolveMcpLaunchConfig(config)
       }
     }
     return result
@@ -187,12 +189,41 @@ export class AppMcpHost {
       for (const [localName, entry] of Object.entries(provider.document.servers)) {
         if (runtimeName(provider.appId, localName) !== name) continue
         const config = restoreConfig(entry, provider.secrets)
-        return config ? { ...entry, config, provider, localName } : null
+        return config ? { ...entry, config: resolveMcpLaunchConfig(config), provider, localName } : null
       }
     }
     return null
   }
   hasApp(appId) { return [...this.providers.values()].some(provider => provider.appId === appId) }
+  toolRevision(provider, entry) { return `${provider.version}/${entry.secretId}/${entry.updatedAt}/${entry.enabled}` }
+  /** Desktop disclosure only: never include launch configuration or credentials. */
+  toolCatalog(appId) {
+    const result = [], runtime = this.getRuntime()
+    for (const provider of this.providers.values()) {
+      if (provider.appId !== appId) continue
+      const installation = runtime?.installations.get(appId), instance = runtime?.instances.get(provider.instanceId)
+      if (!installation || !instance || installation.activeVersion !== provider.version) continue
+      for (const server of this.list(provider).servers) {
+        const status = !installation.enabled ? 'app-disabled' : !instance.enabled ? 'instance-disabled'
+          : !this.active(provider) ? 'unauthorized' : !server.enabled ? 'disabled'
+            : server.credentialsMissing ? 'credentials-missing' : server.check?.state || 'unchecked'
+        result.push({ appId, instanceId: provider.instanceId, name: server.name,
+          runtimeName: runtimeName(appId, server.name), revision: this.toolRevision(provider, provider.document.servers[server.name]),
+          status, tools: server.check?.tools || [], error: server.check?.error,
+          truncated: server.check?.truncated || false })
+      }
+    }
+    return result
+  }
+  async inspectTools(input) {
+    record(input, ['appId', 'instanceId', 'name', 'revision'])
+    const provider = [...this.providers.values()].find(item => item.appId === input.appId && item.instanceId === input.instanceId)
+    const entry = provider?.document.servers[input.name]
+    if (!entry || !this.active(provider) || !entry.enabled) throw new Error('服务已停用或未授权，请在 App 管理中检查。')
+    if (this.toolRevision(provider, entry) !== input.revision) throw new Error('连接配置已变化，请重新加载。')
+    await this.handle('servers.inspect', { name: input.name }, { ...provider, expectedToolRevision: input.revision, signal: AbortSignal.timeout(60_000) })
+    return this.toolCatalog(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
+  }
   list(provider, extra = {}, focusName = '') {
     let budget = 400 * 1024
     const checks = new Map()
@@ -235,10 +266,13 @@ export class AppMcpHost {
       const previousName = input.previousName || input.name
       const entry = provider.document.servers[previousName]
       if (method !== 'servers.save' && !entry) throw new Error('服务不存在，请刷新后重试。')
+      if (context.expectedToolRevision && (!this.active(provider) || !entry.enabled || this.toolRevision(provider, entry) !== context.expectedToolRevision)) {
+        throw new Error('连接配置或启用状态已变化，请重新加载。')
+      }
       if (['servers.inspect', 'auth.start', 'auth.clear'].includes(method)) {
         const config = restoreConfig(entry, provider.secrets)
         if (!config) throw new Error('服务凭据已清除，请编辑连接并重新填写。')
-        return { provider, entry, config }
+        return { provider, entry, config: resolveMcpLaunchConfig(config) }
       }
       const document = structuredClone(provider.document), secrets = { ...provider.secrets }
       if (method === 'servers.save') {
@@ -253,10 +287,11 @@ export class AppMcpHost {
         if (input.previousName && input.previousName !== input.name) delete document.servers[input.previousName]
         document.servers[input.name] = this.encode(config, input.enabled, secrets)
       } else if (method === 'servers.remove') delete document.servers[input.name]
-      else document.servers[input.name] = { ...entry, enabled: input.enabled, updatedAt: Date.now() }
+      else document.servers[input.name] = { ...entry, enabled: input.enabled, updatedAt: Math.max(Date.now(), (entry.updatedAt || 0) + 1) }
       provider = await this.commit(context, document, secrets)
       this.checks.delete(`${key(context)}/${previousName}`)
       this.checks.delete(`${key(context)}/${input.name}`)
+      this.onCatalogChanged?.()
       return { result: this.list(provider, this.onChanged?.() || {}) }
     })
     if (prepared.result) return prepared.result
@@ -273,8 +308,9 @@ export class AppMcpHost {
       return await this.serial(async () => {
         this.assertCurrent(context)
         const current = await this.load(context)
-        if (current.document.servers[input.name]?.secretId !== entry.secretId) throw new Error('连接配置已变化，请重新检查。')
+        if (this.toolRevision(current, current.document.servers[input.name] || {}) !== this.toolRevision(prepared.provider, entry)) throw new Error('连接配置已变化，请重新检查。')
         this.checks.set(`${key(context)}/${input.name}`, check)
+        this.onCatalogChanged?.()
         return this.list(current, method === 'servers.inspect' ? {} : this.onChanged?.() || {}, input.name)
       })
     } catch (error) {
@@ -283,8 +319,9 @@ export class AppMcpHost {
       return this.serial(async () => {
         this.assertCurrent(context)
         const current = await this.load(context)
-        if (current.document.servers[input.name]?.secretId !== entry.secretId) throw new Error('连接配置已变化，请重新检查。')
+        if (this.toolRevision(current, current.document.servers[input.name] || {}) !== this.toolRevision(prepared.provider, entry)) throw new Error('连接配置已变化，请重新检查。')
         this.checks.set(`${key(context)}/${input.name}`, { state: 'failed', tools: [], checkedAt: Date.now(), error: message })
+        this.onCatalogChanged?.()
         return this.list(current)
       })
     }

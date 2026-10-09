@@ -124,6 +124,15 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           <div className="assistant-message-actions -mt-1 flex min-h-7 items-center gap-1">
             {actions}
             {copyAction}
+            {copyAction && message.timestamp && Number.isFinite(message.timestamp.getTime()) ? (
+              <time
+                dateTime={message.timestamp.toISOString()}
+                title={message.timestamp.toLocaleString("zh-CN", { hour12: false })}
+                className="select-none whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+              >
+                {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}
+              </time>
+            ) : null}
           </div>
         ) : null}
       </div>

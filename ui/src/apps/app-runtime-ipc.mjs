@@ -97,6 +97,11 @@ export function registerAppRuntimeIpc(options) {
     return { opened: true }
   })
   ipcMain.handle('app:get-runtime-state', (_event, { appId }) => runtime().getApp(appId))
+  ipcMain.handle('app:inspect-mcp-tools', (_event, input) => {
+    const host = options.getMcpHost?.()
+    if (!host) throw new Error('MCP 工具目录尚未就绪。')
+    return host.inspectTools(input)
+  })
   ipcMain.handle('app:list-contributions', (_event, options = {}) => runtime().listContributions(options))
   ipcMain.handle('app:invoke-contribution', (_event, { kind, id, input, ...invokeOptions }) => {
     if (!['commands', 'resourceProviders'].includes(kind)) {

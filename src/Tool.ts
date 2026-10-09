@@ -687,6 +687,8 @@ export type Tool<
    * or unprefixed (CLAUDE_AGENT_SDK_MCP_NO_PREFIX mode).
    */
   mcpInfo?: { serverName: string; toolName: string }
+  /** Host-provided App identity, used to activate sibling contribution tools together. */
+  appInfo?: { appId: string }
   readonly name: string
   /**
    * Maximum size in characters for tool result before it gets persisted to disk.

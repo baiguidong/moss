@@ -31,7 +31,7 @@ export const inputSchema = lazySchema(() =>
       .number()
       .optional()
       .default(5)
-      .describe('Maximum number of results to return (default: 5)'),
+      .describe('Maximum number of search matches before expanding their tool groups (default: 5). Activated groups are returned in full.'),
   }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
@@ -127,18 +127,43 @@ function buildSearchResult(
   }
 }
 
+function getProviderGroup(tool: Tool): string | undefined {
+  if (tool.isMcp) {
+    return tool.mcpInfo?.serverName ? `mcp:${tool.mcpInfo.serverName}` : undefined
+  }
+  return tool.appInfo?.appId ? `app:${tool.appInfo.appId}` : undefined
+}
+
 export function expandMatchesWithConfiguredGroups(
   matches: string[],
   tools: Tools,
 ): string[] {
-  const availableNames = new Set(tools.map(tool => tool.name))
+  const availableTools = new Map(tools.map(tool => [tool.name, tool]))
+  const providerGroups = new Map<string, string[]>()
+  // Use provider metadata, not normalized name prefixes: App IDs and MCP
+  // server names can contain separators, and SDK MCP tools can be unprefixed.
+  for (const tool of tools) {
+    const group = getProviderGroup(tool)
+    if (!group) continue
+    const members = providerGroups.get(group) ?? []
+    members.push(tool.name)
+    providerGroups.set(group, members)
+  }
   const expanded: string[] = []
   const seen = new Set<string>()
 
   for (const match of matches) {
-    const candidates = getMossToolGroupMembers(match) ?? [match]
+    const tool = availableTools.get(match)
+    if (!tool) continue
+    const group = getProviderGroup(tool)
+    const candidates = group ? providerGroups.get(group)!
+      : tool.isMcp || tool.appInfo ? [match]
+        : (getMossToolGroupMembers(match) ?? [match]).filter(name => {
+          const member = availableTools.get(name)
+          return member && !member.isMcp && !member.appInfo
+        })
     for (const name of candidates) {
-      if (!availableNames.has(name) || seen.has(name)) continue
+      if (!availableTools.has(name) || seen.has(name)) continue
       seen.add(name)
       expanded.push(name)
     }
@@ -222,6 +247,13 @@ async function searchToolsWithKeywords(
     tools.find(t => t.name.toLowerCase() === queryLower)
   if (exactMatch) {
     return [exactMatch.name]
+  }
+
+  // Allow the original name shown by the MCP App, such as browser_navigate.
+  const mcpNameMatches = tools.filter(tool => tool.isMcp
+    && tool.mcpInfo?.toolName.toLowerCase() === queryLower)
+  if (mcpNameMatches.length > 0) {
+    return mcpNameMatches.slice(0, maxResults).map(tool => tool.name)
   }
 
   // If query looks like an MCP tool prefix (mcp__server), find matching tools.

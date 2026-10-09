@@ -13,10 +13,6 @@ import { jsonStringify } from '../../utils/slowOperations.js'
 import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
 import type { MossToolName } from './toolLoading.js'
 
-const tabIdField = {
-  tab_id: z.string().optional().describe('Browser tab id. Omit to use the active tab in the current Moss session.'),
-}
-
 const mossOutputSchema = z.object({
   ok: z.boolean(),
   app: z.unknown().optional(),
@@ -58,7 +54,6 @@ type MossToolConfig<InputSchema extends MossInputSchema> = {
   event: (input: z.infer<InputSchema>) => MossAppEvent
   readOnly?: boolean
   supportedEnvironments?: readonly ('desktop' | 'server')[]
-  browserPermission?: boolean
   userFacingName?: string
   repeatKey?: (input: z.infer<InputSchema>) => string
   maxCallsPerTurn?: number
@@ -181,12 +176,6 @@ function createMossTool<InputSchema extends MossInputSchema>(
       return config.readOnly === true
     },
     async checkPermissions(input: z.infer<InputSchema>) {
-      if (config.browserPermission) {
-        return {
-          behavior: 'ask' as const,
-          message: 'Browser automation requires access to the current Moss browser page.',
-        }
-      }
       return { behavior: 'allow' as const, updatedInput: input }
     },
     async call(input: z.infer<InputSchema>, context: ToolUseContext) {
@@ -363,19 +352,25 @@ export const AppGetVersionsTool = createMossTool({
 })
 
 const browserOpenSchema = z.strictObject({
-  url: z.string().min(1).optional().describe('URL to open in the Moss right-side browser.'),
-  query: z.string().min(1).optional().describe('Search query to open in the Moss right-side browser.'),
+  url: z.string().min(1).optional().describe('URL to open only in the Moss embedded browser for manual viewing.'),
+  query: z.string().min(1).optional().describe('Search query to open only in the Moss embedded browser for manual viewing.'),
   engine: z.enum(['baidu', 'google', 'bing']).optional().describe('Search engine for query. Defaults to baidu for Chinese searches.'),
 }).refine(input => Boolean(input.url || input.query), {
   message: 'Provide either url or query.',
 })
 
-export const BrowserOpenTool = createMossTool({
-  name: 'browser_open',
+export const MossBrowserOpenTool = createMossTool({
+  name: 'moss_browser_open',
   supportedEnvironments: ['desktop', 'server'],
-  description: 'Open a URL or search query in the Moss right-side browser panel and bring it into view.',
-  prompt: 'Open a URL or search query in the Moss right-side browser. Provide either url or query. Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine. When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the browser panel is on the right and provide the exact URL.',
-  searchHint: 'open website search browser',
+  description: 'Open a URL or search query ONLY in the Moss embedded browser panel for the user to view and interact with manually. For automated navigation, screenshots, clicks, or typing, use the playwright-cdp MCP tools.',
+  prompt: [
+    'Open a URL or search query ONLY in the Moss embedded right-side browser for manual viewing. Provide either url or query.',
+    'This tool cannot open system Chrome, enable CDP, read page contents, take screenshots, click, or type. Moss browser tabs are separate from the browser controlled by playwright-cdp; opening a Moss tab does not make it available to CDP tools.',
+    'For browser automation, use ToolSearch to discover browser_navigate from the playwright-cdp MCP service and use that service for navigation and all subsequent page operations. Never call moss_browser_open to prepare a page for CDP. If the browser MCP service is unavailable, report that it needs to be enabled; this tool is not an automation fallback.',
+    'Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine.',
+    'When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the Moss browser panel is on the right and provide the exact URL.',
+  ].join(' '),
+  searchHint: 'open moss embedded browser manual viewing preview',
   inputSchema: browserOpenSchema,
   // Some OpenAI-compatible providers reject combinators at the schema root.
   // The Zod refinement above still enforces that url or query is present.
@@ -385,12 +380,12 @@ export const BrowserOpenTool = createMossTool({
       url: {
         type: 'string',
         minLength: 1,
-        description: 'URL to open in the Moss right-side browser.',
+        description: 'URL to open only in the Moss embedded browser for manual viewing.',
       },
       query: {
         type: 'string',
         minLength: 1,
-        description: 'Search query to open in the Moss right-side browser.',
+        description: 'Search query to open only in the Moss embedded browser for manual viewing.',
       },
       engine: {
         type: 'string',
@@ -404,124 +399,7 @@ export const BrowserOpenTool = createMossTool({
   repeatKey: normalizeBrowserOpenRepeatKey,
   maxCallsPerTurn: 3,
   readOnly: true,
-  userFacingName: '浏览器',
-})
-
-const browserSnapshotSchema = z.strictObject({
-  ...tabIdField,
-  full_page: z.boolean().optional().describe('Capture the full page instead of the visible viewport.'),
-})
-
-export const BrowserSnapshotTool = createMossTool({
-  name: 'browser_snapshot',
-  description: 'Inspect the active Moss browser tab, capture its actual rendered pixels, save the screenshot, and return page text and stable element refs.',
-  prompt: 'Use this tool whenever the user asks to screenshot, capture, or show the current browser, page, or HTML. Never use image_generate to recreate or approximate a screenshot. The actual capture is saved in the workspace and attached to the conversation without inlining image bytes into model context. If visual analysis is needed, read the returned filePath; image reads are resized/compressed to the model image budget. Prefer viewport screenshots; use full_page only when the complete layout matters. Take a new snapshot after navigation or scrolling.',
-  searchHint: 'inspect screenshot browser page',
-  inputSchema: browserSnapshotSchema,
-  event: input => ({ type: 'browser_snapshot', input }),
-  readOnly: true,
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserClickSchema = z.strictObject({
-  ...tabIdField,
-  snapshot_id: z.string().min(1).describe('Snapshot id returned by browser_snapshot.'),
-  ref: z.string().min(1).describe('Element reference such as e1 returned by browser_snapshot.'),
-  click_count: z.union([z.literal(1), z.literal(2)]).optional().describe('Click count. Defaults to 1.'),
-})
-
-export const BrowserClickTool = createMossTool({
-  name: 'browser_click',
-  description: 'Click an element from the latest Moss browser snapshot using its stable reference.',
-  prompt: 'Call browser_snapshot first, then pass its snapshot id and element ref. Take a new snapshot after navigation. Do not use JavaScript or CSS selectors.',
-  searchHint: 'click browser element',
-  inputSchema: browserClickSchema,
-  event: input => ({ type: 'browser_click', input }),
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserTypeSchema = z.strictObject({
-  ...tabIdField,
-  snapshot_id: z.string().min(1).describe('Snapshot id returned by browser_snapshot.'),
-  ref: z.string().min(1).describe('Input element reference returned by browser_snapshot.'),
-  text: z.string().describe('Text to enter.'),
-  clear: z.boolean().optional().describe('Clear the field first. Defaults to true.'),
-  submit: z.boolean().optional().describe('Press Enter after typing.'),
-})
-
-export const BrowserTypeTool = createMossTool({
-  name: 'browser_type',
-  description: 'Enter text into an element from the latest Moss browser snapshot.',
-  prompt: 'Call browser_snapshot first, then pass its snapshot id and element ref. Use submit to press Enter after typing. Do not use JavaScript or CSS selectors.',
-  searchHint: 'type fill browser input',
-  inputSchema: browserTypeSchema,
-  event: input => ({ type: 'browser_type', input }),
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserPressSchema = z.strictObject({
-  ...tabIdField,
-  key: z.enum(['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete', 'Space']).describe('Keyboard key to press.'),
-})
-
-export const BrowserPressTool = createMossTool({
-  name: 'browser_press',
-  description: 'Press a supported keyboard key in the active Moss browser tab.',
-  searchHint: 'keyboard key browser page',
-  inputSchema: browserPressSchema,
-  event: input => ({ type: 'browser_press', input }),
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserScrollSchema = z.strictObject({
-  ...tabIdField,
-  delta_x: z.number().int().min(-4000).max(4000).optional().describe('Horizontal scroll delta.'),
-  delta_y: z.number().int().min(-4000).max(4000).optional().describe('Vertical scroll delta. Defaults to 600.'),
-})
-
-export const BrowserScrollTool = createMossTool({
-  name: 'browser_scroll',
-  description: 'Scroll the active Moss browser tab by bounded pixel deltas.',
-  prompt: 'Scroll the active browser tab, then call browser_snapshot again because previous element references are stale.',
-  searchHint: 'scroll browser page viewport',
-  inputSchema: browserScrollSchema,
-  event: input => ({ type: 'browser_scroll', input }),
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserWaitSchema = z.strictObject({
-  ...tabIdField,
-  text: z.string().optional().describe('Text to wait for.'),
-  url_contains: z.string().optional().describe('URL substring to wait for.'),
-  timeout_ms: z.number().int().min(100).max(15_000).optional().describe('Maximum wait in milliseconds.'),
-})
-
-export const BrowserWaitTool = createMossTool({
-  name: 'browser_wait',
-  description: 'Wait for text, a URL change, or page settling in the active Moss browser tab.',
-  searchHint: 'wait browser text navigation',
-  inputSchema: browserWaitSchema,
-  event: input => ({ type: 'browser_wait', input }),
-  readOnly: true,
-  browserPermission: true,
-  userFacingName: '浏览器',
-})
-
-const browserReloadSchema = z.strictObject({ ...tabIdField })
-
-export const BrowserReloadTool = createMossTool({
-  name: 'browser_reload',
-  description: 'Reload the active Moss browser tab.',
-  searchHint: 'refresh reload browser page',
-  inputSchema: browserReloadSchema,
-  event: input => ({ type: 'browser_reload', input }),
-  browserPermission: true,
-  userFacingName: '浏览器',
+  userFacingName: 'Moss 内置浏览器',
 })
 
 const connectorCliSetupSchema = z.strictObject({
@@ -574,14 +452,7 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
 })
 
 export const MossTools = [
-  BrowserOpenTool,
-  BrowserSnapshotTool,
-  BrowserClickTool,
-  BrowserTypeTool,
-  BrowserPressTool,
-  BrowserScrollTool,
-  BrowserWaitTool,
-  BrowserReloadTool,
+  MossBrowserOpenTool,
   AppBuildTool,
   AppPreviewTool,
   AppPublishTool,

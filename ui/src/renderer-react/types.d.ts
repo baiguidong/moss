@@ -922,6 +922,7 @@ export type StoredApp = {
     effect: 'read' | 'write' | 'destructive';
     permission?: string;
   }>;
+  mcpServices?: AppMcpServiceTools[];
   contributes?: {
     views?: Array<{ id: string; title: string; route: string; icon?: string; order?: number; permission?: string }>;
     settings?: Array<Record<string, any>>;
@@ -939,6 +940,19 @@ export type StoredApp = {
     state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'crash-loop';
     error?: string;
   };
+};
+
+export type AppMcpServiceTools = {
+  appId: string;
+  instanceId: string;
+  name: string;
+  runtimeName: string;
+  revision: string;
+  status: 'app-disabled' | 'instance-disabled' | 'unauthorized' | 'disabled' | 'credentials-missing'
+    | 'unchecked' | 'authorized' | 'connected' | 'needs-auth' | 'failed';
+  tools: Array<{ name: string; description: string; disabled: boolean }>;
+  error?: string;
+  truncated?: boolean;
 };
 
 export type AppInstance = {
@@ -1416,6 +1430,7 @@ declare global {
         }>;
       };
       listApps: () => Promise<StoredApp[]>;
+      inspectAppMcpTools: (payload: { appId: string; instanceId: string; name: string; revision: string }) => Promise<AppMcpServiceTools>;
       resourceMonitor: {
         getSnapshot: (payload?: { since?: number; active?: boolean }) => Promise<import('./lib/resource-monitor-types').ResourceMonitorSnapshot>;
       };

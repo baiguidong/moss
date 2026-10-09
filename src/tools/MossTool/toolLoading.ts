@@ -3,16 +3,7 @@ import { getAdvancedSetting } from '../../services/advancedSettings.js'
 export type MossToolLoadingMode = 'always' | 'deferred'
 
 export const MOSS_TOOL_GROUPS = {
-  browser: [
-    'browser_open',
-    'browser_snapshot',
-    'browser_click',
-    'browser_type',
-    'browser_press',
-    'browser_scroll',
-    'browser_wait',
-    'browser_reload',
-  ],
+  browser: ['moss_browser_open'],
   computer: ['computer_use'],
   app: [
     'app_build',
@@ -34,14 +25,7 @@ export const MOSS_TOOL_GROUPS = {
 } as const
 
 export const DEFAULT_MOSS_TOOL_LOADING = {
-  browser_open: 'always',
-  browser_snapshot: 'always',
-  browser_click: 'always',
-  browser_type: 'always',
-  browser_press: 'deferred',
-  browser_scroll: 'deferred',
-  browser_wait: 'deferred',
-  browser_reload: 'deferred',
+  moss_browser_open: 'always',
   computer_use: 'always',
   app_build: 'deferred',
   app_preview: 'deferred',
@@ -75,7 +59,9 @@ export function getMossToolGroupMembers(
 }
 
 export function getMossToolLoadingMode(name: MossToolName): MossToolLoadingMode {
-  const configured = getAdvancedSetting('moss_tool_loading')?.[name]
+  const loading = getAdvancedSetting('moss_tool_loading')
+  const configured = loading?.[name]
+    ?? (name === 'moss_browser_open' ? loading?.browser_open : undefined)
   return configured === 'always' || configured === 'deferred'
     ? configured
     : DEFAULT_MOSS_TOOL_LOADING[name]

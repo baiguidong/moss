@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ComputerUseSettings } from '@/components/computer-use';
+import { AppMcpToolRows } from '@/components/app-mcp-tool-rows';
 import {
   Bot,
   Check,
@@ -478,24 +479,25 @@ export function ToolLoadingSettingsTable({
 }
 
 export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
-  const groups = apps.filter(app => app.agentTools?.length);
+  const groups = apps.filter(app => app.agentTools?.length || app.mcpServices?.length);
+  const hasServices = groups.some(app => app.mcpServices?.length);
   return (
     <Surface>
       {groups.length === 0 ? (
         <p className="px-4 py-5 text-xs text-muted-foreground">已安装的 App 暂未提供 AI 工具。</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] table-fixed text-left" aria-label="App 提供的工具">
+          <table className={cn('w-full table-fixed text-left', hasServices ? 'min-w-[840px]' : 'min-w-[720px]')} aria-label="App 提供的工具">
             <colgroup>
-              <col className="w-40" />
-              <col className="w-[180px]" />
+              <col className={hasServices ? 'w-56' : 'w-40'} />
+              <col className="w-[200px]" />
               <col />
-              <col className="w-24" />
-              <col className="w-28" />
+              <col className="w-20" />
+              <col className="w-20" />
             </colgroup>
             <thead>
               <tr className="border-b border-sidebar-border bg-sidebar-accent/45 text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">App</th>
+                <th className="px-4 py-3 text-center font-medium">App</th>
                 <th className="px-4 py-3 font-medium">工具</th>
                 <th className="px-4 py-3 font-medium">简短说明</th>
                 <th className="px-3 py-3 font-medium">加载方式</th>
@@ -503,23 +505,26 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
               </tr>
             </thead>
             {groups.map(app => (
-              <tbody key={app.id || app.name} className="border-b border-sidebar-border last:border-b-0">
-                {app.agentTools!.map((tool, index) => (
-                  <tr key={tool.id} className="border-t border-sidebar-border first:border-t-0">
-                    {index === 0 && <th scope="rowgroup" rowSpan={app.agentTools!.length} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 align-middle text-xs font-semibold text-foreground">
-                      <span className="block break-words">{app.displayName || app.title || app.name}</span>
-                      <code className="mt-1 block break-all text-[11px] font-normal text-muted-foreground">{app.id || app.name}</code>
-                    </th>}
-                    <td className="px-4 py-3 text-xs">
-                      <span className="block break-words font-medium text-foreground">{tool.title}</span>
-                      <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
-                    </td>
-                    <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">{tool.description}</td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground">按需</td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground">{!app.enabled ? 'App 已停用' : tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
-                  </tr>
-                ))}
-              </tbody>
+              <React.Fragment key={app.id || app.name}>
+                {Boolean(app.agentTools?.length) && <tbody className="border-b border-sidebar-border last:border-b-0">
+                  {app.agentTools!.map((tool, index) => (
+                    <tr key={tool.id} className="border-t border-sidebar-border first:border-t-0">
+                      {index === 0 && <th scope="rowgroup" rowSpan={app.agentTools!.length} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-middle text-xs font-semibold text-foreground">
+                        <span className="block break-words">{app.displayName || app.title || app.name}</span>
+                        <code className="mt-1 block break-all text-[11px] font-normal text-muted-foreground">{app.id || app.name}</code>
+                      </th>}
+                      <td className="px-4 py-3 text-xs">
+                        <span className="block break-words font-medium text-foreground">{tool.title}</span>
+                        <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
+                      </td>
+                      <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">{tool.description}</td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">按需</td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">{!app.enabled ? 'App 已停用' : tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
+                    </tr>
+                  ))}
+                </tbody>}
+                {app.mcpServices?.map(service => <AppMcpToolRows key={`${service.instanceId}/${service.name}/${service.revision}`} app={app} service={service} />)}
+              </React.Fragment>
             ))}
           </table>
         </div>
