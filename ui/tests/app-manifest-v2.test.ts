@@ -20,8 +20,8 @@ const valid = {
 }
 
 describe('App manifest V2', () => {
-  it('advertises Host API 2.6 while accepting Apps built for compatible 2.x hosts', () => {
-    expect(APP_HOST_API_VERSION).toBe('2.6.0')
+  it('advertises Host API 2.8 while accepting Apps built for compatible 2.x hosts', () => {
+    expect(APP_HOST_API_VERSION).toBe('2.8.0')
     expect(validateAppManifest(valid).hostApi).toBe('^2.0.0')
     expect(validateAppManifest({ ...valid, hostApi: '^2.1.0' }).hostApi).toBe('^2.1.0')
     expect(validateAppManifest({ ...valid, hostApi: '^2.2.0' }).hostApi).toBe('^2.2.0')
@@ -29,7 +29,7 @@ describe('App manifest V2', () => {
     expect(validateAppManifest({ ...valid, hostApi: '^2.4.0' }).hostApi).toBe('^2.4.0')
     expect(validateAppManifest({ ...valid, hostApi: '^2.5.0' }).hostApi).toBe('^2.5.0')
     expect(validateAppManifest({ ...valid, hostApi: '^2.6.0' }).hostApi).toBe('^2.6.0')
-    expect(() => validateAppManifest({ ...valid, hostApi: '^2.7.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {
@@ -159,11 +159,13 @@ describe('App manifest V2', () => {
           id: 'catalog-search-tool', title: 'Search', description: 'Search the catalog', action: 'catalog.search',
           inputSchema: 'schemas/search.json', effect: 'read', permission: 'catalog:read',
         }],
-        resourceProviders: [{ id: 'catalog-provider', schemes: ['catalog'], resolveAction: 'catalog.search' }],
+        resourceProviders: [{ id: 'catalog-provider', schemes: ['catalog'], title: 'Catalog', listAction: 'catalog.search', resolveAction: 'catalog.search' }],
         widgets: [{ id: 'status', title: 'Status', viewId: 'catalog', placement: 'status' }],
       },
     }
     const manifest = validateAppManifest(contributed)
+    expect(manifest.contributes?.resourceProviders[0]).toMatchObject({title: 'Catalog', listAction: 'catalog.search'})
+    expect(() => validateAppManifest({...contributed, contributes: {resourceProviders: [{...contributed.contributes.resourceProviders[0], listAction:'missing'}]}})).toThrow(/unknown Backend action/)
     expect(manifest.contributes?.views[0]).toMatchObject({ route: '#/catalog', order: 0 })
     expect(manifest.contributes?.tools[0]).toMatchObject({ id: 'catalog-search-tool', effect: 'read', permission: 'catalog:read' })
     expect(() => validateAppManifest({

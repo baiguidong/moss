@@ -31,7 +31,6 @@ import { useIsInsideModal } from '../../context/modalContext.js';
 import { SearchBox } from '../SearchBox.js';
 import { isSupportedTerminal, hasAccessToIDEExtensionDiffFeature } from '../../utils/ide.js';
 import { getInitialSettings, getSettingsForSource, updateSettingsForSource } from '../../utils/settings/settings.js';
-import { getWorkflowSizeGuidelineFromSettings, WORKFLOW_SIZE_GUIDELINES } from '../../utils/workflows/enabled.js';
 import { DEFAULT_OUTPUT_STYLE_NAME } from 'src/constants/outputStyles.js';
 import { isEnvTruthy, isRunningOnHomespace } from 'src/utils/envUtils.js';
 import type { LocalJSXCommandContext, CommandResultDisplay } from '../../commands.js';
@@ -390,50 +389,7 @@ export function Config({
         enabled: enabled_3
       });
     }
-  }] : []), ...(feature('WORKFLOW_SCRIPTS') ? [{
-    id: 'workflows',
-    label: 'Dynamic workflows',
-    value: settingsData?.disableWorkflows === true ? false : settingsData?.enableWorkflows ?? true,
-    type: 'boolean' as const,
-    onChange(workflowsEnabled: boolean) {
-      updateSettingsForSource('userSettings', {
-        enableWorkflows: workflowsEnabled ? undefined : false,
-        disableWorkflows: undefined
-      });
-      setSettingsData(getInitialSettings());
-      setChanges(previous => ({
-        ...previous,
-        'Dynamic workflows': workflowsEnabled ? 'ON' : 'OFF'
-      }));
-      logEvent('tengu_workflows_setting_changed', {
-        enabled: workflowsEnabled
-      });
-    }
-  }, ...(getWorkflowSizeGuidelineFromSettings() === undefined ? [{
-    id: 'workflowSizeGuideline',
-    label: 'Dynamic workflow size',
-    value: globalConfig.workflowSizeGuideline ?? 'medium (default)',
-    options: [...WORKFLOW_SIZE_GUIDELINES],
-    type: 'enum' as const,
-    onChange(size: string) {
-      const guideline = ((WORKFLOW_SIZE_GUIDELINES as readonly string[]).includes(size) ? size : 'unrestricted') as (typeof WORKFLOW_SIZE_GUIDELINES)[number];
-      saveGlobalConfig(current => current.workflowSizeGuideline === guideline ? current : {
-        ...current,
-        workflowSizeGuideline: guideline
-      });
-      setGlobalConfig({
-        ...getGlobalConfig(),
-        workflowSizeGuideline: guideline
-      });
-      setChanges(previous => ({
-        ...previous,
-        'Dynamic workflow size': guideline
-      }));
-      logEvent('tengu_workflow_size_guideline_changed', {
-        size: guideline as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
-      });
-    }
-  }] : [])] : []), {
+  }] : []), {
     id: 'verbose',
     label: 'Verbose output',
     value: verbose,
@@ -993,8 +949,6 @@ export function Config({
       alwaysThinkingEnabled: iu?.alwaysThinkingEnabled,
       fastMode: iu?.fastMode,
       promptSuggestionEnabled: iu?.promptSuggestionEnabled,
-      enableWorkflows: iu?.enableWorkflows,
-      disableWorkflows: iu?.disableWorkflows,
       language: iu?.language,
       // ThemePicker's Ctrl+T writes this key directly — include it so the
       // disk state reverts along with the in-memory AppState.settings restore.

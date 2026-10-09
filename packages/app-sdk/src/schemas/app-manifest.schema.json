@@ -78,6 +78,7 @@
               "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
               "title": { "type": "string", "minLength": 1, "maxLength": 120 },
               "description": { "type": "string", "maxLength": 1000 },
+              "listAction": { "type": "string", "minLength": 1 },
               "action": { "type": "string", "maxLength": 128 },
               "inputSchema": { "type": "string" },
               "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
@@ -117,6 +118,8 @@
                 "items": { "type": "string", "pattern": "^[a-z][a-z0-9+.-]{1,31}$" }
               },
               "resolveAction": { "type": "string", "maxLength": 128 },
+              "listAction": { "type": "string", "maxLength": 128 },
+              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
               "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
             }
           }

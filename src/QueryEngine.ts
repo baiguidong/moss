@@ -1,3 +1,4 @@
+import { runAppAgent, type AppAgentRunParams } from './services/appExecution/runAppAgent.js'
 import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { randomUUID } from 'crypto'
@@ -189,9 +190,38 @@ export class QueryEngine {
     this.totalUsage = EMPTY_USAGE
   }
 
+  /** Host-only execution entry. App processes never receive the internal context. */
+  async executeAppAgent(params: Omit<AppAgentRunParams, 'toolUseContext' | 'canUseTool'> & { allowedTools?: string[] }) {
+    const config = this.config
+    const pool = config.refreshTools ? config.refreshTools() : config.tools
+    const tools = params.allowedTools ? pool.filter(tool => params.allowedTools!.includes(tool.name)) : pool
+    const context = {
+      messages: [], setMessages: () => {}, onChangeAPIKey: () => {},
+      handleElicitation: config.handleElicitation,
+      options: {
+        commands: config.commands, debug: false, tools, verbose: false,
+        mainLoopModel: config.userSpecifiedModel ? parseUserSpecifiedModel(config.userSpecifiedModel) : getMainLoopModel(),
+        thinkingConfig: config.thinkingConfig ?? { type: 'adaptive' },
+        mcpClients: config.mcpClients, mcpResources: {}, ideInstallationStatus: null,
+        isNonInteractiveSession: false,
+        agentDefinitions: { activeAgents: config.agents ?? [], allAgents: [] },
+        theme: resolveThemeSetting(getGlobalConfig().theme),
+      },
+      getAppState: config.getAppState, setAppState: config.setAppState,
+      abortController: params.abortController, readFileState: this.readFileState,
+      nestedMemoryAttachmentTriggers: new Set<string>(), loadedNestedMemoryPaths: new Set<string>(),
+      dynamicSkillDirTriggers: new Set<string>(), discoveredSkillNames: new Set<string>(),
+      setInProgressToolUseIDs: () => {}, setResponseLength: () => {},
+      updateFileHistoryState: (updater: (state: FileHistoryState) => FileHistoryState) => config.setAppState(prev => ({ ...prev, fileHistory: updater(prev.fileHistory) })),
+      emitAppEvent: config.emitAppEvent,
+      updateAttributionState: () => {},
+    } as ToolUseContext
+    return runAppAgent({ ...params, toolUseContext: context, canUseTool: config.canUseTool })
+  }
+
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode },
+    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode; preparedTools?: string[] },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const recoveredMessages = sanitizeMessagesAfterApiFailure(
       this.mutableMessages,
@@ -203,7 +233,7 @@ export class QueryEngine {
     const {
       cwd,
       commands,
-      tools,
+      tools: baseTools,
       mcpClients,
       verbose = false,
       thinkingConfig,
@@ -223,8 +253,12 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
-      refreshTools,
+      refreshTools: baseRefreshTools,
     } = this.config
+    const prepared = new Set(options?.preparedTools || [])
+    const prepareTools = (items: Tools): Tools => items.map(tool => prepared.has(tool.name) ? { ...tool, deferLoading: false } : tool)
+    const tools = prepareTools(baseTools)
+    const refreshTools = baseRefreshTools ? () => prepareTools(baseRefreshTools()) : undefined
 
     this.discoveredSkillNames.clear()
     setCwd(cwd)
@@ -562,7 +596,7 @@ export class QueryEngine {
     headlessProfilerCheckpoint('after_skills')
 
     yield buildSystemInitMessage({
-      tools,
+      tools: baseTools,
       mcpClients,
       model: mainLoopModel,
       permissionMode: initialAppState.toolPermissionContext

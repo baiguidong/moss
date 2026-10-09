@@ -33,7 +33,6 @@ export const MOSS_CONFIG_DIRECTORIES = [
   'agents',
   'output-styles',
   'skills',
-  'workflows',
   ...(feature('TEMPLATES') ? (['templates'] as const) : []),
 ] as const
 

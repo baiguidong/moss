@@ -1,20 +1,57 @@
 {
   "name": "@moss/app-sdk",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
-    ".": { "types": "./src/index.d.mts", "import": "./src/index.mjs" },
-    "./protocol": { "types": "./src/index.d.mts", "import": "./src/protocol/index.mjs" },
-    "./account": { "types": "./src/index.d.mts", "import": "./src/account/index.mjs" },
-    "./agent": { "types": "./src/index.d.mts", "import": "./src/agent/index.mjs" },
-    "./platform": { "types": "./src/index.d.mts", "import": "./src/platform/index.mjs" },
-    "./openim": { "types": "./src/index.d.mts", "import": "./src/openim/index.mjs" },
-    "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" },
-    "./client": { "types": "./src/index.d.mts", "import": "./src/client/index.mjs" },
-    "./schemas": { "types": "./src/index.d.mts", "import": "./src/schemas/index.mjs" },
-    "./testing": { "types": "./src/index.d.mts", "import": "./src/testing/index.mjs" },
-    "./cloud-storage": { "types": "./src/index.d.mts", "import": "./src/cloud-storage/index.mjs" }
+    ".": {
+      "types": "./src/index.d.mts",
+      "import": "./src/index.mjs"
+    },
+    "./execution": {
+      "types": "./src/index.d.mts",
+      "import": "./src/execution/index.mjs"
+    },
+    "./protocol": {
+      "types": "./src/index.d.mts",
+      "import": "./src/protocol/index.mjs"
+    },
+    "./account": {
+      "types": "./src/index.d.mts",
+      "import": "./src/account/index.mjs"
+    },
+    "./agent": {
+      "types": "./src/index.d.mts",
+      "import": "./src/agent/index.mjs"
+    },
+    "./platform": {
+      "types": "./src/index.d.mts",
+      "import": "./src/platform/index.mjs"
+    },
+    "./openim": {
+      "types": "./src/index.d.mts",
+      "import": "./src/openim/index.mjs"
+    },
+    "./host": {
+      "types": "./src/index.d.mts",
+      "import": "./src/host/index.mjs"
+    },
+    "./client": {
+      "types": "./src/index.d.mts",
+      "import": "./src/client/index.mjs"
+    },
+    "./schemas": {
+      "types": "./src/index.d.mts",
+      "import": "./src/schemas/index.mjs"
+    },
+    "./testing": {
+      "types": "./src/index.d.mts",
+      "import": "./src/testing/index.mjs"
+    },
+    "./cloud-storage": {
+      "types": "./src/index.d.mts",
+      "import": "./src/cloud-storage/index.mjs"
+    }
   },
   "dependencies": {
     "ajv": "^8.18.0",

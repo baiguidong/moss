@@ -8,6 +8,20 @@ import {
   startSessionTaskPolling,
 } from '../src/session-tasks.mjs';
 
+test('keeps App task results available alongside shells and after the runtime closes', () => {
+  const appTask = { id: 'apptask1', appId: 'moss.workflow', route: '#/flow/runs/run1', title: '计算', status: 'completed', createdAt: 1, updatedAt: 3, result: 42 };
+  const service = createSessionTaskService({ getAppTasks: (id) => id === 's1' ? [appTask] : [] });
+  const record = { id: 's1', runtime: { getAppState: () => ({ tasks: {
+    shell: { id: 'shell1', type: 'local_bash', status: 'running', startTime: 2, command: 'echo hello' },
+  } }) } };
+  expect(service.snapshotBackgroundTasks(record)).toMatchObject([
+    { id: 'apptask1', kind: 'app', appId: 'moss.workflow', result: 42, route: appTask.route },
+    { id: 'shell1', kind: 'shell', command: 'echo hello' },
+  ]);
+  expect(service.snapshotBackgroundTasks({ id: 's1' })).toMatchObject([{ id: 'apptask1', result: 42 }]);
+  expect(service.snapshotBackgroundTasks({ id: 'another-session' })).toEqual([]);
+});
+
 function deferred() {
   let resolve!: (value?: any) => void;
   const promise = new Promise<any>(done => { resolve = done; });

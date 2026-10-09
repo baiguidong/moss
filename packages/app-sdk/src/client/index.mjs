@@ -571,7 +571,8 @@ export class AppBackendClient {
           agent: this.agent,
           platform: this.platform,
           signal: controller.signal,
-          requestId: message.id,
+          requestId: payload.submissionId || message.id,
+          source: Object.freeze({ surface: payload.source?.surface, workspace: payload.source?.workspace }),
           emit: (name, data) => this.emit(name, data),
           log: (level, text, details) => this.log(level, text, details),
         }))

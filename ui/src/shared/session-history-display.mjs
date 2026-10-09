@@ -32,7 +32,8 @@ export function isDisplayTranscriptEntry(entry) {
   if (entry.type === 'system') {
     return entry.subtype === 'compact_boundary'
       || entry.subtype === 'local_command'
-      || entry.subtype === 'connector_auth';
+      || entry.subtype === 'connector_auth'
+      || entry.subtype === 'app_task';
   }
   if (entry.type === 'tool_progress' || entry.type === 'tool_use_summary') return true;
   return false;
@@ -128,7 +129,7 @@ export function deriveSessionPreview(history) {
       if (preview) return preview;
     }
 
-    if (entry.type === 'system' && entry.subtype === 'connector_auth' && typeof entry.content === 'string') {
+    if (entry.type === 'system' && ['connector_auth', 'app_task'].includes(entry.subtype) && typeof entry.content === 'string') {
       const preview = normalizePreviewText(entry.content);
       if (preview) return preview;
     }

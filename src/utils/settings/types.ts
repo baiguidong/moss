@@ -320,15 +320,11 @@ export const SettingsSchema = lazySchema(() =>
       disableWorkflows: z
         .boolean()
         .optional()
-        .describe('Disable structured workflows and saved workflow commands.'),
+        .describe('Managed policy: disable the Workflow App.'),
       enableWorkflows: z
         .boolean()
         .optional()
-        .describe('Enable structured workflows unless disabled by policy.'),
-      workflowSizeGuideline: z
-        .enum(['unrestricted', 'small', 'medium', 'large'])
-        .optional()
-        .describe('Preferred maximum scale when Moss generates workflow definitions.'),
+        .describe('Managed policy: allow the Workflow App.'),
       permissions: PermissionsSchema()
         .optional()
         .describe('Tool usage permissions configuration'),

@@ -19,11 +19,16 @@ type EmbeddedAppSession = {
 export function EmbeddedAppView({
   appName,
   route = '',
+  sessionId, workspace, compact = false,
 }: {
   appName: string;
   route?: string;
+  sessionId?: string;
+  workspace?: string;
+  compact?: boolean;
 }) {
   const webviewRef = React.useRef<any>(null);
+  const readyRef = React.useRef(false);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
@@ -32,11 +37,12 @@ export function EmbeddedAppView({
   React.useEffect(() => {
     let cancelled = false;
     let embedIdToClose = "";
+    readyRef.current = false;
     setSession(null);
     setError("");
     setLoading(true);
 
-    window.agentDesktop.openEmbeddedApp({ name: appName }).then((result) => {
+    window.agentDesktop.openEmbeddedApp({ name: appName, sessionId, workspace }).then((result) => {
       if (!result?.ok || !result.embedId || !result.url || !result.preload) {
         if (!cancelled) {
           setError(result?.error || "App 加载失败");
@@ -68,14 +74,14 @@ export function EmbeddedAppView({
         void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose });
       }
     };
-  }, [appName, reloadKey, route]);
+  }, [appName, reloadKey, sessionId, workspace]);
 
   React.useEffect(() => {
     if (!session) return;
     const webview = webviewRef.current;
     if (!webview) return;
 
-    const handleLoad = () => setLoading(false);
+    const handleLoad = () => { readyRef.current = true; setLoading(false); };
     const handleFail = (event: any) => {
       if (event?.errorCode === -3) return;
       setError(event?.errorDescription || "App 页面加载失败");
@@ -93,11 +99,18 @@ export function EmbeddedAppView({
     };
   }, [session]);
 
+  React.useEffect(() => {
+    const webview = webviewRef.current;
+    if (session && webview && route && readyRef.current) {
+      const next = `${session.url.split('#', 1)[0]}${route}`;
+      if (webview.getURL() !== next) void webview.loadURL(next).catch((error:any) => setError(error.message));
+    }
+  }, [route, session, loading]);
   const title = session?.app?.displayName || appName;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 px-4">
+      {!compact && <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 px-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <MonitorPlay className="h-4 w-4" />
         </div>
@@ -112,6 +125,7 @@ export function EmbeddedAppView({
           刷新
         </Button>
       </div>
+      }
       <div className="relative min-h-0 flex-1 bg-background">
         {session && (
           <webview

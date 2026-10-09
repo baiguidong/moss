@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('mossApp', {
     getVersions: () => ipcRenderer.invoke('app-ui:list-versions'),
     getInstallationState: () => ipcRenderer.invoke('app-ui:get-installation-state'),
   },
+  composer: {
+    prepare: (input) => ipcRenderer.invoke('app-ui:composer:prepare', input),
+  },
   instances: {
     list: () => ipcRenderer.invoke('app-ui:instances:list'),
     update: (instanceId, patch) => ipcRenderer.invoke('app-ui:instances:update', { instanceId, ...patch }),
@@ -41,4 +44,4 @@ contextBridge.exposeInMainWorld('mossApp', {
   events: { on: (eventName, callback) => on(`app-ui:event:${String(eventName || '')}`, callback) },
 })
 
-contextBridge.exposeInMainWorld('appVersionInfo', { version: '2.6.0', name: 'Moss App Runtime' })
+contextBridge.exposeInMainWorld('appVersionInfo', { version: '2.8.0', name: 'Moss App Runtime' })

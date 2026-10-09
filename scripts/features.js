@@ -78,9 +78,6 @@ export const EXPERIMENTAL = {
   // 从 skill:// MCP resource 发现 Skill（当前缺少 mcpSkills 实现）
   MCP_SKILLS: false,
 
-  // 结构化 Workflow：Definition 编排、节点内 JS、多 Agent 与实时可视化
-  WORKFLOW_SCRIPTS: true,
-
   // 定时任务（Cron）工具：让 Claude 创建和管理 cron 触发的 agent 任务
   AGENT_TRIGGERS: true,
 

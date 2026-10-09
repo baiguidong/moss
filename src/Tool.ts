@@ -339,10 +339,6 @@ export type MossAppEvent =
       }
       signal?: AbortSignal
     }
-  | {
-      type: 'workflow_catalog_changed'
-      input: { action: string; workflowId?: string }
-    }
 
 export type MossAppBuildInput = {
   kind?: 'app'

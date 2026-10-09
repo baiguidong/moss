@@ -1892,8 +1892,7 @@ function runHeadlessStreaming(
                 if (
                   getRunningTasks(currentState).some(
                     t =>
-                      (t.type === 'local_agent' ||
-                        t.type === 'local_workflow') &&
+                      t.type === 'local_agent' &&
                       isBackgroundTask(t),
                   )
                 ) {

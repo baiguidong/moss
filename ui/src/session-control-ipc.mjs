@@ -3,6 +3,7 @@
 export function registerSessionControlIpc({
   ipcMain,
   stopComputerUse = async () => {},
+  stopAppTasks = async () => {},
   getSessionRecord,
   projectTaskCancellationRequests,
   updateProjectRootTaskLifecycle,
@@ -17,17 +18,12 @@ export function registerSessionControlIpc({
   ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
     const sessionRecord = getSessionRecord(sessionId);
     await stopComputerUse(sessionId);
+    await stopAppTasks(sessionId);
     const runtime = sessionRecord.runtime;
-    const runningWorkflowIds = Object.values(runtime?.getAppState?.()?.tasks || {})
-      .filter((task) => task?.type === 'local_workflow' && task?.status === 'running')
-      .map((task) => task.id);
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       projectTaskCancellationRequests.add(sessionRecord.id);
     }
     await Promise.resolve(runtime?.abort?.());
-    if (typeof runtime?.stopTask === 'function') {
-      await Promise.all(runningWorkflowIds.map((taskId) => runtime.stopTask(taskId).catch(() => {})));
-    }
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
         status: 'stopped',

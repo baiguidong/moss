@@ -6,6 +6,7 @@ import type {
 export type SessionRequest = { sessionId: string };
 export type ControlResult = { ok: true };
 export type SendRequest = SessionRequest & {
+  appContext?: {providerId:string;intent:string;ref?:unknown};
   prompt: string;
   skills?: Array<{ name: string; displayName?: string; source?: string }>;
   agentType?: string;

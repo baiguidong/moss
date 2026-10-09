@@ -12,16 +12,11 @@ function fixture() {
     id: 's1', title: 'Task', projectId: 'p1' as string | null, parentSessionId: null as string | null,
     runtime: {
       abort: async () => { actions.push('abort'); },
-      getAppState: () => ({ tasks: {
-        running: { id: 'workflow1', type: 'local_workflow', status: 'running' },
-        finished: { id: 'workflow2', type: 'local_workflow', status: 'completed' },
-        agent: { id: 'agent1', type: 'local_agent', status: 'running' },
-      } }),
-      stopTask: async (id: string) => { actions.push(`stop:${id}`); },
     },
   };
   const deps = {
     ipcMain: { handle: (channel: string, handler: Function) => handlers.set(channel, handler) },
+    stopAppTasks: async (id: string) => { actions.push(`apps:${id}`); },
     getSessionRecord: (id: string) => { if (id !== record.id) throw new Error('Unknown session'); return record; },
     projectTaskCancellationRequests: new Set<string>(),
     updateProjectRootTaskLifecycle: async () => { actions.push('project:stopped'); },
@@ -84,10 +79,10 @@ describe('Desktop session controls through preload and IPC', () => {
     expect(decisions[0]).toMatchObject({ decision: { allowed: false, permissionDecision: { behavior: 'deny', message: 'no thanks' } } });
   });
 
-  it('aborts the runtime before stopping active workflows and clearing approvals', async () => {
+  it('stops App tasks and the runtime before clearing approvals', async () => {
     const { api, actions, deps } = fixture();
     expect(await api.abort({ sessionId: 's1' })).toEqual({ ok: true });
-    expect(actions).toEqual(['abort', 'stop:workflow1', 'project:stopped', 'project:event', 'reject:s1', 'persist:true']);
+    expect(actions).toEqual(['apps:s1', 'abort', 'project:stopped', 'project:event', 'reject:s1', 'persist:true']);
     expect(deps.projectTaskCancellationRequests.has('s1')).toBe(true);
     expect(deps.pendingQuestionRequests.size).toBe(0);
   });
@@ -96,7 +91,7 @@ describe('Desktop session controls through preload and IPC', () => {
     const { api, actions, deps, record } = fixture();
     record.parentSessionId = 'parent';
     await api.abort({ sessionId: 's1' });
-    expect(actions).toEqual(['abort', 'stop:workflow1', 'reject:s1', 'persist:true']);
+    expect(actions).toEqual(['apps:s1', 'abort', 'reject:s1', 'persist:true']);
     expect(deps.projectTaskCancellationRequests.size).toBe(0);
   });
 
@@ -104,7 +99,7 @@ describe('Desktop session controls through preload and IPC', () => {
     const { api, actions, record, deps } = fixture();
     record.runtime.abort = async () => { throw new Error('interrupt failed'); };
     await expect(api.abort({ sessionId: 's1' })).rejects.toThrow('interrupt failed');
-    expect(actions).toEqual([]);
+    expect(actions).toEqual(['apps:s1']);
     expect(deps.pendingQuestionRequests.has('q1')).toBe(true);
   });
 });

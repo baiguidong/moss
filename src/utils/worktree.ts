@@ -953,14 +953,6 @@ export async function cleanupWorktree(): Promise<void> {
   }
 }
 
-/** Explain why workflow worktree isolation cannot be provided, if applicable. */
-export function agentWorktreeUnavailableReason(): string | null {
-  if (hasWorktreeCreateHook()) return null
-  return findCanonicalGitRoot(getCwd())
-    ? null
-    : 'not in a git repository and no WorktreeCreate hooks are configured'
-}
-
 /**
  * Create a lightweight worktree for a subagent.
  * Reuses getOrCreateWorktree/performPostCreationSetup but does NOT touch
@@ -1089,8 +1081,7 @@ export async function removeAgentWorktree(
 
 /**
  * Slug patterns for throwaway worktrees created by AgentTool (`agent-a<7hex>`,
- * from earlyAgentId.slice(0,8)), WorkflowTool (`wf_<runId>-<idx>` where runId
- * is randomUUID().slice(0,12) = 8 hex + `-` + 3 hex), and legacy Remote
+ * from earlyAgentId.slice(0,8)), and legacy Remote
  * Control (`bridge-<safeFilenameId>`). These leak when the parent process is
  * killed
  * (Ctrl+C, ESC, crash) before their in-process cleanup runs. Exact-shape
@@ -1098,10 +1089,6 @@ export async function removeAgentWorktree(
  */
 const EPHEMERAL_WORKTREE_PATTERNS = [
   /^agent-a[0-9a-f]{7}$/,
-  /^wf_[0-9a-f]{8}-[0-9a-f]{3}-\d+$/,
-  // Legacy wf-<idx> slugs from before workflowRunId disambiguation — kept so
-  // the 30-day sweep still cleans up worktrees leaked by older builds.
-  /^wf-\d+$/,
   // Keep cleaning worktrees leaked by legacy Remote Control builds.
   /^bridge-[A-Za-z0-9_]+(-[A-Za-z0-9_]+)*$/,
   // Template job worktrees: job-<templateName>-<8hex>. Prefix distinguishes
@@ -1110,7 +1097,7 @@ const EPHEMERAL_WORKTREE_PATTERNS = [
 ]
 
 /**
- * Remove stale agent/workflow worktrees older than cutoffDate.
+ * Remove stale agent worktrees older than cutoffDate.
  *
  * Safety:
  * - Only touches slugs matching ephemeral patterns (never user-named worktrees)

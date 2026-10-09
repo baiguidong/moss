@@ -183,14 +183,16 @@ describe('desktop settings', () => {
     ).agentSettings).toEqual({ disabled: ['verification', 'Explore'] });
   });
 
-  it('keeps Workflow tools opt-in and normalizes the persisted switch', () => {
-    expect(normalizeDesktopSettings({}).workflows).toEqual({ enabled: false });
-    expect(normalizeDesktopSettings({ workflows: { enabled: true } }).workflows)
-      .toEqual({ enabled: true });
-    expect(normalizeDesktopSettings(
-      { model: 'next-model' },
-      { workflows: { enabled: true } },
-    ).workflows).toEqual({ enabled: true });
+  it('discards the retired Workflow switch from incoming and saved settings', () => {
+    expect(normalizeDesktopSettings({})).not.toHaveProperty('workflows');
+    for (const enabled of [true, false]) {
+      expect(normalizeDesktopSettings({ workflows: { enabled } }))
+        .not.toHaveProperty('workflows');
+      expect(normalizeDesktopSettings(
+        { model: 'next-model' },
+        { workflows: { enabled } },
+      )).not.toHaveProperty('workflows');
+    }
   });
 
   it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {

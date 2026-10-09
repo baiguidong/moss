@@ -1,7 +1,10 @@
+import { AppExecutionHost } from './apps/app-execution-host.mjs';
+import { createExecutionProtocolDefinitions } from '../../packages/app-sdk/src/execution/index.mjs';
 import { createProjectStore } from './project-store.mjs';
 import { createSessionPaths, normalizeSessionDirName } from './session-paths.mjs';
 import { createSessionPersistence } from './session-persistence.mjs';
 import { createSessionHistoryService } from './session-history-service.mjs';
+import { resolveAppTaskSession, appTaskHistoryEvent, appTasksPromptContext } from './apps/app-task-session.mjs';
 import { createProjectId, normalizeOptionalProjectId, normalizeProjectId, normalizeProjectMemoryIndex, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
 import { normalizeStringList } from './shared/string-list.mjs';
 import { runInKeyedQueue } from './shared/keyed-queue.mjs';
@@ -21,6 +24,7 @@ import { registerSessionControlIpc } from './session-control-ipc.mjs';
 import { createComputerUseFeature } from './computer-use/ipc.mjs';
 import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
 import { resolveAppResourceFile } from './apps/app-resources.mjs';
+import { createAppComposer } from './apps/app-composer.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
 import { createLocalFilesProtocolDefinition, createRuntimesProtocolDefinition, createLocalAppHostHandlers } from './apps/app-local-host.mjs';
 import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } from './apps/app-mcp-host.mjs';
@@ -497,6 +501,7 @@ const updateGuardedAppIpc = {
 };
 let appTraceHost = null;
 let appAuditHost = null;
+let appExecutionHost = null;
 let agentChannelController = null;
 let appDecisionBroker = null;
 let remoteSessionSyncPromise = null;
@@ -850,8 +855,10 @@ const { closeWorkspaceWatcher, startWorkspaceWatcher, syncWorkspaceWatcher, emit
   emitToRenderer, mossLog,
 });
 const sessionTaskService = createSessionTaskService({
-  MOSS_HOME, emitToRenderer, getLocalSessionEngineDir, getSessionRecord,
+  MOSS_HOME, emitToRenderer, getSessionRecord,
   scheduleSubAgentSessionSync, sessions, subAgentSessions,
+  getAppTasks: id => appExecutionHost?.listSession(id) || [],
+  cancelAppTask: (sessionId, taskId) => { const task = appExecutionHost?.tasks[taskId]; if (!task || task.source.sessionId !== sessionId) return false; appExecutionHost.cancelTask(task, '用户停止任务'); return true; },
 });
 const { attachBackgroundTaskWatcher, attachSessionTaskWatcher, getClaudeTempDirForLookup, snapshotBackgroundTasks, snapshotSessionTasks } = sessionTaskService;
 const { addProjectAsset, collectProjectWorkspaceFiles, listProjectAssets, removeProjectAsset } = createProjectAssetService({
@@ -2934,7 +2941,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
         ...desktopSettings.advanced,
         moss_response_language: desktopSettings.language,
         moss_tool_loading: desktopSettings.toolLoading,
-        moss_workflows_enabled: desktopSettings.workflows?.enabled === true,
       }),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
       MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
@@ -3536,6 +3542,8 @@ async function runSessionPromptNow({
   attachments = [],
   resources = [],
   runtimeSystemPrompt = '',
+  preparedTools = [],
+  composerContext,
   failOnApiError = false,
   retryEncryptedContentOnce = false,
   agentMailTurn = null,
@@ -3562,6 +3570,7 @@ async function runSessionPromptNow({
   let activeVisibleUserEvent = null;
   if (trimmedUserPrompt || attachments.length > 0 || resources.length > 0) {
     const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments, resources);
+    if (composerContext) userEvent.appContext = composerContext;
     activeVisibleUserEvent = userEvent;
     appendVisibleUserEvent(sessionRecord, sender, userEvent);
     if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
@@ -3620,7 +3629,7 @@ async function runSessionPromptNow({
       const expectedVisibleUserPrompt = normalizeReplayUserText(expectedVisiblePrompt);
       const expectedRuntimeUserPrompt = extractTextFromRuntimePrompt(prompt);
 
-      for await (const message of runtime.send(prompt)) {
+      for await (const message of runtime.send(prompt, undefined, { preparedTools })) {
         const replayUserText = extractTextFromUserReplayMessage(message);
         if (
           !skippedInitialReplayUser &&
@@ -5380,6 +5389,8 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
     mode: 'embedded',
     embedId,
   });
+  state.sessionId = pending.sessionId;
+  state.workspace = pending.sessionId ? getSessionRecord(pending.sessionId).workspace : pending.workspace;
   configureAppWebContents(targetWebContents, pending.bundleToken);
   targetWebContents.once('destroyed', () => {
     disposeAppWebContentsState(targetWebContents.id);
@@ -5646,6 +5657,7 @@ function launchAppWindow(appEntry, source = {}) {
       if (existingWindow.isMinimized()) existingWindow.restore();
       existingWindow.show();
       existingWindow.focus();
+      if (source.route) { const url = new URL(existingWindow.webContents.getURL()); url.hash = source.route; void existingWindow.loadURL(url.toString()); }
       return existingWindow;
     }
   }
@@ -5678,7 +5690,7 @@ function launchAppWindow(appEntry, source = {}) {
       disposeAppWebContentsState(appWindow.webContents.id);
       appWindows.delete(windowKey);
     });
-    void appWindow.loadURL(entryUrl);
+    void appWindow.loadURL(source.route ? entryUrl.split("#")[0] + source.route : entryUrl);
     return appWindow;
   } catch (error) {
     appWindows.delete(windowKey);
@@ -6618,22 +6630,18 @@ async function handleMossHostEvent(event, sessionRecord) {
         {
           requestId: event.input?.requestId,
           signal: event.signal,
+          invocation: { surface: "tool", sessionId: sessionRecord.id, workspace: sessionRecord.workspace },
         },
       );
+      if (result?.presentation && /^#\/[a-zA-Z0-9/_?=&.%+-]*$/.test(result.presentation.route || '')) {
+        const appId = String(event.input?.contributionId || '').split('/')[0];
+        pushSessionHistoryEvent(sessionRecord, { type:'system', subtype:'app_view', uuid:randomUUID(), timestamp:Date.now(), appId, title:String(result.presentation.title || '').slice(0,512), route:result.presentation.route });
+      }
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
-  if (event?.type === 'workflow_catalog_changed') {
-    emitToRenderer('workflow:changed', {
-      ...(event.input || {}),
-      sessionId: sessionRecord?.id || null,
-      runtimeSessionId: sessionRecord?.underlyingSessionId || null,
-    });
-    return { ok: true };
-  }
-
   if (isBrowserAutomationAction(event?.type)) {
     if (!browserViewManager) return { ok: false, error: 'Moss browser is not ready.' };
     if (!sessionRecord?.id) return { ok: false, error: 'Browser automation requires a desktop session.' };
@@ -7087,7 +7095,7 @@ function initializeAgentMail() {
 }
 
 
-async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
+async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '', executionSessionId = undefined) {
   if (!hasFile(sdkPath)) {
     throw new Error(`Missing electron-direct.mjs at ${sdkPath}.`);
   }
@@ -7140,6 +7148,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '') {
   const ClaudeSession = await getClaudeSessionCtor();
 
   sessionRecord.runtime = new ClaudeSession({
+    ...(executionSessionId ? { sessionId: executionSessionId } : {}),
     ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt)),
     coordinatorMode: sessionRecord.isCoordinatorMode ?? false,
     onPermissionRequest,
@@ -7734,16 +7743,69 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     openSession: input => emitToRenderer('app:open-session', input),
     notify: (input, options) => appNotificationBroker.create(input, options),
   });
+  appExecutionHost = new AppExecutionHost({
+    directory: path.join(MOSS_HOME, 'app-tasks'),
+    authorize: async context => {
+      if (context.appId === 'moss.workflow') (await getClaudeRuntimeModule()).assertWorkflowAppPolicy();
+    },
+    createSource: async (context, input) => {
+      const record = await resolveAppTaskSession(context, input, {
+        getSession: getSessionRecord, createSession: createSessionRecord,
+        prepareSession: prepareAssistantContextForSessionStart,
+        openSession: sessionId => {
+          emitToRenderer('app:open-session', { sessionId });
+          mainWindow?.show();
+        },
+      });
+      return { sessionId: record.id, workspace: record.workspace };
+    },
+    validateSource: async source => {
+      const record = getSessionRecord(source.sessionId);
+      if (!record || record.agentMode === 'remote-direct' || record.workspace !== source.workspace) throw new Error('Source session is unavailable or changed');
+      if (record.projectId) { const project = await readProject(record.projectId); if (!project || project.archivedAt) throw new Error('Source project is unavailable'); }
+    },
+    execute: async ({ source, appId, taskId, agentId, input, controller, onProgress }) => {
+      if (appId === 'moss.workflow') (await getClaudeRuntimeModule()).assertWorkflowAppPolicy();
+      const installation = appRuntime.installations.get(appId);
+      if (!installation?.enabled || !installation.grants?.includes('execution:run')) throw new Error('App execution permission was revoked');
+      const record = getSessionRecord(source.sessionId);
+      await resumeSessionRecord(record);
+      const runtime = await ensureRuntime(record, '', source.runtimeSessionId);
+      source.runtimeSessionId = runtime.sessionId;
+      appExecutionHost.persist();
+      return runtime.executeAppAgent({ appId, runId: taskId, prompt: input.prompt,
+        opts: { schema: input.outputSchema, agentType: input.agentType },
+        allowedTools: input.resources?.tools, resumeAgentId: agentId,
+        abortController: controller, onAgentId: () => {}, onProgress });
+    },
+    onChanged: task => {
+      const record = sessions.get(task.sessionId);
+      if (record) {
+        const event = appTaskHistoryEvent(task);
+        if (!record.history.some(item => item.uuid === event.uuid)) {
+          pushSessionHistoryEvent(record, event);
+          record.preview = `${task.title} · ${task.summary || task.status}`;
+          emitSessionMeta(record);
+        }
+        emitToRenderer('agent:background-tasks', { sessionId: record.id, tasks: snapshotBackgroundTasks(record) });
+      }
+    },
+    notify: task => appNotificationBroker.create({ id: `${task.id}:${task.attempt}`, source: 'app', title: task.title,
+      message: task.summary || task.status, severity: task.status === 'completed' ? 'info' : 'error',
+      appId: task.appId, route: task.route, sessionId: task.sessionId }, { id: `${task.id}:${task.attempt}` }),
+  });
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
     trustedPublishers,
     beforeAppDeactivation: async appId => {
+      appExecutionHost?.deactivate(appId);
       await appTraceHost.beforeDeactivation(appId);
       await appAuditHost.beforeDeactivation(appId);
     },
     hostProtocols: [
+      ...createExecutionProtocolDefinitions(),
       createTraceProtocolDefinition(),
       createAuditProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
@@ -7756,6 +7818,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      ...Object.fromEntries(createExecutionProtocolDefinitions().map(def => [def.protocol, Object.fromEntries(Object.keys(def.methods).map(method => [method, (input, context) => appExecutionHost.handle(def.protocol, method, input, context)]))])),
       [AUDIT_PROTOCOL]: Object.fromEntries(Object.keys(createAuditProtocolDefinition().methods).map(method => [
         method, (input, context) => appAuditHost.handle(method, input, context),
       ])),
@@ -7784,6 +7847,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ])),
     },
     onEvent: (event) => {
+      if (event.type === 'status' && ['stopping', 'stopped', 'failed', 'crashed', 'crash_loop'].includes(event.state)) appExecutionHost?.deactivate(event.appId, 'App Backend 已停止', event.instanceId);
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
@@ -8066,6 +8130,7 @@ function shutdownDesktop() {
     await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
     await attempt(async () => { await appAuditHost?.close(); });
+    appExecutionHost?.close();
     for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
       await attempt(() => {
         schedulePersistSession(record, true);
@@ -8695,34 +8760,6 @@ ipcMain.handle('usage:get-session', (_event, payload = {}) => {
 });
 ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 ipcMain.handle('memory:read-entry', (_event, payload = {}) => memoryCatalog.readEntry(payload));
-ipcMain.handle('workflow:list', async (_event, payload = {}) => {
-  const runtime = await getClaudeRuntimeModule();
-  return runtime.listWorkflowCatalog({
-    cwd: payload.cwd,
-    status: payload.status,
-    publishedOnly: payload.publishedOnly ?? !payload.status,
-  });
-});
-ipcMain.handle('workflow:get', async (_event, payload = {}) => {
-  const runtime = await getClaudeRuntimeModule();
-  return runtime.getWorkflowCatalogDetail(payload);
-});
-async function mutateWorkflowCatalog(method, payload = {}) {
-  const runtime = await getClaudeRuntimeModule();
-  if (typeof runtime[method] !== 'function') {
-    throw new Error(`electron-direct.mjs does not export ${method}.`);
-  }
-  const result = await runtime[method](payload);
-  emitToRenderer('workflow:changed', { action: method, workflowId: payload.workflowId });
-  return result;
-}
-ipcMain.handle('workflow:publish', (_event, payload = {}) => mutateWorkflowCatalog('publishWorkflow', payload));
-ipcMain.handle('workflow:unpublish', (_event, payload = {}) => mutateWorkflowCatalog('unpublishWorkflow', payload));
-ipcMain.handle('workflow:duplicate', (_event, payload = {}) => mutateWorkflowCatalog('duplicateWorkflow', payload));
-ipcMain.handle('workflow:archive', (_event, payload = {}) => mutateWorkflowCatalog('archiveWorkflow', payload));
-ipcMain.handle('workflow:restore', (_event, payload = {}) => mutateWorkflowCatalog('restoreWorkflow', payload));
-ipcMain.handle('workflow:delete', (_event, payload = {}) => mutateWorkflowCatalog('deleteWorkflow', payload));
-
 ipcMain.handle('notification:list', () => appNotificationBroker.list());
 ipcMain.handle('notification:create', (_event, { notification, options } = {}) => (
   appNotificationBroker.create(notification || {}, options || {})
@@ -9458,6 +9495,7 @@ async function removeSubAgentSessionRecords(parentSessionId) {
 }
 
 async function deleteSessionRecordById(sessionId) {
+  appExecutionHost?.cancelSession(sessionId);
   const sessionRecord = sessions.get(sessionId) || subAgentSessions.get(sessionId);
   if (!sessionRecord || sessionRecord.deleted) {
     emitToRenderer('agent:session-removed', { sessionId });
@@ -9668,6 +9706,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 
 registerSessionControlIpc({
   stopComputerUse: id => computerUseService.stop('abort', id),
+  stopAppTasks: id => appExecutionHost?.cancelSession(id),
   ipcMain,
   getSessionRecord,
   projectTaskCancellationRequests,
@@ -9755,19 +9794,20 @@ ipcMain.handle('app:list-versions', async (_event, { name }) => {
   }
 });
 
-updateGuardedAppIpc.handle('app:launch', async (_event, { name }) => {
+updateGuardedAppIpc.handle('app:launch', async (_event, { name, route }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
-    launchAppWindow(getPublishedApp(registryEntry.id || name), { mode: 'published' });
+    launchAppWindow(getPublishedApp(registryEntry.id || name), { mode: 'published', ...(typeof route === 'string' && /^#\/[a-zA-Z0-9/_?=&.%+-]*$/.test(route) ? { route } : {}) });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }
 });
 
-updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name }) => {
+updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId, workspace }) => {
   try {
+    if (sessionId) getSessionRecord(sessionId);
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
     const appEntry = getPublishedApp(registryEntry.id || name);
@@ -9780,6 +9820,8 @@ updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name }) => {
     const embedId = randomUUID();
     const pending = {
       embedId,
+      sessionId,
+      workspace,
       appEntry: { ...appEntry, bundleToken },
       bundleToken,
       entryUrl,
@@ -9993,7 +10035,7 @@ updateGuardedAppIpc.handle('app-ui:actions:invoke', async (event, {
   instanceId, name, input, requestId, timeoutMs,
 }) => {
   const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs });
+  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs, invocation: state.sessionId ? { surface: "tool", sessionId: state.sessionId, workspace: getSessionRecord(state.sessionId).workspace } : { surface: "app", workspace: state.workspace } });
 });
 
 ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId }) => {
@@ -10072,6 +10114,7 @@ async function sendAgentPromptNow(event, {
   skills,
   agentType,
   coordinatorMode,
+  appContext,
 }, {
   allowBusyQueue = false,
   sourceChannel = 'desktop',
@@ -10108,6 +10151,7 @@ async function sendAgentPromptNow(event, {
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
 
+  const preparedApp = appContext ? await appComposer.resolve(appContext, { sessionId }) : null;
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
   let filePaths = Array.isArray(files)
     ? files.map((filePath) => typeof filePath === 'string' ? filePath.trim() : '').filter(Boolean)
@@ -10147,6 +10191,24 @@ async function sendAgentPromptNow(event, {
       throw new Error('Shell command is empty.');
     }
     return runDirectBashCommand(sessionRecord, sender, command);
+  }
+
+  if (trimmedPrompt.startsWith('/') && sourceChannel === 'desktop' && sessionRecord.agentMode !== 'remote-direct' && mode !== 'plan') {
+    const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(trimmedPrompt);
+    const reserved = new Set(['clear','compact','model','effort','help','cost','memory','status','review','btw','skills','init','tasks']);
+    if (match && !reserved.has(match[1])) {
+      const options = { requestId: randomUUID(), invocation: { surface: 'tool', sessionId, workspace: sessionRecord.workspace } };
+      const commands = await appRuntime?.listCommands(options) || [];
+      const command = commands.find(item => item.name === match[1] || item.id === match[1]);
+      if (command) {
+        let args;
+        try { args = match[2] ? JSON.parse(match[2]) : {}; } catch { throw new Error('命令参数需要 JSON，例如 /名称 {"topic":"示例"}'); }
+        const result = await appRuntime.invokeDiscoveredCommand(command.id, args, options);
+        pushSessionHistoryEvent(sessionRecord, { type: 'system', subtype: 'app_task', uuid: options.requestId, timestamp: Date.now(), content: trimmedPrompt + '\n\n' + JSON.stringify(result, null, 2).slice(0,20000) });
+        emitSessionMeta(sessionRecord);
+        return { ok: true, sessionId };
+      }
+    }
   }
 
   const isPlanOnly = mode === 'plan';
@@ -10254,8 +10316,10 @@ async function sendAgentPromptNow(event, {
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
     : [
       typeof runtimePromptPrefix === 'string' ? runtimePromptPrefix.trim() : '',
+      appTasksPromptContext(appExecutionHost?.listSession(sessionRecord.id) || []),
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
+      preparedApp?.instruction || '',
       explicitAgentInstruction,
       agentTeamRecovery?.instruction || '',
       effectivePrompt + attachmentSuffix,
@@ -10304,6 +10368,8 @@ async function sendAgentPromptNow(event, {
       visibleUserPrompt,
       attachments: visibleAttachments,
       resources: appResources,
+      preparedTools: isPlanOnly ? [] : preparedApp?.tools || [],
+      composerContext: appContext,
       runtimeSystemPrompt,
       reopenCompletedProjectSession: Boolean(sessionRecord.projectId),
     });
@@ -10460,6 +10526,25 @@ function sendAgentPrompt(event, payload, options = {}) {
     () => { assertUpdateWorkAllowed(); return sendAgentPromptNow(event, payload, options); },
   );
 }
+
+const appComposer = createAppComposer({ getRuntime: () => appRuntime, getSession: getSessionRecord });
+ipcMain.handle('app:composer:list', (_event, payload) => appComposer.list(payload));
+ipcMain.handle('app:composer:resolve', (_event, { context, ...source }) => appComposer.resolve(context, source));
+ipcMain.handle('app-ui:composer:prepare', async (event, input) => {
+  const state = getAppWindowStateBySender(event.sender);
+  const providerId = `${state.id}/${String(input?.providerId || '')}`;
+  const context = { providerId, intent: input?.intent, ref: input?.ref };
+  const prepared = await appComposer.resolve(context, { sessionId: state.sessionId, workspace: state.workspace });
+  emitToRenderer('app:composer:prepare', { context: { ...context, ref: prepared.ref }, title: prepared.title, prompt: prepared.prompt, route: prepared.route, workspace: prepared.workspace, appId: state.id });
+  mainWindow?.show();
+  return { ok: true };
+});
+
+ipcMain.handle('app:list-commands', async (_event, { sessionId } = {}) => {
+  const record = sessionId ? getSessionRecord(sessionId) : null;
+  if (!record || record.agentMode === 'remote-direct') return [];
+  return appRuntime?.listCommands({ invocation: { surface: 'tool', sessionId: record.id, workspace: record.workspace } }) || [];
+});
 
 ipcMain.handle('agent:send', (event, payload) => sendAgentPrompt(event, payload));
 

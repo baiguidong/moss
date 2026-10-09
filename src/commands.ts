@@ -166,14 +166,6 @@ async function getSkills(cwd: string): Promise<{
   }
 }
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-const getWorkflowCommands = feature('WORKFLOW_SCRIPTS')
-  ? (
-      require('./tools/WorkflowTool/createWorkflowCommand.js') as typeof import('./tools/WorkflowTool/createWorkflowCommand.js')
-    ).getWorkflowCommands
-  : null
-/* eslint-enable @typescript-eslint/no-require-imports */
-
 /**
  * Filters commands by their declared `availability` (auth/provider requirement).
  * Commands without `availability` are treated as universal.
@@ -205,22 +197,15 @@ export function meetsAvailabilityRequirement(cmd: Command): boolean {
 }
 
 /**
- * Loads all command sources (skills and workflows). Memoized by cwd
+ * Loads built-in commands and skills. Memoized by cwd
  * because loading is expensive (disk I/O, dynamic imports).
  */
 const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
-  const [
-    { skillDirCommands, bundledSkills },
-    workflowCommands,
-  ] = await Promise.all([
-    getSkills(cwd),
-    getWorkflowCommands ? getWorkflowCommands(cwd) : Promise.resolve([]),
-  ])
+  const { skillDirCommands, bundledSkills } = await getSkills(cwd)
 
   return [
     ...bundledSkills,
     ...skillDirCommands,
-    ...workflowCommands,
     ...COMMANDS(),
   ]
 })
@@ -404,10 +389,6 @@ export function getCommand(commandName: string, commands: Command[]): Command {
 export function formatDescriptionWithSource(cmd: Command): string {
   if (cmd.type !== 'prompt') {
     return cmd.description
-  }
-
-  if (cmd.kind === 'workflow') {
-    return `${cmd.description} (workflow)`
   }
 
   if (cmd.source === 'builtin' || cmd.source === 'mcp') {

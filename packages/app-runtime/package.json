@@ -1,29 +1,80 @@
 {
   "name": "@moss/app-runtime",
-  "version": "2.2.0",
+  "version": "2.8.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
-    ".": { "types": "./src/index.d.mts", "import": "./src/index.mjs" },
-    "./manifest": { "types": "./src/index.d.mts", "import": "./src/manifest/index.mjs" },
-    "./packages": { "types": "./src/index.d.mts", "import": "./src/packages/index.mjs" },
-    "./state": { "types": "./src/index.d.mts", "import": "./src/state/index.mjs" },
-    "./process": { "types": "./src/index.d.mts", "import": "./src/process/index.mjs" },
-    "./actions": { "types": "./src/index.d.mts", "import": "./src/actions/index.mjs" },
-    "./events": { "types": "./src/index.d.mts", "import": "./src/events/index.mjs" },
-    "./account": { "types": "./src/index.d.mts", "import": "./src/account/index.mjs" },
-    "./agent": { "types": "./src/index.d.mts", "import": "./src/agent/index.mjs" },
-    "./platform": { "types": "./src/index.d.mts", "import": "./src/platform/index.mjs" },
-    "./openim": { "types": "./src/index.d.mts", "import": "./src/openim/index.mjs" },
-    "./capabilities": { "types": "./src/index.d.mts", "import": "./src/capabilities/index.mjs" },
-    "./contributions": { "types": "./src/index.d.mts", "import": "./src/contributions/index.mjs" },
-    "./catalog": { "types": "./src/index.d.mts", "import": "./src/catalog/index.mjs" },
-    "./logging": { "types": "./src/index.d.mts", "import": "./src/logging/index.mjs" },
-    "./host": { "types": "./src/index.d.mts", "import": "./src/host/index.mjs" },
-    "./cloud-storage": { "types": "./src/index.d.mts", "import": "./src/cloud-storage/index.mjs" }
+    ".": {
+      "types": "./src/index.d.mts",
+      "import": "./src/index.mjs"
+    },
+    "./manifest": {
+      "types": "./src/index.d.mts",
+      "import": "./src/manifest/index.mjs"
+    },
+    "./packages": {
+      "types": "./src/index.d.mts",
+      "import": "./src/packages/index.mjs"
+    },
+    "./state": {
+      "types": "./src/index.d.mts",
+      "import": "./src/state/index.mjs"
+    },
+    "./process": {
+      "types": "./src/index.d.mts",
+      "import": "./src/process/index.mjs"
+    },
+    "./actions": {
+      "types": "./src/index.d.mts",
+      "import": "./src/actions/index.mjs"
+    },
+    "./events": {
+      "types": "./src/index.d.mts",
+      "import": "./src/events/index.mjs"
+    },
+    "./account": {
+      "types": "./src/index.d.mts",
+      "import": "./src/account/index.mjs"
+    },
+    "./agent": {
+      "types": "./src/index.d.mts",
+      "import": "./src/agent/index.mjs"
+    },
+    "./platform": {
+      "types": "./src/index.d.mts",
+      "import": "./src/platform/index.mjs"
+    },
+    "./openim": {
+      "types": "./src/index.d.mts",
+      "import": "./src/openim/index.mjs"
+    },
+    "./capabilities": {
+      "types": "./src/index.d.mts",
+      "import": "./src/capabilities/index.mjs"
+    },
+    "./contributions": {
+      "types": "./src/index.d.mts",
+      "import": "./src/contributions/index.mjs"
+    },
+    "./catalog": {
+      "types": "./src/index.d.mts",
+      "import": "./src/catalog/index.mjs"
+    },
+    "./logging": {
+      "types": "./src/index.d.mts",
+      "import": "./src/logging/index.mjs"
+    },
+    "./host": {
+      "types": "./src/index.d.mts",
+      "import": "./src/host/index.mjs"
+    },
+    "./cloud-storage": {
+      "types": "./src/index.d.mts",
+      "import": "./src/cloud-storage/index.mjs"
+    }
   },
   "dependencies": {
-    "@moss/app-sdk": "2.2.0",
+    "@moss/app-sdk": "2.8.0",
     "ajv": "^8.18.0",
     "semver": "^7.7.4"
   }

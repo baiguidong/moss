@@ -56,10 +56,7 @@ import { createUserMessage } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
 import type { ModelAlias } from '../../utils/model/aliases.js'
 import {
-  type AgentMetadata,
-  clearAgentTranscriptSubdir,
   recordSidechainTranscript,
-  setAgentTranscriptSubdir,
   updateAgentMetadata,
   writeAgentMetadata,
 } from '../../utils/sessionStorage.js'
@@ -248,9 +245,7 @@ export async function* runAgent({
   projectResources,
   agentName,
   teamName,
-  workflow,
   description,
-  transcriptSubdir,
   onQueryProgress,
   persistedMessageCount = 0,
   stopAfterStructuredOutput = false,
@@ -320,14 +315,9 @@ export async function* runAgent({
   agentName?: string
   /** Team owning this sidechain. Team members are not coordinator children. */
   teamName?: string
-  /** Workflow provenance used to reconstruct completed runs from sidecars. */
-  workflow?: AgentMetadata['workflow']
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
-  /** Optional subdirectory under subagents/ to group this agent's transcript
-   * with related ones (e.g. workflows/<runId> for workflow subagents). */
-  transcriptSubdir?: string
   /** Optional callback fired on every message yielded by query() — including
    * stream_event deltas that runAgent otherwise drops. Use to detect liveness
    * during long single-block streams (e.g. thinking) where no assistant
@@ -352,12 +342,6 @@ export async function* runAgent({
   )
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
-
-  // Route this agent's transcript into a grouping subdirectory if requested
-  // (e.g. workflow subagents write to subagents/workflows/<runId>/).
-  if (transcriptSubdir) {
-    setAgentTranscriptSubdir(agentId, transcriptSubdir)
-  }
 
   // Handle message forking for context sharing
   // Filter out incomplete tool calls from parent messages to avoid API errors
@@ -731,7 +715,6 @@ export async function* runAgent({
     agentType: agentDefinition.agentType,
     ...(agentName && { agentName }),
     ...(teamName && { teamName }),
-    ...(workflow && { workflow }),
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),
     ...(workspacePath && { workspacePath }),
@@ -865,8 +848,6 @@ export async function* runAgent({
     agentToolUseContext.readFileState.clear()
     // Release the cloned fork context messages
     initialMessages.length = 0
-    // Release transcript subdir mapping
-    clearAgentTranscriptSubdir(agentId)
     // Kill any background bash tasks this agent spawned. Without this, a
     // `run_in_background` shell loop (e.g. test fixture fake-logs.sh) outlives
     // the agent as a PPID=1 zombie once the main session eventually exits.

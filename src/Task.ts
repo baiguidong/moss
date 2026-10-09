@@ -7,13 +7,11 @@ export type TaskType =
   | 'local_bash'
   | 'local_agent'
   | 'in_process_teammate'
-  | 'local_workflow'
   | 'dream'
 
 export type TaskStatus =
   | 'pending'
   | 'running'
-  | 'paused'
   | 'completed'
   | 'failed'
   | 'killed'
@@ -64,7 +62,7 @@ export type LocalShellSpawnInput = {
 }
 
 // What getTaskByType dispatches for: kill. spawn/render were never
-// called polymorphically (removed in #22546). All six kill implementations
+// called polymorphically (removed in #22546). All kill implementations
 // use only setAppState — getAppState/abortController were dead weight.
 export type Task = {
   name: string
@@ -77,7 +75,6 @@ const TASK_ID_PREFIXES: Record<string, string> = {
   local_bash: 'b', // Keep as 'b' for backward compatibility
   local_agent: 'a',
   in_process_teammate: 't',
-  local_workflow: 'w',
   dream: 'd',
 }
 

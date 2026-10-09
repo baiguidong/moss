@@ -103,6 +103,7 @@ export class AppActionBroker {
         timeoutMs: options.timeoutMs ?? activeAction.timeoutMs,
         signal: controller.signal,
         principal: options.principal,
+        invocation: options.invocation,
       })
       if (activeAction.outputSchema) {
         const validate = this.validator(activePackage, actionName, 'output', activeAction.outputSchema)

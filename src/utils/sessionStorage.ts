@@ -273,32 +273,13 @@ export function getTranscriptPathForSession(sessionId: string): string {
 // read the raw transcript must bail out above this threshold to avoid OOM.
 export const MAX_TRANSCRIPT_READ_BYTES = 50 * 1024 * 1024
 
-// In-memory map of agentId → subdirectory for grouping related subagent
-// transcripts (e.g. workflow runs write to subagents/workflows/<runId>/).
-// Populated before the agent runs; consulted by getAgentTranscriptPath.
-const agentTranscriptSubdirs = new Map<string, string>()
-
-export function setAgentTranscriptSubdir(
-  agentId: string,
-  subdir: string,
-): void {
-  agentTranscriptSubdirs.set(agentId, subdir)
-}
-
-export function clearAgentTranscriptSubdir(agentId: string): void {
-  agentTranscriptSubdirs.delete(agentId)
-}
-
 export function getAgentTranscriptPath(agentId: AgentId): string {
   // Same sessionEngineDir consistency as getTranscriptPathForSession —
   // subagent transcripts live under the session dir, so if the session
   // transcript is at sessionEngineDir, subagent transcripts are too.
   const engineDir = getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
   const sessionId = getSessionId()
-  const subdir = agentTranscriptSubdirs.get(agentId)
-  const base = subdir
-    ? join(engineDir, sessionId, 'subagents', subdir)
-    : join(engineDir, sessionId, 'subagents')
+  const base = join(engineDir, sessionId, 'subagents')
   return join(base, `agent-${agentId}.jsonl`)
 }
 
@@ -312,14 +293,6 @@ export type AgentMetadata = {
   agentName?: string
   /** Agent Team ownership. Team sidechains are rendered in the team workbench. */
   teamName?: string
-  /** Dynamic workflow ownership and stable position in its execution. */
-  workflow?: {
-    runId: string
-    name: string
-    phaseIndex: number
-    phaseTitle?: string
-    agentIndex: number
-  }
   /** Worktree path if the agent was spawned with isolation: "worktree" */
   worktreePath?: string
   /** Original task description from the AgentTool input. Persisted so a

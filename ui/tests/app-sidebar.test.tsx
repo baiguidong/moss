@@ -6,7 +6,6 @@ import { AppSidebar, getSidebarMoreApps, getSidebarMoreViews } from '../src/rend
 import type { StoredApp } from '../src/renderer-react/types';
 
 function renderSidebar({
-  workflowsEnabled = false,
   remoteEnabled = false,
   agentMailEnabled = false,
   sessions = [],
@@ -16,7 +15,6 @@ function renderSidebar({
   searchQuery = '',
   activeSessionId = null,
 }: {
-  workflowsEnabled?: boolean;
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
@@ -37,7 +35,6 @@ function renderSidebar({
       themeMode="system"
       collapsed={collapsed}
       searchQuery={searchQuery}
-      workflowsEnabled={workflowsEnabled}
       remoteEnabled={remoteEnabled}
       agentMailEnabled={agentMailEnabled}
       onChangeView={() => {}}
@@ -55,7 +52,7 @@ function renderSidebar({
 
 describe('app sidebar more menu', () => {
   test('keeps secondary destinations behind one compact trigger', () => {
-    const html = renderSidebar({ workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true });
+    const html = renderSidebar({ remoteEnabled: true, agentMailEnabled: true });
     expect(html).toContain('title="更多"');
     expect(html).not.toContain('title="资料库"');
     expect(html).not.toContain('title="协作邮箱"');
@@ -66,23 +63,15 @@ describe('app sidebar more menu', () => {
   });
 
   test('builds menu entries from feature availability', () => {
-    expect(getSidebarMoreViews({ workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
+    expect(getSidebarMoreViews({ remoteEnabled: false, agentMailEnabled: false }))
       .toEqual(['overview', 'cron']);
-    expect(getSidebarMoreViews({ workflowsEnabled: true, remoteEnabled: true, agentMailEnabled: true }))
-      .toEqual(['overview', 'workflows', 'mail', 'cron']);
+    expect(getSidebarMoreViews({ remoteEnabled: true, agentMailEnabled: true }))
+      .toEqual(['overview', 'mail', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {
-    expect(getSidebarMoreViews({ workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: true })).not.toContain('mail');
-    expect(getSidebarMoreViews({ workflowsEnabled: false, remoteEnabled: true, agentMailEnabled: false })).not.toContain('mail');
-  });
-
-  test('shows the localized workflow destination only when enabled', () => {
-    expect(getSidebarMoreViews({ workflowsEnabled: false, remoteEnabled: false, agentMailEnabled: false }))
-      .not.toContain('workflows');
-    expect(getSidebarMoreViews({ workflowsEnabled: true, remoteEnabled: false, agentMailEnabled: false }))
-      .toContain('workflows');
-    expect(renderSidebar({ workflowsEnabled: true })).not.toContain('title="Workflows"');
+    expect(getSidebarMoreViews({ remoteEnabled: false, agentMailEnabled: true })).not.toContain('mail');
+    expect(getSidebarMoreViews({ remoteEnabled: true, agentMailEnabled: false })).not.toContain('mail');
   });
 
   test('applies the same dependency to collaborative mailbox sessions', () => {

@@ -1,4 +1,5 @@
 import fsp from 'node:fs/promises';
+import { preserveAppTaskHistory } from './apps/app-task-session.mjs';
 import { createLocalTranscriptSync, readTranscriptHistory } from './local-transcript-sync.mjs';
 import { normalizeSessionDirName } from './session-paths.mjs';
 import { applyRemoteSessionWorkspace } from './workspace-paths.mjs';
@@ -134,7 +135,7 @@ export function createSessionHistoryService({
   }
 
   function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
-    const nextHistory = Array.isArray(history) ? history : [];
+    const nextHistory = preserveAppTaskHistory(sessionRecord.history, history);
     if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
       const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, nextHistory);
       if (enrichedHistory !== sessionRecord.history) {

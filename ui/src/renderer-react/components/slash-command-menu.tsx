@@ -52,11 +52,13 @@ const COMMANDS_WITH_ARGS: Record<string, { name: string; description: string; ar
 
 export function SlashCommandMenu({
   filter,
+  commands = SLASH_COMMANDS,
   onSelect,
   selectedIndex,
   onSetSelectedIndex,
 }: {
   filter: string;
+  commands?: Array<{name:string;description:string}>;
   onSelect: (command: string) => void;
   selectedIndex: number;
   onSetSelectedIndex: (index: number) => void;
@@ -64,12 +66,12 @@ export function SlashCommandMenu({
   const filtered = React.useMemo(() => {
     if (!filter.startsWith("/")) return [];
     const query = filter.toLowerCase().slice(1);
-    return SLASH_COMMANDS.filter(
+    return commands.filter(
       (cmd) =>
         cmd.name.toLowerCase().startsWith("/" + query) ||
         cmd.description.toLowerCase().includes(query)
     );
-  }, [filter]);
+  }, [filter, commands]);
 
   React.useEffect(() => {
     onSetSelectedIndex(0);

@@ -238,6 +238,7 @@ export class AppHostCapabilityRegistry {
       generation: request.generation,
       owner: request.owner || null,
       principal: request.principal || null,
+      invocation: request.invocation || null,
       dataDir: request.dataDir || null,
       runtimeDir: request.runtimeDir || null,
       requestId: request.requestId,

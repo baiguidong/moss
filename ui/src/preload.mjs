@@ -84,21 +84,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),
     readEntry: (payload) => ipcRenderer.invoke('memory:read-entry', payload),
   },
-  workflows: {
-    list: (payload) => ipcRenderer.invoke('workflow:list', payload),
-    get: (payload) => ipcRenderer.invoke('workflow:get', payload),
-    publish: (payload) => ipcRenderer.invoke('workflow:publish', payload),
-    unpublish: (payload) => ipcRenderer.invoke('workflow:unpublish', payload),
-    duplicate: (payload) => ipcRenderer.invoke('workflow:duplicate', payload),
-    archive: (payload) => ipcRenderer.invoke('workflow:archive', payload),
-    restore: (payload) => ipcRenderer.invoke('workflow:restore', payload),
-    delete: (payload) => ipcRenderer.invoke('workflow:delete', payload),
-    onChanged: (callback) => {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on('workflow:changed', handler);
-      return () => ipcRenderer.off('workflow:changed', handler);
-    },
-  },
   agentMail: {
     getStatus: () => ipcRenderer.invoke('agent-mail:get-status'),
     listPending: () => ipcRenderer.invoke('agent-mail:list-pending'),
@@ -220,6 +205,14 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   },
   openAppResource: (uri) => ipcRenderer.invoke('app:open-resource', { uri }),
   getAppRuntimeState: (payload) => ipcRenderer.invoke('app:get-runtime-state', payload),
+  listAppResources: (payload) => ipcRenderer.invoke('app:composer:list', payload),
+  prepareAppResource: (payload) => ipcRenderer.invoke('app:composer:resolve', payload),
+  onAppPrepareComposer: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:composer:prepare', handler);
+    return () => ipcRenderer.off('app:composer:prepare', handler);
+  },
+  listAppCommands: (payload) => ipcRenderer.invoke('app:list-commands', payload),
   listAppContributions: (payload) => ipcRenderer.invoke('app:list-contributions', payload),
   invokeAppContribution: (payload) => ipcRenderer.invoke('app:invoke-contribution', payload),
   setAppEnabled: (payload) => ipcRenderer.invoke('app:set-enabled', payload),

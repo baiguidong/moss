@@ -25,3 +25,7 @@ SDK 的 `validateAppToolInputSchema(schema, fieldName?)` 检查此根节点契�
 公共云端存储协议为 `moss.cloud-storage/v1`。契约、状态、错误和接入示例见 [云端存储文档](../../docs/cloud-storage.md)。
 
 Host API 2.3 的 `moss.cloud-storage/v1` 新增 `shares.create/list/revoke`，使用独立的 `cloud-storage:share` 权限；创建分享还需 Server 账号的读取权限。契约、分享码和浏览器入口见 [云端存储文档](../../docs/cloud-storage.md)。
+
+### Host API 2.7：通用后台任务与 Agent 执行
+
+`@moss/app-sdk/execution` 导出 `createExecutionProtocolDefinitions`、`validateExecutionInput` 和协议常量。App 使用通用 `host.request` 调用 `moss.tasks/v1` 与 `moss.agent-execution/v1`。来源由 Host 绑定，调用者不能通过输入指定其他会话。详见 [接口说明](../../ui/docs/app-execution-host.md)。

@@ -6,7 +6,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '2.6.0'
+export const APP_HOST_API_VERSION = '2.8.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -115,6 +115,7 @@ function normalizeContributes(contributes, manifest) {
       title: command.title.trim(),
       description: String(command.description || '').trim(),
       action: command.action,
+      ...(command.listAction ? { listAction: requireAction(command.listAction, `command ${command.id} listAction`).name } : {}),
       ...(inputSchema ? { inputSchema } : {}),
       ...normalizeContributionPermission(command, requestedPermissions, `command ${command.id}`),
     }
@@ -150,6 +151,8 @@ function normalizeContributes(contributes, manifest) {
     return {
       id: provider.id,
       schemes: [...provider.schemes],
+      ...(provider.title ? { title: provider.title.trim() } : {}),
+      ...(provider.listAction ? { listAction: requireAction(provider.listAction, `resource provider ${provider.id}`).name } : {}),
       resolveAction: requireAction(provider.resolveAction, `resource provider ${provider.id}`).name,
       ...normalizeContributionPermission(provider, requestedPermissions, `resource provider ${provider.id}`),
     }

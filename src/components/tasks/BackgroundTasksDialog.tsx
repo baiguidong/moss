@@ -1,5 +1,4 @@
 import { c as _c } from "react/compiler-runtime";
-import { feature } from 'bun:bundle';
 import figures from 'figures';
 import React, { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { isCoordinatorMode } from 'src/coordinator/coordinatorMode.js';
@@ -15,7 +14,6 @@ import { LocalAgentTask } from 'src/tasks/LocalAgentTask/LocalAgentTask.js';
 import type { LocalShellTaskState } from 'src/tasks/LocalShellTask/guards.js';
 import { LocalShellTask } from 'src/tasks/LocalShellTask/LocalShellTask.js';
 // Type import is erased at build time — safe even though module is ant-gated.
-import type { LocalWorkflowTaskState } from 'src/tasks/LocalWorkflowTask/LocalWorkflowTask.js';
 import { type BackgroundTaskState, isBackgroundTask, type TaskState } from 'src/tasks/types.js';
 import type { DeepImmutable } from 'src/types/utils.js';
 import { intersperse } from 'src/utils/array.js';
@@ -69,12 +67,6 @@ type ListItem = {
   task: DeepImmutable<InProcessTeammateTaskState>;
 } | {
   id: string;
-  type: 'local_workflow';
-  label: string;
-  status: string;
-  task: DeepImmutable<LocalWorkflowTaskState>;
-} | {
-  id: string;
   type: 'dream';
   label: string;
   status: string;
@@ -85,19 +77,6 @@ type ListItem = {
   label: string;
   status: 'running';
 };
-
-// WORKFLOW_SCRIPTS is feature-gated. Use feature() + require so the bundler can
-// dead-code-eliminate the branch.
-/* eslint-disable @typescript-eslint/no-require-imports */
-const WorkflowDetailDialog = feature('WORKFLOW_SCRIPTS') ? (require('./WorkflowDetailDialog.js') as typeof import('./WorkflowDetailDialog.js')).WorkflowDetailDialog : null;
-const workflowTaskModule = feature('WORKFLOW_SCRIPTS') ? require('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') as typeof import('src/tasks/LocalWorkflowTask/LocalWorkflowTask.js') : null;
-const killWorkflowTask = workflowTaskModule?.killWorkflowTask ?? null;
-const pauseWorkflowTask = workflowTaskModule?.pauseWorkflowTask ?? null;
-const buildResumePrompt = workflowTaskModule?.buildResumePrompt ?? null;
-const skipWorkflowAgent = workflowTaskModule?.skipWorkflowAgent ?? null;
-const retryWorkflowAgent = workflowTaskModule?.retryWorkflowAgent ?? null;
-const saveWorkflowDefinition = feature('WORKFLOW_SCRIPTS') ? (require('src/utils/workflows/save.js') as typeof import('src/utils/workflows/save.js')).saveWorkflowDefinition : null;
-/* eslint-enable @typescript-eslint/no-require-imports */
 
 // Helper to get filtered background tasks (excludes foregrounded local_agent)
 function getSelectableBackgroundTasks(tasks: Record<string, TaskState> | undefined, foregroundedTaskId: string | undefined): TaskState[] {
@@ -141,7 +120,6 @@ export function BackgroundTasksDialog({
     };
   });
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [workflowSaveScope, setWorkflowSaveScope] = useState<'user' | 'project' | null>(null);
 
   // Register as modal overlay so parent Chat keybindings (up/down for history)
   // are deactivated while this dialog is open
@@ -152,7 +130,6 @@ export function BackgroundTasksDialog({
     bashTasks,
     agentTasks,
     teammateTasks,
-    workflowTasks,
     dreamTasks: dreamTasks_0,
     allSelectableItems
   } = useMemo(() => {
@@ -171,7 +148,6 @@ export function BackgroundTasksDialog({
     const bash = sorted.filter(item => item.type === 'local_bash');
     // Exclude foregrounded task - it's being viewed in the main UI, not a background task
     const agent = sorted.filter(item_1 => item_1.type === 'local_agent' && item_1.id !== foregroundedTaskId);
-    const workflows = sorted.filter(item_2 => item_2.type === 'local_workflow');
     const dreamTasks = sorted.filter(item_3 => item_3.type === 'dream');
     // In spinner-tree mode, exclude teammates from the dialog (they appear in the tree)
     const teammates = showSpinnerTree ? [] : sorted.filter(item_4 => item_4.type === 'in_process_teammate');
@@ -185,12 +161,11 @@ export function BackgroundTasksDialog({
     return {
       bashTasks: bash,
       agentTasks: agent,
-      workflowTasks: workflows,
       dreamTasks,
       teammateTasks: [...leaderItem, ...teammates],
       // Order MUST match JSX render order so arrow-key navigation moves the
       // cursor visually downward.
-      allSelectableItems: [...leaderItem, ...teammates, ...bash, ...agent, ...workflows, ...dreamTasks]
+      allSelectableItems: [...leaderItem, ...teammates, ...bash, ...agent, ...dreamTasks]
     };
   }, [typedTasks, foregroundedTaskId, showSpinnerTree]);
   const currentSelection = allSelectableItems[selectedIndex] ?? null;
@@ -246,8 +221,6 @@ export function BackgroundTasksDialog({
         void killAgentTask(currentSelection_0.id);
       } else if (currentSelection_0.type === 'in_process_teammate' && currentSelection_0.status === 'running') {
         void killTeammateTask(currentSelection_0.id);
-      } else if (currentSelection_0.type === 'local_workflow' && currentSelection_0.status === 'running' && killWorkflowTask) {
-        killWorkflowTask(currentSelection_0.id, setAppState);
       } else if (currentSelection_0.type === 'dream' && currentSelection_0.status === 'running') {
         void killDreamTask(currentSelection_0.id);
       }
@@ -287,9 +260,7 @@ export function BackgroundTasksDialog({
   useEffect(() => {
     if (viewState.mode !== 'list') {
       const task = (typedTasks ?? {})[viewState.itemId];
-      // Workflow tasks get a grace: their detail view stays open through
-      // completion so the user sees the final state before eviction.
-      if (!task || task.type !== 'local_workflow' && !isBackgroundTask(task)) {
+      if (!task || !isBackgroundTask(task)) {
         // Task was removed or is no longer a background task (e.g. killed).
         // If we skipped the list on mount, close the dialog entirely.
         if (skippedListOnMount.current) {
@@ -346,23 +317,6 @@ export function BackgroundTasksDialog({
             display: 'system'
           });
         } : undefined} key={`teammate-${task_0.id}`} />;
-      case 'local_workflow':
-        if (!WorkflowDetailDialog) return null;
-        return <WorkflowDetailDialog workflow={task_0} onDone={onDone} onKill={task_0.status === 'running' && killWorkflowTask ? () => killWorkflowTask(task_0.id, setAppState) : undefined} onPause={task_0.status === 'running' && pauseWorkflowTask && buildResumePrompt ? () => {
-          if (pauseWorkflowTask(task_0.id, setAppState)) {
-            onDone(buildResumePrompt(task_0 as unknown as LocalWorkflowTaskState), {
-              display: 'system'
-            });
-          }
-        } : undefined} onSkipAgent={task_0.status === 'running' && skipWorkflowAgent ? agentId => skipWorkflowAgent(task_0.id, agentId, setAppState) : undefined} onRetryAgent={task_0.status === 'running' && retryWorkflowAgent ? agentId_0 => retryWorkflowAgent(task_0.id, agentId_0, setAppState) : undefined} saveScope={workflowSaveScope} onToggleSaveScope={() => setWorkflowSaveScope(previous => previous === 'project' ? 'user' : 'project')} onSave={saveWorkflowDefinition ? () => {
-          const scope = workflowSaveScope ?? 'project';
-          void saveWorkflowDefinition({
-            definition: task_0.definition,
-            scope
-          }).then(result => onDone('error' in result ? `Could not save workflow: ${result.error}` : `Saved /${result.name} to ${result.filePath}`, {
-            display: 'system'
-          }));
-        } : undefined} onBack={goBackToList} key={`workflow-${task_0.id}`} />;
       case 'dream':
         return <DreamDetailDialog task={task_0} onDone={() => onDone('Background tasks dialog dismissed', {
           display: 'system'
@@ -372,7 +326,6 @@ export function BackgroundTasksDialog({
   const runningBashCount = count(bashTasks, _ => _.status === 'running');
   const runningAgentCount = count(agentTasks, __1 => __1.status === 'running');
   const runningTeammateCount = count(teammateTasks, __2 => __2.status === 'running');
-  const runningWorkflowCount = count(workflowTasks, __3 => __3.status === 'running');
   const subtitle = intersperse([...(runningTeammateCount > 0 ? [<Text key="teammates">
               {runningTeammateCount}{' '}
               {runningTeammateCount !== 1 ? 'agents' : 'agent'}
@@ -382,11 +335,8 @@ export function BackgroundTasksDialog({
             </Text>] : []), ...(runningAgentCount > 0 ? [<Text key="agents">
               {runningAgentCount}{' '}
               {runningAgentCount !== 1 ? 'active agents' : 'active agent'}
-            </Text>] : []), ...(runningWorkflowCount > 0 ? [<Text key="workflows">
-              {runningWorkflowCount}{' '}
-              {runningWorkflowCount !== 1 ? 'active workflows' : 'active workflow'}
             </Text>] : [])], index => <Text key={`separator-${index}`}> · </Text>);
-  const actions = [<KeyboardShortcutHint key="upDown" shortcut="↑/↓" action="select" />, <KeyboardShortcutHint key="enter" shortcut="Enter" action="view" />, ...(currentSelection?.type === 'in_process_teammate' && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="foreground" shortcut="f" action="foreground" />] : []), ...((currentSelection?.type === 'local_bash' || currentSelection?.type === 'local_agent' || currentSelection?.type === 'in_process_teammate' || currentSelection?.type === 'local_workflow' || currentSelection?.type === 'dream') && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="kill" shortcut="x" action="stop" />] : []), ...(agentTasks.some(t => t.status === 'running') ? [<KeyboardShortcutHint key="kill-all" shortcut={killAgentsShortcut} action="stop all agents" />] : []), <KeyboardShortcutHint key="esc" shortcut="←/Esc" action="close" />];
+  const actions = [<KeyboardShortcutHint key="upDown" shortcut="↑/↓" action="select" />, <KeyboardShortcutHint key="enter" shortcut="Enter" action="view" />, ...(currentSelection?.type === 'in_process_teammate' && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="foreground" shortcut="f" action="foreground" />] : []), ...((currentSelection?.type === 'local_bash' || currentSelection?.type === 'local_agent' || currentSelection?.type === 'in_process_teammate' || currentSelection?.type === 'dream') && currentSelection.status === 'running' ? [<KeyboardShortcutHint key="kill" shortcut="x" action="stop" />] : []), ...(agentTasks.some(t => t.status === 'running') ? [<KeyboardShortcutHint key="kill-all" shortcut={killAgentsShortcut} action="stop all agents" />] : []), <KeyboardShortcutHint key="esc" shortcut="←/Esc" action="close" />];
   const handleCancel = () => onDone('Background tasks dialog dismissed', {
     display: 'system'
   });
@@ -427,16 +377,7 @@ export function BackgroundTasksDialog({
                 </Box>
               </Box>}
 
-            {workflowTasks.length > 0 && <Box flexDirection="column" marginTop={teammateTasks.length > 0 || bashTasks.length > 0 || agentTasks.length > 0 ? 1 : 0}>
-                <Text dimColor>
-                  <Text bold>{'  '}Workflows</Text> ({workflowTasks.length})
-                </Text>
-                <Box flexDirection="column">
-                  {workflowTasks.map(item_10 => <Item key={item_10.id} item={item_10} isSelected={item_10.id === currentSelection?.id} />)}
-                </Box>
-              </Box>}
-
-            {dreamTasks_0.length > 0 && <Box flexDirection="column" marginTop={teammateTasks.length > 0 || bashTasks.length > 0 || agentTasks.length > 0 || workflowTasks.length > 0 ? 1 : 0}>
+            {dreamTasks_0.length > 0 && <Box flexDirection="column" marginTop={teammateTasks.length > 0 || bashTasks.length > 0 || agentTasks.length > 0 ? 1 : 0}>
                 <Box flexDirection="column">
                   {dreamTasks_0.map(item_11 => <Item key={item_11.id} item={item_11} isSelected={item_11.id === currentSelection?.id} />)}
                 </Box>
@@ -468,14 +409,6 @@ function toListItem(task: BackgroundTaskState): ListItem {
         id: task.id,
         type: 'in_process_teammate',
         label: `@${task.identity.agentName}`,
-        status: task.status,
-        task
-      };
-    case 'local_workflow':
-      return {
-        id: task.id,
-        type: 'local_workflow',
-        label: task.summary ?? task.description,
         status: task.status,
         task
       };

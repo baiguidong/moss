@@ -1,3 +1,4 @@
+export { assertWorkflowAppPolicy } from './services/appExecution/policy.js'
 /**
  * Claude Code 直接嵌入 SDK（无子进程）
  *
@@ -20,7 +21,7 @@ import { createStore } from './state/store.js'
 import { stopTask as stopBackgroundTask } from './tasks/stopTask.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool, getAllBaseTools } from './tools.js'
-import { TASK_TYPE_TAG, TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
+import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import {
   createAppContributionTools,
@@ -1228,7 +1229,7 @@ export class ClaudeSession {
    * @param text    用户消息文本，或 Anthropic content block 数组
    * @param signal  可选 AbortSignal
    */
-  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal): AsyncGenerator<SDKMessage> {
+  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal, turnOptions?: { preparedTools?: string[] }): AsyncGenerator<SDKMessage> {
     if (this.#disposed) throw new Error('Session has been disposed')
 
     // 串行队列
@@ -1345,22 +1346,10 @@ export class ClaudeSession {
         (cmd.mode === 'task-notification' || cmd.mode === 'orphaned-permission') &&
         (cmd.sessionId === undefined || cmd.sessionId === sessionId)
 
-      const isCurrentSessionWorkflowNotification = (
-        cmd: {
-          agentId?: unknown
-          mode: string
-          sessionId?: SessionId
-          value?: unknown
-        },
-      ) =>
-        isCurrentSessionMainThreadCommand(cmd) &&
-        typeof cmd.value === 'string' &&
-        cmd.value.includes(`<${TASK_TYPE_TAG}>local_workflow</${TASK_TYPE_TAG}>`)
-
       const dequeueMainThreadTaskNotification = () =>
         this.#opts.coordinatorMode
           ? dequeue(isCurrentSessionMainThreadCommand)
-          : dequeue(isCurrentSessionWorkflowNotification)
+          : undefined
 
       const hasRunningBackgroundTasks = () => {
         const state = this.#store?.getState()
@@ -1369,7 +1358,7 @@ export class ClaudeSession {
           task =>
             isBackgroundTask(task) &&
             task.type !== 'in_process_teammate' &&
-            (this.#opts.coordinatorMode || task.type === 'local_workflow'),
+            this.#opts.coordinatorMode,
         )
       }
 
@@ -1462,6 +1451,7 @@ export class ClaudeSession {
                   const iterator = engine.submitMessage(turnPrompt, {
                     uuid,
                     mode,
+                    preparedTools: turnOptions?.preparedTools,
                   })
 
                   try {
@@ -1604,6 +1594,16 @@ export class ClaudeSession {
         },
       ),
     )
+  }
+
+  async executeAppAgent(params: Parameters<QueryEngine['executeAppAgent']>[0]) {
+    const engine = await this.#initializeForControl()
+    const cwd = getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ?? this.#opts.cwd
+    return runWithSessionApiOverrides(this.#sessionApiOverrides, () => runWithCwdOverride(cwd, () =>
+      runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
+        () => runWithCoordinatorMode(this.#opts.coordinatorMode, () => engine.executeAppAgent(params)),
+        this.#opts.taskScope, this.#opts.environment, this.#opts.runtime),
+      { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }))
   }
 
   async #runFileHistoryControl<T>(operation: (
@@ -1942,14 +1942,3 @@ export async function resumeClaudeSession(
     },
   }
 }
-
-export {
-  archiveWorkflow,
-  deleteWorkflow,
-  duplicateWorkflow,
-  getWorkflowCatalogDetail,
-  listWorkflowCatalog,
-  publishWorkflow,
-  restoreWorkflow,
-  unpublishWorkflow,
-} from './utils/workflows/catalog.js'

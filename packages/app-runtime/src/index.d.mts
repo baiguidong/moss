@@ -51,6 +51,8 @@ export class AppRuntimeHost {
   requireContribution(kind: string, id: string, options?: Record<string, any>): Promise<Record<string, any>>
   invokeContribution(kind: string, id: string, input?: unknown, options?: Record<string, any>): Promise<unknown>
   invokeToolContribution(id: string, input?: unknown, options?: Record<string, any>): Promise<unknown>
+  listCommands(options?: Record<string, any>): Promise<Array<Record<string, any>>>
+  invokeDiscoveredCommand(id: string, args?: unknown, options?: Record<string, any>): Promise<unknown>
   invokeCommandContribution(id: string, input?: unknown, options?: Record<string, any>): Promise<unknown>
   resolveResource(uri: string, options?: Record<string, any>): Promise<unknown>
   setAppEnabled(appId: string, enabled: boolean): Promise<any>

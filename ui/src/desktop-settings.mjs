@@ -112,9 +112,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   expertHub: {
     baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
-  workflows: {
-    enabled: false,
-  },
   agentMail: {
     enabled: false,
     sessionMode: 'fixed',
@@ -717,20 +714,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
           : DEFAULT_DESKTOP_SETTINGS.managedRuntimes.git,
   };
 
-  const sourceWorkflows = source.workflows && typeof source.workflows === 'object'
-    ? source.workflows
-    : {};
-  const existingWorkflows = result.workflows && typeof result.workflows === 'object'
-    ? result.workflows
-    : {};
-  result.workflows = {
-    enabled:
-      sourceWorkflows.enabled !== undefined
-        ? Boolean(sourceWorkflows.enabled)
-        : existingWorkflows.enabled !== undefined
-          ? Boolean(existingWorkflows.enabled)
-          : DEFAULT_DESKTOP_SETTINGS.workflows.enabled,
-  };
+  // Workflow availability is controlled by its installed App. Discard the retired switch.
+  delete result.workflows;
 
   const sourceAgentMail = source.agentMail && typeof source.agentMail === 'object'
     ? source.agentMail

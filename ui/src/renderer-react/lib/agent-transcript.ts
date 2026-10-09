@@ -103,7 +103,7 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   type: 'system';
   role: 'system';
   content: string;
-  variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact';
+  variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact' | 'app_task' | 'app_flow_result';
   status?: 'pending' | 'success' | 'failed';
 };
 
@@ -1384,18 +1384,21 @@ export function buildTranscriptRenderMessages(
       }
       const isLocalCommand = event.subtype === 'local_command';
       const isConnectorAuth = event.subtype === 'connector_auth';
+      const isAppTask = event.subtype === 'app_task';
+      const isAppFlow = isAppTask && event.appId === 'moss.workflow';
+      if (isAppFlow && (event.status === 'running' || (!event.status && / · 已开始/.test(event.content || '')))) continue;
       const content = isLocalCommand
         ? extractLocalCommandOutput(event?.content)
         : normalizeText(event?.content);
       if (!content) continue;
-      if (isLocalCommand || isConnectorAuth) {
-        finalizeAssistantTurn(state, { complete: true });
+      if (isLocalCommand || isConnectorAuth || isAppTask) {
+        if (!isAppTask) finalizeAssistantTurn(state, { complete: true });
         addSystemRenderMessage(
           state,
           timestamp,
           content,
           isConnectorAuth ? ['连接器授权'] : undefined,
-          isConnectorAuth ? 'connector_auth' : 'local_command',
+          isAppFlow ? 'app_flow_result' : isAppTask ? 'app_task' : isConnectorAuth ? 'connector_auth' : 'local_command',
           isConnectorAuth && ['pending', 'success', 'failed'].includes(event.status)
             ? event.status
             : undefined,

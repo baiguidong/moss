@@ -102,10 +102,8 @@ export const SyntheticOutputTool = buildTool({
 
 type CreateResult = { tool: Tool<InputSchema> } | { error: string }
 
-// Workflow scripts call agent({schema: BUGS_SCHEMA}) 30-80 times per run with
-// the same schema object reference. Without caching, each call does
-// new Ajv() + validateSchema() + compile() (~1.4ms of JIT codegen). Identity
-// cache brings 80-call workflows from ~110ms to ~4ms Ajv overhead.
+// Repeated structured-output calls can reuse the same schema object. Cache by
+// identity to avoid repeating Ajv validation and compilation.
 const toolCache = new WeakMap<object, CreateResult>()
 
 /**

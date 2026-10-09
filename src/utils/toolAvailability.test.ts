@@ -1,20 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { feature } from 'bun:bundle'
 import type { ToolUseContext } from '../Tool.js'
 import { getDefaultAppState } from '../state/AppStateStore.js'
-import { assembleToolPool } from '../tools.js'
+import { assembleToolPool, getAllBaseTools } from '../tools.js'
 import { createAppContributionTools } from '../tools/AppContributionTool/AppContributionTool.js'
 import { MossMailTool } from '../tools/MossMailTool/MossMailTool.js'
 import { MossTools } from '../tools/MossTool/MossTool.js'
 import { ToolSearchTool } from '../tools/ToolSearchTool/ToolSearchTool.js'
-import { WorkflowCatalogTools } from '../tools/WorkflowTool/WorkflowCatalogTools.js'
-import { WorkflowRunTool } from '../tools/WorkflowTool/WorkflowTool.js'
 import { asSessionId } from '../types/ids.js'
 import { mergeAndFilterTools } from './toolPool.js'
 import { getSessionRuntimeContext, runWithSessionIdContext, runWithSessionIdContextGenerator, runWithSessionContextOverridesGenerator, type SessionRuntime } from './sessionIdContext.js'
 
-const workflowTools = [WorkflowRunTool, ...WorkflowCatalogTools]
-const workflowNames = workflowTools.map(tool => tool.name)
+const workflowNames = ['WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage']
 const denied = [
   'app_build', 'app_preview', 'app_publish', 'app_launch', 'app_update', 'app_extract_to_workspace', 'app_get_versions',
   'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_reload',
@@ -29,7 +25,7 @@ const appTools = createAppContributionTools([{
 const state = getDefaultAppState()
 const assembleWorker = () => assembleToolPool(state.toolPermissionContext, [])
 const assembleMain = () => mergeAndFilterTools(
-  [...MossTools, MossMailTool, ...appTools, ...workflowTools], assembleWorker(), state.toolPermissionContext.mode,
+  [...MossTools, MossMailTool, ...appTools], assembleWorker(), state.toolPermissionContext.mode,
 )
 const scope = <T>(environment: SessionRuntime['executionEnvironment'], fn: () => T) =>
   runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image })
@@ -49,10 +45,9 @@ describe('session tool availability', () => {
     })
     scope('desktop', () => {
       const names = assembleMain().map(tool => tool.name)
-      expect(denied.filter(name => !names.includes(name))).toEqual([])
-      if (feature('WORKFLOW_SCRIPTS')) {
-        const workerNames = assembleWorker().map(tool => tool.name)
-        expect(workflowNames.filter(name => !workerNames.includes(name))).toEqual([])
+      expect(denied.filter(name => !workflowNames.includes(name) && !names.includes(name))).toEqual([])
+      for (const pool of [getAllBaseTools(), assembleMain(), assembleWorker()]) {
+        expect(pool.map(tool => tool.name).filter(name => workflowNames.includes(name))).toEqual([])
       }
     })
   })
@@ -77,14 +72,14 @@ describe('session tool availability', () => {
   test('interleaved session generators and resumed worker overrides retain their own runtime', async () => {
     function iterator(executionEnvironment: SessionRuntime['executionEnvironment']) {
       return runWithSessionIdContextGenerator(asSessionId(executionEnvironment), null, async function* () {
-        expect(assembleMain().filter(tool => workflowNames.includes(tool.name)).length)
-          .toBe(executionEnvironment === 'server' ? 0 : 4)
+        expect(assembleMain().filter(tool => tool.name === 'example_app_action').length)
+          .toBe(executionEnvironment === 'server' ? 0 : 1)
         yield assembleMain().some(tool => tool.name === 'app_build')
         yield* runWithSessionContextOverridesGenerator({ environment: { WORKER: '1' } }, async function* () {
           await Promise.resolve()
           expect(getSessionRuntimeContext()?.image).toEqual(image)
-          expect(assembleMain().filter(tool => workflowNames.includes(tool.name)).length)
-            .toBe(executionEnvironment === 'server' ? 0 : 4)
+          expect(assembleMain().filter(tool => tool.name === 'example_app_action').length)
+            .toBe(executionEnvironment === 'server' ? 0 : 1)
           yield assembleWorker().some(tool => tool.name === 'app_build')
         })
       }, undefined, undefined, { executionEnvironment, image })

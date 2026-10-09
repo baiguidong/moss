@@ -4,7 +4,6 @@ import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { CronView } from '@/components/cron-view';
 import { OverviewView } from '@/components/overview-view';
-import { WorkflowLibraryView } from '@/components/workflow-library-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
@@ -17,6 +16,7 @@ import {
   ToolDisplaySettingsProvider,
   type ToolDisplayMode,
 } from '@/components/chat/tool-display-settings';
+import { AppComposerContext, resourceContext, type AppComposerResource } from '@/lib/app-composer';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
@@ -45,7 +45,6 @@ import {
   type NewAppNotification,
 } from '@/lib/app-notifications';
 import { isAuthorizedConnector, selectConnectorForNewChat } from '@/lib/connector-selection';
-import { workflowEditPrompt, workflowUsePrompt } from '@/lib/workflow-library';
 import {
   excludeRemovedSessions,
   isSessionAlreadyRemovedError,
@@ -74,7 +73,6 @@ import type {
   SessionSearchResult,
   SessionSummary,
   StoredApp,
-  WorkflowCatalogDetail,
   WorkspacePreviewData,
 } from './types';
 
@@ -149,6 +147,7 @@ type ThemeMode = 'dark' | 'light' | 'system';
 type ComposerIntent = 'chat' | 'boss';
 type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
 type QueuedMessage = {
+  appSelection?: AppComposerResource | null;
   id: string;
   prompt: string;
   skills?: Array<{ name: string; displayName?: string; source?: string }>;
@@ -455,6 +454,8 @@ export default function App() {
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
+  const [appSelection, setAppSelection] = React.useState<AppComposerResource | null>(null);
+  const [appDraftWorkspace, setAppDraftWorkspace] = React.useState<string>();
   const [selectedAppName, setSelectedAppName] = React.useState('');
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
   const [embeddedAppRoute, setEmbeddedAppRoute] = React.useState('');
@@ -532,7 +533,6 @@ export default function App() {
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
-  const workflowsEnabled = desktopSettings?.workflows?.enabled === true;
   const agentMailEnabled =
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
@@ -683,8 +683,10 @@ export default function App() {
   // Per-session composer drafts: text + attachments survive session switches
   // (borrowed from sudowork's useSendBoxDraft). Snapshotted on switch, so live
   // edits stay in normal state and send-clearing works untouched.
-  const composerDraftsRef = React.useRef<Record<string, { text: string; files: ComposerAttachment[] }>>({});
+  const composerDraftsRef = React.useRef<Record<string, { text: string; files: ComposerAttachment[]; appSelection?: AppComposerResource | null }>>({});
   const draftSessionKeyRef = React.useRef<string>('home');
+  const appSelectionDraftRef = React.useRef<AppComposerResource | null>(null);
+  appSelectionDraftRef.current = appSelection;
   const inputDraftRef = React.useRef('');
   inputDraftRef.current = input;
   const composerAttachmentsRef = React.useRef<ComposerAttachment[]>([]);
@@ -697,10 +699,12 @@ export default function App() {
     composerDraftsRef.current[prevKey] = {
       text: inputDraftRef.current,
       files: composerAttachmentsRef.current,
+      appSelection: appSelectionDraftRef.current,
     };
     draftSessionKeyRef.current = nextKey;
     const draft = composerDraftsRef.current[nextKey];
     setInput(draft?.text ?? '');
+    setAppSelection(draft?.appSelection || null);
     setComposerAttachments(draft?.files ?? []);
   }, [activeSessionId]);
 
@@ -771,14 +775,13 @@ export default function App() {
     return out;
   }, [activeDetail?.history]);
 
-  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; forceDiscardDirty?: boolean }) => {
+  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
     setActiveView('chat');
     activeSessionIdRef.current = null;
     activeDetailRef.current = null;
     setActiveSessionId(null);
     setActiveDetail(null);
-    setNewSessionAgentMode('local');
-    void refreshAssistants('local');
+    if (!options?.preserveAgentMode) { setNewSessionAgentMode('local'); void refreshAssistants('local'); }
     clearSessionWorkspaceState();
     if (!options?.preserveIntent) {
       setComposerIntent('chat');
@@ -1025,11 +1028,6 @@ export default function App() {
     }
   }, [activeView, apps, embeddedAppName, selectedAppName]);
 
-  React.useEffect(() => {
-    if (!workflowsEnabled && activeView === 'workflows') {
-      setActiveView('chat');
-    }
-  }, [activeView, workflowsEnabled]);
 
   React.useEffect(() => {
     workspaceDirectoryLoader.reset();
@@ -1750,6 +1748,7 @@ export default function App() {
     files?: ComposerAttachment[],
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
     agentType?: string,
+    selectedResource?: AppComposerResource | null,
   ) => {
     // Show activity during IPC/runtime startup, before the first busy event.
     const request = Symbol();
@@ -1758,6 +1757,7 @@ export default function App() {
       await window.agentDesktop.send({
         sessionId,
         prompt,
+        appContext: selectedResource ? resourceContext(selectedResource) : undefined,
         skills,
         agentType,
         mode: intent,
@@ -1880,7 +1880,7 @@ export default function App() {
       if (queue.length === 0) return;
       const [next, ...rest] = queue;
       updateQueue(sessionId, () => rest);
-      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType).catch((err) => {
+      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection).catch((err) => {
         console.error('[queued message] send failed:', err);
         updateQueue(sessionId, (prev) => [next, ...prev]);
       });
@@ -1900,6 +1900,9 @@ export default function App() {
     if (planDecisionBusy) return;
 
     const prompt = input.trim();
+    const selection = appSelection;
+    if (selection && (activeSessionId ? activeDetail?.agentMode : newSessionAgentMode) === 'remote-direct') throw new Error('工作流需要本地会话，请先切换工作电脑');
+    if (selection) await window.agentDesktop.prepareAppResource({ context: resourceContext(selection), sessionId: activeSessionId || undefined, workspace: workspace || appDraftWorkspace });
 
     // Session is busy: queue the message; it is dispatched automatically when
     // the current turn ends (same as typing while the CLI REPL is running).
@@ -1911,13 +1914,16 @@ export default function App() {
         files,
         intent,
         agentType: agent?.agentType,
+        appSelection: selection,
       };
       updateQueue(activeSessionId, (prev) => [...prev, queued]);
       setInput('');
+      setAppSelection(null);
       return;
     }
 
     setInput('');
+    setAppSelection(current => current === selection ? null : current);
 
     let sessionId = activeSessionId;
     let sessionJustCreated = false;
@@ -1929,7 +1935,7 @@ export default function App() {
         setPreparingNewSession(true);
         creatingSessionRef.current = createAndOpenSession(
           undefined,
-          workspace,
+          workspace || appDraftWorkspace,
           selectedAssistant?.name,
           draftConnectorIds,
           newSessionPermissionMode,
@@ -1965,8 +1971,12 @@ export default function App() {
       filesToSend = newFiles;
     }
 
-    await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType);
-  }, [activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
+    setAppSelection(current => current === selection ? null : current);
+    try {
+      await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType, selection);
+      setAppSelection(current => current === selection ? null : current);
+    } catch(error) { setInput(current => current || prompt); setAppSelection(current => current || selection); throw error }
+  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -1988,29 +1998,6 @@ export default function App() {
       });
     }
   }, [composerIntent, submitPrompt, showPermissionNotice, pushAppNotification]);
-
-  const handleCreateWorkflowInChat = React.useCallback(() => {
-    setActiveView('chat');
-    setComposerIntent('boss');
-    setInput('请使用 WorkflowCreate 创建一个新的结构化 Workflow 草稿，但不要执行。我的需求是：');
-  }, []);
-
-  const handleEditWorkflowInChat = React.useCallback(async (workflow: WorkflowCatalogDetail) => {
-    const originSessionId = workflow.record.origin?.sessionId;
-    const sourceSessionId = summaries.find((session) => (
-      session.id === originSessionId || session.sessionId === originSessionId
-    ))?.id;
-    if (sourceSessionId) await openSession(sourceSessionId);
-    setActiveView('chat');
-    setComposerIntent('boss');
-    setInput(workflowEditPrompt(workflow));
-  }, [openSession, summaries]);
-
-  const handleUseWorkflowInChat = React.useCallback((workflow: WorkflowCatalogDetail) => {
-    setActiveView('chat');
-    setComposerIntent('boss');
-    setInput(workflowUsePrompt(workflow));
-  }, []);
 
 
   const handleApprovePlan = React.useCallback(async () => {
@@ -2259,6 +2246,19 @@ export default function App() {
     }).catch(error => showPermissionNotice(String(error.message || error), 'error', 6000));
   }), [openSession, showPermissionNotice]);
 
+  React.useEffect(() => window.agentDesktop.onAppPrepareComposer(payload => {
+    const selection = { ...payload.context, appId:payload.appId, title:payload.title, route:payload.route, workspace:payload.workspace };
+    composerDraftsRef.current[draftSessionKeyRef.current] = { text:inputDraftRef.current, files:composerAttachmentsRef.current, appSelection:appSelectionDraftRef.current };
+    composerDraftsRef.current.home = { text:payload.prompt, files:[], appSelection:selection };
+    draftSessionKeyRef.current = 'home';
+    if (!navigateToHome({ preserveIntent: true, preserveAgentMode: true })) return;
+    setComposerAttachments([]);
+    setSelectedAssistant(null);
+    setAppDraftWorkspace(payload.workspace);
+    setAppSelection({ ...payload.context, appId: payload.appId, title: payload.title, route: payload.route, workspace: payload.workspace });
+    setInput(payload.prompt);
+  }), [navigateToHome]);
+
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
     const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
     if (appBuilderAssistant) {
@@ -2385,6 +2385,7 @@ export default function App() {
   );
 
   return (
+    <AppComposerContext.Provider value={{ selection: appSelection, select: setAppSelection }}>
     <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
       toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
@@ -2443,7 +2444,6 @@ export default function App() {
             searchQuery={sessionSearchQuery}
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
-            workflowsEnabled={workflowsEnabled}
             agentMailEnabled={agentMailEnabled}
             onChangeView={(view) => {
               if (view === 'settings') setSettingsInitialSection('basic-info');
@@ -2500,6 +2500,7 @@ export default function App() {
               <EmbeddedAppView
                 key={`${embeddedAppName}:${embeddedAppRoute}:${embeddedAppRevision}`}
                 appName={embeddedAppName}
+                workspace={activeDetail?.workspace}
                 route={embeddedAppRoute}
               />
             </div>
@@ -2580,9 +2581,6 @@ export default function App() {
                 contextUsage={contextUsage}
                 turnTokens={turnTokens}
                 agentTeams={agentTeamsBySession[activeSessionId] ?? null}
-                onWorkflowPublished={(workflow) => {
-                  showPermissionNotice(`“${workflow.record.title}”已发布到工作流`, 'info', 3500);
-                }}
                 toolPermissionRequest={activeToolPermissionRequest}
                 questionRequest={activeQuestionRequest}
                 onSubmitQuestion={handleSubmitQuestion}
@@ -2599,6 +2597,8 @@ export default function App() {
                 hasActiveSession={false}
                 sessionTitle=""
                 sessionWorkspace={undefined}
+                homeWorkspace={appDraftWorkspace}
+                onHomeWorkspaceChange={setAppDraftWorkspace}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
                 leftCollapsed={effectiveLeftCollapsed}
@@ -2639,18 +2639,6 @@ export default function App() {
             <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
-          ) : activeView === 'workflows' && workflowsEnabled ? (
-            <WorkflowLibraryView
-              onCreateInChat={handleCreateWorkflowInChat}
-              onEditInChat={handleEditWorkflowInChat}
-              onUseInChat={handleUseWorkflowInChat}
-              onOpenSession={(originSessionId) => {
-                const sourceSessionId = summaries.find((session) => (
-                  session.id === originSessionId || session.sessionId === originSessionId
-                ))?.id;
-                if (sourceSessionId) void handleSelectSession(sourceSessionId);
-              }}
-            />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}
@@ -2755,5 +2743,6 @@ export default function App() {
     </div>
     </ToolDisplaySettingsProvider>
     </UserAvatarContext.Provider>
+    </AppComposerContext.Provider>
   );
 }

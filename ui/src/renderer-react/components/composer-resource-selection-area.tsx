@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resourceKey, type AppComposerResource } from '@/lib/app-composer';
 import { Bot, Cable, Check, GitFork, Hammer, ListFilter } from 'lucide-react';
 import {
   AssistantAvatar,
@@ -25,6 +26,12 @@ import { cn } from '@/lib/utils';
 import type { DesktopAgentDefinition, InstalledConnector } from '@/types';
 
 type ComposerResourceSelectionAreaProps = {
+  appResources?: AppComposerResource[];
+  appResourcesAvailable?: boolean;
+  selectedAppResource?: AppComposerResource | null;
+  onSelectAppResource?: (resource: AppComposerResource | null) => void;
+  onAppResourceQuery?: (query:string) => void;
+  onMoreAppResources?: () => void;
   assistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
@@ -55,6 +62,7 @@ const RESOURCE_TAB_META: Record<ComposerResourceTab, {
   searchPlaceholder: string;
   icon: React.ReactNode;
 }> = {
+  workflows: { label:'工作流', managerLabel:'', searchPlaceholder:'搜索已发布工作流', icon:<GitFork className="h-4 w-4"/> },
   assistants: {
     label: '专家',
     managerLabel: '管理专家',
@@ -136,6 +144,7 @@ function ResourceRow({
 }
 
 export function ComposerResourceSelectionArea({
+  appResources = [], appResourcesAvailable = false, selectedAppResource, onSelectAppResource, onAppResourceQuery, onMoreAppResources,
   assistants = [],
   selectedAssistant = null,
   onSelectAssistant,
@@ -164,12 +173,14 @@ export function ComposerResourceSelectionArea({
     includeAgents: Boolean(onSelectAgent),
     includeSkills: Boolean(onToggleSkill),
     includeConnectors: Boolean(onToggleConnector),
-  }), [onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
+    includeWorkflows: appResourcesAvailable,
+  }), [appResourcesAvailable, onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
   const displayedTab = openTab ?? activeTab;
   const pickerOpen = openTab !== null || open;
+  React.useEffect(() => { if (pickerOpen && displayedTab === 'workflows') onAppResourceQuery?.(query) }, [query, displayedTab, pickerOpen, onAppResourceQuery]);
 
   React.useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab(tabs[0] ?? 'skills');
@@ -212,7 +223,7 @@ export function ComposerResourceSelectionArea({
 
   const selectedSkillNames = new Set(selectedSkills.map((skill) => skill.name));
   const selectedConnectors = new Set(selectedConnectorIds);
-  const selectedCount = (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
+  const selectedCount = (selectedAppResource ? 1 : 0) + (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
     + (tabs.includes('agents') && selectedAgent ? 1 : 0)
     + (tabs.includes('skills')
       ? installedSkills.filter((skill) => selectedSkillNames.has(skill.name)).length
@@ -220,14 +231,14 @@ export function ComposerResourceSelectionArea({
     + (tabs.includes('connectors')
       ? installedConnectors.filter((connector) => selectedConnectors.has(connector.id)).length
       : 0);
-  const activeItems = displayedTab === 'assistants'
+  const activeItems = displayedTab === 'workflows' ? appResources : displayedTab === 'assistants'
     ? filteredAssistants
     : displayedTab === 'agents'
       ? filteredAgents
     : displayedTab === 'skills'
       ? filteredSkills
       : filteredConnectors;
-  const activeTotal = displayedTab === 'assistants'
+  const activeTotal = displayedTab === 'workflows' ? appResources.length : displayedTab === 'assistants'
     ? installedAssistants.length
     : displayedTab === 'agents'
       ? activeAgents.length
@@ -240,14 +251,14 @@ export function ComposerResourceSelectionArea({
     setQuery('');
     onOpenTabChange?.(null);
   };
-  const openManager = displayedTab === 'assistants'
+  const openManager = displayedTab === 'workflows' ? undefined : displayedTab === 'assistants'
     ? onOpenExpertHub
     : displayedTab === 'agents'
       ? onOpenAgentManager
     : displayedTab === 'skills'
       ? onOpenSkillHub
       : onOpenConnectorHub;
-  const emptyLabel = displayedTab === 'assistants'
+  const emptyLabel = displayedTab === 'workflows' ? '没有匹配的已发布工作流' : displayedTab === 'assistants'
     ? '没有匹配的已安装专家'
     : displayedTab === 'agents'
       ? '没有匹配的已启用 Agent'
@@ -325,7 +336,10 @@ export function ComposerResourceSelectionArea({
         )}
       >
         <div className="space-y-1">
-          {displayedTab === 'assistants' ? filteredAssistants.map((assistant) => (
+          {displayedTab === 'workflows' ? <>
+            {appResources.map(resource => <ResourceRow key={resourceKey(resource)} selected={resourceKey(resource)===resourceKey(selectedAppResource)} icon={<GitFork className="h-4 w-4"/>} title={resource.title} description={`${resource.scope==='project'?'项目':'个人'} · ${resource.description || ''}`} singleSelect onSelect={() => onSelectAppResource?.(resourceKey(resource)===resourceKey(selectedAppResource)?null:resource)}/>)}
+            {onMoreAppResources && <button className="p-2 text-xs" onClick={onMoreAppResources}>加载更多</button>}
+          </> : displayedTab === 'assistants' ? filteredAssistants.map((assistant) => (
             <ResourceRow
               key={`assistant:${assistant.name}`}
               selected={selectedAssistant?.name === assistant.name}

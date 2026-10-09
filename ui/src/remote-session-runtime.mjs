@@ -143,7 +143,6 @@ export function createRemoteRuntimeFactory({
               ...getSettings().advanced,
               moss_response_language: getSettings().language,
               moss_tool_loading: getSettings().toolLoading,
-              moss_workflows_enabled: getSettings().workflows?.enabled === true,
             },
             autoMemory: getSettings().autoMemory,
             sessionMemory: getSettings().sessionMemory,

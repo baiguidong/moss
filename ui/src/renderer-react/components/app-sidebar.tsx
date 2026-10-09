@@ -70,22 +70,19 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "workflows" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "workflows" | "mail" | "cron">;
+export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
 export function getSidebarMoreViews({
-  workflowsEnabled,
   remoteEnabled,
   agentMailEnabled,
 }: {
-  workflowsEnabled: boolean;
   remoteEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
-    ...(workflowsEnabled ? ["workflows" as const] : []),
     ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
     "cron",
   ];
@@ -110,7 +107,6 @@ export function getSidebarMoreApps(apps: StoredApp[]) {
 
 const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: typeof BookOpen }> = {
   overview: { label: "概览", icon: ChartNoAxesCombined },
-  workflows: { label: "工作流", icon: GitFork },
   mail: { label: "协作邮箱", icon: Mail },
   cron: { label: "定时任务", icon: AlarmClock },
 };
@@ -127,7 +123,6 @@ interface AppSidebarProps {
   searchQuery: string;
   localEnabled?: boolean;
   remoteEnabled?: boolean;
-  workflowsEnabled?: boolean;
   agentMailEnabled?: boolean;
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
@@ -302,7 +297,6 @@ export function AppSidebar({
   searchQuery,
   localEnabled = true,
   remoteEnabled = false,
-  workflowsEnabled = false,
   agentMailEnabled = false,
   onChangeView,
   onChangeTheme,
@@ -339,7 +333,6 @@ export function AppSidebar({
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
   const moreViews = getSidebarMoreViews({
-    workflowsEnabled,
     remoteEnabled,
     agentMailEnabled,
   });

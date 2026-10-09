@@ -65,7 +65,6 @@ describe('advanced settings', () => {
         moss_context_compaction_strategy: 'proactive',
         moss_session_debug_logging: false,
         moss_tool_loading: {},
-        moss_workflows_enabled: true,
       })
     } finally {
       await rm(configDir, { recursive: true, force: true })
@@ -121,7 +120,6 @@ describe('advanced settings', () => {
         moss_context_compaction_strategy: 'reactive',
         moss_session_debug_logging: false,
         moss_tool_loading: {},
-        moss_workflows_enabled: true,
       })
       const interviewEnabled = runWithSessionIdContext(
         asSessionId('advanced-plan-mode'),

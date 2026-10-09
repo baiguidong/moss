@@ -108,10 +108,6 @@ export function registerTask(task: TaskState, setAppState: SetAppState): void {
     tool_use_id: task.toolUseId,
     description: task.description,
     task_type: task.type,
-    workflow_name:
-      'workflowName' in task
-        ? (task.workflowName as string | undefined)
-        : undefined,
     prompt: 'prompt' in task ? (task.prompt as string) : undefined,
   })
 }
@@ -183,9 +179,6 @@ export async function generateTaskAttachments(state: AppState): Promise<{
         case 'running':
           // Fall through to running logic below
           break
-        case 'paused':
-          // A paused workflow keeps its journal and remains available to resume.
-          continue
       }
     }
 
@@ -305,8 +298,6 @@ function getStatusText(status: TaskStatus): string {
       return 'was stopped'
     case 'running':
       return 'is running'
-    case 'paused':
-      return 'is paused'
     case 'pending':
       return 'is pending'
   }

@@ -827,9 +827,6 @@ export type DesktopSettings = {
   expertHub?: {
     baseUrl?: string;
   };
-  workflows?: {
-    enabled?: boolean;
-  };
   agentMail?: {
     enabled?: boolean;
     sessionMode?: 'fixed' | 'new';
@@ -1211,183 +1208,19 @@ export type BackgroundTaskInfo = {
   id: string;
   description: string;
   command: string;
-  kind: 'shell' | 'monitor' | 'workflow';
-  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'killed';
+  kind: 'shell' | 'monitor' | 'app';
+  appId?: string;
+  route?: string;
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'killed' | 'cancelled' | 'interrupted';
   isBackgrounded: boolean;
   startTime: number | null;
   endTime: number | null;
   exitCode: number | null;
-  workflowName?: string | null;
-  workflowId?: string | null;
-  workflowRevision?: number | null;
-  runMode?: 'test' | 'run' | null;
-  workflowRunId?: string | null;
-  definition?: WorkflowDefinition | null;
-  definitionPath?: string | null;
-  args?: unknown;
-  graph?: WorkflowGraph | null;
-  mermaid?: string;
-  graphError?: string | null;
-  nodeEvents?: WorkflowNodeEvent[];
-  progress?: WorkflowProgressEvent[];
-  agentCount?: number;
   totalTokens?: number;
   totalToolCalls?: number;
   result?: unknown;
   error?: string | null;
 };
-
-export type WorkflowCatalogStatus = 'draft' | 'published' | 'archived';
-export type WorkflowCatalogScope = 'user' | 'project';
-
-export type WorkflowCatalogRecord = {
-  schemaVersion: 1;
-  id: string;
-  scope: WorkflowCatalogScope;
-  status: WorkflowCatalogStatus;
-  name: string;
-  title: string;
-  description: string;
-  currentRevision: number;
-  publishedRevision?: number;
-  publishedFileName?: string;
-  origin?: { sessionId?: string; toolUseId?: string };
-  createdAt: number;
-  updatedAt: number;
-  publishedAt?: number;
-};
-
-export type WorkflowCatalogRevision = {
-  schemaVersion: 1;
-  workflowId: string;
-  revision: number;
-  definition: WorkflowDefinition;
-  graph: WorkflowGraph;
-  mermaid: string;
-  origin?: { sessionId?: string; toolUseId?: string };
-  changeSummary?: string;
-  createdAt: number;
-};
-
-export type WorkflowCatalogEntry = WorkflowCatalogRecord & {
-  graph: WorkflowGraph;
-  mermaid: string;
-  inputSchema?: unknown;
-};
-
-export type WorkflowCatalogDetail = {
-  record: WorkflowCatalogRecord;
-  revision: WorkflowCatalogRevision;
-  revisions: Array<Pick<WorkflowCatalogRevision, 'revision' | 'createdAt' | 'changeSummary' | 'origin'>>;
-};
-
-export type WorkflowGraph = {
-  version: 3;
-  name: string;
-  title: string;
-  description: string;
-  nodes: Array<{
-    id: string;
-    workflowNodeId: string;
-    type: 'start' | 'end' | 'agent' | 'code' | 'condition' | 'workflow' | 'merge' | 'parallel' | 'join' | 'foreach';
-    label: string;
-    detail?: string;
-  }>;
-  edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    type: 'next' | 'true' | 'false' | 'case' | 'loop-back' | 'fan-out' | 'join';
-    label?: string;
-    branchKey?: string;
-    workflowEdgeId?: string;
-  }>;
-  warnings: Array<'truncated'>;
-};
-
-export type WorkflowNodeEvent = {
-  type: 'workflow_node';
-  sequence: number;
-  nodeId: string;
-  instanceId: string;
-  parentInstanceId?: string;
-  state: 'ready' | 'queued' | 'running' | 'waiting_children' | 'completed' | 'blocked' | 'failed' | 'skipped' | 'cancelled' | 'interrupted';
-  timestamp: number;
-  branch?: string;
-  iteration?: number;
-  itemIndex?: number;
-  attempt?: number;
-  cached?: boolean;
-  error?: string;
-};
-
-export type WorkflowDefinitionNode = {
-  id: string;
-  type: string;
-  title: string;
-  description?: string;
-  prompt?: string;
-  script?: string;
-  body?: WorkflowDefinitionGraph;
-  [key: string]: unknown;
-};
-
-export type WorkflowDefinitionGraph = {
-  entry: string;
-  nodes: WorkflowDefinitionNode[];
-  edges: Array<{
-    source: string;
-    target: string;
-    sourcePort?: string;
-    label?: string;
-    kind?: 'back';
-    maxTraversals?: number;
-  }>;
-};
-
-export type WorkflowDefinition = {
-  version: 3;
-  kind: 'state-machine';
-  meta: { name: string; title: string; description: string };
-  defaults?: { concurrency?: number };
-  limits?: { maxAgentCalls?: number; maxNodeExecutions?: number; maxConcurrency?: number; maxDurationMs?: number };
-  graph: WorkflowDefinitionGraph;
-};
-
-export type WorkflowEdgeEvent = {
-  type: 'workflow_edge';
-  sequence: number;
-  edgeId: string;
-  source: string;
-  target: string;
-  instanceId: string;
-  state: 'selected' | 'skipped' | 'traversed';
-  timestamp: number;
-};
-
-export type WorkflowProgressEvent =
-  | { type: 'workflow_phase'; index: number; nodeId?: string; title: string; kind: 'definition' }
-  | { type: 'workflow_log'; message: string; nodeId?: string; instanceId?: string }
-  | WorkflowNodeEvent
-  | WorkflowEdgeEvent
-  | {
-      type: 'workflow_agent';
-      index: number;
-      nodeId: string;
-      instanceId: string;
-      parentInstanceId?: string;
-      label: string;
-      state: 'start' | 'progress' | 'done' | 'error';
-      phaseIndex?: number;
-      phaseTitle?: string;
-      agentType?: string;
-      tokens?: number;
-      toolCalls?: number;
-      durationMs?: number;
-      cached?: boolean;
-      skipped?: boolean;
-      error?: string;
-    };
 
 declare global {
   interface Window {
@@ -1440,26 +1273,6 @@ declare global {
           | { scope: 'project'; projectId: string; kind: 'history'; sessionId: string }
           | { scope: 'session'; sessionId: string }
         ) => Promise<MemoryEntryContent>;
-      };
-      workflows: {
-        list: (payload?: {
-          cwd?: string;
-          status?: WorkflowCatalogStatus;
-          publishedOnly?: boolean;
-        }) => Promise<WorkflowCatalogEntry[]>;
-        get: (payload: { workflowId: string; revision?: number; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        publish: (payload: { workflowId: string; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        unpublish: (payload: { workflowId: string; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        duplicate: (payload: { workflowId: string; name: string; title?: string; scope?: 'user' | 'project'; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        archive: (payload: { workflowId: string; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        restore: (payload: { workflowId: string; cwd?: string }) => Promise<WorkflowCatalogDetail>;
-        delete: (payload: { workflowId: string; cwd?: string }) => Promise<{ deleted: true; workflowId: string }>;
-        onChanged: (callback: (payload: {
-          action?: string;
-          workflowId?: string;
-          sessionId?: string | null;
-          runtimeSessionId?: string | null;
-        }) => void) => () => void;
       };
       agentMail: {
         getStatus: () => Promise<AgentMailRuntimeStatus>;
@@ -1608,7 +1421,7 @@ declare global {
       };
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
-      openEmbeddedApp: (payload: { name: string }) => Promise<{
+      openEmbeddedApp: (payload: { name: string; sessionId?: string; workspace?: string }) => Promise<{
         ok: boolean;
         error?: string;
         embedId?: string;
@@ -1630,6 +1443,10 @@ declare global {
       onAppInstallProgress: (callback: (progress: AppInstallProgress) => void) => () => void;
       openAppResource: (uri: string) => Promise<{ opened: boolean }>;
       getAppRuntimeState: (payload: { appId: string }) => Promise<any>;
+      listAppResources: (payload: {sessionId?:string;workspace?:string;query?:string;offset?:number}) => Promise<{items:import('./lib/app-composer').AppComposerResource[];providers:Array<{id:string;title:string}>}>;
+      prepareAppResource: (payload: {context:{providerId:string;intent:string;ref?:unknown};sessionId?:string;workspace?:string}) => Promise<any>;
+      onAppPrepareComposer: (callback: (payload: {context:{providerId:string;intent:'create'|'edit'|'use';ref?:any};title:string;prompt:string;route?:string;workspace?:string;appId:string}) => void) => () => void;
+      listAppCommands: (payload: {sessionId?: string}) => Promise<Array<{id:string;name:string;description:string}>>;
       listAppContributions: (payload?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean }) => Promise<Record<string, any[]>>;
       invokeAppContribution: (payload: { kind: 'commands' | 'resourceProviders'; id: string; input?: unknown; instanceId?: string; requestId?: string; timeoutMs?: number }) => Promise<unknown>;
       setAppEnabled: (payload: { appId: string; enabled: boolean }) => Promise<any>;

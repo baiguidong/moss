@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ComputerUseSettings } from '@/components/computer-use';
 import {
-  Blocks,
   Bot,
   Check,
   LogIn,
@@ -16,7 +15,6 @@ import {
   Trash2,
   TriangleAlert,
   Wrench,
-  Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -42,8 +40,8 @@ import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'integrations' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'workflows' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'personalization' | 'advanced';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -261,20 +259,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
-    id: 'integrations',
-    title: '扩展与集成',
-    icon: Blocks,
-    iconGradientClassName: 'from-lime-400 to-emerald-600',
-    keywords: ['扩展', '集成', 'integration'],
-    sections: [
-      {
-        id: 'workflows',
-        title: '工作流',
-        keywords: ['workflow', 'workflows', '工作流', '编排', 'tool', '工具'],
-      },
-    ],
-  },
-  {
     id: 'personalization',
     title: '个性化',
     icon: Palette,
@@ -399,7 +383,7 @@ export function ToolLoadingSettingsTable({
 }: {
   value: Record<string, MossToolLoadingMode>;
   onChange: (name: string, mode: MossToolLoadingMode) => void;
-  featureEnabled?: Partial<Record<'workflows' | 'computerUse', boolean>>;
+  featureEnabled?: Partial<Record<'computerUse', boolean>>;
 }) {
   return (
     <Surface>
@@ -911,7 +895,6 @@ export function SettingsView({
     'web-search': null,
     agents: null,
     tools: null,
-    workflows: null,
     appearance: null,
     buddy: null,
     permission: null,
@@ -2125,7 +2108,6 @@ export function SettingsView({
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
                       featureEnabled={{
-                        workflows: settingsDraft?.workflows?.enabled === true,
                         computerUse: settingsDraft?.computerUse?.enabled === true,
                       }}
                     />
@@ -2136,34 +2118,6 @@ export function SettingsView({
                     <AppToolSettingsTable apps={apps} />
                   </section>
                 ) : null}
-
-                {visibleSections.some((section) => section.id === 'workflows') ? (
-                  <SettingsSection
-                    id="workflows"
-                    title="工作流"
-                    sectionRef={(element) => {
-                      sectionRefs.current.workflows = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="启用工作流"
-                        description="允许 Agent 创建、管理和运行结构化工作流，并在“更多”中显示工作流入口。关闭后保留已有工作流。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={settingsDraft.workflows?.enabled === true}
-                            onCheckedChange={(enabled) => updateSetting('workflows', { enabled })}
-                            label="启用工作流"
-                          />
-                        </div>
-                      </SettingsRow>
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
-
-
 
                 {visibleSections.some((section) => section.id === 'service-address') ? (
                   <SettingsSection

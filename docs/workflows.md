@@ -2,22 +2,23 @@
 
 Moss 使用结构化状态机 Definition 描述 Workflow。Definition 同时驱动校验、执行、实时进度和可视化；不解析 JavaScript 或日志来猜测流程。
 
-```text
-自然语言 → WorkflowCreate / WorkflowEdit → 草稿与不可变 Revision
-                                            ├─ 只读流程图
-                                            └─ 发布为可复用模板
+Workflow 位于相邻 `moss-apps/apps/workflow` 的独立 App，要求 Host API 2.8。旧 Core 引擎、工具、模板、原生画布、运行历史扫描与 `workflow:*` IPC 已删除。参见 [交互与验证记录](../ui/docs/workflow-app-experience-plan.md) 和 [通用执行接口](../ui/docs/app-execution-host.md)。以下 Definition v3 节点和数据流规则保持适用。
 
-模板 + JSON 输入 → WorkflowRun → 状态机执行器 → 节点/连线事件 → 最终结果
+```text
+普通会话描述需求 → App 创建/修改草稿 → 按要求发布
+                                      ↓
+选择资源或 @ → 自然语言输入 → App 调度 → Core 通用 Agent 执行
+                                      ↓
+                            会话左侧流程与聊天结果
 ```
 
-## 工具和模板
+## 使用入口与工具
 
-- `WorkflowCreate`：创建并校验草稿，不执行。
-- `WorkflowEdit`：提交完整替换 Definition，生成新 Revision，不执行。
-- `WorkflowRun`：按 `workflowId + revision + args + mode` 运行固定快照。
-- `WorkflowManage`：`list/get/publish/unpublish/duplicate/archive/restore/delete`。
+安装工作流 App 后即可使用；启停统一由 App 管理控制，没有独立的 Workflow 设置开关。App 提供 `workflow_read/create/edit/manage/run/remove` 六个工具，使用时带 `app__moss_workflow__` 前缀。创建、修改、使用分别按需准备 read/create、read/edit、read/run 两个工具。
 
-四个工具按需加载。侧栏 Workflows 展示草稿、发布状态、版本和来源会话；详情页可查看流程图、Definition、输入 Schema，或发起测试/正式运行。旧版 Definition 不兼容，也不迁移。
+App 提供目录、只读画布、流程与运行详情和低频管理菜单。创建、修改及运行输入通过普通会话完成；App 只准备未发送的会话草稿，用户发送后才开始执行。默认使用已发布快照，明确要求试跑时可执行草稿。
+
+不提供旧数据迁移、内置业务模板、人工 Definition 编辑器或 JSON 参数输入框。App 持久维护运行状态快照与分页事件，会话左侧嵌入 App 流程页，最终结果保留在普通会话供追问。Core 只负责通用会话、执行权限、任务、取消和资源上限。
 
 ## 顶层结构
 
@@ -162,4 +163,4 @@ JavaScript 只能位于 `code.script`，用于一个节点内的同步数据转�
 
 画布直接读取 Definition，并用 Runtime 事件更新状态。重复节点显示执行次数，当前节点和当前连线动态高亮，回边单独绘制。节点详情展示任务、每次执行状态和错误。
 
-可导出 Definition、Mermaid、Graph JSON 和包含运行事件及最终结果的 Run JSON。仓库示例 [`examples/workflow-decision.workflow.json`](../examples/workflow-decision.workflow.json) 展示显式并行、结构化 Agent 输出和汇合。
+App 可导出定义与运行记录 JSON；图与 Mermaid 由 App 内的 v3 引擎生成。仓库示例 [`examples/workflow-decision.workflow.json`](../examples/workflow-decision.workflow.json) 展示显式并行、结构化 Agent 输出和汇合。

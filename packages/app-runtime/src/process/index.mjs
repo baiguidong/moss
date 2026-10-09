@@ -530,6 +530,7 @@ export class AppProcessSupervisor {
         generation: hosted.definition.generation,
         owner: hosted.definition.owner || null,
         principal: actionRequest?.principal || hosted.definition.owner || null,
+        invocation: actionRequest?.invocation || null,
         requestId,
         protocol,
         method,
@@ -661,7 +662,7 @@ export class AppProcessSupervisor {
     const hosted = this.processes.get(key)
     if (!hosted || hosted.state !== 'running') throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend is not running')
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
-    const requestId = String(options.requestId || randomUUID())
+    const requestId = randomUUID() // Transport attempts are distinct from caller submission identity.
     if (hosted.pending.has(requestId)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Duplicate action request: ${requestId}`)
     const requestedTimeoutMs = Number(options.timeoutMs ?? this.actionTimeoutMs)
     const timeoutMs = Math.max(
@@ -673,6 +674,8 @@ export class AppProcessSupervisor {
       invocation = createEnvelope('action.invoke', {
         name: actionName,
         input,
+        submissionId: String(options.requestId || requestId),
+        source: { surface: options.invocation?.surface, workspace: options.invocation?.workspace },
         principal: options.principal || hosted.definition.owner || null,
         generation: hosted.definition.generation,
         launchToken: hosted.launchToken,
@@ -696,6 +699,7 @@ export class AppProcessSupervisor {
         timeout,
         signal: options.signal,
         abortHandler,
+        invocation: options.invocation || null,
         principal: options.principal || hosted.definition.owner || null,
       })
       options.signal?.addEventListener('abort', abortHandler, { once: true })

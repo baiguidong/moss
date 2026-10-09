@@ -265,11 +265,12 @@ function SystemMessage({
   variant?: Extract<TranscriptRenderMessage, { type: "system" }>["variant"];
   status?: Extract<TranscriptRenderMessage, { type: "system" }>["status"];
 }) {
-  if (variant === "local_command") {
+  if (variant === "app_flow_result") return <div className="mb-3 rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm"><div className="mb-1 text-xs text-muted-foreground">工作流结果</div><div className="whitespace-pre-wrap break-words">{content}</div></div>;
+  if (variant === "local_command" || variant === "app_task") {
     return (
       <div className="flex justify-start gap-2" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <div className="max-w-[760px] rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">本地命令</div>
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">{variant === "app_task" ? "任务记录" : "本地命令"}</div>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{content}</pre>
         </div>
       </div>

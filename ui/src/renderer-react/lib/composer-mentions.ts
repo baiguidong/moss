@@ -1,4 +1,4 @@
-export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'connectors';
+export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'connectors' | 'workflows';
 export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'>;
 
 export function getComposerResourceTabs({
@@ -6,17 +6,20 @@ export function getComposerResourceTabs({
   includeAgents,
   includeSkills,
   includeConnectors,
+  includeWorkflows = false,
 }: {
   includeAssistants: boolean;
   includeAgents: boolean;
   includeSkills: boolean;
   includeConnectors: boolean;
+  includeWorkflows?: boolean;
 }): ComposerResourceTab[] {
   const tabs: ComposerResourceTab[] = [];
   if (includeAssistants) tabs.push('assistants');
   if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
   if (includeConnectors) tabs.push('connectors');
+  if (includeWorkflows) tabs.push('workflows');
   return tabs;
 }
 
@@ -26,12 +29,14 @@ export function getComposerMentionTabs({
   includeAssistants,
   includeAgents,
   includeConnectors,
+  includeWorkflows = false,
 }: {
   includeFiles: boolean;
   includeSkills: boolean;
   includeAssistants: boolean;
   includeAgents: boolean;
   includeConnectors: boolean;
+  includeWorkflows?: boolean;
 }): ComposerMentionTab[] {
   const tabs: ComposerMentionTab[] = [];
   if (includeFiles) tabs.push('files');
@@ -39,6 +44,7 @@ export function getComposerMentionTabs({
   if (includeSkills) tabs.push('skills');
   if (includeAssistants) tabs.push('assistants');
   if (includeConnectors) tabs.push('connectors');
+  if (includeWorkflows) tabs.push('workflows');
   return tabs;
 }
 
@@ -48,18 +54,21 @@ export function getDefaultComposerPlaceholder({
   includeAssistants,
   includeAgents,
   includeConnectors,
+  includeWorkflows = false,
 }: {
   hasActiveSession: boolean;
   includeSkills: boolean;
   includeAssistants: boolean;
   includeAgents: boolean;
   includeConnectors: boolean;
+  includeWorkflows?: boolean;
 }) {
   const additions = [
     includeAgents ? 'Agent' : null,
     includeSkills ? '技能' : null,
     includeAssistants ? '专家' : null,
     includeConnectors ? '连接器' : null,
+    includeWorkflows ? '工作流' : null,
   ].filter((label): label is string => Boolean(label));
 
   if (!hasActiveSession) {

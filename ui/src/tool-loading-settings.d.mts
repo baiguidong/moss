@@ -9,7 +9,7 @@ export type MossToolDefinition = {
 export type MossToolGroup = {
   id: string;
   label: string;
-  feature?: 'workflows' | 'computerUse';
+  feature?: 'computerUse';
   tools: readonly MossToolDefinition[];
 };
 

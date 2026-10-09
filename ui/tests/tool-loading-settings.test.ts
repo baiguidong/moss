@@ -13,7 +13,7 @@ import {
 describe('Moss tool loading settings', () => {
   it('defines every split host tool exactly once', () => {
     const names = MOSS_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => tool.name));
-    expect(names).toHaveLength(24);
+    expect(names).toHaveLength(20);
     expect(new Set(names).size).toBe(names.length);
     expect(Object.keys(DEFAULT_MOSS_TOOL_LOADING)).toEqual(names);
   });
@@ -40,12 +40,8 @@ describe('Moss tool loading settings', () => {
       'browser_type',
       'computer_use',
     ]);
-    expect(DEFAULT_MOSS_TOOL_LOADING).toMatchObject({
-      WorkflowRun: 'deferred',
-      WorkflowCreate: 'deferred',
-      WorkflowEdit: 'deferred',
-      WorkflowManage: 'deferred',
-    });
+    expect(Object.entries(DEFAULT_MOSS_TOOL_LOADING).filter(([, mode]) => mode === 'deferred'))
+      .toHaveLength(15);
   });
 
   it('uses defaults for missing or invalid entries and ignores unknown tools', () => {
@@ -59,6 +55,12 @@ describe('Moss tool loading settings', () => {
       app_build: 'always',
       image_generate: 'deferred',
     });
-    expect(normalizeMossToolLoading({})).not.toHaveProperty('unknown_tool');
+    const normalized = normalizeMossToolLoading(
+      { WorkflowRun: 'always', WorkflowCreate: 'always', unknown_tool: 'always' },
+      { WorkflowEdit: 'always', WorkflowManage: 'always' },
+    );
+    for (const name of ['unknown_tool', 'WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage']) {
+      expect(normalized).not.toHaveProperty(name);
+    }
   });
 });

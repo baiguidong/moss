@@ -102,7 +102,7 @@ export function registerAppRuntimeIpc(options) {
     if (!['commands', 'resourceProviders'].includes(kind)) {
       throw new Error(`App UI cannot invoke contribution kind: ${kind}`)
     }
-    return runtime().invokeContribution(kind, id, input, invokeOptions)
+    return runtime().invokeContribution(kind, id, input, { instanceId: invokeOptions.instanceId, requestId: invokeOptions.requestId, timeoutMs: invokeOptions.timeoutMs, invocation: { surface: 'app' } })
   })
   ipcMain.handle('app:set-enabled', async (_event, { appId, enabled }) => (
     changed('enabled', appId, runtime().setAppEnabled(appId, enabled))

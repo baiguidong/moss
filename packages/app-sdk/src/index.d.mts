@@ -434,6 +434,7 @@ export interface AppBackendContext {
 }
 
 export interface AppActionContext extends AppBackendContext {
+  readonly source?: Readonly<{ surface?: string; workspace?: string }>
   principal: AppOwner | null
   signal: AbortSignal
   requestId: string
@@ -445,6 +446,9 @@ export type AppActionHandler<Input = unknown, Output = unknown> =
   (input: Input, context: AppActionContext) => Output | Promise<Output>
 
 export interface AppUiApi {
+  composer: {
+    prepare(input: { providerId: string; intent: "create" | "edit" | "use"; ref?: Record<string, unknown> }): Promise<{ ok: true }>
+  }
   app: {
     getInfo(): Promise<Record<string, unknown>>
     getVersions(): Promise<Array<Record<string, unknown>>>
@@ -630,3 +634,9 @@ export function createCloudStorageClient(host: AppHostApi): {
   request<M extends CloudStorageMethod>(method: M, input?: CloudStorageInputMap[M], options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<CloudStorageOutputMap[M]>;
   on(name: typeof CLOUD_STORAGE_EVENTS[number], listener: (data: Record<string, unknown>, context: HostEventContext) => void): () => void;
 }
+
+/** Generic detached task and structured Agent execution protocols (Host API 2.7). */
+export const MOSS_AGENT_EXECUTION_PROTOCOL: 'moss.agent-execution/v1'
+export const MOSS_TASKS_PROTOCOL: 'moss.tasks/v1'
+export function validateExecutionInput(protocol: string, method: string, input: Record<string, unknown>): Record<string, unknown>
+export function createExecutionProtocolDefinitions(): ReturnType<typeof createAgentProtocolDefinition>[]

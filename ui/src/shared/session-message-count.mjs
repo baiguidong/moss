@@ -55,7 +55,8 @@ function hasLocalCommandTextOutput(event) {
 export function countSessionMessages(history) {
   if (!Array.isArray(history)) return 0;
   return history.reduce(
-    (count, event) => count + (hasAgentTextOutput(event) || hasLocalCommandTextOutput(event) ? 1 : 0),
+    (count, event) => count + (hasAgentTextOutput(event) || hasLocalCommandTextOutput(event)
+      || (event?.type === 'system' && event.subtype === 'app_task' && normalizeText(event.content)) ? 1 : 0),
     0,
   );
 }

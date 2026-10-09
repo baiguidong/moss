@@ -60,12 +60,7 @@ import {
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
 import { AskUserQuestionCard, type AskUserQuestionCardProps } from "@/components/chat/ask-user-question-card";
 import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
-import {
-  WorkflowDraftWorkbench,
-  WorkflowGraphPanel,
-  WorkflowSessionStrip,
-  WorkflowWorkbench,
-} from "@/components/workflow-graph-panel";
+
 import {
   CoordinatorWorkersSummary,
   CoordinatorWorkersView,
@@ -74,7 +69,6 @@ import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
-import { conversationWorkflowDrafts, workflowEditPrompt } from "@/lib/workflow-library";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
 import type {
   AgentTeamsSessionState,
@@ -85,7 +79,6 @@ import type {
   InstalledConnector,
   PermissionMode,
   SessionSummary,
-  WorkflowCatalogDetail,
 } from "../types";
 import {
   AssistantAvatar,
@@ -102,6 +95,8 @@ import {
   SkillIcon,
   type InstalledSkillOption,
 } from "@/components/skill-selection-area";
+import { AppComposerContext, resourceKey, useAppComposerResources, type AppComposerResource } from '@/lib/app-composer';
+import { AppConversationFlow } from '@/components/app-conversation-flow';
 import { ComposerResourceSelectionArea } from "@/components/composer-resource-selection-area";
 import { WorkspaceSelector } from "@/components/workspace-selector";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
@@ -580,11 +575,21 @@ function ComposerPanel({
   React.useEffect(() => {
     setAttachmentsRef.current = setAttachments;
   }, [setAttachments]);
+  const { selection: appSelection, select: selectAppResource } = React.useContext(AppComposerContext);
+  const appResources = useAppComposerResources(sessionId, workspace, (hasActiveSession ? sessionAgentMode : newSessionMode) === 'local');
   const isHomeComposer = !hasActiveSession;
   // Sending while loading is allowed: the message is queued and dispatched
   // when the current turn ends (REPL type-while-busy behavior).
   const submitDisabled =
     (!value.trim() && attachments.length === 0) || Boolean(readOnlyReason);
+  const [appCommands, setAppCommands] = React.useState<Array<{name:string;description:string}>>([]);
+  const slashCommands = React.useMemo(() => [...SLASH_COMMANDS, ...appCommands.filter(item => !SLASH_COMMANDS.some(command => command.name === item.name))], [appCommands]);
+  React.useEffect(() => {
+    let active = true;
+    const refresh = () => { if (sessionId) void window.agentDesktop.listAppCommands({sessionId}).then(items => {if(active) setAppCommands(items.map(item => ({name: '/' + item.name, description:item.description})));}).catch(() => {}); else setAppCommands([]); };
+    refresh(); const timer = setInterval(refresh, 10000);
+    return () => {active=false; clearInterval(timer);};
+  }, [sessionId]);
   const [slashCommandFilter, setSlashCommandFilter] = React.useState<string | null>(null);
   const [slashCommandIndex, setSlashCommandIndex] = React.useState(0);
   const [subMenuCommand, setSubMenuCommand] = React.useState<string | null>(null);
@@ -612,14 +617,16 @@ function ComposerPanel({
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
-  }), [allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+    includeWorkflows: appResources.available,
+  }), [appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
   const defaultPlaceholder = React.useMemo(() => getDefaultComposerPlaceholder({
     hasActiveSession,
     includeAgents: canSelectAgents,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
-  }), [allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+    includeWorkflows: appResources.available,
+  }), [appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
 
   React.useEffect(() => {
     if (!mentionTabs.includes(mentionTab)) setMentionTab(mentionTabs[0]);
@@ -803,7 +810,13 @@ function ComposerPanel({
       .slice(0, 8);
   }, [installedConnectors, mentionFilter]);
 
-  const activeMentionItemCount = mentionTab === 'files'
+  React.useEffect(() => { if (mentionFilter !== null && mentionTab === 'workflows') appResources.search(mentionFilter) }, [mentionFilter, mentionTab]);
+  const applyAppMention = (resource: AppComposerResource) => {
+    selectAppResource(resource);
+    onChange(value.replace(/@[^\s]*$/, ''));
+    setMentionFilter(null); setMentionIndex(0);
+  };
+  const activeMentionItemCount = mentionTab === 'workflows' ? appResources.items.length : mentionTab === 'files'
     ? visibleMentionItems.length
     : mentionTab === 'agents'
       ? visibleAgentItems.length
@@ -1004,12 +1017,13 @@ function ComposerPanel({
     return getSelectableInstalledConnectors(installedConnectors ?? [])
       .filter((connector) => selected.has(connector.id));
   }, [installedConnectors, selectedConnectorIds]);
-  const hasSelectedResources = Boolean(selectedAssistant)
+  const hasSelectedResources = Boolean(appSelection) || Boolean(selectedAssistant)
     || Boolean(canSelectAgents && selectedAgent)
     || (allowSkillSelection && selectedSkills.length > 0)
     || selectedConnectorItems.length > 0;
   const selectedResourceIcons = hasSelectedResources ? (
     <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
+      {appSelection && <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除工作流：${appSelection.title}`} onClick={() => selectAppResource(null)}><GitFork className="h-3.5 w-3.5"/>{appSelection.title}<X className="h-3 w-3"/></button>}
       {canSelectAgents && selectedAgent ? (
         <button
           type="button"
@@ -1145,6 +1159,7 @@ function ComposerPanel({
           <Hammer className="h-4 w-4" />
           <span className="flex-1">技能</span>
         </DropdownMenuItem>
+        {appResources.available && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('workflows')}><GitFork className="h-4 w-4"/><span>工作流</span></DropdownMenuItem>}
         <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('connectors')}>
           <Link2 className="h-4 w-4" />
           <span className="flex-1">连接器</span>
@@ -1168,6 +1183,7 @@ function ComposerPanel({
       <div className="relative">
         {slashCommandFilter && !isHomeComposer && !subMenuCommand && (
           <SlashCommandMenu
+            commands={slashCommands}
             filter={slashCommandFilter}
             onSelect={(cmd) => {
               const cmdKey = cmd.startsWith("/") ? cmd.slice(1) : cmd;
@@ -1198,6 +1214,10 @@ function ComposerPanel({
             skillItems={visibleSkillItems}
             agentItems={visibleAgentItems}
             assistantItems={visibleAssistantItems}
+            appResources={appResources.items}
+            selectedAppResource={appSelection}
+            onSelectAppResource={applyAppMention}
+            onMoreAppResources={appResources.hasMore ? appResources.more : undefined}
             connectorItems={visibleConnectorItems}
             notice={visibleMentionItems.length === 0
               ? (mentionNotice ?? (sessionId ? "无匹配文件" : null))
@@ -1295,6 +1315,8 @@ function ComposerPanel({
                   if (mentionTab === "files") {
                     const item = visibleMentionItems[clamped];
                     if (item) applyMention(item);
+                  } else if (mentionTab === "workflows") {
+                    const resource = appResources.items[clamped]; if (resource) applyAppMention(resource);
                   } else if (mentionTab === "agents") {
                     const agent = visibleAgentItems[clamped];
                     if (agent) applyAgentMention(agent);
@@ -1353,7 +1375,7 @@ function ComposerPanel({
             }
             if (slashCommandFilter) {
               const query = slashCommandFilter.toLowerCase().slice(1);
-              const matches = SLASH_COMMANDS.filter(
+              const matches = slashCommands.filter(
                 (cmd: { name: string; description: string }) =>
                   cmd.name.toLowerCase().startsWith("/" + query) ||
                   cmd.description.toLowerCase().includes(query)
@@ -1426,6 +1448,7 @@ function ComposerPanel({
 
         {slashCommandFilter && isHomeComposer && !subMenuCommand && (
           <SlashCommandMenu
+            commands={slashCommands}
             filter={slashCommandFilter}
             onSelect={(cmd) => {
               const cmdKey = cmd.startsWith("/") ? cmd.slice(1) : cmd;
@@ -1489,6 +1512,12 @@ function ComposerPanel({
               </button>
 
               <ComposerResourceSelectionArea
+                appResources={appResources.items}
+                appResourcesAvailable={appResources.available}
+                selectedAppResource={appSelection}
+                onSelectAppResource={selectAppResource}
+                onAppResourceQuery={appResources.search}
+                onMoreAppResources={appResources.hasMore ? appResources.more : undefined}
                 agents={agentItems}
                 selectedAgent={selectedAgent}
                 onSelectAgent={canSelectAgents ? setSelectedAgent : undefined}
@@ -1602,6 +1631,12 @@ function ComposerPanel({
               />
 
               <ComposerResourceSelectionArea
+                appResources={appResources.items}
+                appResourcesAvailable={appResources.available}
+                selectedAppResource={appSelection}
+                onSelectAppResource={selectAppResource}
+                onAppResourceQuery={appResources.search}
+                onMoreAppResources={appResources.hasMore ? appResources.more : undefined}
                 assistants={installedAssistants}
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={onSelectAssistant}
@@ -1621,7 +1656,7 @@ function ComposerPanel({
                 selectedConnectorIds={selectedConnectorIds}
                 onToggleConnector={onToggleConnector}
                 onOpenConnectorHub={onOpenConnectorHub}
-                triggerVisible={false}
+                triggerVisible
                 openTab={resourcePickerTab}
                 onOpenTabChange={setResourcePickerTab}
               />
@@ -1836,6 +1871,7 @@ const MENTION_TAB_LABELS: Record<ComposerMentionTab, string> = {
   skills: '技能',
   assistants: '专家',
   connectors: '连接器',
+  workflows: '工作流',
 };
 
 function MentionResourceRow({
@@ -1887,6 +1923,7 @@ function MentionResourceRow({
 }
 
 function MentionMenu({
+  appResources, selectedAppResource, onSelectAppResource, onMoreAppResources,
   tabs,
   tab,
   onTabChange,
@@ -1907,6 +1944,10 @@ function MentionMenu({
   onSelectAssistant,
   onSelectConnector,
 }: {
+  appResources: AppComposerResource[];
+  selectedAppResource: AppComposerResource | null;
+  onSelectAppResource: (resource: AppComposerResource) => void;
+  onMoreAppResources?: () => void;
   tabs: ComposerMentionTab[];
   tab: ComposerMentionTab;
   onTabChange: (tab: ComposerMentionTab) => void;
@@ -1957,7 +1998,11 @@ function MentionMenu({
         </span>
       </div>
       <div className="max-h-64 overflow-y-auto p-1">
-        {tab === "files" ? (
+        {tab === "workflows" ? (<>
+          {appResources.length === 0 && <p className="p-3 text-xs text-muted-foreground">没有匹配的已发布工作流</p>}
+          {appResources.map((resource, index) => <MentionResourceRow key={resourceKey(resource)} active={index === selectedIndex} selected={resourceKey(resource) === resourceKey(selectedAppResource)} icon={<GitFork className="h-4 w-4"/>} title={resource.title} description={`${resource.scope === "project" ? "项目" : "个人"} · ${resource.description || ""}`} selectionStyle="check" onSelect={() => onSelectAppResource(resource)}/>)}
+          {onMoreAppResources && <button type="button" className="p-2 text-xs" onClick={onMoreAppResources}>加载更多</button>}
+        </>) : tab === "files" ? (
           fileItems.length === 0 ? (
             notice ? <div className="px-3 py-2 text-xs text-muted-foreground">{notice}</div> : null
           ) : (
@@ -2176,7 +2221,7 @@ function BackgroundTaskRow({
   const isRunning = task.status === "running";
 
   React.useEffect(() => {
-    if (!expanded || !sessionId || task.kind === "workflow") return;
+    if (!expanded || !sessionId || task.kind === "app") return;
     let cancelled = false;
     const fetchOutput = async () => {
       try {
@@ -2213,18 +2258,16 @@ function BackgroundTaskRow({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
           onClick={() => setExpanded((prev) => !prev)}
-          title={task.kind === "workflow" ? task.definitionPath ?? task.description : task.command}
+          title={task.command}
         >
           {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-          {task.kind === "workflow" ? (
-            <GitFork className="h-3 w-3 shrink-0 text-violet-500" />
-          ) : task.kind === "monitor" ? (
+          {task.kind === "monitor" ? (
             <Activity className="h-3 w-3 shrink-0 text-amber-500" />
           ) : (
             <Terminal className="h-3 w-3 shrink-0 text-sky-500" />
           )}
           <span className="min-w-0 flex-1 truncate">
-          {task.workflowName || task.description || task.command || task.id}
+          {task.description || task.command || task.id}
           </span>
         </button>
         {isRunning && (
@@ -2237,11 +2280,6 @@ function BackgroundTaskRow({
           {TASK_STATUS_LABELS[task.status] ?? task.status}
           {task.status === "failed" && task.exitCode != null ? ` (${task.exitCode})` : ""}
         </span>
-        {task.kind === "workflow" && (
-          <span className="shrink-0 tabular-nums text-muted-foreground/80">
-            {task.agentCount ?? 0} agents · {formatTokenCount(task.totalTokens ?? 0)} tok
-          </span>
-        )}
         {elapsed && <span className="shrink-0 tabular-nums">{elapsed}</span>}
         {isRunning && sessionId && (
           <button
@@ -2258,8 +2296,11 @@ function BackgroundTaskRow({
       </div>
       {expanded && (
         <div className="border-t border-border/50 px-3 py-2">
-          {task.kind === "workflow" ? (
-            <WorkflowGraphPanel task={task} />
+          {task.kind === "app" ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3"><span>{task.error || task.command || task.description}</span><button className="underline" onClick={() => { void window.agentDesktop.launchApp({ name: task.appId!, route: task.route } as never); }}>查看运行详情</button></div>
+              {task.result !== undefined && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}</pre>}
+            </div>
           ) : (
             <>
               {truncated && (
@@ -2378,7 +2419,6 @@ export function ChatArea({
   onToolDisplayModeChange,
   toolDisplaySettingBusy = false,
   agentTeams,
-  onWorkflowPublished,
   toolPermissionRequest,
   onSubmitToolPermission,
   onRejectToolPermission,
@@ -2457,7 +2497,6 @@ export function ChatArea({
   onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy?: boolean;
   agentTeams?: AgentTeamsSessionState | null;
-  onWorkflowPublished?: (workflow: WorkflowCatalogDetail) => void;
   toolPermissionRequest?: AskUserQuestionRequest | null;
   onSubmitToolPermission?: (
     request: AskUserQuestionRequest,
@@ -2473,78 +2512,14 @@ export function ChatArea({
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
   const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
-  const [workflowOpen, setWorkflowOpen] = React.useState(false);
-  const [selectedWorkflowTaskId, setSelectedWorkflowTaskId] = React.useState<string | null>(null);
-  const [workflowDraftOpen, setWorkflowDraftOpen] = React.useState(false);
-  const [selectedWorkflowDraftId, setSelectedWorkflowDraftId] = React.useState<string | null>(null);
-  const [workflowDrafts, setWorkflowDrafts] = React.useState<WorkflowCatalogDetail[]>([]);
-  const workflowDraftRequest = React.useRef(0);
   const [coordinatorWorkersOpen, setCoordinatorWorkersOpen] = React.useState(false);
   const [selectedCoordinatorWorkerId, setSelectedCoordinatorWorkerId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setAgentTeamsOpen(false);
-    setWorkflowOpen(false);
-    setSelectedWorkflowTaskId(null);
-    setWorkflowDraftOpen(false);
-    setSelectedWorkflowDraftId(null);
-    setWorkflowDrafts([]);
     setCoordinatorWorkersOpen(false);
     setSelectedCoordinatorWorkerId(null);
   }, [sessionId]);
-
-  const refreshWorkflowDrafts = React.useCallback(async () => {
-    const request = ++workflowDraftRequest.current;
-    if (!sessionId) {
-      setWorkflowDrafts([]);
-      return;
-    }
-    try {
-      const entries = conversationWorkflowDrafts(
-        await window.agentDesktop.workflows.list({ cwd: sessionWorkspace, status: "draft" }),
-        sessionId,
-      );
-      const results = await Promise.allSettled(entries.map((entry) => (
-        window.agentDesktop.workflows.get({ workflowId: entry.id, cwd: sessionWorkspace })
-      )));
-      if (request !== workflowDraftRequest.current) return;
-      setWorkflowDrafts(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
-    } catch {
-      if (request === workflowDraftRequest.current) setWorkflowDrafts([]);
-    }
-  }, [sessionId, sessionWorkspace]);
-
-  React.useEffect(() => {
-    void refreshWorkflowDrafts();
-    return window.agentDesktop.workflows.onChanged((event) => {
-      if (
-        event.sessionId === sessionId &&
-        event.workflowId &&
-        (event.action === "create" || event.action === "edit" || event.action === "duplicate")
-      ) {
-        const request = ++workflowDraftRequest.current;
-        void window.agentDesktop.workflows.get({ workflowId: event.workflowId, cwd: sessionWorkspace })
-          .then((workflow) => {
-            if (request !== workflowDraftRequest.current) return;
-            if (workflow.record.status !== "draft") return;
-            setWorkflowDrafts((current) => [
-              workflow,
-              ...current.filter((entry) => entry.record.id !== workflow.record.id),
-            ].sort((left, right) => right.record.updatedAt - left.record.updatedAt));
-          })
-          .catch(() => { void refreshWorkflowDrafts(); });
-        return;
-      }
-      void refreshWorkflowDrafts();
-    });
-  }, [refreshWorkflowDrafts, sessionId, sessionWorkspace]);
-
-  // Catalog events can arrive while a brand-new desktop session is still
-  // acquiring its runtime/workspace metadata. Re-read once the turn settles
-  // so the draft appears immediately without requiring a session switch.
-  React.useEffect(() => {
-    if (!loading) void refreshWorkflowDrafts();
-  }, [loading, refreshWorkflowDrafts]);
 
   React.useEffect(() => {
     if (!focusedToolUseId || !hasActiveSession) return;
@@ -2608,16 +2583,7 @@ export function ChatArea({
   const showAgentTeamsWorkbench = Boolean(
     agentTeamsOpen && agentTeams && agentTeams.teams.length > 0,
   );
-  const workflowTasks = (backgroundTasks ?? []).filter((task) => task.kind === "workflow");
-  const showWorkflowWorkbench = workflowOpen && workflowTasks.length > 0;
-  const showWorkflowDraftWorkbench = workflowDraftOpen && workflowDrafts.length > 0;
   const showCoordinatorWorkers = coordinatorWorkersOpen && childSessions.length > 0;
-
-  React.useEffect(() => {
-    if (workflowDrafts.length > 0) return;
-    setWorkflowDraftOpen(false);
-    setSelectedWorkflowDraftId(null);
-  }, [workflowDrafts.length]);
 
   React.useEffect(() => {
     if (childSessions.length > 0) return;
@@ -2691,7 +2657,7 @@ export function ChatArea({
   }
 
   return (
-    <div className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
+    <div className="@container relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
         title={sessionTitle}
         leftCollapsed={leftCollapsed}
@@ -2714,81 +2680,26 @@ export function ChatArea({
         onReturnToParentSession={onReturnToParentSession}
         onOpenWorkers={() => {
           setAgentTeamsOpen(false);
-          setWorkflowOpen(false);
-          setWorkflowDraftOpen(false);
           setSelectedCoordinatorWorkerId(null);
           setCoordinatorWorkersOpen(true);
         }}
         onSelectWorker={(workerId) => {
           setAgentTeamsOpen(false);
-          setWorkflowOpen(false);
-          setWorkflowDraftOpen(false);
           setSelectedCoordinatorWorkerId(workerId);
           setCoordinatorWorkersOpen(true);
         }}
       />
 
-      {!agentTeamsOpen && !workflowOpen && !workflowDraftOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
+      <AppConversationFlow sessionId={sessionId} tasks={backgroundTasks || []}>
+      {!agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
         <AgentTeamsStrip state={agentTeams} onOpen={() => {
-          setWorkflowOpen(false);
-          setWorkflowDraftOpen(false);
           setCoordinatorWorkersOpen(false);
           setAgentTeamsOpen(true);
         }} />
       ) : null}
 
-      {!agentTeamsOpen && !workflowOpen && !workflowDraftOpen && !coordinatorWorkersOpen && (workflowDrafts.length > 0 || workflowTasks.length > 0) ? (
-        <WorkflowSessionStrip
-          drafts={workflowDrafts}
-          tasks={workflowTasks}
-          onOpenDraft={(workflowId) => {
-            setAgentTeamsOpen(false);
-            setWorkflowOpen(false);
-            setCoordinatorWorkersOpen(false);
-            setSelectedWorkflowDraftId(workflowId);
-            setWorkflowDraftOpen(true);
-          }}
-          onOpenTask={(taskId) => {
-            setAgentTeamsOpen(false);
-            setWorkflowDraftOpen(false);
-            setCoordinatorWorkersOpen(false);
-            setSelectedWorkflowTaskId(taskId);
-            setWorkflowOpen(true);
-          }}
-        />
-      ) : null}
-
       {showAgentTeamsWorkbench && agentTeams ? (
         <AgentTeamsWorkbench state={agentTeams} onClose={() => setAgentTeamsOpen(false)} />
-      ) : showWorkflowDraftWorkbench ? (
-        <WorkflowDraftWorkbench
-          drafts={workflowDrafts}
-          initialWorkflowId={selectedWorkflowDraftId}
-          onClose={() => setWorkflowDraftOpen(false)}
-          onContinueEdit={(workflow) => {
-            onChange(workflowEditPrompt(workflow));
-            setWorkflowDraftOpen(false);
-          }}
-          onPublish={async (workflow) => {
-            const published = await window.agentDesktop.workflows.publish({
-              workflowId: workflow.record.id,
-              cwd: sessionWorkspace,
-            });
-            setWorkflowDrafts((current) => current.filter((entry) => entry.record.id !== workflow.record.id));
-            setWorkflowDraftOpen(false);
-            onWorkflowPublished?.(published);
-          }}
-        />
-      ) : showWorkflowWorkbench ? (
-        <WorkflowWorkbench
-          tasks={workflowTasks}
-          initialTaskId={selectedWorkflowTaskId}
-          onClose={() => setWorkflowOpen(false)}
-          onStop={(taskId) => {
-            if (!sessionId) return;
-            void window.agentDesktop.killTask({ sessionId, taskId });
-          }}
-        />
       ) : showCoordinatorWorkers ? (
         <CoordinatorWorkersView
           workers={childSessions}
@@ -2843,14 +2754,14 @@ export function ChatArea({
       )}
 
 
-      {!showAgentTeamsWorkbench && !showWorkflowDraftWorkbench && !showWorkflowWorkbench && !showCoordinatorWorkers ? (
+      {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
         <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
           <div className={cn(
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
           )}>
-          {backgroundTasks && backgroundTasks.some((task) => task.kind !== "workflow") && (
-            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.kind !== "workflow")} />
+          {backgroundTasks && backgroundTasks.some((task) => task.appId !== "moss.workflow") && (
+            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.appId !== "moss.workflow")} />
           )}
           {loading && composerActivity && loadingStartTime != null && (
             <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />
@@ -2921,6 +2832,7 @@ export function ChatArea({
           </div>
         </div>
       ) : null}
+      </AppConversationFlow>
     </div>
   );
 }

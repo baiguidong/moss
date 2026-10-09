@@ -437,6 +437,33 @@ export class AppRuntimeHost {
     return this.invokeContribution('commands', id, input, options)
   }
 
+  async listCommands(options = {}) {
+    const { commands } = await this.listContributions({ kinds: ['commands'] })
+    const result = []
+    for (const command of commands) {
+      if (!command.listAction) { result.push({ ...command, name: command.localId }); continue }
+      try {
+        const instance = this.resolveContributionInstance(command.appId)
+        const entries = await this.invoke(command.appId, instance.id, command.listAction, {}, options)
+        if (!Array.isArray(entries) || entries.length > 200) throw new Error('Invalid command provider response')
+        for (const entry of entries) {
+          if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(entry.name) || !entry.input || typeof entry.input !== 'object') continue
+          result.push({ ...command, id: command.id + '/' + entry.name, providerId: command.id,
+            name: entry.name, description: String(entry.description || command.description).slice(0,512), input: entry.input })
+        }
+      } catch (error) { this.onEvent?.({type:'command-provider-error', appId:command.appId, error:error.message}) }
+    }
+    // Ambiguous aliases require the stable, qualified name.
+    return result.map(item => ({...item, name: result.filter(other => other.name === item.name).length > 1 ? item.id : item.name}))
+  }
+
+  async invokeDiscoveredCommand(id, args, options = {}) {
+    const command = (await this.listCommands(options)).find(item => item.id === id)
+    if (!command) throw new Error('App command is no longer available')
+    const input = command.providerId ? {...command.input, args} : args
+    return this.invokeCommandContribution(command.providerId || command.id, input, options)
+  }
+
   async resolveResource(uri, options = {}) {
     let parsed
     try { parsed = new URL(String(uri)) } catch {
