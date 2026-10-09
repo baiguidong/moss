@@ -4,7 +4,7 @@ Host Capability API 是 App Backend 使用 Moss 能力的唯一受支持入口�
 Session 或数据库内部模块；它应在 Manifest 中声明版本化协议和权限，再通过 `@moss/app-sdk`
 发起受控请求。
 
-Host API 当前版本为 `2.6.0`，兼容要求 `^2.0.0` 的 App。Backend 进程协议仍为 App Service v1；
+Host API 当前版本为 `3.0.0`，App 声明 `^3.0.0`；不兼容旧 UI 调用签名。Backend 进程协议仍为 App Service v1；
 前者描述公开能力集合，后者描述 Node 子进程的传输 envelope。
 
 ## 内置协议
@@ -15,6 +15,8 @@ Host API 当前版本为 `2.6.0`，兼容要求 `^2.0.0` 的 App。Backend 进�
 | `moss.agent/v1` | Agent 目录、Binding、Session、Turn 和投递确认 | `agent:*` 细分权限 |
 | `moss.platform/v1` | 文件选择、私有缓存、截图、下载、外链和媒体授权 | `platform:*` |
 | `moss.openim/v1` | 使用当前 Moss 身份访问 OpenIM integration | `openim:client` |
+| `moss.tasks/v1` | 后台任务状态、进度与生命周期 | `tasks:read/write/cancel` |
+| `moss.agent-execution/v1` | 有界的结构化 Agent 执行与结果读取 | `execution:read/run/cancel` |
 
 Manifest 中的 `backend.protocols` 使用字符串数组。
 
@@ -85,6 +87,10 @@ backend.agent.on('turn.completed', async (event) => {
 `file.pick`、`file.materialize` 和 `file.thumbnail` 返回的文件路径只位于调用 App 的实例数据目录。
 `file.download` 是用户确认的导出操作。摄像头和麦克风授权还要求 `platform:media` grant。
 
+自 2.9 起，下载边读取边限制实际大小（100 MiB），成功后才将同目录临时文件替换到目标路径。网络失败、超限或提交前取消会清理临时文件并保留已有目标文件。Backend 请求的 signal 会传入下载网络请求；文件选择、缩略图和截图也在提交前检查取消。已经完成的导出或外链打开不会被取消撤回。
+
+当前 App UI 直调 `host.request` 没有独立的取消入口；本次未新增这套 UI 协议。流式限额和文件提交规则对两条调用路径均生效。
+
 ## 传输保证
 
 - Backend 必须是 Node 运行时；构建器可以使用 Bun，但产物目标必须为 Node。
@@ -131,3 +137,11 @@ Desktop 额外注册两个通用协议，使用现有 `context.host.request` 调
 会话正文在 Host 侧脱敏后写文件，避免超出 IPC 消息大小。Host 保留撤销前后事件文件写入，App 自己导入、索引和分析；不公开任意目录、数据库查询或规则执行接口。首次读取前通过 SQLite 在线备份复制旧审计数据库，保留原件。
 
 停用、撤权、卸载先使在途导出与事件票据失效并等待写入结束。未安装或停用 App 不会阻止会话撤销。详见 [审计迁移记录](audit-app-migration.md)。
+
+## Host API 3 调用约定
+
+UI 用 `createAppClient(window.mossApp)` 绑定当前 App，普通 `actions.invoke(name, input, options)`、`host.request(protocol, method, input, options)` 不再接受 instanceId。SDK options 包含 `signal`、`timeoutMs`、`requestId`；preload 只传可序列化字段，取消通过单独 IPC 传递。Main 按窗口隔离 requestId，可信身份由 sender 解析。运行状态通过 `app.getStatus()` 查询。
+
+两种 Host 入口共享请求容量、载荷上限、deadline 和生命周期取消；异步准备后以及 handler 派发前重新检查 App/实例/版本及当前授权。后台请求原有超时传入公共执行层。窗口销毁、App 停用、换版本及授权改变会取消相关请求；副作用 handler 仍须在异步提交前检查 signal / assertCurrent。
+
+Tasks/Execution 与 MCP 的统一契约见 [生成文档](../../packages/host-contracts/README.md)。声明允许的调用端不会自动授予能力；Manifest 和 grants 校验继续执行。新增机制不代表业务调用会自动重试或恰好执行一次。

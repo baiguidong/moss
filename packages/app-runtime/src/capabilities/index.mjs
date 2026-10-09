@@ -51,7 +51,12 @@ function normalizeMemberDefinitions(value, kind, protocol) {
     if (definition.validateOutput !== undefined && typeof definition.validateOutput !== 'function') {
       throw new TypeError(`${protocol} ${kind} validateOutput must be a function: ${name}`)
     }
+    if (definition.surfaces !== undefined && (!Array.isArray(definition.surfaces)
+      || !definition.surfaces.length || definition.surfaces.some(surface => !['ui', 'backend'].includes(surface)))) {
+      throw new TypeError(`${protocol} ${kind} surfaces must contain ui or backend: ${name}`)
+    }
     definitions.set(name, Object.freeze({
+      surfaces: definition.surfaces && Object.freeze([...definition.surfaces]),
       permission: normalizePermission(definition.permission, `${protocol} ${kind} ${name}`),
       validateInput: definition.validateInput || ((input) => validateHostData(input, `${name} input`)),
       validateOutput: definition.validateOutput || null,
@@ -171,6 +176,7 @@ export class AppHostCapabilityRegistry {
       }
       throw error
     }
+    if (member.surfaces && !member.surfaces.includes(request.surface || 'backend')) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Method is unavailable from this caller')
     if (member.permission) {
       requireHostPermission(request.permissions, member.permission)
       requireHostPermission(request.grants ?? [], member.permission, { source: 'grant' })
@@ -201,6 +207,7 @@ export class AppHostCapabilityRegistry {
   async dispatch(request) {
     const { definition, member, name } = this.requireMember(request.protocol, request.method, 'method')
     const authorization = await this.authorizeMember(request, definition, member, name, 'method')
+    request.assertCurrent?.(authorization)
     const input = member.validateInput(request.input)
     if (request.signal?.aborted) throw cancellationError(request.signal)
 
@@ -246,9 +253,11 @@ export class AppHostCapabilityRegistry {
       method: name,
       permission: authorization.permission,
       signal: request.signal,
+      assertCurrent: () => request.assertCurrent?.(authorization),
     })
     const operation = Promise.resolve().then(() => {
       if (request.signal?.aborted) throw cancellationError(request.signal)
+      request.assertCurrent?.(authorization)
       return handler(input, context)
     }).then((result) => member.validateOutput ? member.validateOutput(result) : result).finally(release)
     const canceled = cancellation(request.signal)

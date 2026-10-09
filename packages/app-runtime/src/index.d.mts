@@ -19,6 +19,7 @@ export type AppHostCapabilityContext = {
   method: string
   permission: string | null
   signal?: AbortSignal
+  assertCurrent(): void
 }
 
 export interface AppPackageInfo {
@@ -68,7 +69,7 @@ export class AppRuntimeHost {
   cancel(appId: string, instanceId: string, requestId: string): boolean
   registerHostProtocol(definition: Record<string, any>): () => void
   registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: AppHostCapabilityContext) => unknown | Promise<unknown>): () => void
-  requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; signal?: AbortSignal; principal?: Partial<AppOwner> }): Promise<unknown>
+  requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal; principal?: Partial<AppOwner>; sourceId?: number }): Promise<unknown>
   dispatchHostRequest(request: Record<string, any>): Promise<unknown>
   publishHostEvent(appId: string, instanceId: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
   cancelHostEvent(appId: string, instanceId: string, protocol: string, eventId: string): boolean

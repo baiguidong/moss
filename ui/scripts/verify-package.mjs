@@ -413,6 +413,7 @@ async function main() {
       throw new Error(`Packaged Moss must not include bundled Apps: ${bundledPath}`);
     }
   }
+  requireFile(path.join(paths.resourcesDir, 'packages', 'host-contracts', 'src', 'generated-validators.mjs'), 'Host contracts');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
   for (const file of ['bootstrap.mjs', 'lease.mjs', 'process-info.mjs']) {

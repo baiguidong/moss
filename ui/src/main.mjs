@@ -1,3 +1,5 @@
+import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
+import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
 import { AppExecutionHost } from './apps/app-execution-host.mjs';
 import { createExecutionProtocolDefinitions } from '../../packages/app-sdk/src/execution/index.mjs';
 import { createProjectStore } from './project-store.mjs';
@@ -5372,6 +5374,7 @@ function disposeAppWebContentsState(webContentsId) {
       if (state.source.previewRoot) void fsp.rm(state.source.previewRoot, { recursive: true, force: true });
     });
   }
+  appUiRequests.dispose(webContentsId);
   revokeAppUiBundleRoot(state.bundleToken);
   appWindowStates.delete(webContentsId);
 }
@@ -7746,6 +7749,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appExecutionHost = new AppExecutionHost({
     directory: path.join(MOSS_HOME, 'app-tasks'),
+    publishEvent: (target, protocol, name, data, options) => {
+      if (!appRuntime) return;
+      return appRuntime.withOwner(target.owner || appRuntime.defaultOwner, () =>
+        appRuntime.publishHostEvent(target.appId, target.instanceId, protocol, name, data, options));
+    },
     authorize: async context => {
       if (context.appId === 'moss.workflow') (await getClaudeRuntimeModule()).assertWorkflowAppPolicy();
     },
@@ -7772,8 +7780,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const record = getSessionRecord(source.sessionId);
       await resumeSessionRecord(record);
       const runtime = await ensureRuntime(record, '', source.runtimeSessionId);
-      source.runtimeSessionId = runtime.sessionId;
-      appExecutionHost.persist();
+      await appExecutionHost.updateSource(taskId, { runtimeSessionId: runtime.sessionId });
       return runtime.executeAppAgent({ appId, runId: taskId, prompt: input.prompt,
         opts: { schema: input.outputSchema, agentType: input.agentType },
         allowedTools: input.resources?.tools, resumeAgentId: agentId,
@@ -7795,6 +7802,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       message: task.summary || task.status, severity: task.status === 'completed' ? 'info' : 'error',
       appId: task.appId, route: task.route, sessionId: task.sessionId }, { id: `${task.id}:${task.attempt}` }),
   });
+  await appExecutionHost.ready;
   appRuntime = await createAppRuntime({
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
@@ -8132,7 +8140,7 @@ function shutdownDesktop() {
     await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
     await attempt(async () => { await appAuditHost?.close(); });
-    appExecutionHost?.close();
+    await attempt(() => appExecutionHost?.close());
     for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
       await attempt(() => {
         schedulePersistSession(record, true);
@@ -10034,35 +10042,20 @@ ipcMain.handle('app-ui:instances:get-status', async (event, { instanceId }) => {
   return state.runtime.getInstanceStatus(state.id, instanceId);
 });
 
-updateGuardedAppIpc.handle('app-ui:actions:invoke', async (event, {
-  instanceId, name, input, requestId, timeoutMs,
-}) => {
-  const state = getAppWindowStateBySender(event.sender);
-  return state.runtime.invoke(state.id, instanceId, String(name || ''), input, { requestId, timeoutMs, invocation: state.sessionId ? { surface: "tool", sessionId: state.sessionId, workspace: getSessionRecord(state.sessionId).workspace } : { surface: "app", workspace: state.workspace } });
+const appUiRequests = registerAppUiRequests({
+  ipc: ipcMain, getState: getAppWindowStateBySender,
+  beginRequest: () => {
+    assertUpdateWorkAllowed();
+    activeAppUpdateOperations++;
+    return () => { activeAppUpdateOperations--; };
+  },
+  invocation: state => state.sessionId
+    ? { surface: 'tool', sessionId: state.sessionId, workspace: getSessionRecord(state.sessionId).workspace }
+    : { surface: 'app', workspace: state.workspace },
 });
-
-ipcMain.handle('app-ui:actions:cancel', async (event, { instanceId, requestId }) => {
+ipcMain.handle('app-ui:get-status', event => {
   const state = getAppWindowStateBySender(event.sender);
-  return { canceled: state.runtime.cancel(state.id, instanceId, requestId) };
-});
-
-updateGuardedAppIpc.handle('app-ui:host:request', async (event, {
-  instanceId,
-  protocol: hostProtocol,
-  method,
-  input,
-  requestId,
-} = {}) => {
-  const state = getAppWindowStateBySender(event.sender);
-  const normalizedInput = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  return state.runtime.requestHostCapability(
-    state.id,
-    String(instanceId || ''),
-    String(hostProtocol || ''),
-    String(method || ''),
-    normalizedInput,
-    { requestId },
-  );
+  return state.runtime.getInstanceStatus(state.id, appDefaultInstanceId(state.id));
 });
 
 ipcMain.handle('app-ui:storage:get', async (event, { key }) => {

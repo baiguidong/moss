@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-runtime",
-  "version": "2.8.0",
+  "version": "3.0.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -74,7 +74,7 @@
     }
   },
   "dependencies": {
-    "@moss/app-sdk": "2.8.0",
+    "@moss/app-sdk": "3.0.0",
     "ajv": "^8.18.0",
     "semver": "^7.7.4"
   }

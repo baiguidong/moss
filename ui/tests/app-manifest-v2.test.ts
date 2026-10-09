@@ -14,22 +14,17 @@ const valid = {
   id: 'example.app',
   version: '1.2.3',
   displayName: 'Example',
-  hostApi: '^2.0.0',
+  hostApi: '^3.0.0',
   ui: { entry: 'dist/ui/index.html' },
   permissions: [],
 }
 
 describe('App manifest V2', () => {
-  it('advertises Host API 2.8 while accepting Apps built for compatible 2.x hosts', () => {
-    expect(APP_HOST_API_VERSION).toBe('2.8.0')
-    expect(validateAppManifest(valid).hostApi).toBe('^2.0.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.1.0' }).hostApi).toBe('^2.1.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.2.0' }).hostApi).toBe('^2.2.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.3.0' }).hostApi).toBe('^2.3.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.4.0' }).hostApi).toBe('^2.4.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.5.0' }).hostApi).toBe('^2.5.0')
-    expect(validateAppManifest({ ...valid, hostApi: '^2.6.0' }).hostApi).toBe('^2.6.0')
+  it('advertises Host API 3 and rejects unpublished older contracts', () => {
+    expect(APP_HOST_API_VERSION).toBe('3.0.0')
+    expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.1.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {
@@ -43,7 +38,7 @@ describe('App manifest V2', () => {
     expect(() => validateAppManifest({ ...valid, ui: { entry: '..\\escape.html' } })).toThrow()
     expect(() => validateAppManifest({ ...valid, ui: { entry: 'C:\\escape.html' } })).toThrow()
     expect(() => validateAppManifest({ ...valid, displayName: '   ' })).toThrow()
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.0.0' })).toThrow()
+    expect(() => validateAppManifest({ ...valid, hostApi: '^4.0.0' })).toThrow()
     expect(() => validateAppManifest({ ...valid, permissions: ['Invalid Permission'] })).toThrow(/permissions/)
     expect(() => validateAppManifest({
       ...valid,

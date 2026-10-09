@@ -445,12 +445,15 @@ export interface AppActionContext extends AppBackendContext {
 export type AppActionHandler<Input = unknown, Output = unknown> =
   (input: Input, context: AppActionContext) => Output | Promise<Output>
 
+export type AppCallResult<T> = { ok: true; result: T } | { ok: false; error: { code: string; message: string; details?: unknown } }
+
 export interface AppUiApi {
   composer: {
     prepare(input: { providerId: string; intent: "create" | "edit" | "use"; ref?: Record<string, unknown> }): Promise<{ ok: true }>
   }
   app: {
     getInfo(): Promise<Record<string, unknown>>
+    getStatus(): Promise<Record<string, unknown>>
     getVersions(): Promise<Array<Record<string, unknown>>>
     getInstallationState(): Promise<Record<string, unknown> | null>
   }
@@ -462,8 +465,8 @@ export interface AppUiApi {
     getStatus(instanceId: string): Promise<Record<string, unknown> | null>
   }
   actions: {
-    invoke<Output = unknown>(instanceId: string, name: string, input?: unknown, options?: { requestId?: string; timeoutMs?: number }): Promise<Output>
-    cancel(instanceId: string, requestId: string): Promise<{ canceled: boolean }>
+    invoke<Output = unknown>(name: string, input?: unknown, options?: { requestId?: string; timeoutMs?: number }): Promise<AppCallResult<Output>>
+    cancel(requestId: string): Promise<{ cancelled: boolean }>
   }
   storage: {
     getItem<T = unknown>(key: string): Promise<T | undefined>
@@ -472,7 +475,8 @@ export interface AppUiApi {
     list(): Promise<string[]>
   }
   host: {
-    request<Output = unknown>(instanceId: string, protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>): Promise<Output>
+    request<Output = unknown>(protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number }): Promise<AppCallResult<Output>>
+    cancel(requestId: string): Promise<{ cancelled: boolean }>
   }
   events: {
     on(eventName: string, callback: (payload: unknown) => void): () => void
@@ -635,8 +639,6 @@ export function createCloudStorageClient(host: AppHostApi): {
   on(name: typeof CLOUD_STORAGE_EVENTS[number], listener: (data: Record<string, unknown>, context: HostEventContext) => void): () => void;
 }
 
-/** Generic detached task and structured Agent execution protocols (Host API 2.7). */
-export const MOSS_AGENT_EXECUTION_PROTOCOL: 'moss.agent-execution/v1'
-export const MOSS_TASKS_PROTOCOL: 'moss.tasks/v1'
-export function validateExecutionInput(protocol: string, method: string, input: Record<string, unknown>): Record<string, unknown>
-export function createExecutionProtocolDefinitions(): ReturnType<typeof createAgentProtocolDefinition>[]
+export * from './execution/index.mjs'
+
+export const MAX_INLINE_FILE_BASE64_LENGTH: number

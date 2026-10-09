@@ -1,0 +1,8 @@
+{
+  "name": "@moss/host-contracts",
+  "version": "3.0.0",
+  "type": "module",
+  "exports": { ".": { "types": "./src/generated.d.mts", "import": "./src/index.mjs" } },
+  "scripts": { "generate": "node scripts/generate.mjs", "check": "node scripts/generate.mjs --check" },
+  "dependencies": { "ajv": "^8.18.0" }
+}

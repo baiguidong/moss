@@ -1,8 +1,11 @@
-import fs from 'node:fs'
+import { executionLimits } from '../../../packages/host-contracts/src/index.mjs'
+import fsp from 'node:fs/promises'
+import { ExecutionStore } from './execution-store.mjs'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { Ajv } from 'ajv'
-import { validateExecutionInput } from '../../../packages/app-sdk/src/execution/index.mjs'
+import { validateExecutionHostInput, MOSS_AGENT_EXECUTION_PROTOCOL, MOSS_TASKS_PROTOCOL } from '../../../packages/app-sdk/src/execution/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/protocol/index.mjs'
 
 const SETTLED = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const stable = (value) =>
@@ -25,12 +28,6 @@ const identity = (context) =>
   })
 const id = (prefix) => prefix + '_' + randomUUID()
 const clone = (value) => structuredClone(value)
-function atomic(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temp = file + '.' + randomUUID() + '.tmp'
-  fs.writeFileSync(temp, JSON.stringify(value), { mode: 0o600 })
-  fs.renameSync(temp, file)
-}
 
 /** Generic task and Agent execution ownership. No workflow definitions or scheduling. */
 export class AppExecutionHost {
@@ -40,15 +37,19 @@ export class AppExecutionHost {
     validateSource = async () => {},
     execute,
     onChanged = () => {},
+    publishEvent = null,
     notify = async () => {},
     authorize = async () => {},
   }) {
     this.directory = directory
-    this.file = path.join(directory, 'tasks.json')
+    this.store = new ExecutionStore(directory)
+    this.writes = new Set()
+    this.executionsById = new Map()
     this.createSource = createSource
     this.validateSource = validateSource
     this.execute = execute
     this.onChanged = onChanged
+    this.publishEvent = publishEvent
     this.notify = notify
     this.authorize = authorize
     this.validating = new Set()
@@ -57,21 +58,38 @@ export class AppExecutionHost {
     this.running = new Set()
     this.contextQueues = new Map()
     this.creating = new Map()
-    this.tasks = fs.existsSync(this.file)
-      ? JSON.parse(fs.readFileSync(this.file, 'utf8')).tasks
-      : {}
-    for (const task of Object.values(this.tasks)) {
-      delete task.delivering
-      if (!SETTLED.has(task.status)) task.status = 'interrupted'
-      for (const execution of Object.values(task.executions))
-        if (!SETTLED.has(execution.status)) execution.status = 'interrupted'
-    }
-    this.persist()
-    this.timer = setInterval(() => this.expire(), 1000)
+    this.tasks = {}
+    this.ready = this.store.request('load').then(async tasks => {
+      this.tasks = tasks
+      for (const task of Object.values(tasks)) {
+        for (const execution of Object.values(task.executions)) this.executionsById.set(execution.id, task)
+        this.cancelTask(task, 'Moss restarted', 'interrupted')
+      }
+      await this.flush()
+    })
+    this.ready.catch(() => {})
+    this.timer = setInterval(() => { void this.ready.then(() => { if (!this.closing) this.expire() }).catch(() => {}) }, 1000)
     this.timer.unref?.()
   }
-  persist() {
-    atomic(this.file, { version: 1, tasks: this.tasks })
+  persist(task, execution, event) {
+    const write = this.store.save(task, execution, event).catch(error => {
+      this.persistenceError = error
+      for (const controller of this.controllers.values()) controller.abort(error)
+    }).finally(() => this.writes.delete(write))
+    this.writes.add(write)
+    return write
+  }
+  async flush() {
+    while (this.writes.size) await Promise.all([...this.writes])
+    if (this.persistenceError) throw this.persistenceError
+  }
+  async updateSource(taskId, patch) {
+    await this.ready
+    const task = this.tasks[taskId]
+    if (!task) throw new AppServiceError(APP_ERROR_CODES.notFound, 'Unknown task source')
+    task.source = { ...task.source, ...patch }
+    await this.persist(task)
+    await this.flush()
   }
   event(task, execution, type, data = {}) {
     const event = {
@@ -83,17 +101,50 @@ export class AppExecutionHost {
       ...data,
     }
     execution.events.push(event)
-    if (execution.events.length > 2000)
-      execution.events.splice(0, execution.events.length - 2000)
+    if (execution.events.length > executionLimits.eventHistory)
+      execution.events.splice(0, execution.events.length - executionLimits.eventHistory)
     task.updatedAt = Date.now()
-    this.persist()
-    this.onChanged(this.publicTask(task), event)
+    this.executionsById.set(execution.id, task)
+    const summary = this.publicTask(task), executionSummary = this.publicExecution(execution)
+    const target = { appId: task.appId, instanceId: task.instanceId, owner: clone(task.owner) }
+    void this.persist(task, execution, event).then(() => {
+      if (this.persistenceError) return
+      this.notifyChanged(summary, event)
+      this.publishSnapshot(target, summary, executionSummary, event)
+    })
   }
   changed(task) {
     task.updatedAt = Date.now()
     task.revision++
-    this.persist()
-    this.onChanged(this.publicTask(task))
+    const summary = this.publicTask(task), target = { appId: task.appId, instanceId: task.instanceId, owner: clone(task.owner) }
+    void this.persist(task).then(() => {
+      if (this.persistenceError) return
+      this.notifyChanged(summary)
+      this.publishSnapshot(target, summary)
+    })
+  }
+  notifyChanged(task, event) {
+    void Promise.resolve().then(() => this.onChanged(task, event)).catch(error => {
+      console.warn('App task change observer failed:', error)
+    })
+  }
+  publishChange(task, execution, event) {
+    // Changes are hints; persisted get/events remain the source of truth after a disconnect.
+    if (!this.publishEvent) return
+    const target = { appId: task.appId, instanceId: task.instanceId, owner: task.owner }
+    this.publishSnapshot(target, this.publicTask(task), execution && this.publicExecution(execution), event)
+  }
+  publishSnapshot(target, task, execution, event) {
+    if (!this.publishEvent) return
+    const send = (protocol, name, data, eventId) => {
+      void Promise.resolve().then(() => this.publishEvent(target, protocol, name, data, {
+        ...(eventId ? { eventId } : {}), timeoutMs: 5000, onlyIfRunning: true,
+      })).catch(() => {})
+    }
+    send(MOSS_TASKS_PROTOCOL, 'task.changed', { task })
+    if (execution) send(MOSS_AGENT_EXECUTION_PROTOCOL, 'execution.changed', {
+      taskId: task.id, execution, event: clone(event),
+    }, event.eventId)
   }
   publicTask(task) {
     const {
@@ -104,6 +155,7 @@ export class AppExecutionHost {
       contexts,
       executions,
       notificationPending,
+      owner,
       ...summary
     } = task
     return clone({
@@ -124,31 +176,41 @@ export class AppExecutionHost {
   task(taskId, context) {
     const task = this.tasks[taskId]
     if (!task || task.identity !== identity(context))
-      throw new Error('Task is outside this App owner scope')
+      throw new AppServiceError(APP_ERROR_CODES.notFound, 'Task is outside this App owner scope')
     return task
   }
   findExecution(executionId, context) {
-    for (const task of Object.values(this.tasks))
-      if (task.executions[executionId]) {
-        this.task(task.id, context)
-        return { task, execution: task.executions[executionId] }
-      }
-    throw new Error('Unknown execution')
+    const task = this.executionsById.get(executionId)
+    if (task) {
+      this.task(task.id, context)
+      return { task, execution: task.executions[executionId] }
+    }
+    throw new AppServiceError(APP_ERROR_CODES.notFound, 'Unknown execution')
   }
   checkRevision(task, revision) {
     if (task.revision !== revision)
-      throw new Error('Task revision conflict; refresh before changing it')
+      throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task revision conflict; refresh before changing it', { kind: 'revision', currentRevision: task.revision })
   }
   async handle(protocol, method, raw, context) {
-    const input = validateExecutionInput(protocol, method, raw)
+    await this.ready
+    if (this.closing) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Execution Host is closed')
+    await this.flush()
+    const result = await this.handleRequest(protocol, method, raw, context)
+    await this.flush()
+    return result
+  }
+  async handleRequest(protocol, method, raw, context) {
+    const input = validateExecutionHostInput(protocol, method, raw)
     await this.authorize(context)
+    context.assertCurrent?.()
+    context.signal?.throwIfAborted()
     if (method === 'capabilities')
       return {
         environment: 'local',
         structuredOutput: true,
         contextReuse: true,
-        maxConcurrency: 16,
-        events: true,
+        maxConcurrency: executionLimits.maxConcurrency,
+        events: Boolean(this.publishEvent),
       }
     if (method === 'task.create') {
       const key = identity(context) + ':' + input.idempotencyKey
@@ -157,7 +219,7 @@ export class AppExecutionHost {
       )
       if (existing) {
         if (existing.fingerprint !== digest(input))
-          throw new Error('Task idempotency conflict')
+          throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task idempotency conflict', { kind: 'idempotency' })
         return this.publicTask(existing)
       }
       if (this.creating.has(key)) {
@@ -167,15 +229,17 @@ export class AppExecutionHost {
       const operation = (async () => {
         const source = await this.createSource(context, input)
         await this.authorize(context)
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
         const taskId = id('apptask')
         const limits = {
-          maxConcurrency: Math.min(16, input.limits?.maxConcurrency ?? 4),
-          maxCalls: Math.min(256, input.limits?.maxCalls ?? 256),
+          maxConcurrency: Math.min(executionLimits.maxConcurrency, input.limits?.maxConcurrency ?? 4),
+          maxCalls: Math.min(executionLimits.maxCalls, input.limits?.maxCalls ?? executionLimits.maxCalls),
           maxDurationMs: Math.min(
-            1_800_000,
-            input.limits?.maxDurationMs ?? 1_800_000,
+            executionLimits.maxDurationMs,
+            input.limits?.maxDurationMs ?? executionLimits.maxDurationMs,
           ),
-          maxTokens: Math.min(2_000_000, input.limits?.maxTokens ?? 2_000_000),
+          maxTokens: Math.min(executionLimits.maxTokens, input.limits?.maxTokens ?? executionLimits.maxTokens),
         }
         const task = {
           id: taskId,
@@ -184,6 +248,7 @@ export class AppExecutionHost {
           identity: identity(context),
           appId: context.appId,
           instanceId: context.instanceId,
+          owner: clone(context.owner ?? null),
           source,
           title: input.title,
           route: input.route ?? '#/',
@@ -199,8 +264,10 @@ export class AppExecutionHost {
           executions: {},
         }
         this.tasks[taskId] = task
-        this.persist()
-        this.onChanged(this.publicTask(task))
+        await this.persist(task)
+        await this.flush()
+        this.notifyChanged(this.publicTask(task))
+        this.publishChange(task)
         return this.publicTask(task)
       })()
       this.creating.set(key, operation)
@@ -210,14 +277,10 @@ export class AppExecutionHost {
         this.creating.delete(key)
       }
     }
-    if (method === 'task.list')
-      return {
-        tasks: Object.values(this.tasks)
-          .filter((task) => task.identity === identity(context))
-          .map((task) => this.publicTask(task))
-          .sort((a, b) => b.updatedAt - a.updatedAt)
-          .slice(input.offset ?? 0, (input.offset ?? 0) + Math.min(input.limit ?? 10, 10)),
-      }
+    if (method === 'task.list') {
+      const ids = await this.store.request('list', { owner: identity(context), offset: input.offset ?? 0, limit: Math.min(input.limit ?? 10, 10) })
+      return { tasks: ids.map(id => this.publicTask(this.tasks[id])) }
+    }
     if (method.startsWith('task.')) {
       const task = this.task(input.taskId, context)
       if (method === 'task.get') return this.publicTask(task)
@@ -228,8 +291,11 @@ export class AppExecutionHost {
       this.checkRevision(task, input.revision)
       if (method === 'task.resume') {
         if (!['interrupted', 'failed', 'cancelled'].includes(task.status))
-          throw new Error('Task cannot resume in its current state')
+          throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task cannot resume in its current state')
         await this.validateSource(task.source)
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
+        this.checkRevision(task, input.revision)
         task.status = 'running'
         task.attempt++
         task.scopeRef = id('scope')
@@ -239,7 +305,7 @@ export class AppExecutionHost {
         this.changed(task)
         return this.publicTask(task)
       }
-      if (SETTLED.has(task.status)) throw new Error('Task has already ended')
+      if (SETTLED.has(task.status)) throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task has already ended')
       if (method === 'task.update') {
         task.summary = input.summary ?? task.summary
         task.progress = input.progress ?? task.progress
@@ -251,7 +317,7 @@ export class AppExecutionHost {
             (item) => !SETTLED.has(item.status),
           )
         )
-          throw new Error('Task still has active executions')
+          throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task still has active executions')
         if (input.status === 'failed')
           this.cancelExecutions(task, 'Parent task failed')
         task.status = input.status
@@ -273,14 +339,14 @@ export class AppExecutionHost {
       const task = Object.values(this.tasks).find(
         (item) => item.scopeRef === input.scopeRef,
       )
-      if (!task) throw new Error('Invalid execution scope')
+      if (!task) throw new AppServiceError(APP_ERROR_CODES.notFound, 'Invalid execution scope')
       this.task(task.id, context)
       const fingerprint = digest({ ...input, scopeRef: undefined })
       const prior = Object.values(task.executions).find(
         (item) => item.key === input.idempotencyKey,
       )
       if (prior && prior.fingerprint !== fingerprint)
-        throw new Error('Execution idempotency conflict')
+        throw new AppServiceError(APP_ERROR_CODES.conflict, 'Execution idempotency conflict', { kind: 'idempotency' })
       const duplicate = Object.values(task.executions).find(
         (item) =>
           item.key === input.idempotencyKey &&
@@ -288,19 +354,22 @@ export class AppExecutionHost {
       )
       if (duplicate) {
         if (duplicate.fingerprint !== fingerprint)
-          throw new Error('Execution idempotency conflict')
+          throw new AppServiceError(APP_ERROR_CODES.conflict, 'Execution idempotency conflict', { kind: 'idempotency' })
         return this.publicExecution(duplicate)
       }
       if (task.status !== 'running' || Date.now() >= task.deadlineAt)
-        throw new Error('Task is not accepting executions')
+        throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task is not accepting executions')
       if (
         Object.keys(task.executions).length >= task.limits.maxCalls ||
         this.publicTask(task).tokens >= task.limits.maxTokens
       )
-        throw new Error('Task resource limit reached')
-      new Ajv({ strict: false }).compile(input.outputSchema)
+        throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Task resource limit reached')
+      try { new Ajv({ strict: false }).compile(input.outputSchema) }
+      catch { throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid outputSchema') }
       await this.validateSource(task.source)
       await this.authorize(context)
+      context.assertCurrent?.()
+      context.signal?.throwIfAborted()
       // Re-enter after awaited checks; reserve atomically with no further await.
       const raced = Object.values(task.executions).find(
         (item) =>
@@ -309,16 +378,19 @@ export class AppExecutionHost {
       )
       if (raced) {
         if (raced.fingerprint !== fingerprint)
-          throw new Error('Execution idempotency conflict')
+          throw new AppServiceError(APP_ERROR_CODES.conflict, 'Execution idempotency conflict', { kind: 'idempotency' })
         return this.publicExecution(raced)
       }
       if (
         task.status !== 'running' ||
-        Date.now() >= task.deadlineAt ||
+        Date.now() >= task.deadlineAt
+      )
+        throw new AppServiceError(APP_ERROR_CODES.conflict, 'Task no longer accepts executions')
+      if (
         this.publicTask(task).tokens >= task.limits.maxTokens ||
         Object.keys(task.executions).length >= task.limits.maxCalls
       )
-        throw new Error('Task no longer accepts executions')
+        throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Task resource limit reached')
       const execution = {
         id: id('exec'),
         key: input.idempotencyKey,
@@ -350,17 +422,22 @@ export class AppExecutionHost {
     }
     if (method === 'execution.result.read') {
       const { execution } = this.findExecution(input.resultRef, context)
-      if (!execution.resultRef) throw new Error('Result is unavailable')
-      const value = fs.readFileSync(
-        path.join(this.directory, execution.id + '.result.json'),
-        'utf8',
-      )
-      const offset = input.offset ?? 0
-      const limit = Math.min(input.limit ?? 100_000, 100_000)
-      return {
-        text: value.slice(offset, offset + limit),
-        nextOffset: offset + limit < value.length ? offset + limit : null,
-      }
+      if (!execution.resultRef) throw new AppServiceError(APP_ERROR_CODES.conflict, 'Result is unavailable')
+      const offset = input.offset ?? 0, limit = Math.min(input.limit ?? executionLimits.resultChunkUnits, executionLimits.resultChunkUnits)
+      const file = await fsp.open(path.join(this.directory, execution.id + '.result.utf16'), 'r')
+      try {
+        const size = (await file.stat()).size / 2
+        const buffer = Buffer.alloc(Math.max(0, Math.min(limit, size - offset)) * 2)
+        let read = 0
+        while (read < buffer.length) {
+          const chunk = await file.read(buffer, read, buffer.length - read, offset * 2 + read)
+          if (!chunk.bytesRead) throw new Error('Truncated execution result')
+          read += chunk.bytesRead
+        }
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
+        return { text: buffer.toString('utf16le'), nextOffset: offset + read / 2 < size ? offset + read / 2 : null }
+      } finally { await file.close() }
     }
     const { task, execution } = this.findExecution(input.executionId, context)
     if (method === 'execution.get') return this.publicExecution(execution)
@@ -375,13 +452,13 @@ export class AppExecutionHost {
       this.cancelExecution(task, execution, input.reason ?? 'Cancelled by user')
       return this.publicExecution(execution)
     }
-    throw new Error('Unsupported execution method')
+    throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'Unsupported execution method')
   }
   async drain() {
     for (const task of Object.values(this.tasks)) {
       if (task.status !== 'running') continue
       for (const execution of Object.values(task.executions)) {
-        if (this.running.size >= 16) return
+        if (this.running.size >= executionLimits.maxConcurrency) return
         if (execution.status !== 'queued') continue
         const active = Object.values(task.executions).filter((item) =>
           this.running.has(item.id),
@@ -407,7 +484,7 @@ export class AppExecutionHost {
     const timeoutMs = Math.max(
       1,
       Math.min(
-        execution.input.timeoutMs ?? 1_800_000,
+        execution.input.timeoutMs ?? executionLimits.maxDurationMs,
         task.deadlineAt - Date.now(),
       ),
     )
@@ -422,6 +499,8 @@ export class AppExecutionHost {
       if (task.status !== 'running' || execution.status !== 'queued') return
       execution.status = 'running'
       this.event(task, execution, 'running')
+      await this.flush()
+      if (controller.signal.aborted || this.closing) return
       const result = await this.execute({
         source: task.source,
         appId: task.appId,
@@ -451,10 +530,14 @@ export class AppExecutionHost {
       )
       if (!validator(result.value))
         throw new Error('Agent result does not match outputSchema')
-      atomic(
-        path.join(this.directory, execution.id + '.result.json'),
-        result.value,
-      )
+      const resultFile = path.join(this.directory, execution.id + '.result.utf16')
+      const temporary = resultFile + '.' + randomUUID() + '.tmp'
+      try {
+        await fsp.writeFile(temporary, JSON.stringify(result.value), { encoding: 'utf16le', mode: 0o600, signal: controller.signal })
+        if (SETTLED.has(execution.status)) return
+        await fsp.rename(temporary, resultFile)
+        if (SETTLED.has(execution.status) || controller.signal.aborted) { await fsp.rm(resultFile, { force: true }); return }
+      } finally { await fsp.rm(temporary, { force: true }) }
       execution.resultRef = execution.id
       execution.status = 'completed'
       execution.tokens = result.tokens || 0
@@ -531,15 +614,23 @@ export class AppExecutionHost {
     try {
       await this.notify(this.publicTask(task))
       task.notificationPending = false
-      this.persist()
+      if (!this.closing) await this.persist(task)
     } catch {
     } finally {
       this.delivering.delete(task.id)
     }
   }
   close() {
+    if (this.closePromise) return this.closePromise
+    this.closing = true
     clearInterval(this.timer)
-    for (const task of Object.values(this.tasks))
-      this.cancelTask(task, 'Moss shut down', 'interrupted')
+    this.closePromise = (async () => {
+      try {
+        await this.ready
+        for (const task of Object.values(this.tasks)) this.cancelTask(task, 'Moss shut down', 'interrupted')
+        await this.flush()
+      } finally { await this.store.close() }
+    })()
+    return this.closePromise
   }
 }

@@ -49,17 +49,27 @@ export function createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeSta
       },
     },
     [LOCAL_FILES_PROTOCOL]: {
-      async pick(input) {
+      async pick(input, context) {
+        context?.assertCurrent?.()
+        context?.signal?.throwIfAborted()
         const result = await dialog.showOpenDialog({ properties: [input.kind === 'directory' ? 'openDirectory' : 'openFile', ...(input.multiple === false ? [] : ['multiSelections'])] })
+        context?.assertCurrent?.()
+        context?.signal?.throwIfAborted()
         return { paths: result.canceled ? [] : result.filePaths }
       },
       async open(input, context) {
-        const error = await shell.openPath(await appFile(input, context))
+        const file = await appFile(input, context)
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
+        const error = await shell.openPath(file)
         if (error) throw new Error(error)
         return { opened: true }
       },
       async reveal(input, context) {
-        shell.showItemInFolder(await appFile(input, context))
+        const file = await appFile(input, context)
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
+        shell.showItemInFolder(file)
         return { revealed: true }
       },
     },

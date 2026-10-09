@@ -536,6 +536,7 @@ export class AppProcessSupervisor {
         method,
         input,
         signal: controller.signal,
+        timeoutMs,
       })
     }).then(
       (result) => finish(true, result),
@@ -738,7 +739,11 @@ export class AppProcessSupervisor {
     const normalizedName = validateHostMember(name, `${normalizedProtocol} event`)
     const normalizedData = validateHostData(data, `${normalizedProtocol} ${normalizedName} data`)
     const existing = this.processes.get(key)
-    if (!(existing?.state === 'starting' && existing.handshakeState === 'waiting-ready')) await this.start(key)
+    if (options.onlyIfRunning) {
+      if (existing?.state !== 'running' || existing.stopping) {
+        throw new AppServiceError(codes.unavailable, 'App Backend is not running')
+      }
+    } else if (!(existing?.state === 'starting' && existing.handshakeState === 'waiting-ready')) await this.start(key)
     if (options.signal?.aborted) {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled')
     }

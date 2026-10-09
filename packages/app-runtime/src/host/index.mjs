@@ -6,9 +6,11 @@ import {
   APP_ERROR_CODES,
   AppServiceError,
   loadJsonSchema,
+  requireHostPermission,
   resolveBackendProtocols,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
+import { HostRequests } from './requests.mjs'
 import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
 import {
   APP_CONTRIBUTION_KINDS,
@@ -75,7 +77,11 @@ function ownerStorageSegment(owner) {
 
 export class AppRuntimeHost {
   constructor(options) {
-    this.beforeAppDeactivation = options.beforeAppDeactivation || (() => {})
+    this.hostRequests = new HostRequests(options.hostRequestOptions)
+    this.beforeAppDeactivation = (appId) => {
+      this.cancelHostRequests(appId)
+      return options.beforeAppDeactivation?.(appId)
+    }
     this.rootDir = path.resolve(options.rootDir)
     this.appsDir = path.resolve(options.appsDir || path.join(this.rootDir, 'apps'))
     this.dataDir = path.resolve(options.dataDir || path.join(this.rootDir, 'apps-data'))
@@ -130,6 +136,7 @@ export class AppRuntimeHost {
       supervisor: this.supervisor,
       packageResolver: (appId) => this.getActivePackage(appId),
       authorize: (runtimeRecord) => this.authorizeInvocation(runtimeRecord),
+      prepare: (runtimeRecord) => this.prepareRuntime(runtimeRecord),
     })
     this.appTransitions = new Map()
     this.initialized = false
@@ -247,6 +254,7 @@ export class AppRuntimeHost {
     }
     const instanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
     const runtimeSnapshots = this.runtimes.list(appId)
+    this.cancelHostRequests(appId)
     const nextGrants = installationGrantsForPackage(current, packageInfo.manifest, options.grants)
     const grantsChanged = Boolean(current)
       && JSON.stringify(current.grants || []) !== JSON.stringify(nextGrants)
@@ -575,6 +583,7 @@ export class AppRuntimeHost {
   }
 
   async updateInstanceNow(appId, instanceId, patch = {}) {
+    this.cancelHostRequests(appId, instanceId)
     const instance = this.requireInstance(appId, instanceId)
     const packageInfo = await this.getActivePackage(appId)
     const currentSecrets = await this.credentials.get(appId, instanceId)
@@ -702,6 +711,7 @@ export class AppRuntimeHost {
   }
 
   async restartInstanceNow(appId, instanceId) {
+    this.cancelHostRequests(appId, instanceId)
     const instance = this.requireInstance(appId, instanceId)
     const installation = this.installations.get(appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
@@ -728,14 +738,6 @@ export class AppRuntimeHost {
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
-    const packageInfo = await this.getActivePackage(appId)
-    validateConfiguration(
-      packageInfo.root,
-      packageInfo.manifest.backend,
-      instance.config || {},
-      await this.credentials.get(appId, instanceId),
-    )
-    await this.prepareRuntime(runtimeRecord)
     return this.actions.invoke(runtimeRecord, actionName, input, {
       ...options,
       principal: normalizeAppOwner(options.principal || this.currentOwner()),
@@ -753,40 +755,26 @@ export class AppRuntimeHost {
     return this.hostCapabilities.registerHandler(protocol, method, handler)
   }
 
-  async requestHostCapability(appId, instanceId, protocol, method, input = {}, options = {}) {
-    const installation = this.installations.get(appId)
-    if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
-    const instance = this.requireInstance(appId, instanceId)
-    if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+  requestHostCapability(appId, instanceId, protocol, method, input = {}, options = {}) {
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
-    if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance runtime is unavailable')
-    this.authorizeInvocation(runtimeRecord)
-    const packageInfo = await this.getActivePackage(appId)
-    const backend = packageInfo.manifest.backend
-    if (!backend) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App has no Backend')
-    return this.hostCapabilities.dispatch({
-      appId,
-      instanceId,
-      version: packageInfo.manifest.version,
-      generation: runtimeRecord.generation,
-      dataDir: this.appDataPath(this.dataDir, appId, 'instances', instanceId),
-      runtimeDir: this.appDataPath(this.runtimeDir, appId, instanceId),
-      owner: this.currentOwner(),
-      principal: normalizeAppOwner(options.principal || this.currentOwner()),
-      requestId: String(options.requestId || randomUUID()),
-      protocol,
-      method,
-      input,
-      protocols: resolveBackendProtocols(backend),
-      permissions: packageInfo.manifest.permissions || [],
-      grants: installation.grants || [],
-      signal: options.signal,
+    if (!runtimeRecord) return Promise.reject(new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance runtime is unavailable'))
+    return this.dispatchHostRequest({
+      ...options, appId, instanceId, protocol, method, input,
+      key: runtimeRecord.key, generation: runtimeRecord.generation,
+      version: this.installations.get(appId)?.activeVersion,
+      owner: this.currentOwner(), surface: 'ui',
     })
+  }
+
+  cancelHostRequests(appId, instanceId) {
+    const owner = this.currentOwner()
+    this.hostRequests.cancelWhere(request => request.owner.key === owner.key && request.appId === appId && (!instanceId || request.instanceId === instanceId))
   }
 
   dispatchHostRequest(request) {
     const owner = normalizeAppOwner(request.owner || this.currentOwner())
-    return this.withOwner(owner, () => this.dispatchHostRequestNow(request))
+    return this.withOwner(owner, () => this.hostRequests.run({ ...request, owner, surface: request.surface || 'backend' },
+      current => this.dispatchHostRequestNow(current)))
   }
 
   async dispatchHostRequestNow(request) {
@@ -820,8 +808,18 @@ export class AppRuntimeHost {
     if (typeof this.hostCapabilities?.dispatch !== 'function') {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker is not configured')
     }
+    const assertCurrent = (authorization) => {
+      request.signal?.throwIfAborted()
+      const current = this.runtimes.get(request.key)
+      if (!current || current.generation !== request.generation || this.installations.get(request.appId)?.activeVersion !== request.version) {
+        throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
+      }
+      this.authorizeInvocation(current)
+      if (authorization?.permission) requireHostPermission(this.installations.get(request.appId)?.grants ?? [], authorization.permission, { source: 'grant' })
+    }
     return this.hostCapabilities.dispatch({
       ...request,
+      assertCurrent,
       appId: runtimeRecord.appId,
       instanceId: runtimeRecord.instanceId,
       version: packageInfo.manifest.version,
@@ -848,6 +846,8 @@ export class AppRuntimeHost {
     const prepared = await this.hostCapabilities.prepareEvent({
       appId,
       instanceId,
+      owner: this.currentOwner(),
+      principal: normalizeAppOwner(options.principal || this.currentOwner()),
       protocol,
       name,
       data,
@@ -855,7 +855,15 @@ export class AppRuntimeHost {
       permissions: packageInfo.manifest.permissions || [],
       grants: installation.grants ?? [],
     })
-    await this.prepareRuntime(runtimeRecord)
+    // A status hint only targets an existing process; its runtime is already prepared.
+    if (!options.onlyIfRunning) await this.prepareRuntime(runtimeRecord)
+    // Loading the package, authorization and runtime preparation can yield to revocation.
+    this.authorizeInvocation(runtimeRecord)
+    if (this.runtimes.get(runtimeRecord.key)?.generation !== runtimeRecord.generation
+      || this.installations.get(appId)?.activeVersion !== packageInfo.manifest.version) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
+    }
+    if (prepared.permission) requireHostPermission(this.installations.get(appId)?.grants ?? [], prepared.permission, { source: 'grant' })
     return this.supervisor.publishHostEvent(
       runtimeRecord.key,
       prepared.protocol,
@@ -995,6 +1003,7 @@ export class AppRuntimeHost {
     const previousVersion = installation.activeVersion
     const previousGrants = installation.grants || []
     const nextGrants = installationGrantsForPackage(installation, nextPackage.manifest, options.grants)
+    this.cancelHostRequests(appId)
     const activeRuntimes = this.runtimes.list(appId)
     const activeInstanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
     await Promise.allSettled(activeRuntimes.map((item) => this.supervisor.stop(item.key)))
@@ -1077,6 +1086,7 @@ export class AppRuntimeHost {
   }
 
   async shutdown() {
+    this.hostRequests.cancelWhere(() => true)
     await this.supervisor.shutdown()
   }
 }

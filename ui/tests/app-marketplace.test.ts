@@ -68,7 +68,7 @@ it.each([0, 1].flatMap(response => [
 function version(archive: Buffer, versionNumber = '1.2.0') {
   return {
     version: versionNumber,
-    hostApi: '^2.0.0',
+    hostApi: '^3.0.0',
     platforms: ['darwin-arm64', 'win32-x64'],
     permissions: ['agent:turns:write'],
     publishedAt: '2026-09-21T00:00:00.000Z',

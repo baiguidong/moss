@@ -50,6 +50,9 @@ export const APP_ERROR_CODES = Object.freeze({
   hostUnavailable: 'APP_HOST_UNAVAILABLE',
   hostTimeout: 'APP_HOST_TIMEOUT',
   hostProtocol: 'APP_HOST_PROTOCOL_ERROR',
+  conflict: 'APP_CONFLICT',
+  resourceExhausted: 'APP_RESOURCE_EXHAUSTED',
+  notFound: 'APP_NOT_FOUND',
 })
 
 export class AppServiceError extends Error {

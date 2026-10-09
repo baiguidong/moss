@@ -12,6 +12,7 @@ export class AppActionBroker {
     this.supervisor = options.supervisor
     this.packageResolver = options.packageResolver
     this.authorize = options.authorize || (() => {})
+    this.prepare = options.prepare || (() => {})
     this.queues = new Map()
     this.admissions = new Map()
     this.requests = new Map()
@@ -60,7 +61,9 @@ export class AppActionBroker {
     options.signal?.addEventListener('abort', abortFromCaller, { once: true })
     if (requestKey) this.requests.set(requestKey, { controller, rejectCancellation })
     const validateRequest = async () => {
+      controller.signal.throwIfAborted()
       const packageInfo = await this.packageResolver(runtimeRecord.appId)
+      controller.signal.throwIfAborted()
       const action = packageInfo.manifest.backend?.actions.find((item) => item.name === actionName)
       if (!action) throw new AppServiceError(APP_ERROR_CODES.actionNotFound, `Action is not declared: ${actionName}`)
       if (action.inputSchema) {
@@ -77,7 +80,7 @@ export class AppActionBroker {
       if (this.admissions.get(runtimeRecord.key) === admissionTail) this.admissions.delete(runtimeRecord.key)
     })
     try {
-      await admission
+      await Promise.race([admission, cancellation])
     } catch (error) {
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (requestKey) this.requests.delete(requestKey)
@@ -89,7 +92,13 @@ export class AppActionBroker {
         throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled before execution')
       }
       await this.authorize(runtimeRecord)
+      controller.signal.throwIfAborted()
+      await this.prepare(runtimeRecord)
+      controller.signal.throwIfAborted()
       const activePackage = await this.packageResolver(runtimeRecord.appId)
+      controller.signal.throwIfAborted()
+      await this.authorize(runtimeRecord)
+      controller.signal.throwIfAborted()
       const activeAction = activePackage.manifest.backend?.actions.find((item) => item.name === actionName)
       if (!activeAction) throw new AppServiceError(APP_ERROR_CODES.actionNotFound, `Action is not declared: ${actionName}`)
       if (activeAction.inputSchema) {

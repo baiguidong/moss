@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-sdk",
-  "version": "2.8.0",
+  "version": "3.0.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -9,52 +9,64 @@
       "import": "./src/index.mjs"
     },
     "./execution": {
-      "types": "./src/index.d.mts",
+      "types": "./src/execution/index.d.mts",
       "import": "./src/execution/index.mjs"
     },
     "./protocol": {
-      "types": "./src/index.d.mts",
+      "types": "./src/protocol/index.d.mts",
       "import": "./src/protocol/index.mjs"
     },
     "./account": {
-      "types": "./src/index.d.mts",
+      "types": "./src/account/index.d.mts",
       "import": "./src/account/index.mjs"
     },
     "./agent": {
-      "types": "./src/index.d.mts",
+      "types": "./src/agent/index.d.mts",
       "import": "./src/agent/index.mjs"
     },
     "./platform": {
-      "types": "./src/index.d.mts",
+      "types": "./src/platform/index.d.mts",
       "import": "./src/platform/index.mjs"
     },
     "./openim": {
-      "types": "./src/index.d.mts",
+      "types": "./src/openim/index.d.mts",
       "import": "./src/openim/index.mjs"
     },
     "./host": {
-      "types": "./src/index.d.mts",
+      "types": "./src/host/index.d.mts",
       "import": "./src/host/index.mjs"
     },
     "./client": {
-      "types": "./src/index.d.mts",
+      "types": "./src/client/index.d.mts",
       "import": "./src/client/index.mjs"
     },
     "./schemas": {
-      "types": "./src/index.d.mts",
+      "types": "./src/schemas/index.d.mts",
       "import": "./src/schemas/index.mjs"
     },
     "./testing": {
-      "types": "./src/index.d.mts",
+      "types": "./src/testing/index.d.mts",
       "import": "./src/testing/index.mjs"
     },
     "./cloud-storage": {
-      "types": "./src/index.d.mts",
+      "types": "./src/cloud-storage/index.d.mts",
       "import": "./src/cloud-storage/index.mjs"
+    },
+    "./ui": {
+      "types": "./src/ui/index.d.mts",
+      "import": "./src/ui/index.mjs"
+    },
+    "./mcp": {
+      "types": "./src/mcp/index.d.mts",
+      "import": "./src/mcp/index.mjs"
     }
   },
   "dependencies": {
     "ajv": "^8.18.0",
-    "semver": "^7.7.4"
+    "semver": "^7.7.4",
+    "@moss/host-contracts": "3.0.0"
+  },
+  "scripts": {
+    "check:exports": "node scripts/export-types.mjs --check"
   }
 }

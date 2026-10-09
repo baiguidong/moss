@@ -6,9 +6,12 @@ function on(channel, callback) {
   return () => ipcRenderer.off(channel, handler)
 }
 
+const request = (channel, payload) => ipcRenderer.invoke(channel, payload)
+
 contextBridge.exposeInMainWorld('mossApp', {
   app: {
     getInfo: () => ipcRenderer.invoke('app-ui:get-info'),
+    getStatus: () => ipcRenderer.invoke('app-ui:get-status'),
     getVersions: () => ipcRenderer.invoke('app-ui:list-versions'),
     getInstallationState: () => ipcRenderer.invoke('app-ui:get-installation-state'),
   },
@@ -23,8 +26,8 @@ contextBridge.exposeInMainWorld('mossApp', {
     getStatus: (instanceId) => ipcRenderer.invoke('app-ui:instances:get-status', { instanceId }),
   },
   actions: {
-    invoke: (instanceId, name, input, options) => ipcRenderer.invoke('app-ui:actions:invoke', { instanceId, name, input, ...options }),
-    cancel: (instanceId, requestId) => ipcRenderer.invoke('app-ui:actions:cancel', { instanceId, requestId }),
+    invoke: (name, input, options = {}) => request('app-ui:actions:invoke', { name, input, requestId: options.requestId ?? globalThis.crypto.randomUUID(), timeoutMs: options.timeoutMs }),
+    cancel: (requestId) => ipcRenderer.invoke('app-ui:actions:cancel', { requestId }),
   },
   storage: {
     getItem: (key) => ipcRenderer.invoke('app-ui:storage:get', { key }),
@@ -33,15 +36,12 @@ contextBridge.exposeInMainWorld('mossApp', {
     list: () => ipcRenderer.invoke('app-ui:storage:list'),
   },
   host: {
-    request: (instanceId, protocol, method, input, options) => ipcRenderer.invoke('app-ui:host:request', {
-      instanceId,
-      protocol,
-      method,
-      input,
-      ...options,
+    request: (protocol, method, input, options = {}) => request('app-ui:host:request', {
+      protocol, method, input, requestId: options.requestId ?? globalThis.crypto.randomUUID(), timeoutMs: options.timeoutMs,
     }),
+    cancel: (requestId) => ipcRenderer.invoke('app-ui:host:cancel', { requestId }),
   },
   events: { on: (eventName, callback) => on(`app-ui:event:${String(eventName || '')}`, callback) },
 })
 
-contextBridge.exposeInMainWorld('appVersionInfo', { version: '2.8.0', name: 'Moss App Runtime' })
+contextBridge.exposeInMainWorld('appVersionInfo', { version: '3.0.0', name: 'Moss App Runtime' })

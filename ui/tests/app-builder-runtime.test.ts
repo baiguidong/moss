@@ -34,7 +34,7 @@ describe('App Builder runtime guidance', () => {
         id: 'example-app',
         version: '1.0.0',
         displayName: 'Example App',
-        hostApi: '^2.1.0',
+        hostApi: '^3.0.0',
         backend: {
           entry: 'dist/backend/main.mjs',
           runtime: 'node',
@@ -75,7 +75,7 @@ describe('App Builder runtime guidance', () => {
         id: 'invalid-app',
         version: '1.0.0',
         displayName: 'Invalid App',
-        hostApi: '^2.1.0',
+        hostApi: '^3.0.0',
         backend: {
           entry: 'dist/backend/main.mjs',
           runtime: 'node',

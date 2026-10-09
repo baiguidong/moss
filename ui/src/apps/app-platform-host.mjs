@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -61,16 +62,19 @@ export function createAppPlatformHandlers({
   }
   return {
     async 'file.pick'(input, context) {
+      context?.signal?.throwIfAborted()
       const kind = String(input.kind || 'file')
       const response = await dialog.showOpenDialog({
         properties: ['openFile', ...(input.multiple === false ? [] : ['multiSelections'])],
         ...(FILE_FILTERS[kind] ? { filters: FILE_FILTERS[kind] } : {}),
       })
+      context?.signal?.throwIfAborted()
       if (response.canceled) return { files: [] }
       return { files: response.filePaths.map((filePath) => authorize(copyIntoCache(filePath, context))) }
     },
 
     'file.materialize'(input, context) {
+      context?.signal?.throwIfAborted()
       let buffer
       try { buffer = Buffer.from(input.dataBase64, 'base64') } catch { throw new Error('File data is invalid') }
       if (!buffer.length) throw new Error('File data cannot be empty')
@@ -94,6 +98,7 @@ export function createAppPlatformHandlers({
     },
 
     async 'file.thumbnail'(input, context) {
+      context?.signal?.throwIfAborted()
       const root = cacheRoot(context)
       const source = inside(root, input.path)
       const cachedPath = path.join(root, `${randomUUID()}.png`)
@@ -110,12 +115,14 @@ export function createAppPlatformHandlers({
           ),
         )
       }
+      context?.signal?.throwIfAborted()
       fs.writeFileSync(cachedPath, image.toPNG(), { mode: 0o600 })
       authorize({ path: cachedPath })
       return { path: cachedPath, mediaUrl: mediaUrl(cachedPath) }
     },
 
     async 'screen.capture'(_input, context) {
+      context?.signal?.throwIfAborted()
       const permission = process.platform === 'darwin'
         ? systemPreferences.getMediaAccessStatus('screen')
         : 'granted'
@@ -137,6 +144,7 @@ export function createAppPlatformHandlers({
         fetchWindowIcons: false,
       })
       const source = sources.find((item) => String(item.display_id) === String(display.id)) || sources[0]
+      context?.signal?.throwIfAborted()
       if (!source || source.thumbnail.isEmpty()) throw new Error('未找到可截图的显示器')
       const buffer = source.thumbnail.toPNG()
       const name = `screenshot-${Date.now()}.png`
@@ -145,18 +153,59 @@ export function createAppPlatformHandlers({
       return authorize({ name, path: cachedPath, size: buffer.length, mediaUrl: mediaUrl(cachedPath) })
     },
 
-    async 'file.download'(input) {
+    async 'file.download'(input, context = {}) {
+      const { signal } = context
+      signal?.throwIfAborted()
       const selected = await dialog.showSaveDialog({ defaultPath: safeName(input.fileName, 'download') })
+      signal?.throwIfAborted()
       if (selected.canceled || !selected.filePath) return { canceled: true }
-      const response = await fetchImpl(input.url)
-      if (!response.ok) throw new Error(`下载失败 (${response.status})`)
-      const buffer = Buffer.from(await response.arrayBuffer())
-      if (buffer.length > MAX_FILE_BYTES) throw new Error('Download cannot exceed 100 MB')
-      fs.writeFileSync(selected.filePath, buffer)
-      return { canceled: false, filePath: selected.filePath }
+      const response = await fetchImpl(input.url, { signal })
+      let temporaryDir
+      let file
+      const reader = response.body?.getReader()
+      // A body may fail before the first read (for example while opening the file).
+      reader?.closed.catch(() => {})
+      const cancelBody = () => { void reader?.cancel(signal?.reason).catch(() => {}) }
+      signal?.addEventListener('abort', cancelBody, { once: true })
+      try {
+        signal?.throwIfAborted()
+        if (!response.ok) throw new Error(`下载失败 (${response.status})`)
+        if (Number(response.headers.get('content-length')) > MAX_FILE_BYTES) {
+          throw new Error('Download cannot exceed 100 MB')
+        }
+        // The temporary file shares the destination filesystem so commit is atomic.
+        temporaryDir = fs.mkdtempSync(path.join(path.dirname(selected.filePath), '.moss-download-'))
+        const temporaryFile = path.join(temporaryDir, 'download')
+        file = await fsp.open(temporaryFile, 'wx', 0o600)
+        let size = 0
+        while (reader) {
+          signal?.throwIfAborted()
+          const { done, value } = await reader.read()
+          signal?.throwIfAborted()
+          if (done) break
+          size += value.byteLength
+          if (size > MAX_FILE_BYTES) throw new Error('Download cannot exceed 100 MB')
+          await file.writeFile(value)
+        }
+        await file.close()
+        file = null
+        signal?.throwIfAborted()
+        fs.renameSync(temporaryFile, selected.filePath)
+        return { canceled: false, filePath: selected.filePath }
+      } finally {
+        signal?.removeEventListener('abort', cancelBody)
+        await reader?.cancel().catch(() => {})
+        reader?.releaseLock()
+        try {
+          await file?.close()
+        } finally {
+          if (temporaryDir) fs.rmSync(temporaryDir, { recursive: true, force: true })
+        }
+      }
     },
 
-    async 'shell.open-external'(input) {
+    async 'shell.open-external'(input, context = {}) {
+      context.signal?.throwIfAborted()
       const url = new URL(input.url)
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS links are supported')
       await shell.openExternal(url.href)

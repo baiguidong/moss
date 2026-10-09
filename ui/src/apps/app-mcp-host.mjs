@@ -1,3 +1,6 @@
+import { createMcpProtocolDefinition as contractDefinition, validateMcpHostInput as contractInput, validateMcpHostOutput } from '../../../packages/app-sdk/src/mcp/index.mjs'
+import { mcpLimits } from '../../../packages/host-contracts/src/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/protocol/index.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -7,7 +10,7 @@ import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
 
 export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
-const MAX_SERVERS = 100
+const MAX_SERVERS = mcpLimits.servers
 const SECRET_FIELD = 'mcpSecrets'
 const permissions = { 'servers.list': 'mcp:read', 'servers.inspect': 'mcp:connect', 'auth.start': 'mcp:auth', 'auth.clear': 'mcp:auth' }
 
@@ -17,6 +20,7 @@ function record(value, keys) {
   return value
 }
 export function validateMcpHostInput(method, value) {
+  contractInput(method, value)
   if (!MCP_METHODS.includes(method)) throw new Error('不支持的 MCP 操作。')
   const keys = method === 'servers.list' ? [] : method === 'servers.save' ? ['name', 'previousName', 'enabled', 'config'] : method === 'servers.set-enabled' ? ['name', 'enabled'] : ['name']
   record(value, keys)
@@ -25,16 +29,17 @@ export function validateMcpHostInput(method, value) {
   if (method === 'servers.save') {
     if (value.previousName !== undefined && (!isValidMcpServerName(value.previousName) || value.previousName.length > 64)) throw new Error('原服务名称无效。')
     validateMcpServerConfig(value.config)
-    if (Buffer.byteLength(JSON.stringify(value.config)) > 64 * 1024) throw new Error('服务配置超过 64 KB。')
+    if (Buffer.byteLength(JSON.stringify(value.config)) > mcpLimits.configBytes) throw new Error('服务配置超过 64 KB。')
   }
   if (['servers.save', 'servers.set-enabled'].includes(method) && typeof value.enabled !== 'boolean') throw new Error('启用状态无效。')
   return value
 }
 export function createMcpProtocolDefinition() {
-  return { protocol: MCP_PROTOCOL, methods: Object.fromEntries(MCP_METHODS.map(method => [method, {
-    permission: permissions[method] || 'mcp:manage', validateInput: input => validateMcpHostInput(method, input),
-  }])) }
+  const definition = contractDefinition()
+  for (const [method, value] of Object.entries(definition.methods)) value.validateInput = input => validateMcpHostInput(method, input)
+  return definition
 }
+
 function key(context) { return `${context.appId}/${context.instanceId}` }
 function runtimeName(appId, name) { return appId === 'moss.mcp' ? name : `${appId.replace(/[^a-zA-Z0-9_]/g, '_')}__${name}` }
 function decodeSecrets(values) {
@@ -91,7 +96,7 @@ export class AppMcpHost {
   assertCurrent(context) {
     if (context.signal?.aborted) throw new Error('操作已取消。')
     if (!this.current(context)) throw new Error('请先启用应用。')
-    if (context.permission && !this.getRuntime().installations.get(context.appId)?.grants?.includes(context.permission)) throw new Error('请在应用管理中授予此操作需要的 MCP 权限。')
+    if (context.permission && !this.getRuntime().installations.get(context.appId)?.grants?.includes(context.permission)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '请在应用管理中授予此操作需要的 MCP 权限。')
   }
   async load(context) {
     const file = path.join(context.dataDir, 'mcp-servers.json')
@@ -246,18 +251,27 @@ export class AppMcpHost {
     })), ...extra }
   }
   assertUnique(provider, name, previousName) {
-    if (name !== previousName && provider.document.servers[name]) throw new Error('已有同名服务，请使用其他名称。')
+    if (name !== previousName && provider.document.servers[name]) throw new AppServiceError(APP_ERROR_CODES.conflict, '已有同名服务，请使用其他名称。')
     const target = runtimeName(provider.appId, name).replaceAll('-', '_')
     for (const other of this.providers.values()) {
       for (const localName of Object.keys(other.document.servers)) {
         if (key(other) === key(provider) && localName === previousName) continue
-        if (runtimeName(other.appId, localName).replaceAll('-', '_') === target) throw new Error('该名称会与其他 MCP 工具标识冲突，请使用其他名称。')
+        if (runtimeName(other.appId, localName).replaceAll('-', '_') === target) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称会与其他 MCP 工具标识冲突，请使用其他名称。')
       }
     }
-    if (this.reservedName(runtimeName(provider.appId, name))) throw new Error('该名称已被连接器使用，请使用其他名称。')
+    if (this.reservedName(runtimeName(provider.appId, name))) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称已被连接器使用，请使用其他名称。')
   }
   async handle(method, raw, context) {
-    const input = validateMcpHostInput(method, raw)
+    try { return validateMcpHostOutput(method, await this.handleRequest(method, raw, context)) }
+    catch (error) {
+      if (error instanceof AppServiceError) throw error
+      throw new AppServiceError(context.signal?.aborted ? APP_ERROR_CODES.actionCanceled : APP_ERROR_CODES.hostUnavailable, error.message)
+    }
+  }
+  async handleRequest(method, raw, context) {
+    let input
+    try { input = validateMcpHostInput(method, raw) }
+    catch (error) { throw new AppServiceError(APP_ERROR_CODES.invalidInput, error.message, error.details) }
     context = { ...context, permission: permissions[method] || 'mcp:manage' }
     const prepared = await this.serial(async () => {
       this.assertCurrent(context)
@@ -265,7 +279,7 @@ export class AppMcpHost {
       if (method === 'servers.list') return { result: this.list(provider) }
       const previousName = input.previousName || input.name
       const entry = provider.document.servers[previousName]
-      if (method !== 'servers.save' && !entry) throw new Error('服务不存在，请刷新后重试。')
+      if (method !== 'servers.save' && !entry) throw new AppServiceError(APP_ERROR_CODES.notFound, '服务不存在，请刷新后重试。')
       if (context.expectedToolRevision && (!this.active(provider) || !entry.enabled || this.toolRevision(provider, entry) !== context.expectedToolRevision)) {
         throw new Error('连接配置或启用状态已变化，请重新加载。')
       }
@@ -276,9 +290,9 @@ export class AppMcpHost {
       }
       const document = structuredClone(provider.document), secrets = { ...provider.secrets }
       if (method === 'servers.save') {
-        if (input.previousName && !entry) throw new Error('服务已被删除，请刷新后重试。')
+        if (input.previousName && !entry) throw new AppServiceError(APP_ERROR_CODES.notFound, '服务已被删除，请刷新后重试。')
         this.assertUnique(provider, input.name, input.previousName)
-        if (!entry && Object.keys(document.servers).length >= MAX_SERVERS) throw new Error(`最多添加 ${MAX_SERVERS} 个服务。`)
+        if (!entry && Object.keys(document.servers).length >= MAX_SERVERS) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, `最多添加 ${MAX_SERVERS} 个服务。`)
         const config = validateMcpServerConfig(input.config)
         const previous = entry && restoreConfig(entry, secrets)
         for (const field of ['env', 'headers']) for (const name of Object.keys(config[field] || {})) {

@@ -23,7 +23,7 @@ describe('App V2 registry hydration', () => {
       id: 'fixture.registry-v2',
       version: '1.0.0',
       displayName: 'Registry V2',
-      hostApi: '^2.0.0',
+      hostApi: '^3.0.0',
       ui: { entry: 'dist/ui/index.html' },
       permissions: [],
     }, null, 2)}\n`)
@@ -121,7 +121,7 @@ describe('App V2 registry hydration', () => {
       currentVersion: '1.3.0',
       packageStatus: 'incompatible',
       requiredHostApi: '^1.3.0',
-      packageError: 'App requires Host API ^1.3.0; this Host provides 2.6.0',
+      packageError: 'App requires Host API ^1.3.0; this Host provides 3.0.0',
     }])
   })
 })

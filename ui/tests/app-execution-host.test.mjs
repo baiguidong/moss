@@ -1,8 +1,11 @@
-import { test, expect } from 'bun:test'
+import { test, expect, spyOn } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { AppExecutionHost } from '../src/apps/app-execution-host.mjs'
+import { AppHostCapabilityRegistry } from '../../packages/app-runtime/src/capabilities/index.mjs'
+import { APP_ERROR_CODES } from '../../packages/app-sdk/src/protocol/index.mjs'
+import { createExecutionProtocolDefinitions, createExecutionClient, createTasksClient, validateExecutionHostOutput, validateExecutionHostEvent, validateExecutionHostInput } from '../../packages/app-sdk/src/execution/index.mjs'
 const T = 'moss.tasks/v1', E = 'moss.agent-execution/v1'
 const context = { appId: 'example.app', instanceId: 'default', owner: { userId: 'one' }, invocation: { sessionId: 'session' } }
 const waitFor = async predicate => { for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(r => setTimeout(r, 10)) } throw new Error('Timed out') }
@@ -10,7 +13,15 @@ function setup(execute = async () => ({ value: { answer: 42 }, tokens: 3, toolCa
   const directory = mkdtempSync(path.join(tmpdir(), 'app-execution-'))
   const options = { directory, createSource: async () => ({ sessionId: 'session' }), execute }
   const host = new AppExecutionHost(options)
-  return { host, options, call: (p, m, i = {}, c = context) => host.handle(p, m, i, c), close: () => { host.close(); rmSync(directory, { recursive: true, force: true }) } }
+  const definitions = createExecutionProtocolDefinitions()
+  const registry = new AppHostCapabilityRegistry({ protocols: definitions })
+  const permissions = [...new Set(definitions.flatMap(d => Object.values(d.methods).map(m => m.permission)))]
+  for (const definition of definitions) for (const method of Object.keys(definition.methods)) {
+    registry.registerHandler(definition.protocol, method, (input, ctx) => host.handle(definition.protocol, method, input, ctx))
+  }
+  return { host, options, call: (protocol, method, input = {}, c = context) => registry.dispatch({
+    ...c, protocol, method, input, protocols: [T, E], permissions, grants: permissions,
+  }), close: async () => { await host.close(); rmSync(directory, { recursive: true, force: true }) } }
 }
 const request = task => ({ scopeRef: task.scopeRef, idempotencyKey: 'node-1', contextKey: 'node', prompt: 'Return answer', outputSchema: { type: 'object', required: ['answer'] } })
 test('task and execution idempotency, owner isolation and chunked structured results', async () => {
@@ -20,13 +31,45 @@ test('task and execution idempotency, owner isolation and chunked structured res
     expect((await f.call(T, 'task.create', { idempotencyKey: 'run', title: 'task' })).id).toBe(task.id)
     await expect(f.call(T, 'task.create', { idempotencyKey: 'run', title: 'changed' })).rejects.toThrow('idempotency')
     await expect(f.call(T, 'task.get', { taskId: task.id }, { ...context, instanceId: 'other' })).rejects.toThrow('scope')
-    await expect(f.call(T, 'task.create', { idempotencyKey: 'evil', title: 'task', sessionId: 'forged' })).rejects.toThrow('Unknown field')
+    await expect(f.call(T, 'task.create', { idempotencyKey: 'evil', title: 'task', sessionId: 'forged' })).rejects.toMatchObject({ code: APP_ERROR_CODES.invalidInput })
     const [one, two] = await Promise.all([f.call(E, 'execution.start', request(task)), f.call(E, 'execution.start', request(task))])
     expect(one.id).toBe(two.id)
     await waitFor(() => f.host.tasks[task.id].executions[one.id].status === 'completed')
     expect(JSON.parse((await f.call(E, 'execution.result.read', { resultRef: one.id })).text)).toEqual({ answer: 42 })
     await expect(f.call(E, 'execution.result.read', { resultRef: one.id }, { ...context, owner: { userId: 'two' } })).rejects.toThrow('scope')
-  } finally { f.close() }
+  } finally { await f.close() }
+})
+
+test('typed helpers validate real Host summaries, preserve structured results and use stable errors', async () => {
+  const f = setup()
+  const host = { request: f.call, on: () => () => {} }
+  const tasks = createTasksClient(host), executions = createExecutionClient(host)
+  try {
+    expect(await executions.request('capabilities')).toMatchObject({ events: false })
+    const task = await tasks.request('task.create', { idempotencyKey: 'contract', title: 'contract', limits: { maxCalls: 1 } })
+    expect(task).not.toHaveProperty('owner')
+    expect(task).not.toHaveProperty('source')
+    await expect(tasks.request('task.get', { taskId: 'missing' })).rejects.toMatchObject({ code: APP_ERROR_CODES.notFound })
+    await expect(tasks.request('task.update', { taskId: task.id, revision: 99 })).rejects.toMatchObject({ code: APP_ERROR_CODES.conflict, details: { currentRevision: 1 } })
+    await expect(tasks.request('task.update', { taskId: task.id })).rejects.toMatchObject({ code: APP_ERROR_CODES.invalidInput })
+    const execution = await executions.request('execution.start', request(task))
+    await waitFor(() => f.host.tasks[task.id].executions[execution.id].status === 'completed')
+    await expect(executions.request('execution.start', { ...request(task), idempotencyKey: 'over-limit' })).rejects.toMatchObject({ code: APP_ERROR_CODES.resourceExhausted })
+    expect((await executions.request('execution.list', { taskId: task.id })).executions).toHaveLength(1)
+    const events = (await executions.request('execution.events', { executionId: execution.id })).events
+    expect(events.at(-1).type).toBe('completed')
+    expect((await tasks.request('task.list', {})).tasks).toHaveLength(1)
+    const result = { nested: [{ answer: 42, emoji: '🌱' }], empty: null }
+    const finished = await tasks.request('task.finish', { taskId: task.id, revision: task.revision, status: 'completed', result })
+    expect(finished.result).toEqual(result)
+    for (const invalid of [{ ...finished, owner: context.owner }, { ...finished, status: 'unknown' }, { ...finished, revision: '1' }]) {
+      expect(() => validateExecutionHostOutput(T, 'task.get', invalid)).toThrow(expect.objectContaining({ code: APP_ERROR_CODES.hostProtocol }))
+    }
+    expect(() => validateExecutionHostEvent(E, 'execution.changed', { taskId: task.id, execution, event: { ...events[0], sequence: -1 } })).toThrow()
+    expect(() => validateExecutionHostOutput(T, 'toString', {})).toThrow()
+    const broken = createTasksClient({ ...host, request: async () => ({ id: 'incomplete' }) })
+    await expect(broken.request('task.get', { taskId: task.id })).rejects.toMatchObject({ code: APP_ERROR_CODES.hostProtocol })
+  } finally { await f.close() }
 })
 test('same context serializes; different contexts respect task concurrency', async () => {
   let active = 0, peak = 0
@@ -39,7 +82,7 @@ test('same context serializes; different contexts respect task concurrency', asy
     releases.shift()(); await waitFor(() => releases.length === 2)
     while (releases.length) releases.shift()()
     await waitFor(() => active === 0)
-  } finally { f.close() }
+  } finally { await f.close() }
 })
 test('explicit session stop cascades into detached Agent executions', async () => {
   let aborted = false
@@ -50,20 +93,20 @@ test('explicit session stop cascades into detached Agent executions', async () =
     f.host.cancelSession('session'); await waitFor(() => aborted)
     expect((await f.call(T, 'task.get', { taskId: task.id })).status).toBe('cancelled')
     await expect(f.call(E, 'execution.start', { ...request(task), idempotencyKey: 'new' })).rejects.toThrow('accepting')
-  } finally { f.close() }
+  } finally { await f.close() }
 })
 test('restart interrupts outstanding work; resume requires current revision and rotates scope', async () => {
   const f = setup()
   try {
-    const task = await f.call(T, 'task.create', { idempotencyKey: 'run', title: 'task' }); f.host.close()
+    const task = await f.call(T, 'task.create', { idempotencyKey: 'run', title: 'task' }); await f.host.close()
     const restarted = new AppExecutionHost(f.options)
     try {
       const current = await restarted.handle(T, 'task.get', { taskId: task.id }, context); expect(current.status).toBe('interrupted')
       await expect(restarted.handle(T, 'task.resume', { taskId: task.id, revision: 100 }, context)).rejects.toThrow('revision')
       const resumed = await restarted.handle(T, 'task.resume', { taskId: task.id, revision: current.revision }, context)
       expect(resumed.scopeRef).not.toBe(task.scopeRef); expect(resumed.attempt).toBe(2)
-    } finally { restarted.close() }
-  } finally { f.close() }
+    } finally { await restarted.close() }
+  } finally { await f.close() }
 })
 test('invalid structured output fails and task completion notification is delivered once', async () => {
   const f = setup(async () => ({ value: {}, tokens: 0, toolCalls: 0 })); let deliveries = 0
@@ -73,7 +116,7 @@ test('invalid structured output fails and task completion notification is delive
     const execution = await f.call(E, 'execution.start', request(task)); await waitFor(() => f.host.tasks[task.id].executions[execution.id].status === 'failed')
     await f.call(T, 'task.finish', { taskId: task.id, revision: task.revision, status: 'failed', summary: 'schema failure' }); await waitFor(() => deliveries === 1)
     f.host.expire(); expect(deliveries).toBe(1)
-  } finally { f.close() }
+  } finally { await f.close() }
 })
 test('resume reuses completed execution receipts even when App journal was lost', async () => {
   let calls = 0
@@ -88,7 +131,7 @@ test('resume reuses completed execution receipts even when App journal was lost'
     const reused = await f.call(E, 'execution.start', { ...request(resumed), contextKey: '__proto__' })
     expect(reused.id).toBe(execution.id); expect(calls).toBe(1)
     await expect(f.call(E, 'execution.start', { ...request(resumed), contextKey: '__proto__', prompt: 'changed' })).rejects.toThrow('idempotency')
-  } finally { f.close() }
+  } finally { await f.close() }
 })
 
 test('Host mandatory policy rejects creation and interrupts existing tasks after revocation', async () => {
@@ -104,5 +147,66 @@ test('Host mandatory policy rejects creation and interrupts existing tasks after
     denied=true;host.expire()
     await new Promise(resolve=>setTimeout(resolve,10))
     expect(host.tasks[task.id].status).toBe('cancelled')
-  } finally { host.close(); rmSync(directory,{recursive:true,force:true}) }
+  } finally { await host.close(); rmSync(directory,{recursive:true,force:true}) }
+})
+
+test('SQLite transaction failure rolls back task and event changes together', async () => {
+  const f = setup()
+  try {
+    const task = await f.call(T, 'task.create', { idempotencyKey: 'transaction', title: 'original' })
+    const execution = await f.call(E, 'execution.start', { ...request(task), prompt: '\nReturn answer' })
+    await waitFor(() => f.host.tasks[task.id].executions[execution.id].status === 'completed')
+    await f.host.flush()
+    const before = (await f.host.store.request('load'))[task.id]
+    const { executions, ...state } = before
+    const { events, ...record } = executions[execution.id]
+    await expect(f.host.store.request('save', [{ task: { ...state, title: 'must roll back' }, execution: record, event: events[0] }])).rejects.toThrow()
+    const after = (await f.host.store.request('load'))[task.id]
+    expect(after.title).toBe('original')
+    expect(after.executions[execution.id].events).toEqual(events)
+    await f.host.updateSource(task.id, { runtimeSessionId: 'runtime-1' })
+    expect((await f.host.store.request('load'))[task.id].source.runtimeSessionId).toBe('runtime-1')
+  } finally { await f.close() }
+})
+
+test('a failed observer does not suppress persisted state events', async () => {
+  const f = setup()
+  const warning = spyOn(console, 'warn').mockImplementation(() => {})
+  const published = []
+  f.host.onChanged = async () => { throw new Error('observer unavailable') }
+  f.host.publishEvent = async (_target, protocol, name, data) => {
+    const stored = await f.host.store.request('load')
+    published.push({ protocol, name, data, stored })
+  }
+  try {
+    const task = await f.call(T, 'task.create', { idempotencyKey: 'observer', title: 'observer' })
+    const execution = await f.call(E, 'execution.start', request(task))
+    await waitFor(() => published.some(item => item.name === 'execution.changed' && item.data.event.type === 'completed'))
+    const completion = published.find(item => item.name === 'execution.changed' && item.data.event.type === 'completed')
+    expect(completion.stored[task.id].executions[execution.id].status).toBe('completed')
+    expect(warning).toHaveBeenCalled()
+    expect((await f.call(E, 'execution.get', { executionId: execution.id })).status).toBe('completed')
+  } finally { await f.close(); warning.mockRestore() }
+})
+
+test('range reads preserve UTF-16 offsets across surrogate pairs and restart', async () => {
+  const f = setup(async () => ({ value: { answer: '🌱'.repeat(300) }, tokens: 1, toolCalls: 0 }))
+  try {
+    const task = await f.call(T, 'task.create', { idempotencyKey: 'ranges', title: 'ranges' })
+    const execution = await f.call(E, 'execution.start', request(task))
+    await waitFor(() => f.host.tasks[task.id].executions[execution.id].status === 'completed')
+    let result = '', offset = 0
+    for (;;) {
+      const chunk = await f.call(E, 'execution.result.read', { resultRef: execution.id, offset, limit: 13 })
+      result += chunk.text
+      if (chunk.nextOffset === null) break
+      expect(chunk.nextOffset).toBeGreaterThan(offset)
+      offset = chunk.nextOffset
+    }
+    expect(JSON.parse(result)).toEqual({ answer: '🌱'.repeat(300) })
+    await f.host.close()
+    const restarted = new AppExecutionHost(f.options)
+    try { expect((await restarted.handle(E, 'execution.result.read', { resultRef: execution.id }, context)).text).toBe(result) }
+    finally { await restarted.close() }
+  } finally { await f.close() }
 })
