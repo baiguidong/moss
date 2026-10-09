@@ -57,7 +57,7 @@ describe('App Runtime lifecycle', () => {
     const runtime = await createRuntime('persistent-single', { hostRequestTimeoutMs: 10, maxHostTimeoutMs: 1_000 }, async (source) => {
       const manifestPath = path.join(source, 'app.moss.json')
       const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
-      manifest.backend.protocols = ['moss.test/v1']
+      manifest.host = { protocols: ['moss.test/v1'] }
       manifest.permissions = ['test:request', 'test:event']
       await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
       await fs.writeFile(path.join(source, 'dist/backend/main.mjs'), `
@@ -308,7 +308,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     })
     await runtime.activateVersion(appId, '3.0.0')
     expect((await runtime.getApp(appId))?.instances).toEqual([])
-    expect(runtime.runtimes.list(appId)).toEqual([])
+    expect(runtime.runtimes.list(appId)).toMatchObject([{ instanceId: defaultInstanceId(appId), desiredState: 'stopped' }])
     expect(runtime.supervisor.listStatuses()).toEqual([])
     await runtime.shutdown()
   })

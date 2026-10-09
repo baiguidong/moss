@@ -29,40 +29,8 @@ export const BACKEND_MESSAGE_TYPES = Object.freeze([
   'log.write',
 ])
 
-export const APP_ERROR_CODES = Object.freeze({
-  invalidManifest: 'APP_INVALID_MANIFEST',
-  incompatibleHost: 'APP_INCOMPATIBLE_HOST_API',
-  invalidPackage: 'APP_INVALID_PACKAGE',
-  integrityFailed: 'APP_INTEGRITY_FAILED',
-  disabled: 'APP_DISABLED',
-  instanceDisabled: 'APP_INSTANCE_DISABLED',
-  actionNotFound: 'APP_ACTION_NOT_FOUND',
-  invalidInput: 'APP_INVALID_ACTION_INPUT',
-  invalidOutput: 'APP_INVALID_ACTION_OUTPUT',
-  actionTimeout: 'APP_ACTION_TIMEOUT',
-  actionCanceled: 'APP_ACTION_CANCELED',
-  backendUnavailable: 'APP_BACKEND_UNAVAILABLE',
-  handshakeFailed: 'APP_HANDSHAKE_FAILED',
-  staleGeneration: 'APP_STALE_GENERATION',
-  crashLoop: 'APP_CRASH_LOOP',
-  unauthorized: 'APP_UNAUTHORIZED',
-  permissionDenied: 'APP_PERMISSION_DENIED',
-  hostUnavailable: 'APP_HOST_UNAVAILABLE',
-  hostTimeout: 'APP_HOST_TIMEOUT',
-  hostProtocol: 'APP_HOST_PROTOCOL_ERROR',
-  conflict: 'APP_CONFLICT',
-  resourceExhausted: 'APP_RESOURCE_EXHAUSTED',
-  notFound: 'APP_NOT_FOUND',
-})
-
-export class AppServiceError extends Error {
-  constructor(code, message, details) {
-    super(message)
-    this.name = 'AppServiceError'
-    this.code = code
-    if (details !== undefined) this.details = details
-  }
-}
+export { APP_ERROR_CODES, AppServiceError, serializeError } from '../errors.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../errors.mjs'
 
 export function createEnvelope(type, payload = {}, options = {}) {
   return {
@@ -100,22 +68,4 @@ export function validateEnvelope(raw, options = {}) {
     throw new AppServiceError(APP_ERROR_CODES.handshakeFailed, 'Protocol message exceeds the size limit')
   }
   return raw
-}
-
-export function serializeError(error, fallbackCode = APP_ERROR_CODES.backendUnavailable) {
-  // Native SDKs can reject with response objects instead of Error instances.
-  // Keep their diagnostic fields structured so the Host can redact them.
-  const message = [error?.message, error?.errDlt, error?.errMsg, error]
-    .find(value => typeof value === 'string' && value.trim())
-  const nativeDetails = error?.errCode !== undefined ? {
-    errCode: error.errCode,
-    errMsg: error.errMsg,
-    errDlt: error.errDlt,
-    operationID: error.operationID,
-  } : undefined
-  return {
-    code: String(error?.code || error?.errCode || fallbackCode),
-    message: message || 'Unknown App Backend error',
-    details: error?.details ?? nativeDetails,
-  }
 }

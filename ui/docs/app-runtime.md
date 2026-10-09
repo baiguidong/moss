@@ -49,25 +49,35 @@ example-app/
   "id": "example.app",
   "version": "1.0.0",
   "displayName": "Example",
-  "hostApi": "^2.1.0",
-  "ui": { "entry": "dist/ui/index.html" },
+  "hostApi": "^3.0.0",
+  "ui": {
+    "entry": "dist/ui/index.html"
+  },
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "protocols": ["moss.platform/v1"],
-    "actions": [{ "name": "message.send" }],
+    "actions": [
+      {
+        "name": "message.send"
+      }
+    ],
     "configuration": {
       "schema": "schemas/config.schema.json",
       "secrets": "schemas/secrets.schema.json"
     }
   },
-  "permissions": []
+  "permissions": [],
+  "host": {
+    "protocols": [
+      "moss.platform/v1"
+    ]
+  }
 }
 ```
 
-`backend.protocols` 是 Backend 使用的 Host 协议字符串数组。Manifest 加载时只保留当前 Schema 定义的字段。
+`host.protocols` 是 App 的 UI 与 Backend 共用的 Host 协议字符串数组。Manifest 加载时只保留当前 Schema 定义的字段。
 
 ## 进程与数据
 

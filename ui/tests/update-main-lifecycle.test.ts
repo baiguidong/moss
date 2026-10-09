@@ -14,6 +14,7 @@ function fixture(extra: Record<string, any> = {}) {
     sessions: new Map([['chat', { id: 'chat' }]]), subAgentSessions: new Map([['child', { id: 'child' }]]),
     hasActiveAgentTeam: () => false, shutdownSessionAgentTeam: async () => true,
     agentTeamsService: { checkNow: async () => {}, stop: () => calls.push('teams-stop') },
+    appExecutionHost: { close: async () => { calls.push('executions-close'); } },
     appTraceHost: { close: async () => { calls.push('trace-close'); } },
     agentMailPoller: { stop: async () => { calls.push('mail-stop'); } },
     appAuditHost: { close: () => calls.push('audit-close') },

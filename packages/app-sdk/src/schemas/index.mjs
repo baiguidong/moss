@@ -193,7 +193,6 @@ function normalizeBackend(backend) {
     runtime: 'node',
     apiVersion: 1,
     lifecycle: backend.lifecycle,
-    ...(backend.protocols?.length ? { protocols: [...backend.protocols] } : {}),
     actions,
     ...(backend.configuration ? {
       configuration: {
@@ -205,6 +204,7 @@ function normalizeBackend(backend) {
 }
 
 export function validateAppManifest(rawManifest, options = {}) {
+  if (rawManifest?.backend && Object.hasOwn(rawManifest.backend, 'protocols')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Declare App Host protocols in host.protocols')
   const candidate = structuredClone(rawManifest)
   if (!validateManifestSchema(candidate)) {
     throw new AppServiceError(
@@ -241,6 +241,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     description: String(candidate.description || '').trim(),
     icon: candidate.icon ? ensureSafeRelativePath(candidate.icon, 'icon') : '',
     hostApi: candidate.hostApi,
+    host: { protocols: [...(candidate.host?.protocols || [])] },
     ...(candidate.publisher ? { publisher: { id: candidate.publisher.id, name: candidate.publisher.name.trim() } } : {}),
     ...(candidate.ui ? { ui: normalizeUi(candidate.ui) } : {}),
     ...(candidate.backend ? { backend: normalizeBackend(candidate.backend) } : {}),
@@ -249,8 +250,8 @@ export function validateAppManifest(rawManifest, options = {}) {
   }
 }
 
-export function resolveBackendProtocols(backend) {
-  return Array.isArray(backend?.protocols) ? [...backend.protocols] : []
+export function resolveAppProtocols(manifest) {
+  return [...new Set(['moss.host/v1', ...(manifest?.host?.protocols || [])])]
 }
 
 // App Tools expose their declared schema unchanged as a model function input.

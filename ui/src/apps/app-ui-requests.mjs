@@ -44,17 +44,14 @@ export function registerAppUiRequests({ ipc, cancelIpc = ipc, getState, invocati
         if (group.size >= 64) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many UI requests')
         const controller = new AbortController()
         group.set(key, controller)
-        const duration = Number(timeoutMs ?? 30_000)
-        const timer = setTimeout(() => controller.abort(new AppServiceError(kind === 'host' ? APP_ERROR_CODES.hostTimeout : APP_ERROR_CODES.actionTimeout, 'Request timed out')),
-          Math.max(100, Math.min(Number.isFinite(duration) ? duration : 30_000, 300_000)))
-        cleanup = () => { clearTimeout(timer); group.delete(key) }
-        const options = { requestId: randomUUID(), timeoutMs, signal: controller.signal, sourceId: event.sender.id }
+        cleanup = () => { group.delete(key) }
+        const options = { requestId: randomUUID(), timeoutMs, signal: controller.signal, sourceId: event.sender.id, invocation: invocation(state) }
         const instanceId = defaultInstanceId(state.id)
         const result = kind === 'actions'
           ? await state.runtime.invoke(state.id, instanceId, input.name, input.input, { ...options, invocation: invocation(state) })
           : await state.runtime.requestHostCapability(state.id, instanceId, input.protocol, input.method, input.input ?? {}, options)
         return { ok: true, result }
-      } catch (error) { return { ok: false, error: serializeError(error) } }
+      } catch (error) { return { ok: false, error: serializeError(error, kind === 'host' ? APP_ERROR_CODES.hostUnavailable : APP_ERROR_CODES.backendUnavailable) } }
       finally { cleanup(); endRequest() }
     })
     cancelIpc.handle(`app-ui:${kind}:cancel`, (event, { requestId } = {}) => {
@@ -64,5 +61,33 @@ export function registerAppUiRequests({ ipc, cancelIpc = ipc, getState, invocati
       return { cancelled: Boolean(entry) }
     })
   }
+  ipc.handle('app-ui:host:subscribe', async (event, input = {}) => {
+    let close = () => {}
+    try {
+      const state = getState(event.sender), { subscriptionId, protocol, name } = input
+      if (typeof subscriptionId !== 'string' || !subscriptionId || subscriptionId.length > 128) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid subscription id')
+      const group = groupFor(event.sender), key = `subscription:${subscriptionId}`
+      if (group.has(key)) throw new AppServiceError(APP_ERROR_CODES.conflict, 'Duplicate subscription')
+      if (group.size >= 64) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many subscriptions')
+      const controller = new AbortController()
+      let unsubscribe = () => {}
+      close = () => { controller.abort(); unsubscribe(); group.delete(key) }
+      controller.signal.addEventListener('abort', () => { unsubscribe(); group.delete(key) }, { once: true })
+      group.set(key, controller)
+      unsubscribe = await state.runtime.subscribeHostEvent(state.id, defaultInstanceId(state.id), protocol, name,
+        (data, context) => { if (!controller.signal.aborted) event.sender.send('app-ui:host:event', { subscriptionId, data, context }) },
+        { signal: controller.signal, onClosed: error => {
+          if (!event.sender.isDestroyed?.()) event.sender.send('app-ui:host:event', { subscriptionId, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) })
+          close()
+        } })
+      if (controller.signal.aborted) { unsubscribe(); throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled') }
+      return { ok: true, result: { subscriptionId } }
+    } catch (error) { close(); return { ok: false, error: serializeError(error, APP_ERROR_CODES.hostUnavailable) } }
+  })
+  cancelIpc.handle('app-ui:host:unsubscribe', (event, { subscriptionId } = {}) => {
+    getState(event.sender)
+    senders.get(event.sender.id)?.get(`subscription:${subscriptionId}`)?.abort()
+    return { ok: true }
+  })
   return { dispose }
 }

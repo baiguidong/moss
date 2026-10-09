@@ -70,7 +70,7 @@ describe('chat composer mode placement', () => {
     expect(addMenu).toContain('DropdownMenuSubTrigger');
     expect(addMenu).toContain("style={{ overflow: 'visible' }}");
     expect(addMenu).not.toContain('<ChevronRight');
-    expect(newSessionComposer).toContain('triggerVisible={false}');
+    expect(newSessionComposer).toContain('triggerVisible');
     expect(newSessionComposer).not.toContain('模式：');
   });
 

@@ -1,4 +1,4 @@
-import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../errors.mjs'
 
 const HOST_PROTOCOL_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?\/v[1-9][0-9]*$/
 const HOST_MEMBER_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/

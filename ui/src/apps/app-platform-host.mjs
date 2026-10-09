@@ -1,9 +1,11 @@
+import { platformLimits } from '../../../packages/host-contracts/src/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/errors.mjs'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-const MAX_FILE_BYTES = 100 * 1024 * 1024
+const MAX_FILE_BYTES = platformLimits.fileBytes
 const TRANSFER_FILE_PREFIX = '.moss-transfer-'
 const FILE_FILTERS = {
   image: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'] }],
@@ -18,7 +20,7 @@ function safeName(value, fallback = 'file') {
 }
 
 function cacheRoot(context) {
-  if (!context?.dataDir) throw new Error('App data directory is unavailable')
+  if (!context?.dataDir) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App data directory is unavailable')
   const root = path.resolve(context.dataDir, 'platform-files')
   fs.mkdirSync(root, { recursive: true, mode: 0o700 })
   return root
@@ -28,7 +30,7 @@ function inside(root, candidate) {
   const resolvedRoot = fs.realpathSync(root)
   const resolved = fs.realpathSync(path.resolve(String(candidate || '')))
   const relative = path.relative(resolvedRoot, resolved)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('File is outside the App cache')
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'File is outside the App cache')
   return resolved
 }
 
@@ -39,8 +41,8 @@ function mediaUrl(filePath) {
 function copyIntoCache(sourcePath, context, preferredName) {
   const source = fs.realpathSync(path.resolve(String(sourcePath || '')))
   const stat = fs.statSync(source)
-  if (!stat.isFile()) throw new Error('Selected path is not a file')
-  if (stat.size > MAX_FILE_BYTES) throw new Error('File cannot exceed 100 MB')
+  if (!stat.isFile()) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Selected path is not a file')
+  if (stat.size > MAX_FILE_BYTES) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'File cannot exceed 100 MB')
   const cachedPath = path.join(cacheRoot(context), `${randomUUID()}-${safeName(preferredName || path.basename(source))}`)
   fs.copyFileSync(source, cachedPath)
   return { name: safeName(preferredName || path.basename(source)), path: cachedPath, size: stat.size, mediaUrl: mediaUrl(cachedPath) }
@@ -62,32 +64,36 @@ export function createAppPlatformHandlers({
   }
   return {
     async 'file.pick'(input, context) {
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       const kind = String(input.kind || 'file')
       const response = await dialog.showOpenDialog({
         properties: ['openFile', ...(input.multiple === false ? [] : ['multiSelections'])],
         ...(FILE_FILTERS[kind] ? { filters: FILE_FILTERS[kind] } : {}),
       })
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       if (response.canceled) return { files: [] }
+      if (response.filePaths.length > platformLimits.pickedFiles) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many selected files')
       return { files: response.filePaths.map((filePath) => authorize(copyIntoCache(filePath, context))) }
     },
 
     'file.materialize'(input, context) {
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       let buffer
-      try { buffer = Buffer.from(input.dataBase64, 'base64') } catch { throw new Error('File data is invalid') }
-      if (!buffer.length) throw new Error('File data cannot be empty')
+      try { buffer = Buffer.from(input.dataBase64, 'base64') } catch { throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'File data is invalid') }
+      if (!buffer.length) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'File data cannot be empty')
       const name = safeName(input.fileName, `file-${Date.now()}`)
       const root = cacheRoot(context)
       const transferId = String(input.transferId || randomUUID())
       const transferPath = path.join(root, `${TRANSFER_FILE_PREFIX}${transferId}`)
       const offset = Number(input.offset || 0)
       const currentSize = fs.existsSync(transferPath) ? fs.statSync(transferPath).size : 0
-      if (currentSize !== offset) throw new Error(`File transfer offset mismatch: expected ${currentSize}, received ${offset}`)
+      if (currentSize !== offset) throw new AppServiceError(APP_ERROR_CODES.conflict, `File transfer offset mismatch: expected ${currentSize}, received ${offset}`)
       if (currentSize + buffer.length > MAX_FILE_BYTES) {
         fs.rmSync(transferPath, { force: true })
-        throw new Error('File cannot exceed 100 MB')
+        throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'File cannot exceed 100 MB')
       }
       fs.appendFileSync(transferPath, buffer, { mode: 0o600 })
       const size = currentSize + buffer.length
@@ -98,6 +104,7 @@ export function createAppPlatformHandlers({
     },
 
     async 'file.thumbnail'(input, context) {
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       const root = cacheRoot(context)
       const source = inside(root, input.path)
@@ -115,6 +122,7 @@ export function createAppPlatformHandlers({
           ),
         )
       }
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       fs.writeFileSync(cachedPath, image.toPNG(), { mode: 0o600 })
       authorize({ path: cachedPath })
@@ -122,6 +130,7 @@ export function createAppPlatformHandlers({
     },
 
     async 'screen.capture'(_input, context) {
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       const permission = process.platform === 'darwin'
         ? systemPreferences.getMediaAccessStatus('screen')
@@ -130,7 +139,7 @@ export function createAppPlatformHandlers({
         if (process.platform === 'darwin') {
           await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
         }
-        throw new Error(permission === 'restricted'
+        throw new AppServiceError(APP_ERROR_CODES.permissionDenied, permission === 'restricted'
           ? '系统限制了屏幕录制权限，请联系设备管理员'
           : '已打开屏幕录制权限设置，授权 Moss 后请重新截图')
       }
@@ -138,14 +147,15 @@ export function createAppPlatformHandlers({
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: {
-          width: Math.min(4096, Math.max(1, Math.round(display.size.width * display.scaleFactor))),
-          height: Math.min(4096, Math.max(1, Math.round(display.size.height * display.scaleFactor))),
+          width: Math.min(platformLimits.imageDimension, Math.max(1, Math.round(display.size.width * display.scaleFactor))),
+          height: Math.min(platformLimits.imageDimension, Math.max(1, Math.round(display.size.height * display.scaleFactor))),
         },
         fetchWindowIcons: false,
       })
       const source = sources.find((item) => String(item.display_id) === String(display.id)) || sources[0]
+      context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
-      if (!source || source.thumbnail.isEmpty()) throw new Error('未找到可截图的显示器')
+      if (!source || source.thumbnail.isEmpty()) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, '未找到可截图的显示器')
       const buffer = source.thumbnail.toPNG()
       const name = `screenshot-${Date.now()}.png`
       const cachedPath = path.join(cacheRoot(context), `${randomUUID()}-${name}`)
@@ -169,9 +179,9 @@ export function createAppPlatformHandlers({
       signal?.addEventListener('abort', cancelBody, { once: true })
       try {
         signal?.throwIfAborted()
-        if (!response.ok) throw new Error(`下载失败 (${response.status})`)
+        if (!response.ok) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, `下载失败 (${response.status})`)
         if (Number(response.headers.get('content-length')) > MAX_FILE_BYTES) {
-          throw new Error('Download cannot exceed 100 MB')
+          throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Download cannot exceed 100 MB')
         }
         // The temporary file shares the destination filesystem so commit is atomic.
         temporaryDir = fs.mkdtempSync(path.join(path.dirname(selected.filePath), '.moss-download-'))
@@ -184,11 +194,12 @@ export function createAppPlatformHandlers({
           signal?.throwIfAborted()
           if (done) break
           size += value.byteLength
-          if (size > MAX_FILE_BYTES) throw new Error('Download cannot exceed 100 MB')
+          if (size > MAX_FILE_BYTES) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Download cannot exceed 100 MB')
           await file.writeFile(value)
         }
         await file.close()
         file = null
+        context.assertCurrent?.()
         signal?.throwIfAborted()
         fs.renameSync(temporaryFile, selected.filePath)
         return { canceled: false, filePath: selected.filePath }
@@ -207,7 +218,7 @@ export function createAppPlatformHandlers({
     async 'shell.open-external'(input, context = {}) {
       context.signal?.throwIfAborted()
       const url = new URL(input.url)
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS links are supported')
+      if (!['http:', 'https:'].includes(url.protocol)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Only HTTP and HTTPS links are supported')
       await shell.openExternal(url.href)
       return { opened: true }
     },

@@ -176,13 +176,14 @@ describe('App Host Capability API', () => {
       version: '1.0.0',
       displayName: 'Host Capability Fixture',
       hostApi: '^3.0.0',
-      backend: {
+      host: { protocols: ['moss.test/v1'] },
+backend: {
         entry: 'dist/backend/main.mjs',
         runtime: 'node',
         apiVersion: 1,
         lifecycle: 'persistent',
 
-        protocols: ['moss.test/v1'],
+
         actions: [{ name: 'host.request', inputSchema: 'schemas/echo.json' }],
       },
       permissions: ['test:echo', 'test:notice'],

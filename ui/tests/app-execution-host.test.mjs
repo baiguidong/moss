@@ -210,3 +210,62 @@ test('range reads preserve UTF-16 offsets across surrogate pairs and restart', a
     finally { await restarted.close() }
   } finally { await f.close() }
 })
+
+test('task cursors survive progress updates and restarts, isolate owners and reset after retention', async () => {
+  const f = setup()
+  let reloaded
+  try {
+    const cursor = (await f.call(T, 'task.changes')).nextCursor
+    const tasks = []
+    for (let i = 0; i < 4; i++) tasks.push(await f.call(T, 'task.create', { idempotencyKey: 'page-' + i, title: 'Task ' + i }))
+    const first = await f.call(T, 'task.list', { limit: 2 })
+    expect(first.tasks.map(t => t.id)).toEqual([tasks[3].id, tasks[2].id])
+    await f.call(T, 'task.update', { taskId: tasks[0].id, revision: 1, summary: 'updated' })
+    const second = await f.call(T, 'task.list', { limit: 2, cursor: first.nextCursor })
+    expect(second.tasks.map(t => t.id)).toEqual([tasks[1].id, tasks[0].id])
+    expect(second.nextCursor).toBeNull()
+    const changes = await f.call(T, 'task.changes', { afterCursor: cursor, limit: 2 })
+    expect(changes.hasMore).toBe(true)
+    expect(changes.changes.map(c => c.task.id)).toEqual([tasks[0].id, tasks[1].id])
+    expect((await f.call(T, 'task.changes', { afterCursor: cursor }, { ...context, instanceId: 'other' })).reset).toBe(true)
+    await expect(f.call(T, 'task.list', { cursor }, context)).rejects.toMatchObject({ code: APP_ERROR_CODES.invalidInput })
+    await f.host.close()
+    reloaded = new AppExecutionHost(f.options)
+    await reloaded.ready
+    const afterRestart = await reloaded.handle(T, 'task.changes', { afterCursor: changes.nextCursor }, context)
+    expect(afterRestart.reset).toBe(false)
+    expect(afterRestart.changes.some(c => c.task.status === 'interrupted')).toBe(true)
+    await reloaded.store.request('prune', { now: Date.now() + 8 * 86400000 })
+    expect((await reloaded.handle(T, 'task.changes', { afterCursor: cursor }, context)).reset).toBe(true)
+    expect((await reloaded.listSessionHistory('session')).length).toBe(4)
+  } finally { await reloaded?.close(); await f.close() }
+})
+
+test('settled history has bounded memory, loads on demand and has consistent expiration', async () => {
+  const f = setup()
+  try {
+    let first
+    for (let i = 0; i < 105; i++) {
+      const task = await f.call(T, 'task.create', { idempotencyKey: 'history-' + i, title: 'Task' })
+      first ??= task
+      await f.call(T, 'task.cancel', { taskId: task.id })
+    }
+    expect(Object.keys(f.host.tasks).length).toBeLessThanOrEqual(100)
+    expect(f.host.tasks[first.id]).toBeUndefined()
+    const historic = await f.call(T, 'task.get', { taskId: first.id })
+    expect(historic.status).toBe('cancelled')
+    expect(historic.expiresAt).toBeGreaterThan(Date.now())
+    expect((await f.call(T, 'task.create', { idempotencyKey: 'history-0', title: 'Task' })).id).toBe(first.id)
+    await f.host.hydrate({ taskId: first.id })
+    const expired = f.host.tasks[first.id]
+    expired.updatedAt = Date.now() - 31 * 86400000
+    await f.host.persist(expired)
+    await expect(f.call(T, 'task.get', { taskId: first.id })).rejects.toMatchObject({ code: APP_ERROR_CODES.notFound })
+    const replacement = await f.call(T, 'task.create', { idempotencyKey: 'history-0', title: 'Task' })
+    expect(replacement.id).not.toBe(first.id)
+    expect((await f.call(T, 'task.create', { idempotencyKey: 'history-0', title: 'Task' })).id).toBe(replacement.id)
+    await f.host.store.request('prune')
+    const row = await f.host.store.request('load', { taskId: first.id })
+    expect(row).toEqual({})
+  } finally { await f.close() }
+})

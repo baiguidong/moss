@@ -1,4 +1,4 @@
-import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../errors.mjs'
 import { validateContract, contractDefinition } from '../host/contracts.mjs'
 import { executionLimits } from '../../../host-contracts/src/index.mjs'
 export const MOSS_AGENT_EXECUTION_PROTOCOL = 'moss.agent-execution/v1'
@@ -37,4 +37,4 @@ function createClient(host, protocol) {
 export function createExecutionClient(host) { return createClient(host, MOSS_AGENT_EXECUTION_PROTOCOL) }
 export function createTasksClient(host) { return createClient(host, MOSS_TASKS_PROTOCOL) }
 
-export { ExecutionWatcher, DEFAULT_EXECUTION_REFRESH_MS } from './watcher.mjs'
+export { ExecutionWatcher, TaskChangesWatcher, DEFAULT_EXECUTION_REFRESH_MS } from './watcher.mjs'

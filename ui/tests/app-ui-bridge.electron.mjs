@@ -1,3 +1,5 @@
+import { HostRequests } from '../../packages/app-runtime/src/host/requests.mjs'
+import { build } from 'esbuild'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
@@ -14,14 +16,15 @@ const watchdog = setTimeout(() => { console.error('Electron bridge test timed ou
 app.whenReady().then(async () => {
   let stopped = 0
   let updating = false, active = 0
+  const requests = new HostRequests()
   const runtime = {
     invoke: async (appId, instanceId, name, input) => ({ appId, instanceId, name, input }),
-    requestHostCapability: async (_appId, _instanceId, _protocol, method, _input, options) => {
+    requestHostCapability: async (appId, instanceId, protocol, method, input, options) => requests.run({ ...options, appId, instanceId, protocol, method, input, key: instanceId, owner: { key: 'local' }, surface: 'ui' }, async options => {
       if (method === 'denied') throw Object.assign(new Error('Permission denied'), { code: 'APP_PERMISSION_DENIED', details: { permission: 'fixture:read' } })
       if (method === 'echo') return { ok: 'business result' }
       if (method === 'beginUpdate') { updating = true; return {} }
       return new Promise((_, reject) => options.signal.addEventListener('abort', () => { stopped++; reject(options.signal.reason) }, { once: true }))
-    },
+    }),
   }
   registerAppUiRequests({ ipc: ipcMain, getState: () => ({ id: 'fixture.ui', runtime }), beginRequest: () => {
     if (updating) throw Object.assign(new Error('Update in progress'), { code: 'UPDATE_IN_PROGRESS' })
@@ -37,7 +40,8 @@ app.whenReady().then(async () => {
     window.webContents.on('console-message', event => { if (event.level === 'error') console.error(event.message) })
     await fs.writeFile(path.join(directory, 'index.html'), '<html><body>Host bridge test</body></html>')
     await window.loadFile(path.join(directory, 'index.html'))
-    const sdk = (await fs.readFile(new URL('../../packages/app-sdk/src/ui/index.mjs', import.meta.url), 'utf8')).replace('export function createAppClient', 'function createAppClient')
+    const bundled = await build({ entryPoints: [fileURLToPath(new URL('../../packages/app-sdk/src/ui/index.mjs', import.meta.url))], bundle: true, write: false, platform: 'browser', format: 'iife', globalName: 'MossSdk' })
+    const sdk = bundled.outputFiles[0].text + '\nconst { createAppClient } = MossSdk;'
     const result = await window.webContents.executeJavaScript(`(async () => { try {
       ${sdk}
       const client = createAppClient(window.mossApp)

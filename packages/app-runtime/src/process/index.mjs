@@ -1,3 +1,4 @@
+import { abortError, requestTimeout } from '../../../app-sdk/src/errors.mjs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -397,7 +398,7 @@ export class AppProcessSupervisor {
         this.log(hosted, 'error', error.message)
         return
       }
-      this.cancelHostRequest(hosted, payload.requestId, payload.protocol)
+      this.cancelHostRequest(hosted, payload.requestId, payload.protocol, payload.reason)
       return
     }
     if (message.type === 'host.event.response') {
@@ -472,15 +473,16 @@ export class AppProcessSupervisor {
     }
     if (hosted.hostRequests.size >= this.maxPendingHostRequests) {
       this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
-        codes.unavailable,
+        APP_ERROR_CODES.resourceExhausted,
         `${codes.label} request limit reached`,
       ), { cache: false, fingerprint })
       return
     }
     let protocol
     let method
-    let input
+    let input, timeoutMs
     try {
+      timeoutMs = requestTimeout(payload.timeoutMs, this.hostRequestTimeoutMs, this.maxHostTimeoutMs)
       protocol = validateHostProtocol(payload.protocol)
       method = validateHostMember(payload.method, `${protocol} method`)
       input = validateHostData(payload.input, `${protocol} ${method} input`)
@@ -504,11 +506,6 @@ export class AppProcessSupervisor {
       if (this.processes.get(key) === hosted && !hosted.stopping) this.send(hosted, response)
     }
     active.finish = finish
-    const requestedTimeoutMs = Number(payload.timeoutMs ?? this.hostRequestTimeoutMs)
-    const timeoutMs = Math.max(
-      100,
-      Math.min(Number.isFinite(requestedTimeoutMs) ? requestedTimeoutMs : this.hostRequestTimeoutMs, this.maxHostTimeoutMs),
-    )
     active.timer = setTimeout(() => {
       controller.abort(new AppServiceError(codes.timeout, `${codes.label} request timed out`))
       finish(false, undefined, new AppServiceError(
@@ -588,11 +585,12 @@ export class AppProcessSupervisor {
     this.send(hosted, response)
   }
 
-  cancelHostRequest(hosted, requestId, protocol) {
+  cancelHostRequest(hosted, requestId, protocol, reason) {
     const active = hosted.hostRequests.get(String(requestId || ''))
     if (!active || active.protocol !== protocol) return false
-    active.controller.abort(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request canceled'))
-    active.finish(false, undefined, new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request canceled'))
+    const error = new AppServiceError(reason === APP_ERROR_CODES.hostTimeout ? APP_ERROR_CODES.hostTimeout : APP_ERROR_CODES.actionCanceled, reason === APP_ERROR_CODES.hostTimeout ? 'Host request timed out' : 'Host request canceled')
+    active.controller.abort(error)
+    active.finish(false, undefined, error)
     return true
   }
 
@@ -657,19 +655,17 @@ export class AppProcessSupervisor {
   }
 
   async invoke(key, actionName, input, options = {}) {
-    if (options.signal?.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+    if (options.signal?.aborted) throw abortError(options.signal)
     await this.start(key)
-    if (options.signal?.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+    if (options.signal?.aborted) throw abortError(options.signal)
     const hosted = this.processes.get(key)
     if (!hosted || hosted.state !== 'running') throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend is not running')
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
     const requestId = randomUUID() // Transport attempts are distinct from caller submission identity.
     if (hosted.pending.has(requestId)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Duplicate action request: ${requestId}`)
-    const requestedTimeoutMs = Number(options.timeoutMs ?? this.actionTimeoutMs)
-    const timeoutMs = Math.max(
-      100,
-      Math.min(Number.isFinite(requestedTimeoutMs) ? requestedTimeoutMs : this.actionTimeoutMs, this.maxActionTimeoutMs),
-    )
+    const timeoutMs = options.deadlineAt
+      ? Math.max(1, options.deadlineAt - Date.now())
+      : requestTimeout(options.timeoutMs, Math.min(this.actionTimeoutMs, this.maxActionTimeoutMs), this.maxActionTimeoutMs)
     let invocation
     try {
       invocation = createEnvelope('action.invoke', {
@@ -693,7 +689,7 @@ export class AppProcessSupervisor {
         reject(new AppServiceError(APP_ERROR_CODES.actionTimeout, `App action timed out after ${timeoutMs}ms`))
         this.scheduleIdleStop(key, hosted)
       }, timeoutMs)
-      const abortHandler = () => this.cancel(key, requestId)
+      const abortHandler = () => this.cancel(key, requestId, abortError(options.signal))
       hosted.pending.set(requestId, {
         resolve,
         reject,
@@ -717,14 +713,14 @@ export class AppProcessSupervisor {
     return promise
   }
 
-  cancel(key, requestId) {
+  cancel(key, requestId, reason) {
     const hosted = this.processes.get(key)
     const pending = hosted?.pending.get(requestId)
     if (!hosted || !pending) return false
     hosted.pending.delete(requestId)
     clearTimeout(pending.timeout)
     pending.signal?.removeEventListener('abort', pending.abortHandler)
-    pending.reject(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled'))
+    pending.reject(reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled'))
     this.send(hosted, createEnvelope('action.cancel', { requestId, generation: hosted.definition.generation, launchToken: hosted.launchToken }))
     this.scheduleIdleStop(key, hosted)
     return true

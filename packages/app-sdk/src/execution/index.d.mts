@@ -38,3 +38,8 @@ export class ExecutionWatcher {
   wait(initial: AppExecutionSummary, signal: AbortSignal, onProgress: (state: AppExecutionSummary) => void): Promise<AppExecutionSummary>
   close(): void
 }
+
+export class TaskChangesWatcher {
+  constructor(client: AppTasksClient, onTask: (task: AppTaskSummary) => unknown | Promise<unknown>, options?: { refreshMs?: number; onReset?: () => unknown | Promise<unknown>; onError?: (error: Error) => void })
+  readonly ready: Promise<void>; refresh(): Promise<void>; close(): void
+}

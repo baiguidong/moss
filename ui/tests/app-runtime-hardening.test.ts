@@ -72,7 +72,7 @@ describe('App Runtime hardening', () => {
     await runtime.setInstanceEnabled(appId, instanceId, true)
     await runtime.setAppEnabled(appId, true)
     const first = runtime.invoke(appId, instanceId, 'wait', {}, { requestId: 'limited-1', timeoutMs: 100 }).catch(error => error)
-    const second = runtime.invoke(appId, instanceId, 'wait', {}, { requestId: 'limited-2', timeoutMs: Infinity }).catch(error => error)
+    const second = runtime.invoke(appId, instanceId, 'wait', {}, { requestId: 'limited-2', timeoutMs: 120 }).catch(error => error)
     const queueDeadline = Date.now() + 500
     while (runtime.actions.pendingTotal < 2 && Date.now() < queueDeadline) await new Promise(resolve => setTimeout(resolve, 5))
     await expect(runtime.invoke(appId, instanceId, 'wait', {}, { requestId: 'limited-3' })).rejects.toThrow(/queue limit/)

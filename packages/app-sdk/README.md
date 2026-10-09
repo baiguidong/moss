@@ -2,11 +2,11 @@
 
 当前 SDK 对应 Host API `3.0.0`；App 声明 `hostApi: "^3.0.0"`。不提供旧 UI 调用签名兼容层。
 
-App 安装后自动启用。`backend.protocols` 是 Backend 需要的 Host 协议字符串数组，例如：
+App 安装后自动启用。`host.protocols` 是 App 的 UI 与 Backend 共用的 Host 协议字符串数组，例如：
 
 ```json
 {
-  "protocols": ["moss.platform/v1", "moss.agent/v1"]
+  "host": { "protocols": ["moss.platform/v1", "moss.agent/v1"] }
 }
 ```
 
@@ -56,3 +56,5 @@ Tasks/Execution 与 MCP 的元数据、JSON Schema、权限、限额来自 [host
 node packages/host-contracts/scripts/generate.mjs --check
 node packages/app-sdk/scripts/export-types.mjs --check
 ```
+
+Host API 3 的 App 级协议声明、类型化 UI/Backend 请求、Host 事件订阅、能力发现、持久任务游标与公共结果读写，见 [收尾记录](../../docs/host-api-3-completion.md)。方法输入输出和限额以 [生成契约](../host-contracts/README.md) 为准。

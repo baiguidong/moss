@@ -57,6 +57,8 @@ function normalizeMemberDefinitions(value, kind, protocol) {
     }
     definitions.set(name, Object.freeze({
       surfaces: definition.surfaces && Object.freeze([...definition.surfaces]),
+      apps: definition.apps && Object.freeze([...definition.apps]),
+      limits: Object.freeze({ ...definition.limits }),
       permission: normalizePermission(definition.permission, `${protocol} ${kind} ${name}`),
       validateInput: definition.validateInput || ((input) => validateHostData(input, `${name} input`)),
       validateOutput: definition.validateOutput || null,
@@ -176,6 +178,7 @@ export class AppHostCapabilityRegistry {
       }
       throw error
     }
+    if (member.apps && !member.apps.includes(request.appId)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Method is restricted to another App')
     if (member.surfaces && !member.surfaces.includes(request.surface || 'backend')) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Method is unavailable from this caller')
     if (member.permission) {
       requireHostPermission(request.permissions, member.permission)
@@ -208,7 +211,9 @@ export class AppHostCapabilityRegistry {
     const { definition, member, name } = this.requireMember(request.protocol, request.method, 'method')
     const authorization = await this.authorizeMember(request, definition, member, name, 'method')
     request.assertCurrent?.(authorization)
-    const input = member.validateInput(request.input)
+    let input
+    try { input = member.validateInput(request.input) }
+    catch (error) { if (error?.code) throw error; throw new AppServiceError(APP_ERROR_CODES.invalidInput, error.message) }
     if (request.signal?.aborted) throw cancellationError(request.signal)
 
     const principal = request.principal || request.owner || null
@@ -220,7 +225,7 @@ export class AppHostCapabilityRegistry {
     const key = `${principalKey}:${request.appId}:${request.instanceId}`
     const activeForInstance = this.activeByInstance.get(key) || 0
     if (activeForInstance >= this.maxConcurrentPerInstance || this.activeTotal >= this.maxConcurrentTotal) {
-      throw unavailable(definition, 'Host protocol concurrency limit reached')
+      throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Host protocol concurrency limit reached')
     }
     const handler = this.handlers.get(definition.protocol)?.get(name) || definition.handleRequest
     if (!handler) {
@@ -240,6 +245,7 @@ export class AppHostCapabilityRegistry {
     }
     const context = Object.freeze({
       appId: request.appId,
+      surface: request.surface || 'backend',
       version: request.version,
       instanceId: request.instanceId,
       generation: request.generation,
@@ -259,7 +265,7 @@ export class AppHostCapabilityRegistry {
       if (request.signal?.aborted) throw cancellationError(request.signal)
       request.assertCurrent?.(authorization)
       return handler(input, context)
-    }).then((result) => member.validateOutput ? member.validateOutput(result) : result).finally(release)
+    }).then((result) => { request.assertCurrent?.(authorization); return member.validateOutput ? member.validateOutput(result) : result }).finally(release)
     const canceled = cancellation(request.signal)
     try {
       return await (canceled ? Promise.race([operation, canceled.promise]) : operation)

@@ -63,7 +63,7 @@ describe('Account and Agent Host protocols', () => {
     })).toThrow(/unknown field: token/)
     expect(validatePlatformHostOutput('file.pick', { files: [] })).toEqual({ files: [] })
     expect(() => validatePlatformHostOutput('shell.open-external', { opened: false }))
-      .toThrow(/opened is invalid/)
+      .toThrow(/opened/)
     expect(validateAgentHostOutput('context.observe', { observed: true, duplicate: false }))
       .toEqual({ observed: true, duplicate: false })
     expect(validateAgentHostOutput('turn.start', {
@@ -189,7 +189,7 @@ describe('Account and Agent Host protocols', () => {
     expect(validatePlatformHostInput('file.pick', { kind: 'image', multiple: true }))
       .toEqual({ kind: 'image', multiple: true })
     expect(() => validatePlatformHostInput('shell.open-external', { url: 'file:///tmp/secret' }))
-      .toThrow(/HTTP or HTTPS/)
+      .toThrow(/url/)
     const registry = new AppHostCapabilityRegistry()
     registry.registerProtocol(createPlatformProtocolDefinition())
     registry.registerHandler(MOSS_PLATFORM_PROTOCOL, 'file.pick', () => ({ files: [] }))

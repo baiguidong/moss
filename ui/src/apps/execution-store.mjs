@@ -26,9 +26,9 @@ export class ExecutionStore {
       this.worker.postMessage({ id, method, input })
     })
   }
-  save(task, execution, event) {
+  save(task, execution, event, change) {
     const { executions, ...state } = task
-    const value = { task: structuredClone(state), execution: execution ? structuredClone({ ...execution, events: undefined }) : undefined, event: event && structuredClone(event) }
+    const value = { change, task: structuredClone(state), execution: execution ? structuredClone({ ...execution, events: undefined }) : undefined, event: event && structuredClone(event) }
     return new Promise((resolve, reject) => {
       this.batch.push({ value, resolve, reject })
       if (this.scheduled) return

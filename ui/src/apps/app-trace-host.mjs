@@ -1,17 +1,12 @@
+import { contractDefinition } from '../../../packages/app-sdk/src/host/contracts.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { constants } from 'node:fs'
 
 export const TRACE_APP_ID = 'moss.trace'
 export const TRACE_PROTOCOL = 'moss.trace/v1'
-export function createTraceProtocolDefinition() {
-  return { protocol: TRACE_PROTOCOL, methods: { status: { permission: 'trace:capture', validateInput(input) {
-    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('Trace status takes no parameters')
-    return input
-  } } } }
-}
+export function createTraceProtocolDefinition() { return contractDefinition(TRACE_PROTOCOL) }
 
-/** The installation grants collection; an App process is never on the fetch path. */
 export class AppTraceHost {
   constructor({ mossHome, getRuntime, getCore, getSessions = () => [], log = () => {} }) {
     Object.assign(this, { mossHome, getRuntime, getCore, getSessions, log })
@@ -35,7 +30,7 @@ export class AppTraceHost {
     const runtime = this.getRuntime()
     const instance = runtime?.instances.list(TRACE_APP_ID)?.[0]
     const pkg = instance && this.active(instance.id) ? await runtime.getActivePackage(TRACE_APP_ID).catch(() => null) : null
-    const valid = pkg?.manifest.backend?.protocols?.includes(TRACE_PROTOCOL)
+    const valid = pkg?.manifest.host?.protocols?.includes(TRACE_PROTOCOL)
       && pkg.manifest.permissions?.includes('trace:capture') && this.active(instance.id)
     if (!valid) {
       if (this.output) { this.output = null; await (await this.getCore()).configureTraceOutput(this.mossHome, null) }

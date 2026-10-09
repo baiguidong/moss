@@ -59,7 +59,7 @@ export class AppExecutionHost {
     this.contextQueues = new Map()
     this.creating = new Map()
     this.tasks = {}
-    this.ready = this.store.request('load').then(async tasks => {
+    this.ready = this.store.request('prune').then(() => this.store.request('load', { initial: true })).then(async tasks => {
       this.tasks = tasks
       for (const task of Object.values(tasks)) {
         for (const execution of Object.values(task.executions)) this.executionsById.set(execution.id, task)
@@ -72,7 +72,7 @@ export class AppExecutionHost {
     this.timer.unref?.()
   }
   persist(task, execution, event) {
-    const write = this.store.save(task, execution, event).catch(error => {
+    const write = this.store.save(task, execution, event, this.publicTask(task)).catch(error => {
       this.persistenceError = error
       for (const controller of this.controllers.values()) controller.abort(error)
     }).finally(() => this.writes.delete(write))
@@ -82,6 +82,24 @@ export class AppExecutionHost {
   async flush() {
     while (this.writes.size) await Promise.all([...this.writes])
     if (this.persistenceError) throw this.persistenceError
+  }
+  async hydrate(query) {
+    const loaded = await this.store.request('load', query)
+    for (const [id, task] of Object.entries(loaded)) if (!this.tasks[id]) {
+      this.tasks[id] = task
+      for (const execution of Object.values(task.executions)) this.executionsById.set(execution.id, task)
+    }
+  }
+  trimCache() {
+    const settled = Object.values(this.tasks).filter(task => SETTLED.has(task.status) && !task.notificationPending && !Object.keys(task.executions).some(id => this.running.has(id)))
+      .sort((a,b) => b.updatedAt-a.updatedAt)
+    for (const task of settled.slice(100)) this.forget(task.id)
+  }
+  forget(id) {
+    const task = this.tasks[id]
+    if (!task) return
+    for (const execution of Object.values(task.executions)) this.executionsById.delete(execution.id)
+    delete this.tasks[id]
   }
   async updateSource(taskId, patch) {
     await this.ready
@@ -160,6 +178,7 @@ export class AppExecutionHost {
     } = task
     return clone({
       ...summary,
+      ...(SETTLED.has(task.status) ? { expiresAt: task.updatedAt + executionLimits.retentionMs } : {}),
       sessionId: source.sessionId,
       workspace: source.workspace,
       executionCount: Object.keys(executions).length,
@@ -175,7 +194,7 @@ export class AppExecutionHost {
   }
   task(taskId, context) {
     const task = this.tasks[taskId]
-    if (!task || task.identity !== identity(context))
+    if (!task || task.identity !== identity(context) || (SETTLED.has(task.status) && task.updatedAt + executionLimits.retentionMs <= Date.now()))
       throw new AppServiceError(APP_ERROR_CODES.notFound, 'Task is outside this App owner scope')
     return task
   }
@@ -195,8 +214,15 @@ export class AppExecutionHost {
     await this.ready
     if (this.closing) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Execution Host is closed')
     await this.flush()
-    const result = await this.handleRequest(protocol, method, raw, context)
+    // Hydrate historical records on demand; ordinary startup retains a bounded working set.
+    const checked = validateExecutionHostInput(protocol, method, raw)
+    if (checked.taskId && !this.tasks[checked.taskId]) await this.hydrate({ taskId: checked.taskId })
+    if ((checked.executionId || checked.resultRef) && !this.executionsById.has(checked.executionId || checked.resultRef)) await this.hydrate({ executionId: checked.executionId || checked.resultRef })
+    if (checked.scopeRef && !Object.values(this.tasks).some(task => task.scopeRef === checked.scopeRef)) await this.hydrate({ scopeRef: checked.scopeRef })
+    if (method === 'task.create') await this.hydrate({ key: identity(context) + ':' + checked.idempotencyKey })
+    const result = await this.handleRequest(protocol, method, checked, context)
     await this.flush()
+    this.trimCache()
     return result
   }
   async handleRequest(protocol, method, raw, context) {
@@ -215,7 +241,7 @@ export class AppExecutionHost {
     if (method === 'task.create') {
       const key = identity(context) + ':' + input.idempotencyKey
       const existing = Object.values(this.tasks).find(
-        (task) => task.key === key,
+        (task) => task.key === key && !(SETTLED.has(task.status) && task.updatedAt + executionLimits.retentionMs <= Date.now()),
       )
       if (existing) {
         if (existing.fingerprint !== digest(input))
@@ -226,11 +252,13 @@ export class AppExecutionHost {
         await this.creating.get(key)
         return this.handle(protocol, method, input, context)
       }
+      if (Object.values(this.tasks).filter(task => task.status === 'running').length + this.creating.size >= executionLimits.activeTasks) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Active task limit reached')
       const operation = (async () => {
         const source = await this.createSource(context, input)
         await this.authorize(context)
         context.assertCurrent?.()
         context.signal?.throwIfAborted()
+        if (Object.values(this.tasks).filter(task => task.status === 'running').length >= executionLimits.activeTasks) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Active task limit reached')
         const taskId = id('apptask')
         const limits = {
           maxConcurrency: Math.min(executionLimits.maxConcurrency, input.limits?.maxConcurrency ?? 4),
@@ -278,9 +306,12 @@ export class AppExecutionHost {
       }
     }
     if (method === 'task.list') {
-      const ids = await this.store.request('list', { owner: identity(context), offset: input.offset ?? 0, limit: Math.min(input.limit ?? 10, 10) })
-      return { tasks: ids.map(id => this.publicTask(this.tasks[id])) }
+      let page
+      try { page = await this.store.request('list', { owner: identity(context), cursor: input.cursor, limit: input.limit ?? 10 }) }
+      catch (error) { if (error.message.includes('cursor')) throw new AppServiceError(APP_ERROR_CODES.invalidInput, error.message); throw error }
+      return page
     }
+    if (method === 'task.changes') return this.store.request('changes', { owner: identity(context), afterCursor: input.afterCursor, limit: input.limit ?? 100 })
     if (method.startsWith('task.')) {
       const task = this.task(input.taskId, context)
       if (method === 'task.get') return this.publicTask(task)
@@ -296,6 +327,7 @@ export class AppExecutionHost {
         context.assertCurrent?.()
         context.signal?.throwIfAborted()
         this.checkRevision(task, input.revision)
+        if (Object.values(this.tasks).filter(task => task.status === 'running').length >= executionLimits.activeTasks) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Active task limit reached')
         task.status = 'running'
         task.attempt++
         task.scopeRef = id('scope')
@@ -588,11 +620,18 @@ export class AppExecutionHost {
         this.cancelTask(task, reason, 'interrupted')
   }
   listSession(sessionId) {
-    return Object.values(this.tasks)
-      .filter((task) => task.source.sessionId === sessionId)
-      .map((task) => this.publicTask(task))
+    return Object.values(this.tasks).filter(task => task.source.sessionId === sessionId && (task.status === 'running' || task.updatedAt + executionLimits.retentionMs > Date.now())).map(task => this.publicTask(task))
+  }
+  async listSessionHistory(sessionId) {
+    await this.ready
+    await this.flush()
+    return this.store.request('session', { sessionId })
   }
   expire() {
+    if (!this.pruning && (!this.lastPrune || Date.now()-this.lastPrune > 60000)) {
+      this.lastPrune = Date.now()
+      this.pruning = this.flush().then(() => this.store.request('prune')).then(ids => { for (const id of ids) this.forget(id); this.trimCache() }).catch(error => { this.persistenceError = error }).finally(() => { this.pruning = false })
+    }
     for (const task of Object.values(this.tasks)) {
       if (task.status === 'running' && !this.validating.has(task.id)) {
         this.validating.add(task.id)
@@ -612,6 +651,8 @@ export class AppExecutionHost {
     if (this.delivering.has(task.id)) return
     this.delivering.add(task.id)
     try {
+      await this.flush()
+      if (this.closing) return
       await this.notify(this.publicTask(task))
       task.notificationPending = false
       if (!this.closing) await this.persist(task)
@@ -627,6 +668,7 @@ export class AppExecutionHost {
     this.closePromise = (async () => {
       try {
         await this.ready
+        await this.pruning
         for (const task of Object.values(this.tasks)) this.cancelTask(task, 'Moss shut down', 'interrupted')
         await this.flush()
       } finally { await this.store.close() }

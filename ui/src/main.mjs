@@ -860,6 +860,7 @@ const sessionTaskService = createSessionTaskService({
   MOSS_HOME, emitToRenderer, getSessionRecord,
   scheduleSubAgentSessionSync, sessions, subAgentSessions,
   getAppTasks: id => appExecutionHost?.listSession(id) || [],
+  getAppTaskHistory: id => appExecutionHost?.listSessionHistory(id) || [],
   cancelAppTask: (sessionId, taskId) => { const task = appExecutionHost?.tasks[taskId]; if (!task || task.source.sessionId !== sessionId) return false; appExecutionHost.cancelTask(task, '用户停止任务'); return true; },
 });
 const { attachBackgroundTaskWatcher, attachSessionTaskWatcher, getClaudeTempDirForLookup, snapshotBackgroundTasks, snapshotSessionTasks } = sessionTaskService;
@@ -7709,7 +7710,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const instance = appRuntime.instances.get(context.instanceId);
       if (!instance?.enabled || instance.appId !== context.appId) return false;
       const pkg = await appRuntime.getActivePackage(context.appId);
-      return Boolean(pkg.manifest.backend?.protocols?.includes(MOSS_CLOUD_STORAGE_PROTOCOL)
+      return Boolean(pkg.manifest.host?.protocols?.includes(MOSS_CLOUD_STORAGE_PROTOCOL)
         && pkg.manifest.permissions?.includes(permission));
     },
     publish: (context, name, data) => {
@@ -7786,7 +7787,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         allowedTools: input.resources?.tools, resumeAgentId: agentId,
         abortController: controller, onAgentId: () => {}, onProgress });
     },
-    onChanged: task => {
+    onChanged: async task => {
       const record = sessions.get(task.sessionId);
       if (record) {
         const event = appTaskHistoryEvent(task);
@@ -7795,7 +7796,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           record.preview = `${task.title} · ${task.summary || task.status}`;
           emitSessionMeta(record);
         }
-        emitToRenderer('agent:background-tasks', { sessionId: record.id, tasks: snapshotBackgroundTasks(record) });
+        const appTasks = await appExecutionHost.listSessionHistory(record.id);
+        if (sessions.get(record.id) === record) emitToRenderer('agent:background-tasks', { sessionId: record.id, tasks: snapshotBackgroundTasks(record, appTasks) });
       }
     },
     notify: task => appNotificationBroker.create({ id: `${task.id}:${task.attempt}`, source: 'app', title: task.title,
@@ -7812,6 +7814,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       appExecutionHost?.deactivate(appId);
       await appTraceHost.beforeDeactivation(appId);
       await appAuditHost.beforeDeactivation(appId);
+    },
+    capabilityAvailability: async (protocol, method, context) => {
+      if (protocol === MOSS_CLOUD_STORAGE_PROTOCOL && method !== 'status.get') {
+        const status = await cloudStorageHost.status(); return { available: status.state === 'ready', reason: status.state === 'ready' ? null : status.state };
+      }
+      if (protocol === 'moss.agent-execution/v1' && method === 'execution.start') {
+        if (!getManagedRuntimeStatus().node.installed) return { available: false, reason: 'runtime_unavailable' };
+      }
+      return { available: true, reason: null };
     },
     hostProtocols: [
       ...createExecutionProtocolDefinitions(),
@@ -10312,7 +10323,7 @@ async function sendAgentPromptNow(event, {
     ? `You are in PLAN-ONLY mode. Your ONLY task is to create a step-by-step plan. CRITICAL RULES:\n1. Do NOT use ANY tools. If you need to think, use internal reasoning only.\n2. Do NOT create, read, write, or modify any files.\n3. Do NOT execute any commands.\n4. Do NOT output any code blocks, code, or file content.\n5. ONLY output a clear, structured plan in plain text/markdown.\n\nUser request:\n${effectivePrompt}${attachmentSuffix}\n\nCreate a HIGH-LEVEL plan with:\n- Goal (one sentence)\n- Main steps only - keep total steps to 10 or fewer. For simple requests, use only 2-3 steps.\n- Each step should be a meaningful milestone, not a tiny sub-step.\n- Do not break steps into sub-steps.\n\nDo not execute anything. Just plan.`
     : [
       typeof runtimePromptPrefix === 'string' ? runtimePromptPrefix.trim() : '',
-      appTasksPromptContext(appExecutionHost?.listSession(sessionRecord.id) || []),
+      appTasksPromptContext(await appExecutionHost?.listSessionHistory(sessionRecord.id) || []),
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
       preparedApp?.instruction || '',

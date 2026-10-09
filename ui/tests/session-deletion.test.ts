@@ -300,6 +300,7 @@ function deletionHarness(deleteRemote: () => Promise<void>) {
   const start = mainSource.indexOf('async function deleteSessionRecordById');
   const end = mainSource.indexOf("ipcMain.handle('agent:delete-session'", start);
   const remove = runInNewContext(`${mainSource.slice(start, end)}; deleteSessionRecordById;`, {
+    appExecutionHost: { cancelSession: () => {} },
     sessions, subAgentSessions: new Map(), projectCoordinatorTaskRuns: new Map(),
     projectTaskCancellationRequests: new Set(), subAgentSyncTimers: new Map(),
     browserAutomationSessionOrigins: new Map(), pendingBrowserAutomationGrants: new Map(),

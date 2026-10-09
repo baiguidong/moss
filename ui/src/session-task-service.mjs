@@ -7,6 +7,7 @@ import { compareTaskIds, normalizeSessionTask, snapshotRemoteSessionTasks } from
 export function createSessionTaskService({
   MOSS_HOME,
   getAppTasks = () => [],
+  getAppTaskHistory = getAppTasks,
   cancelAppTask = () => false,
   emitToRenderer,
   getSessionRecord,
@@ -17,7 +18,7 @@ export function createSessionTaskService({
   const BACKGROUND_TASK_EMIT_DELAY_MS = 500;
   const SESSION_TASK_EMIT_DELAY_MS = 150;
 
-  function snapshotBackgroundTasks(sessionRecord) {
+  function snapshotBackgroundTasks(sessionRecord, appTasks = getAppTasks(sessionRecord.id)) {
     try {
       const state = sessionRecord.runtime?.getAppState?.();
       const liveTasks = state?.tasks ? Object.values(state.tasks)
@@ -36,7 +37,7 @@ export function createSessionTaskService({
           };
         }) : [];
       const merged = new Map(liveTasks.map(task => [task.id, task]));
-      for (const task of getAppTasks(sessionRecord.id)) merged.set(task.id, {
+      for (const task of appTasks) merged.set(task.id, {
         id: task.id, kind: 'app', appId: task.appId, route: task.route,
         description: task.title, command: task.summary || '', status: task.status,
         isBackgrounded: true, startTime: task.createdAt, endTime: task.status === 'running' ? null : task.updatedAt,
@@ -59,10 +60,15 @@ export function createSessionTaskService({
 
     let lastJson = '';
     let timer = null;
-    const emitSnapshot = () => {
+    let revision = 0;
+    const emitSnapshot = async () => {
       timer = null;
+      const current = ++revision;
       if (sessionRecord.runtime !== runtime) return;
-      const tasks = snapshotBackgroundTasks(sessionRecord);
+      let appTasks;
+      try { appTasks = await getAppTaskHistory(sessionRecord.id); } catch { return; }
+      if (current !== revision || sessionRecord.runtime !== runtime || sessionRecord.backgroundTaskWatcherRuntime !== runtime) return;
+      const tasks = snapshotBackgroundTasks(sessionRecord, appTasks);
       const json = JSON.stringify(tasks);
       if (json === lastJson) return;
       lastJson = json;
@@ -285,7 +291,7 @@ export function createSessionTaskService({
   function registerIpc(ipcMain) {
     ipcMain.handle('agent:list-background-tasks', async (_event, { sessionId }) => {
       const sessionRecord = getSessionRecord(sessionId);
-      return { tasks: snapshotBackgroundTasks(sessionRecord) };
+      return { tasks: snapshotBackgroundTasks(sessionRecord, await getAppTaskHistory(sessionRecord.id)) };
     });
 
     ipcMain.handle('agent:task-output', async (_event, { sessionId, taskId, maxBytes }) => {

@@ -1,3 +1,4 @@
+import { abortError, requestTimeout } from '../../../app-sdk/src/errors.mjs'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -25,8 +26,11 @@ export class AppActionBroker {
 
   async invoke(runtimeRecord, actionName, input, options = {}) {
     if (options.signal?.aborted) {
-      throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+      throw abortError(options.signal)
     }
+    const startedAt = Date.now()
+    const maximum = this.supervisor.maxActionTimeoutMs || 300000
+    const initialTimeout = requestTimeout(options.timeoutMs, maximum, maximum)
     const requestId = options.requestId === undefined ? null : String(options.requestId)
     if (requestId !== null && (!requestId || requestId.length > 128)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Action request id is invalid')
@@ -44,7 +48,7 @@ export class AppActionBroker {
     }
     const pendingForRuntime = this.pendingCounts.get(runtimeRecord.key) || 0
     if (pendingForRuntime >= this.maxQueuedPerRuntime || this.pendingTotal >= this.maxQueuedTotal) {
-      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App action queue limit reached')
+      throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'App action queue limit reached')
     }
     this.pendingCounts.set(runtimeRecord.key, pendingForRuntime + 1)
     this.pendingTotal += 1
@@ -54,10 +58,23 @@ export class AppActionBroker {
     cancellation.catch(() => {})
     const abortFromCaller = () => {
       if (controller.signal.aborted) return
-      const error = new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+      const error = abortError(options.signal)
       controller.abort(error)
       rejectCancellation(error)
     }
+    let timer, deadlineAt
+    const armDeadline = duration => {
+      clearTimeout(timer)
+      deadlineAt = startedAt + duration
+      const expire = () => {
+        const error = new AppServiceError(APP_ERROR_CODES.actionTimeout, 'App action timed out')
+        controller.abort(error)
+        rejectCancellation(error)
+      }
+      if (deadlineAt <= Date.now()) expire()
+      else { timer = setTimeout(expire, deadlineAt - Date.now()); timer.unref?.() }
+    }
+    armDeadline(initialTimeout)
     options.signal?.addEventListener('abort', abortFromCaller, { once: true })
     if (requestKey) this.requests.set(requestKey, { controller, rejectCancellation })
     const validateRequest = async () => {
@@ -66,6 +83,8 @@ export class AppActionBroker {
       controller.signal.throwIfAborted()
       const action = packageInfo.manifest.backend?.actions.find((item) => item.name === actionName)
       if (!action) throw new AppServiceError(APP_ERROR_CODES.actionNotFound, `Action is not declared: ${actionName}`)
+      armDeadline(requestTimeout(options.timeoutMs, Math.min(action.timeoutMs ?? this.supervisor.actionTimeoutMs ?? 30000, maximum), maximum))
+      controller.signal.throwIfAborted()
       if (action.inputSchema) {
         const validate = this.validator(packageInfo, actionName, 'input', action.inputSchema)
         if (!validate(input)) {
@@ -82,6 +101,7 @@ export class AppActionBroker {
     try {
       await Promise.race([admission, cancellation])
     } catch (error) {
+      clearTimeout(timer)
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (requestKey) this.requests.delete(requestKey)
       this.releaseQueueSlot(runtimeRecord.key)
@@ -89,7 +109,7 @@ export class AppActionBroker {
     }
     const run = async () => {
       if (controller.signal.aborted) {
-        throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled before execution')
+        throw abortError(controller.signal)
       }
       await this.authorize(runtimeRecord)
       controller.signal.throwIfAborted()
@@ -109,7 +129,8 @@ export class AppActionBroker {
       }
       const result = await this.supervisor.invoke(runtimeRecord.key, actionName, input, {
         requestId: requestId || undefined,
-        timeoutMs: options.timeoutMs ?? activeAction.timeoutMs,
+        deadlineAt,
+        timeoutMs: Math.max(1, deadlineAt - Date.now()),
         signal: controller.signal,
         principal: options.principal,
         invocation: options.invocation,
@@ -126,20 +147,22 @@ export class AppActionBroker {
     const tail = queued.catch(() => {})
     this.queues.set(runtimeRecord.key, tail)
     tail.finally(() => {
+      clearTimeout(timer)
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (this.queues.get(runtimeRecord.key) === tail) this.queues.delete(runtimeRecord.key)
       if (requestKey) this.requests.delete(requestKey)
       this.releaseQueueSlot(runtimeRecord.key)
     })
-    return requestKey || options.signal ? Promise.race([queued, cancellation]) : queued
+    return Promise.race([queued, cancellation])
   }
 
   cancel(runtimeKey, requestId) {
     const request = this.requests.get(`${runtimeKey}:${requestId}`)
     if (!request) return this.supervisor.cancel(runtimeKey, requestId)
     if (!request.controller.signal.aborted) {
-      request.controller.abort()
-      request.rejectCancellation(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled'))
+      const error = new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+      request.controller.abort(error)
+      request.rejectCancellation(error)
     }
     return true
   }

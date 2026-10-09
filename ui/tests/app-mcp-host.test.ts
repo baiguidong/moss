@@ -17,7 +17,8 @@ async function fixture(legacy: any = { version: 1, servers: {} }) {
     installations: { get: (id: string) => installations.get(id), list: () => [...installations.values()] },
     instances: { get: (id: string) => instances.get(id), list: (appId: string) => [...instances.values()].filter(instance => instance.appId === appId) },
     appDataPath: (...parts: string[]) => path.join(...parts),
-    getActivePackage: async () => ({ manifest: { backend: { protocols: [MCP_PROTOCOL] }, permissions: ['mcp:manage', 'mcp:connect'] } }),
+    getActivePackage: async () => ({ manifest: { host: { protocols: [MCP_PROTOCOL] },
+backend: { }, permissions: ['mcp:manage', 'mcp:connect'] } }),
   }
   const addApp = (appId: string) => {
     installations.set(appId, { appId, enabled: true, activeVersion: '0.1.0', grants: ['mcp:manage', 'mcp:connect', 'mcp:read', 'mcp:auth'] })

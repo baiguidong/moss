@@ -1,3 +1,5 @@
+import type { TypedHostRequests, TypedHostSubscriptions } from './host/types.mjs'
+import type * as GeneratedHost from '../../host-contracts/src/generated.mjs'
 export type AppBackendLifecycle = 'on-demand' | 'persistent'
 export type AppOwnerScope = 'host' | 'org' | 'user'
 export interface AppOwner {
@@ -305,23 +307,9 @@ export interface PlatformFile {
   mediaUrl: string
 }
 
-export interface PlatformHostRequestMap {
-  'file.pick': { kind?: 'image' | 'video' | 'audio' | 'file'; multiple?: boolean }
-  'file.materialize': { fileName: string; dataBase64: string; transferId?: string; offset?: number; complete?: boolean }
-  'file.thumbnail': { path: string; width?: number; height?: number }
-  'file.download': { url: string; fileName: string }
-  'screen.capture': Record<string, never>
-  'shell.open-external': { url: string }
-}
+export type PlatformHostRequestMap = GeneratedHost.PlatformHostInputMap
 
-export interface PlatformHostResultMap {
-  'file.pick': { files: PlatformFile[] }
-  'file.materialize': PlatformFile | { transferId: string; complete: false; size: number }
-  'file.thumbnail': { path: string; mediaUrl: string }
-  'file.download': { canceled: boolean; filePath?: string }
-  'screen.capture': PlatformFile
-  'shell.open-external': { opened: true }
-}
+export type PlatformHostResultMap = GeneratedHost.PlatformHostOutputMap
 
 export interface AppPlatformApi {
   request<Method extends PlatformHostMethod>(
@@ -345,13 +333,8 @@ export interface OpenIMHostRequestMap {
   'conversation.group.prepare': { userIds: string[] }
 }
 
-export interface AppHostApi {
-  request<Output = unknown>(
-    protocol: AppBackendProtocol,
-    method: string,
-    input?: Record<string, unknown>,
-    options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<Output>
+export interface AppHostApi extends TypedHostRequests {
+  subscribe?: TypedHostSubscriptions<HostEventContext>['subscribe']
   on<Result = unknown>(
     protocol: AppBackendProtocol,
     name: string,
@@ -360,7 +343,7 @@ export interface AppHostApi {
 }
 
 export interface HostEventContext extends AppBackendContext {
-  host: AppHostApi
+  host: AppHostApi & TypedHostSubscriptions<HostEventContext>
   signal: AbortSignal
   eventId: string
   name: string
@@ -382,6 +365,7 @@ export interface AppManifestV2 {
   description: string
   icon: string
   hostApi: string
+  host?: { protocols: AppBackendProtocol[] }
   publisher?: { id: string; name: string }
   ui?: { entry: string; window: { width: number; height: number; resizable: boolean } }
   backend?: {
@@ -389,8 +373,6 @@ export interface AppManifestV2 {
     runtime: 'node'
     apiVersion: 1
     lifecycle: AppBackendLifecycle
-    /** Host protocols used by the Backend. */
-    protocols?: AppBackendProtocol[]
     actions: AppActionManifest[]
     configuration?: { schema?: string; secrets?: string }
   }
@@ -427,7 +409,7 @@ export interface AppBackendContext {
   protocols: AppBackendProtocol[]
   permissions: string[]
   grants: string[]
-  host: AppHostApi
+  host: AppHostApi & TypedHostSubscriptions<HostEventContext>
   account: AppAccountApi
   agent: AppAgentApi
   platform: AppPlatformApi
@@ -475,6 +457,9 @@ export interface AppUiApi {
     list(): Promise<string[]>
   }
   host: {
+    subscribe(protocol: AppBackendProtocol, name: string, subscriptionId: string): Promise<AppCallResult<{ subscriptionId: string }>>
+    unsubscribe(subscriptionId: string): Promise<unknown>
+    onEvent(callback: (event: { subscriptionId: string; data?: unknown; context?: { eventId: string; protocol: string; name: string }; closed?: boolean }) => void): () => void
     request<Output = unknown>(protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number }): Promise<AppCallResult<Output>>
     cancel(requestId: string): Promise<{ cancelled: boolean }>
   }
@@ -499,7 +484,7 @@ export class AppBackendClient {
   requestPlatformHost<Method extends PlatformHostMethod>(method: Method, input: PlatformHostRequestMap[Method], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<PlatformHostResultMap[Method]>
   requestHost<Output = unknown>(protocol: AppBackendProtocol, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<Output>
   onHostEvent<Result = unknown>(protocol: AppBackendProtocol, name: string, handler: (data: Record<string, unknown>, context: HostEventContext) => Result | Promise<Result>): () => void
-  readonly host: AppHostApi
+  readonly host: AppHostApi & TypedHostSubscriptions<HostEventContext>
   readonly account: AppAccountApi
   readonly agent: AppAgentApi
   readonly platform: AppPlatformApi
@@ -574,7 +559,7 @@ export function requireHostPermission(permissions: string[], requiredPermission?
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
 export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
 export function validateAppToolInputSchema(schema: unknown, fieldName?: string): Record<string, unknown> & { type: 'object' }
-export function resolveBackendProtocols(backend: AppManifestV2['backend']): AppBackendProtocol[]
+export function resolveAppProtocols(manifest: AppManifestV2): AppBackendProtocol[]
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>
 export function compileJsonSchema(schema: unknown, options?: { removeAdditional?: boolean }): ((value: unknown) => boolean) & { errors?: unknown[] }
 
@@ -587,46 +572,13 @@ export function createBackendTestHarness(actions?: Record<string, AppActionHandl
 
 /** Cloud storage is separate from App KV, local libraries and workspaces. */
 export const MOSS_CLOUD_STORAGE_PROTOCOL: 'moss.cloud-storage/v1'
-export interface CloudShare {
-  id: string; fileId: string; name: string; size: number; url: string; accessCode: string | null;
-  createdAt: number; expiresAt: number | null; revokedAt: number | null;
-  state: 'active' | 'expired' | 'revoked' | 'unavailable'
-}
+export type CloudShare = GeneratedHost.CloudShare
 export type CloudStoragePermission = 'cloud-storage:share' | 'cloud-storage:read' | 'cloud-storage:write' | 'cloud-storage:delete'
 export type CloudStorageState = 'remote_disabled' | 'unauthenticated' | 'unconfigured' | 'disabled' | 'unsupported' | 'unavailable' | 'target_mismatch' | 'forbidden' | 'ready'
-export interface CloudFile {
-  id: string; parentId: string | null; name: string; kind: 'file' | 'folder'; size: number;
-  revision: string; createdAt: number; updatedAt: number
-}
-export interface CloudTransfer {
-  id: string; transferId: string; direction: 'upload' | 'download'; name: string; fileId: string | null;
-  state: 'queued' | 'running' | 'paused' | 'cancelled' | 'completed';
-  totalBytes: number; transferredBytes: number; error: string | null; createdAt: number; updatedAt: number
-}
-export interface CloudStorageInputMap {
-  'shares.create': { fileId: string; requestKey: string; expiresAt: number | null; accessCode?: string | null };
-  'shares.list': { fileId?: string; cursor?: string; limit?: number }; 'shares.revoke': { shareId: string };
-  'status.get': Record<string, never>; 'quota.get': Record<string, never>;
-  'files.list': { parentId?: string | null; cursor?: string; limit?: number };
-  'files.get': { fileId: string }; 'folders.create': { name: string; parentId?: string | null };
-  'files.update': { fileId: string; name?: string; parentId?: string | null }; 'files.delete': { fileId: string };
-  'local-files.pick': Record<string, never>;
-  'uploads.start': { handle: string; parentId?: string | null; name?: string };
-  'downloads.start': { fileId: string }; 'transfers.list': { cursor?: string; limit?: number };
-  'transfers.get': { transferId: string }; 'transfers.pause': { transferId: string };
-  'transfers.resume': { transferId: string }; 'transfers.cancel': { transferId: string };
-}
-export interface CloudStorageOutputMap {
-  'shares.create': CloudShare; 'shares.revoke': CloudShare; 'shares.list': { shares: CloudShare[]; nextCursor: string | null };
-  'status.get': { state: CloudStorageState; version?: number };
-  'quota.get': { usedBytes: number; reservedBytes: number; limitBytes: number };
-  'files.list': { files: CloudFile[]; nextCursor: string | null };
-  'files.get': CloudFile; 'folders.create': CloudFile; 'files.update': CloudFile; 'files.delete': { ok: true };
-  'local-files.pick': { files: Array<{ handle: string; name: string; size: number }> };
-  'uploads.start': { transferId: string }; 'downloads.start': { transferId: string };
-  'transfers.list': { transfers: CloudTransfer[]; nextCursor: string | null }; 'transfers.get': CloudTransfer;
-  'transfers.pause': CloudTransfer; 'transfers.resume': CloudTransfer; 'transfers.cancel': CloudTransfer;
-}
+export type CloudFile = GeneratedHost.CloudFile
+export type CloudTransfer = GeneratedHost.CloudTransfer
+export type CloudStorageInputMap = GeneratedHost.CloudStorageHostInputMap
+export type CloudStorageOutputMap = GeneratedHost.CloudStorageHostOutputMap
 export type CloudStorageMethod = keyof CloudStorageInputMap
 export const CLOUD_STORAGE_HOST_METHOD_PERMISSIONS: Readonly<Record<CloudStorageMethod, CloudStoragePermission>>
 export const CLOUD_STORAGE_HOST_METHODS: readonly CloudStorageMethod[]

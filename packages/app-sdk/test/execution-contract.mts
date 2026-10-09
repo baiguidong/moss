@@ -40,3 +40,19 @@ import '../src/schemas/index.mjs'
 import '../src/testing/index.mjs'
 import '../src/ui/index.mjs'
 import '../src/mcp/index.mjs'
+
+import { createAppClient } from '@moss/app-sdk/ui'
+import type { AppUiApi } from '@moss/app-sdk'
+declare const bridge: AppUiApi
+const ui = createAppClient(bridge)
+const runtimePath: string | null = (await ui.host.request('moss.runtimes/v1', 'python.get', {})).path
+const capabilities = await backend.host.request('moss.host/v1', 'capabilities.get', {})
+const allowed: boolean = capabilities.capabilities[0].allowed
+await backend.host.subscribe('moss.tasks/v1', 'task.changed', data => { const id: string = data.task.id })
+await ui.host.subscribe('moss.tasks/v1', 'task.changed', data => { const revision: number = data.task.revision })
+// @ts-expect-error Known protocols cannot bypass method checking through the custom overload.
+await ui.host.request('moss.tasks/v1', 'misspelled', {})
+// @ts-expect-error Backend inputs come from the same contracts.
+await backend.host.request('moss.local-files/v1', 'open', { path: 12 })
+// @ts-expect-error UI event payloads are typed.
+await ui.host.subscribe('moss.tasks/v1', 'task.changed', data => data.execution)

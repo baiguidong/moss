@@ -11,7 +11,7 @@ describe('App Builder runtime guidance', () => {
     )
 
     expect(prompt).toContain('App 安装后自动启用')
-    expect(prompt).toContain('`backend.protocols` 数组')
+    expect(prompt).toContain('`host.protocols` 数组')
   })
 
   it('keeps the Skill conversion template free of location concepts', async () => {
@@ -35,13 +35,14 @@ describe('App Builder runtime guidance', () => {
         version: '1.0.0',
         displayName: 'Example App',
         hostApi: '^3.0.0',
-        backend: {
+        host: { protocols: ['moss.platform/v1'] },
+backend: {
           entry: 'dist/backend/main.mjs',
           runtime: 'node',
           apiVersion: 1,
           lifecycle: 'persistent',
 
-          protocols: ['moss.platform/v1'],
+
           actions: [],
         },
         permissions: [],

@@ -86,8 +86,9 @@ async function setup() {
   await fs.writeFile(path.join(source, 'app.moss.json'), JSON.stringify({
     schemaVersion: 2, id: appId, version: '1.0.0', displayName: 'Execution fixture', hostApi: '^3.0.0',
     permissions,
-    backend: { entry: 'main.mjs', runtime: 'node', apiVersion: 1, lifecycle: 'on-demand',
-      protocols: [T, E], actions: [{ name: 'request' }] },
+    host: { protocols: [T, E] },
+backend: { entry: 'main.mjs', runtime: 'node', apiVersion: 1, lifecycle: 'on-demand',
+       actions: [{ name: 'request' }] },
   }))
   const sdkUrl = new URL('../../packages/app-sdk/src/index.mjs', import.meta.url).href
   await fs.writeFile(path.join(source, 'main.mjs'), `

@@ -50,7 +50,7 @@ docker compose restart server
 
 **App 接入**
 
-Manifest 声明 `hostApi: "^2.2.0"`，在 `backend.protocols` 中加入 `moss.cloud-storage/v1`，并声明所需权限：
+Manifest 声明 `hostApi: "^3.0.0"`，在 `host.protocols` 中加入 `moss.cloud-storage/v1`，并声明所需权限：
 
 | 权限 | 操作 |
 | --- | --- |

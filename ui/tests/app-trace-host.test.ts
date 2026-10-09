@@ -22,7 +22,8 @@ async function fixture() {
     installations: { get: () => installed ? installation : null },
     instances: { get: () => installed ? instance : null, list: () => installed ? [instance] : [] },
     appDataPath: (...parts: string[]) => path.join(...parts),
-    getActivePackage: async () => ({ manifest: { permissions: ['trace:capture'], backend: { protocols: ['moss.trace/v1'] } } }),
+    getActivePackage: async () => ({ manifest: { permissions: ['trace:capture'], host: { protocols: ['moss.trace/v1'] },
+backend: { } } }),
   }
   const host = new AppTraceHost({ mossHome: home, getRuntime: () => runtime, getCore: async () => ({ ...output, toTraceMessages }) })
   const directory = path.join(runtime.dataDir, 'moss.trace', 'instances', id, 'trace')

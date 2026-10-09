@@ -11,7 +11,7 @@ const task = record({
   status: { enum: ['running', ...settled] }, revision: positive, scopeRef: string, attempt: positive,
   limits, createdAt: positive, updatedAt: positive, deadlineAt: positive,
   sessionId: string, workspace: { type: 'string' }, executionCount: count, tokens: count,
-  summary: { type: 'string' }, progress: { type: 'number', minimum: 0, maximum: 1 }, result: {}, error: { type: 'string' },
+  expiresAt: count, summary: { type: 'string' }, progress: { type: 'number', minimum: 0, maximum: 1 }, result: {}, error: { type: 'string' },
 }, ['id', 'appId', 'instanceId', 'title', 'route', 'status', 'revision', 'scopeRef', 'attempt',
   'limits', 'createdAt', 'updatedAt', 'deadlineAt', 'sessionId', 'executionCount', 'tokens'])
 const execution = record({
@@ -28,7 +28,8 @@ export const executionOutputs = {
   capabilities: record({ environment: { const: 'local' }, structuredOutput: { type: 'boolean' },
     contextReuse: { type: 'boolean' }, maxConcurrency: positive, events: { type: 'boolean' } }),
   task,
-  'task.list': record({ tasks: { type: 'array', items: task, maxItems: 10 } }),
+  'task.list': record({ tasks: { type: 'array', items: task, maxItems: 10 }, nextCursor: { anyOf: [string,{type:'null'}] } }),
+  'task.changes': record({ changes: {type:'array', maxItems:100, items:record({cursor:string,task})}, nextCursor:string, reset:{type:'boolean'}, hasMore:{type:'boolean'} }),
   execution,
   'execution.list': record({ executions: { type: 'array', items: execution, maxItems: 256 } }),
   'execution.events': record({ events: { type: 'array', items: event, maxItems: 200 }, earliestSequence: count }),
@@ -39,7 +40,7 @@ export const executionOutputs = {
 
 export const executionTypes = { TaskLimits: limits, AppTaskSummary: task, AppExecutionSummary: execution, AppExecutionEvent: event, TaskChangedEvent: executionOutputs['task.changed'], ExecutionChangedEvent: executionOutputs['execution.changed'] }
 
-export const executionLimits = Object.freeze({ maxConcurrency: 16, maxCalls: 256, maxDurationMs: 1_800_000, maxTokens: 2_000_000, resultPreviewBytes: 32768, resultChunkUnits: 100_000, eventHistory: 2000 })
+export const executionLimits = Object.freeze({ maxConcurrency: 16, maxCalls: 256, maxDurationMs: 1_800_000, maxTokens: 2_000_000, resultPreviewBytes: 32768, resultChunkUnits: 100_000, eventHistory: 2000, retentionMs: 30 * 86400000, changeRetentionMs: 7 * 86400000, changeHistory: 10000, activeTasks: 512 })
 const text = (maxLength = 512) => ({ type: 'string', minLength: 1, maxLength, pattern: '^(?=[\\s\\S]*\\S)[^\\u0000]*$' })
 const taskId = { taskId: text() }, executionId = { executionId: text() }
 const partialLimits = record(Object.fromEntries(['maxConcurrency', 'maxCalls', 'maxDurationMs', 'maxTokens'].map(key => [key, { ...positive, maximum: executionLimits[key] }])), [])
@@ -53,7 +54,8 @@ export const executionContracts = {
     methods: {
       'task.create': method('tasks:write', record({ idempotencyKey: text(), title: text(), route, limits: partialLimits }, ['idempotencyKey', 'title']), task, { idempotency: 'key' }),
       'task.get': method('tasks:read', record(taskId), task),
-      'task.list': method('tasks:read', record({ offset: count, limit: { ...positive, maximum: 10 } }, []), executionOutputs['task.list']),
+      'task.list': method('tasks:read', record({ cursor: text(2048), limit: { ...positive, maximum: 10 } }, []), executionOutputs['task.list']),
+      'task.changes': method('tasks:read', record({afterCursor:text(2048),limit:{...positive,maximum:100}},[]), executionOutputs['task.changes'], {limits:{retentionMs:executionLimits.changeRetentionMs,maxChanges:executionLimits.changeHistory}}),
       'task.update': method('tasks:write', record({ ...taskId, revision: positive, summary, progress: { type: 'number', minimum: 0, maximum: 1 } }, ['taskId', 'revision']), task),
       'task.finish': method('tasks:write', record({ ...taskId, revision: positive, status: { enum: ['completed', 'failed'] }, summary, result: {} }, ['taskId', 'revision', 'status']), task, { limits: { resultPreviewBytes: executionLimits.resultPreviewBytes } }),
       'task.cancel': method('tasks:cancel', record({ ...taskId, reason }, ['taskId']), task),

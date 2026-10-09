@@ -38,7 +38,7 @@ After App Builder accepts the action contract, read [backend-generation.md](refe
 
 - Each App runs at most one Host-managed Backend process and has one App enable switch.
 - Declare each action in `app.moss.json.backend.actions`.
-- Declare the required Host protocols as a flat `backend.protocols` array and include only fields used by the generated App.
+- Declare the required Host protocols as a flat `host.protocols` array and include only fields used by the generated App.
 - Implement the child-process protocol with `@moss/app-sdk`.
 - Bundle all runtime dependencies; never run a package manager or install hook at runtime.
 - Never expose a general shell, arbitrary executable, arbitrary arguments, arbitrary working directory, code runner, Skill runner, or prompt runner.

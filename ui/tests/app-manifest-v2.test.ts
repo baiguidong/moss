@@ -5,7 +5,7 @@ import {
   APP_MANIFEST_SCHEMA,
   AppBackendClient,
   createEnvelope,
-  resolveBackendProtocols,
+  resolveAppProtocols,
   validateAppManifest,
 } from '../../packages/app-sdk/src/index.mjs'
 
@@ -92,15 +92,16 @@ describe('App manifest V2', () => {
     const backend = {
       entry: 'dist/backend.mjs', runtime: 'node', apiVersion: 1,
       lifecycle: 'persistent',
-      protocols: ['moss.agent/v1'], actions: [],
+      actions: [],
     }
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
       backend,
+      host: { protocols: ['moss.agent/v1'] },
       permissions: ['agent:turns:write'],
-    }).backend?.protocols).toEqual(['moss.agent/v1'])
-    expect(resolveBackendProtocols(backend)).toEqual(['moss.agent/v1'])
+    }).host?.protocols).toEqual(['moss.agent/v1'])
+    expect(resolveAppProtocols({ host: { protocols: ['moss.agent/v1'] } })).toEqual(['moss.host/v1', 'moss.agent/v1'])
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
@@ -110,20 +111,23 @@ describe('App manifest V2', () => {
     expect(validateAppManifest({
       ...valid,
       ui: undefined,
-      backend: { ...backend, protocols: ['moss.unknown/v1'] },
+      host: { protocols: ['moss.unknown/v1'] },
+backend: { ...backend, },
       permissions: ['unknown:read'],
-    }).backend?.protocols).toEqual(['moss.unknown/v1'])
+    }).host?.protocols).toEqual(['moss.unknown/v1'])
     expect(() => validateAppManifest({
       ...valid,
       ui: undefined,
-      backend: { ...backend, protocols: ['Moss Unknown'] },
+      host: { protocols: ['Moss Unknown'] },
+backend: { ...backend, },
       permissions: [],
     })).toThrow(/protocols/)
 
     expect(() => validateAppManifest({
       ...valid,
       ui: undefined,
-      backend: { ...backend, protocols: { invalid: ['moss.agent/v1'] } },
+      host: { protocols: { invalid: ['moss.agent/v1'] } },
+backend: { ...backend, },
     })).toThrow(/protocols/)
   })
 

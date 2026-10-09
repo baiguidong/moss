@@ -1,3 +1,4 @@
+import { abortError, requestTimeout } from '../errors.mjs'
 import { createHash, randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import {
@@ -41,14 +42,8 @@ import {
   validateHostProtocol,
 } from '../host/index.mjs'
 
-const DEFAULT_HOST_TIMEOUT_MS = 30_000
-const MAX_HOST_TIMEOUT_MS = 300_000
 const MAX_HOST_REPLY_CACHE_ENTRIES = 128
 
-function boundedTimeout(value, fallback = DEFAULT_HOST_TIMEOUT_MS) {
-  const parsed = Number(value ?? fallback)
-  return Math.max(100, Math.min(Number.isFinite(parsed) ? parsed : fallback, MAX_HOST_TIMEOUT_MS))
-}
 
 function hostError(payload, fallbackMessage, fallbackCode = APP_ERROR_CODES.hostUnavailable) {
   const error = payload?.error || {}
@@ -78,6 +73,7 @@ export class AppBackendClient {
     this.actions = new Map()
     this.controllers = new Map()
     this.hostHandlers = new Map()
+    this.hostSubscribers = new Map()
     this.hostRequests = new Map()
     this.hostEvents = new Map()
     this.hostEventReplies = new Map()
@@ -88,7 +84,7 @@ export class AppBackendClient {
     this.onInitialize = options.onInitialize || null
     this.onShutdown = options.onShutdown || null
     this.onFatalError = options.onFatalError || null
-    this.hostRequestTimeoutMs = boundedTimeout(options.hostRequestTimeoutMs)
+    this.hostRequestTimeoutMs = requestTimeout(options.hostRequestTimeoutMs)
     this.maxPendingHostRequests = Math.max(1, Number(options.maxPendingHostRequests) || 32)
     this.maxActiveHostEvents = Math.max(1, Number(options.maxActiveHostEvents) || 32)
     this.send = options.send || ((message) => process.send?.(message))
@@ -110,6 +106,32 @@ export class AppBackendClient {
     this.host = Object.freeze({
       request: (protocol, method, input, requestOptions) => this.requestHost(protocol, method, input, requestOptions),
       on: (protocol, name, handler) => this.onHostEvent(protocol, name, handler),
+      subscribe: async (protocol, name, handler, options = {}) => {
+        if (typeof handler !== 'function') throw new TypeError('Host event handler must be a function')
+        if (options.signal?.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled')
+        const key = hostHandlerKey(protocol, name)
+        let group = this.hostSubscribers.get(key)
+        if (!group) {
+          const listeners = new Set()
+          const off = this.onHostEvent(protocol, name, async (data, context) => {
+            await Promise.all([...listeners].map(async entry => {
+              try { await entry.handler(data, context) }
+              catch (error) { try { await entry.onError?.(error) } catch {} }
+            }))
+          })
+          group = { listeners, off }; this.hostSubscribers.set(key, group)
+        }
+        const entry = { handler, onError: options.onError }
+        group.listeners.add(entry)
+        const dispose = () => {
+          group.listeners.delete(entry)
+          if (!group.listeners.size) { group.off(); if (this.hostSubscribers.get(key) === group) this.hostSubscribers.delete(key) }
+          options.signal?.removeEventListener('abort', dispose)
+        }
+        entry.dispose = dispose
+        options.signal?.addEventListener('abort', dispose, { once: true })
+        return dispose
+      },
     })
   }
 
@@ -213,14 +235,14 @@ export class AppBackendClient {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, `${label} is not initialized`)
     }
     if (this.hostRequests.size >= this.maxPendingHostRequests) {
-      throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, `${label} request limit reached`)
+      throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, `${label} request limit reached`)
     }
     requireHostProtocol(this.context.protocols, protocol)
     const requestId = String(options.requestId || randomUUID())
     if (!requestId || requestId.length > 128 || this.hostRequests.has(requestId)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `${label} request id is invalid or duplicated`)
     }
-    const timeoutMs = boundedTimeout(options.timeoutMs, this.hostRequestTimeoutMs)
+    const timeoutMs = requestTimeout(options.timeoutMs, this.hostRequestTimeoutMs)
     let message
     try {
       message = createEnvelope('host.request', {
@@ -247,7 +269,7 @@ export class AppBackendClient {
       }
       const cancel = (error) => {
         try {
-          this.send(createEnvelope('host.cancel', { protocol, requestId, ...this.identity() }))
+          this.send(createEnvelope('host.cancel', { protocol, requestId, reason: error.code === APP_ERROR_CODES.hostTimeout ? APP_ERROR_CODES.hostTimeout : APP_ERROR_CODES.actionCanceled, ...this.identity() }))
         } catch {} finally {
           finish(error)
         }
@@ -256,7 +278,7 @@ export class AppBackendClient {
         new AppServiceError(APP_ERROR_CODES.hostTimeout, `${label} request timed out after ${timeoutMs}ms`),
       ), timeoutMs)
       timer.unref?.()
-      const abortHandler = () => cancel(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request canceled'))
+      const abortHandler = () => cancel(abortError(options.signal))
       this.hostRequests.set(requestId, { resolve, reject, timer, signal: options.signal, abortHandler, finish, protocol })
       if (options.signal?.aborted) return abortHandler()
       options.signal?.addEventListener('abort', abortHandler, { once: true })
@@ -292,6 +314,7 @@ export class AppBackendClient {
 
   closeHost(error = new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host disconnected')) {
     this.hostClosed = true
+    for (const group of this.hostSubscribers.values()) for (const entry of [...group.listeners]) entry.dispose()
     for (const pending of [...this.hostRequests.values()]) pending.finish(error)
     for (const active of this.hostEvents.values()) {
       active.canceled = true

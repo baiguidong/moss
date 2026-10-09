@@ -168,6 +168,7 @@ export async function createAppRuntime(options) {
   const runtime = new AppRuntimeHost({
     rootDir: options.mossHome,
     beforeAppDeactivation: options.beforeAppDeactivation,
+    capabilityAvailability: options.capabilityAvailability,
     appsDir: options.appsDir,
     dataDir: path.join(options.mossHome, 'apps-data'),
     runtimeDir: path.join(options.mossHome, 'apps-runtime'),

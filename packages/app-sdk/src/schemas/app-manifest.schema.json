@@ -4,23 +4,69 @@
   "title": "Moss App Manifest V2",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schemaVersion", "id", "version", "displayName", "hostApi", "permissions"],
-  "anyOf": [{ "required": ["ui"] }, { "required": ["backend"] }],
+  "required": [
+    "schemaVersion",
+    "id",
+    "version",
+    "displayName",
+    "hostApi",
+    "permissions"
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "ui"
+      ]
+    },
+    {
+      "required": [
+        "backend"
+      ]
+    }
+  ],
   "properties": {
-    "schemaVersion": { "const": 2 },
-    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$" },
-    "version": { "type": "string" },
-    "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
-    "description": { "type": "string", "maxLength": 2000 },
-    "icon": { "type": "string" },
-    "hostApi": { "type": "string" },
+    "schemaVersion": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$"
+    },
+    "version": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "icon": {
+      "type": "string"
+    },
+    "hostApi": {
+      "type": "string"
+    },
     "publisher": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 120 }
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
       }
     },
     "permissions": {
@@ -42,14 +88,40 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "title"],
+            "required": [
+              "id",
+              "title"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "route": { "type": "string", "pattern": "^#/", "maxLength": 256 },
-              "icon": { "type": "string", "maxLength": 80 },
-              "order": { "type": "integer", "minimum": -10000, "maximum": 10000 },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "route": {
+                "type": "string",
+                "pattern": "^#/",
+                "maxLength": 256
+              },
+              "icon": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "order": {
+                "type": "integer",
+                "minimum": -10000,
+                "maximum": 10000
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
             }
           }
         },
@@ -58,13 +130,36 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "title", "viewId"],
+            "required": [
+              "id",
+              "title",
+              "viewId"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "viewId": { "type": "string", "maxLength": 80 },
-              "order": { "type": "integer", "minimum": -10000, "maximum": 10000 },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "viewId": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "order": {
+                "type": "integer",
+                "minimum": -10000,
+                "maximum": 10000
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
             }
           }
         },
@@ -73,15 +168,42 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "title", "action"],
+            "required": [
+              "id",
+              "title",
+              "action"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
-              "description": { "type": "string", "maxLength": 1000 },
-              "listAction": { "type": "string", "minLength": 1 },
-              "action": { "type": "string", "maxLength": 128 },
-              "inputSchema": { "type": "string" },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "listAction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "action": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "inputSchema": {
+                "type": "string"
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
             }
           }
         },
@@ -90,16 +212,52 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "title", "description", "action", "inputSchema", "effect"],
+            "required": [
+              "id",
+              "title",
+              "description",
+              "action",
+              "inputSchema",
+              "effect"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 64 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
-              "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
-              "action": { "type": "string", "maxLength": 128 },
-              "inputSchema": { "type": "string" },
-              "outputSchema": { "type": "string" },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 },
-              "effect": { "enum": ["read", "write", "destructive"] }
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 64
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "action": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "inputSchema": {
+                "type": "string"
+              },
+              "outputSchema": {
+                "type": "string"
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "effect": {
+                "enum": [
+                  "read",
+                  "write",
+                  "destructive"
+                ]
+              }
             }
           }
         },
@@ -108,19 +266,44 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "schemes", "resolveAction"],
+            "required": [
+              "id",
+              "schemes",
+              "resolveAction"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
               "schemes": {
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
-                "items": { "type": "string", "pattern": "^[a-z][a-z0-9+.-]{1,31}$" }
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9+.-]{1,31}$"
+                }
               },
-              "resolveAction": { "type": "string", "maxLength": 128 },
-              "listAction": { "type": "string", "maxLength": 128 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
+              "resolveAction": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "listAction": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
             }
           }
         },
@@ -129,13 +312,38 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["id", "title", "viewId", "placement"],
+            "required": [
+              "id",
+              "title",
+              "viewId",
+              "placement"
+            ],
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 80 },
-              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "viewId": { "type": "string", "maxLength": 80 },
-              "placement": { "enum": ["overlay", "status"] },
-              "permission": { "type": "string", "minLength": 1, "maxLength": 160 }
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "viewId": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "placement": {
+                "enum": [
+                  "overlay",
+                  "status"
+                ]
+              },
+              "permission": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
             }
           }
         }
@@ -144,16 +352,31 @@
     "ui": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["entry"],
+      "required": [
+        "entry"
+      ],
       "properties": {
-        "entry": { "type": "string", "minLength": 1 },
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        },
         "window": {
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "width": { "type": "integer", "minimum": 320, "maximum": 3840 },
-            "height": { "type": "integer", "minimum": 240, "maximum": 2160 },
-            "resizable": { "type": "boolean" }
+            "width": {
+              "type": "integer",
+              "minimum": 320,
+              "maximum": 3840
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 240,
+              "maximum": 2160
+            },
+            "resizable": {
+              "type": "boolean"
+            }
           }
         }
       }
@@ -161,34 +384,58 @@
     "backend": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["entry", "runtime", "apiVersion", "lifecycle", "actions"],
+      "required": [
+        "entry",
+        "runtime",
+        "apiVersion",
+        "lifecycle",
+        "actions"
+      ],
       "properties": {
-        "entry": { "type": "string", "minLength": 1 },
-        "runtime": { "const": "node" },
-        "apiVersion": { "const": 1 },
-        "lifecycle": { "enum": ["on-demand", "persistent"] },
-        "instanceMode": { "const": "single", "description": "Legacy field; each App has one Backend and new manifests omit this field." },
-        "protocols": {
-          "description": "Host protocols used by the Backend.",
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "maxLength": 100,
-            "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$"
-          }
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "const": "node"
+        },
+        "apiVersion": {
+          "const": 1
+        },
+        "lifecycle": {
+          "enum": [
+            "on-demand",
+            "persistent"
+          ]
+        },
+        "instanceMode": {
+          "const": "single",
+          "description": "Legacy field; each App has one Backend and new manifests omit this field."
         },
         "actions": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "properties": {
-              "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$" },
-              "inputSchema": { "type": "string" },
-              "outputSchema": { "type": "string" },
-              "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 }
+              "name": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              },
+              "inputSchema": {
+                "type": "string"
+              },
+              "outputSchema": {
+                "type": "string"
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 300000
+              }
             }
           }
         },
@@ -196,8 +443,31 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "schema": { "type": "string" },
-            "secrets": { "type": "string" }
+            "schema": {
+              "type": "string"
+            },
+            "secrets": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocols"
+      ],
+      "properties": {
+        "protocols": {
+          "description": "Host protocols used by this App UI and Backend.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$"
           }
         }
       }

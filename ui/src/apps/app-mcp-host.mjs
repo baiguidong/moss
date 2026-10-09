@@ -164,7 +164,7 @@ export class AppMcpHost {
       const current = new Set()
       for (const installation of runtime.installations.list()) {
         const pkg = await runtime.getActivePackage(installation.appId).catch(() => null)
-        if (!pkg?.manifest.backend?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
+        if (!pkg?.manifest.host?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
         for (const instance of runtime.instances.list(installation.appId)) {
           const context = { appId: installation.appId, instanceId: instance.id, version: installation.activeVersion,
             dataDir: runtime.appDataPath(runtime.dataDir, installation.appId, 'instances', instance.id) }

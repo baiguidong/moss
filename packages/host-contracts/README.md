@@ -1,12 +1,13 @@
 # Generated Host contracts
 
-Source: `src/execution.mjs`, `src/mcp.mjs`. Run `node scripts/generate.mjs --check` in CI.
+Source: `src/*` contract modules. DTO definitions: [generated types](src/generated.d.mts). Run `node scripts/generate.mjs --check` in CI.
 
 | Protocol / method | Permission | Input fields (* required) | Caller | Semantics / limits |
 | --- | --- | --- | --- | --- |
 | moss.tasks/v1 / task.create | tasks:write | idempotencyKey*, title*, route, limits | ui, backend | idempotency: key |
 | moss.tasks/v1 / task.get | tasks:read | taskId* | ui, backend |  |
-| moss.tasks/v1 / task.list | tasks:read | offset, limit | ui, backend |  |
+| moss.tasks/v1 / task.list | tasks:read | cursor, limit | ui, backend |  |
+| moss.tasks/v1 / task.changes | tasks:read | afterCursor, limit | ui, backend | {"retentionMs":604800000,"maxChanges":10000} |
 | moss.tasks/v1 / task.update | tasks:write | taskId*, revision*, summary, progress | ui, backend |  |
 | moss.tasks/v1 / task.finish | tasks:write | taskId*, revision*, status*, summary, result | ui, backend | {"resultPreviewBytes":32768} |
 | moss.tasks/v1 / task.cancel | tasks:cancel | taskId*, reason | ui, backend |  |
@@ -25,3 +26,50 @@ Source: `src/execution.mjs`, `src/mcp.mjs`. Run `node scripts/generate.mjs --che
 | moss.mcp/v1 / servers.inspect | mcp:connect | name* | ui, backend | {"servers":100,"configBytes":65536} |
 | moss.mcp/v1 / auth.start | mcp:auth | name* | ui, backend | {"servers":100,"configBytes":65536} |
 | moss.mcp/v1 / auth.clear | mcp:auth | name* | ui, backend | {"servers":100,"configBytes":65536} |
+| moss.local-files/v1 / pick | local-files:pick | kind, multiple | ui, backend |  |
+| moss.local-files/v1 / open | local-files:open | path* | ui, backend |  |
+| moss.local-files/v1 / reveal | local-files:open | path* | ui, backend |  |
+| moss.runtimes/v1 / python.get | null | {} | ui, backend |  |
+| moss.platform/v1 / file.pick | platform:files | kind, multiple | ui, backend | {"fileBytes":104857600,"inlineBase64Length":524288,"pickedFiles":100,"imageDimension":4096} |
+| moss.platform/v1 / file.materialize | platform:files | fileName*, dataBase64*, transferId, offset, complete | ui, backend | byte; {"fileBytes":104857600,"inlineBase64Length":524288,"pickedFiles":100,"imageDimension":4096} |
+| moss.platform/v1 / file.thumbnail | platform:files | path*, width, height | ui, backend |  |
+| moss.platform/v1 / file.download | platform:files | url*, fileName* | ui, backend | {"fileBytes":104857600} |
+| moss.platform/v1 / screen.capture | platform:screen-capture | {} | ui, backend |  |
+| moss.platform/v1 / shell.open-external | platform:external-links | url* | ui, backend |  |
+| moss.audit/v1 / source.capture | audit:read | {} | ui, backend |  |
+| moss.audit/v1 / session.open | audit:navigate | sessionId*, toolUseId | ui, backend |  |
+| moss.audit/v1 / notification.publish | audit:notify | id*, severity*, title*, message*, details | ui, backend |  |
+| moss.trace/v1 / status | trace:capture | {} | ui, backend |  |
+| moss.cloud-storage/v1 / status.get | cloud-storage:read | {} | ui, backend |  |
+| moss.cloud-storage/v1 / quota.get | cloud-storage:read | {} | ui, backend |  |
+| moss.cloud-storage/v1 / files.list | cloud-storage:read | parentId, cursor, limit | ui, backend |  |
+| moss.cloud-storage/v1 / files.get | cloud-storage:read | fileId* | ui, backend |  |
+| moss.cloud-storage/v1 / folders.create | cloud-storage:write | name*, parentId | ui, backend |  |
+| moss.cloud-storage/v1 / files.update | cloud-storage:write | fileId*, name, parentId | ui, backend |  |
+| moss.cloud-storage/v1 / files.delete | cloud-storage:delete | fileId* | ui, backend |  |
+| moss.cloud-storage/v1 / local-files.pick | cloud-storage:write | {} | ui, backend |  |
+| moss.cloud-storage/v1 / uploads.start | cloud-storage:write | handle*, name, parentId | ui, backend |  |
+| moss.cloud-storage/v1 / downloads.start | cloud-storage:read | fileId* | ui, backend |  |
+| moss.cloud-storage/v1 / transfers.list | cloud-storage:read | cursor, limit | ui, backend |  |
+| moss.cloud-storage/v1 / transfers.get | cloud-storage:read | transferId* | ui, backend |  |
+| moss.cloud-storage/v1 / transfers.pause | cloud-storage:read | transferId* | ui, backend |  |
+| moss.cloud-storage/v1 / transfers.resume | cloud-storage:read | transferId* | ui, backend |  |
+| moss.cloud-storage/v1 / transfers.cancel | cloud-storage:read | transferId* | ui, backend |  |
+| moss.cloud-storage/v1 / shares.create | cloud-storage:share | fileId*, requestKey*, expiresAt*, accessCode | ui, backend | idempotency: requestKey |
+| moss.cloud-storage/v1 / shares.list | cloud-storage:share | fileId, cursor, limit | ui, backend |  |
+| moss.cloud-storage/v1 / shares.revoke | cloud-storage:share | shareId* | ui, backend |  |
+| moss.host/v1 / capabilities.get | null | protocols | ui, backend |  |
+
+## Events
+
+| Protocol / event | Permission | Payload |
+| --- | --- | --- |
+| moss.tasks/v1 / task.changed | tasks:read | TaskChangedEvent |
+| moss.agent-execution/v1 / execution.changed | execution:read | ExecutionChangedEvent |
+| moss.cloud-storage/v1 / transfers.progress | cloud-storage:read | CloudTransfer |
+| moss.cloud-storage/v1 / transfers.changed | cloud-storage:read | CloudTransfer |
+| moss.cloud-storage/v1 / storage.status-changed | cloud-storage:read | CloudStorageStatus |
+
+## Errors
+
+`APP_PERMISSION_DENIED`, `APP_INVALID_ACTION_INPUT`, `APP_HOST_TIMEOUT`, `APP_ACTION_CANCELED`, `APP_CONFLICT`, `APP_NOT_FOUND`, `APP_RESOURCE_EXHAUSTED`, `APP_HOST_UNAVAILABLE`, `APP_HOST_PROTOCOL_ERROR`

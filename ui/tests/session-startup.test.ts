@@ -61,7 +61,7 @@ test('loads runtime file URLs in Node and retries after a failed Windows runtime
 test('shows and retains a notification when the first message fails before the runtime starts', async () => {
   const renderer = readFileSync(new URL('../src/renderer-react/App.tsx', import.meta.url), 'utf8');
   const start = renderer.indexOf('const handleSend = React.useCallback');
-  const end = renderer.indexOf('const handleCreateWorkflowInChat', start);
+  const end = renderer.indexOf('const handleApprovePlan', start);
   const source = new Bun.Transpiler({ loader: 'tsx' }).transformSync(renderer.slice(start, end));
   const notices: unknown[][] = [];
   const notifications: any[] = [];

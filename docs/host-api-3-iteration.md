@@ -1,5 +1,7 @@
 # Host API 3.0 迭代与 App 适配记录
 
+本页保留首轮 3.0 实施记录；后续高价值项目的完整收尾见 [Host API 3 收尾与 App 适配](host-api-3-completion.md)。
+
 2026-10-09。Core 与相邻 `moss-apps` 已完成本轮实现和验证，分别提交源码与 App 适配。依据 [后续优化评估](host-api-next-stage-review.md)，本轮落地调用保障、增量存储、首批统一契约及 SDK 公共封装。
 
 按当前未发布阶段要求，Host API / SDK / Runtime 为 **3.0.0**，10 个 App 均声明 `hostApi: "^3.0.0"`。删除旧 UI 调用签名和 `validateExecutionInput` 别名，不提供旧任务数据导入。Manifest 2、App Service v1、已有领域协议名称和业务分工继续沿用。
@@ -77,12 +79,6 @@ bun run build
 MOSS_CORE_ROOT="$PWD/../moss" node apps/workflow/scripts/verify-package.mjs
 ```
 
-## 仍需按价值逐项推进
+## 后续收尾
 
-1. **历史容量管理**：SQLite 消除了全量重写，但启动仍加载任务历史到内存；未增加历史任务、结果文件自动清理或崩溃孤立文件回收。下一步应明确保留窗口，并把历史读取逐步下沉到 Store。
-2. **可靠状态恢复**：Execution 事件已持久化且每个执行保留最近 2000 条；推送在持久化后发送，仍是可能丢失的状态提示。尚无跨任务全局游标、持久 outbox 或永久重放保证；Watcher 用初始查询、序号过滤和 5 秒兜底恢复当前状态。
-3. **契约继续覆盖**：首批覆盖 Tasks/Execution 与 MCP。Local Files、受管 Runtime、Cloud、Audit/Trace 按具体修改逐个纳入，未宣称所有 Host 协议已统一生成。
-4. **公共大结果辅助函数**：Audit/Trace 的重复传输代码以及 Workflow 的资源读取仍可单独收敛；全局 ResourceRef 暂未实施。
-5. **能力发现与领域命名**：`moss.host`、Desktop/Observability 提取、`channels` / `executions` 全面改名均未纳入本轮。后续以实际复用收益推进。
-
-本轮不导入旧 `tasks.json`，也不自动删除旧文件。未修改现有用户数据，所有存储测试和集成验证均使用临时目录。
+历史容量管理、持久状态游标、扩展契约、公共大结果、能力发现、App 级协议声明与 UI 订阅已在 [后续收尾](host-api-3-completion.md) 完成。该记录包含当前 App 版本、保留窗口及恢复语义。领域协议全面更名和全局 ResourceRef 不在已确认范围内。

@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('mossApp', {
     list: () => ipcRenderer.invoke('app-ui:storage:list'),
   },
   host: {
+    subscribe: (protocol, name, subscriptionId) => request('app-ui:host:subscribe', { protocol, name, subscriptionId }),
+    unsubscribe: subscriptionId => request('app-ui:host:unsubscribe', { subscriptionId }),
+    onEvent: callback => on('app-ui:host:event', callback),
     request: (protocol, method, input, options = {}) => request('app-ui:host:request', {
       protocol, method, input, requestId: options.requestId ?? globalThis.crypto.randomUUID(), timeoutMs: options.timeoutMs,
     }),

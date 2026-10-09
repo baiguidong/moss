@@ -20,7 +20,7 @@ test('cloud capability requires grants and cannot override identity or pass file
   }
   expect(()=>validateCloudStorageHostInput('files.list',{limit:100000})).toThrow()
   const manifest=JSON.parse(await readFile(new URL('../../examples/cloud-storage-app/app.moss.json',import.meta.url),'utf8'))
-  expect(validateAppManifest(manifest).hostApi).toBe('^2.2.0')
+  expect(validateAppManifest(manifest).hostApi).toBe('^3.0.0')
 })
 
 test('typed cloud helper dispatches methods and subscribes to named Host events', async () => {

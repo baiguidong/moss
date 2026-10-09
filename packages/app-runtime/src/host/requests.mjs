@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { abortError, requestTimeout } from '../../../app-sdk/src/errors.mjs'
 import { APP_ERROR_CODES, AppServiceError, createEnvelope, validateEnvelope } from '../../../app-sdk/src/protocol/index.mjs'
 
 /** Admission, deadlines and lifecycle cancellation shared by UI and Backend Host calls. */
@@ -9,6 +10,7 @@ export class HostRequests {
   }
 
   async run(request, operation) {
+    const timeoutMs = requestTimeout(request.timeoutMs, this.timeoutMs, this.maxTimeoutMs)
     const requestId = request.requestId ?? randomUUID()
     if (typeof requestId !== 'string' || !requestId || requestId.length > 128) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid Host request id')
@@ -21,12 +23,10 @@ export class HostRequests {
     try { validateEnvelope(createEnvelope('host.request', { protocol: request.protocol, method: request.method, input: request.input }, { id: requestId })) }
     catch (error) { throw new AppServiceError(APP_ERROR_CODES.invalidInput, error.message) }
     const controller = new AbortController()
-    const abort = () => controller.abort(request.signal?.reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host request cancelled'))
+    const abort = () => controller.abort(abortError(request.signal))
     if (request.signal?.aborted) abort()
     controller.signal.throwIfAborted()
     request.signal?.addEventListener('abort', abort, { once: true })
-    const duration = Number(request.timeoutMs ?? this.timeoutMs)
-    const timeoutMs = Math.max(100, Math.min(Number.isFinite(duration) ? duration : this.timeoutMs, this.maxTimeoutMs))
     const timer = setTimeout(() => controller.abort(new AppServiceError(APP_ERROR_CODES.hostTimeout, 'Host request timed out')), timeoutMs)
     timer.unref?.()
     const current = { ...request, requestId, timeoutMs, signal: controller.signal, controller }

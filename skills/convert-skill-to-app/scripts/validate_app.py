@@ -50,14 +50,15 @@ def validate(root, phase, report_root):
     ui, backend = app.get("ui"), app.get("backend")
     if not isinstance(ui, dict) and not isinstance(backend, dict): errors.append("at least one of ui or backend is required")
     if isinstance(ui, dict): safe_file(root, ui.get("entry"), "ui.entry", errors)
+    protocols = app.get("host", {}).get("protocols", [])
+    if not isinstance(protocols, list) or any(not isinstance(name, str) for name in protocols):
+        errors.append("host.protocols must be an array of protocol names")
     declared = set()
     if isinstance(backend, dict):
         if backend.get("runtime") != "node" or backend.get("apiVersion") != 1: errors.append("Backend must use node API version 1")
         if backend.get("lifecycle") not in {"on-demand", "persistent"}: errors.append("Backend lifecycle is invalid")
         if "instanceMode" in backend and backend["instanceMode"] != "single": errors.append("Each App supports only one Backend")
-        protocols = backend.get("protocols")
-        if protocols is not None and (not isinstance(protocols, list) or any(not isinstance(name, str) for name in protocols)):
-            errors.append("backend.protocols must be an array of protocol names")
+        if "protocols" in backend: errors.append("Use host.protocols instead of backend.protocols")
         entry = safe_file(root, backend.get("entry"), "backend.entry", errors)
         actions = backend.get("actions")
         if not isinstance(actions, list): errors.append("Backend actions must be an array"); actions = []

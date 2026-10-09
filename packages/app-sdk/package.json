@@ -59,6 +59,14 @@
     "./mcp": {
       "types": "./src/mcp/index.d.mts",
       "import": "./src/mcp/index.mjs"
+    },
+    "./results": {
+      "types": "./src/results/index.d.mts",
+      "import": "./src/results/index.mjs"
+    },
+    "./results/store": {
+      "types": "./src/results/store.d.mts",
+      "import": "./src/results/store.mjs"
     }
   },
   "dependencies": {

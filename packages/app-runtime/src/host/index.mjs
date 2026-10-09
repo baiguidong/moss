@@ -1,3 +1,4 @@
+import { contractDefinition } from '../../../app-sdk/src/host/contracts.mjs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -7,7 +8,7 @@ import {
   AppServiceError,
   loadJsonSchema,
   requireHostPermission,
-  resolveBackendProtocols,
+  resolveAppProtocols,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
 import { HostRequests } from './requests.mjs'
@@ -78,6 +79,8 @@ function ownerStorageSegment(owner) {
 export class AppRuntimeHost {
   constructor(options) {
     this.hostRequests = new HostRequests(options.hostRequestOptions)
+    this.uiHostSubscriptions = new Set()
+    this.capabilityAvailability = options.capabilityAvailability || (() => ({ available: true, reason: null }))
     this.beforeAppDeactivation = (appId) => {
       this.cancelHostRequests(appId)
       return options.beforeAppDeactivation?.(appId)
@@ -122,6 +125,8 @@ export class AppRuntimeHost {
       throw new TypeError('hostCapabilities must implement dispatch(request) and registerProtocol(definition)')
     }
     this.hostCapabilities = options.hostCapabilities ?? new AppHostCapabilityRegistry(options.hostCapabilityOptions)
+    this.hostCapabilities.registerProtocol(contractDefinition('moss.host/v1'))
+    this.hostCapabilities.registerHandler('moss.host/v1', 'capabilities.get', (input, context) => this.describeCapabilities(input, context))
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
       processesDir: path.join(this.runtimeDir, 'processes'),
@@ -491,7 +496,6 @@ export class AppRuntimeHost {
   async ensureDefaultInstance(appId) {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
-    if (!backend) return null
     const existing = this.instances.get(defaultInstanceId(appId))
     const instance = existing || await this.instances.create(appId, {
       displayName: 'Default', config: {}, secretRefs: {}, enabled: true,
@@ -502,7 +506,6 @@ export class AppRuntimeHost {
 
   async ensureRuntime(packageInfo, instance) {
     const backend = packageInfo.manifest.backend
-    if (!backend) return null
     const key = runtimeKey(instance.id, this.currentOwner())
     const current = this.runtimes.get(key)
     return this.runtimes.upsert({
@@ -769,6 +772,10 @@ export class AppRuntimeHost {
   cancelHostRequests(appId, instanceId) {
     const owner = this.currentOwner()
     this.hostRequests.cancelWhere(request => request.owner.key === owner.key && request.appId === appId && (!instanceId || request.instanceId === instanceId))
+    for (const entry of this.uiHostSubscriptions) if (entry.owner.key === owner.key && entry.appId === appId && (!instanceId || entry.instanceId === instanceId)) {
+      this.uiHostSubscriptions.delete(entry)
+      entry.onClosed?.(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App lifecycle changed'))
+    }
   }
 
   dispatchHostRequest(request) {
@@ -828,10 +835,76 @@ export class AppRuntimeHost {
       runtimeDir: this.appDataPath(this.runtimeDir, runtimeRecord.appId, runtimeRecord.instanceId),
       owner: this.currentOwner(),
       principal: request.principal || this.currentOwner(),
-      protocols: resolveBackendProtocols(backend),
+      protocols: resolveAppProtocols(packageInfo.manifest),
       permissions: packageInfo.manifest.permissions || [],
       grants: this.installations.get(request.appId)?.grants ?? [],
     })
+  }
+
+  async describeCapabilities(input, context) {
+    const pkg = await this.getActivePackage(context.appId)
+    const declared = resolveAppProtocols(pkg.manifest)
+    const protocols = input.protocols || declared
+    const capabilities = []
+    for (const protocol of protocols) {
+      if (!declared.includes(protocol)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Capability discovery requires a declared protocol')
+      const definition = this.hostCapabilities.protocols.get(protocol)
+      if (!definition) { capabilities.push({ protocol, method: '*', supported: false, allowed: false, available: false, reason: 'unsupported', permission: null, surfaces: [], limits: {} }); continue }
+      for (const [name, member] of definition.methods) {
+        const supported = Boolean(this.hostCapabilities.handlers.get(protocol)?.has(name) || definition.handleRequest)
+        let allowed = false, reason = supported ? null : 'unsupported'
+        try { await this.hostCapabilities.authorizeMember({ ...context, surface: context.surface, protocols: declared, permissions: pkg.manifest.permissions, grants: this.installations.get(context.appId)?.grants || [] }, definition, member, name, 'method'); allowed = true }
+        catch { reason = 'permission_denied' }
+        let status = supported && allowed ? await this.capabilityAvailability(protocol, name, context) : { available: false, reason }
+        context.assertCurrent()
+        if (allowed && member.permission) {
+          try { requireHostPermission(this.installations.get(context.appId)?.grants || [], member.permission, { source: 'grant' }) }
+          catch { allowed = false; reason = 'permission_denied'; status = { available: false, reason } }
+        }
+        capabilities.push({ protocol, method: name, supported, allowed, available: supported && allowed && status.available === true,
+          reason: status.reason || reason, permission: member.permission, surfaces: member.surfaces || ['ui','backend'],
+          limits: { timeoutMs: this.hostRequests.timeoutMs, maxTimeoutMs: this.hostRequests.maxTimeoutMs, maxPending: this.hostRequests.maxPerRuntime, ...member.limits } })
+      }
+    }
+    context.assertCurrent()
+    const grants = this.installations.get(context.appId)?.grants || []
+    for (const item of capabilities) if (item.allowed && item.permission && !grants.includes(item.permission)) {
+      item.allowed = false; item.available = false; item.reason = 'permission_denied'
+    }
+    return { capabilities }
+  }
+
+  async subscribeHostEvent(appId, instanceId, protocol, name, listener, options = {}) {
+    const runtime = this.runtimeForInstance(appId, instanceId)
+    if (!runtime) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App runtime unavailable')
+    const generation = runtime.generation, version = this.installations.get(appId)?.activeVersion, owner = this.currentOwner()
+    this.authorizeInvocation(runtime)
+    const pkg = await this.getActivePackage(appId)
+    const { definition, member } = this.hostCapabilities.requireMember(protocol, name, 'event')
+    await this.hostCapabilities.authorizeMember({ surface: 'ui', appId, instanceId, owner, protocols: resolveAppProtocols(pkg.manifest), permissions: pkg.manifest.permissions, grants: this.installations.get(appId)?.grants || [] }, definition, member, name, 'event')
+    const current = () => {
+      options.signal?.throwIfAborted()
+      this.authorizeInvocation(this.runtimeForInstance(appId, instanceId))
+      if (this.runtimeForInstance(appId, instanceId)?.generation !== generation || this.installations.get(appId)?.activeVersion !== version) throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Subscription generation is stale')
+      if (member.permission) requireHostPermission(this.installations.get(appId)?.grants || [], member.permission, { source: 'grant' })
+    }
+    current()
+    if (this.uiHostSubscriptions.size >= 512) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Host subscription limit reached')
+    const entry = { appId, instanceId, protocol, name, owner, current, listener, onClosed: options.onClosed }
+    this.uiHostSubscriptions.add(entry)
+    return () => this.uiHostSubscriptions.delete(entry)
+  }
+
+  async publishUiHostEvent(appId, instanceId, protocol, name, data, options) {
+    for (const entry of this.uiHostSubscriptions) {
+      if (entry.owner.key !== this.currentOwner().key || entry.appId !== appId || entry.instanceId !== instanceId || entry.protocol !== protocol || entry.name !== name) continue
+      try {
+        entry.current()
+        const { member } = this.hostCapabilities.requireMember(protocol, name, 'event')
+        const value = member.validateInput(data)
+        entry.listener(value, { eventId: options.eventId || randomUUID(), protocol, name })
+      } catch (error) { this.uiHostSubscriptions.delete(entry); entry.onClosed?.(error) }
+    }
   }
 
   async publishHostEvent(appId, instanceId, protocol, name, data = {}, options = {}) {
@@ -843,6 +916,8 @@ export class AppRuntimeHost {
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App instance runtime is unavailable')
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
+    await this.publishUiHostEvent(appId, instanceId, protocol, name, data, options)
+    if (!backend) return { delivered: true }
     const prepared = await this.hostCapabilities.prepareEvent({
       appId,
       instanceId,
@@ -851,7 +926,7 @@ export class AppRuntimeHost {
       protocol,
       name,
       data,
-      protocols: resolveBackendProtocols(backend),
+      protocols: resolveAppProtocols(packageInfo.manifest),
       permissions: packageInfo.manifest.permissions || [],
       grants: installation.grants ?? [],
     })
@@ -908,7 +983,7 @@ export class AppRuntimeHost {
       generation: runtimeRecord.generation,
       entry: backend.entry,
       lifecycle: backend.lifecycle,
-      protocols: resolveBackendProtocols(backend),
+      protocols: resolveAppProtocols(packageInfo.manifest),
       permissions: packageInfo.manifest.permissions || [],
       grants: this.installations.get(packageInfo.manifest.id)?.grants ?? [],
       packageRoot: packageInfo.root,
@@ -924,7 +999,13 @@ export class AppRuntimeHost {
     const packageInfo = await this.getActivePackage(appId)
     const backend = packageInfo.manifest.backend
     if (!backend) {
-      for (const runtimeRecord of this.runtimes.list(appId)) await this.removeRuntimeRecord(runtimeRecord)
+      const instance = await this.ensureDefaultInstance(appId)
+      for (const runtimeRecord of this.runtimes.list(appId)) {
+        await this.supervisor.stop(runtimeRecord.key)
+        this.supervisor.unregister(runtimeRecord.key)
+        if (runtimeRecord.instanceId !== instance.id) await this.runtimes.remove(runtimeRecord.key)
+        else await this.runtimes.upsert({ ...runtimeRecord, desiredState: 'stopped' })
+      }
       return
     }
     const defaultInstance = await this.ensureDefaultInstance(appId)
@@ -1087,6 +1168,8 @@ export class AppRuntimeHost {
 
   async shutdown() {
     this.hostRequests.cancelWhere(() => true)
+    for (const entry of this.uiHostSubscriptions) entry.onClosed?.(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host shut down'))
+    this.uiHostSubscriptions.clear()
     await this.supervisor.shutdown()
   }
 }

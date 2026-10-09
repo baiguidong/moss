@@ -1,3 +1,4 @@
+import { contractDefinition } from '../../../packages/app-sdk/src/host/contracts.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -6,26 +7,7 @@ import { DatabaseSync, backup } from 'node:sqlite'
 export const AUDIT_APP_ID = 'moss.audit'
 export const AUDIT_PROTOCOL = 'moss.audit/v1'
 
-function validate(input, fields, required = []) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected an object')
-  if (Object.keys(input).some(key => !fields.includes(key))) throw new Error('Unknown audit capability field')
-  for (const key of fields) {
-    if (input[key] === undefined && !required.includes(key)) continue
-    if (typeof input[key] !== 'string' || !input[key].trim() || input[key].length > (key === 'details' ? 16000 : 4000)) throw new Error(`Invalid ${key}`)
-  }
-  return input
-}
-export function createAuditProtocolDefinition() {
-  return { protocol: AUDIT_PROTOCOL, methods: {
-    'source.capture': { permission: 'audit:read', validateInput: input => validate(input, []) },
-    'session.open': { permission: 'audit:navigate', validateInput: input => validate(input, ['sessionId', 'toolUseId'], ['sessionId']) },
-    'notification.publish': { permission: 'audit:notify', validateInput: input => {
-      validate(input, ['id', 'severity', 'title', 'message', 'details'], ['id', 'severity', 'title', 'message'])
-      if (!['info', 'warning', 'error'].includes(input.severity)) throw new Error('Invalid severity')
-      return input
-    } },
-  } }
-}
+export function createAuditProtocolDefinition() { return contractDefinition(AUDIT_PROTOCOL) }
 
 /** Redact before data leaves the Host, preserving tool names, paths and message structure. */
 export function redactAuditSource(value, key = '', seen = new WeakSet()) {
@@ -69,7 +51,7 @@ export class AppAuditHost {
     const runtime = this.getRuntime()
     if (!this.active(instanceId)) throw new Error('请启用审计 App 并授予会话读取权限。')
     const pkg = await runtime.getActivePackage(AUDIT_APP_ID)
-    if (!pkg.manifest.backend?.protocols?.includes(AUDIT_PROTOCOL) || !pkg.manifest.permissions?.includes('audit:read')) throw new Error('审计 App 未声明读取能力。')
+    if (!pkg.manifest.host?.protocols?.includes(AUDIT_PROTOCOL) || !pkg.manifest.permissions?.includes('audit:read')) throw new Error('审计 App 未声明读取能力。')
     const directory = runtime.appDataPath(runtime.dataDir, AUDIT_APP_ID, 'instances', instanceId)
     await fs.mkdir(directory, { recursive: true, mode: 0o700 })
     const dataRoot = await fs.realpath(runtime.dataDir)

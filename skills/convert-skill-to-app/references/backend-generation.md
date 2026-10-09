@@ -22,20 +22,24 @@ apps/<app-name>/
   "id": "example.app",
   "version": "0.1.0",
   "displayName": "Example",
-  "hostApi": "^2.1.0",
+  "hostApi": "^3.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "on-demand",
-    "protocols": [],
-    "actions": [{
-      "name": "search",
-      "inputSchema": "schemas/search.input.json",
-      "outputSchema": "schemas/search.output.json"
-    }]
+    "actions": [
+      {
+        "name": "search",
+        "inputSchema": "schemas/search.input.json",
+        "outputSchema": "schemas/search.output.json"
+      }
+    ]
   },
-  "permissions": []
+  "permissions": [],
+  "host": {
+    "protocols": []
+  }
 }
 ```
 

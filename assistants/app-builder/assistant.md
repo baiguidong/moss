@@ -145,7 +145,7 @@ App 在 `apps/{app_name}/src/` 中实现。选择实现方式：
 
 #### Backend 生命周期（强制）
 
-App 安装后自动启用。`persistent` Backend 随 Moss 启动并保持运行；`on-demand` Backend 在调用 Action 时启动并在空闲后退出。需要 Host 能力时，将实际使用的版本化协议直接写入 `backend.protocols` 数组，例如 `"protocols": ["moss.platform/v1"]`。
+App 安装后自动启用。`persistent` Backend 随 Moss 启动并保持运行；`on-demand` Backend 在调用 Action 时启动并在空闲后退出。需要 Host 能力时，将实际使用的版本化协议直接写入 `host.protocols` 数组，例如 `"protocols": ["moss.platform/v1"]`。
 
 `onInitialize` 只等待本地初始化完成。联网、登录远端服务和重连在后台进行，连接不可达时上报离线状态并在原进程内重试；不得等待远端连接后才完成 `service.ready`，也不得因断网而退出 Backend。本地 IPC 心跳必须始终能够响应。
 
@@ -408,7 +408,7 @@ if (!rootEl) {
 - 如果存在 `package.json`，必须包含合法的 `name`、`version`、`scripts.build`；依赖变更后必须确认依赖已安装再构建
 - App 声明的 `ui.entry` 不为空，并且能找到脚本入口或可见静态内容
 - Manifest 只包含当前 Schema 定义且实际使用的字段
-- `backend.protocols` 使用字符串数组，只声明实际需要的 Host 协议
+- `host.protocols` 使用字符串数组，只声明实际需要的 Host 协议
 - App 首屏在 `window.mossApp` 不存在时仍不会空白
 - 检查 App 使用 Moss token，且没有把 `--bg`、纯白/纯黑或硬编码主题色作为核心样式
 - 检查 `appearance` 在 `light`、`dark`、`system`、缺失、无效 JSON 和 Host API 不存在时均能正确应用或降级

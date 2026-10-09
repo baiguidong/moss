@@ -18,7 +18,7 @@ Host API 当前版本为 `3.0.0`，App 声明 `^3.0.0`；不兼容旧 UI 调用�
 | `moss.tasks/v1` | 后台任务状态、进度与生命周期 | `tasks:read/write/cancel` |
 | `moss.agent-execution/v1` | 有界的结构化 Agent 执行与结果读取 | `execution:read/run/cancel` |
 
-Manifest 中的 `backend.protocols` 使用字符串数组。
+Manifest 中的 `host.protocols` 使用字符串数组。
 
 ## Manifest 与授权
 
@@ -28,20 +28,29 @@ Manifest 中的 `backend.protocols` 使用字符串数组。
   "id": "example.integration",
   "version": "1.0.0",
   "displayName": "Example Integration",
-  "hostApi": "^2.1.0",
+  "hostApi": "^3.0.0",
   "backend": {
     "entry": "dist/backend/main.mjs",
     "runtime": "node",
     "apiVersion": 1,
     "lifecycle": "persistent",
-    "protocols": ["moss.account/v1", "moss.agent/v1"],
-    "actions": [{ "name": "status.get" }]
+    "actions": [
+      {
+        "name": "status.get"
+      }
+    ]
   },
   "permissions": [
     "account:identity:read",
     "agent:turns:read",
     "agent:turns:write"
-  ]
+  ],
+  "host": {
+    "protocols": [
+      "moss.account/v1",
+      "moss.agent/v1"
+    ]
+  }
 }
 ```
 

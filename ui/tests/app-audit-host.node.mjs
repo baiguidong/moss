@@ -18,7 +18,8 @@ async function fixture(t) {
     installations: { get: () => installation },
     instances: { get: id => id === instance.id ? instance : null, list: () => [instance] },
     appDataPath: (...parts) => path.join(...parts),
-    getActivePackage: async () => ({ manifest: { permissions: installation.grants, backend: { protocols: [AUDIT_PROTOCOL] } } }),
+    getActivePackage: async () => ({ manifest: { permissions: installation.grants, host: { protocols: [AUDIT_PROTOCOL] },
+backend: { } } }),
   }
   const host = new AppAuditHost({ mossHome: home, getRuntime: () => runtime, getSessions: () => sessions,
     openSession: input => opened.push(input), notify: (...args) => notifications.push(args) })
@@ -113,8 +114,8 @@ test('capability registry enforces grants and rejects arbitrary paths and method
   const definition = createAuditProtocolDefinition()
   assert.throws(() => definition.methods['source.capture'].validateInput({ path: '/private' }))
   const registry = new AppHostCapabilityRegistry({ protocols: [definition] })
-  registry.registerHandler(AUDIT_PROTOCOL, 'source.capture', () => ({ schemaVersion: 1 }))
+  registry.registerHandler(AUDIT_PROTOCOL, 'source.capture', () => ({ schemaVersion: 1, capturedAt: 1, sessionCount: 0 }))
   const input = { appId: 'moss.audit', instanceId: 'default', protocol: AUDIT_PROTOCOL, method: 'source.capture', input: {}, protocols: [AUDIT_PROTOCOL], permissions: ['audit:read'], grants: [] }
   await assert.rejects(registry.dispatch(input))
-  assert.deepEqual(await registry.dispatch({ ...input, grants: ['audit:read'] }), { schemaVersion: 1 })
+  assert.deepEqual(await registry.dispatch({ ...input, grants: ['audit:read'] }), { schemaVersion: 1, capturedAt: 1, sessionCount: 0 })
 })
