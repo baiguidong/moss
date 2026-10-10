@@ -151,6 +151,7 @@ function normalizeContributes(contributes, manifest) {
     return {
       id: provider.id,
       schemes: [...provider.schemes],
+      ...(provider.authoring ? { authoring: { target: provider.authoring.target, intents: [...provider.authoring.intents] } } : {}),
       ...(provider.title ? { title: provider.title.trim() } : {}),
       ...(provider.listAction ? { listAction: requireAction(provider.listAction, `resource provider ${provider.id}`).name } : {}),
       resolveAction: requireAction(provider.resolveAction, `resource provider ${provider.id}`).name,

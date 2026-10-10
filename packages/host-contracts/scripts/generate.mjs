@@ -8,8 +8,9 @@ import { mcpTypes, mcpLimits } from '../src/mcp.mjs'
 import { localTypes, platformLimits } from '../src/local.mjs'
 import { cloudTypes } from '../src/cloud.mjs'
 import { hostTypes } from '../src/host.mjs'
+import { appsTypes, authoringLimits } from '../src/apps.mjs'
 
-const named = { ...executionTypes, ...mcpTypes, ...localTypes, ...cloudTypes, ...hostTypes }
+const named = { ...executionTypes, ...mcpTypes, ...localTypes, ...cloudTypes, ...hostTypes, ...appsTypes }
 function type(schema, defining) {
   const name = Object.keys(named).find(name => named[name] === schema && name !== defining)
   if (name) return name
@@ -34,6 +35,7 @@ for (const [name, schema] of Object.entries(named)) declarations += `export type
 declarations += `export const executionLimits: ${JSON.stringify(executionLimits).replace(/,/g, ';')}\nexport const mcpLimits: ${JSON.stringify(mcpLimits).replace(/,/g, ';')}\n`
 declarations += 'export const contracts: Record<string, { types: string; methods: Record<string, { permission: string | null; input: object; output: object; surfaces: string[]; errors: string[]; limits?: Record<string, number> }>; events: Record<string, { permission: string | null; input: object }> }>\n'
 declarations += `export const platformLimits: ${JSON.stringify(platformLimits).replace(/,/g, ';')}\n`
+declarations += `export const authoringLimits: ${JSON.stringify(authoringLimits).replace(/,/g, ';')}\n`
 const ajv = new Ajv({ strict: false, allErrors: true, code: { source: true, esm: true, lines: true } })
 const exports = {}, keys = {}, schemas = new Map()
 function register(schema, key) {

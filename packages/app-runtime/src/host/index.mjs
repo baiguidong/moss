@@ -378,7 +378,12 @@ export class AppRuntimeHost {
     const result = Object.fromEntries(requestedKinds.map((kind) => [kind, []]))
     for (const installation of this.installations.list()) {
       if (options.appId && installation.appId !== options.appId) continue
-      const packageInfo = await this.getActivePackage(installation.appId)
+      let packageInfo
+      try { packageInfo = await this.getActivePackage(installation.appId) }
+      catch (error) {
+        if (options.appId) throw error
+        continue // One damaged installation must not hide other Apps' contributions.
+      }
       const enabled = Boolean(installation.enabled)
       const contributions = collectManifestContributions(packageInfo.manifest, {
         grants: installation.grants || [],

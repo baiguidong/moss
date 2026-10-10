@@ -1,0 +1,3523 @@
+{
+  "moss.account/v1": {
+    "methods": {
+      "identity.current": {
+        "permission": "account:identity:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "departmentId": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "organization": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "user"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "directory.list": {
+        "permission": "account:directory:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "departmentId": {
+              "type": "string"
+            },
+            "cursor": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "number"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "users": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "departmentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "departments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "userCount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "revision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "users",
+            "departments"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "directory.search": {
+        "permission": "account:directory:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "departmentId": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "number"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "users": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "departmentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "departments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "userCount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "revision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "users",
+            "departments"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      }
+    },
+    "events": {
+      "directory.changed": {
+        "permission": "account:directory:read",
+        "input": {
+          "type": "object",
+          "properties": {
+            "revision": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "directory.user-changed": {
+        "permission": "account:directory:read",
+        "input": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "departmentId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "user"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "moss.agent/v1": {
+    "methods": {
+      "catalog.list": {
+        "permission": "agent:catalog:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "agents"
+                  },
+                  {
+                    "const": "tools"
+                  },
+                  {
+                    "const": "skills"
+                  },
+                  {
+                    "const": "connectors"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "agents": {
+              "type": "array",
+              "items": {}
+            },
+            "tools": {
+              "type": "array",
+              "items": {}
+            },
+            "skills": {
+              "type": "array",
+              "items": {}
+            },
+            "connectors": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "binding.get": {
+        "permission": "agent:bindings:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalMemberId": {
+              "type": "string"
+            },
+            "defaultConversationId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalConversationId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "appId": {
+                      "type": "string"
+                    },
+                    "instanceId": {
+                      "type": "string"
+                    },
+                    "externalConversationId": {
+                      "type": "string"
+                    },
+                    "externalMemberId": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "policy": {
+                      "type": "object",
+                      "properties": {
+                        "inheritDefault": {
+                          "anyOf": [
+                            {
+                              "const": false
+                            },
+                            {
+                              "const": true
+                            }
+                          ]
+                        },
+                        "replyMode": {
+                          "anyOf": [
+                            {
+                              "const": "human_only"
+                            },
+                            {
+                              "const": "ai_auto"
+                            },
+                            {
+                              "const": "ai_draft_review"
+                            },
+                            {
+                              "const": "mention_only"
+                            },
+                            {
+                              "const": "inherit"
+                            }
+                          ]
+                        },
+                        "agentId": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "permissionMode": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "const": "default"
+                            },
+                            {
+                              "const": "acceptEdits"
+                            },
+                            {
+                              "const": "dontAsk"
+                            }
+                          ]
+                        },
+                        "resources": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "tools": {
+                                  "anyOf": [
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  ]
+                                },
+                                "skills": {
+                                  "anyOf": [
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  ]
+                                },
+                                "connectors": {
+                                  "anyOf": [
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "session": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "mode": {
+                                  "anyOf": [
+                                    {
+                                      "const": "fixed"
+                                    },
+                                    {
+                                      "const": "rotating"
+                                    },
+                                    {
+                                      "const": "new_each_turn"
+                                    }
+                                  ]
+                                },
+                                "rotateAfterTurns": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "proactive": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "enabled": {
+                                  "anyOf": [
+                                    {
+                                      "const": false
+                                    },
+                                    {
+                                      "const": true
+                                    }
+                                  ]
+                                },
+                                "maxConsecutiveReplies": {
+                                  "type": "number"
+                                },
+                                "cooldownMs": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    },
+                    "revision": {
+                      "type": "number"
+                    },
+                    "createdAt": {
+                      "type": "number"
+                    },
+                    "updatedAt": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "appId",
+                    "instanceId",
+                    "externalConversationId",
+                    "externalMemberId",
+                    "policy",
+                    "revision",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "effective": {
+              "type": "object",
+              "properties": {
+                "appId": {
+                  "type": "string"
+                },
+                "instanceId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalMemberId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "revision": {
+                  "type": "number"
+                },
+                "sourceRevisions": {
+                  "type": "object",
+                  "properties": {
+                    "instance": {
+                      "type": "number"
+                    },
+                    "conversation": {
+                      "type": "number"
+                    },
+                    "instanceMember": {
+                      "type": "number"
+                    },
+                    "member": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "instance",
+                    "conversation",
+                    "instanceMember",
+                    "member"
+                  ],
+                  "additionalProperties": false
+                },
+                "inherited": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "inheritDefault": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "replyMode": {
+                  "anyOf": [
+                    {
+                      "const": "human_only"
+                    },
+                    {
+                      "const": "ai_auto"
+                    },
+                    {
+                      "const": "ai_draft_review"
+                    },
+                    {
+                      "const": "mention_only"
+                    },
+                    {
+                      "const": "inherit"
+                    }
+                  ]
+                },
+                "agentId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "permissionMode": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "acceptEdits"
+                    },
+                    {
+                      "const": "dontAsk"
+                    }
+                  ]
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "tools": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "skills": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "connectors": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tools",
+                    "skills",
+                    "connectors"
+                  ],
+                  "additionalProperties": false
+                },
+                "session": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "fixed"
+                        },
+                        {
+                          "const": "rotating"
+                        },
+                        {
+                          "const": "new_each_turn"
+                        }
+                      ]
+                    },
+                    "rotateAfterTurns": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "rotateAfterTurns"
+                  ],
+                  "additionalProperties": false
+                },
+                "proactive": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "maxConsecutiveReplies": {
+                      "type": "number"
+                    },
+                    "cooldownMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "maxConsecutiveReplies",
+                    "cooldownMs"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "appId",
+                "instanceId",
+                "externalConversationId",
+                "externalMemberId",
+                "revision",
+                "sourceRevisions",
+                "replyMode",
+                "agentId",
+                "permissionMode",
+                "resources",
+                "session",
+                "proactive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "binding",
+            "effective"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "binding.update": {
+        "permission": "agent:bindings:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalMemberId": {
+              "type": "string"
+            },
+            "defaultConversationId": {
+              "type": "string"
+            },
+            "expectedRevision": {
+              "type": "number"
+            },
+            "patch": {
+              "type": "object",
+              "properties": {
+                "inheritDefault": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "replyMode": {
+                  "anyOf": [
+                    {
+                      "const": "human_only"
+                    },
+                    {
+                      "const": "ai_auto"
+                    },
+                    {
+                      "const": "ai_draft_review"
+                    },
+                    {
+                      "const": "mention_only"
+                    },
+                    {
+                      "const": "inherit"
+                    }
+                  ]
+                },
+                "agentId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "permissionMode": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "acceptEdits"
+                    },
+                    {
+                      "const": "dontAsk"
+                    }
+                  ]
+                },
+                "resources": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "tools": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "skills": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "connectors": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "session": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "anyOf": [
+                            {
+                              "const": "fixed"
+                            },
+                            {
+                              "const": "rotating"
+                            },
+                            {
+                              "const": "new_each_turn"
+                            }
+                          ]
+                        },
+                        "rotateAfterTurns": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "proactive": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "anyOf": [
+                            {
+                              "const": false
+                            },
+                            {
+                              "const": true
+                            }
+                          ]
+                        },
+                        "maxConsecutiveReplies": {
+                          "type": "number"
+                        },
+                        "cooldownMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "externalConversationId",
+            "patch"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "type": "object",
+              "properties": {
+                "appId": {
+                  "type": "string"
+                },
+                "instanceId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalMemberId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "policy": {
+                  "type": "object",
+                  "properties": {
+                    "inheritDefault": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "replyMode": {
+                      "anyOf": [
+                        {
+                          "const": "human_only"
+                        },
+                        {
+                          "const": "ai_auto"
+                        },
+                        {
+                          "const": "ai_draft_review"
+                        },
+                        {
+                          "const": "mention_only"
+                        },
+                        {
+                          "const": "inherit"
+                        }
+                      ]
+                    },
+                    "agentId": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "permissionMode": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "const": "default"
+                        },
+                        {
+                          "const": "acceptEdits"
+                        },
+                        {
+                          "const": "dontAsk"
+                        }
+                      ]
+                    },
+                    "resources": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "tools": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              ]
+                            },
+                            "skills": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              ]
+                            },
+                            "connectors": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "session": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "anyOf": [
+                                {
+                                  "const": "fixed"
+                                },
+                                {
+                                  "const": "rotating"
+                                },
+                                {
+                                  "const": "new_each_turn"
+                                }
+                              ]
+                            },
+                            "rotateAfterTurns": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "proactive": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "anyOf": [
+                                {
+                                  "const": false
+                                },
+                                {
+                                  "const": true
+                                }
+                              ]
+                            },
+                            "maxConsecutiveReplies": {
+                              "type": "number"
+                            },
+                            "cooldownMs": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "revision": {
+                  "type": "number"
+                },
+                "createdAt": {
+                  "type": "number"
+                },
+                "updatedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "appId",
+                "instanceId",
+                "externalConversationId",
+                "externalMemberId",
+                "policy",
+                "revision",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            },
+            "effective": {
+              "type": "object",
+              "properties": {
+                "appId": {
+                  "type": "string"
+                },
+                "instanceId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalMemberId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "revision": {
+                  "type": "number"
+                },
+                "sourceRevisions": {
+                  "type": "object",
+                  "properties": {
+                    "instance": {
+                      "type": "number"
+                    },
+                    "conversation": {
+                      "type": "number"
+                    },
+                    "instanceMember": {
+                      "type": "number"
+                    },
+                    "member": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "instance",
+                    "conversation",
+                    "instanceMember",
+                    "member"
+                  ],
+                  "additionalProperties": false
+                },
+                "inherited": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "inheritDefault": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "replyMode": {
+                  "anyOf": [
+                    {
+                      "const": "human_only"
+                    },
+                    {
+                      "const": "ai_auto"
+                    },
+                    {
+                      "const": "ai_draft_review"
+                    },
+                    {
+                      "const": "mention_only"
+                    },
+                    {
+                      "const": "inherit"
+                    }
+                  ]
+                },
+                "agentId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "permissionMode": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "acceptEdits"
+                    },
+                    {
+                      "const": "dontAsk"
+                    }
+                  ]
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "tools": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "skills": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "connectors": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tools",
+                    "skills",
+                    "connectors"
+                  ],
+                  "additionalProperties": false
+                },
+                "session": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "fixed"
+                        },
+                        {
+                          "const": "rotating"
+                        },
+                        {
+                          "const": "new_each_turn"
+                        }
+                      ]
+                    },
+                    "rotateAfterTurns": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "rotateAfterTurns"
+                  ],
+                  "additionalProperties": false
+                },
+                "proactive": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "maxConsecutiveReplies": {
+                      "type": "number"
+                    },
+                    "cooldownMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "maxConsecutiveReplies",
+                    "cooldownMs"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "appId",
+                "instanceId",
+                "externalConversationId",
+                "externalMemberId",
+                "revision",
+                "sourceRevisions",
+                "replyMode",
+                "agentId",
+                "permissionMode",
+                "resources",
+                "session",
+                "proactive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "binding",
+            "effective"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "binding.reset": {
+        "permission": "agent:bindings:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalMemberId": {
+              "type": "string"
+            },
+            "defaultConversationId": {
+              "type": "string"
+            },
+            "expectedRevision": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "externalConversationId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "reset": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "binding": {
+              "type": "null"
+            },
+            "effective": {
+              "type": "object",
+              "properties": {
+                "appId": {
+                  "type": "string"
+                },
+                "instanceId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalMemberId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "revision": {
+                  "type": "number"
+                },
+                "sourceRevisions": {
+                  "type": "object",
+                  "properties": {
+                    "instance": {
+                      "type": "number"
+                    },
+                    "conversation": {
+                      "type": "number"
+                    },
+                    "instanceMember": {
+                      "type": "number"
+                    },
+                    "member": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "instance",
+                    "conversation",
+                    "instanceMember",
+                    "member"
+                  ],
+                  "additionalProperties": false
+                },
+                "inherited": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "inheritDefault": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "replyMode": {
+                  "anyOf": [
+                    {
+                      "const": "human_only"
+                    },
+                    {
+                      "const": "ai_auto"
+                    },
+                    {
+                      "const": "ai_draft_review"
+                    },
+                    {
+                      "const": "mention_only"
+                    },
+                    {
+                      "const": "inherit"
+                    }
+                  ]
+                },
+                "agentId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "permissionMode": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "acceptEdits"
+                    },
+                    {
+                      "const": "dontAsk"
+                    }
+                  ]
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "tools": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "skills": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "connectors": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tools",
+                    "skills",
+                    "connectors"
+                  ],
+                  "additionalProperties": false
+                },
+                "session": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "const": "fixed"
+                        },
+                        {
+                          "const": "rotating"
+                        },
+                        {
+                          "const": "new_each_turn"
+                        }
+                      ]
+                    },
+                    "rotateAfterTurns": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "rotateAfterTurns"
+                  ],
+                  "additionalProperties": false
+                },
+                "proactive": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "maxConsecutiveReplies": {
+                      "type": "number"
+                    },
+                    "cooldownMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "maxConsecutiveReplies",
+                    "cooldownMs"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "appId",
+                "instanceId",
+                "externalConversationId",
+                "externalMemberId",
+                "revision",
+                "sourceRevisions",
+                "replyMode",
+                "agentId",
+                "permissionMode",
+                "resources",
+                "session",
+                "proactive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "reset",
+            "binding",
+            "effective"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "session.list": {
+        "permission": "agent:sessions:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "page": {
+              "type": "number"
+            },
+            "pageSize": {
+              "type": "number"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "preview": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "number"
+                  },
+                  "busy": {
+                    "anyOf": [
+                      {
+                        "const": false
+                      },
+                      {
+                        "const": true
+                      }
+                    ]
+                  },
+                  "projectName": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "originChannel": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "updatedAt",
+                  "busy"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "currentSession": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "preview": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "number"
+                    },
+                    "busy": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "projectName": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "originChannel": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "updatedAt",
+                    "busy"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "page": {
+              "type": "number"
+            },
+            "pageSize": {
+              "type": "number"
+            },
+            "total": {
+              "type": "number"
+            },
+            "hasPrevious": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "hasNext": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "sessions",
+            "currentSession",
+            "page",
+            "pageSize",
+            "total",
+            "hasPrevious",
+            "hasNext"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "session.current": {
+        "permission": "agent:sessions:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "session": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "preview": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "number"
+                    },
+                    "busy": {
+                      "anyOf": [
+                        {
+                          "const": false
+                        },
+                        {
+                          "const": true
+                        }
+                      ]
+                    },
+                    "projectName": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "originChannel": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "updatedAt",
+                    "busy"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "session.create": {
+        "permission": "agent:sessions:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId",
+            "externalEventId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "session": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "preview": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                },
+                "busy": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "projectName": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "originChannel": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "updatedAt",
+                "busy"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "session.select": {
+        "permission": "agent:sessions:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId",
+            "externalEventId",
+            "sessionId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "session": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "preview": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                },
+                "busy": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "projectName": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "originChannel": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "updatedAt",
+                "busy"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "session.abort": {
+        "permission": "agent:sessions:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId",
+            "externalEventId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "cancelled": {
+              "type": "number"
+            },
+            "session": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "preview": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                },
+                "busy": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "projectName": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "originChannel": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "updatedAt",
+                "busy"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "cancelled",
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "context.observe": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "externalUserId",
+            "externalConversationId",
+            "externalEventId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "observed": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "duplicate": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "observed",
+            "duplicate"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.start": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalUserId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "externalEventId": {
+              "type": "string"
+            },
+            "defaultConversationId": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "attachments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "anyOf": [
+                      {
+                        "const": "file"
+                      },
+                      {
+                        "const": "image"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "mimeType": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "mentioned": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "human"
+                },
+                {
+                  "const": "agent"
+                },
+                {
+                  "const": "system"
+                }
+              ]
+            },
+            "hop": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "externalUserId",
+            "externalConversationId",
+            "externalEventId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": {}
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.list": {
+        "permission": "agent:turns:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "externalConversationId": {
+              "type": "string"
+            },
+            "statuses": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "human"
+                  },
+                  {
+                    "const": "received"
+                  },
+                  {
+                    "const": "queued"
+                  },
+                  {
+                    "const": "running"
+                  },
+                  {
+                    "const": "awaiting_review"
+                  },
+                  {
+                    "const": "completed"
+                  },
+                  {
+                    "const": "rejected"
+                  },
+                  {
+                    "const": "failed"
+                  },
+                  {
+                    "const": "cancelled"
+                  }
+                ]
+              }
+            },
+            "limit": {
+              "type": "number"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "turns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": [
+            "turns"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.get": {
+        "permission": "agent:turns:read",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "turnId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "turn"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.abort": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "turnId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {}
+            },
+            "aborted": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "turn",
+            "aborted"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.reply": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string"
+            },
+            "action": {
+              "anyOf": [
+                {
+                  "const": "send"
+                },
+                {
+                  "const": "dismiss"
+                }
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "turnId",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "turn"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.review": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string"
+            },
+            "action": {
+              "anyOf": [
+                {
+                  "const": "approve"
+                },
+                {
+                  "const": "reject"
+                }
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "turnId",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "turn"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "turn.delivery.ack": {
+        "permission": "agent:turns:write",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string"
+            },
+            "externalConversationId": {
+              "type": "string"
+            },
+            "ok": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "externalMessageId": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "turnId",
+            "externalConversationId",
+            "ok"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "acknowledged": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "turnId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "acknowledged",
+            "turnId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      }
+    },
+    "events": {
+      "binding.changed": {
+        "permission": "agent:bindings:read",
+        "input": {
+          "type": "object",
+          "required": [
+            "externalConversationId",
+            "revision"
+          ],
+          "properties": {
+            "externalConversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "turn.accepted": {
+        "permission": "agent:turns:read",
+        "input": {
+          "type": "object",
+          "required": [
+            "externalConversationId",
+            "turnId"
+          ],
+          "properties": {
+            "externalConversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "turn.review_requested": {
+        "permission": "agent:turns:read",
+        "input": {
+          "type": "object",
+          "required": [
+            "externalConversationId",
+            "turnId"
+          ],
+          "properties": {
+            "externalConversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "turn.completed": {
+        "permission": "agent:turns:read",
+        "input": {
+          "type": "object",
+          "required": [
+            "externalConversationId",
+            "turnId"
+          ],
+          "properties": {
+            "externalConversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "turn.failed": {
+        "permission": "agent:turns:read",
+        "input": {
+          "type": "object",
+          "required": [
+            "externalConversationId",
+            "turnId"
+          ],
+          "properties": {
+            "externalConversationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  },
+  "moss.openim/v1": {
+    "methods": {
+      "session.issue": {
+        "permission": "openim:client",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "platformId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "platformId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "userID": {
+              "type": "string"
+            },
+            "imToken": {
+              "type": "string"
+            },
+            "expiresIn": {
+              "type": "number"
+            },
+            "apiAddr": {
+              "type": "string"
+            },
+            "wsAddr": {
+              "type": "string"
+            },
+            "rtcEnabled": {
+              "anyOf": [
+                {
+                  "const": false
+                },
+                {
+                  "const": true
+                }
+              ]
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "createGroup": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "createGroup"
+              ],
+              "additionalProperties": false
+            },
+            "user": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "orgId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orgId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "available",
+            "userID",
+            "imToken",
+            "expiresIn",
+            "apiAddr",
+            "wsAddr",
+            "rtcEnabled",
+            "capabilities",
+            "user"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "directory.list": {
+        "permission": "openim:client",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "number"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "departments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "userCount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "userCount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "users": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "departmentId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "openimUserID": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "openimUserID"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "revision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "departments",
+            "users"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "conversation.direct.prepare": {
+        "permission": "openim:client",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "userId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "userId"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "userID": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "userID",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      },
+      "conversation.group.prepare": {
+        "permission": "openim:client",
+        "surfaces": [
+          "ui",
+          "backend"
+        ],
+        "input": {
+          "type": "object",
+          "properties": {
+            "userIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "userIds"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "groupID": {
+              "type": "string"
+            },
+            "memberUserIDs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "groupID",
+            "memberUserIDs"
+          ],
+          "additionalProperties": false
+        },
+        "errors": [
+          "APP_INVALID_ACTION_INPUT",
+          "APP_PERMISSION_DENIED",
+          "APP_HOST_UNAVAILABLE",
+          "APP_HOST_PROTOCOL_ERROR"
+        ]
+      }
+    },
+    "events": {}
+  }
+}

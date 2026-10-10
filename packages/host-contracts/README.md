@@ -59,6 +59,28 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.cloud-storage/v1 / shares.list | cloud-storage:share | fileId, cursor, limit | ui, backend |  |
 | moss.cloud-storage/v1 / shares.revoke | cloud-storage:share | shareId* | ui, backend |  |
 | moss.host/v1 / capabilities.get | null | protocols | ui, backend |  |
+| moss.host/v1 / info.get | null | {} | ui, backend |  |
+| moss.host/v1 / contracts.list | null | kind, offset, limit | ui, backend |  |
+| moss.host/v1 / contracts.get | null | kind*, member*, contractHash* | ui, backend | {"responseBytes":262144} |
+| moss.host/v1 / sdk.export | apps:author | projectRef*, sdkHash* | backend |  |
+| moss.apps/v1 / authoring.get | null | {} | ui |  |
+| moss.apps/v1 / authoring.prepare | null | intent*, targetRef, ref, prompt | ui |  |
+| moss.apps/v1 / catalog.list | apps:read | kind | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / target.inspect | apps:read | projectRef, targetRef, appId | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / source.inspect | apps:read | projectRef, targetRef, appId | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / project.prepare | apps:author | intent*, projectId*, projectRef, draftRef, targetRef, appId, sourcePath, replaceOriginal | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / build.start | apps:build | projectRef*, submissionKey*, sourceHash*, contractHash*, sdkHash*, installDependencies | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / build.get | apps:read | operationRef*, offset, limit | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / build.cancel | apps:build | operationRef* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / artifact.validate | apps:read | artifactRef* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / artifact.preview | apps:build | artifactRef*, submissionKey*, grants, config | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / artifact.test | apps:build | previewRef*, action*, input, submissionKey* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / artifact.get | apps:read | operationRef*, offset, limit | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / artifact.close | apps:build | operationRef* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / release.prepare | apps:install | artifactRef*, submissionKey*, expectedBaseVersion*, expectedInstallationRevision*, dataCompatibility*, verification | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / release.commit | apps:install | releaseRef*, submissionKey* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / release.get | apps:read | operationRef*, offset, limit | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
+| moss.apps/v1 / release.cancel | apps:install | operationRef* | backend | idempotency: submissionKey is scoped to owner, App, session and operation; same content returns its durable receipt; {"concurrentBuilds":2,"buildsPerProject":1,"queuedBuilds":32,"logBytes":10485760,"retentionMs":604800000,"responseBytes":262144} |
 
 ## Events
 
@@ -69,6 +91,8 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.cloud-storage/v1 / transfers.progress | cloud-storage:read | CloudTransfer |
 | moss.cloud-storage/v1 / transfers.changed | cloud-storage:read | CloudTransfer |
 | moss.cloud-storage/v1 / storage.status-changed | cloud-storage:read | CloudStorageStatus |
+| moss.apps/v1 / authoring.changed | null | { "revision": number } |
+| moss.apps/v1 / operation.changed | apps:read | AuthoringOperation |
 
 ## Errors
 

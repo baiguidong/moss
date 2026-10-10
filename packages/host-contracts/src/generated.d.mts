@@ -16,10 +16,12 @@ export type CloudTransfer = { "id": string; "transferId": string; "direction": "
 export type CloudShare = { "id": string; "fileId": string; "name": string; "size": number; "url": string; "accessCode": string | null; "createdAt": number; "expiresAt": number | null; "revokedAt": number | null; "state": "active" | "expired" | "revoked" | "unavailable" }
 export type CloudStorageStatus = { "state": "remote_disabled" | "unauthenticated" | "unconfigured" | "disabled" | "unsupported" | "unavailable" | "target_mismatch" | "forbidden" | "ready"; "version"?: number }
 export type HostCapability = { "protocol": string; "method": string; "supported": boolean; "allowed": boolean; "available": boolean; "reason": string | null; "permission": string | null; "limits": { [key: string]: number }; "surfaces": Array<"ui" | "backend"> }
+export type AuthoringOperation = { "operationRef": string; "kind": string; "status": string; "projectRef": string; "createdAt": number; "updatedAt": number; "result"?: { [key: string]: unknown }; "error"?: string | null; "log"?: string; "nextOffset"?: number }
 export const executionLimits: {"maxConcurrency":16;"maxCalls":256;"maxDurationMs":1800000;"maxTokens":2000000;"resultPreviewBytes":32768;"resultChunkUnits":100000;"eventHistory":2000;"retentionMs":2592000000;"changeRetentionMs":604800000;"changeHistory":10000;"activeTasks":512}
 export const mcpLimits: {"servers":100;"configBytes":65536}
 export const contracts: Record<string, { types: string; methods: Record<string, { permission: string | null; input: object; output: object; surfaces: string[]; errors: string[]; limits?: Record<string, number> }>; events: Record<string, { permission: string | null; input: object }> }>
 export const platformLimits: {"fileBytes":104857600;"inlineBase64Length":524288;"pickedFiles":100;"imageDimension":4096}
+export const authoringLimits: {"concurrentBuilds":2;"buildsPerProject":1;"queuedBuilds":32;"logBytes":10485760;"retentionMs":604800000;"responseBytes":262144}
 export interface TasksHostInputMap {
   "task.create": { "idempotencyKey": string; "title": string; "route"?: string; "limits"?: { "maxConcurrency"?: number; "maxCalls"?: number; "maxDurationMs"?: number; "maxTokens"?: number } }
   "task.get": { "taskId": string }
@@ -189,11 +191,63 @@ export interface CloudStorageHostEventMap {
 }
 export interface HostHostInputMap {
   "capabilities.get": { "protocols"?: Array<string> }
+  "info.get": Record<string, never>
+  "contracts.list": { "kind"?: string; "offset"?: number; "limit"?: number }
+  "contracts.get": { "kind": string; "member": string; "contractHash": string }
+  "sdk.export": { "projectRef": string; "sdkHash": string }
 }
 export interface HostHostOutputMap {
   "capabilities.get": { "capabilities": Array<HostCapability> }
+  "info.get": { "hostApiVersion": string; "sdkVersion": string; "manifestSchemaVersion": number; "contractHash": string; "sdkHash": string }
+  "contracts.list": { "contractHash": string; "items": Array<{ "kind": string; "member": string }>; "nextOffset": number | null }
+  "contracts.get": { "kind": string; "member": string; "contractHash": string; "document": { [key: string]: unknown } }
+  "sdk.export": { "projectRef": string; "path": string; "sdkHash": string; "contractHash": string }
 }
 export interface HostHostEventMap {
+}
+export interface AppsHostInputMap {
+  "authoring.get": Record<string, never>
+  "authoring.prepare": { "intent": "create" | "edit"; "targetRef"?: string; "ref"?: { [key: string]: unknown }; "prompt"?: string }
+  "catalog.list": { "kind"?: "apps" | "projects" }
+  "target.inspect": { "projectRef"?: string; "targetRef"?: string; "appId"?: string }
+  "source.inspect": { "projectRef"?: string; "targetRef"?: string; "appId"?: string }
+  "project.prepare": { "intent": "create" | "edit"; "projectId": string; "projectRef"?: string; "draftRef"?: string; "targetRef"?: string; "appId"?: string; "sourcePath"?: string; "replaceOriginal"?: boolean }
+  "build.start": { "projectRef": string; "submissionKey": string; "sourceHash": string; "contractHash": string; "sdkHash": string; "installDependencies"?: boolean }
+  "build.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "build.cancel": { "operationRef": string }
+  "artifact.validate": { "artifactRef": string }
+  "artifact.preview": { "artifactRef": string; "submissionKey": string; "grants"?: Array<string>; "config"?: { [key: string]: unknown } }
+  "artifact.test": { "previewRef": string; "action": string; "input"?: { [key: string]: unknown }; "submissionKey": string }
+  "artifact.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "artifact.close": { "operationRef": string }
+  "release.prepare": { "artifactRef": string; "submissionKey": string; "expectedBaseVersion": string | null; "expectedInstallationRevision": number; "dataCompatibility": "unchanged" | "migration-tested" | "unknown"; "verification"?: string }
+  "release.commit": { "releaseRef": string; "submissionKey": string }
+  "release.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "release.cancel": { "operationRef": string }
+}
+export interface AppsHostOutputMap {
+  "authoring.get": { "available": boolean; "reason": string | null; "provider": { [key: string]: unknown } | null }
+  "authoring.prepare": { [key: string]: unknown }
+  "catalog.list": { "items": Array<{ [key: string]: unknown }> }
+  "target.inspect": { [key: string]: unknown }
+  "source.inspect": { [key: string]: unknown }
+  "project.prepare": { [key: string]: unknown }
+  "build.start": AuthoringOperation
+  "build.get": AuthoringOperation
+  "build.cancel": AuthoringOperation
+  "artifact.validate": { [key: string]: unknown }
+  "artifact.preview": AuthoringOperation
+  "artifact.test": AuthoringOperation
+  "artifact.get": AuthoringOperation
+  "artifact.close": AuthoringOperation
+  "release.prepare": AuthoringOperation
+  "release.commit": AuthoringOperation
+  "release.get": AuthoringOperation
+  "release.cancel": AuthoringOperation
+}
+export interface AppsHostEventMap {
+  "authoring.changed": { "revision": number }
+  "operation.changed": AuthoringOperation
 }
 export interface HostInputMap {
   "moss.tasks/v1": TasksHostInputMap
@@ -206,6 +260,7 @@ export interface HostInputMap {
   "moss.trace/v1": TraceHostInputMap
   "moss.cloud-storage/v1": CloudStorageHostInputMap
   "moss.host/v1": HostHostInputMap
+  "moss.apps/v1": AppsHostInputMap
 }
 export interface HostOutputMap {
   "moss.tasks/v1": TasksHostOutputMap
@@ -218,6 +273,7 @@ export interface HostOutputMap {
   "moss.trace/v1": TraceHostOutputMap
   "moss.cloud-storage/v1": CloudStorageHostOutputMap
   "moss.host/v1": HostHostOutputMap
+  "moss.apps/v1": AppsHostOutputMap
 }
 export interface HostEventMap {
   "moss.tasks/v1": TasksHostEventMap
@@ -230,4 +286,5 @@ export interface HostEventMap {
   "moss.trace/v1": TraceHostEventMap
   "moss.cloud-storage/v1": CloudStorageHostEventMap
   "moss.host/v1": HostHostEventMap
+  "moss.apps/v1": AppsHostEventMap
 }

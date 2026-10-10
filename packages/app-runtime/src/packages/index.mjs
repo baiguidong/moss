@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID, verify as verifySignature } from 'node:crypto'
 import semver from 'semver'
+import { validateSourcePackage } from './source.mjs'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -292,6 +293,7 @@ export async function validateAppPackage(packageRoot, options = {}) {
     }
   }
   const trust = await validatePackageSignature(root, manifest, actualChecksums, options)
+  await validateSourcePackage(root, { required: options.requireSource === true })
   return deepFreeze({ root, manifest, checksums: actualChecksums, files, trust })
 }
 

@@ -68,6 +68,7 @@ function hostTransportCodes() {
 
 export class AppProcessSupervisor {
   constructor(options = {}) {
+    this.nodeArgs = options.nodeArgs || []
     this.nodeExecutable = options.nodeExecutable || process.env.MOSS_NODE_PATH || process.execPath
     this.handshakeTimeoutMs = options.handshakeTimeoutMs || 15_000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs || 5_000
@@ -203,6 +204,7 @@ export class AppProcessSupervisor {
       stopping: false,
       failures: options.clearCrashLoop ? [] : current?.failures || this.failureHistory.get(key) || [],
       lastError: null,
+      stderrTail: '',
       failureReason: null,
       healthWatchdog: null,
       idleTimer: null,
@@ -224,7 +226,7 @@ export class AppProcessSupervisor {
     try {
       hosted.lease = await this.leases.acquire(definition)
       if (this.shuttingDown) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
-      child = spawn(this.nodeExecutable, ['--import', bootstrapUrl, entryPath, hosted.lease.marker], {
+      child = spawn(this.nodeExecutable, [...this.nodeArgs, '--import', bootstrapUrl, entryPath, hosted.lease.marker], {
         cwd: definition.packageRoot,
         env: minimalEnvironment({
           ...(this.nodeExecutable === process.execPath && process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
@@ -245,7 +247,10 @@ export class AppProcessSupervisor {
     hosted.child = child
     this.emitStatus(key)
     child.stdout?.on('data', (chunk) => this.log(hosted, 'info', String(chunk).trim(), { stream: 'stdout' }))
-    child.stderr?.on('data', (chunk) => this.log(hosted, 'error', String(chunk).trim(), { stream: 'stderr' }))
+    child.stderr?.on('data', (chunk) => {
+      hosted.stderrTail = (hosted.stderrTail + String(chunk)).slice(-8192)
+      this.log(hosted, 'error', String(chunk).trim(), { stream: 'stderr' })
+    })
     child.on('message', (message) => {
       if (hosted.handshakeState === 'bootstrapping' && message?.type === 'moss.app.bootstrap' && message.marker === hosted.lease.marker) {
         hosted.handshakeState = 'recording-process'
@@ -926,7 +931,8 @@ export class AppProcessSupervisor {
     })
     if (this.processes.get(key) !== hosted) return
     if (hosted.state === 'starting') {
-      hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend exited before handshake: ${code ?? 'null'}`))
+      const detail = redactAppValue(hosted.stderrTail.trim(), Object.values(hosted.definition.secrets || {}))
+      hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend exited before handshake: ${code ?? 'null'}${detail ? `\n${detail}` : ''}`))
     }
     if (hosted.stopping || this.shuttingDown) {
       this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))

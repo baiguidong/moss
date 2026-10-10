@@ -333,6 +333,13 @@ export interface OpenIMHostRequestMap {
   'conversation.group.prepare': { userIds: string[] }
 }
 
+export interface OpenIMHostResultMap {
+  'session.issue': { available: true; userID: string; imToken: string; expiresIn: number; apiAddr: string; wsAddr: string; rtcEnabled: boolean; capabilities: { createGroup: boolean }; user: { id: string; name: string; email?: string | null; orgId: string } }
+  'directory.list': { departments: Array<AccountDirectoryDepartment & { userCount: number }>; users: Array<AccountDirectoryUser & { openimUserID: string }>; nextCursor?: string | null; revision?: string }
+  'conversation.direct.prepare': { userID: string; name: string; email?: string | null }
+  'conversation.group.prepare': { groupID: string; memberUserIDs: string[] }
+}
+
 export interface AppHostApi extends TypedHostRequests {
   subscribe?: TypedHostSubscriptions<HostEventContext>['subscribe']
   on<Result = unknown>(
@@ -429,12 +436,29 @@ export type AppActionHandler<Input = unknown, Output = unknown> =
 
 export type AppCallResult<T> = { ok: true; result: T } | { ok: false; error: { code: string; message: string; details?: unknown } }
 
+export interface AppAppearance {
+  themeMode: 'light' | 'dark' | 'system'
+  [key: string]: unknown
+}
+export interface AppUiInfo {
+  id: string
+  name: string
+  kind: 'app'
+  displayName: string
+  description: string
+  version: string | null
+  hasUi: boolean
+  hasBackend: boolean
+  backend: AppManifestV2['backend'] | null
+  permissions: string[]
+  appearance: AppAppearance
+}
 export interface AppUiApi {
   composer: {
     prepare(input: { providerId: string; intent: "create" | "edit" | "use"; ref?: Record<string, unknown> }): Promise<{ ok: true }>
   }
   app: {
-    getInfo(): Promise<Record<string, unknown>>
+    getInfo(): Promise<AppUiInfo>
     getStatus(): Promise<Record<string, unknown>>
     getVersions(): Promise<Array<Record<string, unknown>>>
     getInstallationState(): Promise<Record<string, unknown> | null>

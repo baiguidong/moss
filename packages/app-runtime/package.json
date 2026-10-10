@@ -4,6 +4,10 @@
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
+    "./source": {
+      "types": "./src/packages/source.d.mts",
+      "import": "./src/packages/source.mjs"
+    },
     ".": {
       "types": "./src/index.d.mts",
       "import": "./src/index.mjs"
