@@ -8,7 +8,9 @@ const options = { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true,
 async function windowsProcesses(pid) {
   const filter = pid === undefined ? '' : ` -Filter 'ProcessId = ${pid}'`
   const script = `@(Get-CimInstance Win32_Process${filter} | Select-Object ProcessId,CommandLine,@{Name='Started';Expression={if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().Ticks.ToString()} else {''}}}) | ConvertTo-Json -Compress`
-  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], options)
+  // Cold CIM startup on Windows CI can exceed five seconds; stay within the
+  // supervisor's 15-second handshake deadline without skipping identity checks.
+  const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { ...options, timeout: 12_000 })
   const values = JSON.parse(stdout.trim() || '[]')
   return (Array.isArray(values) ? values : [values]).map(value => ({
     pid: Number(value.ProcessId), started: value.Started, command: value.CommandLine || '', state: '',
