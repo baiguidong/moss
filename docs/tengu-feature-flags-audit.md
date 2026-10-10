@@ -63,6 +63,7 @@ Feature/gate 复核日期：2026-09-01
 | `moss_scratchpad` | `false` | 会话临时工作区 | 为 Agent 和 Coordinator Worker 提供隔离的会话级临时目录。 |
 | `moss_idle_session_cleanup` | `false` | 闲置会话优化 | 会话闲置 60 分钟后清理较早的工具结果，固定保留最近 5 个可压缩结果。 |
 | `moss_streaming_tool_execution` | `false` | 流式工具执行 | 工具参数在流式响应中完成后提前开始执行。 |
+| `moss_disable_nonstreaming_fallback` | `false` | 禁止失败恢复 | 独立控制模型流式请求失败后的非流式恢复；默认允许恢复，不与流式工具执行联动。 |
 | `moss_plan_mode_interview` | `true` | Plan 引导访谈 | Plan Mode 使用分阶段澄清、探索和计划生成流程。 |
 | `moss_fast_web_search` | `false` | 快速网页搜索 | Web Search 使用小型快速模型、关闭 thinking 并强制选择搜索工具。 |
 | `moss_memory_learn_from_corrections` | `false` | 从纠正中学习 | 用户拒绝或取消工具后，提醒 Agent 识别后续纠正和偏好并考虑写入长期记忆。 |
@@ -105,7 +106,8 @@ Feature/gate 复核日期：2026-09-01
 - Agent Teams 已删除二次熔断，仅由 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 或 `--agent-teams` 显式启用。
 - Opus effort 推荐已使用固定产品文案，不再读取 A/B 对象配置。
 - Bash 和 PowerShell 权限确认框已固定显示检测到的破坏性命令警告。
-- 开启 `moss_streaming_tool_execution` 时自动禁止流式失败后的非流式重放，避免工具重复执行。
+- `moss_disable_nonstreaming_fallback` 独立控制流式失败后的非流式恢复，默认关闭；不再由 `moss_streaming_tool_execution` 隐式开启。原有 `CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK` 环境变量仍可显式禁用恢复。
+- 两个开关独立不代表请求重放具有幂等性：开启流式工具执行且允许恢复时，已执行工具的副作用无法由丢弃旧响应撤销。需要禁止这类重放时，应显式开启“禁止失败恢复”。普通工具错误后的新调用不属于此恢复策略。
 - `ECONNRESET` 或 `EPIPE` 后自动关闭 keep-alive 并使用新连接重试，不再依赖运行时开关。
 
 ## 保留行为但不建议进入 UI

@@ -82,6 +82,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     moss_scratchpad: false,
     moss_idle_session_cleanup: false,
     moss_streaming_tool_execution: false,
+    moss_disable_nonstreaming_fallback: false,
     moss_plan_mode_interview: true,
     moss_fast_web_search: false,
     moss_memory_learn_from_corrections: false,

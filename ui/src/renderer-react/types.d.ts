@@ -786,6 +786,7 @@ export type DesktopSettings = {
     moss_scratchpad?: boolean;
     moss_idle_session_cleanup?: boolean;
     moss_streaming_tool_execution?: boolean;
+    moss_disable_nonstreaming_fallback?: boolean;
     moss_plan_mode_interview?: boolean;
     moss_fast_web_search?: boolean;
     moss_memory_learn_from_corrections?: boolean;

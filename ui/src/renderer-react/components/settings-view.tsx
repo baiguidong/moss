@@ -188,6 +188,7 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
   moss_scratchpad: false,
   moss_idle_session_cleanup: false,
   moss_streaming_tool_execution: false,
+  moss_disable_nonstreaming_fallback: false,
   moss_plan_mode_interview: true,
   moss_fast_web_search: false,
   moss_memory_learn_from_corrections: false,
@@ -298,7 +299,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'tool-performance',
         title: '工具与性能',
-        keywords: ['tool', 'performance', 'streaming', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'],
+        keywords: ['tool', 'performance', 'streaming', 'fallback', '禁止失败恢复', '流式工具执行', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'],
       },
       {
         id: 'prompt',
@@ -1805,6 +1806,20 @@ export function SettingsView({
                             checked={Boolean(advancedDraft.moss_streaming_tool_execution)}
                             onCheckedChange={(checked) => updateAdvancedSettings({ moss_streaming_tool_execution: checked })}
                             label="流式工具执行"
+                          />
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="禁止失败恢复"
+                        description="默认关闭，允许模型流式请求失败后尝试非流式恢复。开启后禁用此恢复方式；不影响普通工具调用失败后的继续处理。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={Boolean(advancedDraft.moss_disable_nonstreaming_fallback)}
+                            onCheckedChange={(checked) => updateAdvancedSettings({ moss_disable_nonstreaming_fallback: checked })}
+                            label="禁止失败恢复"
                           />
                         </div>
                       </SettingsRow>

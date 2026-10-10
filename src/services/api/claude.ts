@@ -2280,12 +2280,12 @@ async function* queryModel(
         }
       }
 
-      // Streaming tool execution must not use the non-streaming fallback. A
-      // partial stream may already have started a tool, while the fallback can
-      // produce and run the same tool_use again. See inc-4258.
+      // Keep the recovery opt-out independent of streaming tool execution,
+      // matching the original agent policy. Disabling recovery prevents replay
+      // when a partial stream may already have started a tool (inc-4258).
       const disableFallback =
         isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) ||
-        getAdvancedSetting('moss_streaming_tool_execution')
+        getAdvancedSetting('moss_disable_nonstreaming_fallback')
 
       if (disableFallback) {
         logForDebugging(

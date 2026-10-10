@@ -33,6 +33,7 @@ export type AdvancedSettings = {
   moss_scratchpad: boolean
   moss_idle_session_cleanup: boolean
   moss_streaming_tool_execution: boolean
+  moss_disable_nonstreaming_fallback: boolean
   moss_plan_mode_interview: boolean
   moss_fast_web_search: boolean
   moss_memory_learn_from_corrections: boolean
@@ -103,6 +104,7 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = Object.freeze({
   moss_scratchpad: false,
   moss_idle_session_cleanup: false,
   moss_streaming_tool_execution: false,
+  moss_disable_nonstreaming_fallback: false,
   moss_plan_mode_interview: true,
   moss_fast_web_search: false,
   moss_memory_learn_from_corrections: false,
@@ -164,6 +166,7 @@ export const advancedSettingsSchema = lazySchema(() =>
     moss_scratchpad: z.boolean().optional(),
     moss_idle_session_cleanup: z.boolean().optional(),
     moss_streaming_tool_execution: z.boolean().optional(),
+    moss_disable_nonstreaming_fallback: z.boolean().optional(),
     moss_plan_mode_interview: z.boolean().optional(),
     moss_fast_web_search: z.boolean().optional(),
     moss_memory_learn_from_corrections: z.boolean().optional(),
