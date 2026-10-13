@@ -23,12 +23,15 @@ const root = mkdtempSync(path.join(os.tmpdir(),'moss-native-electron-'));
 app.setPath('userData', path.join(root,'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
 let runtime, window, target;
+let phase = 'install';
+const settingsRequestOptions = { timeoutMs: 60000 }; // Match the App UI's cold-start budget.
+const progress = value => { phase = value; console.log(`NATIVE_PHASE: ${value}`); };
 let targetPid;
 const targetBundleId = 'ai.moss.native-migration-test';
 let settings = { enabled:false, apps:[{bundleId:targetBundleId,name:'Moss migration test'}] };
 const feature = createDesktopControlFeature({ app, ipcMain, powerMonitor, shell, getMainWindow:() => window, getRuntime:() => runtime,
   getSettings:() => settings, saveSettings:value => {settings=value;}, publish() {}, expectedBundleId:'com.github.Electron' });
-const timeout = setTimeout(() => { console.error('Native integration timed out', root); app.exit(1); }, 120000);
+const timeout = setTimeout(() => { console.error('Native integration timed out', { phase, status: feature.status(), root }); app.exit(1); }, 120000);
 void (async () => { try {
   const fixture = useHostTrust ? source : path.join(root,'fixture');
   if (!useHostTrust) await fs.cp(source,fixture,{recursive:true});
@@ -51,13 +54,14 @@ void (async () => { try {
   assert.equal(runtime.nativeAvailable(pkg),true);
   await fs.writeFile(path.join(root,'trust.json'),JSON.stringify(pkg.trust,null,2));
   const preload = path.join(root,'preload.cjs');
-  await fs.writeFile(preload, `const {contextBridge,ipcRenderer}=require('electron'); contextBridge.exposeInMainWorld('mossApp',{app:{getInfo:async()=>({appearance:{themeMode:'light',cssThemeId:'grid-theme'}})},host:{request:(protocol,method,input)=>ipcRenderer.invoke('native-smoke:request',{protocol,method,input}),cancel:async()=>{}},events:{on:()=>()=>{}}});`);
+  await fs.writeFile(preload, `const {contextBridge,ipcRenderer}=require('electron'); contextBridge.exposeInMainWorld('mossApp',{app:{getInfo:async()=>({appearance:{themeMode:'light',cssThemeId:'grid-theme'}})},host:{request:(protocol,method,input,options)=>ipcRenderer.invoke('native-smoke:request',{protocol,method,input,options}),cancel:async()=>{}},events:{on:()=>()=>{}}});`);
   window = new BrowserWindow({width:1040,height:800,show:false,webPreferences:{preload,contextIsolation:true,sandbox:true}});
-  ipcMain.handle('native-smoke:request',async (event,{protocol,method,input}) => {
+  ipcMain.handle('native-smoke:request',async (event,{protocol,method,input,options}) => {
     assert.equal(event.sender,window.webContents); assert.equal(event.senderFrame,window.webContents.mainFrame);
-    try { return {ok:true,result:await runtime.requestHostCapability(manifest.id,instance.id,protocol,method,input)}; }
+    try { return {ok:true,result:await runtime.requestHostCapability(manifest.id,instance.id,protocol,method,input,options)}; }
     catch(error) {return {ok:false,error:{message:error.message}};}
   });
+  progress('settings-ui');
   await window.loadFile(path.join(pkg.root,manifest.ui.entry));
   const read = script => window.webContents.executeJavaScript(script);
   for (let i=0;i<50;i++) {
@@ -67,11 +71,16 @@ void (async () => { try {
   assert.equal(await read(`document.getElementById('phase').textContent`),'控制已关闭');
   assert.equal(await read(`document.getElementById('error').hidden`),true);
   await fs.writeFile(path.join(root,'settings.png'),(await window.webContents.capturePage()).toPNG());
-  const enabled = await runtime.requestHostCapability(manifest.id,instance.id,'moss.host/v1','native.settings',{operation:'enable',enabled:true});
+  progress('enable-driver');
+  const enabled = await runtime.requestHostCapability(manifest.id,instance.id,'moss.host/v1','native.settings',{operation:'enable',enabled:true},settingsRequestOptions);
+  console.log('NATIVE_DRIVER_STATUS:', JSON.stringify(enabled));
   await fs.writeFile(path.join(root,'status.json'),JSON.stringify(enabled,null,2));
   assert.equal(enabled.permissions?.hostIdentity,true,enabled.error);
   const session = {id:'isolated-native-test',title:'Native migration test',appIds:[manifest.id],sessionKind:'chat',originChannel:'desktop',agentMode:'local'};
-  const invoke = request => runtime.invokeToolContribution(`${manifest.id}/computer_use`,{request},{sessionRecord:session,signal:new AbortController().signal});
+  const invoke = request => {
+    progress(`tool:${request.action}`);
+    return runtime.invokeToolContribution(`${manifest.id}/computer_use`,{request},{sessionRecord:session,signal:new AbortController().signal});
+  };
   assert.equal((await invoke({action:'status'})).format,'moss.tool-result/v1');
   if (loadOnly) {
     console.log('NATIVE_LOAD_PASSED: package signature, adapter startup, host identity and status tool');
@@ -188,5 +197,5 @@ app.run()
   console.log(JSON.stringify({result:'NATIVE_APP_INTEGRATION_PASSED',root,hostIdentity:enabled.permissions.hostIdentity,trust:pkg.trust,loadOnly}));
   await runtime.shutdown(); target?.kill(); window.destroy(); clearTimeout(timeout); app.exit(0);
 } catch(error) {
-  console.error(error,root); target?.kill(); await feature.stop('test-failed').catch(()=>{}); await runtime?.shutdown().catch(()=>{}); clearTimeout(timeout); app.exit(1);
+  console.error(error,{phase,status:feature.status(),root}); target?.kill(); await feature.stop('test-failed').catch(()=>{}); await runtime?.shutdown().catch(()=>{}); clearTimeout(timeout); app.exit(1);
 } })();
