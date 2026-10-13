@@ -81,7 +81,12 @@ test('only the main frame can decide grants; App settings cannot issue decisions
 test('system permission requests give feedback and reject active control', async () => {
   const f = featureFixture({ accessibility:false, screenRecording:false });
   const status = await f.invoke('request-permissions');
-  assert.deepEqual(f.calls, ['request','check']); assert.match(f.opened[0], /Privacy_Accessibility/); assert.match(status.permissionNotice, /已打开/);
+  assert.deepEqual(f.calls, ['request','check']);
+  if (process.platform === 'darwin') {
+    assert.match(f.opened[0], /Privacy_Accessibility/); assert.match(status.permissionNotice, /已打开/);
+  } else {
+    assert.deepEqual(f.opened, []); assert.match(status.permissionNotice, /系统能力检查未通过/);
+  }
   await f.feature.invoke(f.pkg, 'test', {}, {sessionRecord:session});
   await assert.rejects(f.invoke('request-permissions'), /先结束/);
 });
