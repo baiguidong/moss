@@ -223,7 +223,7 @@ async function publishAppFromBuildNow(buildDir, options = {}) {
   if (options.expectedInstallationRevision !== undefined
     && (getAppInstallationRevision(source.manifest.id) !== options.expectedInstallationRevision
       || (readJsonFile(getAppCurrentPath(source.manifest.id), {})?.version || null) !== options.expectedBaseVersion)) {
-    throw new Error('App installation changed before commit')
+    throw Object.assign(new Error('App installation changed before commit'), { code: 'MOSS_APP_INSTALLATION_CHANGED' })
   }
   const installationRevision = advanceInstallationRevision(source.manifest.id)
   writeJsonFile(getAppCurrentPath(source.manifest.id), { version: source.manifest.version, installationRevision, updatedAt: now() })

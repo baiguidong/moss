@@ -334,12 +334,28 @@ export function createAppMarketplaceService(options = {}) {
       if (!version.artifact.signed) throw new Error(`App ${appId}@${version.version} is not signed`)
 
       const runtime = options.getRuntime()
+      const installationRevision = options.getInstallationRevision?.(appId)
       const installedEntry = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
-      if (installedEntry?.localModification) throw new Error('此 App 包含本地修改。请保留源码并明确卸载本地版本后，再安装市场版本。')
+      const localVersion = installedEntry?.localModification ? installedEntry.currentVersion : null
+      // Different immutable versions can coexist, including their source packages.
+      // Replacing the contents of the same version still requires an explicit uninstall.
+      if (installedEntry?.localModification && (!localVersion || localVersion === version.version)) {
+        throw new Error('此 App 的本地版本与市场版本号冲突。请保留源码并卸载本地版本后，再安装市场版本。')
+      }
+      if (localVersion && !options.confirmInstallation) throw new Error('此 App 包含本地修改，需要确认后才能安装市场版本。')
       const installation = runtime.getInstallation(appId)
-      const previousVersion = installation?.activeVersion || null
-      if (installation?.activeVersion === version.version) {
+      const previousVersion = installation?.activeVersion || installedEntry?.currentVersion || null
+      if (!localVersion && installation?.activeVersion === version.version) {
         return { ok: true, alreadyInstalled: true, appId, version: version.version }
+      }
+      const installationSnapshot = (entry) => JSON.stringify([entry?.currentVersion, entry?.localModification])
+      const initialInstallationSnapshot = installationSnapshot(installedEntry)
+      const assertInstallationUnchanged = async () => {
+        const current = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
+        if (installationSnapshot(current) !== initialInstallationSnapshot
+          || (installationRevision !== undefined && options.getInstallationRevision(appId) !== installationRevision)) {
+          throw new Error('此 App 的安装状态已变化，请重试安装市场版本。')
+        }
       }
       const currentGrants = installation?.grants || []
       const declaredPermissions = new Set(version.permissions)
@@ -389,19 +405,28 @@ export function createAppMarketplaceService(options = {}) {
               throw new Error(`Downloaded App signer mismatch: ${appId}@${version.version}`)
             }
             const pendingPermissions = acceptPermissions ? [] : addedPermissions
-            if (pendingPermissions.length || describeAppTools(packageInfo.manifest).length) {
+            await assertInstallationUnchanged()
+            if (localVersion || pendingPermissions.length || describeAppTools(packageInfo.manifest).length) {
               report({ phase: 'awaiting-permission' })
               if (!options.confirmInstallation) throw new Error('安装此 App 前需要确认其 AI 工具列表')
-              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions)) {
+              const replacementDetails = localVersion
+                ? `当前使用的是本地修改版本 ${localVersion}。安装后将切换到市场版本 ${version.version}。\n本地版本及其源码会保留在版本历史中，可通过回滚重新使用；现有 App 配置和数据会保留。`
+                : ''
+              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions, replacementDetails)) {
                 throw Object.assign(new Error('App installation was canceled'), { code: INSTALL_CANCELED })
               }
             }
+            await assertInstallationUnchanged()
             report({ phase: 'installing' })
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
               trustedPublishers,
               requireTrustedPublisher: true,
               marketplaceSource: { catalogUrl: indexUrl, appId, version: version.version },
+              ...(installationRevision !== undefined ? {
+                expectedInstallationRevision: installationRevision,
+                expectedBaseVersion: installedEntry?.currentVersion || null,
+              } : {}),
             })
           },
         })
@@ -412,7 +437,7 @@ export function createAppMarketplaceService(options = {}) {
         await options.emitChanged?.({ action: installation ? 'marketplace-updated' : 'marketplace-installed', appId })
         return { ok: true, appId, version: version.version, app }
       } catch (error) {
-        if (packageInstallStarted && !activationCompleted) {
+        if (packageInstallStarted && !activationCompleted && error?.code !== 'MOSS_APP_INSTALLATION_CHANGED') {
           try {
             report({ phase: 'rolling-back' })
             await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version })

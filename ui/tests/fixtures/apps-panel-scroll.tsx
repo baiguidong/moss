@@ -15,7 +15,8 @@ let storedApps = Array.from({ length: 24 }, (_, index) => ({
   description: '检查启用和停用 App 后，列表顶部与底部都能完整显示。',
   enabled: true,
   hasUi: true,
-  currentVersion: '1.0.0',
+  currentVersion: index === 4 ? '1.0.0-local.1' : '1.0.0',
+  localModification: index === 4 ? { sourceHash: 'local-fixture' } : null,
   updatedAt: 1_700_000_000_000,
 })) as StoredApp[];
 
@@ -27,6 +28,10 @@ let storedApps = Array.from({ length: 24 }, (_, index) => ({
     storedApps = storedApps.map(app => app.id === appId ? { ...app, enabled } : app);
   },
   appMarketplace: {
+    install: async ({ appId, version }: { appId: string; version: string }) => {
+      storedApps = storedApps.map(app => app.id === appId ? { ...app, currentVersion: version, localModification: null } : app);
+      return { ok: true, appId, version };
+    },
     list: async () => ({
       hostApiVersion: '3.3.0', fetchedAt: Date.now(), generatedAt: new Date().toISOString(),
       apps: storedApps.map(app => ({

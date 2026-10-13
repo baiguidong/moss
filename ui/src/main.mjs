@@ -8127,7 +8127,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     authorizePreview: (manifest, grants) => confirmAppInstallation(dialog, { ...manifest, contributes: undefined }, grants),
     authorizeInstall: (manifest, result) => confirmAppInstallation(dialog,
       JSON.stringify(result.tools) === JSON.stringify(result.previousTools) ? { ...manifest, contributes: undefined } : manifest, result.addedPermissions,
-      [result.source?.marketplace && result.source.appId === manifest.id ? `此本地修改将替换市场 App ${manifest.id}。原版本保留，当前版本不再继承市场签名信任；后续市场更新会被阻止。` : '',
+      [result.source?.marketplace && result.source.appId === manifest.id ? `此本地修改将替换市场 App ${manifest.id}。原版本保留，当前版本不再继承市场签名信任；切回市场版本时需要再次确认。` : '',
         result.dataCompatibility === 'migration-tested' ? `数据迁移验证：${result.verification}` : ''].filter(Boolean).join('\n\n')),
     install: async (artifact, { project, expectedGrants, ...expected }) => {
       const installed = await publishAppFromBuild(artifact.directory, { ...expected, sourceRoot: artifact.source, reason: 'authoring', localModification: { origin: project.origin, sourceHash: artifact.sourceHash }, validateCommit: () => {
@@ -8190,8 +8190,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       trustedPublishers,
       getRuntime: () => appRuntime,
       getInstalledApps: () => listAllStoredApps(),
+      getInstallationRevision: getAppInstallationRevision,
       installPackage: installAppPackage,
-      confirmInstallation: (manifest, permissions) => confirmAppInstallation(dialog, manifest, permissions),
+      confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(dialog, manifest, permissions, details),
       rollbackPackage: async ({ appId, previousVersion }) => {
         if (previousVersion) rollbackAppToVersion(appId, previousVersion);
         else await deleteApp(appId);

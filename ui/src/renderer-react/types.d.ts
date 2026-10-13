@@ -921,6 +921,7 @@ export type StoredApp = {
   packageStatus?: 'ready' | 'incompatible' | 'invalid';
   packageError?: string | null;
   requiredHostApi?: string | null;
+  localModification?: Record<string, unknown> | null;
   marketplaceSource?: {
     catalogUrl: string;
     appId: string;
@@ -1066,6 +1067,7 @@ export type AppMarketplaceEntry = {
   latestVersion: string;
   latest: AppMarketplaceVersion;
   installedVersion: string | null;
+  localModification?: boolean;
   updateAvailable: boolean;
   platformCompatible: boolean;
   hostCompatible: boolean;

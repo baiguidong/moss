@@ -163,6 +163,14 @@ async function run() {
     await delay();
     assert.deepEqual(await evaluate(() => [...new Set([...document.querySelectorAll('main [data-app-category]')].map(card => card.dataset.appCategory))]), ['development']);
     assert.equal(await evaluate(() => document.querySelectorAll('main section').length), 4);
+    const localButton = () => [...document.querySelectorAll('main section button')].find(button => button.textContent === '安装市场版');
+    assert(await evaluate(() => [...document.querySelectorAll('main section')].some(card => card.textContent.includes('本地版本和源码仍保留'))));
+    assert.equal(await evaluate(() => [...document.querySelectorAll('main section button')].find(button => button.textContent === '安装市场版')?.disabled), false);
+    await evaluate(() => [...document.querySelectorAll('main section button')].find(button => button.textContent === '安装市场版').click());
+    await delay();
+    assert.equal(await evaluate(localButton), undefined);
+    assert(await evaluate(() => [...document.querySelectorAll('main section')].find(card => card.textContent.includes('滚动测试 App 5')).textContent.includes('已安装 1.0.0')));
+    console.log('PASS local App offers marketplace installation and refreshes after switching versions');
     await capture('marketplace-category');
     console.log('PASS marketplace uses category tabs and a compact header without search');
   } catch (error) {

@@ -127,6 +127,130 @@ function detail(latest: ReturnType<typeof version>) {
   }
 }
 
+async function localVersionFixture(overrides: Record<string, any> = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-local-'))
+  roots.push(root)
+  const archive = Buffer.from('signed market replacement')
+  const latest = { ...version(archive), permissions: [] }
+  const localVersion = '1.2.0-local.20261012'
+  const state = {
+    entry: { id: 'example.app', currentVersion: localVersion, localModification: { sourceHash: 'local-source' } } as any,
+    installs: [] as any[], registrations: [] as any[], rollbacks: [] as any[], prompts: [] as any[],
+    validated: false,
+  }
+  const responses = new Map([
+    ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
+    ['https://example.com/example.app.json', Buffer.from(JSON.stringify(detail(latest)))],
+    [latest.artifact.downloadUrl, archive],
+  ])
+  const service = createAppMarketplaceService({
+    indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'), platform: 'darwin-arm64',
+    getInstalledApps: async () => state.entry ? [state.entry] : [],
+    getInstallationRevision: () => 7,
+    getRuntime: () => ({
+      getInstallation: () => ({ activeVersion: localVersion, grants: [] }),
+      registerInstalled: async (...args: any[]) => { state.registrations.push(args) },
+    }),
+    download: async (url: string) => responses.get(url),
+    installArchive: async (_runtime: unknown, _archive: string, options: any) => options.installPackage('/verified-package'),
+    validatePackage: async () => {
+      state.validated = true
+      return {
+        manifest: { id: 'example.app', version: latest.version, displayName: 'Example', permissions: [] },
+        trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+      }
+    },
+    confirmInstallation: async (...args: any[]) => { state.prompts.push(args); return true },
+    installPackage: async (_root: string, options: any) => { state.installs.push(options); return { id: 'example.app' } },
+    rollbackPackage: async (options: any) => { state.rollbacks.push(options) },
+    ...overrides,
+  })
+  return { service, state, localVersion }
+}
+
+it.each([0, 1].flatMap(response => [false, true].map(acceptPermissions => ({ response, acceptPermissions }))))(
+  'confirms a local replacement after verification even without tools or new permissions (%o)',
+  async ({ response, acceptPermissions }) => {
+    const { service, state, localVersion } = await localVersionFixture({
+      confirmInstallation: async (manifest: any, permissions: string[], details: string) => {
+        expect(state.validated).toBe(true)
+        expect(state.installs).toHaveLength(0)
+        return confirmAppInstallation({ showMessageBox: async (prompt: any) => { state.prompts.push(prompt); return { response } } }, manifest, permissions, details)
+      },
+    })
+    expect((await service.list()).apps[0].localModification).toBe(true)
+    const result = await service.install({ appId: 'example.app', acceptPermissions })
+    expect(result.ok).toBe(response === 1)
+    expect(state.prompts).toHaveLength(1)
+    expect(state.prompts[0].detail).toContain(localVersion)
+    expect(state.prompts[0].detail).toContain('源码会保留在版本历史')
+    expect(state.installs).toHaveLength(response)
+    expect(state.registrations).toHaveLength(response)
+    expect(state.rollbacks).toHaveLength(0)
+    if (response) expect(state.installs[0]).toMatchObject({
+      marketplaceSource: { appId: 'example.app', version: '1.2.0' },
+      expectedInstallationRevision: 7, expectedBaseVersion: localVersion,
+    })
+    else expect(result.canceled).toBe(true)
+  },
+)
+
+it('keeps local versions protected when there is no host confirmation', async () => {
+  const { service, state } = await localVersionFixture({ confirmInstallation: undefined })
+  await expect(service.install({ appId: 'example.app', acceptPermissions: true })).rejects.toThrow('需要确认')
+  expect(state.validated).toBe(false)
+  expect(state.installs).toHaveLength(0)
+})
+
+it('does not report a conflicting local version as already installed', async () => {
+  const { service, state } = await localVersionFixture({
+    getRuntime: () => ({ getInstallation: () => ({ activeVersion: '1.2.0', grants: [] }) }),
+  })
+  state.entry.currentVersion = '1.2.0'
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('版本号冲突')
+  expect(state.prompts).toHaveLength(0)
+  expect(state.installs).toHaveLength(0)
+})
+
+it.each(['download', 'confirmation'])('requires a fresh confirmation if the local version changes during %s', async phase => {
+  const { service, state } = await localVersionFixture({
+    confirmInstallation: async () => {
+      state.prompts.push(true)
+      if (phase === 'confirmation') state.entry = { ...state.entry, currentVersion: '1.3.0-local.1' }
+      return true
+    },
+    installArchive: async (_runtime: unknown, _archive: string, options: any) => {
+      if (phase === 'download') state.entry = { ...state.entry, currentVersion: '1.3.0-local.1' }
+      return options.installPackage('/verified-package')
+    },
+  })
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('安装状态已变化')
+  expect(state.prompts).toHaveLength(phase === 'download' ? 0 : 1)
+  expect(state.installs).toHaveLength(0)
+  expect(state.rollbacks).toHaveLength(0)
+})
+
+it('does not roll back a concurrent installation when the commit guard rejects the replacement', async () => {
+  const { service, state } = await localVersionFixture({
+    installPackage: async () => { throw Object.assign(new Error('App installation changed before commit'), { code: 'MOSS_APP_INSTALLATION_CHANGED' }) },
+  })
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('changed before commit')
+  expect(state.rollbacks).toHaveLength(0)
+  expect(state.registrations).toHaveLength(0)
+})
+
+it('restores the local version when activating the marketplace replacement fails', async () => {
+  const { service, state, localVersion } = await localVersionFixture({
+    getRuntime: () => ({
+      getInstallation: () => ({ activeVersion: '1.2.0-local.20261012', grants: [] }),
+      registerInstalled: async () => { throw new Error('activation failed') },
+    }),
+  })
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('activation failed')
+  expect(state.installs).toHaveLength(1)
+  expect(state.rollbacks).toEqual([{ appId: 'example.app', previousVersion: localVersion, failedVersion: '1.2.0' }])
+})
+
 describe('App marketplace', () => {
   it('retains primary category and searchable keywords, with other as the legacy and future fallback', () => {
     const release = version(Buffer.from('app'));

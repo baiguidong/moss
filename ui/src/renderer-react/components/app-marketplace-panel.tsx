@@ -186,10 +186,13 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                 && (selectedRelease.hostCompatible ?? entry.hostCompatible),
               );
               const sameVersion = installed?.currentVersion === selectedVersion;
+              const localModification = Boolean(installed?.localModification || entry.localModification);
               const actionLabel = busy
                 ? installed ? "更新中…" : "安装中…"
                 : !installed
                   ? "安装"
+                  : localModification
+                    ? sameVersion ? "本地版本冲突" : "安装市场版"
                   : sameVersion
                     ? "已安装"
                     : selectedVersion === entry.latestVersion && entry.updateAvailable
@@ -213,7 +216,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible} onClick={() => void install(entry)}>
-                      {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+                      {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
                       {actionLabel}
                     </Button>
                     <Button size="sm" variant="outline" className="h-8" onClick={() => void toggleDetails(entry)}>
@@ -222,6 +225,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                     {!compatible && <span className="text-xs text-destructive">当前系统或 Moss 版本不兼容</span>}
                     {installed?.currentVersion && <span title={installed.currentVersion} className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion.replace(/-local\..*$/, " · 本地版")}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
                   </div>
+                  {localModification && <p className="mt-2 text-xs leading-5 text-muted-foreground">{sameVersion
+                    ? "本地修改与市场版本号相同，请保留源码并卸载本地版本后再安装。"
+                    : "当前为本地修改版本。确认安装市场版后，本地版本和源码仍保留，可在版本历史中回滚。"}</p>}
                   {installProgress && <div className="mt-3"><AppInstallProgressView progress={installProgress} /></div>}
                   {expanded && (
                     <div className="mt-4 border-t border-border pt-3 text-xs">

@@ -13,6 +13,56 @@ afterEach(async () => {
 })
 
 describe('App V2 registry hydration', () => {
+  it('preserves local packages and source when switching to the marketplace and rolling back', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-local-market-'))
+    roots.push(home)
+    const appId = 'fixture.local-market'
+    const localVersion = '1.2.0-local.20261012'
+    const packages = [localVersion, '1.2.0', '1.3.0'].map(version => path.join(home, 'packages', version))
+    for (const [index, packageRoot] of packages.entries()) {
+      await fs.mkdir(path.join(packageRoot, 'src'), { recursive: true })
+      await fs.writeFile(path.join(packageRoot, 'src', 'index.html'), `<p>source ${index}</p>`)
+      await fs.writeFile(path.join(packageRoot, 'index.html'), `<p>built ${index}</p>`)
+      await fs.writeFile(path.join(packageRoot, 'app.moss.json'), JSON.stringify({
+        schemaVersion: 2, id: appId, version: [localVersion, '1.2.0', '1.3.0'][index],
+        displayName: 'Local market fixture', hostApi: '^3.0.0', ui: { entry: 'index.html' }, permissions: [],
+      }))
+      await writePackageChecksums(packageRoot)
+    }
+    const modulePath = path.resolve(import.meta.dir, '../src/app-platform.mjs')
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs/promises';
+      import path from 'node:path';
+      import { publishAppFromBuild, getAppRoot, getAppInstallationRevision, listAppVersions, listAppsFromRegistry, rollbackAppToVersion } from ${JSON.stringify(modulePath)};
+      const [local, market, newer] = ${JSON.stringify(packages)};
+      const appId = ${JSON.stringify(appId)}, localVersion = ${JSON.stringify(localVersion)};
+      const localModification = { sourceHash: 'local-source' };
+      await publishAppFromBuild(local, { localModification, sourceRoot: local });
+      const root = getAppRoot(appId);
+      const sourceArchive = path.join(root, 'sources', localVersion + '.tar.gz');
+      const originalArchive = await fs.readFile(sourceArchive);
+      const originalChecksums = await fs.readFile(path.join(root, 'versions', localVersion, 'checksums.json'));
+      const marketplaceSource = { catalogUrl: 'https://example.com', appId, version: '1.2.0' };
+      await publishAppFromBuild(market, { marketplaceSource,
+        expectedInstallationRevision: getAppInstallationRevision(appId), expectedBaseVersion: localVersion });
+      assert.equal(listAppsFromRegistry()[0].currentVersion, '1.2.0');
+      assert.equal(listAppsFromRegistry()[0].localModification, null);
+      assert.deepEqual(listAppsFromRegistry()[0].marketplaceSource, marketplaceSource);
+      assert.equal(listAppVersions(appId).length, 2);
+      assert.equal(await fs.readFile(path.join(root, 'versions', localVersion, 'src/index.html'), 'utf8'), '<p>source 0</p>');
+      assert.deepEqual(await fs.readFile(sourceArchive), originalArchive);
+      assert.deepEqual(await fs.readFile(path.join(root, 'versions', localVersion, 'checksums.json')), originalChecksums);
+      await assert.rejects(publishAppFromBuild(newer, { expectedInstallationRevision: 0, expectedBaseVersion: localVersion }), { code: 'MOSS_APP_INSTALLATION_CHANGED' });
+      assert.equal(listAppsFromRegistry()[0].currentVersion, '1.2.0');
+      rollbackAppToVersion(appId, localVersion);
+      assert.equal(listAppsFromRegistry()[0].currentVersion, localVersion);
+      assert.deepEqual(listAppsFromRegistry()[0].localModification, localModification);
+    `], { env: { ...process.env, MOSS_HOME: path.join(home, 'profile') }, encoding: 'utf8' })
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+  })
+
   it('lists only installed V2 packages and hydrates their manifest and UI entry', async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-registry-'))
     roots.push(home)
