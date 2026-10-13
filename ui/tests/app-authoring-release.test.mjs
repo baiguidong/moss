@@ -59,8 +59,8 @@ test('RE-03/08: cancellation and unknown migration state never install', async (
   } finally { await f.close() }
 }, 30000)
 
-test('RE-04: restart reconciles only the exact committed package, revision and source', async () => {
-  for (const fault of ['none', 'package', 'source', 'revision']) {
+for (const fault of ['none', 'package', 'source', 'revision']) {
+  test(`RE-04: restart reconciles only the exact committed package, revision and source (${fault})`, async () => {
     const f = await fixture()
     try {
       const project = await f.prepare(), prepared = await release(f, project, '0.1.0')
@@ -82,8 +82,8 @@ test('RE-04: restart reconciles only the exact committed package, revision and s
       if (fault === 'none') assert.equal(receipt.result.recovered, true)
       else assert.match(receipt.error, /recovery failed/)
     } finally { await f.close() }
-  }
-}, 20000)
+  }, 30000)
+}
 
 test('RE-04: an install failure preserves the previous active version and project baseline', async () => {
   let rejectInstall = false
