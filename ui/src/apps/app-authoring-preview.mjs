@@ -13,10 +13,6 @@ export function createAuthoringPreview({ root, getRuntime, nodeExecutable, openW
     const protocols = [...host.protocols.values()].filter(protocol => protocol.protocol !== 'moss.host/v1').map(protocol => ({
       ...clean(protocol), methods: members(protocol.methods), events: members(protocol.events),
     }))
-    const handlers = Object.fromEntries([...host.handlers].map(([protocol, methods]) => [protocol,
-      // Each preview runtime creates its own built-in handlers bound to its identity/state.
-      Object.fromEntries([...methods].filter(([name]) => !(protocol === 'moss.host/v1' && ['capabilities.get', 'native.settings'].includes(name)))),
-    ]))
     let runtime, window, closed = false
     const close = async () => {
       if (closed) return
@@ -27,7 +23,14 @@ export function createAuthoringPreview({ root, getRuntime, nodeExecutable, openW
     }
     try {
       runtime = await createAppRuntime({ mossHome: previewRoot, appsDir: path.join(previewRoot, 'apps'), nodeExecutable,
-        hostProtocols: protocols, hostHandlers: handlers })
+        hostProtocols: protocols })
+      // Built-in handlers capture the new runtime's identity and state. Copy
+      // only additional Desktop handlers, never handlers from the parent runtime.
+      for (const [protocol, methods] of host.handlers) {
+        for (const [name, handler] of methods) {
+          if (!runtime.hostCapabilities.handlers.get(protocol)?.has(name)) runtime.registerHostHandler(protocol, name, handler)
+        }
+      }
       await runtime.installFromDirectory(artifact.directory, { grants })
       const manifest = artifact.manifest, instanceId = defaultInstanceId(manifest.id)
       if (manifest.backend) {

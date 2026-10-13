@@ -8,6 +8,8 @@ function fixture(extra: Record<string, any> = {}) {
   const calls: string[] = [];
   const context = {
     Promise, Error, appShutdownComplete: false, desktopShutdownPromise: null,
+    sessionRuntimePool: { stop: () => calls.push('runtime-pool-stop') },
+    pendingRuntimeDisposals: new Set(),
     stopMossCronScheduler: () => calls.push('cron-stop'),
     localTranscriptSync: { dispose: () => calls.push('transcript-sync-stop') },
     appTestingHost: { close: async () => { calls.push('testing-close'); } },
@@ -46,6 +48,7 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
   expect(calls.indexOf('persist-child')).toBeLessThan(calls.indexOf('dispose-child'));
   expect(calls).toContain('apps-close');
   expect(calls).toContain('transcript-sync-stop');
+  expect(calls.indexOf('runtime-pool-stop')).toBeLessThan(calls.indexOf('dispose-chat'));
   expect(calls.indexOf('computer-use-stop')).toBeLessThan(calls.indexOf('apps-close'));
   expect(calls.indexOf('trace-close')).toBeLessThan(calls.indexOf('apps-close'));
   await shutdown(); expect(calls.filter(call => call === 'apps-close').length).toBe(1);

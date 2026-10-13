@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const main = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
-const source = main.slice(main.indexOf("ipcMain.handle('agent:get-model-context'"), main.indexOf("ipcMain.handle('agent:get-session'"));
+const source = main.slice(main.indexOf("ipcMain.handle('agent:get-model-context'"), main.indexOf('registerSessionEffortIpc({'));
 
 test('context IPC uses live runtime settings, resolves unopened sessions, and skips remote discovery', async () => {
   let handle: (_event: unknown, payload: { sessionId: string }) => Promise<unknown>;

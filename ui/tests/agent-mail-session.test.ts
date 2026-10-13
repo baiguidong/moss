@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import * as mailContext from '../src/agent-mail-context.mjs';
+import { normalizeStringList } from '../src/shared/string-list.mjs';
 
 const mainSource = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
 
@@ -24,7 +25,10 @@ function createHarness(sessionMode = 'fixed') {
   const shutdownIds: string[] = [];
   const noop = () => {};
   const context: any = {
-    ...mailContext,
+    ...mailContext, normalizeStringList,
+    hasActiveAgentTeam: () => false,
+    getProjectWorkerTasks: () => [],
+    isActiveProjectWorker: () => false,
     computerUseService: { beginTurn: () => {}, finish: async () => {} },
     sessions,
     desktopSettings: { agentMail: { sessionMode, inboxSessionIds: {} } },

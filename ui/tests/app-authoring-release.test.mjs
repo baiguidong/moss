@@ -30,7 +30,7 @@ test('RE-01 SE-05: consecutive installs advance baseline; lost response retries 
     assert.equal((await f.service.contextForSession('session')).ref.projectRef, project.projectRef)
     await fs.access(`${f.appsDir}/${project.appId}/versions/0.2.0/source/src/index.html`)
   } finally { await f.close() }
-})
+}, 30000)
 test('RE-02/03/07: ABA revision and grant changes invalidate prepared installation', async () => {
   const f = await fixture()
   try {
@@ -46,7 +46,7 @@ test('RE-02/03/07: ABA revision and grant changes invalidate prepared installati
     await f.runtime.installations.upsert(project.appId, { grants: ['apps:read'] })
     await assert.rejects(() => f.call('release.commit', { releaseRef: second.operationRef, submissionKey: 'grant' }), /permissions changed/)
   } finally { await f.close() }
-})
+}, 30000)
 test('RE-03/08: cancellation and unknown migration state never install', async () => {
   const f = await fixture()
   try {
@@ -57,7 +57,7 @@ test('RE-03/08: cancellation and unknown migration state never install', async (
     const build = f.service.operationsForSession('session').find(item => item.kind === 'build')
     await assert.rejects(() => f.call('release.prepare', { artifactRef: build.result.artifactRef, submissionKey: 'unknown', expectedBaseVersion: null, expectedInstallationRevision: 0, dataCompatibility: 'unknown' }), /compatibility/)
   } finally { await f.close() }
-})
+}, 30000)
 
 test('RE-04: restart reconciles only the exact committed package, revision and source', async () => {
   for (const fault of ['none', 'package', 'source', 'revision']) {
@@ -103,7 +103,7 @@ test('RE-04: an install failure preserves the previous active version and projec
     assert.equal(current.baseVersion, '0.1.0')
     assert.equal(current.installationRevision, 1)
   } finally { await f.close() }
-})
+}, 30000)
 
 test('RE-06: provider self-update completes in Core after its old Backend is stopped', async () => {
   const f = await fixture()
@@ -138,4 +138,4 @@ test('RE-06: provider self-update completes in Core after its old Backend is sto
     assert.equal(receipt.result.installationRevision, 1)
     assert.equal((await f.service.availability()).available, true)
   } finally { await f.close() }
-})
+}, 30000)

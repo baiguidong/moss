@@ -7,8 +7,9 @@ export function loadDesktopPreload(invoke: (channel: string, payload?: unknown) 
   const ipc = Object.assign(new EventEmitter(), { invoke });
   let api!: Window['agentDesktop'];
   const source = readFileSync(new URL('../../src/preload.mjs', import.meta.url), 'utf8');
-  runInNewContext(source.replace("import { contextBridge, ipcRenderer } from 'electron';", ''), {
+  runInNewContext(source.replace(/^import \{[^}]+\} from 'electron';\s*/m, ''), {
     ipcRenderer: ipc,
+    webUtils: { getPathForFile: (file: { path?: string }) => file.path || '' },
     contextBridge: { exposeInMainWorld: (_name: string, value: Window['agentDesktop']) => { api = value; } },
   });
   return { api, ipc };
