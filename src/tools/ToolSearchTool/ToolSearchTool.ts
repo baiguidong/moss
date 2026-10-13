@@ -176,13 +176,13 @@ export function expandMatchesWithConfiguredGroups(
  * Parse tool name into searchable parts.
  * Handles both MCP tools (mcp__server__action) and regular tools (CamelCase).
  */
-function parseToolName(name: string): {
+function parseToolName(tool: Pick<Tool, 'name' | 'isMcp'>): {
   parts: string[]
   full: string
   isMcp: boolean
 } {
-  // Check if it's an MCP tool
-  if (name.startsWith('mcp__')) {
+  const name = tool.name
+  if (tool.isMcp || name.startsWith('mcp__')) {
     const withoutPrefix = name.replace(/^mcp__/, '').toLowerCase()
     const parts = withoutPrefix.split('__').flatMap(p => p.split('_'))
     return {
@@ -291,7 +291,7 @@ async function searchToolsWithKeywords(
   if (requiredTerms.length > 0) {
     const matches = await Promise.all(
       deferredTools.map(async tool => {
-        const parsed = parseToolName(tool.name)
+        const parsed = parseToolName(tool)
         const description = await getToolDescriptionMemoized(tool.name, tools)
         const descNormalized = description.toLowerCase()
         const hintNormalized = tool.searchHint?.toLowerCase() ?? ''
@@ -312,7 +312,7 @@ async function searchToolsWithKeywords(
 
   const scored = await Promise.all(
     candidateTools.map(async tool => {
-      const parsed = parseToolName(tool.name)
+      const parsed = parseToolName(tool)
       const description = await getToolDescriptionMemoized(tool.name, tools)
       const descNormalized = description.toLowerCase()
       const hintNormalized = tool.searchHint?.toLowerCase() ?? ''

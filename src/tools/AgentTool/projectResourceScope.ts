@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import type { Tools } from '../../Tool.js'
 import { normalizeNameForMCP } from '../../services/mcp/normalization.js'
+import { getMcpToolInfo } from '../../services/mcp/mcpStringUtils.js'
 import type { TaskScope } from '../../utils/sessionIdContext.js'
 import { SKILL_TOOL_NAME } from '../SkillTool/constants.js'
 
@@ -154,9 +155,9 @@ export function filterToolsForProjectWorker(
   if (!selection) return tools
   return tools.filter(tool => {
     if (tool.name === SKILL_TOOL_NAME) return false
-    if (!tool.name.startsWith('mcp__')) return true
-    const serverName = tool.name.split('__')[1]
-    return Boolean(serverName && selection.connectorServerNames.has(serverName))
+    const info = getMcpToolInfo(tool)
+    if (!info) return !tool.isMcp
+    return selection.connectorServerNames.has(normalizeNameForMCP(info.serverName))
   })
 }
 

@@ -109,7 +109,7 @@ import {
   shouldInjectAgentListInMessages,
 } from '../tools/AgentTool/prompt.js'
 import { filterDeniedAgents } from './permissions/permissions.js'
-import { mcpInfoFromString } from '../services/mcp/mcpStringUtils.js'
+import { getMcpToolInfo } from '../services/mcp/mcpStringUtils.js'
 import {
   matchingRuleForInput,
   pathInAllowedWorkingPath,
@@ -1212,7 +1212,7 @@ export function getAgentListingDeltaAttachment(
   // allowedAgentTypes restriction. Keep this in sync with AgentTool.tsx.
   const mcpServers = new Set<string>()
   for (const tool of toolUseContext.options.tools) {
-    const info = mcpInfoFromString(tool.name)
+    const info = getMcpToolInfo(tool)
     if (info) mcpServers.add(info.serverName)
   }
   const permissionContext = toolUseContext.getAppState().toolPermissionContext

@@ -3,6 +3,8 @@ import path from 'node:path'
 import { validateAppManifest, ensureSafeRelativePath } from '../../../app-sdk/src/schemas/index.mjs'
 import { validateAppPackage, writePackageChecksums, listPackageFiles } from './index.mjs'
 import { normalizeMcpAppConfig } from './mcp-app.mjs'
+import { mcpMinimumHostVersion } from '../../../app-sdk/src/mcp/local-options.mjs'
+import semver from 'semver'
 
 /** Generate a data-only App. Core provides the executable UI and MCP lifecycle. */
 export function createMcpAppManifest(definition) {
@@ -14,7 +16,7 @@ export function createMcpAppManifest(definition) {
     schemaVersion: 2, id: definition.id, version: definition.version, displayName: definition.displayName,
     description: definition.description || '', category: definition.category || 'other', keywords: definition.keywords || [],
     publisher: definition.publisher,
-    icon: definition.icon || undefined, hostApi: '^3.9.0', toolScope: definition.toolScope || 'session',
+    icon: definition.icon || undefined, hostApi: '^' + Object.values(definition.mcpServers).map(mcpMinimumHostVersion).sort(semver.rcompare)[0], toolScope: definition.toolScope || 'session',
     ui: { builtin: 'mcp', window: { width: 1120, height: 780, resizable: true } },
     permissions: ['mcp:read', 'mcp:manage', 'mcp:connect'], host: { protocols: ['moss.mcp/v1', 'moss.host/v1'] },
     navigation: { location: 'settings', viewId: 'settings' },

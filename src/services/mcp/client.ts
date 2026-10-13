@@ -2,6 +2,10 @@ import { McpConnectionPool, type ConnectionControls } from './connectionPool.js'
 import { mcpToolCatalogCache, McpToolCatalogCache } from './toolCatalogCache.js'
 import { terminateMcpProcessTree } from './processCleanup.js'
 import { feature } from 'bun:bundle'
+import { prepareMcpDirectoryLaunch } from '../../../packages/app-sdk/src/mcp/directories.mjs'
+import { prepareMcpPython } from '../../../packages/app-sdk/src/mcp/python-runtime.mjs'
+import { installMcpPathBindings, mcpLocalEnvironment } from '../../../packages/app-sdk/src/mcp/path-bindings.mjs'
+import { pathToFileURL } from 'node:url'
 import type {
   Base64ImageSource,
   ContentBlockParam,
@@ -582,6 +586,8 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
       | { connect(t: Transport): Promise<void>; close(): Promise<void> }
       | undefined
     let transport: Transport | undefined, client: Client | undefined
+    let directoryLaunch: Awaited<ReturnType<typeof prepareMcpDirectoryLaunch>> = null
+    let localEnvironment: NodeJS.ProcessEnv | undefined
     let retained = false, transportClose: Promise<void> | undefined
     const closeTransport = () => !transport && !client ? Promise.resolve() : transportClose ??= (async () => {
       if (transport instanceof StdioClientTransport) await terminateMcpProcessTree(transport.pid)
@@ -847,19 +853,21 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
       } else if (serverRef.type === 'sdk') {
         throw new Error('SDK servers should be handled in print.ts')
       } else if (serverRef.type === 'stdio' || !serverRef.type) {
+        directoryLaunch = await prepareMcpDirectoryLaunch(serverRef, serverRef.env?.MOSS_SESSION_WORKSPACE ?? getOriginalCwd())
+        localEnvironment = mcpLocalEnvironment(serverRef, subprocessEnv())
+        const command = await prepareMcpPython(serverRef, { env: localEnvironment, signal: controls.signal })
+        controls.signal.throwIfAborted()
+        const args = directoryLaunch?.args || serverRef.args
         const finalCommand =
-          process.env.CLAUDE_CODE_SHELL_PREFIX || serverRef.command
+          process.env.CLAUDE_CODE_SHELL_PREFIX || command
         const finalArgs = process.env.CLAUDE_CODE_SHELL_PREFIX
-          ? [[serverRef.command, ...serverRef.args].join(' ')]
-          : serverRef.args
+          ? [[command, ...args].join(' ')]
+          : args
         transport = new StdioClientTransport({
           command: finalCommand,
           args: finalArgs,
           cwd: getOriginalCwd(),
-          env: {
-            ...subprocessEnv(),
-            ...serverRef.env,
-          } as Record<string, string>,
+          env: localEnvironment as Record<string, string>,
           stderr: 'pipe', // prevents error output from the MCP server from printing to the UI
         })
       } else {
@@ -908,6 +916,9 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
       )
 
       // Add debug logging for client events if available
+      if (serverRef.type === 'stdio' || !serverRef.type) {
+        installMcpPathBindings(client, serverRef, serverRef.env?.MOSS_SESSION_WORKSPACE ?? getOriginalCwd(), localEnvironment)
+      }
       if (serverRef.type === 'http') {
         logMCPDebug(name, `Client created, setting up request handler`)
       }
@@ -915,9 +926,9 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
       client.setRequestHandler(ListRootsRequestSchema, async () => {
         logMCPDebug(name, `Received ListRoots request from server`)
         return {
-          roots: [
+          roots: directoryLaunch?.roots ?? [
             {
-              uri: `file://${getOriginalCwd()}`,
+              uri: pathToFileURL(getOriginalCwd()).href,
             },
           ],
         }
@@ -1482,18 +1493,19 @@ export const fetchToolsForClient = memoizeWithLRU(
       const skipPrefix =
         client.config.type === 'sdk' &&
         isEnvTruthy(process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX)
+      const appId = getSessionRuntimeContext()?.appToolPolicy?.mcpServers[client.name]?.appId
 
       // Convert MCP tools to our Tool format
       return toolsToProcess
         .filter(tool => !disabledTools.has(tool.name))
         .map((tool): Tool => {
-          const fullyQualifiedName = buildMcpToolName(client.name, tool.name)
+          const fullyQualifiedName = buildMcpToolName(client.name, tool.name, appId)
           return {
             ...MCPTool,
             // In skip-prefix mode, use the original name for model invocation so MCP tools
             // can override builtins by name. mcpInfo is used for permission checking.
             name: skipPrefix ? tool.name : fullyQualifiedName,
-            mcpInfo: { serverName: client.name, toolName: tool.name },
+            mcpInfo: { serverName: client.name, toolName: tool.name, ...(appId && { appId }) },
             isMcp: true,
             // Collapse whitespace: _meta is open to external MCP servers, and
             // a newline here would inject orphan lines into the deferred-tool

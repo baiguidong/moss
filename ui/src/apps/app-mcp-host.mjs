@@ -10,6 +10,8 @@ import { writePrivateFileAtomic } from '../../../shared/security/credential-cryp
 import { isValidMcpServerName, normalizeMcpStore, validateMcpServerConfig } from '../desktop-mcp-settings.mjs'
 import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
 import { readMcpAppConfig } from '../../../packages/app-runtime/src/packages/mcp-app.mjs'
+import { validateMcpPathSettings } from '../../../packages/app-sdk/src/mcp/path-bindings.mjs'
+import { mergeMcpDefaults, adoptMcpSettings } from './mcp-config-defaults.mjs'
 
 export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
@@ -44,7 +46,15 @@ export function createMcpProtocolDefinition() {
 }
 
 function key(context) { return `${context.appId}/${context.instanceId}` }
-function runtimeName(appId, name) { return appId === 'moss.mcp' ? name : `${appId.replace(/[^a-zA-Z0-9_]/g, '_')}__${name}` }
+function runtimeName(appId, name) {
+  if (appId === 'moss.mcp') return name
+  const normalize = value => value.replace(/[^a-zA-Z0-9_]/g, '_')
+  const appName = normalize(appId)
+  // Standalone MCP Apps commonly repeat their local App name as the service name.
+  return normalize(appId.split('.').at(-1)) === normalize(name)
+    ? appName
+    : `${appName}__${name}`
+}
 function decodeSecrets(values) {
   if (!values[SECRET_FIELD]) return {}
   let parsed
@@ -120,15 +130,28 @@ export class AppMcpHost {
     if (pkg.manifest.mcpApp && this.active(provider)) {
       const definition = await readMcpAppConfig(pkg.root, pkg.manifest)
       if (document.definitionRevision !== definition.revision) {
-        const next = { version: 1, definitionRevision: definition.revision, servers: {} }
+        const next = { version: 1, definitionRevision: definition.revision, definitionServers: definition.mcpServers, servers: {} }
         const values = { ...secrets }
         for (const [name, config] of Object.entries(definition.mcpServers)) {
           this.assertUnique(provider, name, name)
-          next.servers[name] = this.encode(validateMcpServerConfig(config), true, values)
+          const previous = document.servers[name]
+          const current = previous && restoreConfig(previous, secrets)
+          if (previous && !current) throw new Error('服务凭据缺失，请恢复凭据后再更新配置。')
+          const merged = current ? document.definitionServers?.[name]
+            ? mergeMcpDefaults(document.definitionServers[name], current, config) : adoptMcpSettings(current, config) : config
+          next.servers[name] = this.encode(validateMcpServerConfig(merged), previous?.enabled ?? true, values, previous?.id)
+          this.checks.delete(`${key(context)}/${name}`)
+        }
+        for (const [name, entry] of Object.entries(document.servers)) {
+          if (!Object.hasOwn(definition.mcpServers, name) && !Object.hasOwn(document.definitionServers || {}, name)) next.servers[name] = entry
         }
         const result = await this.commit(context, next, values)
         this.onChanged?.(context.appId)
         return result
+      }
+      if (!document.definitionServers) {
+        document.definitionServers = definition.mcpServers
+        writePrivateFileAtomic(file, `${JSON.stringify(document, null, 2)}\n`)
       }
     }
     return provider
@@ -327,6 +350,7 @@ export class AppMcpHost {
         this.assertUnique(provider, input.name, input.previousName)
         if (!entry && Object.keys(document.servers).length >= MAX_SERVERS) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, `最多添加 ${MAX_SERVERS} 个服务。`)
         const config = validateMcpServerConfig(input.config)
+        if (config.roots || config.pathBindings) await validateMcpPathSettings(config)
         const previous = entry && restoreConfig(entry, secrets)
         for (const field of ['env', 'headers']) for (const name of Object.keys(config[field] || {})) {
           if (config[field][name] === '' && previous?.[field]?.[name] !== undefined) config[field][name] = previous[field][name]

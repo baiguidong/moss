@@ -105,7 +105,7 @@ import {
   McpAuthError,
   McpToolCallError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from '../mcp/client.js'
-import { mcpInfoFromString } from '../mcp/mcpStringUtils.js'
+import { getMcpToolInfo } from '../mcp/mcpStringUtils.js'
 import { normalizeNameForMCP } from '../mcp/normalization.js'
 import type { MCPServerConnection } from '../mcp/types.js'
 import {
@@ -268,14 +268,10 @@ export type McpServerType =
   | undefined
 
 function findMcpServerConnection(
-  toolName: string,
+  tool: Pick<Tool, 'name' | 'mcpInfo'>,
   mcpClients: MCPServerConnection[],
 ): MCPServerConnection | undefined {
-  if (!toolName.startsWith('mcp__')) {
-    return undefined
-  }
-
-  const mcpInfo = mcpInfoFromString(toolName)
+  const mcpInfo = getMcpToolInfo(tool)
   if (!mcpInfo) {
     return undefined
   }
@@ -283,7 +279,7 @@ function findMcpServerConnection(
   // mcpInfo.serverName is normalized (e.g., "claude_ai_Slack"), but client.name
   // is the original name from the server. Normalize both for comparison.
   return mcpClients.find(
-    client => normalizeNameForMCP(client.name) === mcpInfo.serverName,
+    client => normalizeNameForMCP(client.name) === normalizeNameForMCP(mcpInfo.serverName),
   )
 }
 
@@ -293,10 +289,10 @@ function findMcpServerConnection(
  * or undefined for built-in tools.
  */
 function getMcpServerType(
-  toolName: string,
+  tool: Pick<Tool, 'name' | 'mcpInfo'>,
   mcpClients: MCPServerConnection[],
 ): McpServerType {
-  const serverConnection = findMcpServerConnection(toolName, mcpClients)
+  const serverConnection = findMcpServerConnection(tool, mcpClients)
 
   if (serverConnection?.type === 'connected') {
     // Handle stdio configs where type field is optional (defaults to 'stdio')
@@ -311,10 +307,10 @@ function getMcpServerType(
  * Returns undefined for stdio servers, built-in tools, or if the server is not connected.
  */
 function getMcpServerBaseUrlFromToolName(
-  toolName: string,
+  tool: Pick<Tool, 'name' | 'mcpInfo'>,
   mcpClients: MCPServerConnection[],
 ): string | undefined {
-  const serverConnection = findMcpServerConnection(toolName, mcpClients)
+  const serverConnection = findMcpServerConnection(tool, mcpClients)
   if (serverConnection?.type !== 'connected') {
     return undefined
   }
@@ -344,11 +340,11 @@ export async function* runToolUse(
   const messageId = assistantMessage.message.id
   const requestId = assistantMessage.requestId
   const mcpServerType = getMcpServerType(
-    toolName,
+    tool ?? { name: toolName },
     toolUseContext.options.mcpClients,
   )
   const mcpServerBaseUrl = getMcpServerBaseUrlFromToolName(
-    toolName,
+    tool ?? { name: toolName },
     toolUseContext.options.mcpClients,
   )
 

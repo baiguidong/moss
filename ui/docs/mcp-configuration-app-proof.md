@@ -55,7 +55,7 @@ README.md
 checksums.json
 ```
 
-`definition.json` 保存可重新生成的原始定义。`mcp.json` 是规范化后的 MCP 配置，服务名称为 `moss_drawio__drawio`。用户设置在声明未变时跨刷新和重启保留；包内 MCP 配置修订后，Core 用新的声明重新生成服务配置。
+`definition.json` 保存可重新生成的原始定义。`mcp.json` 是规范化后的 MCP 配置，服务名称为 `moss_drawio__drawio`。用户设置跨刷新和重启保留；Host API 3.10 起，包内 MCP 配置修订时按原默认值、用户设置和新默认值合并，保留用户目录、禁用工具、凭据、启停状态及服务身份。
 
 ## 复现与使用
 
@@ -139,7 +139,7 @@ Core 进程内统一限制 64 个活跃连接（含启动中）、4 个并发启
 
 ## 当前范围
 
-这是 Core 支持下的可运行本地样本，生成入口是 Core CLI。市场签名发布、可视化配置创建、现有 Git/Filesystem App 转换、配置包的 App Builder 编辑/预览流程尚未接入。远程 HTTP/OAuth 使用现有协议接口，本轮仅实测 Draw.io stdio。
+这是 Draw.io 最初的 Core 验证记录。后续市场构建流程已接入，分步思考及 Filesystem 已转换为配置型 App；Git 仍为普通 App。远程 HTTP/OAuth 使用现有协议接口，本记录仅实测 Draw.io stdio。
 
 npx 命令保留用户指定的未锁版本形式，首次连接可能下载依赖，上游版本可能变化。这里的 App 资源指图标与说明；网页内嵌 MCP Apps 扩展与 MCP resources/read 不在此次验证范围。
 

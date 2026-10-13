@@ -1,14 +1,8 @@
-import { homedir } from 'node:os'
 import path from 'node:path'
+import { expandMcpHomePath } from '../../../packages/app-sdk/src/mcp/directories.mjs'
+export { expandMcpHomePath }
 
 // MCP uses argv, not a shell. Keep portable paths on disk and expand only for execution.
-export function expandMcpHomePath(value, homeDir = homedir()) {
-  if (value === '~') return homeDir
-  if (!value.startsWith('~/') && !value.startsWith('~\\')) return value
-  const paths = /^[a-z]:[\\/]|^\\\\/i.test(homeDir) ? path.win32 : path.posix
-  return paths.join(homeDir, value.slice(2).replaceAll('\\', '/'))
-}
-
 export function resolveMcpLaunchConfig(config, { workspace } = {}) {
   if (config.type && config.type !== 'stdio') return config
   if (workspace && !path.isAbsolute(workspace)) throw new Error('Session workspace must be an absolute path')

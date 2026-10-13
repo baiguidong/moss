@@ -3,7 +3,11 @@ const object = (properties, required = []) => ({ type: 'object', properties, req
 const strings = { type: 'array', items: text }
 const stringMap = { type: 'object', additionalProperties: text }
 const name = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[a-zA-Z0-9_-]+$' }
+const roots = object({ directories: { type: 'array', maxItems: 32, items: { type: 'string', minLength: 1, maxLength: 4096 } }, includeWorkspace: { type: 'boolean' }, delivery: { enum: ['roots', 'arguments'] } }, ['directories', 'includeWorkspace', 'delivery'])
 const config = object({ type: { enum: ['stdio', 'http', 'sse'] }, command: text, args: strings, env: stringMap, url: text, headers: stringMap, disabledTools: strings,
+  roots,
+  python: object({ requirements: { type: 'array', minItems: 1, maxItems: 32, items: text } }, ['requirements']),
+  pathBindings: { type: 'array', minItems: 1, maxItems: 16, items: object({ argument: text, kind: { enum: ['directory', 'git-repository'] }, executable: text }, ['argument', 'kind']) },
   oauth: object({ clientName: text, clientId: text, redirectUri: text, authorizationServerOrigin: text, resourceMetadataUrl: text, authServerMetadataUrl: text, callbackPort: { type: 'integer', minimum: 1, maximum: 65535 }, omitRegistrationScope: { type: 'boolean' }, xaa: { type: 'boolean' } }),
 }, ['type'])
 const inputConfig = { ...config, required: [] }

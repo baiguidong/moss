@@ -207,7 +207,7 @@ import {
   ElicitRequestSchema,
   ElicitationCompleteNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { getMcpPrefix } from 'src/services/mcp/mcpStringUtils.js'
+import { toolBelongsToMcpServer } from 'src/services/mcp/mcpStringUtils.js'
 import {
   commandBelongsToServer,
   filterToolsByServer,
@@ -1351,7 +1351,7 @@ function runHeadlessStreaming(
             ...prev.mcp.tools.filter(
               t =>
                 !allSdkNames.some(name =>
-                  t.name.startsWith(getMcpPrefix(name)),
+                  toolBelongsToMcpServer(t, name),
                 ),
             ),
             ...sdkTools,
@@ -1463,7 +1463,7 @@ function runHeadlessStreaming(
               ...prev.mcp.tools.filter(
                 t =>
                   !allSdkNames.some(name =>
-                    t.name.startsWith(getMcpPrefix(name)),
+                    toolBelongsToMcpServer(t, name),
                   ),
               ),
               ...sdkTools,
@@ -2704,7 +2704,6 @@ function runHeadlessStreaming(
           } else {
             const result = await reconnectMcpServerImpl(serverName, config)
             // Update appState.mcp with the new client, tools, commands, and resources
-            const prefix = getMcpPrefix(serverName)
             setAppState(prev => ({
               ...prev,
               mcp: {
@@ -2713,7 +2712,7 @@ function runHeadlessStreaming(
                   c.name === serverName ? result.client : c,
                 ),
                 tools: [
-                  ...reject(prev.mcp.tools, t => t.name?.startsWith(prefix)),
+                  ...reject(prev.mcp.tools, t => toolBelongsToMcpServer(t, serverName)),
                   ...result.tools,
                 ],
                 commands: [
@@ -2738,7 +2737,7 @@ function runHeadlessStreaming(
               ],
               tools: [
                 ...dynamicMcpState.tools.filter(
-                  t => !t.name?.startsWith(prefix),
+                  t => !toolBelongsToMcpServer(t, serverName),
                 ),
                 ...result.tools,
               ],
@@ -2785,7 +2784,6 @@ function runHeadlessStreaming(
               await clearServerCache(serverName, config)
             }
             // Update appState.mcp to reflect disabled status and remove tools/commands/resources
-            const prefix = getMcpPrefix(serverName)
             setAppState(prev => ({
               ...prev,
               mcp: {
@@ -2795,7 +2793,7 @@ function runHeadlessStreaming(
                     ? { name: serverName, type: 'disabled' as const, config }
                     : c,
                 ),
-                tools: reject(prev.mcp.tools, t => t.name?.startsWith(prefix)),
+                tools: reject(prev.mcp.tools, t => toolBelongsToMcpServer(t, serverName)),
                 commands: reject(prev.mcp.commands, c =>
                   commandBelongsToServer(c, serverName),
                 ),
@@ -2809,7 +2807,6 @@ function runHeadlessStreaming(
             const result = await reconnectMcpServerImpl(serverName, config)
             // Update appState.mcp with the new client, tools, commands, and resources
             // This ensures the LLM sees updated tools after enabling the server
-            const prefix = getMcpPrefix(serverName)
             setAppState(prev => ({
               ...prev,
               mcp: {
@@ -2818,7 +2815,7 @@ function runHeadlessStreaming(
                   c.name === serverName ? result.client : c,
                 ),
                 tools: [
-                  ...reject(prev.mcp.tools, t => t.name?.startsWith(prefix)),
+                  ...reject(prev.mcp.tools, t => toolBelongsToMcpServer(t, serverName)),
                   ...result.tools,
                 ],
                 commands: [
@@ -2930,7 +2927,6 @@ function runHeadlessStreaming(
                     serverName,
                     config,
                   )
-                  const prefix = getMcpPrefix(serverName)
                   setAppState(prev => ({
                     ...prev,
                     mcp: {
@@ -2940,7 +2936,7 @@ function runHeadlessStreaming(
                       ),
                       tools: [
                         ...reject(prev.mcp.tools, t =>
-                          t.name?.startsWith(prefix),
+                          toolBelongsToMcpServer(t, serverName),
                         ),
                         ...result.tools,
                       ],
@@ -2971,7 +2967,7 @@ function runHeadlessStreaming(
                     ],
                     tools: [
                       ...dynamicMcpState.tools.filter(
-                        t => !t.name?.startsWith(prefix),
+                        t => !toolBelongsToMcpServer(t, serverName),
                       ),
                       ...result.tools,
                     ],
@@ -3067,7 +3063,6 @@ function runHeadlessStreaming(
           } else {
             await revokeServerTokens(serverName, config)
             const result = await reconnectMcpServerImpl(serverName, config)
-            const prefix = getMcpPrefix(serverName)
             setAppState(prev => ({
               ...prev,
               mcp: {
@@ -3076,7 +3071,7 @@ function runHeadlessStreaming(
                   c.name === serverName ? result.client : c,
                 ),
                 tools: [
-                  ...reject(prev.mcp.tools, t => t.name?.startsWith(prefix)),
+                  ...reject(prev.mcp.tools, t => toolBelongsToMcpServer(t, serverName)),
                   ...result.tools,
                 ],
                 commands: [
@@ -4391,8 +4386,7 @@ export async function handleMcpSetServers(
         await client.cleanup()
       }
       newSdkClients = newSdkClients.filter(c => c.name !== name)
-      const prefix = `mcp__${name}__`
-      newSdkTools = newSdkTools.filter(t => !t.name.startsWith(prefix))
+      newSdkTools = newSdkTools.filter(t => !toolBelongsToMcpServer(t, name))
       delete newSdkConfigs[name]
       sdkRemoved.push(name)
     }
@@ -4488,8 +4482,7 @@ export async function reconcileMcpServers(
     }
 
     // Remove tools from this server
-    const prefix = `mcp__${name}__`
-    newTools = newTools.filter(t => !t.name.startsWith(prefix))
+    newTools = newTools.filter(t => !toolBelongsToMcpServer(t, name))
 
     // Remove from clients list
     newClients = newClients.filter(c => c.name !== name)
@@ -4558,7 +4551,7 @@ export async function reconcileMcpServers(
     // Remove old dynamic tools
     const nonDynamicTools = prev.mcp.tools.filter(t => {
       for (const serverName of allDynamicServerNames) {
-        if (t.name.startsWith(`mcp__${serverName}__`)) {
+        if (toolBelongsToMcpServer(t, serverName)) {
           return false
         }
       }

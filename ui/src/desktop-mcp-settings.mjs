@@ -1,3 +1,6 @@
+import { normalizeMcpRoots } from '../../packages/app-sdk/src/mcp/directories.mjs';
+import { normalizeMcpLocalOptions } from '../../packages/app-sdk/src/mcp/local-options.mjs';
+
 function isValidMcpServerName(name) {
   return typeof name === 'string' && /^[a-zA-Z0-9_-]+$/.test(name);
 }
@@ -63,6 +66,7 @@ export function validateMcpServerConfig(input) {
   }
 
   const type = normalizeMcpServerType(input.type, input);
+  const local = normalizeMcpLocalOptions({ ...input, type });
   if (type === 'stdio') {
     if (typeof input.command !== 'string' || !input.command.trim()) {
       throw new Error('stdio MCP server requires command.');
@@ -75,7 +79,9 @@ export function validateMcpServerConfig(input) {
       type: 'stdio',
       command: input.command.trim(),
       args,
+      ...local,
       ...(input.env ? { env: assertStringRecord(input.env, 'env') } : {}),
+      ...(input.roots !== undefined ? { roots: normalizeMcpRoots(input.roots) } : {}),
       ...(normalizeStringList(input.disabledTools).length > 0
         ? { disabledTools: normalizeStringList(input.disabledTools) }
         : {}),
@@ -83,6 +89,7 @@ export function validateMcpServerConfig(input) {
   }
 
   if (type === 'http' || type === 'sse') {
+    if (input.roots !== undefined) throw new Error('目录绑定仅支持本地 stdio 服务。');
     if (typeof input.url !== 'string' || !input.url.trim()) {
       throw new Error(`${type} MCP server requires url.`);
     }

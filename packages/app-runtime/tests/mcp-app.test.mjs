@@ -80,6 +80,31 @@ test('stateful is the default; only explicit stateless Apps can opt into idle re
   await assert.rejects(f.generate({ runtime: { state: 'shared' } }), /Invalid/)
 })
 
+test('directory-bound Apps require Host 3.10 and validate their portable directory configuration', async t => {
+  const f = await fixture(t)
+  const roots = { includeWorkspace: true, delivery: 'arguments', directories: ['~/Documents'] }
+  const generated = await f.generate({ mcpServers: { files: { command: 'npx', args: ['server'], roots } } })
+  assert.equal(generated.manifest.hostApi, '^3.10.0')
+  await assert.rejects(f.generate({ mcpServers: { files: { command: 'npx', roots: { ...roots, directories: ['relative'] } } } }), /绝对路径/)
+  await assert.rejects(f.generate({ mcpServers: { files: { url: 'https://example.com', roots } } }), /stdio/)
+  await fs.writeFile(path.join(generated.root, 'app.moss.json'), JSON.stringify({ ...generated.manifest, hostApi: '^3.9.0' }))
+  await writePackageChecksums(generated.root)
+  await assert.rejects(validateAppPackage(generated.root), /3.10/)
+})
+
+test('Python environments and argument bindings require Host 3.11 and pinned dependencies', async t => {
+  const f = await fixture(t)
+  const service = { command: 'python3', args: ['-m', 'mcp_server_git'], python: { requirements: ['mcp-server-git==2026.8.18'] },
+    roots: { directories: [], includeWorkspace: true, delivery: 'roots' }, pathBindings: [{ argument: 'repo_path', kind: 'git-repository' }] }
+  const generated = await f.generate({ mcpServers: { git: service } })
+  assert.equal(generated.manifest.hostApi, '^3.11.0')
+  await assert.rejects(f.generate({ mcpServers: { git: { ...service, python: { requirements: ['mcp-server-git'] } } } }), /固定版本/)
+  await assert.rejects(f.generate({ mcpServers: { git: { ...service, roots: undefined } } }), /目录配置/)
+  await fs.writeFile(path.join(generated.root, 'app.moss.json'), JSON.stringify({ ...generated.manifest, hostApi: '^3.10.0' }))
+  await writePackageChecksums(generated.root)
+  await assert.rejects(validateAppPackage(generated.root), /3.11/)
+})
+
 test('MCP source is accepted only with a validated source descriptor; runtime remains data only', async t => {
   const { attachSourcePackage } = await import('../src/packages/source.mjs')
   const f = await fixture(t), generated = await f.generate({ publisher: { id: 'test', name: 'Test' } })

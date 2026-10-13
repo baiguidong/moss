@@ -1,7 +1,7 @@
 import { c as _c } from "react/compiler-runtime";
 import figures from 'figures';
 import React, { useCallback, useMemo, useState } from 'react';
-import { mcpInfoFromString } from 'src/services/mcp/mcpStringUtils.js';
+import { getMcpToolInfo } from 'src/services/mcp/mcpStringUtils.js';
 import { isMcpTool } from 'src/services/mcp/utils.js';
 import type { Tool, Tools } from 'src/Tool.js';
 import { filterToolsForAgent } from 'src/tools/AgentTool/agentToolUtils.js';
@@ -81,7 +81,7 @@ function getMcpServerBuckets(tools: Tools): Array<{
   const serverMap = new Map<string, Tool[]>();
   tools.forEach(tool => {
     if (isMcpTool(tool)) {
-      const mcpInfo = mcpInfoFromString(tool.name);
+      const mcpInfo = getMcpToolInfo(tool);
       if (mcpInfo?.serverName) {
         const existing = serverMap.get(mcpInfo.serverName) || [];
         existing.push(tool);
@@ -385,8 +385,8 @@ export function ToolSelector(t0) {
       }
       customAgentTools.forEach(tool_0 => {
         let displayName = tool_0.name;
-        if (tool_0.name.startsWith("mcp__")) {
-          const mcpInfo = mcpInfoFromString(tool_0.name);
+        if (isMcpTool(tool_0)) {
+          const mcpInfo = getMcpToolInfo(tool_0);
           displayName = mcpInfo ? `${mcpInfo.toolName} (${mcpInfo.serverName})` : tool_0.name;
         }
         navigableItems.push({

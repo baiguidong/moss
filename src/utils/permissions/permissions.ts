@@ -2,6 +2,7 @@ import { APIUserAbortError } from '@anthropic-ai/sdk'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
   getToolNameForPermissionCheck,
+  getMcpPrefix,
   mcpInfoFromString,
 } from '../../services/mcp/mcpStringUtils.js'
 import type { Tool, ToolPermissionContext, ToolUseContext } from '../../Tool.js'
@@ -192,7 +193,7 @@ function toolMatchesRule(
     return false
   }
 
-  // MCP tools are matched by their fully qualified mcp__server__tool name. In
+  // MCP tools are matched by their fully qualified tool name. In
   // skip-prefix mode (CLAUDE_AGENT_SDK_MCP_NO_PREFIX), MCP tools have unprefixed
   // display names (e.g., "Write") that collide with builtin names; rules targeting
   // builtins should not match their MCP replacements.
@@ -201,6 +202,11 @@ function toolMatchesRule(
   // Direct tool name match
   if (rule.ruleValue.toolName === nameForRuleMatch) {
     return true
+  }
+
+  if (tool.mcpInfo) {
+    const server = getMcpPrefix(tool.mcpInfo.serverName, tool.mcpInfo.appId).slice(0, -2)
+    return rule.ruleValue.toolName === server || rule.ruleValue.toolName === `${server}__*`
   }
 
   // MCP server-level permission: rule "mcp__server1" matches tool "mcp__server1__tool1"

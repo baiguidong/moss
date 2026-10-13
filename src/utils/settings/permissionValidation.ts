@@ -139,6 +139,16 @@ export function validatePermissionRule(rule: string): {
     return { valid: true }
   }
 
+  // App MCP names use <app namespace>__<tool>, without an mcp__ marker.
+  // Service-wide rules use <app namespace>__* so they remain unambiguous.
+  if (parsed.toolName.includes('__')) {
+    if (!/^[a-zA-Z0-9_-]+__(?:[a-zA-Z0-9_-]+|\*)$/.test(parsed.toolName)
+      || parsed.ruleContent !== undefined || countUnescapedChar(rule, '(') > 0) {
+      return { valid: false, error: 'Use an App MCP tool name or <app namespace>__* without parentheses' }
+    }
+    return { valid: true }
+  }
+
   // Tool name validation (for non-MCP tools)
   if (!parsed.toolName || parsed.toolName.length === 0) {
     return { valid: false, error: 'Tool name cannot be empty' }

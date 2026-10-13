@@ -73,7 +73,7 @@ export function filterToolsForAgent({
   return tools.filter(tool => {
     if (tool.requiresInteractiveMainSession) return false
     // Allow MCP tools for all agents
-    if (tool.name.startsWith('mcp__')) {
+    if (tool.isMcp || tool.mcpInfo || tool.name.startsWith('mcp__')) {
       return true
     }
     // Allow ExitPlanMode for agents in plan mode (e.g., in-process teammates)

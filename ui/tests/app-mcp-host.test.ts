@@ -38,6 +38,52 @@ backend: { }, permissions: ['mcp:manage', 'mcp:connect'] } }),
 }
 const config = { type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer fixture-secret' }, disabledTools: ['remove'], oauth: { clientId: 'client', callbackPort: 4444 } }
 
+test('configuration updates preserve directory settings, disabled tools, secrets, enablement and identity', async () => {
+  const f = await fixture(), getPackage = f.runtime.getActivePackage
+  const roots = { directories: [], includeWorkspace: true, delivery: 'arguments' }
+  const initial = { type: 'stdio', command: 'npx', args: ['v1'], roots, env: { TOKEN: 'default', NEW: 'old' } }
+  const definition = (value: any) => fs.writeFile(path.join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { files: value } }))
+  f.runtime.getActivePackage = async () => ({ root: f.root, manifest: { ...(await getPackage()).manifest, hostApi: '^3.10.0', mcpApp: { config: 'mcp.json' } } })
+  await definition(initial); await f.host.refresh()
+  await f.host.handle('servers.save', { name: 'files', previousName: 'files', enabled: false, config: { ...initial, roots: { ...roots, directories: [f.root] }, disabledTools: ['write_file'], env: { TOKEN: 'user-secret', NEW: 'old' } } }, f.context)
+  const identity = f.host.toolCatalog('moss.mcp')[0].serviceId
+  await definition({ ...initial, args: ['v2'], env: { TOKEN: 'revised-default', NEW: 'new' } }); await f.host.refresh()
+  const saved = (await f.host.handle('servers.list', {}, f.context)).servers[0]
+  expect(saved.enabled).toBe(false)
+  expect(saved.config.args).toEqual(['v2'])
+  expect(saved.config.roots.directories).toEqual([f.root])
+  expect(saved.config.disabledTools).toEqual(['write_file'])
+  expect(f.host.toolCatalog('moss.mcp')[0].serviceId).toBe(identity)
+  await f.host.handle('servers.set-enabled', { name: 'files', enabled: true }, f.context)
+  expect(f.host.enabledServers().files.env).toMatchObject({ TOKEN: 'user-secret', NEW: 'new', MOSS_SESSION_WORKSPACE: '' })
+  await expect(f.host.handle('servers.save', { name: 'files', previousName: 'files', enabled: true, config: { ...initial, roots: { ...roots, directories: [path.join(f.root, 'missing')] } } }, f.context)).rejects.toThrow('目录不存在')
+  expect(f.host.enabledServers().files.roots.directories).toEqual([f.root])
+})
+
+test('legacy directory Backend conversion replaces obsolete executable paths and preserves public roots and exclusions', async () => {
+  const f = await fixture(), getPackage = f.runtime.getActivePackage
+  await f.host.handle('servers.save', { name: 'files', enabled: false, config: { type: 'stdio', command: '/old/node', args: ['/old/package/cli.mjs', JSON.stringify({ directories: [f.root], disabledTools: ['write_file'] })], disabledTools: ['write_file'] } }, f.context)
+  const identity = f.host.toolCatalog('moss.mcp')[0].serviceId
+  await fs.writeFile(path.join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { files: { command: 'npx', args: ['pinned-upstream'], roots: { directories: [], includeWorkspace: true, delivery: 'arguments' } } } }))
+  f.runtime.getActivePackage = async () => ({ root: f.root, manifest: { ...(await getPackage()).manifest, hostApi: '^3.10.0', mcpApp: { config: 'mcp.json' } } })
+  await f.host.refresh()
+  const saved = (await f.host.handle('servers.list', {}, f.context)).servers[0]
+  expect(saved).toMatchObject({ enabled: false, config: { command: 'npx', args: ['pinned-upstream'], roots: { directories: [f.root] }, disabledTools: ['write_file'] } })
+  expect(f.host.toolCatalog('moss.mcp')[0].serviceId).toBe(identity)
+})
+
+test('an upstream transport switch keeps customized directory connections valid', async () => {
+  const f = await fixture(), getPackage = f.runtime.getActivePackage
+  const initial = { type: 'stdio', command: 'npx', args: ['files'], roots: { directories: [], includeWorkspace: true, delivery: 'arguments' } }
+  const definition = (value: any) => fs.writeFile(path.join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { files: value } }))
+  f.runtime.getActivePackage = async () => ({ root: f.root, manifest: { ...(await getPackage()).manifest, hostApi: '^3.10.0', mcpApp: { config: 'mcp.json' } } })
+  await definition(initial); await f.host.refresh()
+  const customized = { ...initial, roots: { ...initial.roots, directories: [f.root] } }
+  await f.host.handle('servers.save', { name: 'files', previousName: 'files', enabled: true, config: customized }, f.context)
+  await definition({ type: 'http', url: 'https://example.com/files' }); await f.host.refresh()
+  expect((await f.host.handle('servers.list', {}, f.context)).servers[0].config).toEqual(customized)
+})
+
 test('user App scope changes every MCP service without changing saved configurations', async () => {
   const f = await fixture()
   let selectedScope = 'session'
@@ -161,6 +207,26 @@ test('edits preserve masked secrets and OAuth metadata, reject collisions, and r
   expect(f.host.enabledServers()).toEqual({})
   const secrets = await f.runtime.credentials.get(f.context.appId, f.context.instanceId)
   expect(JSON.parse(secrets.mcpSecrets)).toEqual({})
+})
+
+test('omits repeated App service names while keeping manager names and other services distinct', async () => {
+  const f = await fixture(), standalone = f.addApp('moss.sequential-thinking'), other = f.addApp('example.sequential-thinking')
+  await f.host.handle('servers.save', { name: 'sequential-thinking', enabled: true, config }, f.context)
+  await f.host.handle('servers.save', { name: 'sequential-thinking', enabled: true, config }, standalone)
+  await f.host.handle('servers.save', { name: 'sequential-thinking', enabled: true, config }, other)
+  await f.host.handle('servers.save', { name: 'secondary', enabled: true, config }, standalone)
+  expect(Object.keys(f.host.enabledServers())).toEqual([
+    'sequential-thinking', 'moss_sequential_thinking', 'moss_sequential_thinking__secondary', 'example_sequential_thinking',
+  ])
+  expect(f.host.serverOwners().moss_sequential_thinking.appId).toBe(standalone.appId)
+  expect(f.host.toolCatalog(standalone.appId)[0].runtimeName).toBe('moss_sequential_thinking')
+  expect(f.host.findServer('moss_sequential_thinking')?.localName).toBe('sequential-thinking')
+  await f.host.handle('servers.inspect', { name: 'sequential-thinking' }, standalone)
+  expect(f.calls.at(-1).name).toBe('moss_sequential_thinking')
+  await expect(f.host.handle('servers.save', { name: 'moss_sequential_thinking', enabled: true, config }, f.context)).rejects.toThrow('冲突')
+  await expect(f.host.handle('servers.save', { name: 'sequential_thinking', enabled: true, config }, standalone)).rejects.toThrow('冲突')
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.enabledServers()).toEqual(f.host.enabledServers())
 })
 
 test('scopes services to each App and immediately gates injection by enabled state and grants', async () => {

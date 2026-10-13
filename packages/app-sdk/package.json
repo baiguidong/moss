@@ -1,6 +1,6 @@
 {
   "name": "@moss/app-sdk",
-  "version": "3.9.0",
+  "version": "3.11.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
@@ -78,6 +78,7 @@
     }
   },
   "dependencies": {
+    "proper-lockfile": "^4.1.2",
     "ajv": "^8.18.0",
     "semver": "^7.7.4",
     "@moss/host-contracts": "3.0.0"

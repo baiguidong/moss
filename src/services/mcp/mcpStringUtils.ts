@@ -5,6 +5,7 @@
  */
 
 import { normalizeNameForMCP } from './normalization.js'
+import type { Tool } from '../../Tool.js'
 
 /*
  * Extracts MCP server information from a tool name string
@@ -34,35 +35,45 @@ export function mcpInfoFromString(toolString: string): {
 /**
  * Generates the MCP tool/command name prefix for a given server
  * @param serverName Name of the MCP server
+ * @param appId Host-provided App identity; standalone Apps omit the mcp__ marker
  * @returns The prefix string
  */
-export function getMcpPrefix(serverName: string): string {
-  return `mcp__${normalizeNameForMCP(serverName)}__`
+export function getMcpPrefix(serverName: string, appId?: string): string {
+  const prefix = appId && appId !== 'moss.mcp' ? '' : 'mcp__'
+  return `${prefix}${normalizeNameForMCP(serverName)}__`
 }
 
 /**
  * Builds a fully qualified MCP tool name from server and tool names.
- * Inverse of mcpInfoFromString().
+ * App-owned servers already include the App ID in their namespace.
  * @param serverName Name of the MCP server (unnormalized)
  * @param toolName Name of the tool (unnormalized)
  * @returns The fully qualified name, e.g., "mcp__server__tool"
  */
-export function buildMcpToolName(serverName: string, toolName: string): string {
-  return `${getMcpPrefix(serverName)}${normalizeNameForMCP(toolName)}`
+export function buildMcpToolName(serverName: string, toolName: string, appId?: string): string {
+  return `${getMcpPrefix(serverName, appId)}${normalizeNameForMCP(toolName)}`
+}
+
+/** Read MCP identity from metadata, including App and unprefixed SDK tools. */
+export function getMcpToolInfo(tool: Pick<Tool, 'name' | 'mcpInfo'>) {
+  return tool.mcpInfo ?? mcpInfoFromString(tool.name)
+}
+
+/** Tool ownership must not depend on the model-facing naming convention. */
+export function toolBelongsToMcpServer(tool: Pick<Tool, 'name' | 'mcpInfo'>, serverName: string): boolean {
+  if (tool.mcpInfo) return tool.mcpInfo.serverName === serverName
+  return tool.name.startsWith(getMcpPrefix(serverName))
 }
 
 /**
  * Returns the name to use for permission rule matching.
- * For MCP tools, uses the fully qualified mcp__server__tool name so that
+ * For MCP tools, uses the fully qualified tool name so that
  * deny rules targeting builtins (e.g., "Write") don't match unprefixed MCP
  * replacements that share the same display name. Falls back to `tool.name`.
  */
-export function getToolNameForPermissionCheck(tool: {
-  name: string
-  mcpInfo?: { serverName: string; toolName: string }
-}): string {
+export function getToolNameForPermissionCheck(tool: Pick<Tool, 'name' | 'mcpInfo'>): string {
   return tool.mcpInfo
-    ? buildMcpToolName(tool.mcpInfo.serverName, tool.mcpInfo.toolName)
+    ? buildMcpToolName(tool.mcpInfo.serverName, tool.mcpInfo.toolName, tool.mcpInfo.appId)
     : tool.name
 }
 
@@ -76,8 +87,10 @@ export function getMcpDisplayName(
   fullName: string,
   serverName: string,
 ): string {
-  const prefix = `mcp__${normalizeNameForMCP(serverName)}__`
-  return fullName.replace(prefix, '')
+  for (const prefix of [getMcpPrefix(serverName), `${normalizeNameForMCP(serverName)}__`]) {
+    if (fullName.startsWith(prefix)) return fullName.slice(prefix.length)
+  }
+  return fullName
 }
 
 /**

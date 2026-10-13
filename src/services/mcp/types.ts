@@ -32,6 +32,9 @@ export const McpStdioServerConfigSchema = lazySchema(() =>
     args: z.array(z.string()).default([]),
     env: z.record(z.string(), z.string()).optional(),
     disabledTools: z.array(z.string()).optional(),
+    roots: z.object({ directories: z.array(z.string().min(1).max(4096)).max(32), includeWorkspace: z.boolean(), delivery: z.enum(['roots', 'arguments']) }).strict().optional(),
+    python: z.object({ requirements: z.array(z.string()).min(1).max(32) }).strict().optional(),
+    pathBindings: z.array(z.object({ argument: z.string(), kind: z.enum(['directory', 'git-repository']), executable: z.string().optional() }).strict()).min(1).max(16).optional(),
   }),
 )
 

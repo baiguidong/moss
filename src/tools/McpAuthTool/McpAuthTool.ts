@@ -8,6 +8,7 @@ import {
 import {
   buildMcpToolName,
   getMcpPrefix,
+  toolBelongsToMcpServer,
 } from '../../services/mcp/mcpStringUtils.js'
 import type {
   McpHTTPServerConfig,
@@ -19,6 +20,7 @@ import { errorMessage } from '../../utils/errors.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { logMCPDebug, logMCPError } from '../../utils/log.js'
 import type { PermissionDecision } from '../../utils/permissions/PermissionResult.js'
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 
 const inputSchema = lazySchema(() => z.object({}))
 type InputSchema = ReturnType<typeof inputSchema>
@@ -42,9 +44,8 @@ function getConfigUrl(config: ScopedMcpServerConfig): string | undefined {
  * When called, starts performMCPOAuthFlow with skipBrowserOpen and returns
  * the authorization URL. The OAuth callback completes in the background;
  * once it fires, reconnectMcpServerImpl runs and the server's real tools
- * are swapped into appState.mcp.tools via the existing prefix-based
- * replacement (useManageMCPConnections.updateServer wipes anything matching
- * mcp__<server>__*, so this pseudo-tool is removed automatically).
+ * are swapped into appState.mcp.tools by server identity, removing this
+ * pseudo-tool automatically.
  */
 export function createMcpAuthTool(
   serverName: string,
@@ -53,6 +54,7 @@ export function createMcpAuthTool(
   const url = getConfigUrl(config)
   const transport = config.type ?? 'stdio'
   const location = url ? `${transport} at ${url}` : transport
+  const appId = getSessionRuntimeContext()?.appToolPolicy?.mcpServers[serverName]?.appId
 
   const description =
     `The \`${serverName}\` MCP server (${location}) is installed but requires authentication. ` +
@@ -60,9 +62,9 @@ export function createMcpAuthTool(
     `Once the user completes authorization in their browser, the server's real tools will become available automatically.`
 
   return {
-    name: buildMcpToolName(serverName, 'authenticate'),
+    name: buildMcpToolName(serverName, 'authenticate', appId),
     isMcp: true,
-    mcpInfo: { serverName, toolName: 'authenticate' },
+    mcpInfo: { serverName, toolName: 'authenticate', ...(appId && { appId }) },
     isEnabled: () => true,
     isConcurrencySafe: () => false,
     isReadOnly: () => false,
@@ -119,8 +121,7 @@ export function createMcpAuthTool(
       )
 
       // Background continuation: once OAuth completes, reconnect and swap
-      // the real tools into appState. Prefix-based replacement removes this
-      // pseudo-tool since it shares the mcp__<server>__ prefix.
+      // the real tools into appState, removing this server's pseudo-tool.
       void oauthPromise
         .then(async () => {
           clearMcpAuthCache()
@@ -134,7 +135,7 @@ export function createMcpAuthTool(
                 c.name === serverName ? result.client : c,
               ),
               tools: [
-                ...reject(prev.mcp.tools, t => t.name?.startsWith(prefix)),
+                ...reject(prev.mcp.tools, t => toolBelongsToMcpServer(t, serverName)),
                 ...result.tools,
               ],
               commands: [

@@ -13,6 +13,7 @@ import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js';
 import { startAgentSummarization } from '../../services/AgentSummary/agentSummary.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from '../../services/analytics/index.js';
 import { getAdvancedSetting, getAdvancedSettingsEnvironment } from '../../services/advancedSettings.js';
+import { getMcpToolInfo } from '../../services/mcp/mcpStringUtils.js';
 import { completeAgentTask as completeAsyncAgent, createActivityDescriptionResolver, createProgressTracker, enqueueAgentNotification, failAgentTask as failAsyncAgent, getProgressUpdate, getTokenCountFromTracker, isLocalAgentTask, killAsyncAgent, registerAgentForeground, registerAsyncAgent, unregisterAgentForeground, updateAgentProgress as updateAsyncAgentProgress, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
 import { assembleToolPool } from '../../tools.js';
 import { asAgentId } from '../../types/ids.js';
@@ -200,12 +201,9 @@ export const AgentTool = buildTool({
     // Get MCP servers that have tools available
     const mcpServersWithTools: string[] = [];
     for (const tool of tools) {
-      if (tool.name?.startsWith('mcp__')) {
-        const parts = tool.name.split('__');
-        const serverName = parts[1];
-        if (serverName && !mcpServersWithTools.includes(serverName)) {
-          mcpServersWithTools.push(serverName);
-        }
+      const serverName = getMcpToolInfo(tool)?.serverName;
+      if (serverName && !mcpServersWithTools.includes(serverName)) {
+        mcpServersWithTools.push(serverName);
       }
     }
 
@@ -413,13 +411,9 @@ export const AgentTool = buildTool({
       // Get servers that actually have tools (meaning they're connected AND authenticated)
       const serversWithTools: string[] = [];
       for (const tool of currentAppState.mcp.tools) {
-        if (tool.name?.startsWith('mcp__')) {
-          // Extract server name from tool name (format: mcp__serverName__toolName)
-          const parts = tool.name.split('__');
-          const serverName = parts[1];
-          if (serverName && !serversWithTools.includes(serverName)) {
-            serversWithTools.push(serverName);
-          }
+        const serverName = getMcpToolInfo(tool)?.serverName;
+        if (serverName && !serversWithTools.includes(serverName)) {
+          serversWithTools.push(serverName);
         }
       }
       if (!hasRequiredMcpServers(selectedAgent, serversWithTools)) {

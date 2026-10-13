@@ -637,10 +637,10 @@ export type Tool<
   readonly deferLoading?: boolean
   /**
    * For MCP tools: the server and tool names as received from the MCP server (unnormalized).
-   * Present on all MCP tools regardless of whether `name` is prefixed (mcp__server__tool)
-   * or unprefixed (CLAUDE_AGENT_SDK_MCP_NO_PREFIX mode).
+   * Present on all MCP tools, including App names without mcp__ and unprefixed SDK tools.
+   * appId is supplied by the host for App-owned services.
    */
-  mcpInfo?: { serverName: string; toolName: string }
+  mcpInfo?: { serverName: string; toolName: string; appId?: string }
   /** Host-provided App identity, used to activate sibling contribution tools together. */
   appInfo?: { appId: string; toolScope?: 'global' | 'session'; toolSelection?: 'app' | 'services'; serviceId?: string }
   readonly name: string
