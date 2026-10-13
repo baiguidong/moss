@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { writePrivateFileAtomic } from '../../../shared/security/credential-crypto.mjs'
 import { isValidMcpServerName, normalizeMcpStore, validateMcpServerConfig } from '../desktop-mcp-settings.mjs'
 import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
+import { readMcpAppConfig } from '../../../packages/app-runtime/src/packages/mcp-app.mjs'
 
 export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
@@ -73,8 +74,8 @@ function safeError(error, configs) {
 
 /** Host-owned registry. MCP transport and tool execution remain in the agent runtime. */
 export class AppMcpHost {
-  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, reservedName = () => false }) {
-    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, reservedName })
+  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, getIdleTimeoutMs, reservedName = () => false }) {
+    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, getIdleTimeoutMs, reservedName })
     this.providers = new Map()
     this.checks = new Map()
     this.queue = Promise.resolve()
@@ -114,8 +115,22 @@ export class AppMcpHost {
     const credentials = await this.getRuntime().credentials.get(context.appId, context.instanceId)
     const secrets = decodeSecrets(credentials)
     const pkg = await this.getRuntime().getActivePackage(context.appId)
-    const provider = { ...context, toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', signal: undefined, document, file, secrets }
+    const provider = { ...context, toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', mcpIdleTimeoutMs: pkg.manifest.mcpApp?.runtime?.state === 'stateless' ? pkg.manifest.mcpApp.runtime.idleTimeoutMs || 3_600_000 : 0, signal: undefined, document, file, secrets }
     this.providers.set(key(context), provider)
+    if (pkg.manifest.mcpApp && this.active(provider)) {
+      const definition = await readMcpAppConfig(pkg.root, pkg.manifest)
+      if (document.definitionRevision !== definition.revision) {
+        const next = { version: 1, definitionRevision: definition.revision, servers: {} }
+        const values = { ...secrets }
+        for (const [name, config] of Object.entries(definition.mcpServers)) {
+          this.assertUnique(provider, name, name)
+          next.servers[name] = this.encode(validateMcpServerConfig(config), true, values)
+        }
+        const result = await this.commit(context, next, values)
+        this.onChanged?.(context.appId)
+        return result
+      }
+    }
     return provider
   }
   async commit(context, document, secrets) {
@@ -162,7 +177,7 @@ export class AppMcpHost {
     const next = await this.commit(context, document, secrets)
     // This runs only after both encrypted credentials and the new registry are durable.
     await this.clearLegacy?.()
-    this.onChanged?.()
+    this.onChanged?.(context.appId)
     return next
   }
   async refresh() {
@@ -186,7 +201,7 @@ export class AppMcpHost {
     })
   }
   serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
-  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry) } }
+  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) } }
   enabledServers(appIds, workspace, appServiceIds = []) {
     const result = {}
     for (const provider of this.providers.values()) {
@@ -324,7 +339,7 @@ export class AppMcpHost {
       this.checks.delete(`${key(context)}/${previousName}`)
       this.checks.delete(`${key(context)}/${input.name}`)
       this.onCatalogChanged?.()
-      return { result: this.list(provider, this.onChanged?.() || {}) }
+      return { result: this.list(provider, this.onChanged?.(context.appId) || {}) }
     })
     if (prepared.result) return prepared.result
     const { config, entry } = prepared, name = runtimeName(context.appId, input.name)
@@ -343,7 +358,7 @@ export class AppMcpHost {
         if (this.toolRevision(current, current.document.servers[input.name] || {}) !== this.toolRevision(prepared.provider, entry)) throw new Error('连接配置已变化，请重新检查。')
         this.checks.set(`${key(context)}/${input.name}`, check)
         this.onCatalogChanged?.()
-        return this.list(current, method === 'servers.inspect' ? {} : this.onChanged?.() || {}, input.name)
+        return this.list(current, method === 'servers.inspect' ? {} : this.onChanged?.(context.appId) || {}, input.name)
       })
     } catch (error) {
       const message = safeError(error, [config])

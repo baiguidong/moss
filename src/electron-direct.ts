@@ -1,3 +1,5 @@
+import { releaseMcpLifetime, releaseMcpServers, getMcpLifetimeStats, updateMcpLifetimeIdle } from './services/mcp/client.js'
+export { getMcpRuntimeStats } from './services/mcp/client.js'
 import type { AppToolPolicy } from './utils/appToolPolicy.js'
 export { getMossAgentConfigurationSchema, inspectMossAgentConfiguration, validateMossAgentConfiguration, applyMossAgentConfiguration } from './services/mossConfiguration.js'
 export { getMossPreferencesSchema, inspectMossPreferences, applyMossPreferences } from './services/mossConfiguration.js'
@@ -157,6 +159,7 @@ import {
   adoptResumedSessionFile,
   clearSessionMetadata,
   discardSessionStorageRecord,
+  flushSessionStorage,
   getProjectDir,
   recordContentReplacement,
   resetSessionFilePointer,
@@ -773,7 +776,10 @@ export class ClaudeSession {
   #opts: ResolvedClaudeSessionOptions
   #queue: Array<() => void> = []
   #processing = false
+  #activeControls = 0
   #disposed = false
+  #mcpLifetime = { id: randomUUID(), controller: new AbortController(), revokedServers: new Set<string>() }
+  #mcpDisposed: Promise<void> | null = null
   #forkContentReplacementsSeeded = false
   #abortController: AbortController | null = null
   // Session's git root (or cwd), resolved during engine bootstrap. Passed
@@ -835,6 +841,7 @@ export class ClaudeSession {
     this.#opts = {
       runtime: {
         executionEnvironment: opts.executionEnvironment ?? 'desktop',
+        mcpLifetime: { id: this.#mcpLifetime.id, signal: this.#mcpLifetime.controller.signal, revokedServers: this.#mcpLifetime.revokedServers },
         image: opts.image ? { ...opts.image } : undefined,
         desktopCronHostId: opts.desktopCronHostId,
         cron: opts.cron,
@@ -932,6 +939,7 @@ export class ClaudeSession {
 
   /** 懒初始化：第一次 send() 时构建 QueryEngine */
   async #getEngine(): Promise<QueryEngine> {
+    this.#mcpLifetime.controller.signal.throwIfAborted()
     if (this.#engine) return this.#engine
     initLocalAgentRuntimeOnce()
     const engineStart = Date.now()
@@ -967,6 +975,7 @@ export class ClaudeSession {
       dynamicMcpServers,
       this.#opts.addDirs,
     )
+    this.#mcpLifetime.controller.signal.throwIfAborted()
     logForDiagnosticsNoPII('info', 'local_agent_engine_bootstrap_completed', {
       duration_ms: Date.now() - bootstrapStart,
       mcp_client_count: bootstrapResult.mcp.clients.length,
@@ -1001,6 +1010,7 @@ export class ClaudeSession {
       workspaceDirectories: this.#opts.workspaceDirectories,
     })
     const permissionContext = permissionInit.toolPermissionContext
+    this.#mcpLifetime.controller.signal.throwIfAborted()
     for (const warning of permissionInit.warnings) {
       logForDiagnosticsNoPII('warn', 'local_agent_permission_init_warning', {
         warning,
@@ -1183,6 +1193,7 @@ export class ClaudeSession {
     let commands: Awaited<ReturnType<typeof getCommands>> = []
     const commandsStart = Date.now()
     try { commands = await getCommands(cwd) } catch {}
+    this.#mcpLifetime.controller.signal.throwIfAborted()
     logForDiagnosticsNoPII('info', 'local_agent_engine_commands_loaded', {
       duration_ms: Date.now() - commandsStart,
       command_count: commands.length,
@@ -1262,6 +1273,7 @@ export class ClaudeSession {
     })
 
     try {
+      if (this.#disposed) throw new Error('Session has been disposed')
       initLocalAgentRuntimeOnce()
 
       const sessionId = asSessionId(this.sessionId)
@@ -1325,6 +1337,7 @@ export class ClaudeSession {
         ),
       )
       const sessionStore = this.#store
+      this.#mcpLifetime.controller.signal.throwIfAborted()
       if (!sessionStore) {
         throw new Error('Session store was not initialized')
       }
@@ -1609,63 +1622,69 @@ export class ClaudeSession {
   }
 
   async executeAppAgent(params: Parameters<QueryEngine['executeAppAgent']>[0]) {
-    const engine = await this.#initializeForControl()
-    const cwd = getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ?? this.#opts.cwd
-    return runWithSessionApiOverrides(this.#sessionApiOverrides, () => runWithCwdOverride(cwd, () =>
-      runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
-        () => runWithCoordinatorMode(this.#opts.coordinatorMode, () => engine.executeAppAgent(params)),
-        this.#opts.taskScope, this.#opts.environment, this.#opts.runtime),
-      { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }))
+    return this.#withControl(async () => {
+      const engine = await this.#initializeForControl()
+      const cwd = getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ?? this.#opts.cwd
+      return runWithSessionApiOverrides(this.#sessionApiOverrides, () => runWithCwdOverride(cwd, () =>
+        runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
+          () => runWithCoordinatorMode(this.#opts.coordinatorMode, () => engine.executeAppAgent(params)),
+          this.#opts.taskScope, this.#opts.environment, this.#opts.runtime),
+        { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }))
+    })
   }
 
   /** Used by the global memory maintenance host, with a dedicated runtime. */
   async consolidateMemory(options: Parameters<QueryEngine['consolidateMemory']>[0]) {
-    const engine = await this.#initializeForControl()
-    options.signal?.throwIfAborted()
-    return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
-      runWithCwdOverride(this.#opts.cwd, () => runWithSessionIdContext(
-        asSessionId(this.sessionId), this.#opts.projectDir,
-        () => engine.consolidateMemory(options),
-        this.#opts.taskScope, this.#opts.environment, this.#opts.runtime,
-      ), { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }),
-    )
+    return this.#withControl(async () => {
+      const engine = await this.#initializeForControl()
+      options.signal?.throwIfAborted()
+      return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+        runWithCwdOverride(this.#opts.cwd, () => runWithSessionIdContext(
+          asSessionId(this.sessionId), this.#opts.projectDir,
+          () => engine.consolidateMemory(options),
+          this.#opts.taskScope, this.#opts.environment, this.#opts.runtime,
+        ), { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }),
+      )
+    })
   }
 
   async #runFileHistoryControl<T>(operation: (
     state: FileHistoryState,
     update: (updater: (prev: FileHistoryState) => FileHistoryState) => void,
   ) => Promise<T>): Promise<T> {
-    await this.#initializeForControl()
-    const controlStore = this.#store
-    if (!controlStore) throw new Error('Session store was not initialized')
-    const effectiveCwd =
-      getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
-      this.#opts.cwd
-    return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
-      runWithCwdOverride(
-        effectiveCwd,
-        () => runWithSessionIdContext(
-          asSessionId(this.sessionId),
-          this.#opts.projectDir,
-          () => runWithCoordinatorMode(this.#opts.coordinatorMode, () =>
-            operation(
-              controlStore.getState().fileHistory,
-              updater => controlStore.setState(previous => ({
-                ...previous,
-                fileHistory: updater(previous.fileHistory),
-              })),
+    return this.#withControl(async () => {
+      await this.#initializeForControl()
+      const controlStore = this.#store
+      if (!controlStore) throw new Error('Session store was not initialized')
+      const effectiveCwd =
+        getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ??
+        this.#opts.cwd
+      return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+        runWithCwdOverride(
+          effectiveCwd,
+          () => runWithSessionIdContext(
+            asSessionId(this.sessionId),
+            this.#opts.projectDir,
+            () => runWithCoordinatorMode(this.#opts.coordinatorMode, () =>
+              operation(
+                controlStore.getState().fileHistory,
+                updater => controlStore.setState(previous => ({
+                  ...previous,
+                  fileHistory: updater(previous.fileHistory),
+                })),
+              ),
             ),
+            this.#opts.taskScope,
+            this.#opts.environment,
+            this.#opts.runtime,
           ),
-          this.#opts.taskScope,
-          this.#opts.environment,
-          this.#opts.runtime,
+          {
+            projectRoot: this.#projectRoot,
+            additionalDirectories: this.#opts.addDirs,
+          },
         ),
-        {
-          projectRoot: this.#projectRoot,
-          additionalDirectories: this.#opts.addDirs,
-        },
-      ),
-    )
+      )
+    })
   }
 
   async previewFileRewind(userMessageId: string) {
@@ -1705,8 +1724,38 @@ export class ClaudeSession {
   }
 
   async rewindConversation(userMessageId: string) {
-    const engine = await this.#initializeForControl()
-    return engine.rewindToUserMessage(userMessageId)
+    return this.#withControl(async () => {
+      const engine = await this.#initializeForControl()
+      return engine.rewindToUserMessage(userMessageId)
+    })
+  }
+
+  async #withControl<T>(operation: () => Promise<T>): Promise<T> {
+    this.#activeControls++
+    try { return await operation() } finally { this.#activeControls-- }
+  }
+
+  getIdleRetirementBlocker(): string | null {
+    if (this.#processing || this.#queue.length || this.#activeControls) return 'request-running'
+    const state = this.#store?.getState()
+    if (state && getRunningTasks(state).length) return 'background-task'
+    const mcp = getMcpLifetimeStats(this.#mcpLifetime.id)
+    if (mcp.requests) return 'mcp-request'
+    if (mcp.retainedState) return 'stateful-mcp'
+    return null
+  }
+
+  async prepareForIdleDispose(): Promise<void> {
+    if (this.getIdleRetirementBlocker()) throw new Error('Session still owns active work or MCP state')
+    if (this.#storageActivated) await runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
+      () => flushSessionStorage(), this.#opts.taskScope, this.#opts.environment, this.#opts.runtime)
+  }
+
+  setMcpIdleTimeout(ms: number) {
+    for (const owner of Object.values(this.#opts.runtime.appToolPolicy?.mcpServers || {})) {
+      if (owner.mcpIdleTimeoutMs) owner.mcpIdleTimeoutMs = ms
+    }
+    updateMcpLifetimeIdle(this.#mcpLifetime.id, ms)
   }
 
   #flush() {
@@ -1738,9 +1787,21 @@ export class ClaudeSession {
     }))
   }
 
+  /** Revoke removed/disabled App MCP transports immediately, including a busy runtime. */
+  reconcileAppMcpServers(allowedNames: readonly string[]) {
+    const allowed = new Set(allowedNames)
+    const removed = Object.keys(this.#opts.mcpServers || {}).filter(name => this.#opts.runtime.appToolPolicy?.mcpServers[name] && !allowed.has(name))
+    for (const name of removed) this.#mcpLifetime.revokedServers.add(name)
+    return releaseMcpServers(this.#mcpLifetime.id, removed)
+  }
+
   /** 销毁 session，释放资源（后续 send() 会抛错） */
   dispose() {
+    if (this.#mcpDisposed) return this.#mcpDisposed
     this.#disposed = true
+    this.abort()
+    this.#mcpLifetime.controller.abort(new DOMException('Session disposed', 'AbortError'))
+    this.#mcpDisposed = releaseMcpLifetime(this.#mcpLifetime.id)
     this.#engine = null
     this.#pendingListeners = []
     if (this.#opts.onAppEvent) {
@@ -1768,6 +1829,7 @@ export class ClaudeSession {
     discardWorktreeSessionState(this.sessionId)
     discardSessionTaskScope(this.sessionId)
     this.#storageActivated = false
+    return this.#mcpDisposed
   }
 
   /** 中止正在进行的请求 */

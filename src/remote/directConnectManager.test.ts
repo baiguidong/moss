@@ -23,12 +23,15 @@ function connectedManager() {
 describe('DirectConnectSessionManager', () => {
   it('sets reasoning effort over the control channel and returns the applied model level', async () => {
     const { manager, internals, sent } = connectedManager()
+    expect(manager.hasPendingWork()).toBe(false)
     const pending = manager.setEffort('xhigh')
+    expect(manager.hasPendingWork()).toBe(true)
     const request = JSON.parse(sent[0]!)
     expect(request.request).toEqual({ subtype: 'set_effort', effort: 'xhigh' })
     const response = { model: 'gpt-5.5', configured: 'xhigh', applied: 'xhigh', levels: ['low', 'medium', 'high', 'xhigh'], overridden: false }
     internals.handleIncomingText(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response } }))
     expect(await pending).toEqual(response)
+    expect(manager.hasPendingWork()).toBe(false)
     expect(sent).toHaveLength(1)
   })
   it('sends set_permission_mode and resolves its matching response', async () => {

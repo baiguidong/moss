@@ -2,7 +2,11 @@
 
 App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
 
-当前 SDK 对应 Host API `3.8.0`；新 App 声明 `hostApi: "^3.8.0"`。不提供旧 UI 调用签名兼容层。
+当前 SDK 对应 Host API `3.9.0`；新 App 声明 `hostApi: "^3.9.0"`。不提供旧 UI 调用签名兼容层。
+
+配置型 MCP App 声明 `ui: { builtin: "mcp" }` 和 `mcpApp: { config: "mcp.json" }`。Core 生成 Manifest、提供公共设置页并直接注册 MCP，无需额外基础 App、包内 UI 文件或 Backend。要求 Host API 3.9，格式和 Draw.io 实测见 [配置型 MCP App 验证](../../ui/docs/mcp-configuration-app-proof.md)。
+
+`toolScope: "global"` 只控制会话可用范围，MCP 连接仍按会话运行时隔离并回收。配置型 App 默认保留服务状态到运行时关闭；只有可安全重启的服务才声明 `mcpApp.runtime: { state: "stateless" }`，启用空闲回收，默认 1 小时。App 可提供 `idleTimeoutMs` 建议值（1000–3600000 毫秒）；Desktop 统一采用用户在“设置 → 高级设置 → Agent 与执行”中的 MCP 回收时间（1–1440 分钟）。未声明可安全重启的服务不会被此设置强制重启，并阻止所属会话运行时自动回收。
 
 App 根级 `toolScope` 为 `session`（默认）或 `global`。App 原生及 MCP 工具全部继承该设置；选择 App 后在整个会话常驻。未选择的 session App 不提供工具，global App 按需提供。显式声明此字段要求最低 Host API 3.1.0。创建/编辑规则和完整示例见 [App 创建文档](../../ui/docs/app-authoring.md)。
 

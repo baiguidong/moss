@@ -1,3 +1,6 @@
+import { McpConnectionPool, type ConnectionControls } from './connectionPool.js'
+import { mcpToolCatalogCache, McpToolCatalogCache } from './toolCatalogCache.js'
+import { terminateMcpProcessTree } from './processCleanup.js'
 import { feature } from 'bun:bundle'
 import type {
   Base64ImageSource,
@@ -37,7 +40,6 @@ import {
   type ResourceLink,
 } from '@modelcontextprotocol/sdk/types.js'
 import mapValues from 'lodash-es/mapValues.js'
-import memoize from 'lodash-es/memoize.js'
 import zipObject from 'lodash-es/zipObject.js'
 import pMap from 'p-map'
 import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
@@ -120,7 +122,7 @@ import type { AssistantMessage } from 'src/types/message.js'
 import { classifyMcpToolForCollapse } from '../../tools/MCPTool/classifyForCollapse.js'
 import { clearKeychainCache } from '../../utils/secureStorage/macOsKeychainHelpers.js'
 import { sleep } from '../../utils/sleep.js'
-import { getSessionIdContext } from '../../utils/sessionIdContext.js'
+import { getSessionIdContext, getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import {
   McpAuthProvider,
   hasMcpDiscoveryButNoToken,
@@ -498,7 +500,7 @@ export function getServerCacheKey(
 }
 
 function getMcpCacheSessionId(): string {
-  return getSessionIdContext() ?? 'global'
+  return getSessionRuntimeContext()?.mcpLifetime?.id ?? getSessionIdContext() ?? 'global'
 }
 
 export function getMcpClientFetchCacheKey(
@@ -506,36 +508,90 @@ export function getMcpClientFetchCacheKey(
     cacheSessionId?: string
   },
 ): string {
-  return `${clientOrName.cacheSessionId ?? getMcpCacheSessionId()}-${clientOrName.name}`
+  const id = clientOrName.cacheSessionId ?? getMcpCacheSessionId()
+  const lifetime = getSessionRuntimeContext()?.mcpLifetime
+  lifetime?.signal.throwIfAborted()
+  if (lifetime && lifetime.id === id) {
+    if (!lifetimeFetchKeys.has(id)) lifetimeFetchKeys.set(id, new Set())
+    lifetimeFetchKeys.get(id)!.add(clientOrName.name)
+  }
+  return `${id}-${clientOrName.name}`
 }
 
-/**
- * TODO (ollie): The memoization here increases complexity by a lot, and im not sure it really improves performance
- * Attempts to connect to a single MCP server
- * @param name Server name
- * @param serverRef Scoped server configuration
- * @returns A wrapped client (either connected or failed)
- */
-export const connectToServer = memoize(
-  async (
-    name: string,
-    serverRef: ScopedMcpServerConfig,
-    serverStats?: {
-      totalServers: number
-      stdioCount: number
-      sseCount: number
-      httpCount: number
-      sseIdeCount: number
-      wsIdeCount: number
-    },
-  ): Promise<MCPServerConnection> => {
+const lifetimeFetchKeys = new Map<string, Set<string>>()
+const connectionFetchKeys = new Map<string, { fetchKey: string; name: string }>()
+const connectionPool = new McpConnectionPool<MCPServerConnection>({
+  maxConnections: 64, maxStarting: 4, maxQueued: 128,
+  retired(key) {
+    const entry = connectionFetchKeys.get(key)
+    if (!entry) return
+    connectionFetchKeys.delete(key)
+    fetchToolsForClient.cache.delete(entry.fetchKey)
+    fetchResourcesForClient.cache.delete(entry.fetchKey)
+    fetchCommandsForClient.cache.delete(entry.fetchKey)
+    if (feature('MCP_SKILLS')) fetchMcpSkillsForClient!.cache.delete(entry.name)
+  },
+})
+export const getMcpRuntimeStats = () => ({ ...connectionPool.stats(), lifetimes: lifetimeFetchKeys.size, catalog: mcpToolCatalogCache.stats() })
+export const getMcpLifetimeStats = (id: string) => connectionPool.ownerStats(id)
+export const updateMcpLifetimeIdle = (id: string, ms: number) => connectionPool.updateOwnerIdle(id, ms)
+export async function releaseMcpLifetime(id: string) {
+  await connectionPool.closeOwner(id)
+  for (const name of lifetimeFetchKeys.get(id) || []) {
+    const key = `${id}-${name}`
+    fetchToolsForClient.cache.delete(key); fetchResourcesForClient.cache.delete(key); fetchCommandsForClient.cache.delete(key)
+  }
+  lifetimeFetchKeys.delete(id)
+}
+
+export async function releaseMcpServers(id: string, names: readonly string[]) {
+  const keys = new Set(names.map(name => `${id}-${name}`))
+  await Promise.all([...connectionFetchKeys].filter(([, entry]) => keys.has(entry.fetchKey)).map(([key]) => connectionPool.close(key)))
+  for (const key of keys) {
+    fetchToolsForClient.cache.delete(key); fetchResourcesForClient.cache.delete(key); fetchCommandsForClient.cache.delete(key)
+  }
+  for (const name of names) lifetimeFetchKeys.get(id)?.delete(name)
+}
+
+export function mcpCatalogKey(name: string, config: ScopedMcpServerConfig): string {
+  // Sharing schemas never shares transports. Credentials, workspace and inherited launch env
+  // participate in the hash; none are retained as plaintext in the catalog cache.
+  const { scope: _scope, ...launch } = config
+  return McpToolCatalogCache.key([name, launch, getOriginalCwd(), subprocessEnv()])
+}
+
+export function connectToServer(name: string, serverRef: ScopedMcpServerConfig, serverStats?: {
+  totalServers: number; stdioCount: number; sseCount: number; httpCount: number; sseIdeCount: number; wsIdeCount: number
+}): Promise<MCPServerConnection> {
+  const key = getServerCacheKey(name, serverRef), runtime = getSessionRuntimeContext()
+  if (runtime?.mcpLifetime?.revokedServers?.has(name)) return Promise.reject(new Error('此 MCP 服务已从会话撤销，请更新会话工具后重试。'))
+  connectionFetchKeys.set(key, { fetchKey: getMcpClientFetchCacheKey({ name }), name })
+  const pending = connectionPool.acquire(key, runtime?.mcpLifetime,
+    controls => openMcpConnection(name, serverRef, controls, serverStats),
+    runtime?.appToolPolicy?.mcpServers[name]?.mcpIdleTimeoutMs || 0)
+  void pending.catch(() => { if (!connectionPool.has(key)) connectionFetchKeys.delete(key) })
+  return pending
+}
+
+async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig, controls: ConnectionControls, serverStats?: {
+  totalServers: number; stdioCount: number; sseCount: number; httpCount: number; sseIdeCount: number; wsIdeCount: number
+}): Promise<MCPServerConnection> {
     const connectStartTime = Date.now()
     const cacheSessionId = getMcpCacheSessionId()
     let inProcessServer:
       | { connect(t: Transport): Promise<void>; close(): Promise<void> }
       | undefined
+    let transport: Transport | undefined, client: Client | undefined
+    let retained = false, transportClose: Promise<void> | undefined
+    const closeTransport = () => !transport && !client ? Promise.resolve() : transportClose ??= (async () => {
+      if (transport instanceof StdioClientTransport) await terminateMcpProcessTree(transport.pid)
+      await transport?.close().catch(() => {})
+      await client?.close().catch(() => {})
+    })()
+    const abortTransport = () => { void closeTransport() }
+    controls.signal.addEventListener('abort', abortTransport, { once: true })
     try {
-      let transport
+      controls.signal.throwIfAborted()
 
       // If we have the session ingress JWT, we will connect via the session ingress rather than
       // to remote MCP's directly.
@@ -799,6 +855,7 @@ export const connectToServer = memoize(
         transport = new StdioClientTransport({
           command: finalCommand,
           args: finalArgs,
+          cwd: getOriginalCwd(),
           env: {
             ...subprocessEnv(),
             ...serverRef.env,
@@ -819,7 +876,7 @@ export const connectToServer = memoize(
         if (stdioTransport.stderr) {
           stderrHandler = (data: Buffer) => {
             // Cap stderr accumulation to prevent unbounded memory growth
-            if (stderrOutput.length < 64 * 1024 * 1024) {
+            if (stderrOutput.length < 64 * 1024) {
               try {
                 stderrOutput += data.toString()
               } catch {
@@ -831,7 +888,7 @@ export const connectToServer = memoize(
         }
       }
 
-      const client = new Client(
+      client = new Client(
         {
           name: 'moss',
           title: 'Moss',
@@ -894,7 +951,13 @@ export const connectToServer = memoize(
         }
       }
 
+      controls.signal.throwIfAborted()
       const connectPromise = client.connect(transport)
+      let abortConnect: (() => void) | undefined
+      const aborted = new Promise<never>((_, reject) => {
+        abortConnect = () => reject(controls.signal.reason)
+        controls.signal.addEventListener('abort', abortConnect, { once: true })
+      })
       const timeoutPromise = new Promise<never>((_, reject) => {
         const timeoutId = setTimeout(() => {
           const elapsed = Date.now() - connectStartTime
@@ -905,7 +968,7 @@ export const connectToServer = memoize(
           if (inProcessServer) {
             inProcessServer.close().catch(() => {})
           }
-          transport.close().catch(() => {})
+          void closeTransport()
           reject(
             new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
               `MCP server "${name}" connection timed out after ${getConnectionTimeoutMs()}ms`,
@@ -926,7 +989,9 @@ export const connectToServer = memoize(
       })
 
       try {
-        await Promise.race([connectPromise, timeoutPromise])
+        await Promise.race([connectPromise, timeoutPromise, aborted]).finally(() => {
+          if (abortConnect) controls.signal.removeEventListener('abort', abortConnect)
+        })
         if (stderrOutput) {
           logMCPError(name, `Server stderr: ${stderrOutput}`)
           stderrOutput = '' // Release accumulated string to prevent memory growth
@@ -981,7 +1046,7 @@ export const connectToServer = memoize(
         if (inProcessServer) {
           inProcessServer.close().catch(() => {})
         }
-        transport.close().catch(() => {})
+        void closeTransport()
         if (stderrOutput) {
           logMCPError(name, `Server stderr: ${stderrOutput}`)
         }
@@ -1075,7 +1140,7 @@ export const connectToServer = memoize(
         if (hasTriggeredClose) return
         hasTriggeredClose = true
         logMCPDebug(name, `Closing transport (${reason})`)
-        void client.close().catch(e => {
+        void client!.close().catch(e => {
           logMCPDebug(name, `Error during close: ${errorMessage(e)}`)
         })
       }
@@ -1213,26 +1278,7 @@ export const connectToServer = memoize(
           `${transportType.toUpperCase()} connection closed after ${Math.floor(uptime / 1000)}s (${hasErrorOccurred ? 'with errors' : 'cleanly'})`,
         )
 
-        // Clear the memoization cache so next operation reconnects
-        const key = `${cacheSessionId}-${name}-${jsonStringify(serverRef)}`
-        const fetchKey = getMcpClientFetchCacheKey({
-          name,
-          cacheSessionId,
-        })
-
-        // Also clear fetch caches (keyed by server name). Reconnection
-        // creates a new connection object; without clearing, the next
-        // fetch would return stale tools/resources from the old connection.
-        fetchToolsForClient.cache.delete(fetchKey)
-        fetchResourcesForClient.cache.delete(fetchKey)
-        fetchCommandsForClient.cache.delete(fetchKey)
-        if (feature('MCP_SKILLS')) {
-          fetchMcpSkillsForClient!.cache.delete(name)
-        }
-
-        connectToServer.cache.delete(key)
-        logMCPDebug(name, `Cleared connection cache for reconnection`)
-
+        controls.disconnected()
         if (originalOnclose) {
           originalOnclose()
         }
@@ -1247,7 +1293,7 @@ export const connectToServer = memoize(
             logMCPDebug(name, `Error closing in-process server: ${error}`)
           }
           try {
-            await client.close()
+            await client!.close()
           } catch (error) {
             logMCPDebug(name, `Error closing client: ${error}`)
           }
@@ -1260,161 +1306,23 @@ export const connectToServer = memoize(
           stdioTransport.stderr?.off('data', stderrHandler)
         }
 
-        // For stdio transports, explicitly terminate the child process with proper signals
-        // NOTE: StdioClientTransport.close() only sends an abort signal, but many MCP servers
-        // (especially Docker containers) need explicit SIGINT/SIGTERM signals to trigger graceful shutdown
-        if (serverRef.type === 'stdio') {
-          try {
-            const stdioTransport = transport as StdioClientTransport
-            const childPid = stdioTransport.pid
-
-            if (childPid) {
-              logMCPDebug(name, 'Sending SIGINT to MCP server process')
-
-              // First try SIGINT (like Ctrl+C)
-              try {
-                process.kill(childPid, 'SIGINT')
-              } catch (error) {
-                logMCPDebug(name, `Error sending SIGINT: ${error}`)
-                return
-              }
-
-              // Wait for graceful shutdown with rapid escalation (total 500ms to keep CLI responsive)
-              await new Promise<void>(async resolve => {
-                let resolved = false
-
-                // Set up a timer to check if process still exists
-                const checkInterval = setInterval(() => {
-                  try {
-                    // process.kill(pid, 0) checks if process exists without killing it
-                    process.kill(childPid, 0)
-                  } catch {
-                    // Process no longer exists
-                    if (!resolved) {
-                      resolved = true
-                      clearInterval(checkInterval)
-                      clearTimeout(failsafeTimeout)
-                      logMCPDebug(name, 'MCP server process exited cleanly')
-                      resolve()
-                    }
-                  }
-                }, 50)
-
-                // Absolute failsafe: clear interval after 600ms no matter what
-                const failsafeTimeout = setTimeout(() => {
-                  if (!resolved) {
-                    resolved = true
-                    clearInterval(checkInterval)
-                    logMCPDebug(
-                      name,
-                      'Cleanup timeout reached, stopping process monitoring',
-                    )
-                    resolve()
-                  }
-                }, 600)
-
-                try {
-                  // Wait 100ms for SIGINT to work (usually much faster)
-                  await sleep(100)
-
-                  if (!resolved) {
-                    // Check if process still exists
-                    try {
-                      process.kill(childPid, 0)
-                      // Process still exists, SIGINT failed, try SIGTERM
-                      logMCPDebug(
-                        name,
-                        'SIGINT failed, sending SIGTERM to MCP server process',
-                      )
-                      try {
-                        process.kill(childPid, 'SIGTERM')
-                      } catch (termError) {
-                        logMCPDebug(name, `Error sending SIGTERM: ${termError}`)
-                        resolved = true
-                        clearInterval(checkInterval)
-                        clearTimeout(failsafeTimeout)
-                        resolve()
-                        return
-                      }
-                    } catch {
-                      // Process already exited
-                      resolved = true
-                      clearInterval(checkInterval)
-                      clearTimeout(failsafeTimeout)
-                      resolve()
-                      return
-                    }
-
-                    // Wait 400ms for SIGTERM to work (slower than SIGINT, often used for cleanup)
-                    await sleep(400)
-
-                    if (!resolved) {
-                      // Check if process still exists
-                      try {
-                        process.kill(childPid, 0)
-                        // Process still exists, SIGTERM failed, force kill with SIGKILL
-                        logMCPDebug(
-                          name,
-                          'SIGTERM failed, sending SIGKILL to MCP server process',
-                        )
-                        try {
-                          process.kill(childPid, 'SIGKILL')
-                        } catch (killError) {
-                          logMCPDebug(
-                            name,
-                            `Error sending SIGKILL: ${killError}`,
-                          )
-                        }
-                      } catch {
-                        // Process already exited
-                        resolved = true
-                        clearInterval(checkInterval)
-                        clearTimeout(failsafeTimeout)
-                        resolve()
-                      }
-                    }
-                  }
-
-                  // Final timeout - always resolve after 500ms max (total cleanup time)
-                  if (!resolved) {
-                    resolved = true
-                    clearInterval(checkInterval)
-                    clearTimeout(failsafeTimeout)
-                    resolve()
-                  }
-                } catch {
-                  // Handle any errors in the escalation sequence
-                  if (!resolved) {
-                    resolved = true
-                    clearInterval(checkInterval)
-                    clearTimeout(failsafeTimeout)
-                    resolve()
-                  }
-                }
-              })
-            }
-          } catch (processError) {
-            logMCPDebug(name, `Error terminating process: ${processError}`)
-          }
-        }
-
-        // Close the client connection (which also closes the transport)
-        try {
-          await client.close()
-        } catch (error) {
-          logMCPDebug(name, `Error closing client: ${error}`)
-        }
+        await closeTransport()
       }
 
-      // Register cleanup for all transport types - even network transports might need cleanup
-      // This ensures all MCP servers get properly terminated, not just stdio ones
-      const cleanupUnregister = registerCleanup(cleanup)
-
-      // Create the wrapped cleanup that includes unregistering
-      const wrappedCleanup = async () => {
+      let cleanupPromise: Promise<void> | undefined
+      let cleanupUnregister: (() => void) | undefined
+      const wrappedCleanup = () => cleanupPromise ??= (async () => {
+        controls.signal.removeEventListener('abort', abortTransport)
         cleanupUnregister?.()
         await cleanup()
-      }
+      })()
+      cleanupUnregister = registerCleanup(wrappedCleanup)
+      const request = client.request.bind(client)
+      client.request = ((...args: Parameters<Client['request']>) => {
+        const release = controls.beginRequest()
+        return Promise.resolve().then(() => request(...args)).finally(release)
+      }) as Client['request']
+      retained = true
 
       const connectionDurationMs = Date.now() - connectStartTime
       logEvent('tengu_mcp_server_connection_succeeded', {
@@ -1473,10 +1381,14 @@ export const connectToServer = memoize(
         config: serverRef,
         error: errorMessage(error),
       }
+    } finally {
+      if (!retained) {
+        controls.signal.removeEventListener('abort', abortTransport)
+        await closeTransport()
+      }
     }
-  },
-  getServerCacheKey,
-)
+}
+
 
 /**
  * Clears the memoize cache for a specific server
@@ -1487,28 +1399,8 @@ export async function clearServerCache(
   name: string,
   serverRef: ScopedMcpServerConfig,
 ): Promise<void> {
-  const key = getServerCacheKey(name, serverRef)
-
-  try {
-    const wrappedClient = await connectToServer(name, serverRef)
-
-    if (wrappedClient.type === 'connected') {
-      await wrappedClient.cleanup()
-    }
-  } catch {
-    // Ignore errors - server might have failed to connect
-  }
-
-  // Clear from cache (both connection and fetch caches so reconnect
-  // fetches fresh tools/resources/commands instead of stale ones)
-  connectToServer.cache.delete(key)
-  const fetchKey = getMcpClientFetchCacheKey({ name })
-  fetchToolsForClient.cache.delete(fetchKey)
-  fetchResourcesForClient.cache.delete(fetchKey)
-  fetchCommandsForClient.cache.delete(fetchKey)
-  if (feature('MCP_SKILLS')) {
-    fetchMcpSkillsForClient!.cache.delete(name)
-  }
+  // Clearing an absent entry must never start a new process.
+  await connectionPool.close(getServerCacheKey(name, serverRef))
 }
 
 /**
@@ -1573,14 +1465,18 @@ export const fetchToolsForClient = memoizeWithLRU(
         return []
       }
 
-      const result = (await client.client.request(
-        { method: 'tools/list' },
-        ListToolsResultSchema,
+      const result = client.deferredTools || (await client.client.request(
+        { method: 'tools/list' }, ListToolsResultSchema,
       )) as ListToolsResult
+      if (!client.deferredTools && getSessionRuntimeContext()?.mcpLifetime) {
+        mcpToolCatalogCache.put(mcpCatalogKey(client.name, client.config), {
+          tools: result, capabilities: client.capabilities, serverInfo: client.serverInfo, instructions: client.instructions,
+        })
+      }
 
       // Sanitize tool data from MCP server
       const toolsToProcess = recursivelySanitizeUnicode(result.tools)
-      const disabledTools = new Set(client.config.disabledTools ?? [])
+      const disabledTools = new Set('disabledTools' in client.config ? client.config.disabledTools ?? [] : [])
 
       // Check if we should skip the mcp__ prefix for SDK MCP servers
       const skipPrefix =
@@ -2127,7 +2023,14 @@ export async function getMcpToolsCommandsAndResources(
         return
       }
 
-      const client = await connectToServer(name, config, serverStats)
+      const managed = Boolean(getSessionRuntimeContext()?.mcpLifetime)
+      const cached = managed ? mcpToolCatalogCache.get(mcpCatalogKey(name, config)) : undefined
+      const wasConnected = connectionPool.has(getServerCacheKey(name, config))
+      const client: MCPServerConnection = cached ? {
+        name, config, type: 'connected', capabilities: cached.capabilities, serverInfo: cached.serverInfo,
+        instructions: cached.instructions, deferredTools: cached.tools, cacheSessionId: getMcpCacheSessionId(),
+        client: new Client({ name: 'moss-cached-catalog', version: '1.0.0' }), cleanup: async () => {},
+      } : await connectToServer(name, config, serverStats)
 
       if (client.type !== 'connected') {
         onConnectionAttempt({
@@ -2165,6 +2068,11 @@ export async function getMcpToolsCommandsAndResources(
         resourceTools.push(ListMcpResourcesTool, ReadMcpResourceTool)
       }
 
+      // Cold catalog discovery has not run user tools. Release that temporary connection;
+      // the first actual tool call starts a connection owned only by this session.
+      if (managed && !cached && !wasConnected && mcpToolCatalogCache.get(mcpCatalogKey(name, config))) {
+        await clearServerCache(name, config)
+      }
       onConnectionAttempt({
         client,
         tools: [...tools, ...resourceTools],

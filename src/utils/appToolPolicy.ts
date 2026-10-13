@@ -4,7 +4,7 @@ import type { Tool } from '../Tool.js'
 export type AppToolPolicy = {
   appIds: string[]
   appServiceIds?: string[]
-  mcpServers: Record<string, ToolSource>
+  mcpServers: Record<string, ToolSource & { mcpIdleTimeoutMs?: number }>
 }
 
 /** Project cached tools into this session; never mutate shared MCP objects. */

@@ -359,6 +359,9 @@ async function main() {
     '/src/terminal-preload.mjs',
     '/src/terminal-service.mjs',
     '/dist/renderer/index.html',
+    '/dist/mcp-app/index.html',
+    '/dist/mcp-app/main.js',
+    '/dist/mcp-app/main.css',
     '/dist/renderer/build/icon.png',
   ]) {
     if (!asarEntries.has(entry)) throw new Error(`app.asar is missing ${entry}`);

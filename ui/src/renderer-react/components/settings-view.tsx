@@ -43,6 +43,7 @@ import {
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
 import type { DesktopSettings, ManagedRuntimeStatus, StoredApp } from '../types';
+import { DEFAULT_RUNTIME_LIFECYCLE, type RuntimeLifecycleSettings } from '../../runtime-lifecycle-settings.mjs';
 import { AssistantMessage } from '@/components/chat/assistant-message';
 import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
@@ -287,7 +288,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'agent-execution',
         title: 'Agent 与执行',
-        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式'],
+        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式', '回收', '空闲', '运行时', '进程', 'mcp'],
       },
       {
         id: 'tool-performance',
@@ -592,6 +593,30 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
       )}
     </Surface>
   );
+}
+
+function RuntimeLifecycleNumber({ value, maximum, label, onCommit }: { value: number; maximum: number; label: string; onCommit(value: number): void }) {
+  const [draft, setDraft] = React.useState(String(value));
+  React.useEffect(() => setDraft(String(value)), [value]);
+  return <Input type="number" min={1} max={maximum} step={1} aria-label={label} className={FIELD_CLASS_NAME}
+    value={draft} onChange={event => setDraft(event.target.value)}
+    onBlur={() => {
+      const next = Number(draft);
+      if (Number.isInteger(next) && next >= 1 && next <= maximum) { if (next !== value) onCommit(next); }
+      else setDraft(String(value));
+    }} />;
+}
+
+export function RuntimeLifecycleSettingsRows({ value, onChange }: { value: RuntimeLifecycleSettings; onChange(value: RuntimeLifecycleSettings): void }) {
+  const fields = [
+    { key: 'sessionIdleMinutes' as const, label: '会话运行时空闲回收', maximum: 1440, unit: '分钟', description: '默认 60 分钟。空闲后释放运行资源，聊天记录保留，下次发送消息自动恢复。执行中或等待确认的会话不会回收。' },
+    { key: 'maxSessionRuntimes' as const, label: '最多保留会话运行时', maximum: 100, unit: '个', description: '默认 15 个。达到上限时优先释放空闲最久的会话；全部正在工作或保留服务状态时，新请求等待，超时后可重试。' },
+    { key: 'mcpIdleMinutes' as const, label: 'MCP 服务空闲回收', maximum: 1440, unit: '分钟', description: '默认 60 分钟。可安全重启的服务在空闲后关闭，下次工具调用自动连接。未声明可安全重启的服务保留连接并占用配额。' },
+  ];
+  return <>{fields.map(field => <SettingsRow key={field.key} title={field.label} description={field.description} controlClassName="sm:w-[160px]">
+    <div className="flex items-center gap-2"><RuntimeLifecycleNumber value={value[field.key]} maximum={field.maximum} label={field.label}
+      onCommit={next => onChange({ ...value, [field.key]: next })} /><span className="shrink-0 text-xs text-muted-foreground">{field.unit}</span></div>
+  </SettingsRow>)}</>;
 }
 
 function SettingsRow({
@@ -1820,6 +1845,10 @@ export function SettingsView({
                           }}
                         />
                       </SettingsRow>
+                      <RuntimeLifecycleSettingsRows
+                        value={settingsDraft.runtimeLifecycle || DEFAULT_RUNTIME_LIFECYCLE}
+                        onChange={(runtimeLifecycle) => updateSetting('runtimeLifecycle', runtimeLifecycle)}
+                      />
 
                       <SettingsRow
                         title="思考模式"

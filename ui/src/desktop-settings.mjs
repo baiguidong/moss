@@ -1,6 +1,7 @@
 import { normalizeDesktopControlSettings } from '../../packages/app-runtime/src/desktop-control/session.mjs';
 import fs from 'node:fs';
 import { normalizeUserAvatar } from './user-avatar-settings.mjs';
+import { DEFAULT_RUNTIME_LIFECYCLE, normalizeRuntimeLifecycle } from './runtime-lifecycle-settings.mjs';
 
 import {
   DEFAULT_APPEARANCE,
@@ -34,6 +35,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   model: '',
   fastModel: '',
   maxTurns: 100,
+  runtimeLifecycle: { ...DEFAULT_RUNTIME_LIFECYCLE },
   language: 'chinese',
   appendSystemPrompt: '',
   thinkingMode: 'adaptive',
@@ -392,6 +394,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
     source.toolLoading,
     result.toolLoading || DEFAULT_DESKTOP_SETTINGS.toolLoading,
   );
+  result.runtimeLifecycle = normalizeRuntimeLifecycle(source.runtimeLifecycle, result.runtimeLifecycle);
 
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};

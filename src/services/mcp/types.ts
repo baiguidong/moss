@@ -1,6 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type {
   Resource,
+  ListToolsResult,
   ServerCapabilities,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod/v4'
@@ -185,6 +186,8 @@ export type McpJsonConfig = z.infer<ReturnType<typeof McpJsonConfigSchema>>
 // Server connection types
 export type ConnectedMCPServer = {
   client: Client
+  /** A metadata-only descriptor; ensureConnectedClient opens the session transport on use. */
+  deferredTools?: ListToolsResult
   name: string
   type: 'connected'
   capabilities: ServerCapabilities

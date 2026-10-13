@@ -1,0 +1,66 @@
+{
+  "passed": true,
+  "at": "2026-10-13T02:56:26.784Z",
+  "platform": "darwin-arm64",
+  "hostApi": "3.9.0",
+  "checks": [
+    {
+      "name": "Core generated a configuration-only App",
+      "files": [
+        "app.moss.json",
+        "assets/icon.svg",
+        "checksums.json",
+        "definition.json",
+        "mcp.json",
+        "README.md"
+      ]
+    },
+    {
+      "name": "Standalone ZIP installation in an empty Host, using Core UI without a Backend"
+    },
+    {
+      "name": "Independent App identity and session selection preserve the requested command"
+    },
+    {
+      "name": "Core MCP handshake and tool discovery",
+      "serverInfo": {
+        "name": "drawio-mcp",
+        "version": "1.6.3"
+      },
+      "tools": [
+        "open_drawio_xml",
+        "open_drawio_csv",
+        "open_drawio_mermaid",
+        "list_pages",
+        "get_page",
+        "set_page",
+        "search_shapes"
+      ]
+    },
+    {
+      "name": "Real open_drawio_mermaid call returns an editor URL"
+    },
+    {
+      "name": "Draw.io process restart restores the exact diagram saved by set_page"
+    },
+    {
+      "name": "Service/App toggles and permission isolation"
+    },
+    {
+      "name": "Restart restores configuration without App code"
+    },
+    {
+      "name": "Uninstall removes the App and its tools"
+    }
+  ],
+  "packages": [
+    "/Users/bgd/repo/moss/output/mcp-app-proof/moss.drawio-0.1.3.zip"
+  ],
+  "command": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@drawio/mcp"
+    ]
+  }
+}

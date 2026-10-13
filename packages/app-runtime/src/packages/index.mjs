@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createHash, randomUUID, verify as verifySignature } from 'node:crypto'
 import semver from 'semver'
 import { validateSourcePackage } from './source.mjs'
+import { readMcpAppConfig } from './mcp-app.mjs'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -242,7 +243,14 @@ export async function validateAppPackage(packageRoot, options = {}) {
       throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'icon exceeds the 2 MiB size limit')
     }
   }
-  await ensureDeclaredFile(root, manifest.ui?.entry, 'ui.entry')
+  if (!manifest.mcpApp) await ensureDeclaredFile(root, manifest.ui?.entry, 'ui.entry')
+  else {
+    await ensureDeclaredFile(root, manifest.mcpApp.config, 'mcpApp.config')
+    await readMcpAppConfig(root, manifest)
+    if (files.some(file => !file.relativePath.startsWith('source/') && !/\.(json|svg|png|jpg|jpeg|gif|webp|ico|md|txt)$/i.test(file.relativePath))) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'MCP configuration Apps contain only configuration and resources')
+    }
+  }
   await ensureDeclaredFile(root, manifest.backend?.entry, 'backend.entry')
   await ensureDeclaredFile(root, manifest.nativeAdapter?.entry, 'nativeAdapter.entry')
   for (const action of manifest.backend?.actions || []) {
@@ -302,7 +310,7 @@ export async function validateAppPackage(packageRoot, options = {}) {
     }
   }
   const trust = await validatePackageSignature(root, manifest, actualChecksums, options)
-  await validateSourcePackage(root, { required: options.requireSource === true })
+  await validateSourcePackage(root, { required: options.requireSource === true || Boolean(manifest.mcpApp && files.some(file => file.relativePath.startsWith('source/'))) })
   return deepFreeze({ root, manifest, checksums: actualChecksums, files, trust })
 }
 

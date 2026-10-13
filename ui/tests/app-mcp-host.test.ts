@@ -55,6 +55,26 @@ test('user App scope changes every MCP service without changing saved configurat
   expect(f.host.enabledServers(['moss.mcp']).knowledge).toEqual(config)
 })
 
+test('Core propagates only explicitly stateless idle policy and identifies the changed App', async () => {
+  const f = await fixture(), changed: string[] = []
+  f.host.onChanged = (appId: string) => { changed.push(appId) }
+  await f.host.handle('servers.save', { name: 'one', enabled: true, config }, f.context)
+  expect(f.host.serverOwners().one.mcpIdleTimeoutMs).toBeUndefined()
+  const getPackage = f.runtime.getActivePackage
+  let policy: any = { state: 'stateless' }
+  await fs.writeFile(path.join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { one: config } }))
+  f.runtime.getActivePackage = async () => ({ root: f.root, manifest: { ...(await getPackage()).manifest, mcpApp: { config: 'mcp.json', runtime: policy } } })
+  await f.host.refresh()
+  expect(f.host.serverOwners().one.mcpIdleTimeoutMs).toBe(3_600_000)
+  policy = { state: 'stateless', idleTimeoutMs: 10_000 }; await f.host.refresh()
+  expect(f.host.serverOwners().one.mcpIdleTimeoutMs).toBe(10_000)
+  f.host.getIdleTimeoutMs = () => 7_200_000
+  expect(f.host.serverOwners().one.mcpIdleTimeoutMs).toBe(7_200_000)
+  policy = { state: 'session' }; await f.host.refresh()
+  expect(f.host.serverOwners().one.mcpIdleTimeoutMs).toBeUndefined()
+  expect(changed).toEqual(['moss.mcp', 'moss.mcp'])
+})
+
 test('all MCP services inherit App scope, including saves, refreshes and unselected sessions', async () => {
   const f = await fixture()
   await f.host.handle('servers.save', { name: 'one', enabled: true, config }, f.context)

@@ -1,3 +1,4 @@
+import './build-mcp-app.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';

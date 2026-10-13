@@ -704,6 +704,10 @@ export class DirectConnectSessionManager {
     this.pendingControlRequests.clear()
   }
 
+  hasPendingWork(): boolean {
+    return this.pendingControlRequests.size > 0 || this.state === 'connecting' || this.state === 'reconnecting'
+  }
+
   disconnect(): void {
     this.connectionGeneration++
     this.manuallyDisconnected = true

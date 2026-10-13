@@ -1,0 +1,11 @@
+{
+  "baselineErrors": 4096,
+  "currentErrors": 4093,
+  "newDiagnostics": [],
+  "removedDiagnostics": [
+    "src/services/mcp/client.ts: error TS7016: Could not find a declaration file for module 'lodash-es/memoize.js'. '<repo>/node_modules/lodash-es/memoize.js' implicitly has an 'any' type.",
+    "src/services/mcp/client.ts: error TS2339: Property 'disabledTools' does not exist on type 'ScopedMcpServerConfig'.",
+    "src/services/mcp/desktopProbe.ts: error TS2339: Property 'disabledTools' does not exist on type '{ command: string; args: string[]; type?: \"stdio\" | undefined; env?: Record<string, string> | undefined; disabledTools?: string[] | undefined; } | { type: \"sse\"; url: string; headers?: Record<...> | undefined; headersHelper?: string | undefined; disabledTools?: string[] | undefined; oauth?: { ...; } | undefined; } |...'."
+  ],
+  "note": "Normalized repository paths and line/column numbers; full root typecheck still fails on pre-existing errors."
+}

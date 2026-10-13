@@ -1,3 +1,12 @@
+import { parseAppServiceKey } from '../../packages/app-sdk/src/tool-services.mjs';
+
+/** Old users must release removed Apps; new global tools must reach every session. */
+export function isSessionAffectedByApp(record, appId, globallyAvailable = false) {
+  return !appId || globallyAvailable || record.runtimeToolAppIds?.has(appId)
+    || (record.appIds || []).includes(appId)
+    || (record.appServiceIds || []).some(key => parseAppServiceKey(key)?.appId === appId);
+}
+
 export function scheduleMcpRuntimeReload(
   sessionRecords,
   disposeRuntime,

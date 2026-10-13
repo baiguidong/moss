@@ -25,6 +25,63 @@
     }
   ],
   "properties": {
+    "mcpApp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config"
+      ],
+      "properties": {
+        "config": {
+          "type": "string",
+          "minLength": 1
+        },
+        "presentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "headline": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "examples": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            },
+            "usage": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "session",
+                "stateless"
+              ]
+            },
+            "idleTimeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 3600000
+            }
+          }
+        }
+      }
+    },
     "schemaVersion": {
       "const": 2
     },
@@ -495,9 +552,6 @@
     "ui": {
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "entry"
-      ],
       "properties": {
         "entry": {
           "type": "string",
@@ -521,8 +575,34 @@
               "type": "boolean"
             }
           }
+        },
+        "builtin": {
+          "const": "mcp",
+          "description": "Core-provided settings UI for configuration-only MCP Apps. Requires Host API >=3.9.0."
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "entry"
+          ],
+          "not": {
+            "required": [
+              "builtin"
+            ]
+          }
+        },
+        {
+          "required": [
+            "builtin"
+          ],
+          "not": {
+            "required": [
+              "entry"
+            ]
+          }
+        }
+      ]
     },
     "backend": {
       "type": "object",

@@ -14,6 +14,7 @@ export type SessionRuntime = {
   cron?: CronProvider
   unattended?: boolean
   appToolPolicy?: AppToolPolicy
+  mcpLifetime?: { id: string; signal: AbortSignal; revokedServers?: Set<string> }
 }
 
 export type ScopedWorkerResources = {

@@ -106,7 +106,7 @@ export async function inspectSourceProject(root, { appRoot = '.', packageManager
   const dependencies = { ...pkg.dependencies, ...pkg.devDependencies, ...workspace.dependencies, ...workspace.devDependencies }
   if (Object.keys(dependencies).length && !hasLock) invalid(`missing ${lockfile}`)
   const files = await sourceFileList(appPath, { filter: (name, entry) => entry.name !== '.moss-sdk' && !excludeSourceEntry(entry.name, name) })
-  if (!files.some(file => /^(src\/|public\/|index\.)/.test(file.path) || (!file.path.includes('/') && /\.(?:[cm]?js|tsx?|jsx|html|py)$/.test(file.path) && !/^(?:build|vite\.config|webpack\.config|rollup\.config|eslint\.config|postcss\.config)\./.test(file.path)))) invalid('missing editable source files')
+  if (!(manifest.mcpApp && files.some(file => file.path === 'app.json')) && !files.some(file => /^(src\/|public\/|index\.)/.test(file.path) || (!file.path.includes('/') && /\.(?:[cm]?js|tsx?|jsx|html|py)$/.test(file.path) && !/^(?:build|vite\.config|webpack\.config|rollup\.config|eslint\.config|postcss\.config)\./.test(file.path)))) invalid('missing editable source files')
   const workspaces = Array.isArray(workspace.workspaces) ? workspace.workspaces : workspace.workspaces?.packages || []
   // Exported workspaces must be explicit, so validation never guesses which
   // sibling projects an original monorepo glob happened to include.

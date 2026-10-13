@@ -19,6 +19,8 @@ import { createWorkspaceFileService } from './workspace-files.mjs';
 import { createProjectAssetService } from './project-assets.mjs';
 import { createSessionTaskService } from './session-task-service.mjs';
 import { createRemoteRuntimeFactory } from './remote-session-runtime.mjs';
+import { SessionRuntimePool } from './session-runtime-pool.mjs';
+import { normalizeRuntimeLifecycle } from './runtime-lifecycle-settings.mjs';
 import { buildFileAttachmentPrompt, createSessionPromptPreparation } from './session-prompt-preparation.mjs';
 import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
@@ -87,6 +89,7 @@ import {
 } from './connector-hub-ipc.mjs';
 import {
   applyPendingMcpRuntimeReload,
+  isSessionAffectedByApp,
   scheduleMcpRuntimeReload,
 } from './mcp-runtime-reload.mjs';
 import { getInstalledAssistants, registerAgentIpcHandlers } from './agent-ipc.mjs';
@@ -541,6 +544,26 @@ if (hasSingleInstanceLock) {
 }
 
 const sessions = new Map();
+const pendingRuntimeDisposals = new Set();
+const sessionRuntimePool = new SessionRuntimePool({
+  getPolicy: () => normalizeRuntimeLifecycle(desktopSettings.runtimeLifecycle),
+  blocked: record => {
+    if (record.busy || record.preparingPrompt || record.syncingLocalTranscript || record.deleting) return 'session-busy';
+    if (record.isSubAgent) return 'subagent-owner';
+    if ([...pendingQuestionRequests.values()].some(request => request.sessionId === record.id)) return 'user-input';
+    if (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)) return 'project-worker';
+    return record.runtime?.getIdleRetirementBlocker?.() || null;
+  },
+  persist: async record => {
+    await record.runtime?.prepareForIdleDispose?.();
+    if (record.agentMode !== 'remote-direct' && record.messageCount > 0 && !hasFile(getLocalSessionTranscriptPath(record))) {
+      throw new Error('会话记录尚不可恢复，保留当前运行时。');
+    }
+    schedulePersistSession(record, true);
+  },
+  dispose: record => { closeWorkspaceWatcher(record); return disposeRuntime(record); },
+  log: (event, record, error) => mossLog(error ? 'warn' : 'info', 'runtime', event, { sessionId: record?.id, error: error?.message }),
+});
 const workspaceVersionService = createWorkspaceVersionService({
   rootDir: path.join(MOSS_HOME, 'workspace-versions'),
   assertIdle: workspace => {
@@ -2007,9 +2030,20 @@ function saveDesktopMcpStore(store) {
   });
 }
 
-function resetLocalRuntimesForMcpReload() {
+function reconcileSessionMcpAccess(record) {
+  const allowed = Object.keys(appMcpHost?.enabledServers(record.appIds || [], record.workspace, record.appServiceIds || []) || {});
+  return record.runtime?.reconcileAppMcpServers?.(allowed);
+}
+
+function resetLocalRuntimesForMcpReload(changedAppId, globalNativeTools = false) {
+  const owners = appMcpHost?.serverOwners() || {};
+  const globallyAvailable = globalNativeTools || Object.keys(appMcpHost?.enabledServers([]) || {}).some(name => owners[name]?.appId === changedAppId);
+  const affected = [...sessions.values()].filter(record => isSessionAffectedByApp(record, changedAppId, globallyAvailable));
+  for (const record of affected) {
+    void reconcileSessionMcpAccess(record)?.catch(error => mossLog('warn', 'mcp', 'Unable to release revoked MCP connections', { error: error.message }));
+  }
   return scheduleMcpRuntimeReload(
-    sessions.values(),
+    affected,
     disposeRuntime,
     hasActiveAgentTeam,
   );
@@ -2925,6 +2959,10 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     .filter(Boolean)
     .join('\n\n');
   const mcpServers = getSessionMcpServers(sessionRecord, connectorRuntimeCredentials, selectedAppIds, selectedAppServiceIds);
+  if (sessionRecord) sessionRecord.runtimeToolAppIds = new Set([
+    ...appTools.map(tool => tool.appId || tool.id.split('/')[0]),
+    ...Object.keys(mcpServers).map(name => appToolPolicy.mcpServers[name]?.appId).filter(Boolean),
+  ]);
 
   return {
     cwd,
@@ -3113,7 +3151,12 @@ function refreshDesktopSettings(payload = {}) {
   mossLog('info', 'settings', 'Settings updated', { keys: Object.keys(payload) });
   let skippedSessionCount = 0;
   const affectsAgentRuntime = Object.keys(payload)
-    .some((key) => key !== 'userAvatar' && key !== 'appearance' && key !== 'skillHub' && key !== 'expertHub');
+    .some((key) => !['userAvatar', 'appearance', 'skillHub', 'expertHub', 'runtimeLifecycle'].includes(key));
+  if (Object.hasOwn(payload, 'runtimeLifecycle')) {
+    const policy = normalizeRuntimeLifecycle(desktopSettings.runtimeLifecycle);
+    for (const record of [...sessions.values(), ...subAgentSessions.values()]) record.runtime?.setMcpIdleTimeout?.(policy.mcpIdleMinutes * 60_000);
+    void sessionRuntimePool.sweep();
+  }
   if (affectsAgentRuntime) {
     for (const sessionRecord of sessions.values()) {
       if (!sessionRecord.busy && sessionRecord.messageCount === 0) {
@@ -3930,7 +3973,7 @@ async function runSessionPrompt(options) {
       // App installation may refresh contributions while a first prompt is
       // awaiting transcript/runtime/workspace preparation, before busy is set.
       options.sessionRecord.preparingPrompt = true;
-      try { return await runSessionPromptNow(options); }
+      try { return await sessionRuntimePool.use(options.sessionRecord, () => runSessionPromptNow(options)); }
       finally {
         options.sessionRecord.preparingPrompt = false;
         applyPendingMcpRuntimeReload(options.sessionRecord, disposeRuntime, record => Boolean(
@@ -4142,7 +4185,7 @@ async function generateProjectSessionFinalization(project, sessionRecord, memory
     return parseProjectFinalizerResponse('', fallbackConclusion);
   } finally {
     try {
-      runtime?.dispose();
+      await runtime?.dispose();
     } catch {}
   }
 }
@@ -6491,9 +6534,13 @@ function disposeRuntime(sessionRecord) {
   try {
     sessionRecord.sessionTaskUnsubscribe?.();
   } catch {}
-  sessionRecord.runtime.dispose();
+  const pending = Promise.resolve(sessionRecord.runtime.dispose()).catch(error => mossLog('warn', 'mcp', 'Unable to dispose session runtime', { error: error.message }));
+  sessionRuntimePool.trackDisposal(sessionRecord, pending);
+  pendingRuntimeDisposals.add(pending);
+  void pending.finally(() => pendingRuntimeDisposals.delete(pending));
   sessionRecord.runtime = null;
   schedulePersistSession(sessionRecord, true);
+  return pending;
 }
 
 function hasActiveAgentTeam(sessionRecord) {
@@ -7121,7 +7168,11 @@ function initializeAgentMail() {
 }
 
 
-async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '', executionSessionId = undefined) {
+function ensureRuntime(sessionRecord, runtimeSystemPrompt = '', executionSessionId = undefined) {
+  return sessionRuntimePool.ensure(sessionRecord, () => createOrReuseRuntime(sessionRecord, runtimeSystemPrompt, executionSessionId));
+}
+
+async function createOrReuseRuntime(sessionRecord, runtimeSystemPrompt = '', executionSessionId = undefined) {
   if (!hasFile(sdkPath)) {
     throw new Error(`Missing electron-direct.mjs at ${sdkPath}.`);
   }
@@ -7131,14 +7182,7 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '', executionS
     const currentCoordinatorMode = sessionRecord.isCoordinatorMode ?? false
     const existingCoordinatorMode = sessionRecord.runtime.coordinatorMode ?? false
     if (currentCoordinatorMode !== existingCoordinatorMode) {
-      try {
-        sessionRecord.backgroundTaskUnsubscribe?.()
-      } catch {}
-      try {
-        sessionRecord.sessionTaskUnsubscribe?.()
-      } catch {}
-      sessionRecord.runtime.dispose()
-      sessionRecord.runtime = null
+      await disposeRuntime(sessionRecord)
     } else {
       attachBackgroundTaskWatcher(sessionRecord);
       attachSessionTaskWatcher(sessionRecord);
@@ -7190,7 +7234,12 @@ async function ensureRuntime(sessionRecord, runtimeSystemPrompt = '', executionS
   return sessionRecord.runtime;
 }
 
-async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
+function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
+  if (!sessionRecord.runtime && !sessionRecord.underlyingSessionId) return Promise.resolve(null);
+  return sessionRuntimePool.ensure(sessionRecord, () => restoreSessionRuntime(sessionRecord, runtimeSystemPrompt));
+}
+
+async function restoreSessionRuntime(sessionRecord, runtimeSystemPrompt = '') {
   if (sessionRecord.agentMode === 'remote-direct' || sessionRecord.isSubAgent) {
     return null;
   }
@@ -7276,7 +7325,7 @@ async function resumeSessionRecord(sessionRecord, runtimeSystemPrompt = '') {
     emitSessionMeta(sessionRecord);
     return { history: sessionRecord.history, metadata: resumed.metadata };
   } catch (error) {
-    sessionRecord.runtime = null;
+    await disposeRuntime(sessionRecord);
     sessionRecord.resumeReadOnlyReason = error instanceof Error ? error.message : String(error);
     schedulePersistSession(sessionRecord, true);
     emitSessionMeta(sessionRecord);
@@ -7740,6 +7789,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
   });
   appMcpHost = new AppMcpHost({
+    getIdleTimeoutMs: () => normalizeRuntimeLifecycle(desktopSettings.runtimeLifecycle).mcpIdleMinutes * 60_000,
     getRuntime: () => appRuntime,
     readLegacy: readDesktopMcpStore,
     clearLegacy: () => saveDesktopMcpStore({ version: 1, servers: {} }),
@@ -7801,13 +7851,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       const installation = appRuntime.installations.get(appId);
       if (!installation?.enabled || !installation.grants?.includes('execution:run')) throw new Error('App execution permission was revoked');
       const record = getSessionRecord(source.sessionId);
-      await resumeSessionRecord(record);
-      const runtime = await ensureRuntime(record, '', source.runtimeSessionId);
-      await appExecutionHost.updateSource(taskId, { runtimeSessionId: runtime.sessionId });
-      return runtime.executeAppAgent({ appId, runId: taskId, prompt: input.prompt,
-        opts: { schema: input.outputSchema, agentType: input.agentType },
-        allowedTools: input.resources?.tools, resumeAgentId: agentId,
-        abortController: controller, onAgentId: () => {}, onProgress });
+      return sessionRuntimePool.use(record, async () => {
+        await resumeSessionRecord(record);
+        const runtime = await ensureRuntime(record, '', source.runtimeSessionId);
+        await appExecutionHost.updateSource(taskId, { runtimeSessionId: runtime.sessionId });
+        return runtime.executeAppAgent({ appId, runId: taskId, prompt: input.prompt,
+          opts: { schema: input.outputSchema, agentType: input.agentType },
+          allowedTools: input.resources?.tools, resumeAgentId: agentId,
+          abortController: controller, onAgentId: () => {}, onProgress });
+      });
     },
     onChanged: async task => {
       const record = sessions.get(task.sessionId);
@@ -8020,7 +8072,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         void cloudStorageHost?.watch();
       }
       if (appLifecycleChanged || event.type === 'tool-scope-changed' || (event.type === 'instance-changed' && appMcpHost?.hasApp(event.appId))) {
-        void appMcpHost?.refresh().then(() => resetLocalRuntimesForMcpReload()).catch(error => {
+        void appMcpHost?.refresh().then(async () => {
+          const contributions = await appRuntime.listContributions({ kinds: ['tools'], selectedAppIds: [], selectedAppServiceIds: [] });
+          const globalTools = (contributions.tools || []).some(tool => (tool.appId || tool.id.split('/')[0]) === event.appId);
+          return resetLocalRuntimesForMcpReload(event.appId, globalTools);
+        }).catch(error => {
           mossLog('error', 'mcp', 'Unable to refresh App MCP registry', { error: error.message });
           resetLocalRuntimesForMcpReload();
         });
@@ -8304,6 +8360,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
   });
   mossLog('info', 'app', 'Application ready');
+  sessionRuntimePool.start();
   prewarmLocalAgentGlobalInit();
   scheduleNativeWebSearchCapabilityDetection(0);
 });
@@ -8331,6 +8388,7 @@ function assertUpdateWorkAllowed() {
 function shutdownDesktop() {
   if (appShutdownComplete) return Promise.resolve();
   if (desktopShutdownPromise) return desktopShutdownPromise;
+  sessionRuntimePool.stop();
   stopMossCronScheduler();
   localTranscriptSync.dispose();
   desktopShutdownPromise = (async () => {
@@ -8352,13 +8410,14 @@ function shutdownDesktop() {
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
     await attempt(async () => { await appAuditHost?.close(); });
     await attempt(() => appExecutionHost?.close());
-    for (const record of [...sessions.values(), ...subAgentSessions.values()]) {
-      await attempt(() => {
+    await Promise.all([...sessions.values(), ...subAgentSessions.values()].map(record =>
+      attempt(() => {
         schedulePersistSession(record, true);
         closeWorkspaceWatcher(record);
-        disposeRuntime(record);
-      });
-    }
+        return disposeRuntime(record);
+      }),
+    ));
+    await attempt(() => Promise.all([...pendingRuntimeDisposals]));
     await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
     await attempt(async () => { await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
     void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
@@ -8433,6 +8492,7 @@ ipcMain.handle('agent:get-remote-identity', async () => {
   }
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
+ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'computerUse') || Object.prototype.hasOwnProperty.call(payload, 'desktopControl')) throw new Error('请通过电脑操控设置调整授权。');
   return refreshDesktopSettings(payload);
@@ -9537,107 +9597,111 @@ ipcMain.handle('agent:get-turn-changes', async (_event, { sessionId } = {}) => {
 ipcMain.handle('agent:preview-turn-rewind', async (_event, { sessionId, userMessageId } = {}) => {
   await interruptedSessionRecoveryPromise;
   const sessionRecord = getSessionRecord(sessionId);
-  await loadSessionHistoryFromSource(sessionRecord);
-  assertSessionCanRewind(sessionRecord);
-  const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
-  if (!targetId || !truncateHistoryBeforeUserMessage(sessionRecord.history, targetId)) {
-    throw new Error('找不到要撤销的会话轮次。');
-  }
-  const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
-  return runtime.previewFileRewind(targetId);
+  return sessionRuntimePool.use(sessionRecord, async () => {
+    await loadSessionHistoryFromSource(sessionRecord);
+    assertSessionCanRewind(sessionRecord);
+    const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+    if (!targetId || !truncateHistoryBeforeUserMessage(sessionRecord.history, targetId)) {
+      throw new Error('找不到要撤销的会话轮次。');
+    }
+    const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
+    return runtime.previewFileRewind(targetId);
+  });
 });
 
 ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } = {}) => (
   runInKeyedQueue(sessionSendQueues, String(sessionId || ''), async () => {
     await interruptedSessionRecoveryPromise;
     const sessionRecord = getSessionRecord(sessionId);
-    await loadSessionHistoryFromSource(sessionRecord);
-    assertSessionCanRewind(sessionRecord);
-    const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
-    const nextHistory = truncateHistoryBeforeUserMessage(sessionRecord.history, targetId);
-    if (!targetId || !nextHistory) throw new Error('找不到要撤销的会话轮次。');
+    return sessionRuntimePool.use(sessionRecord, async () => {
+      await loadSessionHistoryFromSource(sessionRecord);
+      assertSessionCanRewind(sessionRecord);
+      const targetId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+      const nextHistory = truncateHistoryBeforeUserMessage(sessionRecord.history, targetId);
+      if (!targetId || !nextHistory) throw new Error('找不到要撤销的会话轮次。');
 
-    const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
-    const preview = await runtime.previewFileRewind(targetId);
-    if (!preview.canRewind) {
-      throw new Error(preview.error || '这一轮没有可用的文件 checkpoint。');
-    }
+      const runtime = await ensureRuntimeForTurnRewind(sessionRecord);
+      const preview = await runtime.previewFileRewind(targetId);
+      if (!preview.canRewind) {
+        throw new Error(preview.error || '这一轮没有可用的文件 checkpoint。');
+      }
 
-    const revertedHistory = sessionRecord.history.slice(nextHistory.length);
-    const auditEvent = await appAuditHost?.recordEvent({
-      sessionId: sessionRecord.id,
-      eventType: 'turn_reverted',
-      userMessageId: targetId,
-      details: {
-        status: 'started',
-        expectedFiles: preview.filesChanged || [],
-        checkpointInsertions: preview.insertions || 0,
-        checkpointDeletions: preview.deletions || 0,
-      },
-      sourceSession: {
-        id: sessionRecord.id,
-        workspace: sessionRecord.workspace,
-        history: revertedHistory,
-      },
-    });
-
-    let restoredFiles;
-    let removedRuntimeMessages;
-    try {
-      restoredFiles = await runtime.rewindFiles(targetId);
-      removedRuntimeMessages = await runtime.rewindConversation(targetId);
-    } catch (error) {
-      try {
-        await appAuditHost?.updateEvent(auditEvent, {
-          status: 'failed',
+      const revertedHistory = sessionRecord.history.slice(nextHistory.length);
+      const auditEvent = await appAuditHost?.recordEvent({
+        sessionId: sessionRecord.id,
+        eventType: 'turn_reverted',
+        userMessageId: targetId,
+        details: {
+          status: 'started',
           expectedFiles: preview.filesChanged || [],
-          error: error instanceof Error ? error.message : String(error),
-        });
-      } catch {}
-      throw error;
-    }
-    const removedHistoryEvents = sessionRecord.history.length - nextHistory.length;
-
-    sessionRecord.rewindMessageId = targetId;
-    sessionRecord.rewindCreatedAt = Date.now();
-    syncSessionRecordHistory(sessionRecord, nextHistory, { allowReplacement: true });
-    sessionRecord.updatedAt = Date.now();
-    sessionRecord.preview = deriveSessionPreview(nextHistory);
-    schedulePersistSession(sessionRecord, true);
-
-    let auditRecorded = false;
-    try {
-      auditRecorded = await appAuditHost?.updateEvent(auditEvent, {
-          status: 'completed',
-          restoredFiles,
-          removedHistoryEvents,
-          removedRuntimeMessages,
           checkpointInsertions: preview.insertions || 0,
           checkpointDeletions: preview.deletions || 0,
-      }) === true;
-    } catch (error) {
-      mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
-        sessionId: sessionRecord.id,
-        userMessageId: targetId,
-        error: error instanceof Error ? error.message : String(error),
+        },
+        sourceSession: {
+          id: sessionRecord.id,
+          workspace: sessionRecord.workspace,
+          history: revertedHistory,
+        },
       });
-    }
 
-    emitSessionMeta(sessionRecord);
-    emitSessionHistory(sessionRecord);
-    emitToRenderer('workspace:changed', {
-      sessionId: sessionRecord.id,
-      workspace: sessionRecord.workspace,
-      reason: 'turn-reverted',
-      paths: restoredFiles,
+      let restoredFiles;
+      let removedRuntimeMessages;
+      try {
+        restoredFiles = await runtime.rewindFiles(targetId);
+        removedRuntimeMessages = await runtime.rewindConversation(targetId);
+      } catch (error) {
+        try {
+          await appAuditHost?.updateEvent(auditEvent, {
+            status: 'failed',
+            expectedFiles: preview.filesChanged || [],
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } catch {}
+        throw error;
+      }
+      const removedHistoryEvents = sessionRecord.history.length - nextHistory.length;
+
+      sessionRecord.rewindMessageId = targetId;
+      sessionRecord.rewindCreatedAt = Date.now();
+      syncSessionRecordHistory(sessionRecord, nextHistory, { allowReplacement: true });
+      sessionRecord.updatedAt = Date.now();
+      sessionRecord.preview = deriveSessionPreview(nextHistory);
+      schedulePersistSession(sessionRecord, true);
+
+      let auditRecorded = false;
+      try {
+        auditRecorded = await appAuditHost?.updateEvent(auditEvent, {
+            status: 'completed',
+            restoredFiles,
+            removedHistoryEvents,
+            removedRuntimeMessages,
+            checkpointInsertions: preview.insertions || 0,
+            checkpointDeletions: preview.deletions || 0,
+        }) === true;
+      } catch (error) {
+        mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
+          sessionId: sessionRecord.id,
+          userMessageId: targetId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      emitSessionMeta(sessionRecord);
+      emitSessionHistory(sessionRecord);
+      emitToRenderer('workspace:changed', {
+        sessionId: sessionRecord.id,
+        workspace: sessionRecord.workspace,
+        reason: 'turn-reverted',
+        paths: restoredFiles,
+      });
+      return {
+        ok: true,
+        userMessageId: targetId,
+        restoredFiles,
+        removedHistoryEvents,
+        auditRecorded,
+      };
     });
-    return {
-      ok: true,
-      userMessageId: targetId,
-      restoredFiles,
-      removedHistoryEvents,
-      auditRecorded,
-    };
   })
 ));
 
@@ -10563,10 +10627,6 @@ async function sendAgentPromptNow(event, {
     typeof additionalSystemPrompt === 'string' ? additionalSystemPrompt.trim() : '',
   ].filter(Boolean).join('\n\n');
 
-  if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
-    await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
-  }
-
   // File attachments are references; the runtime reads them on demand.
   const attachmentSuffix = buildFileAttachmentPrompt(filePaths);
 
@@ -10796,7 +10856,7 @@ const sessionApps = createSessionApps({
   getRuntime: () => appRuntime, getMcpHost: () => appMcpHost,
   isBusy: record => record.busy || record.preparingPrompt || hasActiveAgentTeam(record) || (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
   disposeRuntime, persist: schedulePersistSession, emit: emitSessionMeta,
-  onRemoved: (record, removed) => computerUseService.removedFromSession(record.id, removed),
+  onRemoved: async (record, removed) => { await reconcileSessionMcpAccess(record); await computerUseService.removedFromSession(record.id, removed); },
 });
 ipcMain.handle('agent:set-apps', async (_event, { sessionId, appIds, appServiceIds, toggleAppId, toggleServiceId, serviceAppId }) => {
   try {

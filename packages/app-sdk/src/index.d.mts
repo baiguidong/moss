@@ -419,6 +419,8 @@ export const APP_CATEGORIES: readonly AppCategoryDefinition[]
 export function getAppCategory(value?: unknown): AppCategoryDefinition
 
 export interface AppManifestV2 {
+  /** Core-managed, configuration-only MCP App. Requires Host API 3.9. */
+  mcpApp?: { config: string; runtime?: { state: 'session' | 'stateless'; idleTimeoutMs?: number }; presentation?: { headline?: string; examples?: string[]; usage?: string } }
   /** Primary discovery category; legacy Apps without one appear in other. */
   category?: AppCategory
   keywords?: string[]
@@ -439,7 +441,7 @@ export interface AppManifestV2 {
   hostApi: string
   host?: { protocols: AppBackendProtocol[] }
   publisher?: { id: string; name: string }
-  ui?: { entry: string; window: { width: number; height: number; resizable: boolean } }
+  ui?: ({ entry: string; builtin?: never } | { builtin: 'mcp'; entry?: never }) & { window: { width: number; height: number; resizable: boolean } }
   backend?: {
     entry: string
     runtime: 'node'

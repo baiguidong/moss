@@ -1,17 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { asSessionId } from '../../types/ids.js'
 import { runWithSessionIdContext } from '../../utils/sessionIdContext.js'
-import { connectToServer, clearServerCache } from './client.js'
+import { connectToServer, clearServerCache, releaseMcpLifetime } from './client.js'
 import type { McpServerConfig, ScopedMcpServerConfig } from './types.js'
 
 /** An isolated, short-lived connection; never closes a conversation's MCP client. */
 export async function inspectDesktopMcpServer(name: string, config: McpServerConfig, signal?: AbortSignal) {
-  return runWithSessionIdContext(asSessionId(randomUUID()), null, async () => {
+  const id = asSessionId(randomUUID())
+  return runWithSessionIdContext(id, null, async () => {
     const started = Date.now()
     const scoped: ScopedMcpServerConfig = { ...config, scope: 'user' }
-    signal?.throwIfAborted()
-    const connection = await connectToServer(name, scoped)
     try {
+      signal?.throwIfAborted()
+      const connection = await connectToServer(name, scoped)
       signal?.throwIfAborted()
       if (connection.type !== 'connected') {
         if (connection.type === 'needs-auth') return { state: 'needs-auth', tools: [], checkedAt: Date.now() }
@@ -25,7 +26,7 @@ export async function inspectDesktopMcpServer(name: string, config: McpServerCon
           const page = await connection.client.listTools({ cursor }, { signal, timeout: 15_000 })
           for (const tool of page.tools) {
             if (tools.length >= 200) break
-            tools.push({ name: tool.name.slice(0, 256), description: (tool.description || '').slice(0, 1500), disabled: config.disabledTools?.includes(tool.name) || false })
+            tools.push({ name: tool.name.slice(0, 256), description: (tool.description || '').slice(0, 1500), disabled: 'disabledTools' in config && (config.disabledTools?.includes(tool.name) || false) })
           }
           cursor = page.nextCursor
           if (page.tools.length > 200 || tools.length >= 200) break
@@ -34,6 +35,7 @@ export async function inspectDesktopMcpServer(name: string, config: McpServerCon
       return { state: 'connected', serverInfo: connection.serverInfo, tools, truncated: Boolean(cursor || tools.length >= 200), durationMs: Date.now() - started, checkedAt: Date.now() }
     } finally {
       await clearServerCache(name, scoped)
+      await releaseMcpLifetime(id)
     }
-  })
+  }, undefined, undefined, { executionEnvironment: 'desktop', mcpLifetime: { id, signal: signal || new AbortController().signal } })
 }

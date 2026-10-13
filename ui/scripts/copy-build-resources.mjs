@@ -1,3 +1,4 @@
+import './build-mcp-app.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

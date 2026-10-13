@@ -2,10 +2,21 @@ import { describe, expect, it } from 'bun:test';
 import { buildConnectorMcpAuthToolResult } from '../src/app-ipc.mjs';
 import {
   applyPendingMcpRuntimeReload,
+  isSessionAffectedByApp,
   scheduleMcpRuntimeReload,
 } from '../src/mcp-runtime-reload.mjs';
 
 describe('MCP runtime reload', () => {
+  it('refreshes App users and newly global tools without discarding unrelated session state', () => {
+    const selected = { appIds: ['drawio'], runtimeToolAppIds: new Set(['drawio']) };
+    const removed = { appIds: [], runtimeToolAppIds: new Set(['drawio']) };
+    const other = { appIds: ['git'], runtimeToolAppIds: new Set(['git']) };
+    const service = { appIds: [], appServiceIds: [JSON.stringify(['drawio', 'mcp/service'])] };
+    const affected = [selected, removed, other, service].filter(record => isSessionAffectedByApp(record, 'drawio'));
+    expect(affected).toEqual([selected, removed, service]);
+    expect(isSessionAffectedByApp(other, 'drawio', true)).toBe(true);
+    expect(isSessionAffectedByApp(other, undefined)).toBe(true);
+  });
   it('reloads idle sessions immediately', () => {
     const session = { agentMode: 'local', busy: false, runtime: {} };
     const disposed: unknown[] = [];

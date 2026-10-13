@@ -776,6 +776,7 @@ export type DesktopSettings = {
     model: string;
   };
   toolLoading: Record<string, 'always' | 'deferred'>;
+  runtimeLifecycle?: import('../runtime-lifecycle-settings.mjs').RuntimeLifecycleSettings;
   agentSettings?: {
     disabled?: string[];
   };

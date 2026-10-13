@@ -36,8 +36,10 @@ export function createRemoteRuntimeFactory({
     let rejectManagerConnection = null;
     let currentTurn = null;
     let sessionPromise = null;
+    let creatingSession = false;
 
     const ensureSessionConfig = async () => {
+      if (disposed) throw new Error('Remote runtime has been disposed.');
       if (sessionPromise) {
         return sessionPromise;
       }
@@ -45,6 +47,7 @@ export function createRemoteRuntimeFactory({
         throw new Error('会话正在删除，无法连接服务器。');
       }
 
+      creatingSession = true;
       sessionPromise = (async () => {
         const mod = await getClaudeRuntimeModule();
         if (
@@ -176,7 +179,7 @@ export function createRemoteRuntimeFactory({
       })().catch((error) => {
         sessionPromise = null;
         throw error;
-      });
+      }).finally(() => { creatingSession = false; });
 
       return sessionPromise;
     };
@@ -448,6 +451,9 @@ export function createRemoteRuntimeFactory({
       async setEffort(effort) {
         if (!activeManager?.isConnected?.()) throw new Error('云电脑连接后可设置推理强度。');
         return activeManager.setEffort(effort);
+      },
+      getIdleRetirementBlocker() {
+        return creatingSession || currentTurn || rejectManagerConnection || activeManager?.hasPendingWork?.() ? 'remote-request' : null;
       },
       dispose() {
         disposed = true;

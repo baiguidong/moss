@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -248,8 +249,11 @@ export function getPublishedApp(appId, version = null) {
   if (manifest.id !== appId || manifest.version !== currentVersion) {
     throw new Error(`Stored App package identity mismatch: expected ${appId}@${currentVersion}`)
   }
-  const entryPath = manifest.ui ? ensureInsideRoot(versionDir, path.join(versionDir, manifest.ui.entry)) : null
-  if (entryPath && !fs.existsSync(entryPath)) throw new Error(`App UI entry is missing: ${manifest.ui.entry}`)
+  const uiRoot = manifest.ui?.builtin === 'mcp'
+    ? fileURLToPath(new URL('../dist/mcp-app/', import.meta.url)) : versionDir
+  const entryRelativePath = manifest.ui?.builtin === 'mcp' ? 'index.html' : manifest.ui?.entry || null
+  const entryPath = entryRelativePath ? ensureInsideRoot(uiRoot, path.join(uiRoot, entryRelativePath)) : null
+  if (entryPath && !fs.existsSync(entryPath)) throw new Error(`App UI entry is missing: ${entryRelativePath}`)
   return {
     id: manifest.id,
     name: manifest.id,
@@ -265,8 +269,8 @@ export function getPublishedApp(appId, version = null) {
     resizable: manifest.ui?.window.resizable !== false,
     version: currentVersion,
     versionDir,
-    bundleRoot: versionDir,
-    entryRelativePath: manifest.ui?.entry || null,
+    bundleRoot: uiRoot,
+    entryRelativePath,
     filePath: entryPath,
     entryPath,
     manifest,

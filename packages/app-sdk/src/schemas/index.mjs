@@ -6,7 +6,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.8.0'
+export const APP_HOST_API_VERSION = '3.9.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -37,7 +37,7 @@ function formatAjvErrors(errors = []) {
 function normalizeUi(ui) {
   if (!ui) return undefined
   return {
-    entry: ensureSafeRelativePath(ui.entry, 'ui.entry'),
+    ...(ui.builtin ? { builtin: ui.builtin } : { entry: ensureSafeRelativePath(ui.entry, 'ui.entry') }),
     window: {
       width: Number(ui.window?.width) || 1100,
       height: Number(ui.window?.height) || 760,
@@ -297,6 +297,20 @@ export function validateAppManifest(rawManifest, options = {}) {
   if (candidate.toolSelection !== 'services' && (candidate.contributes?.services?.length || candidate.contributes?.tools?.some(tool => tool.serviceId))) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Service declarations require toolSelection services')
   }
+  if (candidate.mcpApp || candidate.ui?.builtin) {
+    if (!semver.subset(candidate.hostApi, '>=3.9.0')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP configuration Apps require hostApi >=3.9.0')
+    if (!candidate.mcpApp || candidate.ui?.builtin !== 'mcp' || candidate.backend || candidate.nativeAdapter) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP configuration Apps require the Core builtin UI and no Backend or native adapter')
+    }
+    if (candidate.mcpApp.runtime?.state !== 'stateless' && candidate.mcpApp.runtime?.idleTimeoutMs !== undefined) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Idle recycling requires an explicitly stateless MCP App')
+    const permissions = ['mcp:read', 'mcp:manage', 'mcp:connect']
+    if (!permissions.every(permission => candidate.permissions.includes(permission))
+      || candidate.permissions.some(permission => !permissions.includes(permission))
+      || !candidate.host?.protocols?.includes('moss.mcp/v1')
+      || candidate.host.protocols.some(protocol => !['moss.mcp/v1', 'moss.host/v1'].includes(protocol))) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP App requires only the MCP Host permissions and protocols')
+    }
+  }
   const contributes = normalizeContributes(candidate.contributes, candidate)
   validateNavigation(candidate, contributes, options.requireNavigation)
   return {
@@ -309,6 +323,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     keywords: [...new Set((candidate.keywords || []).map(keyword => keyword.trim()))],
     icon: candidate.icon ? ensureSafeRelativePath(candidate.icon, 'icon') : '',
     hostApi: candidate.hostApi,
+    ...(candidate.mcpApp ? { mcpApp: { config: ensureSafeRelativePath(candidate.mcpApp.config, 'mcpApp.config'), ...(candidate.mcpApp.runtime ? { runtime: candidate.mcpApp.runtime } : {}), ...(candidate.mcpApp.presentation ? { presentation: candidate.mcpApp.presentation } : {}) } } : {}),
     ...(candidate.platforms ? { platforms: [...candidate.platforms] } : {}),
     ...(candidate.toolSelection ? { toolSelection: candidate.toolSelection } : {}),
     ...(candidate.toolScope ? { toolScope: candidate.toolScope } : {}),
