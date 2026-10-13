@@ -6,7 +6,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.0.0'
+export const APP_HOST_API_VERSION = '3.8.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -98,6 +98,7 @@ function normalizeContributes(contributes, manifest) {
       id: setting.id,
       title: setting.title.trim(),
       viewId: setting.viewId,
+      ...(setting.group ? { group: setting.group } : {}),
       order: Number(setting.order) || 0,
       ...normalizeContributionPermission(setting, requestedPermissions, `settings ${setting.id}`),
     }
@@ -120,13 +121,25 @@ function normalizeContributes(contributes, manifest) {
       ...normalizeContributionPermission(command, requestedPermissions, `command ${command.id}`),
     }
   }, contributionIds)
+  const services = normalizeContributionList(contributes.services, 'service', service => ({
+    id: service.id, title: service.title.trim(), description: String(service.description || '').trim(),
+  }), contributionIds)
+  if (services.some(service => !service.title)) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Service title cannot be blank')
+  const serviceIds = new Set(services.map(service => service.id))
   const tools = normalizeContributionList(contributes.tools, 'tool', (tool) => {
-    const action = requireAction(tool.action, `tool ${tool.id}`)
+    if ((tool.serviceId && !serviceIds.has(tool.serviceId)) || (manifest.toolSelection === 'services' && !tool.serviceId)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Each tool in a services App must reference a declared serviceId')
+    }
+    const native = tool.execution === 'native'
+    if (native && (!manifest.nativeAdapter || tool.permission !== 'desktop:control' || manifest.toolScope !== 'session')) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Native tools require a nativeAdapter, desktop:control permission and session scope')
+    }
+    const action = native ? null : requireAction(tool.action, `tool ${tool.id}`)
     const inputSchema = ensureSafeRelativePath(tool.inputSchema, `tool ${tool.id} inputSchema`)
     const outputSchema = tool.outputSchema
       ? ensureSafeRelativePath(tool.outputSchema, `tool ${tool.id} outputSchema`)
       : undefined
-    if (action.inputSchema !== inputSchema || (outputSchema && action.outputSchema !== outputSchema)) {
+    if (action && (action.inputSchema !== inputSchema || (outputSchema && action.outputSchema !== outputSchema))) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `tool ${tool.id} schemas must match its Backend action`)
     }
     return {
@@ -134,6 +147,9 @@ function normalizeContributes(contributes, manifest) {
       title: tool.title.trim(),
       description: tool.description.trim(),
       action: tool.action,
+      ...(tool.serviceId ? { serviceId: tool.serviceId } : {}),
+      ...(native ? { execution: 'native' } : {}),
+      ...(tool.instructions ? { instructions: ensureSafeRelativePath(tool.instructions, `tool ${tool.id} instructions`) } : {}),
       inputSchema,
       ...(outputSchema ? { outputSchema } : {}),
       effect: tool.effect,
@@ -151,6 +167,7 @@ function normalizeContributes(contributes, manifest) {
     return {
       id: provider.id,
       schemes: [...provider.schemes],
+      ...(provider.authoring ? { authoring: { target: provider.authoring.target, intents: [...provider.authoring.intents] } } : {}),
       ...(provider.title ? { title: provider.title.trim() } : {}),
       ...(provider.listAction ? { listAction: requireAction(provider.listAction, `resource provider ${provider.id}`).name } : {}),
       resolveAction: requireAction(provider.resolveAction, `resource provider ${provider.id}`).name,
@@ -169,7 +186,7 @@ function normalizeContributes(contributes, manifest) {
       ...normalizeContributionPermission(widget, requestedPermissions, `widget ${widget.id}`),
     }
   }, contributionIds)
-  const normalized = { views, settings, commands, tools, resourceProviders, widgets }
+  const normalized = { views, settings, commands, tools, resourceProviders, widgets, ...(services.length ? { services } : {}) }
   return Object.values(normalized).some((items) => items.length) ? normalized : undefined
 }
 
@@ -203,6 +220,36 @@ function normalizeBackend(backend) {
   }
 }
 
+function validateNavigation(manifest, contributes, required) {
+  const navigation = manifest.navigation
+  const settings = contributes?.settings || []
+  const invalid = message => { throw new AppServiceError(APP_ERROR_CODES.invalidManifest, message) }
+  if (required && !navigation) invalid('New App builds must explicitly declare navigation by intended use')
+  if (!navigation && !settings.some(setting => setting.group)) return
+  if (!semver.subset(manifest.hostApi, '>=3.4.0')) invalid('navigation and settings.group require hostApi >=3.4.0')
+  const views = new Map((contributes?.views || []).map(view => [view.id, view]))
+  const settingsRoutes = new Set()
+  for (const setting of settings) {
+    if (navigation && !setting.group) invalid(`settings ${setting.id} must declare a group`)
+    const route = views.get(setting.viewId)?.route
+    if (settingsRoutes.has(route)) invalid('A settings page must not be registered more than once')
+    settingsRoutes.add(route)
+  }
+  if (!navigation) return
+  if (navigation.location === 'none') {
+    if (navigation.viewId !== undefined || settings.length) invalid('navigation none must not declare viewId or settings contributions')
+    return
+  }
+  const view = views.get(navigation.viewId)
+  if (!manifest.ui || !view) invalid('navigation requires an App UI and a valid viewId')
+  if (navigation.location === 'settings' && settings.filter(setting => setting.viewId === view.id).length !== 1) {
+    invalid('navigation settings must reference exactly one settings contribution')
+  }
+  if (navigation.location === 'more' && settingsRoutes.has(view.route)) {
+    invalid('The main operational page and settings pages must use different routes')
+  }
+}
+
 export function validateAppManifest(rawManifest, options = {}) {
   if (rawManifest?.backend && Object.hasOwn(rawManifest.backend, 'protocols')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Declare App Host protocols in host.protocols')
   const candidate = structuredClone(rawManifest)
@@ -232,19 +279,45 @@ export function validateAppManifest(rawManifest, options = {}) {
       `App requires Host API ${candidate.hostApi}; this Host provides ${hostApiVersion}`,
     )
   }
+  if (candidate.toolScope !== undefined && !semver.subset(candidate.hostApi, '>=3.1.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'toolScope requires hostApi >=3.1.0')
+  }
+  if ((candidate.nativeAdapter || candidate.contributes?.tools?.some(tool => tool.instructions || tool.execution)) && !semver.subset(candidate.hostApi, '>=3.2.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Native adapters and tool instructions require hostApi >=3.2.0')
+  }
+  if (candidate.nativeAdapter && (!candidate.publisher || !candidate.permissions.includes('desktop:control'))) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Native adapters require a publisher and desktop:control permission')
+  }
+  if (candidate.platforms && !semver.subset(candidate.hostApi, '>=3.3.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'platforms requires hostApi >=3.3.0')
+  }
+  if ((candidate.toolSelection !== undefined || candidate.contributes?.services?.length || candidate.contributes?.tools?.some(tool => tool.serviceId)) && !semver.subset(candidate.hostApi, '>=3.8.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'App subservices require hostApi >=3.8.0')
+  }
+  if (candidate.toolSelection !== 'services' && (candidate.contributes?.services?.length || candidate.contributes?.tools?.some(tool => tool.serviceId))) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Service declarations require toolSelection services')
+  }
   const contributes = normalizeContributes(candidate.contributes, candidate)
+  validateNavigation(candidate, contributes, options.requireNavigation)
   return {
     schemaVersion: 2,
     id: candidate.id,
     version: candidate.version,
     displayName: candidate.displayName.trim(),
     description: String(candidate.description || '').trim(),
+    category: candidate.category || 'other',
+    keywords: [...new Set((candidate.keywords || []).map(keyword => keyword.trim()))],
     icon: candidate.icon ? ensureSafeRelativePath(candidate.icon, 'icon') : '',
     hostApi: candidate.hostApi,
+    ...(candidate.platforms ? { platforms: [...candidate.platforms] } : {}),
+    ...(candidate.toolSelection ? { toolSelection: candidate.toolSelection } : {}),
+    ...(candidate.toolScope ? { toolScope: candidate.toolScope } : {}),
+    ...(candidate.navigation ? { navigation: { ...candidate.navigation } } : {}),
     host: { protocols: [...(candidate.host?.protocols || [])] },
     ...(candidate.publisher ? { publisher: { id: candidate.publisher.id, name: candidate.publisher.name.trim() } } : {}),
     ...(candidate.ui ? { ui: normalizeUi(candidate.ui) } : {}),
     ...(candidate.backend ? { backend: normalizeBackend(candidate.backend) } : {}),
+    ...(candidate.nativeAdapter ? { nativeAdapter: { kind: 'desktop-control', apiVersion: 1, entry: ensureSafeRelativePath(candidate.nativeAdapter.entry, 'nativeAdapter.entry') } } : {}),
     ...(contributes ? { contributes } : {}),
     permissions: [...candidate.permissions],
   }

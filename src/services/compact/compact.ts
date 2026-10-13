@@ -1,3 +1,4 @@
+import { buildCompactContext } from './compactContext.js'
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
 import uniqBy from 'lodash-es/uniqBy.js'
@@ -323,7 +324,10 @@ export type RecompactionInfo = {
  */
 export function buildPostCompactMessages(result: CompactionResult): Message[] {
   return [
-    result.boundaryMarker,
+    {
+      ...result.boundaryMarker,
+      compactMetadata: { ...result.boundaryMarker.compactMetadata, context: buildCompactContext(result) },
+    },
     ...result.summaryMessages,
     ...(result.messagesToKeep ?? []),
     ...result.attachments,

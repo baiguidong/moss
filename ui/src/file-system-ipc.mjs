@@ -1,7 +1,11 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isAppResourceUri } from './shared/app-resource-uri.mjs';
+import { parseRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
 
 import { resolveUserPath } from './file-path-utils.mjs';
 
@@ -13,6 +17,7 @@ export function registerFileSystemIpcHandlers({
   maxImageBase64Bytes,
   maxReadTextBytes,
   uploadRemoteWorkspaceFile,
+  resolveResourceFile,
 }) {
   // UI-only metadata lookup. Paths must already come from an approved tool
   // adapter; this endpoint does not discover files or resolve relative paths.
@@ -76,6 +81,19 @@ export function registerFileSystemIpcHandlers({
   // session workspace. Keep that preview read-only; workspace reads/writes
   // retain their existing session boundary.
   ipcMain.handle('preview:read-file', async (_event, { sessionId, filePath }) => {
+    if (typeof filePath !== 'string' || !filePath) throw new Error('Invalid file path');
+    if (filePath.startsWith('moss-remote-workspace://')) {
+      const reference = parseRemoteWorkspaceUrl(filePath);
+      if (sessionId && reference.sessionId !== sessionId) throw new Error('File belongs to another session');
+      if (getSessionRecord(reference.sessionId)?.agentMode !== 'remote-direct') throw new Error('Remote file session is unavailable');
+      sessionId = reference.sessionId;
+      filePath = reference.filePath;
+    }
+    if (isAppResourceUri(filePath)) {
+      if (!resolveResourceFile) throw new Error('App 文件暂不可用');
+      filePath = (await resolveResourceFile(filePath)).path;
+      sessionId = undefined;
+    }
     const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
     if (sessionRecord?.agentMode === 'remote-direct') {
       return readWorkspaceFile(sessionRecord, filePath);
@@ -129,7 +147,7 @@ export function registerFileSystemIpcHandlers({
   ipcMain.handle('fs:getFileMetadata', async (event, { path: filePath }) => {
     try {
       const stats = await fsp.stat(filePath);
-      return { size: stats.size };
+      return { size: stats.size, isFile: stats.isFile() };
     } catch {
       return null;
     }
@@ -197,7 +215,7 @@ export function registerFileSystemIpcHandlers({
   ipcMain.handle('fs:createTempFile', async (event, { fileName }) => {
     try {
       const safeFileName = String(fileName || '').replace(/[<>:"/\\|?*]/g, '_');
-      const tempPath = path.join(os.tmpdir(), `moss_${Date.now()}_${safeFileName}`);
+      const tempPath = path.join(os.tmpdir(), `moss_${randomUUID()}_${safeFileName}`);
       return tempPath;
     } catch {
       return null;

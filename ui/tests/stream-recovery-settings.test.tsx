@@ -61,8 +61,6 @@ test.each([false, true])('shows independent recovery and streaming controls (rec
     onToolDisplayModeChange={() => {}}
     onAppearancePreview={() => {}}
     onAppearanceCommit={() => {}}
-    buddyEnabled={false}
-    onBuddyEnabledChange={() => {}}
     initialSection="tool-performance"
   />);
   const recoveryToggle = html.match(/<input[^>]*aria-label="禁止失败恢复"[^>]*>/)?.[0];

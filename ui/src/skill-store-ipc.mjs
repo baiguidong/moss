@@ -169,6 +169,7 @@ export async function getInstalledSkills() {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const skillDir = path.join(MOSS_SKILLS_DIR, entry.name);
+        if (isRetiredAppAuthoringResource(skillDir)) continue;
         const meta = await readSkillMeta(skillDir);
         const version = await readSkillVersion(skillDir);
 
@@ -524,3 +525,4 @@ export function registerSkillStoreIpcHandlers() {
     }
   });
 }
+import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs';

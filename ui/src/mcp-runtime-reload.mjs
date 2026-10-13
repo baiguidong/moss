@@ -9,7 +9,7 @@ export function scheduleMcpRuntimeReload(
   for (const sessionRecord of sessionRecords) {
     if (sessionRecord.agentMode === 'remote-direct') continue;
     if (!sessionRecord.runtime) continue;
-    if (sessionRecord.busy || shouldDefer(sessionRecord)) {
+    if (sessionRecord.busy || sessionRecord.preparingPrompt || shouldDefer(sessionRecord)) {
       sessionRecord.pendingMcpRuntimeReload = true;
       skippedBusySessionCount += 1;
       continue;
@@ -26,6 +26,7 @@ export function applyPendingMcpRuntimeReload(sessionRecord, disposeRuntime, shou
   if (
     !sessionRecord?.pendingMcpRuntimeReload ||
     sessionRecord.busy ||
+    sessionRecord.preparingPrompt ||
     shouldDefer(sessionRecord)
   ) return false;
   sessionRecord.pendingMcpRuntimeReload = false;

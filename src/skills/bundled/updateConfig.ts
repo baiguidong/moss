@@ -14,6 +14,22 @@ function generateSettingsSchema(): string {
 
 const SETTINGS_EXAMPLES_DOCS = `## Settings File Locations
 
+### Moss Desktop and Buddy
+
+In Moss Desktop, first discover the installed Buddy tools with ToolSearch:
+\`app__moss_buddy__settings_read\`, \`app__moss_buddy__settings_apply\`, and \`app__moss_buddy__settings_undo\`.
+Use settings_read(operation="catalog") to find the current Desktop, Agent/project/local,
+session, App, MCP, assistant, and general-preference fields. Then read the exact
+domain/scope/target and apply only the requested changes with that revision and a
+unique requestId. Report the receipt's actual application status; undo uses its receiptId.
+Desktop theme is \`desktop / appearance.themeMode\`; terminal theme is a separate
+\`preferences\` setting. Do not use Config's terminal theme for the Desktop UI.
+Desktop model settings share a persisted document with Agent settings and must go
+through the Host so normalization, runtime reload, credentials and change events stay consistent.
+If Buddy is unavailable, use the corresponding Desktop settings page. The direct-file
+examples below remain applicable to Agent settings in CLI; do not invent Desktop keys.
+Credentials and environment secrets belong in their designated settings UI, never in chat.
+
 Choose the appropriate file based on scope:
 
 | File | Scope | Git | Use For |

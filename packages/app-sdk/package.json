@@ -1,9 +1,13 @@
 {
   "name": "@moss/app-sdk",
-  "version": "3.0.0",
+  "version": "3.8.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
+    "./categories": {
+      "types": "./src/categories.d.mts",
+      "import": "./src/categories.mjs"
+    },
     ".": {
       "types": "./src/index.d.mts",
       "import": "./src/index.mjs"
@@ -67,6 +71,10 @@
     "./results/store": {
       "types": "./src/results/store.d.mts",
       "import": "./src/results/store.mjs"
+    },
+    "./tool-services": {
+      "types": "./src/tool-services.d.mts",
+      "import": "./src/tool-services.mjs"
     }
   },
   "dependencies": {

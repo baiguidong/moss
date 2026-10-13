@@ -33,6 +33,7 @@ export function effortLevelToSymbol(level: EffortLevel): string {
     case 'high':
       return EFFORT_HIGH
     case 'max':
+    case 'xhigh':
       return EFFORT_MAX
     default:
       // Defensive: level can originate from remote config. If an unknown

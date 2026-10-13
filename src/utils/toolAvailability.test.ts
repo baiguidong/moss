@@ -62,7 +62,7 @@ describe('session tool availability', () => {
     })
     scope('desktop', () => {
       const names = assembleMain().map(tool => tool.name)
-      expect(denied.filter(name => !workflowNames.includes(name) && !names.includes(name))).toEqual([])
+      expect(denied.filter(name => !workflowNames.includes(name) && !name.startsWith('app_') && !names.includes(name))).toEqual([])
       for (const pool of [getAllBaseTools(), assembleMain(), assembleWorker()]) {
         expect(pool.map(tool => tool.name).filter(name => workflowNames.includes(name))).toEqual([])
       }
@@ -91,13 +91,13 @@ describe('session tool availability', () => {
       return runWithSessionIdContextGenerator(asSessionId(executionEnvironment), null, async function* () {
         expect(assembleMain().filter(tool => tool.name === 'example_app_action').length)
           .toBe(executionEnvironment === 'server' ? 0 : 1)
-        yield assembleMain().some(tool => tool.name === 'app_build')
+        yield assembleMain().some(tool => tool.name === 'connector_cli_setup')
         yield* runWithSessionContextOverridesGenerator({ environment: { WORKER: '1' } }, async function* () {
           await Promise.resolve()
           expect(getSessionRuntimeContext()?.image).toEqual(image)
           expect(assembleMain().filter(tool => tool.name === 'example_app_action').length)
             .toBe(executionEnvironment === 'server' ? 0 : 1)
-          yield assembleWorker().some(tool => tool.name === 'app_build')
+          yield assembleWorker().some(tool => tool.name === 'connector_cli_setup')
         })
       }, undefined, undefined, { executionEnvironment, image })
     }

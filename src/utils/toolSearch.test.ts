@@ -78,7 +78,7 @@ describe('generic ToolSearch', () => {
 
   test('restores activated tools from an ordinary ToolSearch result', () => {
     const result = ToolSearchTool.mapToolResultToToolResultBlockParam({
-      matches: ['moss_browser_open', 'app_preview'],
+      matches: ['moss_browser_open', 'connector_mcp_authenticate'],
       query: 'preview browser',
       total_deferred_tools: 12,
     }, 'tool-use-search')
@@ -111,7 +111,7 @@ describe('generic ToolSearch', () => {
     ]
 
     expect([...extractDiscoveredToolNames(messages as never)])
-      .toEqual(['moss_browser_open', 'app_preview'])
+      .toEqual(['moss_browser_open', 'connector_mcp_authenticate'])
   })
 
   test('keeps activated groups loaded after conversation compaction', () => {
@@ -144,12 +144,12 @@ describe('generic ToolSearch', () => {
 
   test('only activates group members present in the permitted tool pool', () => {
     const availableTools = MossTools.filter(tool =>
-      ['app_build', 'app_preview'].includes(tool.name),
+      ['connector_cli_setup', 'connector_mcp_authenticate'].includes(tool.name),
     )
     expect(expandMatchesWithConfiguredGroups(
-      ['app_build'],
+      ['connector_cli_setup'],
       availableTools,
-    )).toEqual(['app_build', 'app_preview'])
+    )).toEqual(['connector_cli_setup', 'connector_mcp_authenticate'])
   })
 
   test('keeps tools outside configured groups scoped to the individual match', () => {

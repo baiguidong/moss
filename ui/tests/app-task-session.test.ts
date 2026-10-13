@@ -11,9 +11,9 @@ test('desktop runs create ordinary chat sessions; tool runs retain their existin
     createSession: options => { created.push(options); return { ...options, id: 'new', workspace: '/new' } },
     prepareSession: async () => {}, openSession: id => opened.push(id),
   }
-  const app = await resolveAppTaskSession({ invocation: { surface: 'app', sessionId: 'existing' } }, { title: '资料整理' }, services)
+  const app = await resolveAppTaskSession({ appId: 'example.workflow', invocation: { surface: 'app', sessionId: 'existing' } }, { title: '资料整理' }, services)
   expect(app.id).toBe('new')
-  expect(created).toEqual([{ title: '资料整理', agentMode: 'local' }])
+  expect(created).toEqual([{ title: '资料整理', agentMode: 'local', appIds: ['example.workflow'] }])
   expect(opened).toEqual(['new'])
   const tool = await resolveAppTaskSession({ invocation: { surface: 'tool', sessionId: 'existing' } }, { title: '继续' }, services)
   expect(tool).toBe(existing)

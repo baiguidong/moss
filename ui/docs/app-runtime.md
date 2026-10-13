@@ -19,12 +19,14 @@ AI 助手的工具列表。安装或更新包含 AI 工具的 App 时，安装�
 已停用的状态。开发工具与 HTTP 调试 App 仅提供页面功能，不注册 AI 工具。
 
 设置 → 工具也按 App 分组展示声明的 AI 工具，包括已停用或尚未授权的工具。此处仅展示，
-不提供逐工具的常驻、按需或关闭选项；App 工具统一按需加载，启停和授权仍由 App 管理控制。
-工具的按需加载与 Backend 的常驻或按需启动生命周期相互独立。
+不提供逐工具的常驻、按需或关闭选项。App 在 Manifest 根级声明 `toolScope: "session" | "global"`，默认 session；原生和 App MCP 工具全部继承。session App 仅在会话选中后提供工具，global App 未选中时按需提供；两者选中后全部可用工具在整个会话常驻。启停和授权仍由 App 管理控制。
+工具加载与 Backend 进程生命周期相互独立。显式声明 `toolScope` 要求 Host API 至少 3.1.0；省略字段的旧 App 在新宿主也默认 session。完整创建、迭代和 MCP 继承规则见 [App 创建文档](app-authoring.md)。
 
 导航位置统一由 Moss 决定，App 不声明 `contributes.views[].location`，也不提供手动加入侧栏功能。进入 App 时优先使用已授权 view 中 `order` 最小的页面路由；未声明 view 时打开 `ui.entry`。多个页面由 App 内部导航，旧包的位置字段会被忽略。
 
 ## App 包
+
+App 的单一主分类由根级 `category` 声明，`keywords` 用于搜索。安装读取和版本切换使用该版本的 Manifest；缺字段的旧 App 显示“其他”。分类与展示顺序、创建及迁移规则见 [App 创建文档：分类与搜索](app-authoring.md#分类与搜索)。
 
 ```text
 example-app/
@@ -40,6 +42,18 @@ example-app/
 
 `checksums.json` 必须覆盖包内除自身和 `app-signature.json` 以外的每个文件。安装包不能包含软链接、
 绝对路径、路径穿越或运行期安装脚本。Backend 的运行依赖必须在构建阶段放入包内。
+
+### 源码随版本安装与发布
+
+后续所有新发布 App，以及 App Builder 创建或修改后每次本机安装的版本，都必须在包根/安装版本目录内携带完整、可重建源码：`source/` 保存工程，`source-manifest.json` 记录入口、版本、工具链、SDK 和文件摘要。源码包括实际构建需要的脚本、锁文件、资源、测试及本地依赖，不能只保存 `dist/`，也不能只引用会话工作区或构建缓存。
+
+打包器、CI、Core 安装和应用构建已接入该格式。源码以安装版本目录为准；`project.prepare` 恢复完整 workspace 并返回 `path/sourceRoot/appRoot`，`build.start` 使用声明的精确 npm/Bun 版本、锁文件和包内 SDK，构建后检查独立 Backend 握手。完整格式见 [moss-apps 源码随包发布规范与实施计划](https://github.com/baiguidong/moss-apps/blob/main/docs/app-source-packaging.md)。
+
+Core 必须将运行产物、源码与安装回执一致提交和恢复。删除原会话工作区、清理临时构建缓存、重启或开新会话后，仍能从 `.moss/apps/<app-id>/versions/<version>/` 恢复真实工程继续迭代。源码与对应安装版本一同保留，不能被临时作业清理删除。
+
+市场包的源码与描述文件纳入完整 checksums 和发布者签名；Builder 本机安装无需先生成 ZIP 或市场签名，但必须纳入 checksums、artifactHash 和持久回执。单纯安装不运行源码脚本，后续依赖安装与构建沿用 Agent 执行权限检查。
+
+已发布旧版本保持不可变且沿用原运行兼容规则；缺少有效源码时明确说明不能直接迭代，不能把重新编写的工程当作原源码恢复。未来给旧 App 补源码需发布新版本。
 
 最小 Manifest V2：
 
@@ -121,3 +135,14 @@ Host 启动时先恢复这些记录，包括已停用 App 的记录。确认旧�
 - App UI 使用 context isolation，不能任意访问文件系统，也不能指定其他 App ID。
 - Action 输入、输出、消息大小、超时和并发均受限；日志轮转并对密钥字段和值脱敏。
 - Backend 进程不是操作系统级沙箱，只应运行第一方或用户明确信任的包。
+
+
+### 按平台分发 App（Host API 3.3）
+
+Manifest 可声明 `platforms`（如 `["win32-x64"]`），须将 `hostApi` 最低版本设为 3.3。平台列表纳入包校验与签名，安装和加载均以 Host 的 OS/CPU 核验。未声明的旧 App 维持原有兼容行为。
+
+市场版本可以使用 `artifacts: { "darwin-arm64": { ... }, "win32-x64": { ... } }`。键必须与版本 `platforms` 完全一致，Host 不会回退到其他平台的包。目录中的旧 `artifact` 字段仅用于旧 Host 解析元数据；存在 `artifacts` 时新 Host 仅从平台映射选择。每个平台独立提供文件名、下载地址、大小、SHA-256 和签名标识。
+
+## App 展示位置（Host API 3.4）
+
+Manifest 根级 `navigation` 显式声明主入口：`{ "location": "more", "viewId": "home" }` 用于日常操作页，`{ "location": "settings", "viewId": "configuration" }` 用于配置页，`{ "location": "none" }` 用于纯后台或辅助 UI。位置引用 `contributes.views`，设置入口复用 `contributes.settings` 并选择 `group: "integrations" | "tools" | "apps"`。操作页与配置页须使用不同路由。显式位置或设置分组要求 Host API >=3.4.0；新建时必须按用途选择，旧安装包不改写。展示位置与 `category`、`toolScope`、生命周期独立。创建和迁移规则由 Core 的 `ui/docs/app-authoring.md` 维护。

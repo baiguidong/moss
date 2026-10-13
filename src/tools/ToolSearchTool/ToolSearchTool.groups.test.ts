@@ -29,6 +29,22 @@ const appTools = createAppContributionTools([
 ].map(tool => ({ ...tool, effect: 'read' as const, inputSchemaDocument: { type: 'object' } })))
 
 describe('provider tool group activation', () => {
+  test('native child services expand independently within the same App', async () => {
+    const children = createAppContributionTools(['sales', 'sales', 'support'].map((serviceId, index) => ({
+      appId: 'customer.services', id: `customer.services/tool-${index}`, name: `app__customer_services__tool_${index}`,
+      title: `Tool ${index}`, description: `Read ${serviceId}`, effect: 'read' as const,
+      toolSelection: 'services' as const, serviceId, inputSchemaDocument: { type: 'object' },
+    })))
+    const result = await search(children, `select:${children[0]!.name}`)
+    expect(result.data.matches).toEqual(names(children.slice(0, 2)))
+    expect(result.data.matches).not.toContain(children[2]!.name)
+  })
+  test('Browser Use App tools remain separate from a customer service with the same local name', async () => {
+    const appBrowser = ['browser_navigate', 'browser_click', 'browser_snapshot']
+      .map(name => mcpTool('moss_browser_use__playwright-cdp', name))
+    const result = await search([...MossTools, ...appBrowser, ...browser], `select:${appBrowser[0]!.name}`)
+    expect(result.data.matches).toEqual(names(appBrowser))
+  })
   test.each([
     'browser_navigate',
     'browser navigate',
@@ -42,7 +58,7 @@ describe('provider tool group activation', () => {
   })
 
   test.each(['select:app__example_catalog__search', 'find records'])('App query %s activates only tools from the same actual App ID', async query => {
-    expect(appTools[0]!.appInfo).toEqual({ appId: 'example.catalog' })
+    expect(appTools[0]!.appInfo).toMatchObject({ appId: 'example.catalog', toolScope: 'session' })
     const result = await search([...appTools, ...browser], query)
     expect(result.data.matches).toEqual(names(appTools.slice(0, 2)))
   })

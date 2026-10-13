@@ -6,7 +6,7 @@ import { asSessionId } from '../../types/ids.js'
 import { runWithSessionIdContext } from '../../utils/sessionIdContext.js'
 import { isDeferredTool } from '../ToolSearchTool/prompt.js'
 import {
-  AppBuildTool,
+  ConnectorCliSetupTool,
   MossBrowserOpenTool,
   ConnectorMcpAuthenticateTool,
   MossTools,
@@ -17,13 +17,6 @@ describe('split Moss host tools', () => {
   test('registers one named tool per action', () => {
     expect(MossTools.map(tool => tool.name)).toEqual([
       'moss_browser_open',
-      'app_build',
-      'app_preview',
-      'app_publish',
-      'app_launch',
-      'app_update',
-      'app_extract_to_workspace',
-      'app_get_versions',
       'connector_cli_setup',
       'connector_mcp_authenticate',
     ])
@@ -33,8 +26,6 @@ describe('split Moss host tools', () => {
   })
 
   test('uses action-specific schemas with required fields', () => {
-    expect(AppBuildTool.inputSchema.safeParse({ name: 'demo' }).success).toBe(true)
-    expect(AppBuildTool.inputSchema.safeParse({ name: 'demo', action: 'app_build' }).success).toBe(false)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero', out_path: 'hero.png' }).success).toBe(true)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero' }).success).toBe(false)
     expect(MossBrowserOpenTool.inputSchema.safeParse({}).success).toBe(false)
@@ -155,21 +146,21 @@ describe('split Moss host tools', () => {
 
   test.each(['moss_browser_open', 'browser_open'])('applies defaults and per-session loading overrides from %s', browserSettingName => {
     expect(isDeferredTool(MossBrowserOpenTool)).toBe(false)
-    expect(isDeferredTool(AppBuildTool)).toBe(true)
+    expect(isDeferredTool(ConnectorCliSetupTool)).toBe(true)
 
     runWithSessionIdContext(
       asSessionId('tool-loading-test'),
       undefined,
       () => {
         expect(isDeferredTool(MossBrowserOpenTool)).toBe(true)
-        expect(isDeferredTool(AppBuildTool)).toBe(false)
+        expect(isDeferredTool(ConnectorCliSetupTool)).toBe(false)
       },
       undefined,
       {
         [MOSS_RUNTIME_ADVANCED_SETTINGS_ENV]: JSON.stringify({
           moss_tool_loading: {
             [browserSettingName]: 'deferred',
-            app_build: 'always',
+            connector_cli_setup: 'always',
           },
         }),
       },

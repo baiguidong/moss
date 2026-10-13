@@ -7,6 +7,7 @@ import { confirmAppInstallation } from '../src/apps/app-tool-disclosure.mjs'
 import {
   createAppMarketplaceService,
   normalizeMarketplaceIndex,
+  normalizeMarketplaceDetail,
 } from '../src/apps/app-marketplace.mjs'
 
 const roots: string[] = []
@@ -127,6 +128,20 @@ function detail(latest: ReturnType<typeof version>) {
 }
 
 describe('App marketplace', () => {
+  it('retains primary category and searchable keywords, with other as the legacy and future fallback', () => {
+    const release = version(Buffer.from('app'));
+    const index = catalog(release);
+    const apps = [
+      { ...index.apps[0], category: 'automation', keywords: ['Chrome', '网页'] },
+      { ...index.apps[0], id: 'legacy.app' },
+      { ...index.apps[0], id: 'future.app', category: 'future' },
+    ];
+    const normalized = normalizeMarketplaceIndex({ ...index, apps }, 'https://example.com/index.json');
+    expect(normalized.apps.map(app => app.category)).toEqual(['automation', 'other', 'other']);
+    expect(normalized.apps[0].keywords).toEqual(['Chrome', '网页']);
+    expect(normalizeMarketplaceDetail({ ...detail(release), category: 'automation' }, 'https://example.com/example.app.json', 'example.app').category).toBe('automation');
+  })
+
   it('normalizes catalog URLs and rejects unsafe artifact metadata', () => {
     const archive = Buffer.from('app')
     const normalized = normalizeMarketplaceIndex(catalog(version(archive)), 'https://example.com/v1/index.json')
@@ -432,10 +447,90 @@ describe('App marketplace', () => {
         return Buffer.from(JSON.stringify(catalog(latest)))
       },
     })
-    await service.list({ forceRefresh: true })
+    const fresh = await service.list({ forceRefresh: true })
     online = false
     const cached = await service.list({ forceRefresh: true })
     expect(cached.cached).toBe(true)
     expect(cached.warning).toContain('正在显示缓存')
+    expect(cached.warning).toContain('offline')
+    expect(cached.fetchedAt).toBe(fresh.fetchedAt)
+    online = true
+    expect(await service.list({ forceRefresh: true })).toMatchObject({ cached: false, warning: '' })
   })
+
+  it('reports a failed refresh when no cached catalog is available', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-offline-'))
+    roots.push(root)
+    const service = createAppMarketplaceService({
+      indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'),
+      getInstalledApps: async () => [],
+      download: async () => { throw new Error('ECONNRESET') },
+    })
+    await expect(service.list({ forceRefresh: true })).rejects.toThrow('应用市场请求失败：ECONNRESET')
+  })
+
+  it('aborts a stuck catalog request and exposes the timeout instead of waiting indefinitely', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-timeout-'))
+    roots.push(root)
+    let signal: AbortSignal | undefined
+    const service = createAppMarketplaceService({
+      indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'),
+      requestTimeoutMs: 20, getInstalledApps: async () => [],
+      download: async (_url: string, options: { signal: AbortSignal }) => {
+        signal = options.signal
+        return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+      },
+    })
+    await expect(service.list({ forceRefresh: true })).rejects.toThrow('应用市场请求超时')
+    expect(signal?.aborted).toBe(true)
+  }, 2000)
+})
+
+it.each(['darwin-arm64', 'win32-x64'])('downloads only the matching signed variant on %s and rejects a mislabeled package', async platform => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-variants-')); roots.push(root)
+  const mac = Buffer.from('mac package'), windows = Buffer.from('windows package')
+  const macArtifact = { ...version(mac).artifact, fileName: 'mac.zip', downloadUrl: 'https://example.com/mac.zip' }
+  const winArtifact = { ...version(windows).artifact, fileName: 'windows.zip', downloadUrl: 'https://example.com/windows.zip' }
+  const { artifact: _, ...base } = version(mac)
+  const latest: any = { ...base, hostApi: '^3.3.0', artifacts: { 'darwin-arm64': macArtifact, 'win32-x64': winArtifact } }
+  const downloaded: string[] = []
+  let installs = 0, declaredPlatform = platform
+  const service = createAppMarketplaceService({ indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'cache.json'), platform,
+    getInstalledApps: async () => [], getRuntime: () => ({ getInstallation: () => null, registerInstalled: async () => {} }),
+    download: async (url: string) => {
+      if (url.endsWith('index.json')) return Buffer.from(JSON.stringify(catalog(latest)))
+      if (url.endsWith('example.app.json')) return Buffer.from(JSON.stringify(detail(latest)))
+      downloaded.push(url); return url.endsWith('/mac.zip') ? mac : windows
+    },
+    installArchive: async (_r: any, _a: any, options: any) => options.installPackage(root),
+    validatePackage: async (_root: string, options: any) => {
+      expect(options.platform).toBe(platform)
+      return { manifest: { id: 'example.app', version: latest.version, platforms: [declaredPlatform], permissions: [] }, trust: { publisherId: 'moss', keyId: 'release-1' } }
+    },
+    installPackage: async () => { installs++; return {} },
+  })
+  const selected = (await service.getDetails('example.app')).versions[0]
+  expect(selected.artifact.fileName).toBe(platform === 'win32-x64' ? 'windows.zip' : 'mac.zip')
+  await service.install({ appId: 'example.app', acceptPermissions: true })
+  expect(downloaded).toEqual([latest.artifacts[platform].downloadUrl]); expect(installs).toBe(1)
+  declaredPlatform = platform === 'win32-x64' ? 'darwin-arm64' : 'win32-x64'
+  await expect(service.install({ appId: 'example.app', acceptPermissions: true })).rejects.toThrow('platform mismatch')
+  expect(installs).toBe(1)
+})
+
+it('rejects incomplete or ambiguous artifact maps instead of falling back to a different platform', () => {
+  const { artifact, ...base } = version(Buffer.from('package'))
+  for (const latest of [
+    { ...base, artifacts: { 'darwin-arm64': artifact } },
+    { ...base, hostApi: '^3.3.0', artifacts: { 'darwin-arm64': artifact }, artifact },
+    { ...base, artifacts: { 'darwin-arm64': artifact, 'linux-x64': artifact } },
+  ]) expect(() => normalizeMarketplaceIndex(catalog(latest as any), 'https://example.com/index.json')).toThrow()
+})
+
+it('reads a catalog with a legacy artifact field while exclusively selecting the platform map', () => {
+  const { artifact, ...base } = version(Buffer.from('package'))
+  const latest: any = { ...base, hostApi: '^3.3.0', artifact, artifacts: { 'darwin-arm64': artifact, 'win32-x64': { ...artifact, fileName: 'windows.zip' } } }
+  const normalized = normalizeMarketplaceIndex(catalog(latest), 'https://example.com/index.json').apps[0].latest
+  expect(normalized.artifact).toBeUndefined()
+  expect(normalized.artifacts['win32-x64'].fileName).toBe('windows.zip')
 })

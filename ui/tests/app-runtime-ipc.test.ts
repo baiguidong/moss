@@ -67,7 +67,7 @@ describe('App archive installation', () => {
     expect(fixture.prompts[0].detail).toContain('AI 工具（1 个）')
     expect(fixture.prompts[0].detail).toContain('发送请求（request） · 可修改数据')
     expect(fixture.prompts[0].detail).toContain('从本机访问指定服务')
-    expect(fixture.prompts[0].detail).toContain('加入 Moss AI 助手的工具列表')
+    expect(fixture.prompts[0].detail).toContain('会话选择此 App 后常驻提供')
     expect(fixture.packageInstallCount()).toBe(response)
     expect(fixture.registrations).toHaveLength(response)
     expect(result.ok).toBe(response === 1)

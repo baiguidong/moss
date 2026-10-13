@@ -180,6 +180,7 @@ function findAssistantDir(name) {
       const assistantDir = path.join(dir, safeName);
       try {
         fs.accessSync(assistantDir);
+          if (isRetiredAppAuthoringResource(assistantDir)) continue;
         let meta = null;
         try {
           meta = JSON.parse(fs.readFileSync(path.join(assistantDir, ASSISTANT_META_FILE), 'utf-8'));
@@ -198,6 +199,7 @@ function findAssistantDir(name) {
         const assistantDir = path.join(dir, stripped);
         try {
           fs.accessSync(assistantDir);
+          if (isRetiredAppAuthoringResource(assistantDir)) continue;
           let meta = null;
           try {
             meta = JSON.parse(fs.readFileSync(path.join(assistantDir, ASSISTANT_META_FILE), 'utf-8'));
@@ -218,6 +220,7 @@ function findAssistantDir(name) {
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
         if (reservedNames.includes(entry.name)) continue;
         const assistantDir = path.join(dir, entry.name);
+        if (isRetiredAppAuthoringResource(assistantDir)) continue;
         const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
         try {
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
@@ -236,15 +239,17 @@ function findAssistantDir(name) {
   return null;
 }
 
-async function getInstalledAssistants() {
+export async function getInstalledAssistants() {
   const assistants = [];
   const seenAssistantNames = new Set();
 
   for (const { dir: baseDir, category: fallbackCategory, reservedNames = [] } of ASSISTANT_SEARCH_DIRS) {
     const dirs = await scanAssistantDirs(baseDir, reservedNames);
     for (const assistantDir of dirs) {
+      if (isRetiredAppAuthoringResource(assistantDir)) continue;
       const dirName = path.basename(assistantDir);
-      const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
+      if (isRetiredAppAuthoringResource(assistantDir)) continue;
+        const metaPath = path.join(assistantDir, ASSISTANT_META_FILE);
       let assistant;
       try {
         const metaContent = await fsp.readFile(metaPath, 'utf-8');
@@ -697,3 +702,4 @@ export function registerAgentIpcHandlers() {
     }
   });
 }
+import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs';

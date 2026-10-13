@@ -8,7 +8,7 @@ function isObject(value) {
 
 function isTopLevelUserMessage(event) {
   if (!isObject(event) || event.type !== 'user') return false;
-  if (event.isMeta === true || event.isSynthetic === true) return false;
+  if (event.isCompactSummary === true || event.isMeta === true || event.isSynthetic === true) return false;
   if (event.origin?.kind && event.origin.kind !== 'human') return false;
   if (event.toolUseResult || event.tool_use_result) return false;
   const blocks = Array.isArray(event.message?.content) ? event.message.content : [];

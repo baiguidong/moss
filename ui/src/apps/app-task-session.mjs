@@ -8,7 +8,7 @@ export async function resolveAppTaskSession(context, input, { getSession, create
     return record
   }
   if (context.invocation?.surface !== 'app') throw new Error('App execution requires a desktop action or session tool')
-  const record = createSession({ title: input.title, agentMode: 'local' })
+  const record = createSession({ title: input.title, agentMode: 'local', appIds: [context.appId] })
   await prepareSession(record)
   openSession(record.id)
   return record

@@ -17,6 +17,21 @@ describe('MCP runtime reload', () => {
     expect(disposed).toEqual([session]);
   });
 
+  it('keeps the first prompt runtime alive while asynchronous preparation precedes busy', () => {
+    const session = { agentMode: 'local', busy: false, preparingPrompt: true, runtime: {} };
+    const disposed: unknown[] = [];
+    const dispose = (record: unknown) => disposed.push(record);
+    expect(scheduleMcpRuntimeReload([session], dispose).resetSessionCount).toBe(0);
+    expect(applyPendingMcpRuntimeReload(session, dispose)).toBe(false);
+    expect(disposed).toEqual([]);
+    session.preparingPrompt = false;
+    session.busy = true;
+    expect(applyPendingMcpRuntimeReload(session, dispose)).toBe(false);
+    session.busy = false;
+    expect(applyPendingMcpRuntimeReload(session, dispose)).toBe(true);
+    expect(disposed).toEqual([session]);
+  });
+
   it('reloads a busy session as soon as its turn finishes', () => {
     const session = { agentMode: 'local', busy: true, runtime: {} };
     const disposed: unknown[] = [];

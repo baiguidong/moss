@@ -11,7 +11,8 @@ const { app } = electron;
 
 export { MANAGED_RUNTIME_VERSIONS };
 
-const RUNTIME_HOME = path.join(MOSS_HOME, 'runtimes');
+const RUNTIME_HOME = process.env.MOSS_RUNTIME_HOME ? path.resolve(process.env.MOSS_RUNTIME_HOME) : path.join(MOSS_HOME, 'runtimes');
+export const getManagedRuntimeHome = () => RUNTIME_HOME;
 const REGISTRY_PATH = path.join(RUNTIME_HOME, 'registry.json');
 
 function platformId() {

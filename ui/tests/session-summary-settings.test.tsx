@@ -22,8 +22,6 @@ function renderMemorySettings(enabled?: boolean) {
     onToolDisplayModeChange={() => {}}
     onAppearancePreview={() => {}}
     onAppearanceCommit={() => {}}
-    buddyEnabled={false}
-    onBuddyEnabledChange={() => {}}
     initialSection="memory"
   />);
 }

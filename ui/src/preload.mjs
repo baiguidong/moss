@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 // Use a finite source mapping: renderer input must never become an IPC channel.
 function cronPrefix(source) {
@@ -58,11 +58,6 @@ contextBridge.exposeInMainWorld('agentDesktop', {
 
   computerUse: {
     status: () => ipcRenderer.invoke('computer-use:status'),
-    enable: (enabled) => ipcRenderer.invoke('computer-use:enable', { enabled }),
-    check: () => ipcRenderer.invoke('computer-use:check'),
-    requestPermissions: () => ipcRenderer.invoke('computer-use:request-permissions'),
-    revealHostApp: () => ipcRenderer.invoke('computer-use:reveal-host-app'),
-    openSettings: (permission) => ipcRenderer.invoke('computer-use:open-settings', { permission }),
     stop: () => ipcRenderer.invoke('computer-use:stop'),
     revoke: (bundleId) => ipcRenderer.invoke('computer-use:revoke', { bundleId }),
     decide: (id, decision) => ipcRenderer.invoke('computer-use:decide', { id, decision }),
@@ -80,7 +75,11 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     getCloudOverview: () => ipcRenderer.invoke('usage:get-cloud-overview'),
     getSession: (payload) => ipcRenderer.invoke('usage:get-session', payload),
   },
+
   memory: {
+    dreamStatus: () => ipcRenderer.invoke('memory:dream-status'),
+    startDream: () => ipcRenderer.invoke('memory:dream-start'),
+    stopDream: () => ipcRenderer.invoke('memory:dream-stop'),
     getCatalog: () => ipcRenderer.invoke('memory:get-catalog'),
     readEntry: (payload) => ipcRenderer.invoke('memory:read-entry', payload),
   },
@@ -125,7 +124,10 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   forkSession: (payload) => ipcRenderer.invoke('agent:fork-session', payload),
   openTerminal: (payload) => ipcRenderer.invoke('terminal:open', payload),
   getSession: (payload) => ipcRenderer.invoke('agent:get-session', payload),
+  getCompactionRequest: (payload) => ipcRenderer.invoke('agent:get-compaction-request', payload),
   getModelContext: (payload) => ipcRenderer.invoke('agent:get-model-context', payload),
+  getSessionEffort: (payload) => ipcRenderer.invoke('agent:get-session-effort', payload),
+  setSessionEffort: (payload) => ipcRenderer.invoke('agent:set-session-effort', payload),
   listSessionTasks: (payload) => ipcRenderer.invoke('agent:list-session-tasks', payload),
   getTurnChanges: (payload) => ipcRenderer.invoke('agent:get-turn-changes', payload),
   previewTurnRewind: (payload) => ipcRenderer.invoke('agent:preview-turn-rewind', payload),
@@ -134,6 +136,8 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   setSessionToolDisplayMode: (payload) => ipcRenderer.invoke('agent:set-session-tool-display-mode', payload),
   setSessionPermissionMode: (payload) => ipcRenderer.invoke('agent:set-session-permission-mode', payload),
   deleteSession: (payload) => ipcRenderer.invoke('agent:delete-session', payload),
+  setSessionApps: (payload) => ipcRenderer.invoke('agent:set-apps', payload),
+  selectAppResource: (payload) => ipcRenderer.invoke('app:composer:select', payload),
   setSessionConnectors: (payload) => ipcRenderer.invoke('agent:set-session-connectors', payload),
   listWorkspaces: (payload) => ipcRenderer.invoke('agent:list-workspaces', payload),
   createWorkspace: (payload) => ipcRenderer.invoke('agent:create-workspace', payload),
@@ -186,6 +190,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     install: (payload) => ipcRenderer.invoke('app-market:install', payload),
   },
   listApps: () => ipcRenderer.invoke('app:list'),
+  importLegacyBuddy: (payload) => ipcRenderer.invoke('app:import-legacy-buddy', payload),
   inspectAppMcpTools: (payload) => ipcRenderer.invoke('app:inspect-mcp-tools', payload),
   resourceMonitor: {
     getSnapshot: (payload) => ipcRenderer.invoke('resource-monitor:snapshot', payload),
@@ -207,6 +212,21 @@ contextBridge.exposeInMainWorld('agentDesktop', {
   openAppResource: (uri) => ipcRenderer.invoke('app:open-resource', { uri }),
   getAppRuntimeState: (payload) => ipcRenderer.invoke('app:get-runtime-state', payload),
   listAppResources: (payload) => ipcRenderer.invoke('app:composer:list', payload),
+  getAppAuthoring: () => ipcRenderer.invoke('app:authoring:get'),
+  prepareAppAuthoring: (appId) => ipcRenderer.invoke('app:authoring:prepare', { appId }),
+  getAppAuthoringOperations: (sessionId) => ipcRenderer.invoke('app:authoring:operations', { sessionId }),
+  getAppAuthoringContext: (sessionId) => ipcRenderer.invoke('app:authoring:context', { sessionId }),
+  onAppAuthoringOperation: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:authoring:operation', listener);
+    return () => ipcRenderer.removeListener('app:authoring:operation', listener);
+  },
+  cancelAppAuthoringOperation: (sessionId, operationRef) => ipcRenderer.invoke('app:authoring:cancel', { sessionId, operationRef }),
+  onAppComposerBound: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:composer:bound', listener);
+    return () => ipcRenderer.removeListener('app:composer:bound', listener);
+  },
   prepareAppResource: (payload) => ipcRenderer.invoke('app:composer:resolve', payload),
   onAppPrepareComposer: (callback) => {
     const handler = (_event, payload) => callback(payload);
@@ -347,6 +367,7 @@ contextBridge.exposeInMainWorld('agentDesktop', {
     showItemInFolder: (filePath) => ipcRenderer.invoke('shell.show-item-in-folder', filePath),
   },
   fs: {
+    getPathForFile: (file) => webUtils.getPathForFile(file),
     getImageBase64: (path) => ipcRenderer.invoke('fs:getImageBase64', { path }),
     getFileMetadata: (path) => ipcRenderer.invoke('fs:getFileMetadata', { path }),
     getHomeDir: () => ipcRenderer.invoke('fs:getHomeDir'),

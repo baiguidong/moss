@@ -9,6 +9,7 @@ import type {
 } from '../entrypoints/sdk/controlTypes.js'
 import type { MossAppEvent, MossAppEventResult } from '../Tool.js'
 import type { ExternalPermissionMode } from '../types/permissions.js'
+import type { EffortLevel, SessionEffortConfiguration } from '../utils/effort.js'
 import { logForDebugging } from '../utils/debug.js'
 import { errorMessage } from '../utils/errors.js'
 import { getWebSocketTLSOptions } from '../utils/mtls.js'
@@ -644,6 +645,37 @@ export class DirectConnectSessionManager {
         clearTimeout(timeout)
         this.pendingControlRequests.delete(requestId)
         reject(new Error('Failed to change remote permission mode.'))
+      }
+    })
+  }
+
+  getEffort(): Promise<SessionEffortConfiguration> {
+    return this.requestEffort({ subtype: 'get_effort' })
+  }
+
+  setEffort(effort: EffortLevel | null): Promise<SessionEffortConfiguration> {
+    return this.requestEffort({ subtype: 'set_effort', effort })
+  }
+
+  private requestEffort(request: { subtype: 'get_effort' | 'set_effort'; effort?: EffortLevel | null }): Promise<SessionEffortConfiguration> {
+    if (!this.ws || this.state !== 'connected') return Promise.reject(new Error('云电脑连接后可设置推理强度。'))
+    const requestId = randomUUID()
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('云端未响应推理强度设置，请确认服务端已更新。'))
+      }, 10_000)
+      this.pendingControlRequests.set(requestId, {
+        resolve: response => {
+          if (!response || typeof response.model !== 'string' || !Array.isArray(response.levels)) {
+            reject(new Error('云端返回了无效的推理强度设置。'))
+          } else resolve(response as unknown as SessionEffortConfiguration)
+        }, reject, timeout,
+      })
+      if (!this.sendLine(jsonStringify({ type: 'control_request', request_id: requestId, request }))) {
+        clearTimeout(timeout)
+        this.pendingControlRequests.delete(requestId)
+        reject(new Error('无法更新云端推理强度。'))
       }
     })
   }

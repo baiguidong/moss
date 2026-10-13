@@ -89,8 +89,8 @@ function openZip(zipPath) {
 
 export async function extractAppArchive(zipPath, destination, limits = {}) {
   const maxFiles = limits.maxFiles || 10_000
-  const maxFileBytes = limits.maxFileBytes || 50 * 1024 * 1024
-  const maxArchiveBytes = limits.maxArchiveBytes || 250 * 1024 * 1024
+  const maxFileBytes = limits.maxFileBytes || 128 * 1024 * 1024
+  const maxArchiveBytes = limits.maxArchiveBytes || 512 * 1024 * 1024
   const zip = await openZip(zipPath)
   const seen = new Set()
   let count = 0
@@ -150,12 +150,17 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
   try {
     options.onProgress?.({ phase: 'extracting' })
     await extractAppArchive(archivePath, staging)
-    const entries = await fsp.readdir(staging, { withFileTypes: true })
-    const packageRoot = fs.existsSync(path.join(staging, 'app.moss.json'))
-      ? staging
-      : entries.length === 1 && entries[0].isDirectory()
-        ? path.join(staging, entries[0].name)
-        : staging
+    let packageRoot = staging
+    if (!fs.existsSync(path.join(packageRoot, 'app.moss.json'))) {
+      const entries = await fsp.readdir(staging, { withFileTypes: true })
+      const candidates = entries.filter(entry => entry.isDirectory() && entry.name !== '__MACOSX'
+        && fs.existsSync(path.join(staging, entry.name, 'app.moss.json')))
+      if (candidates.length !== 1) {
+        const reason = candidates.length > 1 ? '包含多个 App，无法确定要安装哪一个' : '根目录或单层目录中缺少 app.moss.json'
+        throw new Error(`无法安装「${path.basename(archivePath)}」：${reason}。请选择单个 Moss App 的安装包。`)
+      }
+      packageRoot = path.join(staging, candidates[0].name)
+    }
     return options.installPackage
       ? await options.installPackage(packageRoot)
       : await runtime.installFromDirectory(packageRoot)
@@ -168,6 +173,8 @@ export async function createAppRuntime(options) {
   const runtime = new AppRuntimeHost({
     rootDir: options.mossHome,
     beforeAppDeactivation: options.beforeAppDeactivation,
+    nativeAdapterHost: options.nativeAdapterHost,
+    nativePublishers: options.nativePublishers,
     capabilityAvailability: options.capabilityAvailability,
     appsDir: options.appsDir,
     dataDir: path.join(options.mossHome, 'apps-data'),
@@ -187,6 +194,8 @@ export async function createAppRuntime(options) {
     }
   }
   runtime.events.on('event', (event) => options.onEvent?.(event))
+  // Host handlers need this runtime before initialize restores persistent Backends.
+  await options.onCreated?.(runtime)
   await runtime.initialize()
   return runtime
 }

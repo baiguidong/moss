@@ -1,3 +1,6 @@
+import type { AppToolPolicy } from './utils/appToolPolicy.js'
+export { getMossAgentConfigurationSchema, inspectMossAgentConfiguration, validateMossAgentConfiguration, applyMossAgentConfiguration } from './services/mossConfiguration.js'
+export { getMossPreferencesSchema, inspectMossPreferences, applyMossPreferences } from './services/mossConfiguration.js'
 export { assertWorkflowAppPolicy } from './services/appExecution/policy.js'
 /**
  * Claude Code 直接嵌入 SDK（无子进程）
@@ -17,6 +20,8 @@ import { resolveDesktopModelContext } from './utils/model/desktopModelContext.js
 export { resolveDesktopModelContext } from './utils/model/desktopModelContext.js'
 import { setGlobalAppEventBridge, unregisterAppEventBridge, type MossAppEvent, type MossAppEventResult, type ToolUseContext } from './Tool.js'
 import { getDefaultAppState } from './state/AppStateStore.js'
+import { getSessionEffortConfiguration, isEffortLevel, type EffortLevel } from './utils/effort.js'
+export { getSessionEffortConfiguration } from './utils/effort.js'
 import { createStore } from './state/store.js'
 import { stopTask as stopBackgroundTask } from './tasks/stopTask.js'
 import { QueryEngine } from './QueryEngine.js'
@@ -493,6 +498,8 @@ export interface ClaudeSessionOptions {
   maxTurns?: number
   /** 思考配置 */
   thinkingConfig?: ThinkingConfig
+  /** Session reasoning effort; null follows the model default. */
+  effort?: EffortLevel | null
   /** 是否启用 Coordinator 模式（多 worker 并行编排）*/
   coordinatorMode?: boolean
   /** App 事件回调，用于 MossTool 保存/打开 app */
@@ -503,6 +510,7 @@ export interface ClaudeSessionOptions {
   agentMailEnabled?: boolean
   /** Tools contributed by enabled Apps. */
   appTools?: AppToolContributionDescriptor[]
+  appToolPolicy?: AppToolPolicy
   /** Restrict Bash to commands accepted by the core read-only validator. */
   readOnlyBashOnly?: boolean
   /** 恢复后的 transcript session ID */
@@ -551,6 +559,7 @@ type ResolvedClaudeSessionOptions = {
   ) => Promise<DesktopPermissionDecision | null | undefined>
   maxTurns: number
   thinkingConfig: ThinkingConfig
+  effort?: EffortLevel | null
   coordinatorMode: boolean
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   agentMailEnabled: boolean
@@ -830,6 +839,7 @@ export class ClaudeSession {
         desktopCronHostId: opts.desktopCronHostId,
         cron: opts.cron,
         unattended: opts.unattended,
+        appToolPolicy: structuredClone(opts.appToolPolicy || { appIds: [], mcpServers: {} }),
       },
       cwd,
       model,
@@ -844,6 +854,7 @@ export class ClaudeSession {
       onToolUseValidation: opts.onToolUseValidation,
       maxTurns: opts.maxTurns ?? 100,
       thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
+      effort: opts.effort,
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
       agentMailEnabled: opts.agentMailEnabled === true,
@@ -1102,6 +1113,7 @@ export class ClaudeSession {
     this.#store = createStore(
       {
         ...getDefaultAppState(),
+        ...(this.#opts.effort !== undefined ? { effortValue: this.#opts.effort ?? undefined } : {}),
         mcp: {
           ...getDefaultAppState().mcp,
           clients: mcp.clients,
@@ -1606,6 +1618,19 @@ export class ClaudeSession {
       { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }))
   }
 
+  /** Used by the global memory maintenance host, with a dedicated runtime. */
+  async consolidateMemory(options: Parameters<QueryEngine['consolidateMemory']>[0]) {
+    const engine = await this.#initializeForControl()
+    options.signal?.throwIfAborted()
+    return runWithSessionApiOverrides(this.#sessionApiOverrides, () =>
+      runWithCwdOverride(this.#opts.cwd, () => runWithSessionIdContext(
+        asSessionId(this.sessionId), this.#opts.projectDir,
+        () => engine.consolidateMemory(options),
+        this.#opts.taskScope, this.#opts.environment, this.#opts.runtime,
+      ), { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }),
+    )
+  }
+
   async #runFileHistoryControl<T>(operation: (
     state: FileHistoryState,
     update: (updater: (prev: FileHistoryState) => FileHistoryState) => void,
@@ -1772,6 +1797,25 @@ export class ClaudeSession {
   /** 获取当前 app state */
   getAppState() {
     return this.#store?.getState() ?? null
+  }
+
+  getEffort() {
+    return getSessionEffortConfiguration(this.#opts.model, this.#store
+      ? this.#store.getState().effortValue
+      : this.#opts.effort ?? undefined)
+  }
+
+  setEffort(value: EffortLevel | null) {
+    if (this.#disposed) throw new Error('Session has been disposed')
+    if (value !== null && (typeof value !== 'string' || !isEffortLevel(value))) {
+      throw new Error('Invalid reasoning effort')
+    }
+    if (value !== null && this.getEffort().levels.length === 0) {
+      throw new Error('当前模型不支持设置推理强度。')
+    }
+    this.#opts.effort = value
+    this.#store?.setState(previous => ({ ...previous, effortValue: value ?? undefined }))
+    return this.getEffort()
   }
 
   /** Stop one background task through the same task registry used by TaskStop. */

@@ -8,3 +8,6 @@ export * from './openim/index.mjs'
 export * from './host/index.mjs'
 export * from './cloud-storage/index.mjs'
 export * from './execution/index.mjs'
+export * from './categories.mjs'
+
+export * from './tool-services.mjs'

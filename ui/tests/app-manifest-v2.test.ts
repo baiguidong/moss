@@ -20,11 +20,24 @@ const valid = {
 }
 
 describe('App manifest V2', () => {
+  it('preserves one category and search keywords through normalization while accepting legacy Apps', () => {
+    const source = { ...valid, category: 'automation', keywords: ['Chrome', ' 网页 ', '网页'] };
+    expect(validateAppManifest(source)).toMatchObject({ category: 'automation', keywords: ['Chrome', '网页'] });
+    expect(source.keywords).toEqual(['Chrome', ' 网页 ', '网页']);
+    expect(validateAppManifest(valid)).toMatchObject({ category: 'other', keywords: [] });
+    for (const category of ['效率', 'unknown', '', ['automation'], null]) {
+      expect(() => validateAppManifest({ ...valid, category })).toThrow();
+    }
+    for (const keywords of [[' '], ['x'.repeat(41)], Array.from({ length: 21 }, (_, i) => String(i)), 'Chrome']) {
+      expect(() => validateAppManifest({ ...valid, keywords })).toThrow();
+    }
+  })
+
   it('advertises Host API 3 and rejects unpublished older contracts', () => {
-    expect(APP_HOST_API_VERSION).toBe('3.0.0')
+    expect(APP_HOST_API_VERSION).toBe('3.8.0')
     expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.1.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.9.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {
@@ -216,3 +229,12 @@ backend: { ...backend, },
     expect(received.at(-1)).toMatchObject({ type: 'service.status', payload: { state: 'error' } })
   })
 })
+
+  it('validates one App-wide scope and requires a host that understands explicit declarations', () => {
+    expect(validateAppManifest(valid).toolScope ?? 'session').toBe('session')
+    expect(validateAppManifest({ ...valid, hostApi: '^3.1.0', toolScope: 'global' }).toolScope).toBe('global')
+    expect(validateAppManifest({ ...valid, hostApi: '^3.1.0', toolScope: 'session' }).toolScope).toBe('session')
+    expect(() => validateAppManifest({ ...valid, toolScope: 'session' })).toThrow(/hostApi/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.1.0', toolScope: 'always' })).toThrow()
+    expect(() => validateAppManifest(validateAppManifest(valid))).not.toThrow()
+  })

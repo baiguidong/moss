@@ -549,6 +549,41 @@ describe('direct embedded backend model settings', () => {
     }
   })
 
+  test('reads and applies session effort without submitting a prompt', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-effort-'))
+    let effort: string | null = null
+    let sends = 0
+    class FakeSession {
+      async *send(): AsyncGenerator<unknown> { sends++ }
+      abort(): void {}
+      dispose(): void {}
+      setPermissionMode(): void {}
+      getEffort() { return { model: 'gpt-5.5', configured: effort, applied: effort, levels: ['low', 'medium', 'high', 'xhigh'], overridden: false } }
+      setEffort(value: string | null) { effort = value; return this.getEffort() }
+    }
+    registerDirectRuntimeModule({ ClaudeSession: FakeSession, resumeClaudeSession: async () => null })
+    const handle = await new DirectEmbeddedBackend().spawn({
+      sessionId: 'session-effort', cwd: join(tempRoot, 'workspace'),
+      runtime: { backend: 'host', profileDir: join(tempRoot, 'profile'), transcriptDir: join(tempRoot, 'transcripts'), workspaceDir: join(tempRoot, 'workspace') },
+      systemSettings: makeSettings({}),
+    })
+    try {
+      for (const [index, request] of [
+        { subtype: 'set_effort', effort: 'low' },
+        { subtype: 'get_effort' },
+        { subtype: 'set_effort', effort: 'invalid' },
+      ].entries()) {
+        const response = waitForStdout(handle, message => message.type === 'control_response')
+        handle.writeStdin(`${JSON.stringify({ type: 'control_request', request_id: `effort-${index}`, request })}\n`)
+        const output = await response as any
+        expect(output.response.subtype).toBe(index === 2 ? 'error' : 'success')
+        if (index < 2) expect(output.response.response.applied).toBe('low')
+      }
+      expect(effort).toBe('low')
+      expect(sends).toBe(0)
+    } finally { handle.destroy() }
+  })
+
   test('interrupts the active turn in process without disposing the session', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-direct-interrupt-'))
     let abortCount = 0

@@ -1,4 +1,4 @@
-import { normalizeComputerUseSettings } from './computer-use/service.mjs';
+import { normalizeDesktopControlSettings } from '../../packages/app-runtime/src/desktop-control/session.mjs';
 import fs from 'node:fs';
 import { normalizeUserAvatar } from './user-avatar-settings.mjs';
 
@@ -23,6 +23,7 @@ const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS ==
 const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
 
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
+  appWidgets: { enabled: true },
   userAvatar: '',
   agentMode: 'local',
   localEnabled: true,
@@ -270,7 +271,8 @@ function loadLocalSettingsAuthConfig(settingsPath) {
 export function normalizeDesktopSettings(input, existing = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
-  result.computerUse = normalizeComputerUseSettings(source.computerUse ?? existing.computerUse);
+  result.desktopControl = normalizeDesktopControlSettings(source.desktopControl ?? existing.desktopControl ?? source.computerUse ?? existing.computerUse);
+  delete result.computerUse;
   result.userAvatar = normalizeUserAvatar(source.userAvatar ?? result.userAvatar);
   const sourceModels = objectField(source, 'models');
   const sourceText = objectField(sourceModels, 'text');
@@ -766,6 +768,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
   };
 
   result.appearance = normalizeAppearance(source.appearance, result.appearance);
+  result.appWidgets = { enabled: typeof source.appWidgets?.enabled === 'boolean' ? source.appWidgets.enabled : (existing.appWidgets?.enabled ?? true) };
 
   if (source.logRotationMaxSize !== undefined) {
     let size = Number.parseInt(String(source.logRotationMaxSize), 10);
@@ -1092,6 +1095,22 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
     save(nextSettings) {
       state = saveDesktopSettingsFile(settingsPath, nextSettings, value);
       value = state.value;
+      return { state, value };
+    },
+    reload() {
+      const loaded = loadDesktopSettings(settingsPath, log);
+      if (!loaded.loaded && loaded.parseError) throw new Error(loaded.parseError);
+      const previous = value;
+      state = loaded;
+      value = loaded.value;
+      // Credentials hydrated from the secure store are intentionally absent on disk.
+      value.webSearch = { ...previous.webSearch, mode: value.webSearch.mode };
+      if (value.remoteDirectServerUrl === previous.remoteDirectServerUrl) {
+        for (const key of ['remoteDirectApiKey','remoteDirectUserPassword']) value[key] = previous[key];
+        value.remoteDirect = { ...value.remoteDirect, apiKey:previous.remoteDirectApiKey, userPassword:previous.remoteDirectUserPassword };
+      }
+      syncDesktopThinkingEnv(value);
+      syncDesktopModelEnv(value);
       return { state, value };
     },
   };

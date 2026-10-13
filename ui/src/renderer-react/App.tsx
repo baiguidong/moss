@@ -1,7 +1,9 @@
+import { AppToolSelectionContext, canSelectToolApp, toolAppId, getAppToolServices, parseAppServiceKey } from '@/lib/app-tool-selection';
 import * as React from 'react';
 import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
+import { appPageUnavailableReason, getAppPrimaryEntry, getAppSettingsEntries } from '@/lib/app-navigation';
 import { CronView } from '@/components/cron-view';
 import { OverviewView } from '@/components/overview-view';
 import { AgentMailView } from '@/components/agent-mail-view';
@@ -23,7 +25,7 @@ import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
 import { startSessionTaskPolling } from '../session-tasks.mjs';
-import { BuddyCompanion, isBuddyEnabled, setBuddyEnabled } from '@/components/buddy';
+import { AppWidgetHost } from '@/components/app-widget-host';
 import { SettingsView } from '@/components/settings-view';
 import { UserAvatarContext } from '@/components/user-avatar';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
@@ -356,6 +358,8 @@ export default function App() {
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [activeView, setActiveView] = React.useState<MainView>('chat');
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
+  const [settingsInitialAppId, setSettingsInitialAppId] = React.useState<string | null>(null);
+  const [appManagementName, setAppManagementName] = React.useState<string | null>(null);
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [toolFocusTarget, setToolFocusTarget] = React.useState<{
     sessionId: string;
@@ -456,7 +460,6 @@ export default function App() {
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [appSelection, setAppSelection] = React.useState<AppComposerResource | null>(null);
   const [appDraftWorkspace, setAppDraftWorkspace] = React.useState<string>();
-  const [selectedAppName, setSelectedAppName] = React.useState('');
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
   const [embeddedAppRoute, setEmbeddedAppRoute] = React.useState('');
   const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
@@ -467,6 +470,10 @@ export default function App() {
   const assistantRefreshRequestIdRef = React.useRef(0);
   const [installedConnectors, setInstalledConnectors] = React.useState<InstalledConnector[]>([]);
   const [draftConnectorIds, setDraftConnectorIds] = React.useState<string[]>([]);
+  const [draftAppIds, setDraftAppIds] = React.useState<string[]>([]);
+  const [draftAppServiceIds, setDraftAppServiceIds] = React.useState<string[]>([]);
+  const [appSelectionPending, setAppSelectionPending] = React.useState(false);
+  const appSelectionQueue = React.useRef<Promise<unknown>>(Promise.resolve());
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
   const [forkingSessionId, setForkingSessionId] = React.useState<string | null>(null);
   const forkSessionRequestRef = React.useRef(false);
@@ -536,7 +543,6 @@ export default function App() {
   const agentMailEnabled =
     desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
-  const [forceBuddyUpdate, setForceBuddyUpdate] = React.useState(0);
   const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
   const activeSessionIdRef = React.useRef<string | null>(null);
@@ -775,7 +781,7 @@ export default function App() {
     return out;
   }, [activeDetail?.history]);
 
-  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; resetApp?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
+  const navigateToHome = React.useCallback((options?: { resetInput?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
     setActiveView('chat');
     activeSessionIdRef.current = null;
     activeDetailRef.current = null;
@@ -790,9 +796,6 @@ export default function App() {
       setInput('');
       composerDraftsRef.current['home'] = { text: '', files: [] };
     }
-    if (options?.resetApp) {
-      setSelectedAppName('');
-    }
     return true;
   }, [clearSessionWorkspaceState, refreshAssistants]);
 
@@ -801,6 +804,11 @@ export default function App() {
     let detail;
     try {
       detail = await window.agentDesktop.getSession({ sessionId });
+      const context = await window.agentDesktop.getAppAuthoringContext?.(sessionId);
+      if (context) {
+        const previous = composerDraftsRef.current[sessionId] || { text: '', files: [] };
+        composerDraftsRef.current[sessionId] = { ...previous, appSelection: { ...context, appId: context.providerId.split('/')[0], title: 'App 项目' } };
+      }
     } catch {
       // 会话可能已被删除或后端出错; 忽略并保持当前视图
       return false;
@@ -851,12 +859,15 @@ export default function App() {
     connectorIds?: string[],
     permissionMode?: PermissionMode,
     agentMode: 'local' | 'remote-direct' = 'local',
+    appIds: string[] = [],
+    appServiceIds: string[] = [],
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
+    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
     if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
+    if (agentMode === 'local') { payload.appIds = appIds; payload.appServiceIds = appServiceIds; }
     if (permissionMode) payload.permissionMode = permissionMode;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
@@ -1017,16 +1028,13 @@ export default function App() {
   }, []);
 
   React.useEffect(() => {
-    if (selectedAppName && !apps.some((entry) => entry.name === selectedAppName)) {
-      setSelectedAppName('');
-    }
     if (embeddedAppName && !apps.some((entry) => entry.name === embeddedAppName || entry.id === embeddedAppName)) {
       setEmbeddedAppName('');
       if (activeView === 'embedded-app') {
         setActiveView('apps');
       }
     }
-  }, [activeView, apps, embeddedAppName, selectedAppName]);
+  }, [activeView, apps, embeddedAppName]);
 
 
   React.useEffect(() => {
@@ -1323,10 +1331,6 @@ export default function App() {
 
     const offAppsChanged = window.agentDesktop.onAppsChanged((payload) => {
       const changedName = payload?.appId || payload?.app?.id || payload?.app?.name;
-      if (changedName && selectedAssistant?.name === 'app-builder-assistant') {
-        setSelectedAppName(changedName);
-        void loadAppVersions(changedName);
-      }
       if (changedName && changedName === embeddedAppName && payload?.action !== 'runtime') {
         setEmbeddedAppRevision((value) => value + 1);
       }
@@ -1561,7 +1565,7 @@ export default function App() {
   }, []);
 
   const handleNewSession = React.useCallback(async () => {
-    navigateToHome({ resetInput: true, resetApp: true });
+    navigateToHome({ resetInput: true });
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
@@ -1761,7 +1765,6 @@ export default function App() {
         skills,
         agentType,
         mode: intent,
-        appName: selectedAssistant?.name === 'app-builder-assistant' ? selectedAppName : undefined,
         files: files?.filter((file) => !file.resource).map((file) => file.path),
         resources: files?.flatMap((file) => file.resource ? [file.resource] : []),
       });
@@ -1773,7 +1776,7 @@ export default function App() {
         return next;
       });
     }
-  }, [selectedAppName, selectedAssistant]);
+  }, [selectedAssistant]);
 
   const handleRunCliConnectorSetup = React.useCallback(async (
     connector: InstalledConnector,
@@ -1940,6 +1943,8 @@ export default function App() {
           draftConnectorIds,
           newSessionPermissionMode,
           newSessionAgentMode,
+          draftAppIds,
+          draftAppServiceIds,
         ).finally(() => {
           creatingSessionRef.current = null;
           setPreparingNewSession(false);
@@ -1947,6 +1952,7 @@ export default function App() {
         sessionJustCreated = true;
       }
       sessionId = await creatingSessionRef.current;
+      if (sessionJustCreated) { setDraftAppIds([]); setDraftAppServiceIds([]); }
     }
     if (!sessionId) return;
 
@@ -1976,7 +1982,7 @@ export default function App() {
       await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType, selection);
       setAppSelection(current => current === selection ? null : current);
     } catch(error) { setInput(current => current || prompt); setAppSelection(current => current || selection); throw error }
-  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
+  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2136,14 +2142,35 @@ export default function App() {
     openPreviewWindow(data);
   }, [activeSessionId, openPreviewWindow]);
 
-  const handleLaunchApp = React.useCallback(async (name: string) => {
+  const handleLaunchApp = React.useCallback(async (name: string, options?: { settings?: boolean; route?: string }) => {
     try {
-      const result = await window.agentDesktop.launchApp({ name });
-      if (!result?.ok) throw new Error(result?.error || 'App 打开失败');
+      const app = apps.find(item => item.name === name);
+      if (!app) throw new Error('App 未安装');
+      const entry = getAppPrimaryEntry(app);
+      if (options?.settings || entry?.location === 'settings') {
+        const setting = getAppSettingsEntries([app]).find(item => options?.route ? item.route === options.route : entry?.location !== 'settings' || item.id === entry.settingsId);
+        if (!setting) throw new Error('App 未声明设置页');
+        if (setting.unavailableReason) throw new Error(setting.unavailableReason);
+        if (app.navigation?.location === 'settings') {
+          setSettingsInitialAppId(setting.id);
+          setActiveView('settings');
+        } else {
+          setEmbeddedAppName(name);
+          setEmbeddedAppRoute(setting.route);
+          setActiveView('embedded-app');
+        }
+        return;
+      }
+      const reason = entry?.unavailableReason || appPageUnavailableReason(app);
+      if (reason) throw new Error(reason);
+      if (!app.hasUi || (!entry && app.navigation?.location !== 'none')) throw new Error('App 没有可用页面');
+      setEmbeddedAppName(name);
+      setEmbeddedAppRoute(entry?.route || '');
+      setActiveView('embedded-app');
     } catch (error: any) {
       showPermissionNotice(`App 打开失败：${cleanIpcErrorMessage(error?.message || String(error))}`, 'error', 6000);
     }
-  }, [showPermissionNotice]);
+  }, [apps, showPermissionNotice]);
 
   const handleOpenEmbeddedApp = React.useCallback((name: string, route = '') => {
     setEmbeddedAppName(name);
@@ -2158,6 +2185,82 @@ export default function App() {
   const handleClearAssistant = React.useCallback(() => {
     setSelectedAssistant(null);
   }, []);
+
+  const selectedToolServiceIds = activeSessionId ? (activeDetail?.appServiceIds || []) : draftAppServiceIds;
+  const selectedToolAppIds = activeSessionId ? (activeDetail?.appIds || []) : draftAppIds;
+  const enqueueAppSelection = React.useCallback((operation: () => Promise<unknown>) => {
+    setAppSelectionPending(true);
+    const task = appSelectionQueue.current.catch(() => {}).then(operation);
+    appSelectionQueue.current = task;
+    void task.catch(error => showPermissionNotice(cleanIpcErrorMessage(String(error.message || error)), 'error', 6000))
+      .finally(() => { if (appSelectionQueue.current === task) setAppSelectionPending(false); });
+  }, [showPermissionNotice]);
+
+  const applyAppSessionDetail = React.useCallback((detail: SessionDetail) => {
+    if (activeSessionIdRef.current === detail.id) {
+      setActiveDetail(detail); activeDetailRef.current = detail;
+    }
+    setSummaries(previous => upsertSummary(previous, detail));
+  }, []);
+
+  const handleToggleToolApp = React.useCallback((id: string) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) {
+      const app = apps.find(item => toolAppId(item) === id);
+      if (!draftAppIds.includes(id) && (!app || !canSelectToolApp(app))) {
+        showPermissionNotice('此 App 暂未提供可用工具，请检查启用状态、授权或服务配置', 'error', 6000);
+        return;
+      }
+      setDraftAppIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
+      return;
+    }
+    enqueueAppSelection(async () => {
+      const result = await window.agentDesktop.setSessionApps({ sessionId, toggleAppId: id });
+      if (!result.success || !result.data) throw new Error(result.error || 'App 更新失败');
+      applyAppSessionDetail(result.data);
+    });
+  }, [apps, draftAppIds, showPermissionNotice, enqueueAppSelection, applyAppSessionDetail]);
+
+  const handleToolServices = React.useCallback((appId: string, ids: string[], toggleId?: string) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) {
+      const app = apps.find(item => toolAppId(item) === appId);
+      const available = app ? getAppToolServices(app).filter(service => service.available).map(service => service.id) : [];
+      const requested = toggleId ? [toggleId] : ids;
+      if (requested.some(id => !available.includes(id) && !draftAppServiceIds.includes(id))) {
+        showPermissionNotice('此子服务暂不可用，请检查启用状态、授权或服务配置', 'error', 6000); return;
+      }
+      setDraftAppServiceIds(previous => toggleId
+        ? previous.includes(toggleId) ? previous.filter(id => id !== toggleId) : [...previous, toggleId]
+        : [...previous.filter(id => parseAppServiceKey(id)?.appId !== appId), ...ids]);
+      return;
+    }
+    enqueueAppSelection(async () => {
+      const result = await window.agentDesktop.setSessionApps(toggleId ? { sessionId, toggleServiceId: toggleId } : { sessionId, serviceAppId: appId, appServiceIds: ids });
+      if (!result.success || !result.data) throw new Error(result.error || '子服务更新失败');
+      applyAppSessionDetail(result.data);
+    });
+  }, [apps, draftAppServiceIds, showPermissionNotice, enqueueAppSelection, applyAppSessionDetail]);
+
+  const addAppResourceOwner = React.useCallback(async (sessionId: string | undefined, providerId: string) => {
+    const { appId, data } = await window.agentDesktop.selectAppResource({ sessionId, providerId });
+    if (data) applyAppSessionDetail(data);
+    if (!sessionId) {
+      const app = apps.find(item => toolAppId(item) === appId);
+      if (app?.toolSelection === 'services') setDraftAppServiceIds(previous => [...new Set([...previous, ...getAppToolServices(app).filter(service => service.available).map(service => service.id)])]);
+      else setDraftAppIds(previous => [...new Set([...previous, appId])]);
+    }
+    return appId;
+  }, [apps, applyAppSessionDetail]);
+
+  const handleSelectAppResource = React.useCallback((resource: AppComposerResource | null) => {
+    if (!resource) { setAppSelection(null); return; }
+    const sessionId = activeSessionIdRef.current || undefined;
+    enqueueAppSelection(async () => {
+      const appId = await addAppResourceOwner(sessionId, resource.providerId);
+      if ((activeSessionIdRef.current || undefined) === sessionId) setAppSelection({ ...resource, appId });
+    });
+  }, [enqueueAppSelection, addAppResourceOwner]);
 
   const selectedConnectorIds = React.useMemo(
     () => activeSessionId ? (activeDetail?.connectorIds ?? []) : draftConnectorIds,
@@ -2246,33 +2349,38 @@ export default function App() {
     }).catch(error => showPermissionNotice(String(error.message || error), 'error', 6000));
   }), [openSession, showPermissionNotice]);
 
-  React.useEffect(() => window.agentDesktop.onAppPrepareComposer(payload => {
-    const selection = { ...payload.context, appId:payload.appId, title:payload.title, route:payload.route, workspace:payload.workspace };
+  React.useEffect(() => window.agentDesktop.onAppComposerBound?.(({ sessionId, context }) => {
+    const selection = { ...context, appId: context.providerId.split('/')[0], title: 'App 项目' };
+    composerDraftsRef.current[sessionId] = { ...(composerDraftsRef.current[sessionId] || { text: '', files: [] }), appSelection: selection };
+    if (activeSessionIdRef.current === sessionId) setAppSelection(selection);
+  }), []);
+
+  React.useEffect(() => window.agentDesktop.onAppPrepareComposer(payload => { enqueueAppSelection(async () => {
+    const appId = await addAppResourceOwner(payload.sessionId, payload.context.providerId);
+    const selection = { ...payload.context, appId, title:payload.title, route:payload.route, workspace:payload.workspace };
     composerDraftsRef.current[draftSessionKeyRef.current] = { text:inputDraftRef.current, files:composerAttachmentsRef.current, appSelection:appSelectionDraftRef.current };
+    if (payload.sessionId) {
+      const previous = composerDraftsRef.current[payload.sessionId];
+      composerDraftsRef.current[payload.sessionId] = { text: previous?.text || payload.prompt, files: previous?.files || [], appSelection: selection };
+      if (!await openSession(payload.sessionId)) return;
+      setAppSelection(selection);
+      setInput(previous?.text || payload.prompt);
+      return;
+    }
     composerDraftsRef.current.home = { text:payload.prompt, files:[], appSelection:selection };
     draftSessionKeyRef.current = 'home';
     if (!navigateToHome({ preserveIntent: true, preserveAgentMode: true })) return;
     setComposerAttachments([]);
     setSelectedAssistant(null);
     setAppDraftWorkspace(payload.workspace);
-    setAppSelection({ ...payload.context, appId: payload.appId, title: payload.title, route: payload.route, workspace: payload.workspace });
+    setAppSelection(selection);
     setInput(payload.prompt);
-  }), [navigateToHome]);
+  }); }), [navigateToHome, openSession, enqueueAppSelection, addAppResourceOwner]);
 
   const handleIterateExistingApp = React.useCallback(async (name: string) => {
-    const appBuilderAssistant = installedAssistants.find(a => a.name === 'app-builder-assistant');
-    if (appBuilderAssistant) {
-      setSelectedAssistant(appBuilderAssistant);
-    }
-
-    const ok = navigateToHome({ preserveIntent: true });
-    if (!ok) return;
-    await createAndOpenSession(`迭代 ${name}`, undefined, appBuilderAssistant?.name);
-
-    setSelectedAppName(name);
-    setComposerIntent('chat');
-    setActiveView('chat');
-  }, [navigateToHome, createAndOpenSession, installedAssistants]);
+    try { await window.agentDesktop.prepareAppAuthoring(name); }
+    catch (error) { showPermissionNotice(cleanIpcErrorMessage(String(error)), 'error', 6000); }
+  }, [showPermissionNotice]);
 
   const handleDeleteApp = React.useCallback(async (name: string, options: { deleteData?: boolean; deleteCredentials?: boolean } = {}) => {
     const result = await window.agentDesktop.deleteApp({ name, ...options });
@@ -2294,9 +2402,6 @@ export default function App() {
       showPermissionNotice(`App 回滚失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`, 'error', 6000);
       return;
     }
-    if (result?.app?.name) {
-      setSelectedAppName(result.app.name);
-    }
     await refreshApps();
     await loadAppVersions(name);
   }, [loadAppVersions, refreshApps, showPermissionNotice]);
@@ -2310,6 +2415,15 @@ export default function App() {
       setSettingsNotice(error?.message || String(error));
     }
   }, [applyDesktopSettings]);
+
+  React.useEffect(() => {
+    if (!desktopSettings || localStorage.getItem('ui.buddyVisibilityMigrated.v1')) return;
+    const old = localStorage.getItem('ui.buddyEnabled');
+    if (old === null) { localStorage.setItem('ui.buddyVisibilityMigrated.v1', 'done'); return; }
+    void window.agentDesktop.updateSettings({ appWidgets: { enabled: old !== 'false' } }).then(saved => {
+      applyDesktopSettings(saved); localStorage.setItem('ui.buddyVisibilityMigrated.v1', 'done');
+    }).catch(error => setSettingsNotice(error.message));
+  }, [Boolean(desktopSettings), applyDesktopSettings]);
 
   const autoSaveImageSettings = React.useCallback(async (image: DesktopSettings['image']) => {
     try {
@@ -2372,20 +2486,18 @@ export default function App() {
       }}
       onAppearancePreview={previewAppearance}
       onAppearanceCommit={saveAppearance}
-      buddyEnabled={isBuddyEnabled()}
-      onBuddyEnabledChange={(enabled) => {
-        setBuddyEnabled(enabled);
-        setForceBuddyUpdate((n) => n + 1);
-      }}
       workspace={activeDetail && activeDetail.agentMode !== 'remote-direct'
         ? activeDetail.workspace
         : undefined}
       initialSection={settingsInitialSection}
+      initialAppSettingId={settingsInitialAppId}
+      onOpenAppManagement={(name) => { setAppManagementName(apps.find(app => app.name === name)?.id || name); setActiveView('apps'); }}
     />
   );
 
   return (
-    <AppComposerContext.Provider value={{ selection: appSelection, select: setAppSelection }}>
+    <AppToolSelectionContext.Provider value={{ apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: (activeSessionId ? activeDetail?.agentMode !== 'remote-direct' : newSessionAgentMode === 'local'), pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
+    <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource }}>
     <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
       toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
@@ -2446,7 +2558,8 @@ export default function App() {
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
             onChangeView={(view) => {
-              if (view === 'settings') setSettingsInitialSection('basic-info');
+              if (view === 'settings') { setSettingsInitialSection('basic-info'); setSettingsInitialAppId(null); }
+              if (view === 'apps') setAppManagementName(null);
               setActiveView(view);
             }}
             onChangeTheme={handleThemeModeChange}
@@ -2500,6 +2613,7 @@ export default function App() {
               <EmbeddedAppView
                 key={`${embeddedAppName}:${embeddedAppRoute}:${embeddedAppRevision}`}
                 appName={embeddedAppName}
+                app={apps.find(app => app.name === embeddedAppName)}
                 workspace={activeDetail?.workspace}
                 route={embeddedAppRoute}
               />
@@ -2510,7 +2624,6 @@ export default function App() {
               <ChatArea
                 messages={chatMessages}
                 value={input}
-                selectedAppName={selectedAppName}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId))}
                 busyStartedAt={activeDetail?.busyStartedAt ?? null}
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
@@ -2569,6 +2682,7 @@ export default function App() {
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
+                  setSettingsInitialAppId(null);
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
@@ -2592,7 +2706,6 @@ export default function App() {
               <ChatArea
                 messages={[]}
                 value={input}
-                selectedAppName={selectedAppName}
                 loading={preparingNewSession}
                 hasActiveSession={false}
                 sessionTitle=""
@@ -2627,6 +2740,7 @@ export default function App() {
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
+                  setSettingsInitialAppId(null);
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
@@ -2642,7 +2756,7 @@ export default function App() {
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}
-              onOpenSettings={() => setActiveView('settings')}
+              onOpenSettings={() => { setSettingsInitialAppId(null); setActiveView('settings'); }}
             />
           ) : activeView === 'skills' || activeView === 'connectors' || activeView === 'experts' ? (
             <ResourceHubView
@@ -2667,6 +2781,7 @@ export default function App() {
             <AppsPanel
               apps={apps}
               versionsByApp={versionsByApp}
+              initialExpandedApp={appManagementName}
               onLaunch={handleLaunchApp}
               onDelete={handleDeleteApp}
               onIterate={handleIterateExistingApp}
@@ -2730,9 +2845,7 @@ export default function App() {
           </>
         )}
 
-        {isBuddyEnabled() && (
-          <BuddyCompanion key={forceBuddyUpdate} />
-        )}
+        <AppWidgetHost apps={apps} enabled={desktopSettings?.appWidgets?.enabled !== false} />
         <GlobalSessionSearch
           open={globalSearchOpen}
           onClose={() => setGlobalSearchOpen(false)}
@@ -2744,5 +2857,6 @@ export default function App() {
     </ToolDisplaySettingsProvider>
     </UserAvatarContext.Provider>
     </AppComposerContext.Provider>
+    </AppToolSelectionContext.Provider>
   );
 }

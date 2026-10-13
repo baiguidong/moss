@@ -32,17 +32,17 @@ function assistant(
 describe('assistant selection', () => {
   it('shows one entry for duplicate logical assistants and keeps the first source', () => {
     const selected = getSelectableInstalledAssistants([
-      assistant('app-builder-assistant', 'App 构建助手', '/assistants/app-builder'),
+      assistant('custom-helper', '自定义助手', '/assistants/custom-helper'),
       assistant('job-search', '求职冲刺', '/assistants/job-search'),
-      assistant('app-builder-assistant', 'App 构建助手', '/assistants/system/app-builder'),
+      assistant('custom-helper', '自定义助手', '/assistants/system/custom-helper'),
     ]);
 
     expect(selected.map((item) => item.name)).toEqual([
       'job-search',
-      'app-builder-assistant',
+      'custom-helper',
     ]);
-    expect(selected.find((item) => item.name === 'app-builder-assistant')?.source)
-      .toBe('/assistants/app-builder');
+    expect(selected.find((item) => item.name === 'custom-helper')?.source)
+      .toBe('/assistants/custom-helper');
   });
 
   it('excludes disabled assistants', () => {

@@ -2,6 +2,7 @@ import { contractDefinition } from '../../../packages/app-sdk/src/host/contracts
 import { AppServiceError, APP_ERROR_CODES } from '../../../packages/app-sdk/src/errors.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { openAppFilePreview } from './app-file-preview.mjs'
 
 export const LOCAL_FILES_PROTOCOL = 'moss.local-files/v1'
 export const RUNTIMES_PROTOCOL = 'moss.runtimes/v1'
@@ -20,7 +21,7 @@ async function appFile(input, context) {
   if (!(await fs.stat(file)).isFile()) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Expected a file')
   return file
 }
-export function createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeStatus }) {
+export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus }) {
   return {
     [RUNTIMES_PROTOCOL]: {
       'python.get': () => {
@@ -29,6 +30,14 @@ export function createLocalAppHostHandlers({ dialog, shell, getManagedRuntimeSta
       },
     },
     [LOCAL_FILES_PROTOCOL]: {
+      async preview(input, context) {
+        const file = await appFile(input, context)
+        if (!/\.html?$/i.test(file)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Preview requires an HTML file')
+        context.assertCurrent?.()
+        context.signal?.throwIfAborted()
+        await openAppFilePreview(BrowserWindow, file)
+        return { opened: true }
+      },
       async pick(input, context) {
         context?.assertCurrent?.()
         context?.signal?.throwIfAborted()

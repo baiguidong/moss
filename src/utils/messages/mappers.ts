@@ -82,6 +82,7 @@ export function toSDKCompactMetadata(
   return {
     trigger: meta.trigger,
     pre_tokens: meta.preTokens,
+    ...(meta.context && { context: meta.context }),
     ...(seg && {
       preserved_segment: {
         head_uuid: seg.headUuid,
@@ -102,6 +103,7 @@ export function fromSDKCompactMetadata(
   return {
     trigger: meta.trigger,
     preTokens: meta.pre_tokens,
+    ...(meta.context && { context: meta.context }),
     ...(seg && {
       preservedSegment: {
         headUuid: seg.head_uuid,

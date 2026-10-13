@@ -1,9 +1,13 @@
 {
   "name": "@moss/app-runtime",
-  "version": "3.0.0",
+  "version": "3.8.0",
   "type": "module",
   "types": "./src/index.d.mts",
   "exports": {
+    "./source": {
+      "types": "./src/packages/source.d.mts",
+      "import": "./src/packages/source.mjs"
+    },
     ".": {
       "types": "./src/index.d.mts",
       "import": "./src/index.mjs"
@@ -71,10 +75,14 @@
     "./cloud-storage": {
       "types": "./src/index.d.mts",
       "import": "./src/cloud-storage/index.mjs"
+    },
+    "./desktop-control": {
+      "types": "./src/desktop-control/session.d.mts",
+      "import": "./src/desktop-control/session.mjs"
     }
   },
   "dependencies": {
-    "@moss/app-sdk": "3.0.0",
+    "@moss/app-sdk": "3.8.0",
     "ajv": "^8.18.0",
     "semver": "^7.7.4"
   }

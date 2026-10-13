@@ -1,8 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { MonitorPlay, RefreshCcw } from "lucide-react";
+import { ArrowLeft, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AppToolbarActions } from '@/components/app-settings';
+import { useAppAuthoring } from '@/lib/app-authoring';
+import type { StoredApp } from '@/types';
 
 type EmbeddedAppSession = {
   embedId: string;
@@ -18,26 +21,30 @@ type EmbeddedAppSession = {
 
 export function EmbeddedAppView({
   appName,
+  app,
   route = '',
-  sessionId, workspace, compact = false,
+  sessionId, workspace, compact = false, widget = false,
 }: {
   appName: string;
+  app?: StoredApp;
   route?: string;
   sessionId?: string;
   workspace?: string;
   compact?: boolean;
+  widget?: boolean;
 }) {
   const webviewRef = React.useRef<any>(null);
-  const readyRef = React.useRef(false);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [reloadKey, setReloadKey] = React.useState(0);
+  const [settingsRoute, setSettingsRoute] = React.useState<string | null>(null);
+  const authoring = useAppAuthoring();
+  React.useEffect(() => { setSettingsRoute(null); }, [appName, route]);
 
   React.useEffect(() => {
     let cancelled = false;
     let embedIdToClose = "";
-    readyRef.current = false;
     setSession(null);
     setError("");
     setLoading(true);
@@ -57,7 +64,7 @@ export function EmbeddedAppView({
       }
       setSession({
         embedId: result.embedId,
-        url: route ? `${result.url.split('#', 1)[0]}${route}` : result.url,
+        url: result.url,
         preload: result.preload,
         app: result.app,
       });
@@ -81,7 +88,7 @@ export function EmbeddedAppView({
     const webview = webviewRef.current;
     if (!webview) return;
 
-    const handleLoad = () => { readyRef.current = true; setLoading(false); };
+    const handleLoad = () => { setLoading(false); };
     const handleFail = (event: any) => {
       if (event?.errorCode === -3) return;
       setError(event?.errorDescription || "App 页面加载失败");
@@ -99,18 +106,15 @@ export function EmbeddedAppView({
     };
   }, [session]);
 
-  React.useEffect(() => {
-    const webview = webviewRef.current;
-    if (session && webview && route && readyRef.current) {
-      const next = `${session.url.split('#', 1)[0]}${route}`;
-      if (webview.getURL() !== next) void webview.loadURL(next).catch((error:any) => setError(error.message));
-    }
-  }, [route, session, loading]);
+  // Keep the guest's requested URL in sync even while a previous navigation is
+  // loading. Comparing getURL() would miss a quick return to the current route.
+  const activeRoute = settingsRoute ?? route;
+  const viewUrl = session && activeRoute ? `${session.url.split('#', 1)[0]}${activeRoute}` : session?.url;
   const title = session?.app?.displayName || appName;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      {!compact && <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 px-4">
+    <div className={`flex h-full min-h-0 flex-col ${widget ? 'bg-transparent' : 'bg-background'}`}>
+      {!widget && !compact && <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 px-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <MonitorPlay className="h-4 w-4" />
         </div>
@@ -120,18 +124,17 @@ export function EmbeddedAppView({
             {session?.app?.description || "App"}
           </div>
         </div>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5 rounded-xl px-2.5 text-xs" onClick={() => setReloadKey((value) => value + 1)}>
-          <RefreshCcw className="h-3.5 w-3.5" />
-          刷新
-        </Button>
+        {(authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} variant="outline" size="sm" onClick={() => { void window.agentDesktop.prepareAppAuthoring(appName).catch(error => setError(error.message)); }}>迭代</Button>}
+        {settingsRoute !== null && <Button variant="ghost" size="sm" onClick={() => setSettingsRoute(null)}><ArrowLeft className="h-3.5 w-3.5" />返回应用</Button>}
+        <AppToolbarActions app={app} onRefresh={() => setReloadKey(value => value + 1)} onOpenSettings={setSettingsRoute} />
       </div>
       }
-      <div className="relative min-h-0 flex-1 bg-background">
+      <div className={`relative min-h-0 flex-1 ${widget ? 'bg-transparent' : 'bg-background'}`}>
         {session && (
           <webview
             key={session.embedId}
             ref={webviewRef}
-            src={session.url}
+            src={viewUrl}
             preload={session.preload}
             className="h-full w-full"
           />

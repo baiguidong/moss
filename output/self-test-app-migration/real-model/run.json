@@ -1,0 +1,173 @@
+{
+  "id": "c7c72863-1590-4c5b-ac29-4d3cfceff2dd",
+  "phase": "completed",
+  "message": "所有所选测试项通过。 测试实例和数据已保留，可直接查看。",
+  "appVersion": "40.8.3",
+  "selfTestAppVersion": "0.1.0",
+  "appearance": {
+    "themeMode": "light",
+    "cssThemeId": "grid-theme",
+    "toolDisplayMode": "merged",
+    "chatFontSize": 16,
+    "chatLineHeight": 1.6,
+    "chatMessageSpacing": 12,
+    "showAssistantMessageBorder": false,
+    "showAssistantAvatar": false
+  },
+  "catalogRevision": "15e979ca203048d2e9517a2b9f99ee47aa10365dfdb9f39e24ed9acff6dba94d",
+  "model": "gpt-5.5",
+  "permissionMode": "bypassPermissions",
+  "preparation": {
+    "stage": "controller",
+    "label": "测试窗口已就绪，正在创建 AI 控制会话…",
+    "updatedAt": 1791779188246
+  },
+  "directory": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd",
+  "home": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/target/home",
+  "evidenceDir": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd/evidence",
+  "fixturePath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/target/home/self-test-workspace/self-test-note.txt",
+  "reportPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd/report.json",
+  "startedAt": 1791779185663,
+  "finishedAt": 1791779388981,
+  "reportHtmlPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd/report.html",
+  "sessionId": "e949afad-46f3-4640-9d87-d5d4884e2131",
+  "cases": [
+    {
+      "id": "startup",
+      "title": "启动与主界面",
+      "default": true,
+      "requiresModel": false,
+      "prerequisites": [
+        "独立测试实例已启动"
+      ],
+      "steps": [
+        "选择带本轮标识的 Moss 主页面，等待加载完成。",
+        "读取页面并截图，检查侧栏、新建会话入口和消息输入区域。"
+      ],
+      "expected": [
+        "主界面正常显示，没有白屏或启动错误覆盖层。",
+        "新建会话和设置入口可见且可交互。"
+      ]
+    },
+    {
+      "id": "apps-list",
+      "title": "继承应用与分类筛选",
+      "default": true,
+      "requiresModel": false,
+      "prerequisites": [
+        "主界面可以交互；已继承主 Moss 的 App 安装及配置，提示中附有继承清单"
+      ],
+      "steps": [
+        "进入应用管理的已安装列表，对照继承清单检查应用及启用状态。不要把应用市场的可安装条目当成已安装应用。",
+        "使用列表上方的 App 分类页签，选择至少两个现有分类（不足两个时选择现有分类），核对选中状态、卡片数量和分类；再切回“全部”。没有已安装 App 时检查空状态。当前界面通过分类筛选，不要求不存在的名称搜索框。",
+        "返回聊天界面。"
+      ],
+      "expected": [
+        "已安装列表包含继承清单中的 App，启用状态一致，没有一直加载或错误覆盖层；仅继承清单为空时可接受空状态。",
+        "分类切换后只显示对应分类的 App，页签选中状态和数量正确；切回“全部”恢复全部已安装 App。返回聊天界面后仍可操作；空安装环境应显示明确空状态。"
+      ]
+    },
+    {
+      "id": "chat-response",
+      "title": "真实模型收发消息",
+      "default": true,
+      "requiresModel": true,
+      "prerequisites": [
+        "主 Moss 已配置可用文本模型；本项会产生模型调用"
+      ],
+      "steps": [
+        "新建测试会话，发送：自测 c7c72863，请只回复 MOSS_SELF_TEST_OK。",
+        "等待最多 180 秒，观察发送中状态、真实 AI 回复和结束状态。必须在 AI 消息中看到回复，输入框或用户消息中的相同文字不能算通过。",
+        "离开再回到该会话，检查双方消息仍存在并截图。"
+      ],
+      "expected": [
+        "用户消息显示，AI 回复包含 MOSS_SELF_TEST_OK 且没有模型错误。",
+        "回复结束后输入区域恢复可发送，重新打开会话后双方消息仍存在。"
+      ]
+    }
+  ],
+  "results": {
+    "startup": {
+      "status": "passed",
+      "checks": [
+        {
+          "index": 0,
+          "passed": true,
+          "actual": "已选择 URL 含 moss-self-test=5f60f4ed-8656-43bf-be9a-9ccca35a6fb8 的 Moss 主页面。页面正常显示 Moss 主界面、侧栏、欢迎区和输入区；控制台无 error，仅 1 条 warning；未见白屏或启动错误覆盖层。"
+        },
+        {
+          "index": 1,
+          "passed": true,
+          "actual": "侧栏中的“新会话”按钮可见并已实际点击，仍保持正常主界面；底部“设置”入口可见并已实际点击，成功打开设置页面，说明入口可交互。"
+        }
+      ],
+      "evidence": [
+        "startup.png",
+        "startup-settings.png"
+      ],
+      "notes": "startup 项通过。实际步骤：列出并确认当前测试主页面 URL，读取主界面快照；截图 startup.png；点击“新会话”验证入口可交互；点击“设置”打开设置页并截图 startup-settings.png。",
+      "recordedAt": 1791779226533
+    },
+    "apps-list": {
+      "status": "passed",
+      "checks": [
+        {
+          "actual": "进入侧栏 Apps 已安装列表，页面标题显示 Apps 和“1 个已安装”。列表中显示继承清单对应 App“AI 自测”，版本 v0.1.0，提供 1 个 AI 工具，状态“运行中”，开关显示“已启用”；无一直加载或错误覆盖层。",
+          "index": 0,
+          "passed": true
+        },
+        {
+          "actual": "列表上方仅有两个分类页签：“全部 1”和“诊断与审计 1”。先观察“全部 1”选中时显示 1 个 App；点击“诊断与审计 1”后该页签选中且仍只显示 AI 自测 1 个 App；再切回“全部 1”，并点击“新会话”返回聊天界面，输入区和侧栏可继续操作。",
+          "index": 1,
+          "passed": true
+        }
+      ],
+      "evidence": [
+        "apps-list-all.png",
+        "apps-list-category.png",
+        "apps-list-return-chat.png"
+      ],
+      "notes": "apps-list 项通过。按本轮继承清单核对：moss.self-test 0.1.0 已安装且启用；分类筛选因仅有一个现有分类，按用例要求选择现有分类“诊断与审计”，再切回“全部”；最后返回聊天界面。",
+      "recordedAt": 1791779288129
+    },
+    "chat-response": {
+      "status": "passed",
+      "checks": [
+        {
+          "actual": "在新会话中发送“自测 c7c72863，请只回复 MOSS_SELF_TEST_OK。”后，侧栏新增本轮会话。消息区显示用户消息；其下方 AI 回复段落显示 MOSS_SELF_TEST_OK，控制台无 error，未见模型错误。",
+          "index": 0,
+          "passed": true
+        },
+        {
+          "actual": "AI 回复结束后输入框恢复为“继续输入...”状态，发送按钮因输入为空而禁用，表示可继续输入并发送。切换到“自测样例”会话后再切回本轮会话，用户消息与 AI 回复仍存在，本轮会话在侧栏保持选中。",
+          "index": 1,
+          "passed": true
+        }
+      ],
+      "evidence": [
+        "chat-response-reply.png",
+        "chat-response-reopened.png"
+      ],
+      "notes": "chat-response 项通过。通过真实界面创建新会话、发送消息并等待 AI 回复；MOSS_SELF_TEST_OK 出现在 AI 回复段落中，不是用户消息或输入框内容。随后切换离开并返回，会话内容保持。",
+      "recordedAt": 1791779387697
+    }
+  },
+  "engineVersion": "0.0.83",
+  "targetId": "5f60f4ed-8656-43bf-be9a-9ccca35a6fb8",
+  "inheritedApps": [
+    {
+      "id": "moss.self-test",
+      "version": "0.1.0",
+      "enabled": true,
+      "grants": [
+        "agent:permissions:bypass",
+        "local-files:open",
+        "testing:control"
+      ]
+    }
+  ],
+  "instanceLogPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/target/instance.log",
+  "endpoint": "http://127.0.0.1:54435",
+  "activeCaseId": null,
+  "disabled": false
+}

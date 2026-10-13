@@ -7,7 +7,6 @@ const SLASH_COMMANDS = [
   { name: "/clear", description: "清除对话历史" },
   { name: "/compact", description: "压缩对话上下文" },
   { name: "/model", description: "切换模型", args: "model" },
-  { name: "/effort", description: "设置推理强度", args: "effort" },
   { name: "/help", description: "显示帮助信息" },
   { name: "/cost", description: "查看当前会话费用" },
   { name: "/memory", description: "管理记忆" },
@@ -27,26 +26,12 @@ const MODEL_OPTIONS = [
   { value: "opus-4-6", label: "Opus 4.6", description: "最新 Opus" },
 ];
 
-const EFFORT_OPTIONS = [
-  { value: "low", label: "low", description: "快速、简洁的实现" },
-  { value: "medium", label: "medium", description: "平衡方式" },
-  { value: "high", label: "high", description: "全面实现，充分测试" },
-  { value: "max", label: "max", description: "最强推理（仅 Opus）" },
-  { value: "auto", label: "auto", description: "模型默认" },
-];
-
 const COMMANDS_WITH_ARGS: Record<string, { name: string; description: string; args: string; optionList: { value: string; label: string; description: string }[] }> = {
   model: {
     name: "/model",
     description: "切换模型",
     args: "model",
     optionList: MODEL_OPTIONS,
-  },
-  effort: {
-    name: "/effort",
-    description: "设置推理强度",
-    args: "effort",
-    optionList: EFFORT_OPTIONS,
   },
 };
 

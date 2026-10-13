@@ -12,7 +12,7 @@ export const DEFAULT_AGENT_CHANNEL_POLICY = Object.freeze({
 
 const REPLY_MODES = new Set(['human_only', 'ai_auto', 'ai_draft_review', 'mention_only', 'inherit']);
 const SESSION_MODES = new Set(['fixed', 'rotating', 'new_each_turn']);
-const PERMISSION_MODES = new Set(['default', 'acceptEdits', 'dontAsk']);
+const PERMISSION_MODES = new Set(['bypassPermissions', 'default', 'acceptEdits', 'dontAsk']);
 const TURN_TRANSITIONS = Object.freeze({
   received: new Set(['human', 'queued', 'failed', 'cancelled']),
   queued: new Set(['running', 'failed', 'cancelled']),
@@ -182,7 +182,7 @@ function narrowResources(base, override) {
 
 function narrowPermissionMode(base, override) {
   if (!override) return base;
-  const safetyRank = { dontAsk: 0, default: 1, acceptEdits: 2 };
+  const safetyRank = { dontAsk: 0, default: 1, acceptEdits: 2, bypassPermissions: 3 };
   return safetyRank[override] < safetyRank[base] ? override : base;
 }
 

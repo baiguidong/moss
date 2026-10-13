@@ -1,10 +1,14 @@
 "use client";
 
 import * as React from "react";
-import DOMPurify from "dompurify";
+import { AppIcon } from "@/components/app-icon";
+import { AppSettingsButton } from '@/components/app-settings';
+import { AppCategoryTabs } from '@/components/app-category-tabs';
+import { filterApps, groupApps } from '@/lib/app-categories';
+import { appPageUnavailableReason, getAppPrimaryEntry } from '@/lib/app-navigation';
 import {
   AlertCircle, Download, ExternalLink, History,
-  KeyRound, MonitorPlay, Pencil, RefreshCw, RotateCcw,
+  KeyRound, Pencil, RefreshCw, RotateCcw,
   Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
 import { AppInstallProgressView } from "@/components/app-install-progress";
+import { useAppAuthoring } from '@/lib/app-authoring';
 import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
@@ -20,22 +25,11 @@ function formatTimestamp(timestamp: number) {
   return new Date(timestamp).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function AppIcon({ icon }: { icon: string }) {
-  if (!icon?.startsWith("data:image/")) {
-    return <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary"><MonitorPlay className="h-5 w-5" /></div>;
-  }
-  if (icon.startsWith("data:image/svg+xml")) {
-    const [metadata, payload = ""] = icon.split(",", 2);
-    const rawSvg = metadata.includes(";base64") ? atob(payload) : decodeURIComponent(payload);
-    const svg = DOMPurify.sanitize(rawSvg, { USE_PROFILES: { svg: true, svgFilters: true } });
-    return <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md" dangerouslySetInnerHTML={{ __html: svg }} />;
-  }
-  return <img className="h-10 w-10 shrink-0 rounded-md object-cover" src={icon} alt="" />;
-}
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }) {
+  // Keep the hidden focus target inside the list's scrollable content.
   return (
-    <label className={`inline-flex items-center gap-2 text-xs ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+    <label className={`relative inline-flex items-center gap-2 text-xs ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
       <input className="peer sr-only" type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       <span className="relative h-5 w-9 rounded-full bg-muted transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow after:transition-transform peer-checked:after:translate-x-4" />
       <span>{label}</span>
@@ -230,8 +224,14 @@ function SchemaFields({ schema, value, secrets, configured, onChange }: {
   );
 }
 
-function statusLabel(state?: string) {
-  return ({ running: "运行中", starting: "启动中", stopping: "停止中", stopped: "已停止", error: "错误", "crash-loop": "反复崩溃" } as Record<string, string>)[state || "stopped"] || state;
+function statusLabel(state: string, app: StoredApp) {
+  const instance = app.instances?.[0];
+  if (state === "stopped" && app.backend?.lifecycle === "on-demand"
+    && app.enabled && instance?.enabled && !app.runtimeStatus?.error
+    && !missingRequiredConfiguration(app, instance).length) {
+    return "按需运行";
+  }
+  return ({ running: "运行中", starting: "启动中", stopping: "停止中", stopped: "已停止", error: "错误", "crash-loop": "反复崩溃" } as Record<string, string>)[state] || state;
 }
 
 function errorMessage(error: unknown) {
@@ -322,24 +322,29 @@ export function AppAgentTools({ app }: { app: StoredApp }) {
   </div>;
 }
 
-export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh }: {
+export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp }: {
   apps: StoredApp[];
   versionsByApp: Record<string, AppVersion[]>;
-  onLaunch: (name: string) => void;
+  onLaunch: (name: string, options?: { settings?: boolean; route?: string }) => void;
+  initialExpandedApp?: string | null;
   onDelete: (name: string, options?: { deleteData?: boolean; deleteCredentials?: boolean }) => void;
   onIterate: (name: string) => void;
   onLoadVersions: (name: string) => void;
   onRollback: (name: string, versionId: string) => void;
   onRefresh: () => Promise<unknown>;
 }) {
-  const [expanded, setExpanded] = React.useState<string | null>(null);
+  const [expanded, setExpanded] = React.useState<string | null>(initialExpandedApp || null);
+  React.useEffect(() => { if (initialExpandedApp) setExpanded(initialExpandedApp); }, [initialExpandedApp]);
+  const authoring = useAppAuthoring();
   const [versionsOpen, setVersionsOpen] = React.useState<string | null>(null);
   const [marketOpen, setMarketOpen] = React.useState(false);
+  const [category, setCategory] = React.useState('all');
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
   const { progress, clearProgress } = useAppInstallProgress("local");
   const localProgress = progress.local;
   const installing = busy === "install" || isAppInstallActive(localProgress);
+  const visibleApps = groupApps(filterApps(apps, '', category)).flatMap(group => group.apps);
 
   const run = async (key: string, operation: () => Promise<unknown>) => {
     setBusy(key);
@@ -363,21 +368,26 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div><h1 className="text-lg font-semibold">Apps</h1><div className="text-xs text-muted-foreground">{apps.length} 个已安装 App</div></div>
+      <div data-app-header className="shrink-0 border-b border-border/70">
+      <div className="mx-auto flex h-12 w-full max-w-[1180px] items-center justify-between gap-3 px-4 sm:px-5">
+        <div className="flex items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="text-xs text-muted-foreground">{apps.length} 个已安装</span></div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />应用市场</Button>
-          <Button size="sm" disabled={installing} onClick={install}><Download className="h-4 w-4" />{installing ? "安装中…" : "本地安装"}</Button>
+          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" />应用市场</Button>
+          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={installing} onClick={install}><Download className="h-3.5 w-3.5" />{installing ? "安装中…" : "本地安装"}</Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
+        <AppCategoryTabs apps={apps} value={category} onChange={setCategory} panelId="installed-apps" />
         {localProgress && <div className="mb-4"><AppInstallProgressView progress={localProgress} /></div>}
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
-        {apps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">暂无 App</div>
+        <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-2">
+        {visibleApps.length === 0 ? (
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{apps.length ? '没有匹配的 App' : '暂无 App'}</div>
         ) : (
-          <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-            {apps.map((app) => {
+          <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
+            {visibleApps.map((app) => {
               const appId = app.id || app.name;
               const isExpanded = expanded === appId;
               const state = app.runtimeStatus?.state || "stopped";
@@ -386,41 +396,45 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const permissions = app.permissions || [];
               const enabled = isAppEnabled(app);
               const packageUnavailable = app.packageStatus === "incompatible" || app.packageStatus === "invalid";
+              const primaryEntry = getAppPrimaryEntry(app);
+              const auxiliaryUi = app.hasUi && app.navigation?.location === 'none';
+              const openReason = primaryEntry?.unavailableReason || appPageUnavailableReason(app);
               const packageNotice = app.packageStatus === "incompatible"
                 ? `当前安装的 v${app.currentVersion || "-"}${app.requiredHostApi ? ` 需要 Host API ${app.requiredHostApi}` : ""}，与此版本 Moss 不兼容，请更新到兼容版本。`
                 : app.packageStatus === "invalid"
                   ? "当前安装包不可用，请重新安装或更新版本。"
                   : "";
               return (
-                <section key={appId} className={`flex min-w-0 flex-col rounded-md border border-border bg-card p-4 ${isExpanded ? "xl:order-first xl:col-span-2 2xl:col-span-3" : ""}`}>
-                  <div className="flex items-start gap-3">
-                    <AppIcon icon={app.icon} />
-                    <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
+                <section key={appId} data-app-category={app.category || 'other'} className={`flex min-w-0 flex-col rounded-lg border border-border/70 bg-card/80 p-3 transition-colors hover:border-border ${isExpanded ? "lg:col-span-2 2xl:col-span-3" : ""}`}>
+                  <div className="flex items-start gap-2.5">
+                    <AppIcon icon={app.icon} className="h-9 w-9 rounded-lg" />
+                    <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h3><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
                     <div className="grid justify-items-end gap-2">
                       <Toggle checked={enabled} disabled={busy === appId || packageUnavailable} label={enabled ? "已启用" : "已停用"} onChange={(nextEnabled) => void run(appId, () => setAppEnabled(app, nextEnabled))} />
                     </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                    <span>v{app.currentVersion || "-"}</span>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                    <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
                     {Boolean(app.agentTools?.length) && <span>提供 {app.agentTools!.length} 个 AI 工具</span>}
-                    <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>
-                    {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state)}</span>}
-                    <span>{formatTimestamp(app.updatedAt)}</span>
+                    {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>}
+                    {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
+                    {isExpanded && <span>{formatTimestamp(app.updatedAt)}</span>}
                   </div>
                   {packageUnavailable && <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{packageNotice}</div>}
                   {!packageUnavailable && app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
-                  <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                    {app.hasUi && <Button
+                  <div className="mt-auto flex flex-wrap gap-1.5 pt-2.5">
+                    {(primaryEntry || auxiliaryUi) && <Button
                       size="sm"
                       className="h-8"
                       data-app-open={appId}
-                      disabled={packageUnavailable || !app.enabled}
-                      title={packageUnavailable ? packageNotice : app.enabled ? "打开 App" : "请先启用 App"}
+                      disabled={Boolean(openReason)}
+                      title={!app.enabled && !packageUnavailable ? '请先启用 App' : openReason || (primaryEntry?.location === 'settings' ? '打开应用设置' : '打开 App')}
                       onClick={() => onLaunch(app.name)}
-                    ><ExternalLink className="h-4 w-4" />{packageUnavailable ? "不可用" : app.enabled ? "打开" : "请先启用"}</Button>}
+                    ><ExternalLink className="h-4 w-4" />{packageUnavailable ? "不可用" : !app.enabled ? "请先启用" : '打开'}</Button>}
+                    {!packageUnavailable && <AppSettingsButton app={app} onOpenSettings={route => onLaunch(app.name, { settings: true, route })} />}
                     {packageUnavailable && <Button size="sm" className="h-8" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />更新版本</Button>}
                     {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>}
-                    {!packageUnavailable && <Button size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
+                    {(authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {
                       if (!window.confirm(`卸载“${app.displayName || app.name}”？`)) return;
@@ -432,7 +446,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   {isExpanded && (
                     <div className="mt-4 border-t border-border pt-3">
                       {app.hasBackend && (app.instances?.[0]
-                        ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name)} />
+                        ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name, { settings: true })} />
                         : <div className="py-3 text-xs text-muted-foreground">后台服务尚未就绪</div>)}
                       {permissions.length ? (
                         <div className="mt-3 border-t border-border pt-3">
@@ -467,6 +481,8 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
             })}
           </div>
         )}
+        </div>
+      </div>
       </div>
     </div>
   );

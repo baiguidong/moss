@@ -99,7 +99,7 @@ export async function execAgentHook(
       // or entering plan mode, and filter out duplicate StructuredOutput tools
       const tools: Tool[] = [
         ...filteredTools.filter(
-          tool => !ALL_AGENT_DISALLOWED_TOOLS.has(tool.name),
+          tool => !tool.requiresInteractiveMainSession && !ALL_AGENT_DISALLOWED_TOOLS.has(tool.name),
         ),
         structuredOutputTool,
       ]

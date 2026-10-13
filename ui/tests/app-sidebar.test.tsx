@@ -115,6 +115,7 @@ describe('app sidebar resource navigation', () => {
   test('creates one entry per App and opens its first authorized view by order', () => {
     const configured = {
       ...app,
+      icon: 'data:image/png;base64,aWNvbg==',
       contributes: { views: [
         { id: 'second', title: 'Second', route: '#/second', order: 10 },
         { id: 'restricted', title: 'Restricted', route: '#/admin', order: -10, permission: 'admin:read' },
@@ -122,7 +123,7 @@ describe('app sidebar resource navigation', () => {
       ] },
     };
     expect(getSidebarMoreApps([configured])).toEqual([
-      { id: app.id, name: app.name, title: 'Example', route: '#/home' },
+      { id: app.id, name: app.name, title: 'Example', route: '#/home', icon: configured.icon },
     ]);
     expect(getSidebarMoreApps([{ ...configured, grants: ['admin:read'] }])[0].route).toBe('#/admin');
   });

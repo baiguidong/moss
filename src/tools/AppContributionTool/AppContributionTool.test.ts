@@ -8,6 +8,8 @@ import {
 } from '../../Tool.js'
 import { hasPermissionsToUseTool } from '../../utils/permissions/permissions.js'
 import { toolToAPISchema } from '../../utils/api.js'
+import { filterToolsForAgent } from '../AgentTool/agentToolUtils.js'
+import { applyCoordinatorToolFilter } from '../../utils/toolPool.js'
 import {
   createAppContributionTool,
   createAppContributionTools,
@@ -45,6 +47,43 @@ function contextWith(
 }
 
 describe('App Contribution Tool', () => {
+  it('preserves native image/error results and full instructions through the generic tool', async () => {
+    const tool = createAppContributionTool({ ...descriptor('write'), instructionsText: 'Full observation instructions', hostPermissionManaged: true })
+    expect(await tool.prompt({} as any)).toContain('Full observation instructions')
+    expect(await tool.checkPermissions!({ query: 'test' } as any, {} as any)).toMatchObject({ behavior: 'allow' })
+    expect(tool.isReadOnly({} as any)).toBe(false)
+    expect(applyCoordinatorToolFilter([tool])).toEqual([tool])
+    expect(filterToolsForAgent({tools:[tool],isBuiltIn:true})).toEqual([])
+    const output = tool.mapToolResultToToolResultBlockParam({ format:'moss.tool-result/v1', isError:true,
+      content:[{type:'text',text:'Observe again'}, {type:'image',mimeType:'image/png',data:'base64'}] }, 'native-1')
+    expect(output).toMatchObject({ is_error:true, content:[{type:'text',text:'Observe again'}, {type:'image',source:{type:'base64',media_type:'image/png',data:'base64'}}] })
+    let called = false
+    await expect(tool.call({query:'test'}, {agentId:'worker', emitAppEvent:() => { called = true }} as any, null as any, null as any)).rejects.toThrow('main session')
+    expect(called).toBe(false)
+  })
+  it('checks the exact build command through the ordinary Agent permission callback and rejects substitutions', async () => {
+    const tool = createAppContributionTool(descriptor('write'))
+    let authorize: ((command: string) => Promise<void>) | undefined
+    const context = contextWith(async event => {
+      if (event.type === 'app_tool_invoke') authorize = event.authorizeCommand
+      return { ok: true, result: {} }
+    })
+    const parent = { type: 'assistant', message: { content: [] } } as any
+    const decisions: unknown[] = []
+    const policy = async (commandTool: any, input: any, source: any, message: any) => {
+      decisions.push({ name: commandTool.name, input, source, message })
+      return { behavior: 'allow', updatedInput: input } as const
+    }
+    await tool.call({ query: 'build' }, context, policy as any, parent)
+    await authorize!("cd '/workspace/app' && npm run build")
+    expect(decisions).toMatchObject([{ name: 'Bash', input: { command: "cd '/workspace/app' && npm run build" }, source: context, message: parent }])
+    await tool.call({ query: 'build' }, context, (async () => ({ behavior: 'deny' })) as any, parent)
+    await expect(authorize!('npm run build')).rejects.toThrow('denied')
+    await tool.call({ query: 'build' }, context, (async () => ({ behavior: 'allow', updatedInput: { command: 'different' } })) as any, parent)
+    await expect(authorize!('npm run build')).rejects.toThrow('changed')
+    await tool.call({ query: 'build' }, context, null as any, parent)
+    await expect(authorize!('npm run build')).rejects.toThrow('unavailable')
+  })
   it('uses the declared JSON schema and invokes the qualified contribution', async () => {
     let emitted: MossAppEvent | null = null
     const context = contextWith(async (event) => {

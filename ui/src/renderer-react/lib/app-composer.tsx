@@ -5,7 +5,7 @@ export type AppComposerResource = {
   appId: string;
   title: string;
   description?: string;
-  ref?: { workflowId: string; revision: number };
+  ref?: Record<string, unknown>;
   intent?: 'create' | 'edit' | 'use';
   route?: string;
   scope?: string;

@@ -28,3 +28,20 @@ test('Generic local Host picks files/directories and confines open/reveal to the
     expect(() => createRuntimesProtocolDefinition().methods['python.get'].validateInput({ sessionId: 'x' })).toThrow()
   } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+test('HTML preview rejects other Apps, escaping links, unsupported files, and canceled callers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moss-app-preview-'))
+  try {
+    const dataDir = join(root, 'app'); await mkdir(dataDir)
+    const file = join(dataDir, 'report.html'), outside = join(root, 'outside.html'), text = join(dataDir, 'report.md')
+    await writeFile(file, '<h1>Report</h1>'); await writeFile(outside, 'outside'); await writeFile(text, 'text')
+    await symlink(outside, join(dataDir, 'escape.html'))
+    const local = createLocalAppHostHandlers({})[LOCAL_FILES_PROTOCOL]
+    await expect(local.preview({ path: outside }, { dataDir })).rejects.toThrow('outside')
+    await expect(local.preview({ path: join(dataDir, 'escape.html') }, { dataDir })).rejects.toThrow('outside')
+    await expect(local.preview({ path: text }, { dataDir })).rejects.toThrow('HTML')
+    const signal = AbortSignal.abort(new Error('caller canceled'))
+    await expect(local.preview({ path: file }, { dataDir, signal })).rejects.toThrow('caller canceled')
+    await expect(local.preview({ path: file }, { dataDir, assertCurrent() { throw new Error('revoked') } })).rejects.toThrow('revoked')
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

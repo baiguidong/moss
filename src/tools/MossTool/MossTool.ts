@@ -250,107 +250,6 @@ function createMossTool<InputSchema extends MossInputSchema>(
   } satisfies ToolDef<InputSchema, MossOutput>)
 }
 
-const appBuildSchema = z.strictObject({
-  name: z.string().min(1).describe('App slug/name. The manifest must exist at apps/{name}/app.moss.json.'),
-})
-
-export const AppBuildTool = createMossTool({
-  name: 'app_build',
-  description: 'Build a Moss App from apps/{name}/app.moss.json in the current session workspace and return its build directory.',
-  searchHint: 'build compile Moss app',
-  inputSchema: appBuildSchema,
-  event: input => ({ type: 'app_build', input: { kind: 'app', name: input.name } }),
-  userFacingName: 'App 构建',
-})
-
-const appPreviewSchema = z.strictObject({
-  buildDir: z.string().min(1).describe('Path to the App build directory, usually apps/{name}/build.'),
-})
-
-export const AppPreviewTool = createMossTool({
-  name: 'app_preview',
-  description: 'Preview a built Moss App.',
-  searchHint: 'preview built Moss app',
-  inputSchema: appPreviewSchema,
-  event: input => ({ type: 'app_preview', input: { kind: 'app', buildDir: input.buildDir } }),
-  readOnly: true,
-  userFacingName: 'App 预览',
-})
-
-const appPublishSchema = z.strictObject({
-  name: z.string().min(1).describe('App slug/name.'),
-  buildDir: z.string().min(1).describe('Path to the App build directory.'),
-  description: z.string().min(1).describe('Published App description.'),
-  reason: z.string().optional().describe('Optional release reason.'),
-})
-
-export const AppPublishTool = createMossTool({
-  name: 'app_publish',
-  description: 'Publish a built Moss App to the local App list as a versioned package.',
-  searchHint: 'publish release Moss app',
-  inputSchema: appPublishSchema,
-  event: input => ({ type: 'app_publish', input: { kind: 'app', ...input } }),
-  userFacingName: 'App 发布',
-})
-
-const appLaunchSchema = z.strictObject({
-  name: z.string().min(1).describe('Installed App slug/name.'),
-})
-
-export const AppLaunchTool = createMossTool({
-  name: 'app_launch',
-  description: 'Open an installed Moss App.',
-  searchHint: 'open launch installed app',
-  inputSchema: appLaunchSchema,
-  event: input => ({ type: 'app_launch', input }),
-  readOnly: true,
-  userFacingName: 'App 打开',
-})
-
-const appUpdateSchema = z.strictObject({
-  name: z.string().min(1).describe('Installed App slug/name.'),
-  buildDir: z.string().min(1).describe('Path to the new App build directory.'),
-  description: z.string().optional().describe('Updated App description.'),
-  reason: z.string().optional().describe('Reason for this update.'),
-})
-
-export const AppUpdateTool = createMossTool({
-  name: 'app_update',
-  description: 'Publish a new version of an installed Moss App from a build directory.',
-  searchHint: 'update release installed app',
-  inputSchema: appUpdateSchema,
-  event: input => ({ type: 'app_update', input: { kind: 'app', ...input } }),
-  userFacingName: 'App 更新',
-})
-
-const appExtractSchema = z.strictObject({
-  name: z.string().min(1).describe('Installed App slug/name.'),
-  versionId: z.string().optional().describe('Specific App version to extract. Defaults to the active version.'),
-})
-
-export const AppExtractToWorkspaceTool = createMossTool({
-  name: 'app_extract_to_workspace',
-  description: 'Extract an installed Moss App version into the current session workspace.',
-  searchHint: 'extract app source workspace',
-  inputSchema: appExtractSchema,
-  event: input => ({ type: 'app_extract_to_workspace', input: { kind: 'app', ...input } }),
-  userFacingName: 'App 提取',
-})
-
-const appGetVersionsSchema = z.strictObject({
-  name: z.string().min(1).describe('Installed App slug/name.'),
-})
-
-export const AppGetVersionsTool = createMossTool({
-  name: 'app_get_versions',
-  description: 'List the version history of an installed Moss App.',
-  searchHint: 'list app version history',
-  inputSchema: appGetVersionsSchema,
-  event: input => ({ type: 'app_get_versions', input }),
-  readOnly: true,
-  userFacingName: 'App 版本',
-})
-
 const browserOpenSchema = z.strictObject({
   url: z.string().min(1).optional().describe('URL to open only in the Moss embedded browser for manual viewing.'),
   query: z.string().min(1).optional().describe('Search query to open only in the Moss embedded browser for manual viewing.'),
@@ -362,11 +261,12 @@ const browserOpenSchema = z.strictObject({
 export const MossBrowserOpenTool = createMossTool({
   name: 'moss_browser_open',
   supportedEnvironments: ['desktop', 'server'],
-  description: 'Open a URL or search query ONLY in the Moss embedded browser panel for the user to view and interact with manually. For automated navigation, screenshots, clicks, or typing, use the playwright-cdp MCP tools.',
+  description: 'Open a URL or search query ONLY in the Moss embedded browser panel for the user to view and interact with manually. For automated navigation, screenshots, clicks, or typing, use the Browser Use App’s Playwright MCP tools.',
   prompt: [
     'Open a URL or search query ONLY in the Moss embedded right-side browser for manual viewing. Provide either url or query.',
-    'This tool cannot open system Chrome, enable CDP, read page contents, take screenshots, click, or type. Moss browser tabs are separate from the browser controlled by playwright-cdp; opening a Moss tab does not make it available to CDP tools.',
-    'For browser automation, use ToolSearch to discover browser_navigate from the playwright-cdp MCP service and use that service for navigation and all subsequent page operations. Never call moss_browser_open to prepare a page for CDP. If the browser MCP service is unavailable, report that it needs to be enabled; this tool is not an automation fallback.',
+    'This tool cannot open system Chrome, enable CDP, read page contents, take screenshots, click, or type. Moss browser tabs are separate from the Chrome browser controlled by the Browser Use App; opening a Moss tab does not make it available to CDP tools.',
+    'For browser automation, use ToolSearch to discover browser_navigate from the enabled Browser Use App (moss.browser-use, MCP service moss_browser_use__playwright-cdp) and use that service for navigation and all subsequent page operations. Never call moss_browser_open to prepare a page for CDP. If the browser MCP service is unavailable, ask the user to install or enable the Browser Use App; this tool is not an automation fallback.',
+    'Browser Use offers a managed Chrome for Testing with a persistent profile (default), or a Playwright extension connection to the user’s daily Chrome, selectable in the App settings. The managed browser has a separate application identity and reuses one instance. Never launch the user’s system Chrome with an automation user-data-dir, copy their personal profile, or restart their browser with remote-debugging flags. For daily Chrome, guide the user through extension setup if needed; the App can store an optional extension token for subsequent connections.',
     'Use engine "baidu" when the user asks for Baidu or requests a Chinese search without naming another engine.',
     'When this returns ok, do not repeat the call merely because the user cannot see the panel; explain that the Moss browser panel is on the right and provide the exact URL.',
   ].join(' '),
@@ -453,13 +353,6 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
 
 export const MossTools = [
   MossBrowserOpenTool,
-  AppBuildTool,
-  AppPreviewTool,
-  AppPublishTool,
-  AppLaunchTool,
-  AppUpdateTool,
-  AppExtractToWorkspaceTool,
-  AppGetVersionsTool,
   ConnectorCliSetupTool,
   ConnectorMcpAuthenticateTool,
 ] as const

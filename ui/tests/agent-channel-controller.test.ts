@@ -511,3 +511,20 @@ describe('Agent Channel controller', () => {
     expect(result.turn.deliveredAt).toBeNumber()
   })
 })
+
+it('requires an explicit grant for unrestricted Channel execution and honors revocation',()=>{
+  const result=runControllerScenario(`
+    const f=setup();
+    const patch={replyMode:'ai_auto',permissionMode:'bypassPermissions',resources:{tools:null,skills:null,connectors:null}};
+    let rejected=false;
+    try{await f.controller.handleAgentRequest('binding.update',{externalConversationId:'pet',expectedRevision:0,patch},f.context)}catch{rejected=true}
+    const granted={...f.context,grants:['agent:permissions:bypass']};
+    await f.controller.handleAgentRequest('binding.update',{externalConversationId:'pet',expectedRevision:0,patch},granted);
+    const accepted=await f.controller.handleAgentRequest('turn.start',{externalConversationId:'pet',externalUserId:'owner',externalEventId:'one',text:'hello',source:'human'},granted);
+    await waitFor(()=>f.store.getTurn(accepted.turnId).status==='completed');
+    let revoked=false;
+    try{await f.controller.handleAgentRequest('turn.start',{externalConversationId:'pet',externalUserId:'owner',externalEventId:'two',text:'hello',source:'human'},f.context)}catch{revoked=true}
+    console.log(JSON.stringify({rejected,revoked,mode:f.promptOptions[0].policy.permissionMode,tools:f.promptOptions[0].policy.resources.tools}));f.db.close();
+  `)
+  expect(result).toEqual({rejected:true,revoked:true,mode:'bypassPermissions',tools:null})
+})

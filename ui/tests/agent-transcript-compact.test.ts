@@ -56,3 +56,19 @@ describe('compact transcript markers', () => {
       .toEqual([expect.objectContaining({ content: '已压缩上下文' })]);
   });
 });
+
+it('retains distinct compact anchors across history insertion, replay and legacy summaries', () => {
+  const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'b1', compact_metadata: { trigger: 'auto', pre_tokens: 20 } };
+  const legacy = { type: 'user', uuid: 's1', isCompactSummary: true, message: { content: 'old exact summary' } };
+  const history = [{ type: 'user', uuid: 'u1', prompt: 'hello' }, boundary, legacy, boundary,
+    { type: 'system', subtype: 'compact_boundary', uuid: 'b2', compactMetadata: { trigger: 'manual', context: { version: 1, entries: [{ id: 's2', kind: 'summary', role: 'user', content: 'second summary' }] } } },
+  ];
+  const messages = render(history);
+  const markers = messages.filter(message => message.type === 'system') as any[];
+  expect(markers.map(message => message.id)).toEqual(['compact:b1', 'compact:b2']);
+  expect(markers.map(message => message.compaction.number)).toEqual([1, 2]);
+  expect(markers[0].compaction.entries[0].content).toBe('old exact summary');
+  expect(markers[1].compaction.complete).toBe(true);
+  expect(messages.filter(message => message.type === 'user_text')).toHaveLength(1);
+  expect(render([assistant('inserted'), ...history]).filter(message => message.type === 'system').map(message => message.id)).toEqual(['compact:b1', 'compact:b2']);
+});

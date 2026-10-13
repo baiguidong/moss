@@ -1,3 +1,4 @@
+import { appServiceKey } from '../../packages/app-sdk/src/tool-services.mjs'
 import { afterEach, expect, test } from 'bun:test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -37,10 +38,46 @@ backend: { }, permissions: ['mcp:manage', 'mcp:connect'] } }),
 }
 const config = { type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer fixture-secret' }, disabledTools: ['remove'], oauth: { clientId: 'client', callbackPort: 4444 } }
 
+test('user App scope changes every MCP service without changing saved configurations', async () => {
+  const f = await fixture()
+  let selectedScope = 'session'
+  f.runtime.getToolScope = () => selectedScope
+  await f.host.handle('servers.save', { name: 'knowledge', enabled: true, config }, f.context)
+  expect(f.host.enabledServers([])).toEqual({})
+  selectedScope = 'global'
+  expect(f.host.enabledServers([]).knowledge).toEqual(config)
+  const snapshot = f.host.serverOwners()
+  expect(snapshot.knowledge.toolScope).toBe('global')
+  selectedScope = 'session'
+  expect(f.host.enabledServers([])).toEqual({})
+  expect(f.host.serverOwners().knowledge.toolScope).toBe('session')
+  expect(snapshot.knowledge.toolScope).toBe('global')
+  expect(f.host.enabledServers(['moss.mcp']).knowledge).toEqual(config)
+})
+
+test('all MCP services inherit App scope, including saves, refreshes and unselected sessions', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'one', enabled: true, config }, f.context)
+  await f.host.handle('servers.save', { name: 'two', enabled: true, config }, f.context)
+  expect(Object.keys(f.host.enabledServers([]))).toEqual([])
+  expect(Object.keys(f.host.enabledServers(['moss.mcp'])).sort()).toEqual(['one', 'two'])
+  expect(f.host.serverOwners().one).toMatchObject({ appId: 'moss.mcp', toolScope: 'session' })
+  const getPackage = f.runtime.getActivePackage
+  f.runtime.getActivePackage = async () => {
+    const pkg = await getPackage()
+    return { manifest: { ...pkg.manifest, toolScope: 'global' } }
+  }
+  await f.host.refresh()
+  expect(Object.keys(f.host.enabledServers([])).sort()).toEqual(['one', 'two'])
+  await f.host.handle('servers.save', { name: 'three', enabled: true, config }, f.context)
+  expect(f.host.serverOwners().three.toolScope).toBe('global')
+  expect(Object.keys(f.host.enabledServers([]))).toHaveLength(3)
+})
+
 test('portable stdio paths stay on disk and resolve identically for sessions and checks after restart', async () => {
   const f = await fixture()
   const portable = { type: 'stdio', command: '~/bin/mcp', args: ['--output-dir', '~/.moss/artifacts/playwright'] }
-  const resolved = { ...portable, command: path.join(os.homedir(), 'bin/mcp'), args: ['--output-dir', path.join(os.homedir(), '.moss/artifacts/playwright')] }
+  const resolved = { ...portable, env: { MOSS_SESSION_WORKSPACE: '' }, command: path.join(os.homedir(), 'bin/mcp'), args: ['--output-dir', path.join(os.homedir(), '.moss/artifacts/playwright')] }
   await f.host.handle('servers.save', { name: 'browser', enabled: true, config: portable }, f.context)
   expect(f.host.enabledServers().browser).toEqual(resolved)
   expect(f.host.findServer('browser')?.config).toEqual(resolved)
@@ -51,6 +88,30 @@ test('portable stdio paths stay on disk and resolve identically for sessions and
   expect(stored.servers.browser.config).toEqual(portable)
   const restarted = new AppMcpHost(f.options); await restarted.refresh()
   expect(restarted.enabledServers().browser).toEqual(resolved)
+})
+
+test('session MCP launches bind their own workspace without changing shared settings or service checks', async () => {
+  const f = await fixture()
+  for (const appId of ['moss.git', 'moss.filesystem']) {
+    const context = f.addApp(appId)
+    const config = { type: 'stdio', command: 'node', args: ['server.mjs', '{"directories":["/shared"]}'], env: { TOKEN: 'fixture', MOSS_SESSION_WORKSPACE: '/stale' } }
+    await f.host.handle('servers.save', { name: 'local', enabled: true, config }, context)
+    const name = `${appId.replaceAll('.', '_')}__local`
+    const first = path.join(f.root, 'First workspace'), second = path.join(f.root, '第二个工作目录')
+    const a = f.host.enabledServers([appId], first)[name]
+    const b = f.host.enabledServers([appId], second)[name]
+    expect(a.env).toEqual({ TOKEN: 'fixture', MOSS_SESSION_WORKSPACE: first })
+    expect(b.env.MOSS_SESSION_WORKSPACE).toBe(second)
+    expect(a.env.MOSS_SESSION_WORKSPACE).toBe(first)
+    expect(a.args).toEqual(config.args)
+    await f.host.handle('servers.inspect', { name: 'local' }, context)
+    expect(f.calls.at(-1).config.env.MOSS_SESSION_WORKSPACE).toBe('')
+    expect(f.host.findServer(name)?.config.env.MOSS_SESSION_WORKSPACE).toBe('')
+    const disk = await fs.readFile(path.join(context.dataDir, 'mcp-servers.json'), 'utf8')
+    expect(disk).not.toContain(first)
+    expect(disk).not.toContain(second)
+    expect(f.host.enabledServers([], first)[name]).toBeUndefined()
+  }
 })
 
 test('migrates legacy services once, preserves names and tool options, and encrypts credentials', async () => {
@@ -228,4 +289,42 @@ test('a queued desktop discovery rechecks enabled state before starting the tran
   release(); await blocker; await disabled
   await expect(inspect).rejects.toThrow('启用状态已变化')
   expect(f.calls).toHaveLength(0)
+})
+
+
+test('generic App subservices survive rename/restart and do not include new or recreated servers', async () => {
+  const f = await fixture(), context = f.addApp('customer.container')
+  const getPackage = f.runtime.getActivePackage
+  f.runtime.getActivePackage = async () => ({ manifest: { ...(await getPackage()).manifest, toolSelection: 'services' } })
+  await f.host.handle('servers.save', { name: 'one', enabled: true, config }, context)
+  await f.host.handle('servers.save', { name: 'two', enabled: true, config }, context)
+  const first = f.host.toolCatalog(context.appId)[0]
+  const selected = [appServiceKey(context.appId, first.serviceId)]
+  expect(Object.keys(f.host.enabledServers([], undefined, selected))).toEqual(['customer_container__one'])
+  expect(f.host.enabledServers([context.appId])).toEqual({})
+  await f.host.handle('servers.save', { name: 'renamed', previousName: 'one', enabled: true, config }, context)
+  expect(f.host.toolCatalog(context.appId).find((service: any) => service.name === 'renamed').serviceId).toBe(first.serviceId)
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(Object.keys(restarted.enabledServers([], undefined, selected))).toEqual(['customer_container__renamed'])
+  await restarted.handle('servers.save', { name: 'three', enabled: true, config }, context)
+  expect(Object.keys(restarted.enabledServers([], undefined, selected))).toEqual(['customer_container__renamed'])
+  await restarted.handle('servers.remove', { name: 'renamed' }, context)
+  await restarted.handle('servers.save', { name: 'renamed', enabled: true, config }, context)
+  expect(restarted.enabledServers([], undefined, selected)).toEqual({})
+  f.installations.get(context.appId).enabled = false
+  expect(restarted.enabledServers([], undefined, restarted.toolCatalog(context.appId).map((service: any) => appServiceKey(context.appId, service.serviceId)))).toEqual({})
+})
+
+test('legacy service identities are migrated durably before rename', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'old', enabled: true, config }, f.context)
+  const file = path.join(f.context.dataDir, 'mcp-servers.json')
+  const document = JSON.parse(await fs.readFile(file, 'utf8')); delete document.servers.old.id
+  await fs.writeFile(file, JSON.stringify(document))
+  await f.host.refresh()
+  const id = f.host.toolCatalog(f.context.appId)[0].serviceId
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.toolCatalog(f.context.appId)[0].serviceId).toBe(id)
+  await restarted.handle('servers.save', { name: 'new', previousName: 'old', enabled: true, config }, f.context)
+  expect(restarted.toolCatalog(f.context.appId)[0].serviceId).toBe(id)
 })

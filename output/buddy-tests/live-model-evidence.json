@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "liveModel": true,
+  "domains": [
+    "preferences",
+    "desktop",
+    "agent",
+    "mcp",
+    "apps",
+    "session",
+    "assistants"
+  ],
+  "petIdentityStable": true,
+  "assistantMessages": 2
+}

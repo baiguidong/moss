@@ -42,6 +42,7 @@ export function applyCoordinatorToolFilter(tools: Tools): Tools {
   return tools.filter(
     t =>
       COORDINATOR_MODE_ALLOWED_TOOLS.has(t.name) ||
+      t.requiresInteractiveMainSession === true ||
       isPrActivitySubscriptionTool(t.name),
   )
 }

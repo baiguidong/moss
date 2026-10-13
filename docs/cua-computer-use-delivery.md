@@ -1,4 +1,8 @@
+> 2026-10-11：Computer Use 已迁移到独立 App。本文保留为历史记录；当前实现与验收见 [迁移交付记录](../ui/docs/computer-use-app-delivery.md)。
+
 # Moss 电脑操控：安装与测试
+
+2026-10-11 源码更新：`computer_use` 的模型输入改为 `{request:{action,…}}`，补全动作指引并保留结构化控件信息，补上无有效截图时的坐标输入检查。工具测试 13 项、Host 回归 16 项通过；见 [变更与独立 App 迁移规划](../ui/docs/computer-use-app-plan.md)。尚未生成包含本轮变更的新安装包，下列安装包与真机记录仍对应原测试版。
 
 2026-10-08 · 测试版 `0.0.1-cua.3` · macOS 14+ / Apple Silicon
 

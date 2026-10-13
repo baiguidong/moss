@@ -8,6 +8,12 @@ import { calculateFileSha256, isPathInsideDirectory } from './shared/file-path-u
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import { REMOTE_WORKSPACE_SCHEME, parseRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
 
+export function buildFileAttachmentPrompt(filePaths) {
+  return filePaths.length
+    ? ['\n\n[Attached files]', ...filePaths.map(filePath => `- ${filePath}`), 'Use the Read tool to view the attached files.'].join('\n')
+    : '';
+}
+
 export function createSessionPromptPreparation({
   emitSessionMeta,
   emitToRenderer,

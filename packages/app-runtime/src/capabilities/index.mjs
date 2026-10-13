@@ -258,6 +258,12 @@ export class AppHostCapabilityRegistry {
       protocol: definition.protocol,
       method: name,
       permission: authorization.permission,
+      grants: Object.freeze([...(request.grants || [])]),
+      assertPermission: permission => {
+        requireHostPermission(request.permissions || [], permission);
+        requireHostPermission(request.grants || [], permission, { source: 'grant' });
+        request.assertCurrent?.({ ...authorization, permission });
+      },
       signal: request.signal,
       assertCurrent: () => request.assertCurrent?.(authorization),
     })

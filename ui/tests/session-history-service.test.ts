@@ -111,3 +111,17 @@ it('does not replace a more complete turn with a partially written transcript', 
   expect(record.history).toEqual([user('question'), assistant('complete reply')]);
   expect(persisted).toEqual([]);
 });
+
+it('reloads old compaction summaries for details without turning them into visible user messages', async () => {
+  const { paths, service, record } = await fixture();
+  record.underlyingSessionId = 'engine';
+  const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'compact-1', compactMetadata: { trigger: 'manual', preTokens: 100 } };
+  const summary = { ...user('original summary', 'summary-1'), isCompactSummary: true, isVisibleInTranscriptOnly: true };
+  await writeFile(paths.sessionTranscriptPath('session', 'engine'), jsonl([user('question'), assistant('reply'), boundary, summary]));
+  const history = await service.loadSessionHistoryFromSource(record);
+  expect(history).toContainEqual(summary);
+  const { buildMainChatRenderMessagesFromHistory } = await import('../src/renderer-react/lib/agent-transcript');
+  const rendered = buildMainChatRenderMessagesFromHistory(history);
+  expect(rendered.filter(message => message.type === 'user_text')).toHaveLength(1);
+  expect((rendered.find(message => message.type === 'system') as any).compaction.entries[0].content).toBe('original summary');
+});

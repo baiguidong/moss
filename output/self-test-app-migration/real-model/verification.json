@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "runId": "c7c72863-1590-4c5b-ac29-4d3cfceff2dd",
+  "reportPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd/report.json",
+  "reportHtmlPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-k4F3H0/apps-data/moss.self-test/instances/moss.self-test--default/runs/c7c72863-1590-4c5b-ac29-4d3cfceff2dd/report.html",
+  "cases": [
+    "startup",
+    "apps-list",
+    "chat-response"
+  ],
+  "evidence": {
+    "demos": {},
+    "replies": [
+      {
+        "token": "MOSS_SELF_TEST_OK",
+        "sessionId": "7d897a78-5d96-4fda-8d0e-c4b71f2dbae7"
+      }
+    ]
+  },
+  "checks": [
+    "installed App",
+    "settings entry",
+    "session scope",
+    "button start",
+    "theme sync",
+    "trusted result source",
+    "model to CDP to App result",
+    "automatic report",
+    "page reopen",
+    "target reuse",
+    "disable cleanup"
+  ]
+}

@@ -17,6 +17,7 @@ function eventText(event) {
       event.parent_tool_use_id != null
       || event.tool_use_result
       || event.toolUseResult
+      || event.isCompactSummary === true
       || event.isMeta === true
       || event.isSynthetic === true
       || event.isVisibleInTranscriptOnly === true

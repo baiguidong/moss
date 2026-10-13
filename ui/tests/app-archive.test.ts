@@ -66,4 +66,25 @@ describe('App archive extraction', () => {
     const drive = await writeArchive(root, { 'C:/outside.txt': 'unsafe' })
     await expect(extractAppArchive(drive, path.join(root, 'drive'))).rejects.toThrow()
   })
+
+  it('identifies non-App archives by filename before calling the installer', async () => {
+    const root = await temporaryRoot()
+    const archive = await writeArchive(root, { 'report.html': '<main>comparison</main>', 'screenshots/search.png': 'test' })
+    let called = false
+    await expect(installAppArchive({ installFromDirectory: () => { called = true } }, archive)).rejects.toThrow('无法安装「app.zip」：根目录或单层目录中缺少 app.moss.json')
+    expect(called).toBe(false)
+  })
+
+  it('finds one wrapped App alongside Finder metadata and rejects multiple Apps', async () => {
+    const root = await temporaryRoot()
+    const archive = await writeArchive(root, {
+      'wrapped/app.moss.json': '{"id":"example.app"}',
+      '__MACOSX/._wrapped': 'finder metadata',
+      '.DS_Store': 'finder metadata',
+    })
+    const installed = await installAppArchive({}, archive, { installPackage: async directory => JSON.parse(await fs.readFile(path.join(directory, 'app.moss.json'), 'utf8')) })
+    expect(installed.id).toBe('example.app')
+    const ambiguous = await writeArchive(root, { 'one/app.moss.json': '{}', 'two/app.moss.json': '{}' })
+    await expect(installAppArchive({}, ambiguous)).rejects.toThrow('包含多个 App')
+  })
 })

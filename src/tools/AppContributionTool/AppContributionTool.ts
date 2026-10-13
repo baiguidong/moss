@@ -19,7 +19,12 @@ export type AppToolContributionDescriptor = {
   name: string
   title: string
   description: string
+  instructionsText?: string
+  hostPermissionManaged?: boolean
   appId: string
+  toolScope?: 'global' | 'session'
+  toolSelection?: 'app' | 'services'
+  serviceId?: string
   appDisplayName?: string
   effect: AppToolEffect
   inputSchemaDocument: Record<string, unknown>
@@ -39,6 +44,20 @@ function formatValidationErrors(errors: unknown): string {
 }
 
 function mapResult(content: unknown, toolUseID: string) {
+  const result = content as { format?: string; content?: any[]; isError?: boolean } | null
+  if (result?.format === 'moss.tool-result/v1' && Array.isArray(result.content)) {
+    let imageBytes = 0
+    const blocks = result.content.map(item => {
+      if (item.type === 'text' && typeof item.text === 'string') return { type: 'text' as const, text: item.text }
+      if (item.type === 'image' && ['image/png','image/jpeg','image/webp','image/gif'].includes(item.mimeType) && typeof item.data === 'string') {
+        imageBytes += item.data.length
+        if (imageBytes > 24 * 1024 * 1024) throw new Error('App tool images exceed the result limit')
+        return { type: 'image' as const, source: { type: 'base64' as const, media_type: item.mimeType, data: item.data } }
+      }
+      throw new Error('Invalid App tool result content block')
+    })
+    return { tool_use_id: toolUseID, type: 'tool_result' as const, content: blocks, ...(result.isError ? { is_error: true } : {}) }
+  }
   let serialized = 'null'
   try {
     serialized = jsonStringify(content) ?? 'null'
@@ -71,16 +90,18 @@ export function createAppContributionTool(
 
   return buildTool({
     name: descriptor.name,
-    appInfo: { appId: descriptor.appId },
+    appInfo: { appId: descriptor.appId, toolScope: descriptor.toolScope || 'session', toolSelection: descriptor.toolSelection, serviceId: descriptor.serviceId },
     supportedEnvironments: ['desktop'],
+    requiresDesktop: descriptor.hostPermissionManaged === true,
+    requiresInteractiveMainSession: descriptor.hostPermissionManaged === true,
     searchHint: `${descriptor.title} from ${appLabel}`.slice(0, 160),
-    maxResultSizeChars: 100_000,
+    maxResultSizeChars: descriptor.hostPermissionManaged ? 120_000 : 100_000,
     deferLoading: true,
     async description() {
       return descriptor.description
     },
     async prompt() {
-      return `${descriptor.description}\n\nThis tool is provided by the installed Moss App "${appLabel}".`
+      return `${descriptor.instructionsText || descriptor.description}\n\nThis tool is provided by the installed Moss App "${appLabel}".`
     },
     get inputSchema() {
       return permissiveObjectSchema
@@ -111,7 +132,7 @@ export function createAppContributionTool(
           }
     },
     async checkPermissions(input) {
-      if (isReadOnly) return { behavior: 'allow' as const, updatedInput: input }
+      if (isReadOnly || descriptor.hostPermissionManaged) return { behavior: 'allow' as const, updatedInput: input }
       return {
         behavior: 'ask' as const,
         message: isDestructive
@@ -127,7 +148,8 @@ export function createAppContributionTool(
         } : {}),
       }
     },
-    async call(input, context: ToolUseContext): Promise<{ data: unknown }> {
+    async call(input, context: ToolUseContext, canUseTool, parentMessage): Promise<{ data: unknown }> {
+      if (descriptor.hostPermissionManaged && context.agentId) throw new Error('Native desktop control is reserved for the interactive main session')
       const emitAppEvent = context.emitAppEvent ?? getGlobalAppEventBridge()
       if (!emitAppEvent) {
         throw new Error(`Moss App Tool is unavailable because its Host bridge is not connected: ${descriptor.id}`)
@@ -140,6 +162,18 @@ export function createAppContributionTool(
           requestId: `tool:${context.toolUseId || randomUUID()}`,
         },
         signal: context.abortController.signal,
+        authorizeCommand: async (command: string) => {
+          if (!canUseTool || !parentMessage) throw new Error('Ordinary Agent command authorization is unavailable')
+          const { BashTool } = await import('../BashTool/BashTool.js')
+          const commandInput = { command, description: 'Build or verify the bound App source snapshot' }
+          const validation = await BashTool.validateInput?.(commandInput, context)
+          if (validation && !validation.result) throw new Error(validation.message)
+          const decision = await canUseTool(BashTool, commandInput, context, parentMessage, randomUUID())
+          if (decision.behavior !== 'allow') throw new Error('App command was denied by the ordinary Agent permission policy')
+          if (decision.updatedInput && (decision.updatedInput as { command?: string }).command !== command) {
+            throw new Error('Command changed during authorization; prepare a new build request')
+          }
+        },
       })
       if (!result.ok) throw new Error(result.error)
       return { data: result.result }

@@ -1,3 +1,4 @@
+import { isToolSourceAvailable } from '../../../app-sdk/src/tool-services.mjs'
 import { contractDefinition } from '../../../app-sdk/src/host/contracts.mjs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -6,11 +7,14 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   APP_ERROR_CODES,
   AppServiceError,
+  compileJsonSchema,
   loadJsonSchema,
   requireHostPermission,
   resolveAppProtocols,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
+import { AppToolScopeStore } from '../tool-scope/index.mjs'
+import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
 import { HostRequests } from './requests.mjs'
 import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
 import {
@@ -78,14 +82,17 @@ function ownerStorageSegment(owner) {
 
 export class AppRuntimeHost {
   constructor(options) {
+    this.nativeAdapterHost = options.nativeAdapterHost
+    this.nativePublishers = new Set(options.nativePublishers || [])
     this.hostRequests = new HostRequests(options.hostRequestOptions)
     this.uiHostSubscriptions = new Set()
     this.capabilityAvailability = options.capabilityAvailability || (() => ({ available: true, reason: null }))
     this.beforeAppDeactivation = (appId) => {
       this.cancelHostRequests(appId)
-      return options.beforeAppDeactivation?.(appId)
+      return Promise.resolve(this.nativeAdapterHost?.deactivate(appId)).then(() => options.beforeAppDeactivation?.(appId))
     }
     this.rootDir = path.resolve(options.rootDir)
+    this.toolScopes = new AppToolScopeStore(path.join(this.rootDir, 'app-tool-scopes.json'))
     this.appsDir = path.resolve(options.appsDir || path.join(this.rootDir, 'apps'))
     this.dataDir = path.resolve(options.dataDir || path.join(this.rootDir, 'apps-data'))
     this.runtimeDir = path.resolve(options.runtimeDir || path.join(this.rootDir, 'apps-runtime'))
@@ -127,6 +134,13 @@ export class AppRuntimeHost {
     this.hostCapabilities = options.hostCapabilities ?? new AppHostCapabilityRegistry(options.hostCapabilityOptions)
     this.hostCapabilities.registerProtocol(contractDefinition('moss.host/v1'))
     this.hostCapabilities.registerHandler('moss.host/v1', 'capabilities.get', (input, context) => this.describeCapabilities(input, context))
+    this.hostCapabilities.registerHandler('moss.host/v1', 'tools.scope.get', (_input, context) => this.toolScopeSettings(context))
+    this.hostCapabilities.registerHandler('moss.host/v1', 'tools.scope.set', (input, context) => this.toolScopeSettings(context, input.scope))
+    this.hostCapabilities.registerHandler('moss.host/v1', 'native.settings', async (input, context) => {
+      const pkg = await this.requireNativePackage(context.appId)
+      context.assertCurrent()
+      return this.nativeAdapterHost.settings(pkg, input, context)
+    })
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
       processesDir: path.join(this.runtimeDir, 'processes'),
@@ -150,6 +164,13 @@ export class AppRuntimeHost {
   async initialize() {
     if (this.initialized) return this
     await this.state.initialize()
+    const retiredDir = path.join(this.runtimeDir, 'retired-native-packages')
+    for (const name of await fsp.readdir(retiredDir).catch(error => { if (error.code === 'ENOENT') return []; throw error })) {
+      const appId = name.endsWith('.json') ? name.slice(0, -5) : ''
+      if (!/^[a-z][a-z0-9._-]*$/.test(appId)) continue
+      if (!this.installations.listAll().some(item => item.appId === appId) && !this.nativeAdapterHost?.isLoaded(appId)) await this.packages.removeApp(appId)
+      await fsp.rm(path.join(retiredDir, name), { force: true })
+    }
     for (const error of await this.supervisor.recoverOrphans()) {
       this.publishRuntimeEvent({ type: 'restore-error', error: error.message })
     }
@@ -162,6 +183,20 @@ export class AppRuntimeHost {
 
   currentOwner() {
     return this.ownerContext.getStore() || this.defaultOwner
+  }
+
+  getToolScope(appId, manifestScope) {
+    return getAppToolScope(this.toolScopes?.get(this.storageAppId(appId)) ?? manifestScope)
+  }
+
+  async toolScopeSettings(context, scope = undefined) {
+    const pkg = await this.getActivePackage(context.appId)
+    context.assertCurrent()
+    if (scope !== undefined) {
+      if (scope !== null && scope !== 'global' && scope !== 'session') throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid App tool scope')
+      if (this.toolScopes.set(this.storageAppId(context.appId), scope)) this.publishRuntimeEvent({ type: 'tool-scope-changed', appId: context.appId })
+    }
+    return { scope: this.getToolScope(context.appId, pkg.manifest.toolScope), defaultScope: getAppToolScope(pkg.manifest.toolScope), overridden: this.toolScopes.get(this.storageAppId(context.appId)) !== undefined }
   }
 
   withOwner(owner, operation) {
@@ -259,12 +294,14 @@ export class AppRuntimeHost {
     }
     const instanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
     const runtimeSnapshots = this.runtimes.list(appId)
-    this.cancelHostRequests(appId)
     const nextGrants = installationGrantsForPackage(current, packageInfo.manifest, options.grants)
     const grantsChanged = Boolean(current)
       && JSON.stringify(current.grants || []) !== JSON.stringify(nextGrants)
     try {
       if (grantsChanged) {
+        // Repeated registration after installation/startup keeps the same owner
+        // alive. Only cancel its calls and subscriptions when replacing it.
+        this.cancelHostRequests(appId)
         await Promise.allSettled(runtimeSnapshots.map((item) => this.supervisor.stop(item.key)))
       }
       await this.installations.upsert(appId, {
@@ -280,6 +317,7 @@ export class AppRuntimeHost {
       this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return packageInfo
     } catch (error) {
+      this.cancelHostRequests(appId)
       const snapshotKeys = new Set(runtimeSnapshots.map((runtimeRecord) => runtimeRecord.key))
       for (const runtimeRecord of this.runtimes.list(appId)) {
         await this.supervisor.stop(runtimeRecord.key).catch(() => {})
@@ -317,6 +355,22 @@ export class AppRuntimeHost {
     return this.installations.get(appId)
   }
 
+  nativeAvailable(pkg) {
+    return Boolean(this.nativeAdapterHost && pkg.manifest.nativeAdapter
+      && pkg.trust?.status === 'trusted' && this.nativePublishers.has(pkg.trust.publisherId))
+  }
+
+  async requireNativePackage(appId) {
+    // Revalidate the installed bytes and signature before loading native code.
+    const installation = this.installations.get(appId)
+    if (!installation?.enabled || !installation.grants?.includes('desktop:control')) throw new Error('Native App is disabled or desktop:control was revoked')
+    const pkg = await this.packages.get(appId, installation.activeVersion)
+    if (!this.nativeAvailable(pkg)) throw new Error('Native adapters require a trusted signature from a Host-approved native publisher')
+    const current = this.installations.get(appId)
+    if (!current?.enabled || current.activeVersion !== pkg.manifest.version || !current.grants?.includes('desktop:control')) throw new Error('Native App changed during authorization')
+    return pkg
+  }
+
   authorizeInvocation(runtimeRecord) {
     const installation = this.installations.get(runtimeRecord.appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
@@ -345,6 +399,7 @@ export class AppRuntimeHost {
     return {
       installation,
       manifest: packageInfo.manifest,
+      toolScope: this.getToolScope(appId, packageInfo.manifest.toolScope),
       trust: packageInfo.trust,
       configuration: packageInfo.manifest.backend?.configuration ? {
         schema: packageInfo.manifest.backend.configuration.schema
@@ -378,17 +433,27 @@ export class AppRuntimeHost {
     const result = Object.fromEntries(requestedKinds.map((kind) => [kind, []]))
     for (const installation of this.installations.list()) {
       if (options.appId && installation.appId !== options.appId) continue
-      const packageInfo = await this.getActivePackage(installation.appId)
+      let packageInfo
+      try { packageInfo = await this.getActivePackage(installation.appId) }
+      catch (error) {
+        if (options.appId) throw error
+        continue // One damaged installation must not hide other Apps' contributions.
+      }
       const enabled = Boolean(installation.enabled)
       const contributions = collectManifestContributions(packageInfo.manifest, {
+        toolScope: this.getToolScope(installation.appId, packageInfo.manifest.toolScope),
         grants: installation.grants || [],
         enabled,
         includeUnavailable: options.includeUnavailable === true,
       })
       for (const kind of requestedKinds) {
         for (const item of contributions[kind]) {
+          if (item.execution === 'native' && !this.nativeAvailable(packageInfo)) continue
+          if (kind === 'tools' && Array.isArray(options.selectedAppIds) && !isToolSourceAvailable(item, options.selectedAppIds, options.selectedAppServiceIds)) continue
           const contribution = { ...item }
+          if (item.execution === 'native') contribution.hostPermissionManaged = true
           if (options.loadSchemas && ['commands', 'tools'].includes(kind)) {
+            if (item.instructions) contribution.instructionsText = await fsp.readFile(path.join(packageInfo.root, item.instructions), 'utf8')
             if (item.inputSchema) {
               contribution.inputSchemaDocument = loadJsonSchema(
                 packageInfo.root,
@@ -437,6 +502,13 @@ export class AppRuntimeHost {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App contribution cannot be invoked: ${kind}`)
     }
     const contribution = await this.requireContribution(kind, id)
+    if (kind === 'tools' && contribution.execution === 'native') {
+      const pkg = await this.requireNativePackage(contribution.appId)
+      const validate = compileJsonSchema(loadJsonSchema(pkg.root, contribution.inputSchema))
+      if (!validate(input)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Native tool input does not match its schema')
+      options.signal?.throwIfAborted()
+      return this.nativeAdapterHost.invoke(pkg, contribution.action, input, options)
+    }
     const instance = this.resolveContributionInstance(contribution.appId, options.instanceId)
     const action = kind === 'resourceProviders' ? contribution.resolveAction : contribution.action
     return this.invoke(contribution.appId, instance.id, action, input, options)
@@ -539,6 +611,7 @@ export class AppRuntimeHost {
       }
       await this.reconcileApp(appId)
     } catch (error) {
+      if (packageInfo.manifest.nativeAdapter) throw error // Revocation must fail closed.
       await this.installations.upsert(appId, { grants: installation.grants || [] })
       for (const runtimeRecord of this.runtimes.list(appId)) {
         await this.supervisor.stop(runtimeRecord.key).catch(() => {})
@@ -552,13 +625,14 @@ export class AppRuntimeHost {
   }
 
   async setAppEnabledNow(appId, enabled) {
-    await this.getActivePackage(appId)
+    const packageInfo = await this.getActivePackage(appId)
     const previous = this.installations.get(appId)
     await this.installations.upsert(appId, { enabled: Boolean(enabled) })
     try {
       if (!enabled) await this.beforeAppDeactivation(appId)
       await this.reconcileApp(appId)
     } catch (error) {
+      if (!enabled && packageInfo.manifest.nativeAdapter) throw error
       await this.installations.upsert(appId, { enabled: previous.enabled })
       await this.reconcileApp(appId).catch(() => {})
       throw error
@@ -1080,6 +1154,7 @@ export class AppRuntimeHost {
         : this.setAppGrantsNow(appId, options.grants)
     }
     const nextPackage = await this.packages.get(appId, version)
+    await this.beforeAppDeactivation(appId)
     this.packageCache.set(`${appId}@${version}`, nextPackage)
     const previousVersion = installation.activeVersion
     const previousGrants = installation.grants || []
@@ -1138,6 +1213,7 @@ export class AppRuntimeHost {
     const installation = this.installations.get(appId)
     if (!installation) return false
     await this.installations.upsert(appId, { enabled: false })
+    await this.beforeAppDeactivation(appId)
     const runtimes = this.runtimes.list(appId)
     await Promise.allSettled(runtimes.map((item) => this.supervisor.stop(item.key)))
     for (const runtimeRecord of runtimes) this.supervisor.unregister(runtimeRecord.key)
@@ -1145,10 +1221,16 @@ export class AppRuntimeHost {
     if (options.deleteData) await this.instances.removeForApp(appId)
     await this.installations.remove(appId)
     if (!this.installations.listAll().some((item) => item.appId === appId)) {
-      await this.packages.removeApp(appId)
+      // Native modules cannot be unloaded safely. Retain their immutable files
+      // until the next Host process; activation of a new version requires restart.
+      if (!this.nativeAdapterHost?.isLoaded(appId)) await this.packages.removeApp(appId)
+      else {
+        const retiredDir = path.join(this.runtimeDir, 'retired-native-packages')
+        await fsp.mkdir(retiredDir, { recursive: true })
+        await fsp.writeFile(path.join(retiredDir, `${appId}.json`), '{}\n')
+      }
       for (const key of this.packageCache.keys()) if (key.startsWith(`${appId}@`)) this.packageCache.delete(key)
     }
-    await this.beforeAppDeactivation(appId)
     if (options.deleteData) {
       await fsp.rm(this.appDataPath(this.dataDir, appId), { recursive: true, force: true })
       await fsp.rm(this.appDataPath(this.runtimeDir, appId), { recursive: true, force: true })
@@ -1167,6 +1249,7 @@ export class AppRuntimeHost {
   }
 
   async shutdown() {
+    await this.nativeAdapterHost?.stop('shutdown')
     this.hostRequests.cancelWhere(() => true)
     for (const entry of this.uiHostSubscriptions) entry.onClosed?.(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host shut down'))
     this.uiHostSubscriptions.clear()

@@ -10,6 +10,7 @@ export const localContracts = {
   'moss.local-files/v1': { types: 'LocalFiles', methods: {
     pick: method('local-files:pick', record({ kind: { enum: ['file', 'directory'] }, multiple: boolean }, []), record({ paths: array(text(), 100) })),
     open: method('local-files:open', record({ path: absolutePath }), record({ opened: { const: true } })),
+    preview: method('local-files:open', record({ path: absolutePath }), record({ opened: { const: true } })),
     reveal: method('local-files:open', record({ path: absolutePath }), record({ revealed: { const: true } })),
   }, events: {} },
   'moss.runtimes/v1': { types: 'Runtimes', methods: {

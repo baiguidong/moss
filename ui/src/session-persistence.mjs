@@ -7,7 +7,7 @@ import { applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { applyRemoteSessionHistoryTitle } from './remote-session-reconcile.mjs';
 import { normalizeOptionalProjectId, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
 import { normalizeStringList } from './shared/string-list.mjs';
-import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode } from './shared/session-normalization.mjs';
+import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode, normalizeSessionEffort } from './shared/session-normalization.mjs';
 import { deriveSessionPreview, derivePendingPlanApproval } from './shared/session-history-display.mjs';
 
 /** Metadata/history caches; Main owns the database and session records.
@@ -68,6 +68,9 @@ export function createSessionPersistence({
       sessionRecord.channelRuntimePolicy && typeof sessionRecord.channelRuntimePolicy === 'object'
         ? JSON.stringify(sessionRecord.channelRuntimePolicy)
         : null,
+      JSON.stringify(normalizeStringList(sessionRecord.appIds)),
+      normalizeSessionEffort(sessionRecord.effort),
+      JSON.stringify(normalizeStringList(sessionRecord.appServiceIds)),
     ];
   }
 
@@ -131,11 +134,14 @@ export function createSessionPersistence({
       assistantName: sessionRecord.assistantName || null,
       projectId: sessionRecord.projectId || null,
       connectorIds: normalizeStringList(sessionRecord.connectorIds),
+      appIds: normalizeStringList(sessionRecord.appIds),
+      appServiceIds: normalizeStringList(sessionRecord.appServiceIds),
       sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
       originChannel: normalizeOriginChannel(sessionRecord.originChannel, sessionRecord.sessionKind),
       channelAppId: sessionRecord.channelAppId || null,
       channelInstanceId: sessionRecord.channelInstanceId || null,
       channelRuntimePolicy: sessionRecord.channelRuntimePolicy || null,
+      effort: normalizeSessionEffort(sessionRecord.effort),
       sourceSessionId: sessionRecord.sourceSessionId || null,
       sourceSessionTitle: sessionRecord.sourceSessionId
         ? sessions.get(sessionRecord.sourceSessionId)?.title || null
@@ -298,6 +304,8 @@ export function createSessionPersistence({
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
+        appIds: parsePersistedStringList(row.app_ids_json),
+        appServiceIds: parsePersistedStringList(row.app_service_ids_json),
         sessionKind: normalizeSessionKind(row.session_kind),
         originChannel: normalizeOriginChannel(row.origin_channel, row.session_kind),
         sourceSessionId: row.source_session_id || null,
@@ -322,6 +330,7 @@ export function createSessionPersistence({
         channelAppId: row.channel_app_id || null,
         channelInstanceId: row.channel_instance_id || null,
         channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
+        effort: normalizeSessionEffort(row.effort),
       };
       if (agentMode === 'remote-direct') {
         applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
@@ -373,6 +382,8 @@ export function createSessionPersistence({
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
+        appIds: parsePersistedStringList(row.app_ids_json),
+        appServiceIds: parsePersistedStringList(row.app_service_ids_json),
         sessionKind: normalizeSessionKind(row.session_kind),
         originChannel: normalizeOriginChannel(row.origin_channel, row.session_kind),
         sourceSessionId: row.source_session_id || null,
@@ -393,6 +404,7 @@ export function createSessionPersistence({
         channelAppId: row.channel_app_id || null,
         channelInstanceId: row.channel_instance_id || null,
         channelRuntimePolicy: parsePersistedObject(row.channel_runtime_policy_json),
+        effort: normalizeSessionEffort(row.effort),
       };
       if (agentMode === 'remote-direct') {
         applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);

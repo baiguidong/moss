@@ -1,3 +1,4 @@
+import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/index.mjs'
 
 export const APP_CONTRIBUTION_KINDS = Object.freeze([
@@ -32,6 +33,8 @@ export function collectManifestContributions(manifest, options = {}) {
         id: contributionId(manifest.id, item.id),
         localId: item.id,
         appId: manifest.id,
+        toolScope: getAppToolScope(options.toolScope ?? manifest.toolScope),
+        toolSelection: manifest.toolSelection || 'app',
         appVersion: manifest.version,
         appDisplayName: manifest.displayName,
         enabled,

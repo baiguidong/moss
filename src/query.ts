@@ -1,3 +1,5 @@
+import { withTraceRequestMetadata } from './services/trace/requestMetadata.js'
+import { getPostCompactBoundaryId } from './services/compact/compactContext.js'
 import type {
   ToolResultBlockParam,
   ToolUseBlock,
@@ -595,7 +597,10 @@ async function* queryLoop(
         try {
           let streamingFallbackOccured = false
           queryCheckpoint('query_api_streaming_start')
-          for await (const message of deps.callModel({
+          for await (const message of withTraceRequestMetadata({
+            compactBoundaryId: getPostCompactBoundaryId(messagesForQuery),
+            agentId: toolUseContext.agentId ?? '',
+          }, () => deps.callModel({
             messages: prependUserContext(messagesForQuery, userContext),
             systemPrompt: fullSystemPrompt,
             thinkingConfig: toolUseContext.options.thinkingConfig,
@@ -644,7 +649,7 @@ async function* queryLoop(
                 },
               }),
             },
-          })) {
+          }))) {
             // We won't use the tool_calls from the first attempt
             // We could.. but then we'd have to merge assistant messages
             // with different ids and double up on full the tool_results

@@ -10,6 +10,7 @@ export const AGENT_PERMISSIONS = Object.freeze({
   sessionsWrite: 'agent:sessions:write',
   turnsRead: 'agent:turns:read',
   turnsWrite: 'agent:turns:write',
+  bypassPermissions: 'agent:permissions:bypass',
 })
 
 export const AGENT_REPLY_MODES = Object.freeze([
@@ -26,9 +27,9 @@ export const AGENT_SESSION_MODES = Object.freeze([
   'new_each_turn',
 ])
 
-// Channel Apps may narrow permissions, but may never request the unsafe
-// bypassPermissions mode used by an explicitly controlled local session.
+// Unrestricted execution requires a separate explicit App grant in the Host.
 export const AGENT_PERMISSION_MODES = Object.freeze([
+  'bypassPermissions',
   'default',
   'acceptEdits',
   'dontAsk',

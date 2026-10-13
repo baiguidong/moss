@@ -20,3 +20,22 @@ test('ordinary composer uses attested workspace, bounded resources and only owni
   assert.equal(calls.length,2) // no session creation or execution while preparing
   await assert.rejects(()=>composer.resolve({providerId:provider.id,intent:'execute'}), /无效/)
 })
+
+
+test('service-selected Apps can resolve their resources without reselecting a whole App', async () => {
+  const session = { id: 'session', workspace: '/trusted', agentMode: 'local', appIds: [], appServiceIds: ['["example","sales"]'] }
+  const provider = { id: 'example/flows', appId: 'example', listAction: 'list', resolveAction: 'resolve', toolScope: 'session' }
+  let calls = 0
+  const runtime = {
+    requireContribution: async () => provider,
+    resolveContributionInstance: () => ({ id: 'default' }),
+    invoke: async () => { calls++; return { instruction: 'Use this resource', tools: ['read'] } },
+    listContributions: async () => ({ tools: [{ localId: 'read', name: 'app__example__read' }] }),
+  }
+  const composer = createAppComposer({ getRuntime: () => runtime, getSession: () => session })
+  await composer.resolve({ providerId: provider.id, intent: 'use' }, { sessionId: 'session', requireSelected: true })
+  assert.equal(calls, 1)
+  session.appServiceIds = ['["another-app","sales"]']
+  await assert.rejects(() => composer.resolve({ providerId: provider.id, intent: 'use' }, { sessionId: 'session', requireSelected: true }), /加入会话/)
+  assert.equal(calls, 1)
+})

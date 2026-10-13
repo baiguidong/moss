@@ -22,6 +22,7 @@ export function isDisplayTranscriptEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   if (entry.isSidechain) return false;
   if (entry.type === 'user') {
+    if (entry.isCompactSummary) return true;
     if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
     const text = extractDisplayTextFromTranscriptEntry(entry).trim();
     if (text.startsWith('<local-command-caveat>')) return false;
@@ -41,7 +42,7 @@ export function isDisplayTranscriptEntry(entry) {
 
 function isVisibleUserTextEntry(entry) {
   if (!entry || entry.type !== 'user') return false;
-  if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
+  if (entry.isCompactSummary || entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
   const text = extractDisplayTextFromTranscriptEntry(entry).trim();
   if (!text) return false;
   if (text.startsWith('<local-command-caveat>')) return false;

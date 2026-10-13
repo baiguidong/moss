@@ -1,10 +1,11 @@
+import { parseAppServiceKey } from '../../../packages/app-sdk/src/tool-services.mjs'
 // App-owned resources can prepare an ordinary composer without creating a session.
 // The Host supplies identity/workspace; Apps supply bounded display and prompt data.
 export function createAppComposer({ getRuntime, getSession }) {
   function source({ sessionId, workspace } = {}) {
     const record = sessionId ? getSession(sessionId) : null
     if (record?.agentMode === 'remote-direct') throw new Error('App 资源需要本地普通会话')
-    return { surface: 'tool', ...(record ? { sessionId: record.id } : {}), workspace: record?.workspace || workspace || undefined }
+    return { surface: 'app', origin: 'composer', ...(record ? { sessionId: record.id } : {}), workspace: record?.workspace || workspace || undefined }
   }
   async function invoke(provider, action, input, invocation) {
     const runtime = getRuntime()
@@ -36,6 +37,9 @@ export function createAppComposer({ getRuntime, getSession }) {
       const provider = await runtime.requireContribution('resourceProviders', context.providerId)
       if (!provider.listAction) throw new Error('App 未提供会话资源')
       const invocation = source(options)
+      const selectedSession = options.requireSelected ? getSession(options.sessionId) : null
+      const selected = selectedSession?.appIds?.includes(provider.appId) || selectedSession?.appServiceIds?.some(id => parseAppServiceKey(id)?.appId === provider.appId)
+      if (options.requireSelected && provider.toolScope !== 'global' && !selected) throw new Error('请先把资源所属 App 加入会话')
       const result = await invoke(provider, provider.resolveAction, { intent: context.intent, ...(context.ref ? { ref: context.ref } : {}) }, invocation)
       if (!result || typeof result.instruction !== 'string' || result.instruction.length > 32000) throw new Error('App 会话上下文无效')
       const contributions = await runtime.listContributions({ appId: provider.appId, kinds: ['tools'] })

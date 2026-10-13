@@ -15,7 +15,6 @@ import {
   RUNTIME_ARTIFACTS,
 } from '../src/runtime/runtime-manifest.mjs';
 import { sha256File } from './download-runtimes.mjs';
-import { verifyComputerUseSdk } from './verify-computer-use.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const uiRoot = path.resolve(path.dirname(__filename), '..');
@@ -415,6 +414,10 @@ async function main() {
   }
   requireFile(path.join(paths.resourcesDir, 'packages', 'host-contracts', 'src', 'generated-validators.mjs'), 'Host contracts');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
+  requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'host', 'public-contracts.json'), 'public developer contracts');
+  for (const retired of ['assistants/app-builder', 'skills/convert-skill-to-app']) {
+    if (fs.existsSync(path.join(paths.resourcesDir, retired))) throw new Error(`Retired authoring resource is still packaged: ${retired}`);
+  }
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'index.mjs'), 'App runtime');
   for (const file of ['bootstrap.mjs', 'lease.mjs', 'process-info.mjs']) {
     requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'process', file), 'App process recovery');
@@ -433,9 +436,6 @@ async function main() {
     await fsp.rm(cronTestRoot, { recursive: true, force: true });
   }
   requireFile(path.join(paths.resourcesDir, 'licenses', 'open-file-viewer.LICENSE'), 'Open File Viewer license');
-  requireFile(path.join(paths.resourcesDir, 'skills', 'convert-skill-to-app', 'SKILL.md'), 'skill-to-app skill');
-  requireFile(path.join(paths.resourcesDir, 'assistants', 'app-builder', 'assistant.md'), 'app-builder assistant');
-  requireFile(path.join(paths.resourcesDir, 'assistants', 'app-builder', '_moss_meta.json'), 'app-builder metadata');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'cloud-auth-providers.json'), 'connector cloud auth configuration');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-mcp-overrides.json'), 'connector MCP overrides');
   requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-cli-overrides.json'), 'connector CLI overrides');
@@ -485,7 +485,6 @@ async function main() {
   }
   await verifyUpdateMetadata(platform, paths, installerFiles, appPackage.version);
   verifyUnsignedPackage(platform, paths, installerFiles);
-  const computerUse = verifyComputerUseSdk(paths.executable, paths.resourcesDir, target);
 
   console.log(JSON.stringify({
     ok: true,
@@ -496,7 +495,6 @@ async function main() {
     sharp: sharpOutput,
     ...runtimeVersions,
     unsigned: !(platform === 'darwin' && process.env.MOSS_MAC_SIGNING_IDENTITY),
-    computerUse,
     installerFiles,
   }, null, 2));
 }

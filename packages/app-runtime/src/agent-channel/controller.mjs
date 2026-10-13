@@ -455,6 +455,9 @@ export function createAgentChannelController({
         externalMemberId: message.externalUserId,
         defaultConversationId,
       }, context);
+      if (binding.permissionMode === 'bypassPermissions' && !context.grants?.includes('agent:permissions:bypass')) {
+        throw new Error('Unrestricted Agent execution is no longer authorized for this App.');
+      }
       if (binding.agentId && binding.agentAvailable === false) {
         throw new Error(`Configured Agent is unavailable: ${binding.agentId}`);
       }
@@ -558,6 +561,9 @@ export function createAgentChannelController({
       };
     }
     if (method === 'binding.update') {
+      if (input.patch?.permissionMode === 'bypassPermissions' && !context.grants?.includes('agent:permissions:bypass')) {
+        throw new Error('Unrestricted Agent execution requires the agent:permissions:bypass App grant.');
+      }
       const updated = store.updateBinding({
         ...input,
         ...scope,

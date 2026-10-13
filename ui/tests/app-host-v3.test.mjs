@@ -41,7 +41,7 @@ test('Action deadline includes package loading even without a caller request id'
   expect(broker.pendingTotal).toBe(0)
 })
 
-async function pureUi(options = {}) {
+async function pureUi(options = {}, getHandler = (_input, context) => ({ appId: context.appId, surface: context.surface })) {
   const root = await mkdtemp(path.join(tmpdir(), 'moss-ui-v3-'))
   const source = path.join(root, 'source')
   await mkdir(source)
@@ -50,12 +50,43 @@ async function pureUi(options = {}) {
   await writePackageChecksums(source)
   const runtime = await new AppRuntimeHost({ rootDir: path.join(root, 'host'), ...options }).initialize()
   runtime.registerHostProtocol({ protocol: 'moss.test/v1', methods: { get: { permission: 'test:read', limits: { items: 10 } }, unsupported: {}, backend: { surfaces: ['backend'] } }, events: { changed: { permission: 'test:read' } } })
-  runtime.registerHostHandler('moss.test/v1', 'get', (_input, context) => ({ appId: context.appId, surface: context.surface }))
+  runtime.registerHostHandler('moss.test/v1', 'get', getHandler)
   runtime.registerHostHandler('moss.test/v1', 'backend', () => ({}))
   await runtime.installFromDirectory(source)
   const instanceId = defaultInstanceId('test.ui')
   return { runtime, instanceId, call: (protocol, method, input = {}) => runtime.requestHostCapability('test.ui', instanceId, protocol, method, input), close: async () => { await runtime.shutdown(); await rm(root, { recursive: true, force: true }) } }
 }
+
+test.each([
+  ['unchanged implicit grants', undefined, false],
+  ['unchanged explicit grants', ['test:read'], false],
+  ['revoked grants', [], true],
+])('registering an installed version preserves Host calls and subscriptions unless grants change: %s', async (_label, grants, canceled) => {
+  let release, entered
+  const started = new Promise(resolve => { entered = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  const f = await pureUi({}, async (_input, context) => {
+    entered(context)
+    await gate
+    context.assertCurrent()
+    return { ready: true }
+  })
+  try {
+    const events = [], closed = []
+    await f.runtime.subscribeHostEvent('test.ui', f.instanceId, 'moss.test/v1', 'changed', data => events.push(data), { onClosed: error => closed.push(error.code) })
+    const pending = f.call('moss.test/v1', 'get').then(value => ({ value }), error => ({ error }))
+    const context = await started
+
+    await f.runtime.registerInstalled('test.ui', '1.0.0', { grants })
+
+    expect(context.signal.aborted).toBe(canceled)
+    expect(closed).toEqual(canceled ? ['APP_ACTION_CANCELED'] : [])
+    await f.runtime.publishHostEvent('test.ui', f.instanceId, 'moss.test/v1', 'changed', { ready: true })
+    expect(events).toEqual(canceled ? [] : [{ ready: true }])
+    release()
+    expect(await pending).toMatchObject(canceled ? { error: { code: 'APP_ACTION_CANCELED' } } : { value: { ready: true } })
+  } finally { release?.(); await f.close() }
+})
 
 test('pure UI Host requests and subscriptions use App identity, surfaces, grants and sender lifetime', async () => {
   const f = await pureUi()

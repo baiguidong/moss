@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs';
 
 export const ASSISTANT_META_FILE = '_moss_meta.json';
 
@@ -61,6 +62,7 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
     for (const candidateName of candidateNames) {
       if (reservedNames.has(candidateName)) continue;
       const assistantDir = path.join(dir, candidateName);
+      if (isRetiredAppAuthoringResource(assistantDir)) continue;
       try {
         const stat = await fsp.stat(assistantDir);
         if (stat.isDirectory()) {
@@ -79,6 +81,7 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
         if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
         if (reservedNames.has(entry.name)) continue;
         const candidateDir = path.join(dir, entry.name);
+        if (isRetiredAppAuthoringResource(candidateDir)) continue;
         const meta = await readAssistantMeta(candidateDir);
         const metaNames = [
           meta?.id,
@@ -125,6 +128,7 @@ export async function resolveAssistantRuleFile(assistantDir, _assistantName, pre
 }
 
 export async function readAssistantContext(assistantDir, assistantName) {
+  if (isRetiredAppAuthoringResource(assistantDir)) return { meta: null, ruleFile: undefined, rules: '', enabledSkillIdentifiers: [] };
   const meta = await readAssistantMeta(assistantDir);
   const ruleFile = await resolveAssistantRuleFile(
     assistantDir,

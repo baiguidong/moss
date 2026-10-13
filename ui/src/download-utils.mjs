@@ -12,18 +12,21 @@ export async function downloadFileBuffer(url, options = {}) {
     maxRedirects = MAX_DOWNLOAD_REDIRECTS,
     maxBytes = MAX_DOWNLOAD_BYTES,
     onProgress,
+    signal,
   } = options;
 
   let currentUrl = url;
   const visitedUrls = new Set();
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
+    signal?.throwIfAborted();
     const normalizedUrl = new URL(currentUrl).toString();
     if (visitedUrls.has(normalizedUrl)) {
       throw new Error(`Redirect loop detected while downloading: ${normalizedUrl}`);
     }
     visitedUrls.add(normalizedUrl);
 
+    let abortRequest;
     const result = await new Promise((resolve, reject) => {
       const parsedUrl = new URL(normalizedUrl);
       const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -93,8 +96,17 @@ export async function downloadFileBuffer(url, options = {}) {
       request.setTimeout(timeoutMs, () => {
         request.destroy(new Error('Download timeout'));
       });
+      abortRequest = () => {
+        const error = signal.reason || new Error('Download canceled');
+        reject(error);
+        request.destroy(error);
+      };
+      signal?.addEventListener('abort', abortRequest, { once: true });
       request.on('error', reject);
+      if (signal?.aborted) { abortRequest(); return; }
       request.end();
+    }).finally(() => {
+      if (abortRequest) signal?.removeEventListener('abort', abortRequest);
     });
 
     if (result.redirectUrl) {

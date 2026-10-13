@@ -113,7 +113,7 @@ export function ConversationNavigator({
   return (
     <nav
       aria-label="对话导航"
-      className="absolute left-1.5 top-1/2 z-20 hidden max-h-[64%] -translate-y-1/2 flex-col overflow-visible md:flex"
+      className="absolute left-1.5 top-1/2 z-20 hidden max-h-[min(64%,calc(100%_-_6rem))] -translate-y-1/2 flex-col overflow-visible md:flex"
     >
       <div
         className="flex w-8 max-h-full flex-col items-start gap-px overflow-y-auto overflow-x-hidden py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"

@@ -6,27 +6,7 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
       { name: 'moss_browser_open', description: '在 Moss 内置浏览器中打开网址或搜索内容，供手动浏览', defaultMode: 'always' },
     ],
   },
-  {
-    id: 'computer',
-    label: '电脑操控',
-    feature: 'computerUse',
-    tools: [
-      { name: 'computer_use', description: '读取应用界面、截图并执行点击和输入', defaultMode: 'always' },
-    ],
-  },
-  {
-    id: 'app',
-    label: 'App 管理',
-    tools: [
-      { name: 'app_build', description: '构建工作区中的 Moss App', defaultMode: 'deferred' },
-      { name: 'app_preview', description: '预览已构建的 App', defaultMode: 'deferred' },
-      { name: 'app_publish', description: '发布 App 新版本', defaultMode: 'deferred' },
-      { name: 'app_launch', description: '打开已安装的 App', defaultMode: 'deferred' },
-      { name: 'app_update', description: '更新已安装的 App', defaultMode: 'deferred' },
-      { name: 'app_extract_to_workspace', description: '提取 App 到当前工作区', defaultMode: 'deferred' },
-      { name: 'app_get_versions', description: '查看 App 版本历史', defaultMode: 'deferred' },
-    ],
-  },
+
   {
     id: 'connector',
     label: '连接器',

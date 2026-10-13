@@ -1,3 +1,7 @@
+import { AppToolSelectionContext, canSelectToolApp, getToolPickerItems, getAppToolServices, parseAppServiceKey, type ToolPickerItem, toolAppId, toolAppTitle, toolAppDescription } from '@/lib/app-tool-selection';
+import { getAppCategory } from '@/lib/app-categories';
+import { AppIcon } from '@/components/app-icon';
+import type { StoredApp } from '@/types';
 "use client";
 
 import * as React from "react";
@@ -67,6 +71,8 @@ import {
 } from "@/components/coordinator-workers-view";
 import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
+import { SessionEffortSelector } from "@/components/session-effort-selector";
+import { collectFileAttachments, mergeFileAttachments } from "@/lib/file-attachments";
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
@@ -480,9 +486,8 @@ function PlanApprovalCard({
   );
 }
 
-function ComposerPanel({
+export function ComposerPanel({
   value,
-  selectedAppName,
   loading,
   readOnlyReason,
   composerIntent,
@@ -519,7 +524,6 @@ function ComposerPanel({
   contextUsage,
 }: {
   value: string;
-  selectedAppName: string;
   loading: boolean;
   readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
@@ -557,31 +561,36 @@ function ComposerPanel({
 }) {
   const [internalAttachments, setInternalAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const attachments = externalAttachments ?? internalAttachments;
+  const attachmentsRef = React.useRef(attachments);
+  attachmentsRef.current = attachments;
   const setAttachments = React.useCallback((
     updater: Array<{ name: string; path: string }> | ((prev: Array<{ name: string; path: string }>) => Array<{ name: string; path: string }>)
   ) => {
-    if (typeof updater === 'function') {
-      if (onAttachmentsChange) {
-        onAttachmentsChange(updater(externalAttachments ?? internalAttachments));
-      } else {
-        setInternalAttachments(updater);
-      }
-    } else {
-      onAttachmentsChange?.(updater);
-    }
-  }, [onAttachmentsChange, externalAttachments, internalAttachments]);
+    const next = typeof updater === 'function' ? updater(attachmentsRef.current) : updater;
+    attachmentsRef.current = next;
+    if (onAttachmentsChange) onAttachmentsChange(next);
+    else setInternalAttachments(next);
+  }, [onAttachmentsChange]);
   const composerId = React.useRef<string>('composer-' + Math.random().toString(36).slice(2));
-  const setAttachmentsRef = React.useRef(setAttachments);
+  const importGeneration = React.useRef(0);
+  const pendingImports = React.useRef(0);
+  const [importingFiles, setImportingFiles] = React.useState(false);
+  const [attachmentError, setAttachmentError] = React.useState('');
+  const [draggingFiles, setDraggingFiles] = React.useState(false);
   React.useEffect(() => {
-    setAttachmentsRef.current = setAttachments;
-  }, [setAttachments]);
+    importGeneration.current += 1;
+    pendingImports.current = 0;
+    setImportingFiles(false); setAttachmentError(''); setDraggingFiles(false);
+    return () => { importGeneration.current += 1; };
+  }, [sessionId]);
+  const toolApps = React.useContext(AppToolSelectionContext);
   const { selection: appSelection, select: selectAppResource } = React.useContext(AppComposerContext);
   const appResources = useAppComposerResources(sessionId, workspace, (hasActiveSession ? sessionAgentMode : newSessionMode) === 'local');
   const isHomeComposer = !hasActiveSession;
   // Sending while loading is allowed: the message is queued and dispatched
   // when the current turn ends (REPL type-while-busy behavior).
   const submitDisabled =
-    (!value.trim() && attachments.length === 0) || Boolean(readOnlyReason);
+    (!value.trim() && attachments.length === 0) || Boolean(readOnlyReason) || importingFiles || toolApps.pending;
   const [appCommands, setAppCommands] = React.useState<Array<{name:string;description:string}>>([]);
   const slashCommands = React.useMemo(() => [...SLASH_COMMANDS, ...appCommands.filter(item => !SLASH_COMMANDS.some(command => command.name === item.name))], [appCommands]);
   React.useEffect(() => {
@@ -618,7 +627,8 @@ function ComposerPanel({
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResources.available,
-  }), [appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+    includeApps: toolApps.enabled,
+  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
   const defaultPlaceholder = React.useMemo(() => getDefaultComposerPlaceholder({
     hasActiveSession,
     includeAgents: canSelectAgents,
@@ -626,7 +636,8 @@ function ComposerPanel({
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
     includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResources.available,
-  }), [appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+    includeApps: toolApps.enabled,
+  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
 
   React.useEffect(() => {
     if (!mentionTabs.includes(mentionTab)) setMentionTab(mentionTabs[0]);
@@ -798,6 +809,11 @@ function ComposerPanel({
       .slice(0, 8);
   }, [hasActiveSession, installedAssistants, mentionFilter]);
 
+  const [mentionServiceAppId, setMentionServiceAppId] = React.useState<string | null>(null);
+  const mentionServiceApp = toolApps.apps.find(app => toolAppId(app) === mentionServiceAppId);
+  React.useEffect(() => { if (mentionFilter === null || mentionTab !== 'apps' || !mentionServiceApp) setMentionServiceAppId(null) }, [mentionFilter, mentionTab, mentionServiceApp]);
+  const visibleToolApps = getToolPickerItems(toolApps.apps, mentionFilter || '', toolApps.selectedIds, toolApps.selectedServiceIds || [], mentionServiceAppId).filter(item => item.available);
+  const leaveServiceMenu = () => { setMentionServiceAppId(null); setMentionIndex(0); textareaRef.current?.focus() };
   const visibleConnectorItems = React.useMemo(() => {
     if (mentionFilter === null) return [];
     const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
@@ -816,7 +832,7 @@ function ComposerPanel({
     onChange(value.replace(/@[^\s]*$/, ''));
     setMentionFilter(null); setMentionIndex(0);
   };
-  const activeMentionItemCount = mentionTab === 'workflows' ? appResources.items.length : mentionTab === 'files'
+  const activeMentionItemCount = mentionTab === 'apps' ? visibleToolApps.length : mentionTab === 'workflows' ? appResources.items.length : mentionTab === 'files'
     ? visibleMentionItems.length
     : mentionTab === 'agents'
       ? visibleAgentItems.length
@@ -825,6 +841,10 @@ function ComposerPanel({
       : mentionTab === 'assistants'
         ? visibleAssistantItems.length
         : visibleConnectorItems.length;
+
+  React.useEffect(() => {
+    setMentionIndex(index => Math.min(index, Math.max(0, activeMentionItemCount - 1)));
+  }, [activeMentionItemCount]);
 
   const applyMention = React.useCallback((item: WorkspaceMentionItem) => {
     const isDir = item.type === "directory";
@@ -872,135 +892,83 @@ function ComposerPanel({
     setMentionTab("files");
   }, [onChange, onToggleConnector, value]);
 
+  const applyToolAppMention = (item: ToolPickerItem) => {
+    if (item.expandable) {
+      setMentionServiceAppId(toolAppId(item.app)); setMentionIndex(0);
+      onChange(value.replace(/(^|\s)@[^\s@]*$/, '$1@')); setMentionFilter(''); textareaRef.current?.focus(); return;
+    }
+    if (!item.available && !item.selected) return;
+    if (item.service) toolApps.toggleService?.(item.id); else toolApps.toggle(item.id);
+    onChange(value.replace(/(^|\s)@[^\s@]*$/, '$1'));
+    setMentionFilter(null); setMentionIndex(0);
+    textareaRef.current?.focus();
+  };
+
   const toggleSelectedSkill = React.useCallback((skill: SkillMentionItem) => {
     setSelectedSkills((prev) => prev.some((item) => item.name === skill.name)
       ? prev.filter((item) => item.name !== skill.name)
       : [...prev, skill]);
   }, []);
 
-  React.useEffect(() => {
-    pasteService.init();
-    pasteService.registerHandler(composerId.current, async (event) => {
-      const handled = await pasteService.handlePaste(
-        event,
-        (files) => setAttachmentsRef.current(prev => [...prev, ...files]),
-        undefined
-      );
-      return handled;
-    });
-    pasteService.setLastFocusedComponent(composerId.current);
-    return () => {
-      pasteService.unregisterHandler(composerId.current);
-    };
-  }, []);
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('Files')) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-
-    const newAttachments: Array<{ name: string; path: string }> = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const filePath = (file as File & { path?: string }).path;
-      if (filePath) {
-        newAttachments.push({ name: file.name, path: filePath });
-      } else if (file.type.startsWith('image/')) {
-        const ext = file.name.split('.').pop() || 'png';
-        const fileName = file.name || `pasted_image.${ext}`;
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const data = Array.from(new Uint8Array(arrayBuffer));
-          let savedPath: string | null = null;
-          if (sessionId) {
-            const result = await window.agentDesktop.fs.saveImageToWorkspace(sessionId, fileName, data) as { path: string } | { error: string };
-            if (result && typeof result === 'object' && 'path' in result) savedPath = result.path;
-          }
-          if (!savedPath) {
-            const tempPath = await window.agentDesktop.fs.createTempFile(fileName);
-            if (tempPath) {
-              await window.agentDesktop.fs.writeFile(tempPath, data);
-              savedPath = tempPath;
-            }
-          }
-          if (savedPath) {
-            newAttachments.push({ name: fileName, path: savedPath });
-          }
-        } catch (err) {
-          console.error('Failed to save dropped image:', err);
-        }
+  const importFiles = React.useCallback(async (files: File[]) => {
+    if (readOnlyReason || !files.length) return;
+    const generation = importGeneration.current;
+    pendingImports.current += 1; setImportingFiles(true); setAttachmentError('');
+    try {
+      const result = await collectFileAttachments(files);
+      if (generation !== importGeneration.current) return;
+      setAttachments(prev => mergeFileAttachments(prev, result.attachments));
+      setAttachmentError(result.errors.join('；'));
+    } finally {
+      if (generation === importGeneration.current) {
+        pendingImports.current -= 1;
+        setImportingFiles(pendingImports.current > 0);
       }
     }
-    if (newAttachments.length > 0) {
-      setAttachments(prev => [...prev, ...newAttachments]);
-    }
-  };
+  }, [readOnlyReason, setAttachments]);
 
+  const handlePaste = React.useCallback((event: ClipboardEvent | React.ClipboardEvent) => {
+    const files = Array.from(event.clipboardData?.files || []);
+    if (!files.length) return false;
+    event.preventDefault(); event.stopPropagation();
+    void importFiles(files);
+    return true;
+  }, [importFiles]);
+
+  React.useEffect(() => {
+    pasteService.init();
+    pasteService.registerHandler(composerId.current, async event => handlePaste(event));
+    pasteService.setLastFocusedComponent(composerId.current);
+    return () => pasteService.unregisterHandler(composerId.current);
+  }, [handlePaste]);
+
+  const handleDragOver = (event: React.DragEvent) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); event.stopPropagation();
+    event.dataTransfer.dropEffect = readOnlyReason ? 'none' : 'copy';
+    setDraggingFiles(!readOnlyReason);
+  };
+  const handleDrop = (event: React.DragEvent) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); event.stopPropagation(); setDraggingFiles(false);
+    void importFiles(Array.from(event.dataTransfer.files));
+  };
   const handleRemoveAttachment = (index: number) => {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
-
   const handleSelectFile = async () => {
-    const files = await window.agentDesktop.pickFiles();
-    if (files.length > 0) {
-      setAttachments(prev => [...prev, ...files]);
-    }
-  };
-
-  const handlePaste = async (e: React.ClipboardEvent) => {
-    const clipboardItems = e.clipboardData?.items;
-    if (!clipboardItems) return;
-
-    const newAttachments: Array<{ name: string; path: string }> = [];
-    for (let i = 0; i < clipboardItems.length; i++) {
-      const item = clipboardItems[i];
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          const ext = item.type.split('/')[1] || 'png';
-          const fileName = file.name || `pasted_image.${ext}`;
-          try {
-            const arrayBuffer = await file.arrayBuffer();
-            const data = Array.from(new Uint8Array(arrayBuffer));
-
-            let savedPath: string | null = null;
-            if (sessionId) {
-              const result = await window.agentDesktop.fs.saveImageToWorkspace(sessionId, fileName, data) as { path: string } | { error: string };
-              if ('path' in result) savedPath = result.path;
-            }
-            if (!savedPath) {
-              // Fallback to temp file
-              const tempPath = await window.agentDesktop.fs.createTempFile(fileName);
-              if (tempPath) {
-                await window.agentDesktop.fs.writeFile(tempPath, data);
-                savedPath = tempPath;
-              }
-            }
-
-            if (savedPath) {
-              newAttachments.push({ name: fileName, path: savedPath });
-            }
-          } catch (err) {
-            console.error('Failed to save pasted image:', err);
-          }
-        }
-      }
-    }
-    if (newAttachments.length > 0) {
-      e.preventDefault();
-      setAttachments(prev => [...prev, ...newAttachments]);
+    if (readOnlyReason) return;
+    const generation = importGeneration.current;
+    try {
+      const files = await window.agentDesktop.pickFiles();
+      if (generation === importGeneration.current) setAttachments(prev => mergeFileAttachments(prev, files));
+    } catch (error) {
+      if (generation === importGeneration.current) setAttachmentError(String(error));
     }
   };
 
   const handleSendClick = () => {
+    if (submitDisabled || pendingImports.current > 0) return;
     const files = attachments.length > 0 ? attachments : undefined;
     onSend(
       files,
@@ -1017,12 +985,29 @@ function ComposerPanel({
     return getSelectableInstalledConnectors(installedConnectors ?? [])
       .filter((connector) => selected.has(connector.id));
   }, [installedConnectors, selectedConnectorIds]);
-  const hasSelectedResources = Boolean(appSelection) || Boolean(selectedAssistant)
+  const hasSelectedResources = (toolApps.enabled && (toolApps.selectedIds.length > 0 || (toolApps.selectedServiceIds?.length || 0) > 0 || toolApps.nextTurn)) || Boolean(appSelection) || Boolean(selectedAssistant)
     || Boolean(canSelectAgents && selectedAgent)
     || (allowSkillSelection && selectedSkills.length > 0)
     || selectedConnectorItems.length > 0;
   const selectedResourceIcons = hasSelectedResources ? (
     <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
+      {toolApps.enabled && toolApps.selectedIds.map(id => {
+        const app = toolApps.apps.find(item => toolAppId(item) === id);
+        return <button type="button" key={id} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary"
+          aria-label={`移除 App：${app ? toolAppTitle(app) : id}`} onClick={() => toolApps.toggle(id)} title={app ? toolAppDescription(app) : 'App 已卸载'}>
+          <AppIcon icon={app?.icon} className="h-4 w-4" />{app ? toolAppTitle(app) : id}{(!app || !canSelectToolApp(app)) && '（不可用）'}<X className="h-3 w-3" />
+        </button>;
+      })}
+      {toolApps.enabled && (toolApps.selectedServiceIds || []).map(id => {
+        const ref = parseAppServiceKey(id);
+        const app = toolApps.apps.find(item => toolAppId(item) === ref?.appId);
+        const service = app && getAppToolServices(app).find(item => item.id === id);
+        const title = `${app ? toolAppTitle(app) : ref?.appId || 'App'} · ${service?.title || '已移除的服务'}`;
+        return <button type="button" key={id} className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除服务：${title}`} title={title} onClick={() => toolApps.toggleService?.(id)}>
+          <AppIcon icon={app?.icon} className="h-4 w-4 shrink-0" /><span className="truncate">{title}{!service?.available && '（不可用）'}</span><X className="h-3 w-3 shrink-0" />
+        </button>;
+      })}
+      {toolApps.enabled && toolApps.nextTurn && <span className="self-center text-xs text-muted-foreground">资源变更下一轮生效</span>}
       {appSelection && <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除工作流：${appSelection.title}`} onClick={() => selectAppResource(null)}><GitFork className="h-3.5 w-3.5"/>{appSelection.title}<X className="h-3 w-3"/></button>}
       {canSelectAgents && selectedAgent ? (
         <button
@@ -1159,6 +1144,7 @@ function ComposerPanel({
           <Hammer className="h-4 w-4" />
           <span className="flex-1">技能</span>
         </DropdownMenuItem>
+        {toolApps.enabled && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('apps')}><AppIcon className="h-4 w-4" /><span>App</span></DropdownMenuItem>}
         {appResources.available && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('workflows')}><GitFork className="h-4 w-4"/><span>工作流</span></DropdownMenuItem>}
         <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('connectors')}>
           <Link2 className="h-4 w-4" />
@@ -1177,9 +1163,13 @@ function ComposerPanel({
           : "shadow-[0_16px_54px_-38px_rgba(0,0,0,0.45)]",
         className,
       )}
+      onFocusCapture={() => pasteService.setLastFocusedComponent(composerId.current)}
+      onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDraggingFiles(false); }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {(draggingFiles || importingFiles) && <div role="status" className="px-4 pt-3 text-xs text-primary">{importingFiles ? '正在添加文件…' : '松开以添加文件'}</div>}
+      {attachmentError && <div role="alert" className="px-4 pt-3 text-xs text-destructive">{attachmentError}</div>}
       <div className="relative">
         {slashCommandFilter && !isHomeComposer && !subMenuCommand && (
           <SlashCommandMenu
@@ -1218,6 +1208,10 @@ function ComposerPanel({
             selectedAppResource={appSelection}
             onSelectAppResource={applyAppMention}
             onMoreAppResources={appResources.hasMore ? appResources.more : undefined}
+            toolAppParent={mentionServiceApp}
+            onLeaveToolApp={leaveServiceMenu}
+            toolAppItems={visibleToolApps}
+            onSelectToolApp={applyToolAppMention}
             connectorItems={visibleConnectorItems}
             notice={visibleMentionItems.length === 0
               ? (mentionNotice ?? (sessionId ? "无匹配文件" : null))
@@ -1252,11 +1246,7 @@ function ComposerPanel({
               ? readOnlyReason
               : (
             isHomeComposer
-              ? selectedAssistant?.name === "app-builder-assistant" && selectedAppName
-                ? `描述你想如何修改 ${selectedAppName}...`
-                : selectedAssistant?.name === "app-builder-assistant"
-                  ? "描述你想创建或修改的 App、目标用户、交互和风格..."
-                  : composerIntent === "boss"
+              ? composerIntent === "boss"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : defaultPlaceholder
               : defaultPlaceholder
@@ -1271,7 +1261,7 @@ function ComposerPanel({
             setSlashCommandFilter(filter);
             const mention = getFileMentionFilter(newValue, caret);
             setMentionFilter(mention);
-            if (mention === null) setMentionIndex(0);
+            setMentionIndex(0);
           }}
           disabled={Boolean(readOnlyReason)}
           ref={textareaRef}
@@ -1284,6 +1274,8 @@ function ComposerPanel({
           rows={isHomeComposer ? 5 : 1}
           onKeyDown={(event) => {
             if (mentionFilter !== null) {
+              if (mentionTab === 'apps' && mentionServiceAppId && (event.key === 'ArrowLeft' || event.key === 'Escape')) { event.preventDefault(); leaveServiceMenu(); return; }
+              if (mentionTab === 'apps' && event.key === 'ArrowRight' && visibleToolApps[mentionIndex]?.expandable) { event.preventDefault(); applyToolAppMention(visibleToolApps[mentionIndex]); return; }
               if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                 event.preventDefault();
                 setMentionTab((prev) => event.key === "ArrowLeft"
@@ -1315,6 +1307,9 @@ function ComposerPanel({
                   if (mentionTab === "files") {
                     const item = visibleMentionItems[clamped];
                     if (item) applyMention(item);
+                  } else if (mentionTab === "apps") {
+                    const app = visibleToolApps[clamped];
+                    if (app) applyToolAppMention(app);
                   } else if (mentionTab === "workflows") {
                     const resource = appResources.items[clamped]; if (resource) applyAppMention(resource);
                   } else if (mentionTab === "agents") {
@@ -1539,6 +1534,7 @@ function ComposerPanel({
                 onChange={onPermissionModeChange}
                 disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
               />
+              {sessionId && <SessionEffortSelector key={sessionId} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} />}
 
             </div>
 
@@ -1668,11 +1664,6 @@ function ComposerPanel({
             </div>
 
             <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2">
-              {selectedAssistant?.name === "app-builder-assistant" && selectedAppName && (
-                <span className="max-w-[160px] shrink-0 truncate rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
-                  更新 {selectedAppName}
-                </span>
-              )}
 
               <Button
                 className="h-9 rounded-full px-3.5 sm:px-4"
@@ -1690,20 +1681,8 @@ function ComposerPanel({
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
                 {attachments.map((file, index) => (
-                  <span
-                    key={`${file.path}-${index}`}
-                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs text-foreground"
-                  >
-                    <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                    <span className="max-w-[180px] truncate">{file.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveAttachment(index)}
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
+                  <FilePreview key={`${file.path}-${index}`} path={file.path} name={file.name}
+                    onRemove={() => handleRemoveAttachment(index)} />
                 ))}
 
               </div>
@@ -1718,7 +1697,6 @@ function ComposerPanel({
 
 function HomeLanding({
   value,
-  selectedAppName,
   loading,
   composerIntent,
   sessionId,
@@ -1748,7 +1726,6 @@ function HomeLanding({
   onOpenAgentManager,
 }: {
   value: string;
-  selectedAppName: string;
   loading: boolean;
   composerIntent: ComposerIntent;
   sessionId?: string;
@@ -1790,7 +1767,6 @@ function HomeLanding({
 
       <ComposerPanel
         value={value}
-        selectedAppName={selectedAppName}
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
@@ -1872,6 +1848,7 @@ const MENTION_TAB_LABELS: Record<ComposerMentionTab, string> = {
   assistants: '专家',
   connectors: '连接器',
   workflows: '工作流',
+  apps: 'App',
 };
 
 function MentionResourceRow({
@@ -1888,13 +1865,15 @@ function MentionResourceRow({
   icon: React.ReactNode;
   title: string;
   description: string;
-  selectionStyle: 'check' | 'checkbox';
+  selectionStyle: 'check' | 'checkbox' | 'expand';
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
-      aria-pressed={selected}
+      aria-pressed={selectionStyle === 'expand' ? undefined : selected}
+      aria-haspopup={selectionStyle === 'expand' ? 'true' : undefined}
+      data-active={active}
       className={cn(
         'flex h-12 w-full items-center gap-3 rounded-md px-3 text-left transition-colors',
         active || selected ? 'bg-primary/10' : 'hover:bg-muted',
@@ -1908,7 +1887,7 @@ function MentionResourceRow({
         <span className="block truncate text-sm font-medium text-foreground">{title}</span>
         <span className="block truncate text-xs text-muted-foreground">{description}</span>
       </span>
-      {selectionStyle === 'checkbox' ? (
+      {selectionStyle === 'expand' ? <ChevronRight className="h-4 w-4 shrink-0" /> : selectionStyle === 'checkbox' ? (
         <span className={cn(
           'flex h-5 w-5 shrink-0 items-center justify-center rounded border',
           selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
@@ -1923,6 +1902,7 @@ function MentionResourceRow({
 }
 
 function MentionMenu({
+  toolAppItems, onSelectToolApp, toolAppParent, onLeaveToolApp,
   appResources, selectedAppResource, onSelectAppResource, onMoreAppResources,
   tabs,
   tab,
@@ -1944,6 +1924,10 @@ function MentionMenu({
   onSelectAssistant,
   onSelectConnector,
 }: {
+  toolAppItems: ToolPickerItem[];
+  toolAppParent?: StoredApp;
+  onLeaveToolApp: () => void;
+  onSelectToolApp: (item: ToolPickerItem) => void;
   appResources: AppComposerResource[];
   selectedAppResource: AppComposerResource | null;
   onSelectAppResource: (resource: AppComposerResource) => void;
@@ -1968,8 +1952,19 @@ function MentionMenu({
   onSelectAssistant: (assistant: InstalledAssistant) => void;
   onSelectConnector: (connector: InstalledConnector) => void;
 }) {
+  const toolApps = React.useContext(AppToolSelectionContext);
   const selectedSkills = new Set(selectedSkillNames);
   const selectedConnectors = new Set(selectedConnectorIds);
+  const itemsRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const container = itemsRef.current;
+    const activeItem = container?.querySelector<HTMLElement>('[data-active="true"]');
+    if (!container || !activeItem) return;
+    const viewport = container.getBoundingClientRect();
+    const item = activeItem.getBoundingClientRect();
+    if (item.top < viewport.top) container.scrollTop -= viewport.top - item.top;
+    else if (item.bottom > viewport.bottom) container.scrollTop += item.bottom - viewport.bottom;
+  }, [selectedIndex, tab]);
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur">
       <div className="flex min-w-0 items-center border-b border-border/50 px-2 py-1.5 text-xs">
@@ -1997,7 +1992,11 @@ function MentionMenu({
           ← → 切换 · Enter 选择
         </span>
       </div>
-      <div className="max-h-64 overflow-y-auto p-1">
+      {tab === 'apps' && toolAppParent && <div className="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs" onMouseDown={event => event.preventDefault()}>
+        <button type="button" className="flex min-w-0 items-center gap-1" onClick={onLeaveToolApp}><ArrowLeft className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{toolAppTitle(toolAppParent)}</span></button>
+        <button type="button" className="shrink-0 text-primary disabled:opacity-50" disabled={toolApps.pending || !getAppToolServices(toolAppParent).some(service => service.available)} onClick={() => toolApps.setServices?.(toolAppId(toolAppParent), getAppToolServices(toolAppParent).filter(service => service.available).map(service => service.id))}>全选当前可用服务</button>
+      </div>}
+      <div ref={itemsRef} className="max-h-64 overflow-y-auto p-1">
         {tab === "workflows" ? (<>
           {appResources.length === 0 && <p className="p-3 text-xs text-muted-foreground">没有匹配的已发布工作流</p>}
           {appResources.map((resource, index) => <MentionResourceRow key={resourceKey(resource)} active={index === selectedIndex} selected={resourceKey(resource) === resourceKey(selectedAppResource)} icon={<GitFork className="h-4 w-4"/>} title={resource.title} description={`${resource.scope === "project" ? "项目" : "个人"} · ${resource.description || ""}`} selectionStyle="check" onSelect={() => onSelectAppResource(resource)}/>)}
@@ -2010,6 +2009,7 @@ function MentionMenu({
               <button
                 key={item.relativePath}
                 type="button"
+                data-active={i === selectedIndex}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors",
                   i === selectedIndex
@@ -2071,6 +2071,16 @@ function MentionMenu({
               selectionStyle="check"
               onSelect={() => onSelectAssistant(assistant)}
             />
+          ))
+        ) : tab === 'apps' ? (
+          toolAppItems.length === 0 ? <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的可用 App 或服务</div> : toolAppItems.map((item, i) => (
+            <React.Fragment key={item.id}>
+            {!toolAppParent && (i === 0 || getAppCategory(toolAppItems[i - 1].app.category).id !== getAppCategory(item.app.category).id) &&
+              <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{getAppCategory(item.app.category).label}</div>}
+            <MentionResourceRow active={i === selectedIndex} selected={item.selected}
+              icon={<AppIcon icon={item.app.icon} className="h-4 w-4" />} title={item.title} description={item.description}
+              selectionStyle={item.expandable ? 'expand' : 'checkbox'} onSelect={() => onSelectToolApp(item)} />
+            </React.Fragment>
           ))
         ) : connectorItems.length === 0 ? (
           <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已认证连接器</div>
@@ -2350,7 +2360,6 @@ function BackgroundTaskPanel({
 export function ChatArea({
   messages,
   value,
-  selectedAppName,
   loading,
   busyStartedAt,
   readOnlyReason,
@@ -2428,7 +2437,6 @@ export function ChatArea({
 }: {
   messages: TranscriptRenderMessage[];
   value: string;
-  selectedAppName: string;
   loading: boolean;
   busyStartedAt?: number | null;
   readOnlyReason?: string | null;
@@ -2615,7 +2623,6 @@ export function ChatArea({
       <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
         <HomeLanding
           value={value}
-          selectedAppName={selectedAppName}
           loading={loading}
           composerIntent={composerIntent}
           sessionId={sessionId}
@@ -2798,7 +2805,6 @@ export function ChatArea({
           )}
           <ComposerPanel
             value={value}
-            selectedAppName={selectedAppName}
             loading={loading}
             readOnlyReason={readOnlyReason}
             composerIntent={composerIntent}

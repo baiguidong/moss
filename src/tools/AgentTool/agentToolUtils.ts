@@ -71,6 +71,7 @@ export function filterToolsForAgent({
   permissionMode?: PermissionMode
 }): Tools {
   return tools.filter(tool => {
+    if (tool.requiresInteractiveMainSession) return false
     // Allow MCP tools for all agents
     if (tool.name.startsWith('mcp__')) {
       return true

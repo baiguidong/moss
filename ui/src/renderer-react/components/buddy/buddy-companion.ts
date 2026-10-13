@@ -115,7 +115,7 @@ export function saveCompanion(soul: { name: string; personality: string }): Comp
   const { bones } = roll(getUserId());
   const companion: Companion = {
     ...soul,
-    hatchedAt: Date.now(),
+    hatchedAt: getCompanion()?.hatchedAt || Date.now(),
     ...bones,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ name: soul.name, personality: soul.personality, hatchedAt: companion.hatchedAt }));

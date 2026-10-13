@@ -16,10 +16,12 @@ export type CloudTransfer = { "id": string; "transferId": string; "direction": "
 export type CloudShare = { "id": string; "fileId": string; "name": string; "size": number; "url": string; "accessCode": string | null; "createdAt": number; "expiresAt": number | null; "revokedAt": number | null; "state": "active" | "expired" | "revoked" | "unavailable" }
 export type CloudStorageStatus = { "state": "remote_disabled" | "unauthenticated" | "unconfigured" | "disabled" | "unsupported" | "unavailable" | "target_mismatch" | "forbidden" | "ready"; "version"?: number }
 export type HostCapability = { "protocol": string; "method": string; "supported": boolean; "allowed": boolean; "available": boolean; "reason": string | null; "permission": string | null; "limits": { [key: string]: number }; "surfaces": Array<"ui" | "backend"> }
+export type AuthoringOperation = { "operationRef": string; "kind": string; "status": string; "projectRef": string; "createdAt": number; "updatedAt": number; "result"?: { [key: string]: unknown }; "error"?: string | null; "log"?: string; "nextOffset"?: number }
 export const executionLimits: {"maxConcurrency":16;"maxCalls":256;"maxDurationMs":1800000;"maxTokens":2000000;"resultPreviewBytes":32768;"resultChunkUnits":100000;"eventHistory":2000;"retentionMs":2592000000;"changeRetentionMs":604800000;"changeHistory":10000;"activeTasks":512}
 export const mcpLimits: {"servers":100;"configBytes":65536}
 export const contracts: Record<string, { types: string; methods: Record<string, { permission: string | null; input: object; output: object; surfaces: string[]; errors: string[]; limits?: Record<string, number> }>; events: Record<string, { permission: string | null; input: object }> }>
 export const platformLimits: {"fileBytes":104857600;"inlineBase64Length":524288;"pickedFiles":100;"imageDimension":4096}
+export const authoringLimits: {"concurrentBuilds":2;"buildsPerProject":1;"queuedBuilds":32;"logBytes":10485760;"retentionMs":604800000;"responseBytes":262144}
 export interface TasksHostInputMap {
   "task.create": { "idempotencyKey": string; "title": string; "route"?: string; "limits"?: { "maxConcurrency"?: number; "maxCalls"?: number; "maxDurationMs"?: number; "maxTokens"?: number } }
   "task.get": { "taskId": string }
@@ -87,11 +89,13 @@ export interface McpHostEventMap {
 export interface LocalFilesHostInputMap {
   "pick": { "kind"?: "file" | "directory"; "multiple"?: boolean }
   "open": { "path": string }
+  "preview": { "path": string }
   "reveal": { "path": string }
 }
 export interface LocalFilesHostOutputMap {
   "pick": { "paths": Array<string> }
   "open": { "opened": true }
+  "preview": { "opened": true }
   "reveal": { "revealed": true }
 }
 export interface LocalFilesHostEventMap {
@@ -188,12 +192,131 @@ export interface CloudStorageHostEventMap {
   "storage.status-changed": CloudStorageStatus
 }
 export interface HostHostInputMap {
+  "tools.scope.get": Record<string, never>
+  "tools.scope.set": { "scope": "session" | "global" | null }
+  "native.settings": { "operation": "status" | "enable" | "check" | "request-permissions" | "open-settings" | "reveal-host-app" | "stop" | "revoke"; "enabled"?: boolean; "permission"?: "accessibility" | "screen"; "bundleId"?: string }
   "capabilities.get": { "protocols"?: Array<string> }
+  "info.get": Record<string, never>
+  "contracts.list": { "kind"?: string; "offset"?: number; "limit"?: number }
+  "contracts.get": { "kind": string; "member": string; "contractHash": string }
+  "sdk.export": { "projectRef": string; "sdkHash": string }
 }
 export interface HostHostOutputMap {
+  "tools.scope.get": { "scope": "session" | "global"; "defaultScope": "session" | "global"; "overridden": boolean }
+  "tools.scope.set": { "scope": "session" | "global"; "defaultScope": "session" | "global"; "overridden": boolean }
+  "native.settings": { [key: string]: unknown }
   "capabilities.get": { "capabilities": Array<HostCapability> }
+  "info.get": { "hostApiVersion": string; "sdkVersion": string; "manifestSchemaVersion": number; "contractHash": string; "sdkHash": string }
+  "contracts.list": { "contractHash": string; "items": Array<{ "kind": string; "member": string }>; "nextOffset": number | null }
+  "contracts.get": { "kind": string; "member": string; "contractHash": string; "document": { [key: string]: unknown } }
+  "sdk.export": { "projectRef": string; "path": string; "sdkHash": string; "contractHash": string }
 }
 export interface HostHostEventMap {
+}
+export interface AppsHostInputMap {
+  "authoring.get": Record<string, never>
+  "authoring.resources": Record<string, never>
+  "authoring.prepare": { "intent": "create" | "edit"; "targetRef"?: string; "ref"?: { [key: string]: unknown }; "prompt"?: string }
+  "catalog.list": { "kind"?: "apps" | "projects" }
+  "target.inspect": { "projectRef"?: string; "targetRef"?: string; "appId"?: string }
+  "source.inspect": { "projectRef"?: string; "targetRef"?: string; "appId"?: string }
+  "project.prepare": { "intent": "create" | "edit"; "projectId": string; "projectRef"?: string; "draftRef"?: string; "targetRef"?: string; "appId"?: string; "sourcePath"?: string; "replaceOriginal"?: boolean }
+  "build.start": { "projectRef": string; "submissionKey": string; "sourceHash": string; "contractHash": string; "sdkHash": string; "installDependencies"?: boolean }
+  "build.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "build.cancel": { "operationRef": string }
+  "artifact.validate": { "artifactRef": string }
+  "artifact.preview": { "artifactRef": string; "submissionKey": string; "grants"?: Array<string>; "config"?: { [key: string]: unknown } }
+  "artifact.test": { "previewRef": string; "action": string; "input"?: { [key: string]: unknown }; "submissionKey": string }
+  "artifact.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "artifact.close": { "operationRef": string }
+  "release.prepare": { "artifactRef": string; "submissionKey": string; "expectedBaseVersion": string | null; "expectedInstallationRevision": number; "dataCompatibility": "unchanged" | "migration-tested" | "unknown"; "verification"?: string }
+  "release.commit": { "releaseRef": string; "submissionKey": string }
+  "release.get": { "operationRef": string; "offset"?: number; "limit"?: number }
+  "release.cancel": { "operationRef": string }
+}
+export interface AppsHostOutputMap {
+  "authoring.get": { "available": boolean; "reason": string | null; "provider": { [key: string]: unknown } | null }
+  "authoring.resources": { "items": Array<{ [key: string]: unknown }> }
+  "authoring.prepare": { [key: string]: unknown }
+  "catalog.list": { "items": Array<{ [key: string]: unknown }> }
+  "target.inspect": { [key: string]: unknown }
+  "source.inspect": { [key: string]: unknown }
+  "project.prepare": { [key: string]: unknown }
+  "build.start": AuthoringOperation
+  "build.get": AuthoringOperation
+  "build.cancel": AuthoringOperation
+  "artifact.validate": { [key: string]: unknown }
+  "artifact.preview": AuthoringOperation
+  "artifact.test": AuthoringOperation
+  "artifact.get": AuthoringOperation
+  "artifact.close": AuthoringOperation
+  "release.prepare": AuthoringOperation
+  "release.commit": AuthoringOperation
+  "release.get": AuthoringOperation
+  "release.cancel": AuthoringOperation
+}
+export interface AppsHostEventMap {
+  "authoring.changed": { "revision": number }
+  "operation.changed": AuthoringOperation
+}
+export interface SettingsHostInputMap {
+  "catalog": { "domain"?: string; "scope"?: string; "target"?: string; "key"?: string; "query"?: string }
+  "read": { "domain": string; "scope"?: string; "target"?: string; "key"?: string }
+  "apply": { "domain": string; "scope"?: string; "target"?: string; "key"?: string; "revision": string; "requestId": string; "changes": Array<{ "path": string; "value"?: unknown; "remove"?: boolean }>; "preview"?: boolean; "approvalMode"?: "confirm" | "unrestricted" }
+  "undo": { "receiptId": string; "requestId": string; "approvalMode"?: "confirm" | "unrestricted" }
+}
+export interface SettingsHostOutputMap {
+  "catalog": { [key: string]: unknown }
+  "read": { [key: string]: unknown }
+  "apply": { [key: string]: unknown }
+  "undo": { [key: string]: unknown }
+}
+export interface SettingsHostEventMap {
+}
+export interface NotificationsHostInputMap {
+  "list": Record<string, never>
+  "mark-read": { "id": string }
+}
+export interface NotificationsHostOutputMap {
+  "list": { [key: string]: unknown }
+  "mark-read": { [key: string]: unknown }
+}
+export interface NotificationsHostEventMap {
+}
+export interface TestingHostInputMap {
+  "environment": Record<string, never>
+  "target.status": Record<string, never>
+  "target.open": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
+  "target.sync": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
+  "target.reset": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
+  "target.close": Record<string, never>
+  "target.attach": { "runId": string }
+  "controller.create": { "runId": string; "engineEntry": string; "disabledTools": Array<string>; "title": string }
+  "controller.turn.start": { "sessionId": string; "prompt": string }
+  "controller.turn.status": { "sessionId": string }
+  "controller.turn.abort": { "sessionId": string }
+  "controller.dispose": { "sessionId": string }
+  "controller.caller": Record<string, never>
+  "controller.open": { "sessionId": string }
+}
+export interface TestingHostOutputMap {
+  "environment": { [key: string]: unknown }
+  "target.status": { [key: string]: unknown }
+  "target.open": { [key: string]: unknown }
+  "target.sync": { [key: string]: unknown }
+  "target.reset": { [key: string]: unknown }
+  "target.close": { [key: string]: unknown }
+  "target.attach": { [key: string]: unknown }
+  "controller.create": { [key: string]: unknown }
+  "controller.turn.start": { [key: string]: unknown }
+  "controller.turn.status": { [key: string]: unknown }
+  "controller.turn.abort": { [key: string]: unknown }
+  "controller.dispose": { [key: string]: unknown }
+  "controller.caller": { "sessionId": string | null }
+  "controller.open": { "opened": boolean }
+}
+export interface TestingHostEventMap {
+  "target.changed": { [key: string]: unknown }
 }
 export interface HostInputMap {
   "moss.tasks/v1": TasksHostInputMap
@@ -206,6 +329,10 @@ export interface HostInputMap {
   "moss.trace/v1": TraceHostInputMap
   "moss.cloud-storage/v1": CloudStorageHostInputMap
   "moss.host/v1": HostHostInputMap
+  "moss.apps/v1": AppsHostInputMap
+  "moss.settings/v1": SettingsHostInputMap
+  "moss.notifications/v1": NotificationsHostInputMap
+  "moss.testing/v1": TestingHostInputMap
 }
 export interface HostOutputMap {
   "moss.tasks/v1": TasksHostOutputMap
@@ -218,6 +345,10 @@ export interface HostOutputMap {
   "moss.trace/v1": TraceHostOutputMap
   "moss.cloud-storage/v1": CloudStorageHostOutputMap
   "moss.host/v1": HostHostOutputMap
+  "moss.apps/v1": AppsHostOutputMap
+  "moss.settings/v1": SettingsHostOutputMap
+  "moss.notifications/v1": NotificationsHostOutputMap
+  "moss.testing/v1": TestingHostOutputMap
 }
 export interface HostEventMap {
   "moss.tasks/v1": TasksHostEventMap
@@ -230,4 +361,8 @@ export interface HostEventMap {
   "moss.trace/v1": TraceHostEventMap
   "moss.cloud-storage/v1": CloudStorageHostEventMap
   "moss.host/v1": HostHostEventMap
+  "moss.apps/v1": AppsHostEventMap
+  "moss.settings/v1": SettingsHostEventMap
+  "moss.notifications/v1": NotificationsHostEventMap
+  "moss.testing/v1": TestingHostEventMap
 }

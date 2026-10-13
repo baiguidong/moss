@@ -13,7 +13,7 @@ import {
 describe('Moss tool loading settings', () => {
   it('defines every split host tool exactly once', () => {
     const names = MOSS_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => tool.name));
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(5);
     expect(new Set(names).size).toBe(names.length);
     expect(Object.keys(DEFAULT_MOSS_TOOL_LOADING)).toEqual(names);
   });
@@ -29,27 +29,26 @@ describe('Moss tool loading settings', () => {
     expect(DEFAULT_MOSS_TOOL_LOADING).toEqual(RUNTIME_DEFAULT_MOSS_TOOL_LOADING);
   });
 
-  it('keeps moss_browser_open and computer_use resident and defaults the others to deferred', () => {
+  it('keeps moss_browser_open resident and defaults the others to deferred', () => {
     const always = Object.entries(DEFAULT_MOSS_TOOL_LOADING)
       .filter(([, mode]) => mode === 'always')
       .map(([name]) => name);
     expect(always).toEqual([
       'moss_browser_open',
-      'computer_use',
     ]);
     expect(Object.entries(DEFAULT_MOSS_TOOL_LOADING).filter(([, mode]) => mode === 'deferred'))
-      .toHaveLength(11);
+      .toHaveLength(4);
   });
 
   it('uses defaults for missing or invalid entries and ignores unknown tools', () => {
     expect(normalizeMossToolLoading({
       moss_browser_open: 'deferred',
-      app_build: 'always',
+      connector_cli_setup: 'always',
       image_generate: 'invalid',
       unknown_tool: 'always',
     })).toMatchObject({
       moss_browser_open: 'deferred',
-      app_build: 'always',
+      connector_cli_setup: 'always',
       image_generate: 'deferred',
     });
     const normalized = normalizeMossToolLoading(

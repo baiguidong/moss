@@ -419,7 +419,9 @@ function configureEffortParams(
     betas.push(EFFORT_BETA_HEADER)
   } else if (typeof effortValue === 'string') {
     // Send string effort level as is
-    outputConfig.effort = effortValue
+    // Compatible gateways also accept xhigh, which the Anthropic SDK's
+    // narrower type does not yet describe. Claude values are normalized above.
+    ;(outputConfig as { effort?: string }).effort = effortValue
     betas.push(EFFORT_BETA_HEADER)
   }
 }

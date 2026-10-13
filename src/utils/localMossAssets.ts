@@ -1,4 +1,5 @@
 import { homedir } from 'os'
+import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs'
 import { readFile, readdir, stat } from 'fs/promises'
 import path from 'path'
 import { parseFrontmatter } from './frontmatterParser.js'
@@ -75,6 +76,7 @@ async function findAssistantDir(assistantName: string): Promise<string | null> {
   for (const root of roots) {
     for (const name of names) {
       const candidate = path.join(root, name)
+      if (isRetiredAppAuthoringResource(candidate)) continue
       try {
         if ((await stat(candidate)).isDirectory()) return candidate
       } catch {}
@@ -91,6 +93,7 @@ async function findAssistantDir(assistantName: string): Promise<string | null> {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
       const candidate = path.join(root, entry.name)
+      if (isRetiredAppAuthoringResource(candidate)) continue
       const meta = await readJsonObject(path.join(candidate, ASSISTANT_META_FILE))
       if (meta?.name === normalized) return candidate
     }
@@ -127,6 +130,7 @@ export async function getLocalInstalledSkills(): Promise<LocalInstalledSkill[]> 
       .filter(entry => entry.isDirectory())
       .map(async entry => {
         const skillDir = path.join(SKILLS_DIR, entry.name)
+        if (isRetiredAppAuthoringResource(skillDir)) return null
         const [meta, markdown] = await Promise.all([
           readJsonObject(path.join(skillDir, SKILL_META_FILE)),
           readFile(path.join(skillDir, 'SKILL.md'), 'utf8').catch(() => ''),

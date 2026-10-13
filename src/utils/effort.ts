@@ -2,18 +2,38 @@ import { getInitialSettings } from './settings/settings.js'
 import { getAPIProvider } from './model/providers.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { isEnvTruthy } from './envUtils.js'
-import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
-
-export type { EffortLevel }
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const EFFORT_LEVELS = [
   'low',
   'medium',
   'high',
+  'xhigh',
   'max',
 ] as const satisfies readonly EffortLevel[]
 
 export type EffortValue = EffortLevel | number
+
+export type SessionEffortConfiguration = {
+  model: string
+  configured: EffortValue | null
+  applied: EffortValue | null
+  levels: EffortLevel[]
+  overridden: boolean
+}
+
+export function getSessionEffortConfiguration(model: string, value?: EffortValue): SessionEffortConfiguration {
+  const levels: EffortLevel[] = modelSupportsEffort(model) ? ['low', 'medium', 'high'] : []
+  if (levels.length > 0) {
+    if (!/claude|opus|sonnet|haiku/i.test(model)) levels.push('xhigh')
+    if (modelSupportsMaxEffort(model)) levels.push('max')
+  }
+  return {
+    model, configured: value ?? null,
+    applied: levels.length > 0 ? resolveAppliedEffort(model, value) ?? null : null,
+    levels, overridden: getEffortEnvOverride() !== undefined,
+  }
+}
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
@@ -45,7 +65,7 @@ export function modelSupportsEffort(model: string): boolean {
 }
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
-// Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
+// Keep the native model's highest tier distinct from gateway aliases.
 export function modelSupportsMaxEffort(model: string): boolean {
   const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
   if (supported3P !== undefined) {
@@ -54,6 +74,7 @@ export function modelSupportsMaxEffort(model: string): boolean {
   if (model.toLowerCase().includes('opus-4-6')) {
     return true
   }
+  if (/(?:^|\/)gpt-6(?:[-.]|$)/i.test(model)) return true
   return false
 }
 
@@ -152,8 +173,14 @@ export function resolveAppliedEffort(
   }
   const resolved =
     envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
-  // API rejects 'max' on non-Opus-4.6 models — downgrade to 'high'.
+  // Claude uses max for its highest tier; OpenAI-compatible gateways accept
+  // xhigh. Keep provider-specific values for other gateway model names.
+  if (resolved === 'xhigh' && /claude|opus|sonnet|haiku/i.test(model)) {
+    return modelSupportsMaxEffort(model) ? 'max' : 'high'
+  }
+  // Normalize the highest tier for models without a native max value.
   if (resolved === 'max' && !modelSupportsMaxEffort(model)) {
+    if (/(?:^|\/)gpt-/i.test(model)) return 'xhigh'
     return 'high'
   }
   return resolved
@@ -217,7 +244,9 @@ export function getEffortLevelDescription(level: EffortLevel): string {
     case 'high':
       return 'Comprehensive implementation with extensive testing and documentation'
     case 'max':
-      return 'Maximum capability with deepest reasoning (Opus 4.6 only)'
+      return 'Maximum capability with deepest reasoning'
+    case 'xhigh':
+      return 'Extra-high reasoning for compatible models'
   }
 }
 

@@ -13,13 +13,7 @@ import * as path from 'node:path'
 import * as fs from 'node:fs'
 import os from 'node:os';
 import {
-  buildAppFromWorkspace,
-  extractAppToWorkspace,
-  getAppWorkspaceBuildDir,
   listAppsFromRegistry,
-  listAppVersions,
-  publishAppFromBuild,
-  readAppManifestFromDir,
 } from './app-platform.mjs'
 import { MOSS_HOME } from './moss-home.mjs'
 
@@ -123,18 +117,11 @@ export function listAllStoredApps() {
 
 /**
  * @typedef {Object} MossAppEvent
- * @property {'app_build'} type
+ * @property {string} type
  * @property {Object} input
  */
 /** @type {MossAppEvent[]} */
 const MossAppEventTypes = [
-  'app_build',
-  'app_preview',
-  'app_publish',
-  'app_launch',
-  'app_update',
-  'app_extract_to_workspace',
-  'app_get_versions',
   'browser_open',
   'connector_cli_setup',
   'connector_mcp_authenticate',
@@ -192,112 +179,9 @@ export function createMossAppEventHandler(windows, events, options = {}) {
     ? options.attachConnectorToSession
     : null
 
-  const requireWorkspaceBuildDir = (sessionRecord, input = {}) => {
-    if (!sessionRecord?.workspace) {
-      throw new Error('Session workspace is required for App build directory access')
-    }
-    const buildDir = input.buildDir
-      ? path.resolve(sessionRecord.workspace, input.buildDir)
-      : getAppWorkspaceBuildDir(sessionRecord.workspace, input.name)
-    const relativePath = path.relative(sessionRecord.workspace, buildDir)
-    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-      throw new Error('App buildDir must stay inside the current session workspace')
-    }
-    return buildDir
-  }
-
-  const slugifyAppId = (value) => String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
-
-  const requireBuildManifestForName = (buildDir, name) => {
-    const manifest = readAppManifestFromDir(buildDir)
-    const requestedId = slugifyAppId(name)
-    if (requestedId && manifest.id !== requestedId) {
-      throw new Error(`App build id "${manifest.id}" does not match requested name "${name}"`)
-    }
-    return manifest
-  }
-
-  const findRegisteredApp = (name) => {
-    const normalizedName = String(name || '').trim()
-    const normalizedId = slugifyAppId(normalizedName)
-    return listAppsFromRegistry().find(entry =>
-      entry.name === normalizedName ||
-      entry.id === normalizedName ||
-      entry.id === normalizedId
-    )
-  }
-
   return async (event, sessionRecord = null) => {
     try {
       switch (event.type) {
-        case 'app_build': {
-          if (!sessionRecord?.workspace) {
-            throw new Error('Session workspace is required for App build')
-          }
-          return await buildAppFromWorkspace(sessionRecord.workspace, event.input.name)
-        }
-
-        case 'app_preview': {
-          const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
-          readAppManifestFromDir(buildDir)
-          await windows.previewAppBuild(buildDir)
-          return { ok: true, buildDir }
-        }
-
-        case 'app_publish': {
-          const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
-          requireBuildManifestForName(buildDir, event.input.name)
-          const app = await publishAppFromBuild(buildDir, {
-            description: event.input.description,
-            reason: event.input.reason,
-          })
-          await events.emitAppsChanged({ action: 'created', app })
-          return { ok: true, app }
-        }
-
-        case 'app_launch': {
-          const app = findRegisteredApp(event.input.name)
-          if (!app) throw new Error(`Unknown App: ${event.input.name}`)
-          windows.launchApp?.(app.id)
-          return { ok: true, app }
-        }
-
-        case 'app_update': {
-          const buildDir = requireWorkspaceBuildDir(sessionRecord, event.input)
-          requireBuildManifestForName(buildDir, event.input.name)
-          const app = await publishAppFromBuild(buildDir, {
-            description: event.input.description,
-            reason: event.input.reason || 'updated',
-          })
-          await events.emitAppsChanged({ action: 'updated', app })
-          return { ok: true, app }
-        }
-
-        case 'app_extract_to_workspace': {
-          if (!sessionRecord) {
-            throw new Error('Session context is required for app_extract_to_workspace')
-          }
-          const app = findRegisteredApp(event.input.name)
-          if (!app) throw new Error(`Unknown App: ${event.input.name}`)
-          const extracted = await extractAppToWorkspace(app.id, sessionRecord, event.input.versionId)
-          return {
-            ok: true,
-            app: extracted.app,
-            metadataPath: extracted.metadataPath,
-            htmlPath: extracted.htmlPath,
-          }
-        }
-
-        case 'app_get_versions': {
-          const app = findRegisteredApp(event.input.name)
-          return { ok: true, versions: app ? listAppVersions(app.id) : [] }
-        }
-
         case 'browser_open': {
           const directUrl = typeof event.input?.url === 'string'
             ? event.input.url.trim()

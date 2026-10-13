@@ -91,6 +91,8 @@ type DirectSession = {
   abort(): void
   dispose(): void
   setPermissionMode(mode: DirectPermissionMode | 'allow-all'): void
+  getEffort?(): JsonObject
+  setEffort?(effort: string | null): JsonObject
 }
 type DirectRuntimeModule = {
   ClaudeSession: new (options: DirectSessionOptions) => DirectSession
@@ -651,6 +653,23 @@ class DirectEmbeddedHandle implements BackendHandle {
             response: {},
           },
         })
+      }
+      return true
+    }
+    if (request.subtype === 'get_effort' || request.subtype === 'set_effort') {
+      try {
+        if (!this.session.getEffort || !this.session.setEffort) throw new Error('请更新云端运行时以设置推理强度。')
+        const effort = request.effort
+        if (request.subtype === 'set_effort' && effort !== null &&
+          (typeof effort !== 'string' || !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))) {
+          throw new Error('Invalid reasoning effort.')
+        }
+        const result = request.subtype === 'get_effort'
+          ? this.session.getEffort()
+          : this.session.setEffort(effort as string | null)
+        this.#emitStdout({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: result } })
+      } catch (error) {
+        this.#emitControlResponseError(requestId, error instanceof Error ? error.message : String(error))
       }
       return true
     }

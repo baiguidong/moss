@@ -44,3 +44,13 @@ describe("conversation navigator", () => {
     expect(markup.match(/data-turn-number=/g)?.length).toBe(4);
   });
 });
+
+it('hides the turn rail in short conversations', () => {
+  const items = buildConversationNavigationItems([
+    { id: 'u1', renderIndex: 0, content: 'first turn' },
+    { id: 'u2', renderIndex: 2, content: 'second turn' },
+  ]);
+  expect(items.map(item => item.turnNumber)).toEqual([1, 2]);
+  const markup = renderToStaticMarkup(<ConversationNavigator items={items} activeItemId="u1" onNavigate={() => {}} />);
+  expect(markup).toBe('');
+});

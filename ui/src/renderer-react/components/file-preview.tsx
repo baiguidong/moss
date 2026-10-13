@@ -1,123 +1,69 @@
-"use client";
-
-import * as React from "react";
-import { X, FileText, Image as ImageIcon } from "lucide-react";
+import * as React from 'react';
+import { X, FileText, Image as ImageIcon, MoreHorizontal, Eye, Copy, FolderOpen, ExternalLink } from 'lucide-react';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
-import { cn } from "@/lib/utils";
-import { LocalImage } from "@/components/local-image";
+import { fileActionCapabilities, performFileAction } from '@/lib/file-actions';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
-const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
-
-function isImageFile(path: string): boolean {
-  const ext = path.toLowerCase().slice(path.lastIndexOf('.'));
-  return IMAGE_EXTS.includes(ext);
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0B';
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
-}
-
-interface FilePreviewProps {
-  path: string;
-  name?: string;
-  onRemove?: () => void;
-  readonly?: boolean;
-}
-
-export function FilePreview({ path, name, onRemove, readonly = false }: FilePreviewProps) {
-  const isImage = isImageFile(path);
-  const appResource = isAppResourceUri(path);
-  const isRemoteWorkspaceFile = path.startsWith('moss-remote-workspace://');
+export function FilePreview({ path, name, onRemove, readonly = false }: {
+  path: string; name?: string; onRemove?: () => void; readonly?: boolean;
+}) {
+  const remote = path.startsWith('moss-remote-workspace://');
+  const resource = isAppResourceUri(path);
   let resourceName = '';
-  if (appResource) {
-    try {
-      resourceName = new URL(path).searchParams.get('name') || '';
-    } catch {}
-  }
-  const fileName = name || resourceName || (appResource ? 'App 文档' : path.split(/[\\/]/).pop()) || '';
-  const fileExt = fileName.includes('.') ? fileName.split('.').pop()?.toUpperCase() || '' : '';
-  const [imageUrl, setImageUrl] = React.useState<string>('');
-  const [fileSize, setFileSize] = React.useState<string>('');
-
+  if (resource) { try { resourceName = new URL(path).searchParams.get('name') || ''; } catch {} }
+  const fileName = name || resourceName || path.split(/[\\/]/).pop() || '文件';
+  const isImage = /\.(jpe?g|png|gif|bmp|webp|svg|avif|ico)$/i.test(fileName);
+  const [imageUrl, setImageUrl] = React.useState('');
+  const [size, setSize] = React.useState<number>();
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const capabilities = fileActionCapabilities(path);
   React.useEffect(() => {
     let cancelled = false;
-    setImageUrl('');
-    if (isRemoteWorkspaceFile) {
-      if (isImage) setImageUrl(path);
-      return () => { cancelled = true; };
-    }
-    if (appResource) return () => { cancelled = true; };
-    window.agentDesktop.fs.getFileMetadata(path)
-      .then((metadata: any) => {
-        if (!cancelled && metadata?.size) setFileSize(formatFileSize(metadata.size));
-      })
-      .catch(() => { /* 忽略元数据读取失败 */ });
-
-    if (isImage) {
-      window.agentDesktop.fs.getImageBase64(path)
-        .then((base64: string | null) => {
-          // path 已切换或组件卸载则丢弃, 避免显示错误图片
-          if (!cancelled && base64) setImageUrl(base64);
-        })
-        .catch(() => { /* 忽略图片加载失败 */ });
+    setImageUrl(remote && isImage ? path : ''); setSize(undefined); setError('');
+    if (!remote && !resource) {
+      void window.agentDesktop.fs.getFileMetadata(path).then(metadata => {
+        if (!cancelled) setSize(metadata?.size);
+      }).catch(() => {});
+      if (isImage) void window.agentDesktop.fs.getImageBase64(path).then(url => {
+        if (!cancelled) setImageUrl(url || '');
+      }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [path, isImage, isRemoteWorkspaceFile, appResource]);
-
-  const handleRemove = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onRemove?.();
-  };
-
-  if (isImage) {
-    return (
-      <div className="relative inline-block">
-        <div className="overflow-hidden rounded-lg border border-border/70">
-          {imageUrl ? (
-            <LocalImage src={imageUrl} alt={fileName} className="h-16 w-16 object-cover" />
-          ) : (
-            <div className="h-16 w-16 bg-muted flex items-center justify-center">
-              <ImageIcon className="h-6 w-6 text-muted-foreground" />
-            </div>
-          )}
-        </div>
-        {!readonly && onRemove && (
-          <button
-            onClick={handleRemove}
-            className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-border flex items-center justify-center shadow-sm hover:shadow-md transition-shadow"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
-      </div>
-    );
+  }, [path, remote, resource, isImage]);
+  async function act(action: Parameters<typeof performFileAction>[1]) {
+    setBusy(true); setError('');
+    try { await performFileAction(path, action); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
   }
-
+  const sizeLabel = size === undefined ? '' : size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.round(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return (
-    <div className="relative inline-block">
-      <div className="h-16 flex items-center gap-3 px-3 rounded-lg border border-border/70 bg-card">
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-muted">
-          <FileText className="h-5 w-5 text-muted-foreground" />
-        </div>
-        <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-sm font-medium truncate max-w-[150px]">{fileName}</span>
-          <span className="text-xs text-muted-foreground">
-            {fileExt}{fileSize ? `: ${fileSize}` : ''}
+    <div className="max-w-full" data-file-attachment={path}>
+      <div className="flex max-w-full items-center rounded-lg border border-border/70 bg-card">
+        <button type="button" disabled={busy} onClick={() => void act('preview')} title={path} aria-label={`预览 ${fileName}`}
+          className="flex min-w-0 items-center gap-2 rounded-lg p-2 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+            {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setImageUrl('')} />
+              : isImage ? <ImageIcon className="h-5 w-5 text-muted-foreground" /> : <FileText className="h-5 w-5 text-muted-foreground" />}
           </span>
-        </div>
-      </div>
-      {!readonly && onRemove && (
-        <button
-          onClick={handleRemove}
-          className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-background border border-border flex items-center justify-center shadow-sm hover:shadow-md transition-shadow"
-        >
-          <X className="h-3 w-3" />
+          <span className="flex min-w-0 flex-col">
+            <span className="max-w-[180px] truncate text-xs font-medium">{fileName}</span>
+            <span className="text-[10px] text-muted-foreground">{sizeLabel || '文件'} · 点击预览</span>
+          </span>
         </button>
-      )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><button type="button" disabled={busy} aria-label={`${fileName} 操作`} className="p-1.5 text-muted-foreground hover:text-foreground"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => void act('preview')}><Eye />预览</DropdownMenuItem>
+            {capabilities.system && <DropdownMenuItem onSelect={() => void act('system')}><ExternalLink />用系统应用打开</DropdownMenuItem>}
+            {capabilities.reveal && <DropdownMenuItem onSelect={() => void act('reveal')}><FolderOpen />在文件夹中显示</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={() => void act('copy')}><Copy />复制路径</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {!readonly && onRemove && <button type="button" onClick={onRemove} aria-label={`移除 ${fileName}`} className="p-1.5 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>}
+      </div>
+      {error && <p role="alert" className="mt-1 max-w-[260px] text-xs text-destructive">{error}</p>}
     </div>
   );
 }

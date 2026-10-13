@@ -1,3 +1,9 @@
+export type MemoryDreamStatus = {
+  phase: 'idle' | 'running' | 'stopping' | 'completed' | 'failed' | 'canceled';
+  message: string;
+  result: { sessionsReviewed: number; summary: string; filesTouched: string[] } | null;
+};
+
 export type ComputerUseStatus = {
   version: string; supported: boolean; enabled: boolean; phase: string; error: string; captureVerified: boolean;
   permissions: { accessibility: boolean; screenRecording: boolean; hostIdentity: boolean; bundleId: string } | null;
@@ -91,6 +97,9 @@ export type SessionSummary = {
   projectConclusion?: string;
   projectMemoryVersion?: number;
   connectorIds?: string[];
+  appIds?: string[];
+  appServiceIds?: string[];
+  appToolsPending?: boolean;
   sessionKind?: 'chat' | 'cron' | 'agent-mail';
   originChannel?: string;
   sourceSessionId?: string | null;
@@ -113,6 +122,15 @@ export type ModelContextInfo = {
   model: string;
   contextWindow: number;
   isDefault: boolean;
+};
+
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type SessionEffortConfiguration = {
+  model: string;
+  configured: EffortLevel | null;
+  applied: EffortLevel | null;
+  levels: EffortLevel[];
+  overridden: boolean;
 };
 
 export type SessionTokenTotals = {
@@ -717,7 +735,8 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
-  computerUse?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
+  appWidgets?: { enabled: boolean };
+  desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
@@ -878,6 +897,8 @@ export type ManagedRuntimeStatus = {
 };
 
 export type StoredApp = {
+  category?: string;
+  keywords?: string[];
   id?: string;
   kind?: 'app';
   name: string;
@@ -916,8 +937,12 @@ export type StoredApp = {
     actions: Array<{ name: string }>;
   } | null;
   permissions?: string[];
+  toolScope?: 'global' | 'session';
+  toolSelection?: 'app' | 'services';
+  navigation?: import('../../../packages/app-sdk/src/index.mjs').AppNavigation;
   agentTools?: Array<{
     id: string;
+    serviceId?: string;
     title: string;
     description: string;
     effect: 'read' | 'write' | 'destructive';
@@ -925,8 +950,9 @@ export type StoredApp = {
   }>;
   mcpServices?: AppMcpServiceTools[];
   contributes?: {
+    services?: Array<{ id: string; title: string; description?: string }>;
     views?: Array<{ id: string; title: string; route: string; icon?: string; order?: number; permission?: string }>;
-    settings?: Array<Record<string, any>>;
+    settings?: import('../../../packages/app-sdk/src/index.mjs').AppSettingsContribution[];
     commands?: Array<Record<string, any>>;
     tools?: Array<Record<string, any>>;
     resourceProviders?: Array<Record<string, any>>;
@@ -944,6 +970,7 @@ export type StoredApp = {
 };
 
 export type AppMcpServiceTools = {
+  serviceId?: string;
   appId: string;
   instanceId: string;
   name: string;
@@ -1017,12 +1044,14 @@ export type AppMarketplaceVersion = {
   permissions: string[];
   publishedAt: string;
   releaseNotes: string;
-  artifact: AppMarketplaceArtifact;
+  artifact: AppMarketplaceArtifact | null;
+  artifacts?: Record<string, AppMarketplaceArtifact>;
   platformCompatible?: boolean;
   hostCompatible?: boolean;
 };
 
 export type AppMarketplaceEntry = {
+  category?: string;
   id: string;
   displayName: string;
   summary: string;
@@ -1237,6 +1266,7 @@ export type BackgroundTaskInfo = {
   error?: string | null;
 };
 
+
 declare global {
   interface Window {
     mossTerminal: {
@@ -1250,11 +1280,6 @@ declare global {
     agentDesktop: {
       computerUse: {
         status: () => Promise<ComputerUseStatus>;
-        enable: (enabled: boolean) => Promise<ComputerUseStatus>;
-        check: () => Promise<ComputerUseStatus>;
-        requestPermissions: () => Promise<ComputerUseStatus>;
-        revealHostApp: () => Promise<void>;
-        openSettings: (permission: 'accessibility' | 'screen') => Promise<void>;
         stop: () => Promise<ComputerUseStatus>;
         revoke: (bundleId: string) => Promise<ComputerUseStatus>;
         decide: (id: string, decision: 'session' | 'always' | 'deny') => Promise<void>;
@@ -1280,7 +1305,11 @@ declare global {
         getCloudOverview: () => Promise<CloudUsageOverview | null>;
         getSession: (payload: { sessionId: string }) => Promise<SessionRecordedUsage | null>;
       };
+
       memory: {
+        dreamStatus: () => Promise<MemoryDreamStatus>;
+        startDream: () => Promise<MemoryDreamStatus>;
+        stopDream: () => Promise<MemoryDreamStatus>;
         getCatalog: () => Promise<MemoryCatalog>;
         readEntry: (payload:
           | { scope: 'global'; path: string; source?: 'local' | 'remote' }
@@ -1342,11 +1371,17 @@ declare global {
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
+      getCompactionRequest: (payload: { sessionId: string; boundaryId: string }) => Promise<{
+        request: { id: string; model?: string; startedAt?: string; status?: string; content: unknown; truncated?: boolean } | null;
+        reason?: string;
+      }>;
       getModelContext: (payload: { sessionId: string }) => Promise<ModelContextInfo | null>;
+      getSessionEffort: (payload: { sessionId: string }) => Promise<SessionEffortConfiguration>;
+      setSessionEffort: (payload: { sessionId: string; effort: EffortLevel | null }) => Promise<SessionEffortConfiguration>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
       previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;
@@ -1367,6 +1402,8 @@ declare global {
         mode: PermissionMode;
       }) => Promise<SessionSummary>;
       deleteSession: (payload: { sessionId: string }) => Promise<{ ok: boolean }>;
+      setSessionApps: (payload: { sessionId: string } & ({ appIds: string[]; appServiceIds?: string[] } | { toggleAppId: string } | { toggleServiceId: string } | { serviceAppId: string; appServiceIds: string[] })) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
+      selectAppResource: (payload: { sessionId?: string; providerId: string }) => Promise<{ appId: string; data?: SessionDetail }>;
       setSessionConnectors: (payload: { sessionId: string; connectorIds: string[] }) => Promise<{ success?: boolean; data?: SessionDetail & { skippedBusyRuntime?: boolean }; error?: string }>;
       listWorkspaces: (payload?: { query?: string; limit?: number }) => Promise<WorkspaceLocation[]>;
       createWorkspace: (payload: { name: string }) => Promise<WorkspaceLocation>;
@@ -1431,6 +1468,7 @@ declare global {
         }>;
       };
       listApps: () => Promise<StoredApp[]>;
+      importLegacyBuddy: (payload: { name: string; personality: string; hatchedAt: number; userId?: string }) => Promise<unknown>;
       inspectAppMcpTools: (payload: { appId: string; instanceId: string; name: string; revision: string }) => Promise<AppMcpServiceTools>;
       resourceMonitor: {
         getSnapshot: (payload?: { since?: number; active?: boolean }) => Promise<import('./lib/resource-monitor-types').ResourceMonitorSnapshot>;
@@ -1460,8 +1498,15 @@ declare global {
       openAppResource: (uri: string) => Promise<{ opened: boolean }>;
       getAppRuntimeState: (payload: { appId: string }) => Promise<any>;
       listAppResources: (payload: {sessionId?:string;workspace?:string;query?:string;offset?:number}) => Promise<{items:import('./lib/app-composer').AppComposerResource[];providers:Array<{id:string;title:string}>}>;
-      prepareAppResource: (payload: {context:{providerId:string;intent:string;ref?:unknown};sessionId?:string;workspace?:string}) => Promise<any>;
-      onAppPrepareComposer: (callback: (payload: {context:{providerId:string;intent:'create'|'edit'|'use';ref?:any};title:string;prompt:string;route?:string;workspace?:string;appId:string}) => void) => () => void;
+      getAppAuthoring: () => Promise<{available:boolean;reason:string|null;provider:{id:string;appId:string}|null}>;
+      prepareAppAuthoring: (appId:string) => Promise<{ok:boolean}>;
+      getAppAuthoringContext: (sessionId:string) => Promise<{providerId:string;intent:'create'|'edit'|'use';ref:Record<string,unknown>}|null>;
+      onAppAuthoringOperation: (callback:(payload:{sessionId:string})=>void) => () => void;
+      getAppAuthoringOperations: (sessionId:string) => Promise<Array<{operationRef:string;kind:string;status:string;result?:Record<string,unknown>;error?:string}>>;
+      cancelAppAuthoringOperation: (sessionId:string,operationRef:string) => Promise<unknown>;
+      onAppComposerBound: (callback:(payload:{sessionId:string;context:{providerId:string;intent:'create'|'edit'|'use';ref:Record<string,unknown>}})=>void) => () => void;
+      prepareAppResource: (payload: {sessionId?:string;context:{providerId:string;intent:string;ref?:unknown};sessionId?:string;workspace?:string}) => Promise<any>;
+      onAppPrepareComposer: (callback: (payload: {sessionId?:string;context:{providerId:string;intent:'create'|'edit'|'use';ref?:any};title:string;prompt:string;route?:string;workspace?:string;appId:string}) => void) => () => void;
       listAppCommands: (payload: {sessionId?: string}) => Promise<Array<{id:string;name:string;description:string}>>;
       listAppContributions: (payload?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean }) => Promise<Record<string, any[]>>;
       invokeAppContribution: (payload: { kind: 'commands' | 'resourceProviders'; id: string; input?: unknown; instanceId?: string; requestId?: string; timeoutMs?: number }) => Promise<unknown>;
@@ -1473,7 +1518,6 @@ declare global {
       clearAppInstanceCredentials: (payload: { appId: string; instanceId: string }) => Promise<any>;
       restartAppInstance: (payload: { appId: string; instanceId: string }) => Promise<any>;
       getAppInstanceLogs: (payload: { appId: string; instanceId: string; limit?: number }) => Promise<any[]>;
-      saveApp: (payload: { sessionId: string; launch?: boolean }) => Promise<{ ok: boolean; app?: StoredApp; error?: string }>;
       listWorkspaceDir: (payload: { sessionId: string; dirPath?: string }) => Promise<any>;
       readWorkspaceFile: (payload: { sessionId: string; filePath: string }) => Promise<WorkspacePreviewData>;
       document: {
@@ -1592,7 +1636,8 @@ declare global {
       };
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;
-        getFileMetadata: (path: string) => Promise<{ size: number } | null>;
+        getPathForFile: (file: File) => string;
+        getFileMetadata: (path: string) => Promise<{ size: number; isFile?: boolean } | null>;
         getHomeDir: () => Promise<string>;
         createTempFile: (fileName: string) => Promise<string | null>;
         writeFile: (path: string, data: number[]) => Promise<boolean>;

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { AppMcpServiceTools, StoredApp } from '../types';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
+import { ToolDescription } from '@/components/tool-description';
 
 const statusLabels = {
   'app-disabled': 'App 已停用', 'instance-disabled': '实例已停用', unauthorized: '未授权',
@@ -56,8 +57,10 @@ export function AppMcpToolRows({ app, service }: { app: StoredApp; service: AppM
   return <tbody className="border-b border-sidebar-border last:border-b-0">{tools.map((tool, index) => <tr key={tool.name} className="border-t border-sidebar-border first:border-t-0">
     {index === 0 && serviceHeader}
     <td className="break-all px-4 py-3 text-xs font-medium">{tool.name}</td>
-    <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">{tool.description || '此工具未提供描述。'}</td>
-    <td className="px-3 py-3 text-xs text-muted-foreground">按需</td>
+    <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">
+      <ToolDescription description={tool.description || '此工具未提供描述。'} toolName={tool.name} />
+    </td>
+    <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? '全局 · 按需' : '指定 · 选择后常驻'}</td>
     <td className="px-3 py-3 text-xs text-muted-foreground">{current.status !== 'connected' || !app.enabled ? label : tool.disabled ? '已排除' : '可用'}</td>
   </tr>)}</tbody>;
 }

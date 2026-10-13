@@ -1,6 +1,10 @@
+import { AppToolSelectionContext, getToolPickerItems, getAppToolServices, toolAppId, toolAppTitle } from '@/lib/app-tool-selection';
+import { AppIcon } from '@/components/app-icon';
+import { AppCategoryFilter } from '@/components/app-category-filter';
+import { getAppCategory } from '@/lib/app-categories';
 import * as React from 'react';
 import { resourceKey, type AppComposerResource } from '@/lib/app-composer';
-import { Bot, Cable, Check, GitFork, Hammer, ListFilter } from 'lucide-react';
+import { ArrowLeft, Bot, Cable, Check, ChevronRight, GitFork, Hammer, ListFilter } from 'lucide-react';
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
@@ -62,6 +66,7 @@ const RESOURCE_TAB_META: Record<ComposerResourceTab, {
   searchPlaceholder: string;
   icon: React.ReactNode;
 }> = {
+  apps: { label: 'App', managerLabel: '管理 App', searchPlaceholder: '搜索 App 或子服务', icon: <AppIcon className="h-4 w-4" /> },
   workflows: { label:'工作流', managerLabel:'', searchPlaceholder:'搜索已发布工作流', icon:<GitFork className="h-4 w-4"/> },
   assistants: {
     label: '专家',
@@ -103,6 +108,8 @@ function ResourceRow({
   title,
   description,
   singleSelect = false,
+  expandable = false,
+  disabled = false,
   onSelect,
 }: {
   selected: boolean;
@@ -110,15 +117,19 @@ function ResourceRow({
   title: string;
   description: string;
   singleSelect?: boolean;
+  expandable?: boolean;
+  disabled?: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
-      aria-pressed={selected}
+      aria-pressed={expandable ? undefined : selected}
+      aria-haspopup={expandable ? 'true' : undefined}
+      disabled={disabled}
       onClick={onSelect}
       className={cn(
-        'flex h-12 w-full items-center gap-3 rounded-md px-3 text-left transition-colors',
+        'flex h-12 w-full items-center gap-3 rounded-md px-3 text-left transition-colors disabled:opacity-50',
         selected ? 'bg-primary/10' : 'hover:bg-muted',
       )}
     >
@@ -129,7 +140,7 @@ function ResourceRow({
         <span className="block truncate text-sm font-medium text-foreground">{title}</span>
         <span className="block truncate text-xs text-muted-foreground">{description}</span>
       </span>
-      {singleSelect ? (
+      {expandable ? <ChevronRight className="h-4 w-4 shrink-0" /> : singleSelect ? (
         selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null
       ) : (
         <span className={cn(
@@ -168,18 +179,25 @@ export function ComposerResourceSelectionArea({
   openTab = null,
   onOpenTabChange,
 }: ComposerResourceSelectionAreaProps) {
+  const toolApps = React.useContext(AppToolSelectionContext);
   const tabs = React.useMemo(() => getComposerResourceTabs({
+    includeApps: toolApps.enabled,
     includeAssistants: Boolean(onSelectAssistant),
     includeAgents: Boolean(onSelectAgent),
     includeSkills: Boolean(onToggleSkill),
     includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResourcesAvailable,
-  }), [appResourcesAvailable, onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
+  }), [toolApps.enabled, appResourcesAvailable, onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
+  const [appCategory, setAppCategory] = React.useState('all');
+  const [serviceAppId, setServiceAppId] = React.useState<string | null>(null);
+  const serviceApp = toolApps.apps.find(app => toolAppId(app) === serviceAppId);
+  const selectedServiceIds = toolApps.selectedServiceIds || [];
   const displayedTab = openTab ?? activeTab;
   const pickerOpen = openTab !== null || open;
+  React.useEffect(() => { if (!pickerOpen || displayedTab !== 'apps' || !serviceApp) setServiceAppId(null) }, [pickerOpen, displayedTab, serviceApp]);
   React.useEffect(() => { if (pickerOpen && displayedTab === 'workflows') onAppResourceQuery?.(query) }, [query, displayedTab, pickerOpen, onAppResourceQuery]);
 
   React.useEffect(() => {
@@ -219,11 +237,15 @@ export function ComposerResourceSelectionArea({
     connector.type,
   ], query)), [installedConnectors, query]);
 
+  const allToolApps = getToolPickerItems(toolApps.apps, '', toolApps.selectedIds, selectedServiceIds).map(item => item.app);
+  const filteredToolItems = getToolPickerItems(toolApps.apps, query, toolApps.selectedIds, selectedServiceIds, serviceAppId, serviceAppId ? 'all' : appCategory);
+  const availableServiceIds = serviceApp ? getAppToolServices(serviceApp).filter(service => service.available).map(service => service.id) : [];
+  const allServicesSelected = availableServiceIds.length > 0 && availableServiceIds.every(id => selectedServiceIds.includes(id));
   if (tabs.length === 0) return null;
 
   const selectedSkillNames = new Set(selectedSkills.map((skill) => skill.name));
   const selectedConnectors = new Set(selectedConnectorIds);
-  const selectedCount = (selectedAppResource ? 1 : 0) + (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
+  const selectedCount = (toolApps.enabled ? (toolApps.selectedIds.length + selectedServiceIds.length) : 0) + (selectedAppResource ? 1 : 0) + (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
     + (tabs.includes('agents') && selectedAgent ? 1 : 0)
     + (tabs.includes('skills')
       ? installedSkills.filter((skill) => selectedSkillNames.has(skill.name)).length
@@ -231,14 +253,14 @@ export function ComposerResourceSelectionArea({
     + (tabs.includes('connectors')
       ? installedConnectors.filter((connector) => selectedConnectors.has(connector.id)).length
       : 0);
-  const activeItems = displayedTab === 'workflows' ? appResources : displayedTab === 'assistants'
+  const activeItems = displayedTab === 'apps' ? filteredToolItems : displayedTab === 'workflows' ? appResources : displayedTab === 'assistants'
     ? filteredAssistants
     : displayedTab === 'agents'
       ? filteredAgents
     : displayedTab === 'skills'
       ? filteredSkills
       : filteredConnectors;
-  const activeTotal = displayedTab === 'workflows' ? appResources.length : displayedTab === 'assistants'
+  const activeTotal = displayedTab === 'apps' ? (serviceApp ? getAppToolServices(serviceApp).length : allToolApps.length) : displayedTab === 'workflows' ? appResources.length : displayedTab === 'assistants'
     ? installedAssistants.length
     : displayedTab === 'agents'
       ? activeAgents.length
@@ -249,16 +271,17 @@ export function ComposerResourceSelectionArea({
   const closePicker = () => {
     setOpen(false);
     setQuery('');
+    setServiceAppId(null);
     onOpenTabChange?.(null);
   };
-  const openManager = displayedTab === 'workflows' ? undefined : displayedTab === 'assistants'
+  const openManager = displayedTab === 'apps' ? toolApps.openManager : displayedTab === 'workflows' ? undefined : displayedTab === 'assistants'
     ? onOpenExpertHub
     : displayedTab === 'agents'
       ? onOpenAgentManager
     : displayedTab === 'skills'
       ? onOpenSkillHub
       : onOpenConnectorHub;
-  const emptyLabel = displayedTab === 'workflows' ? '没有匹配的已发布工作流' : displayedTab === 'assistants'
+  const emptyLabel = displayedTab === 'apps' ? '没有匹配的带工具 App' : displayedTab === 'workflows' ? '没有匹配的已发布工作流' : displayedTab === 'assistants'
     ? '没有匹配的已安装专家'
     : displayedTab === 'agents'
       ? '没有匹配的已启用 Agent'
@@ -290,9 +313,9 @@ export function ComposerResourceSelectionArea({
 
       <SelectionPickerDialog
         open={pickerOpen}
-        title={openTab ? `选择${meta.label}` : "选择资源"}
-        description={openTab ? `选择会话所需${meta.label}` : `选择会话所需资源，已选 ${selectedCount} 项`}
-        searchPlaceholder={meta.searchPlaceholder}
+        title={serviceApp ? `选择${toolAppTitle(serviceApp)}的服务` : openTab ? `选择${meta.label}` : "选择资源"}
+        description={serviceApp ? `可多选，已选 ${selectedServiceIds.filter(id => getAppToolServices(serviceApp).some(service => service.id === id)).length} 个服务` : openTab ? `选择会话所需${meta.label}` : `选择会话所需资源，已选 ${selectedCount} 项`}
+        searchPlaceholder={serviceApp ? "搜索当前 App 的服务" : meta.searchPlaceholder}
         query={query}
         onQueryChange={setQuery}
         onClose={closePicker}
@@ -305,7 +328,12 @@ export function ComposerResourceSelectionArea({
         managerPlacement="left"
         confirmLabel="确定"
         onConfirm={closePicker}
-        contentHeader={openTab ? undefined : (
+        contentHeader={<>
+          {displayedTab === 'apps' && (serviceApp ? <div className="mb-2 flex items-center justify-between gap-2">
+            <button type="button" className="flex min-w-0 items-center gap-1 text-sm" onClick={() => { setServiceAppId(null); setQuery('') }}><ArrowLeft className="h-4 w-4 shrink-0" /><span className="truncate">{toolAppTitle(serviceApp)}</span></button>
+            <button type="button" className="shrink-0 text-xs text-primary disabled:opacity-50" disabled={!availableServiceIds.length || toolApps.pending} onClick={() => toolApps.setServices?.(toolAppId(serviceApp), allServicesSelected ? [] : availableServiceIds)}>{allServicesSelected ? '清空服务选择' : '全选当前可用服务'}</button>
+          </div> : <div className="mb-2"><AppCategoryFilter apps={allToolApps} value={appCategory} onChange={setAppCategory} /></div>)}
+          {!openTab && (
           <div className="flex items-center gap-1" role="tablist" aria-label="资源类型">
             {tabs.map((tab) => {
               const tabMeta = RESOURCE_TAB_META[tab];
@@ -333,10 +361,16 @@ export function ComposerResourceSelectionArea({
               );
             })}
           </div>
-        )}
+          )}
+        </>}
       >
         <div className="space-y-1">
-          {displayedTab === 'workflows' ? <>
+          {displayedTab === 'apps' ? filteredToolItems.map((item, i) => <React.Fragment key={item.id}>
+            {!serviceApp && (i === 0 || getAppCategory(filteredToolItems[i - 1].app.category).id !== getAppCategory(item.app.category).id) && <h3 data-app-category={getAppCategory(item.app.category).id} className="px-3 pb-1 pt-3 text-xs font-medium text-muted-foreground">{getAppCategory(item.app.category).label}</h3>}
+            <ResourceRow selected={item.selected} expandable={item.expandable} disabled={toolApps.pending || (!item.available && !item.selected && !item.expandable)}
+              icon={<AppIcon icon={item.app.icon} className="h-5 w-5" />} title={item.title} description={item.description}
+              onSelect={() => item.expandable ? (setServiceAppId(toolAppId(item.app)), setQuery('')) : item.service ? toolApps.toggleService?.(item.id) : toolApps.toggle(item.id)} />
+          </React.Fragment>) : displayedTab === 'workflows' ? <>
             {appResources.map(resource => <ResourceRow key={resourceKey(resource)} selected={resourceKey(resource)===resourceKey(selectedAppResource)} icon={<GitFork className="h-4 w-4"/>} title={resource.title} description={`${resource.scope==='project'?'项目':'个人'} · ${resource.description || ''}`} singleSelect onSelect={() => onSelectAppResource?.(resourceKey(resource)===resourceKey(selectedAppResource)?null:resource)}/>)}
             {onMoreAppResources && <button className="p-2 text-xs" onClick={onMoreAppResources}>加载更多</button>}
           </> : displayedTab === 'assistants' ? filteredAssistants.map((assistant) => (

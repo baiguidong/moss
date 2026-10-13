@@ -1,0 +1,18 @@
+{
+  "assistants/app-builder": {
+    "_moss_meta.json": "78719f0edbc1a1eb032d3d2554846fb63fb17265396e3429a0206134a314505e",
+    "assistant.md": "7dbbed48d4a555862f4547c966f8e554c435260ce380a9dbad891207f40d33bf"
+  },
+  "skills/convert-skill-to-app": {
+    "SKILL.md": "8b3992c35dcc85075b38946341d32cdc601a8cf28ce382545c67f00d04f947dd",
+    "references/quality-gates.md": "67f86fc56a4525cadef69670ab254c0128e45bdc764ad14d562924b2faf39c64",
+    "references/backend-generation.md": "a4999d120c8a50749747732b10ddc836a04f3f6feb916e4f10d8aa7164fcee1b",
+    "references/analysis-and-design.md": "3cd32e5e21f4512f740bf5c6ed004af77bb3f682994ac4a3376aa5f00438fda3",
+    "agents/openai.yaml": "7cdeae71f40ec2a05bd7b36e18146ac211145a06fea0511957559f0fe3262c8d",
+    "scripts/validate_app.py": "ded6f04d09e8aa6093772697fba4c46b7323d8d3214d7824a52e40e93675aefa",
+    "scripts/inspect_skill.py": "581aaf7b71e0b16562eedd9dad57920b90a5d52ce7661d01dbe84ce00060f150",
+    "scripts/run_backend_tests.mjs": "4001eb0ffb5029ca6a66b3cbd4a7a3c71e7c83dbb90aa414922ecf35d3b7fbc1",
+    "assets/backend-test-plan.schema.json": "c444f5a4be1de0713123ba9f93090f2600eec41a5ab08646381607828061b4ad",
+    "assets/conversion-report.schema.json": "e3269ba5c054ab124d81ae4b574047e8f52b6a70d320ca760bd7344e099f696d"
+  }
+}

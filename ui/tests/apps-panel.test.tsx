@@ -54,6 +54,21 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 }
 
 describe('Apps management', () => {
+  test('renders category tabs and one card per App, including disabled and legacy Apps', () => {
+    const apps = [
+      { ...settingsApp(), id: 'automation.app', name: 'automation.app', displayName: '网页操控', category: 'automation', enabled: false },
+      { ...settingsApp(), id: 'legacy.app', name: 'legacy.app', displayName: '旧应用' },
+      { ...settingsApp(), id: 'knowledge.app', name: 'knowledge.app', displayName: '知识库', category: 'knowledge' },
+    ];
+    const html = renderToStaticMarkup(<AppsPanel apps={apps} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    expect([...html.matchAll(/data-app-category="([^"]+)"/g)].map(match => match[1])).toEqual(['knowledge', 'automation', 'other']);
+    expect(html.match(/data-app-open="automation.app"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="App 分类"');
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('role="tabpanel"');
+    expect(html).not.toContain('aria-label="搜索 App"');
+  });
+
   test('shows tool names, purpose, effects and authorization independently of Backend actions', () => {
     const app = {
       ...settingsApp(), enabled: true, grants: [],
@@ -96,7 +111,8 @@ describe('Apps management', () => {
     );
 
     expect(markup).toContain('应用市场');
-    expect(markup).toContain('placeholder="搜索 App"');
+    expect(markup).not.toContain('placeholder="搜索 App"');
+    expect(markup).toContain('role="tablist"');
     expect(markup).toContain('title="返回已安装 App"');
     expect(markup).toContain('正在加载应用市场');
   });

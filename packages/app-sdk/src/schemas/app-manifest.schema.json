@@ -44,6 +44,74 @@
       "type": "string",
       "maxLength": 2000
     },
+    "category": {
+      "type": "string",
+      "description": "One primary category for App discovery. Omitted legacy values are displayed as other.",
+      "default": "other",
+      "oneOf": [
+        {
+          "const": "communication",
+          "title": "沟通协作"
+        },
+        {
+          "const": "knowledge",
+          "title": "知识与文件"
+        },
+        {
+          "const": "automation",
+          "title": "自动化"
+        },
+        {
+          "const": "ai",
+          "title": "AI 增强"
+        },
+        {
+          "const": "development",
+          "title": "开发工具"
+        },
+        {
+          "const": "diagnostics",
+          "title": "诊断与审计"
+        },
+        {
+          "const": "other",
+          "title": "其他"
+        }
+      ]
+    },
+    "navigation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location"
+      ],
+      "description": "Primary App entry. Choose by purpose: an operational page in more, configuration in settings, or none for background/auxiliary Apps. Requires Host API >=3.4.0.",
+      "properties": {
+        "location": {
+          "enum": [
+            "more",
+            "settings",
+            "none"
+          ]
+        },
+        "viewId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      }
+    },
+    "keywords": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "\\S"
+      }
+    },
     "icon": {
       "type": "string"
     },
@@ -149,6 +217,15 @@
               "viewId": {
                 "type": "string",
                 "maxLength": 80
+              },
+              "group": {
+                "type": "string",
+                "description": "Settings destination; required for Apps declaring navigation. Legacy contributions without a group appear under apps. Requires Host API >=3.4.0.",
+                "enum": [
+                  "integrations",
+                  "tools",
+                  "apps"
+                ]
               },
               "order": {
                 "type": "integer",
@@ -257,6 +334,20 @@
                   "write",
                   "destructive"
                 ]
+              },
+              "execution": {
+                "enum": [
+                  "backend",
+                  "native"
+                ]
+              },
+              "instructions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "serviceId": {
+                "type": "string",
+                "maxLength": 80
               }
             }
           }
@@ -303,6 +394,30 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 160
+              },
+              "authoring": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "intents"
+                ],
+                "properties": {
+                  "target": {
+                    "const": "moss-app"
+                  },
+                  "intents": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "create",
+                        "edit"
+                      ]
+                    }
+                  }
+                }
               }
             }
           }
@@ -343,6 +458,34 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 160
+              }
+            }
+          }
+        },
+        "services": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1000
               }
             }
           }
@@ -471,6 +614,58 @@
           }
         }
       }
+    },
+    "toolScope": {
+      "type": "string",
+      "enum": [
+        "global",
+        "session"
+      ],
+      "default": "session",
+      "description": "App-wide tool visibility. All native and MCP tools inherit this scope; session requires explicit conversation selection."
+    },
+    "nativeAdapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "apiVersion",
+        "entry"
+      ],
+      "properties": {
+        "kind": {
+          "const": "desktop-control"
+        },
+        "apiVersion": {
+          "const": 1
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "darwin-arm64",
+          "darwin-x64",
+          "win32-x64",
+          "win32-arm64",
+          "linux-x64",
+          "linux-arm64"
+        ]
+      }
+    },
+    "toolSelection": {
+      "enum": [
+        "app",
+        "services"
+      ],
+      "description": "App or independently selectable subservices. Requires Host API >=3.8.0; defaults to app."
     }
   }
 }

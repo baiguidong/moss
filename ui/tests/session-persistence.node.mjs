@@ -68,7 +68,9 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   const f = fixture(t);
   let service = f.open();
   const main = record('parent', {
-    projectId: 'project', isCoordinatorMode: true, permissionMode: 'plan',
+    projectId: 'project', isCoordinatorMode: true, permissionMode: 'plan', effort: 'xhigh',
+    appIds: ['builder', 'mcp', 'builder'],
+    appServiceIds: ['["customer.app","sales"]', '["customer.app","sales"]'],
     connectorIds: [' mail ', 'drive', 'mail'], sessionKind: 'cron', originChannel: 'cron',
     sourceSessionId: 'source', cronTaskId: 'cron-1', sessionRole: 'coordinator',
     assistantName: 'Expert', workerSummariesJson: '[{"status":"completed"}]',
@@ -87,17 +89,21 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   assert.equal(manifest.sourceSessionTitle, 'Source title');
   assert.equal(manifest.layoutVersion, 2);
   assert.equal(manifest.toolDisplayMode, 'merged');
+  assert.equal(manifest.effort, 'xhigh');
   service = f.open();
   service.hydratePersistedSessions();
   const restored = service.sessions.get('parent');
   for (const key of ['title', 'workspace', 'createdAt', 'updatedAt', 'messageCount', 'underlyingSessionId',
-    'history', 'projectId', 'isCoordinatorMode', 'permissionMode', 'sessionKind', 'originChannel',
+    'history', 'projectId', 'isCoordinatorMode', 'permissionMode', 'effort', 'sessionKind', 'originChannel',
     'sourceSessionId', 'cronTaskId', 'sessionRole', 'assistantName', 'workerSummariesJson',
     'projectTaskStatus', 'projectTaskPrompt', 'projectTaskError', 'projectTaskCompletedAt',
     'toolDisplayMode', 'rewindMessageId', 'rewindCreatedAt', 'channelAppId', 'channelInstanceId', 'channelRuntimePolicy']) {
     assert.deepEqual(restored[key], main[key], key);
   }
   assert.deepEqual(restored.connectorIds, ['mail', 'drive']);
+  assert.deepEqual(restored.appIds, ['builder', 'mcp']);
+  assert.deepEqual(restored.appServiceIds, ['["customer.app","sales"]']);
+  assert.deepEqual(manifest.appServiceIds, restored.appServiceIds);
   assert.equal(restored.busy, false);
   assert.equal(restored.runtime, null);
   assert.equal(restored.workspaceWatcher, null);

@@ -1,6 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { CompactionDetails, CompactionMarker } from "./compaction-details";
+import { CompactionNavigator } from "./compaction-navigator";
+import { AppAuthoringOperations } from "@/components/app-authoring-operations";
+import type { CompactionRecord } from "@/lib/compaction";
 import { ArrowDownToLine, ArrowUpToLine } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
@@ -20,6 +24,7 @@ import {
   ConversationNavigator,
   getActiveConversationNavigationItemId,
   type ConversationNavigationItem,
+  type ConversationNavigationSource,
 } from "@/components/chat/conversation-navigator";
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
 import { extractShellResult, getToolKind } from "@/components/chat/tool-utils";
@@ -317,6 +322,7 @@ function renderTranscriptItem(
   workspace?: string,
   remote?: boolean,
   showCopyButton = false,
+  onInspectCompaction?: (record: CompactionRecord) => void,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -348,6 +354,7 @@ function renderTranscriptItem(
     return <ToolResultBlock key={message.id} result={message} />;
   }
   if (message.type === "system") {
+    if (message.variant === "compact") return <CompactionMarker record={message.compaction} content={message.content} onInspect={onInspectCompaction} />;
     return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} status={message.status} />;
   }
   if (message.type === "bash") {
@@ -570,6 +577,7 @@ export const VirtualMessageList = React.forwardRef<
     sessionId?: string;
     agentMode?: 'local' | 'remote-direct';
     latestMessageActions?: React.ReactNode;
+    onInspectCompaction?: (record: CompactionRecord) => void;
   }
 >(function VirtualMessageList(
   {
@@ -587,6 +595,7 @@ export const VirtualMessageList = React.forwardRef<
     sessionId,
     agentMode,
     latestMessageActions,
+    onInspectCompaction,
   },
   ref,
 ) {
@@ -650,18 +659,15 @@ export const VirtualMessageList = React.forwardRef<
   const outputFilesByMessage = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
-    renderItems.flatMap((item, renderIndex) => (
-      item.kind === "message" && item.message.type === "user_text"
-        ? [{
-            id: item.message.id,
-            content: item.message.content || item.message.attachments
-              ?.map((attachment) => attachment.name || attachment.path.split(/[\\/]/).at(-1) || attachment.path)
-              .join(", ") || "",
-            renderIndex,
-            attachmentCount: item.message.attachments?.length || 0,
-          }]
-        : []
-    )),
+    renderItems.flatMap<ConversationNavigationSource>((item, renderIndex) => {
+      if (item.kind !== "message") return [];
+      const message = item.message;
+      if (message.type !== "user_text") return [];
+      return [{ id: message.id, renderIndex,
+        content: message.content || message.attachments?.map(file => file.name || file.path).join(", ") || "",
+        attachmentCount: message.attachments?.length || 0,
+      }];
+    }),
   ), [renderItems]);
   const activeConversationItemId = getActiveConversationNavigationItemId(
     conversationNavigationItems,
@@ -670,6 +676,8 @@ export const VirtualMessageList = React.forwardRef<
   const resolvedContentClassName = cn(
     contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
     conversationNavigationItems.length >= 4 && "md:px-12",
+    "group-has-[[data-chat-floating-tools]>button:only-child]/message-pane:pr-12",
+    "group-has-[[data-chat-floating-tools]>button+button]/message-pane:pr-24",
   );
 
   React.useEffect(() => () => {
@@ -703,8 +711,9 @@ export const VirtualMessageList = React.forwardRef<
           step.kind === "thinking" ? matches(step.message) : matches(step.toolCall)
         )));
     if (index >= 0) {
+      atBottomRef.current = false;
       setHighlightedMessageId(resolvedMessageId);
-      virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "smooth" });
+      virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
       if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
       highlightTimerRef.current = window.setTimeout(() => {
         setHighlightedMessageId((current) => current === resolvedMessageId ? null : current);
@@ -721,6 +730,7 @@ export const VirtualMessageList = React.forwardRef<
   }, [childToolCallsByParent]);
 
   const navigateToConversationItem = React.useCallback((item: ConversationNavigationItem) => {
+    atBottomRef.current = false;
     setHighlightedMessageId(item.id);
     virtuosoRef.current?.scrollToIndex({
       index: item.renderIndex,
@@ -758,7 +768,7 @@ export const VirtualMessageList = React.forwardRef<
       <WorkspacePathProvider workspace={workspace || ""}>
         <div className={cn(
           "mx-auto w-full py-3",
-          contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
+          resolvedContentClassName,
         )}>
           {emptyState || (
             <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">
@@ -822,6 +832,7 @@ export const VirtualMessageList = React.forwardRef<
             workspace,
             agentMode === 'remote-direct',
             getRenderItemId(item) === latestCopyMessageId,
+            onInspectCompaction,
           );
           const turnId = getRenderItemTurnId(item);
           const turnChange = turnId ? turnChanges.get(turnId) : undefined;
@@ -903,6 +914,11 @@ export const MessageListPane = React.forwardRef<
     }),
     [],
   );
+  const compactions = React.useMemo(() => listProps.messages.flatMap(message =>
+    message.type === 'system' && message.compaction ? [{ messageId: message.id, record: message.compaction }] : []), [listProps.messages]);
+  const [selectedCompactId, setSelectedCompactId] = React.useState<string | null>(null);
+  const selectedCompaction = compactions.find(item => item.record.id === selectedCompactId);
+  React.useEffect(() => { setSelectedCompactId(null); }, [listProps.sessionId]);
   const [atTop, setAtTop] = React.useState(false);
   const [atBottom, setAtBottom] = React.useState(true);
   const longConversation = React.useMemo(
@@ -914,13 +930,20 @@ export const MessageListPane = React.forwardRef<
   );
 
   return (
-    <div className={cn("relative min-h-0 min-w-0", className)}>
+    <div className={cn("group/message-pane relative flex min-h-0 min-w-0 flex-col", className)}>
+      <div className="relative min-h-0 flex-1">
       <VirtualMessageList
         ref={innerRef}
         onAtTopChange={setAtTop}
         onAtBottomChange={setAtBottom}
         {...listProps}
+        onInspectCompaction={record => setSelectedCompactId(record.id)}
       />
+      <div data-chat-floating-tools className="absolute right-2 top-2 z-30 flex items-center gap-1.5">
+        <CompactionNavigator key={listProps.sessionId} items={compactions}
+          onNavigate={messageId => innerRef.current?.scrollToMessage(messageId)} />
+        <AppAuthoringOperations sessionId={listProps.sessionId} />
+      </div>
       {longConversation && (!atTop || !atBottom) ? (
         <div
           className="absolute bottom-4 z-30 flex flex-col items-center gap-2"
@@ -950,6 +973,10 @@ export const MessageListPane = React.forwardRef<
           ) : null}
         </div>
       ) : null}
+      </div>
+      {selectedCompaction && <CompactionDetails key={`${listProps.sessionId}:${selectedCompaction.record.id}`}
+        sessionId={listProps.sessionId} record={selectedCompaction.record} onClose={() => setSelectedCompactId(null)}
+        onLocate={() => innerRef.current?.scrollToMessage(selectedCompaction.messageId)} />}
     </div>
   );
 });

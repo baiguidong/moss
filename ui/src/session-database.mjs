@@ -4,6 +4,9 @@ import { migrateCronSessionIndex } from './moss-cron-scheduler.mjs';
 // connection and initializes the other stores in their existing order.
 export function prepareSessionStatements(sessionDb) {
   const persistSessionStmt = (() => {
+    try { sessionDb.exec('ALTER TABLE sessions ADD COLUMN effort TEXT'); } catch {}
+    try { sessionDb.exec("ALTER TABLE sessions ADD COLUMN app_service_ids_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+    try { sessionDb.exec("ALTER TABLE sessions ADD COLUMN app_ids_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
     // Migration: add columns if table exists but columns are missing
     try {
       sessionDb.exec(`ALTER TABLE sessions ADD COLUMN is_sub_agent INTEGER NOT NULL DEFAULT 0`);
@@ -156,6 +159,7 @@ export function prepareSessionStatements(sessionDb) {
         preview TEXT NOT NULL,
         agent_mode TEXT NOT NULL DEFAULT 'local',
         permission_mode TEXT,
+        effort TEXT,
         is_coordinator_mode INTEGER NOT NULL DEFAULT 0,
         remote_workspace TEXT,
         underlying_session_id TEXT,
@@ -182,15 +186,17 @@ export function prepareSessionStatements(sessionDb) {
         rewind_created_at INTEGER,
         channel_app_id TEXT,
         channel_instance_id TEXT,
-        channel_runtime_policy_json TEXT
+        channel_runtime_policy_json TEXT,
+        app_ids_json TEXT NOT NULL DEFAULT '[]',
+        app_service_ids_json TEXT NOT NULL DEFAULT '[]'
       )
     `);
     migrateCronSessionIndex(sessionDb);
     return sessionDb.prepare(`
       INSERT INTO sessions (
-        id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json
+        id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json, app_ids_json, effort, app_service_ids_json
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
@@ -227,12 +233,16 @@ export function prepareSessionStatements(sessionDb) {
         rewind_created_at = excluded.rewind_created_at,
         channel_app_id = excluded.channel_app_id,
         channel_instance_id = excluded.channel_instance_id,
-        channel_runtime_policy_json = excluded.channel_runtime_policy_json
+        channel_runtime_policy_json = excluded.channel_runtime_policy_json,
+        app_ids_json = excluded.app_ids_json,
+        app_service_ids_json = excluded.app_service_ids_json,
+        effort = excluded.effort
     `);
   })();
   const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
   const loadSessionsStmt = sessionDb.prepare(`
     SELECT
+      effort,
       id,
       title,
       workspace,
@@ -268,13 +278,16 @@ export function prepareSessionStatements(sessionDb) {
       rewind_created_at,
       channel_app_id,
       channel_instance_id,
-      channel_runtime_policy_json
+      channel_runtime_policy_json,
+      app_ids_json,
+      app_service_ids_json
     FROM sessions
     WHERE is_sub_agent = 0
     ORDER BY updated_at DESC
   `);
   const loadSubAgentSessionsStmt = sessionDb.prepare(`
     SELECT
+      effort,
       id,
       title,
       workspace,
@@ -310,7 +323,9 @@ export function prepareSessionStatements(sessionDb) {
       rewind_created_at,
       channel_app_id,
       channel_instance_id,
-      channel_runtime_policy_json
+      channel_runtime_policy_json,
+      app_ids_json,
+      app_service_ids_json
     FROM sessions
     WHERE is_sub_agent = 1
     ORDER BY created_at ASC

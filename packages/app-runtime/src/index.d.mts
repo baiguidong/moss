@@ -19,6 +19,8 @@ export type AppHostCapabilityContext = {
   method: string
   permission: string | null
   signal?: AbortSignal
+  grants: readonly string[]
+  assertPermission(permission: string): void
   assertCurrent(): void
 }
 
@@ -45,10 +47,14 @@ export class AppRuntimeHost {
   installFromDirectory(sourceDir: string, options?: Record<string, any>): Promise<any>
   registerInstalled(appId: string, version: string, options?: Record<string, any>): Promise<any>
   getInstallation(appId: string): any | null
+  getToolScope(appId: string, manifestScope?: 'session' | 'global'): 'session' | 'global'
+  toolScopeSettings(context: AppHostCapabilityContext, scope?: 'session' | 'global' | null): Promise<{ scope: 'session' | 'global'; defaultScope: 'session' | 'global'; overridden: boolean }>
   getActivePackage(appId: string): Promise<AppPackageInfo>
+  nativeAvailable(pkg: AppPackageInfo): boolean
+  requireNativePackage(appId: string): Promise<AppPackageInfo>
   getApp(appId: string): Promise<any>
   listApps(): Promise<any[]>
-  listContributions(options?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean }): Promise<Record<string, any[]>>
+  listContributions(options?: { appId?: string; kinds?: string[]; includeUnavailable?: boolean; loadSchemas?: boolean; selectedAppIds?: string[]; selectedAppServiceIds?: string[] }): Promise<Record<string, any[]>>
   requireContribution(kind: string, id: string, options?: Record<string, any>): Promise<Record<string, any>>
   invokeContribution(kind: string, id: string, input?: unknown, options?: Record<string, any>): Promise<unknown>
   invokeToolContribution(id: string, input?: unknown, options?: Record<string, any>): Promise<unknown>

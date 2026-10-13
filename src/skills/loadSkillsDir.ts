@@ -1,4 +1,5 @@
 import { realpath } from 'fs/promises'
+import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs'
 import ignore from 'ignore'
 import memoize from 'lodash-es/memoize.js'
 import {
@@ -428,6 +429,7 @@ async function loadSkillsFromSkillsDir(
         }
 
         const skillDirPath = join(basePath, entry.name)
+        if (isRetiredAppAuthoringResource(skillDirPath)) return null
         const skillFilePath = join(skillDirPath, 'SKILL.md')
 
         try {

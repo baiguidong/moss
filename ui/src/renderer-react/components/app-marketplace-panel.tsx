@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
+import { AppCategoryTabs } from '@/components/app-category-tabs';
+import { filterApps, groupApps } from '@/lib/app-categories';
 import {
   AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, Download,
-  LoaderCircle, PackageCheck, RefreshCw, Search, ShieldCheck, Store,
+  LoaderCircle, PackageCheck, RefreshCw, ShieldCheck, Store,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppInstallProgressView } from "@/components/app-install-progress";
 import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
@@ -39,25 +40,49 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   const [details, setDetails] = React.useState<Record<string, AppMarketplaceDetail>>({});
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [selectedVersions, setSelectedVersions] = React.useState<Record<string, string>>({});
-  const [query, setQuery] = React.useState("");
+  const [category, setCategory] = React.useState('all');
   const [loading, setLoading] = React.useState(true);
+  const [refreshResult, setRefreshResult] = React.useState<{ kind: "success" | "warning" | "error"; message: string } | null>(null);
+  const catalogRequest = React.useRef(0);
   const [pendingAppIds, setPendingAppIds] = React.useState<Set<string>>(() => new Set());
   const [error, setError] = React.useState("");
   const { progress, clearProgress } = useAppInstallProgress("marketplace");
 
   const loadCatalog = React.useCallback(async (forceRefresh = false) => {
+    const request = ++catalogRequest.current;
     setLoading(true);
     setError("");
+    setRefreshResult(null);
     try {
-      setCatalog(await window.agentDesktop.appMarketplace.list({ forceRefresh }));
+      const result = await window.agentDesktop.appMarketplace.list({ forceRefresh });
+      if (request !== catalogRequest.current) return;
+      setCatalog(result);
+      if (forceRefresh && !result.cached) {
+        setDetails({});
+        setSelectedVersions({});
+        setExpandedId(null);
+      }
+      const updatedAt = new Date(result.fetchedAt).toLocaleString();
+      const publishedAt = new Date(result.generatedAt).toLocaleString();
+      const updates = result.apps.filter((app) => app.updateAvailable && app.hostCompatible && app.platformCompatible).length;
+      setRefreshResult(result.warning
+        ? { kind: "warning", message: `${result.warning}。上次成功更新：${updatedAt}` }
+        : { kind: "success", message: result.cached
+          ? `正在显示缓存，更新时间：${updatedAt}`
+          : `${forceRefresh ? "刷新成功" : "已获取市场目录"}，${updates ? `${updates} 个 App 可更新` : "当前目录暂无可用更新"}。目录更新时间：${publishedAt}` });
     } catch (loadError) {
-      setError(cleanIpcErrorMessage(loadError));
+      if (request === catalogRequest.current) {
+        setRefreshResult({ kind: "error", message: `刷新应用市场失败：${cleanIpcErrorMessage(loadError)}` });
+      }
     } finally {
-      setLoading(false);
+      if (request === catalogRequest.current) setLoading(false);
     }
   }, []);
 
-  React.useEffect(() => { void loadCatalog(); }, [loadCatalog]);
+  React.useEffect(() => {
+    void loadCatalog();
+    return () => { catalogRequest.current++; };
+  }, [loadCatalog]);
 
   const toggleDetails = async (entry: AppMarketplaceEntry) => {
     if (expandedId === entry.id) {
@@ -66,12 +91,14 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
     }
     setExpandedId(entry.id);
     if (details[entry.id]) return;
+    const request = catalogRequest.current;
     try {
       const detail = await window.agentDesktop.appMarketplace.getDetails({ appId: entry.id });
+      if (request !== catalogRequest.current) return;
       setDetails((current) => ({ ...current, [entry.id]: detail }));
       setSelectedVersions((current) => ({ ...current, [entry.id]: current[entry.id] || detail.latestVersion }));
     } catch (detailError) {
-      setError(cleanIpcErrorMessage(detailError));
+      if (request === catalogRequest.current) setError(cleanIpcErrorMessage(detailError));
     }
   };
 
@@ -106,39 +133,43 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   };
 
   const installedById = React.useMemo(() => new Map(installedApps.map((app) => [app.id || app.name, app])), [installedApps]);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleApps = (catalog?.apps || []).filter((entry) => {
-    if (!normalizedQuery) return true;
-    return [entry.displayName, entry.summary, entry.id, ...entry.categories]
-      .some((value) => String(value || "").toLocaleLowerCase().includes(normalizedQuery));
-  });
+  const visibleApps = groupApps(filterApps(catalog?.apps || [], '', category)).flatMap(group => group.apps);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-4">
+      <div data-app-header className="shrink-0 border-b border-border/70">
+      <div className="mx-auto flex h-12 w-full max-w-[1180px] items-center gap-2 px-4 sm:px-5">
         <Button variant="ghost" size="icon" className="h-8 w-8" title="返回已安装 App" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-semibold">应用市场</h1>
-          <div className="text-xs text-muted-foreground">{catalog ? `${catalog.apps.length} 个可用 App · Host API ${catalog.hostApiVersion}` : "发现和更新 Moss App"}</div>
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <h1 className="text-sm font-semibold">应用市场</h1>
+          {catalog && <span className="text-xs text-muted-foreground">{catalog.apps.length} 个应用</span>}
         </div>
-        <div className="relative w-56 max-w-full">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input className="h-8 pl-8 text-xs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 App" />
-        </div>
-        <Button size="sm" variant="outline" className="h-8" disabled={loading} onClick={() => void loadCatalog(true)}>
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />刷新
+        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={loading} aria-busy={loading} onClick={() => void loadCatalog(true)}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />{loading ? "刷新中…" : "刷新"}
         </Button>
       </div>
+      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        {catalog?.warning && <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">{catalog.warning}</div>}
+      {refreshResult && refreshResult.kind !== 'success' && <div role="alert"
+        className={`flex shrink-0 items-start gap-2 border-b px-4 py-2 text-xs ${refreshResult.kind === "error"
+          ? "border-destructive/30 bg-destructive/5 text-destructive"
+          : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"}`}>
+        <AlertCircle className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 break-words leading-4">{refreshResult.message}</span>
+        <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void loadCatalog(true)}>重试</button>
+      </div>}
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
+        <AppCategoryTabs apps={catalog?.apps || []} value={category} onChange={setCategory} panelId="marketplace-apps" />
+        <div role="tabpanel" id="marketplace-apps" aria-labelledby={`marketplace-apps-${category}`} className="mt-2">
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         {loading && !catalog ? (
           <div className="flex min-h-72 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在加载应用市场…</div>
         ) : visibleApps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{query ? "没有匹配的 App" : "应用市场暂无 App"}</div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' ? "此分类暂无 App" : "应用市场暂无 App"}</div>
         ) : (
-          <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
             {visibleApps.map((entry) => {
               const detail = details[entry.id];
               const expanded = expandedId === entry.id;
@@ -165,23 +196,22 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                       ? "更新"
                       : "安装此版本";
               return (
-                <section key={entry.id} className={`rounded-lg border bg-card p-4 ${entry.featured ? "border-primary/30" : "border-border"}`}>
+                <section key={entry.id} data-app-category={entry.category || 'other'} className={`rounded-lg border bg-card/80 p-3 ${entry.featured ? "border-primary/30" : "border-border/70"}`}>
                   <div className="flex items-start gap-3">
                     <MarketplaceIcon entry={entry} />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="truncate text-sm font-semibold">{entry.displayName}</h2>
+                        <h3 className="truncate text-sm font-semibold">{entry.displayName}</h3>
                         {entry.featured && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">推荐</span>}
                       </div>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">{entry.summary}</p>
                       <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
                         <span>v{entry.latestVersion}</span>
                         {entry.publisher?.name && <span>· {entry.publisher.name}</span>}
-                        {entry.categories.map((category) => <span key={category} className="rounded bg-muted px-1.5 py-0.5">{category}</span>)}
                       </div>
                     </div>
                   </div>
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible} onClick={() => void install(entry)}>
                       {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
                       {actionLabel}
@@ -190,7 +220,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                       {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}详情
                     </Button>
                     {!compatible && <span className="text-xs text-destructive">当前系统或 Moss 版本不兼容</span>}
-                    {installed?.currentVersion && <span className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
+                    {installed?.currentVersion && <span title={installed.currentVersion} className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion.replace(/-local\..*$/, " · 本地版")}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
                   </div>
                   {installProgress && <div className="mt-3"><AppInstallProgressView progress={installProgress} /></div>}
                   {expanded && (
@@ -208,9 +238,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                           </label>
                           {selectedRelease.releaseNotes && <div><div className="mb-1 font-medium">更新说明</div><p className="whitespace-pre-wrap leading-5 text-muted-foreground">{selectedRelease.releaseNotes}</p></div>}
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-                            <span>{formatBytes(selectedRelease.artifact.size)}</span>
+                            <span>{selectedRelease.artifact ? formatBytes(selectedRelease.artifact.size) : '无适用安装包'}</span>
                             <span>Host API {selectedRelease.hostApi}</span>
-                            <span>{selectedRelease.artifact.signed ? "已签名" : "未签名"}</span>
+                            <span>{selectedRelease.artifact?.signed ? "已签名" : "未签名"}</span>
                           </div>
                           {selectedRelease.permissions.length > 0 && (
                             <div><div className="mb-1 flex items-center gap-1 font-medium"><ShieldCheck className="h-3.5 w-3.5" />所需权限</div><div className="flex flex-wrap gap-1">{selectedRelease.permissions.map((permission) => <code key={permission} className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{permission}</code>)}</div></div>
@@ -224,6 +254,8 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
             })}
           </div>
         )}
+        </div>
+      </div>
       </div>
     </div>
   );

@@ -1,9 +1,17 @@
 import * as React from 'react';
-import { ComputerUseSettings } from '@/components/computer-use';
 import { AppMcpToolRows } from '@/components/app-mcp-tool-rows';
+import { AppIcon } from '@/components/app-icon';
+import { EmbeddedAppView } from '@/components/embedded-app-view';
+import { AppToolbarActions } from '@/components/app-settings';
+import { getAppToolbarSettingsEntry, getVisibleAppSettingsEntries, type AppSettingsEntry } from '@/lib/app-navigation';
+import { ToolDescription } from '@/components/tool-description';
+import { MemoryDreamControl } from '@/components/memory-dream-control';
 import {
+  Blocks,
   Bot,
   Check,
+  ChevronLeft,
+  ChevronRight,
   LogIn,
   Monitor,
   MoonStar,
@@ -19,7 +27,6 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { BuddySummary } from '@/components/buddy';
 import { UserAvatarSetting } from '@/components/user-avatar-setting';
 import { AgentManager } from '@/components/agent-manager';
 import { Button } from '@/components/ui/button';
@@ -41,8 +48,8 @@ import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'personalization' | 'advanced';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'buddy' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'advanced' | 'apps';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -57,11 +64,11 @@ type SettingsViewProps = {
   onToolDisplayModeChange: (mode: DesktopSettings['appearance']['toolDisplayMode']) => void;
   onAppearancePreview: (patch: Partial<DesktopSettings['appearance']>) => void;
   onAppearanceCommit: (patch: Partial<DesktopSettings['appearance']>) => void;
-  buddyEnabled: boolean;
-  onBuddyEnabledChange: (enabled: boolean) => void;
   apps?: StoredApp[];
   workspace?: string;
   initialSection?: SectionId;
+  initialAppSettingId?: string | null;
+  onOpenAppManagement?: (appName: string) => void;
 };
 
 type SettingsSectionDefinition = {
@@ -261,20 +268,6 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
-    id: 'personalization',
-    title: '个性化',
-    icon: Palette,
-    iconGradientClassName: 'from-amber-400 to-orange-600',
-    keywords: ['个性化', 'personalization', '外观', 'buddy'],
-    sections: [
-      {
-        id: 'buddy',
-        title: 'Buddy',
-        keywords: ['buddy', 'pet', 'companion', '伴侣', '宠物'],
-      },
-    ],
-  },
-  {
     id: 'advanced',
     title: '高级设置',
     icon: SlidersHorizontal,
@@ -378,6 +371,71 @@ function SettingsGroup({ children, className }: SettingsGroupProps) {
   );
 }
 
+function groupAppSettingsEntries(entries: AppSettingsEntry[]) {
+  const groups = new Map<string, { appId: string; title: string; icon?: string; entries: AppSettingsEntry[] }>();
+  for (const entry of entries) {
+    let group = groups.get(entry.appId);
+    if (!group) {
+      group = { appId: entry.appId, title: entry.appTitle, icon: entry.appIcon, entries: [] };
+      groups.set(entry.appId, group);
+    }
+    group.entries.push(entry);
+  }
+  return [...groups.values()];
+}
+
+function AppSettingsNavigationButton({ app, active, onClick, compact = false }: {
+  app: ReturnType<typeof groupAppSettingsEntries>[number];
+  active: boolean;
+  onClick: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <button type="button" data-app-settings-nav={app.appId} aria-current={active ? 'page' : undefined}
+      onClick={onClick} title={app.title}
+      className={cn(
+        'flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
+        compact ? 'min-w-max flex-none' : 'w-full min-w-0',
+        active
+          ? 'bg-sidebar-accent text-sidebar-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--sidebar-border)_90%,transparent)]'
+          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground',
+      )}
+    >
+      <AppIcon icon={app.icon} className="h-8 w-8 rounded-xl" />
+      <span className="truncate text-sm font-medium">{app.title}</span>
+    </button>
+  );
+}
+
+function AppSettingsGroups({ entries, onSelect }: {
+  entries: AppSettingsEntry[];
+  onSelect: (entry: AppSettingsEntry) => void;
+}) {
+  return (
+    <div className="space-y-5" aria-label="应用设置">
+      {groupAppSettingsEntries(entries).map(app => (
+        <section key={app.appId} data-app-settings-group={app.appId} aria-label={app.title}>
+          <div className="mb-3 flex items-center gap-2.5 px-1">
+            <AppIcon icon={app.icon} className="h-8 w-8 rounded-xl" />
+            <h2 className="min-w-0 break-words text-[15px] font-semibold text-foreground">{app.title}</h2>
+          </div>
+          <SettingsGroup>
+            {app.entries.map(entry => (
+              <button key={entry.id} type="button" data-app-setting={entry.id}
+                aria-label={`${app.title} · ${entry.title}`} onClick={() => onSelect(entry)}
+                className="group flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-sidebar-accent/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring"
+              >
+                <span className="min-w-0 break-words text-[13px] font-medium text-foreground">{entry.title}</span>
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-sidebar-foreground" />
+              </button>
+            ))}
+          </SettingsGroup>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function ToolLoadingSettingsTable({
   value,
   onChange,
@@ -385,7 +443,7 @@ export function ToolLoadingSettingsTable({
 }: {
   value: Record<string, MossToolLoadingMode>;
   onChange: (name: string, mode: MossToolLoadingMode) => void;
-  featureEnabled?: Partial<Record<'computerUse', boolean>>;
+  featureEnabled?: Record<string, boolean>;
 }) {
   return (
     <Surface>
@@ -436,7 +494,7 @@ export function ToolLoadingSettingsTable({
                       </code>
                     </td>
                     <td className="px-4 py-3 align-middle text-xs leading-5 text-muted-foreground">
-                      {tool.description}
+                      <ToolDescription description={tool.description} toolName={tool.name} />
                     </td>
                     <td className="px-2 py-3 text-center align-middle">
                       <input
@@ -480,12 +538,12 @@ export function ToolLoadingSettingsTable({
 }
 
 export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
-  const groups = apps.filter(app => app.agentTools?.length || app.mcpServices?.length);
+  const groups = apps.filter(app => app.enabled && (app.agentTools?.length || app.mcpServices?.length));
   const hasServices = groups.some(app => app.mcpServices?.length);
   return (
     <Surface>
       {groups.length === 0 ? (
-        <p className="px-4 py-5 text-xs text-muted-foreground">已安装的 App 暂未提供 AI 工具。</p>
+        <p className="px-4 py-5 text-xs text-muted-foreground">已启用的 App 暂未提供 AI 工具。</p>
       ) : (
         <div className="overflow-x-auto">
           <table className={cn('w-full table-fixed text-left', hasServices ? 'min-w-[840px]' : 'min-w-[720px]')} aria-label="App 提供的工具">
@@ -518,9 +576,11 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
                         <span className="block break-words font-medium text-foreground">{tool.title}</span>
                         <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
                       </td>
-                      <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">{tool.description}</td>
-                      <td className="px-3 py-3 text-xs text-muted-foreground">按需</td>
-                      <td className="px-3 py-3 text-xs text-muted-foreground">{!app.enabled ? 'App 已停用' : tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
+                      <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">
+                        <ToolDescription description={tool.description} toolName={tool.id} />
+                      </td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? '全局 · 按需' : '指定 · 选择后常驻'}</td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">{tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
                     </tr>
                   ))}
                 </tbody>}
@@ -601,6 +661,8 @@ function NavigationGroupButton({ group, active, onClick, compact = false }: Navi
   return (
     <button
       type="button"
+      data-settings-nav={group.id}
+      aria-current={active ? 'page' : undefined}
       onClick={onClick}
       className={cn(
         'group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors',
@@ -877,11 +939,11 @@ export function SettingsView({
   onToolDisplayModeChange,
   onAppearancePreview,
   onAppearanceCommit,
-  buddyEnabled,
-  onBuddyEnabledChange,
   apps = [],
   workspace,
   initialSection = 'basic-info',
+  initialAppSettingId = null,
+  onOpenAppManagement,
 }: SettingsViewProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
@@ -894,15 +956,31 @@ export function SettingsView({
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSection]);
   const [activeSection, setActiveSection] = React.useState<SectionId>(initialSection);
+  const [selectedAppSettingId, setSelectedAppSettingId] = React.useState(initialAppSettingId);
+  const [appRefreshKey, setAppRefreshKey] = React.useState(0);
+  const appSettingsEntries = React.useMemo(() => getVisibleAppSettingsEntries(apps), [apps]);
+  const selectedAppSetting = appSettingsEntries.find(entry => entry.id === selectedAppSettingId);
+  const selectedApp = apps.find(app => (app.id || app.name) === selectedAppSetting?.appId);
+  const appGroupMatches = 'apps 应用设置'.includes(deferredSearchQuery);
+  const visibleAppEntries = deferredSearchQuery && !appGroupMatches ? appSettingsEntries.filter(entry =>
+    [entry.appTitle, entry.title, ...entry.keywords].join(' ').toLowerCase().includes(deferredSearchQuery)) : appSettingsEntries;
+  const appNavigationItems = groupAppSettingsEntries(visibleAppEntries);
+  const selectedAppEntries = appSettingsEntries.filter(entry => entry.appId === selectedAppSetting?.appId);
+  const toolbarSettingsEntry = selectedApp && getAppToolbarSettingsEntry(selectedApp);
+  const navigationGroups: SettingsNavigationGroup[] = [...SETTINGS_NAVIGATION_GROUPS];
+  if (appSettingsEntries.length) navigationGroups.push({
+    id: 'apps', title: 'Apps', icon: Blocks, iconGradientClassName: 'from-teal-400 to-cyan-600',
+    keywords: ['apps', '应用设置'], sections: [],
+  });
+  const mobileNavigationRef = React.useRef<HTMLDivElement | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
-  const sectionRefs = React.useRef<Record<SectionId, HTMLElement | null>>({
+  const sectionRefs = React.useRef<Partial<Record<SectionId, HTMLElement | null>>>({
     'basic-info': null,
     model: null,
     'web-search': null,
     agents: null,
     tools: null,
     appearance: null,
-    buddy: null,
     permission: null,
     memory: null,
     'agent-execution': null,
@@ -911,8 +989,9 @@ export function SettingsView({
     'service-address': null,
   });
 
-  const visibleNavigationGroups = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => {
+  const visibleNavigationGroups = navigationGroups.flatMap((group) => {
     if (!deferredSearchQuery) return [group];
+    if (group.id === 'apps') return visibleAppEntries.length ? [group] : [];
     const groupMatches = [group.title, ...group.keywords]
       .join(' ')
       .toLowerCase()
@@ -925,11 +1004,11 @@ export function SettingsView({
             .toLowerCase()
             .includes(deferredSearchQuery)
         ));
-    return sections.length > 0 ? [{ ...group, sections }] : [];
+    return sections.length ? [{ ...group, sections }] : [];
   });
-  const activeGroup = SETTINGS_NAVIGATION_GROUPS.find((group) => group.id === activeGroupId)
+  const activeGroup = navigationGroups.find((group) => group.id === (selectedAppSetting ? 'apps' : activeGroupId))
     ?? SETTINGS_NAVIGATION_GROUPS[0];
-  const visibleSections = deferredSearchQuery
+  const visibleSections = selectedAppSetting ? [] : deferredSearchQuery
     ? visibleNavigationGroups.flatMap((group) => group.sections)
     : activeGroup.sections;
   const visibleSectionKey = visibleSections.map((section) => section.id).join('|');
@@ -958,10 +1037,25 @@ export function SettingsView({
   };
 
   React.useEffect(() => {
+    if (initialAppSettingId) return;
+    setSelectedAppSettingId(null);
     setActiveSection(initialSection);
     setActiveGroupId(SECTION_GROUP_IDS[initialSection]);
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [initialSection]);
+  }, [initialSection, initialAppSettingId]);
+
+  React.useEffect(() => {
+    setSelectedAppSettingId(initialAppSettingId);
+    setSearchQuery('');
+  }, [initialAppSettingId]);
+
+  React.useEffect(() => {
+    if (selectedAppSettingId && !selectedAppSetting) {
+      setSelectedAppSettingId(null);
+      setActiveGroupId(appSettingsEntries.length ? 'apps' : 'basic');
+      setActiveSection('basic-info');
+    }
+  }, [selectedAppSettingId, selectedAppSetting, appSettingsEntries.length]);
 
   React.useEffect(() => {
     if (!activeSectionVisible && firstVisibleSectionId) {
@@ -969,6 +1063,20 @@ export function SettingsView({
       setActiveGroupId(SECTION_GROUP_IDS[firstVisibleSectionId]);
     }
   }, [activeSectionVisible, firstVisibleSectionId]);
+
+  React.useEffect(() => {
+    const container = mobileNavigationRef.current;
+    if (!container) return;
+    const revealSelection = () => {
+      if (container.clientWidth) {
+        container.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    };
+    revealSelection();
+    const observer = new ResizeObserver(revealSelection);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [selectedAppSetting?.id, activeGroupId]);
 
   React.useEffect(() => {
     if (!settingsDraft?.remoteDirectServerUrl || !settingsDraft.remoteDirectApiKey) {
@@ -988,7 +1096,7 @@ export function SettingsView({
 
   React.useEffect(() => {
     const container = scrollRef.current;
-    if (!container) return;
+    if (!container || !firstVisibleSectionId) return;
 
     const updateActive = () => {
       const threshold = container.scrollTop + 108;
@@ -1029,18 +1137,28 @@ export function SettingsView({
     settingsDraft?.sessionMemory,
     settingsDraft?.autoMemory,
     settingsDraft?.advanced,
-    buddyEnabled,
   ]);
 
   const selectNavigationGroup = (group: SettingsNavigationGroup) => {
-    const visibleGroup = visibleNavigationGroups.find((candidate) => candidate.id === group.id);
-    const targetSection = (deferredSearchQuery ? visibleGroup?.sections : group.sections)?.[0]?.id;
-    if (!targetSection) return;
+    const targetSection = group.sections[0]?.id;
+    setSearchQuery('');
+    setSelectedAppSettingId(null);
     setActiveGroupId(group.id);
-    setActiveSection(targetSection);
+    if (targetSection) setActiveSection(targetSection);
     window.requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  };
+
+  const selectAppSetting = (entry: AppSettingsEntry) => {
+    setSelectedAppSettingId(entry.id);
+    setActiveGroupId('apps');
+    setSearchQuery('');
+  };
+
+  const selectApp = (item: ReturnType<typeof groupAppSettingsEntries>[number]) => {
+    const app = apps.find(app => (app.id || app.name) === item.appId);
+    selectAppSetting(item.entries.find(entry => entry.viewId === app?.navigation?.viewId) || item.entries[0]);
   };
 
   const updateSetting = <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => {
@@ -1256,7 +1374,7 @@ export function SettingsView({
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onChange={(event) => { setSearchQuery(event.target.value); setSelectedAppSettingId(null); }}
                   className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
                   placeholder="搜索设置"
                 />
@@ -1264,14 +1382,21 @@ export function SettingsView({
             </div>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-4 pb-4 [scrollbar-gutter:stable]">
               {visibleNavigationGroups.map((group) => {
-                const groupActive = group.id === activeGroupId;
+                const groupActive = group.id === activeGroup.id;
                 return (
+                  <div key={group.id}>
                   <NavigationGroupButton
-                    key={group.id}
                     group={group}
                     active={groupActive}
                     onClick={() => selectNavigationGroup(group)}
                   />
+                  {group.id === 'apps' && (groupActive || deferredSearchQuery) && (
+                    <div className="ml-4 mt-1 space-y-1 border-l border-sidebar-border pl-2">
+                      {appNavigationItems.map(app => <AppSettingsNavigationButton key={app.appId} app={app}
+                        active={app.appId === selectedAppSetting?.appId} onClick={() => selectApp(app)} />)}
+                    </div>
+                  )}
+                  </div>
                 );
               })}
             </nav>
@@ -1285,28 +1410,61 @@ export function SettingsView({
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
+                      onChange={(event) => { setSearchQuery(event.target.value); setSelectedAppSettingId(null); }}
                       className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
                       placeholder="搜索设置"
                     />
                   </div>
-                  <div className="-mx-1 overflow-x-auto pb-1">
+                  <div ref={mobileNavigationRef} className="-mx-1 overflow-x-auto pb-1">
                     <div className="flex gap-2 px-1">
                       {visibleNavigationGroups.map((group) => (
                         <NavigationGroupButton
                           key={group.id}
                           group={group}
                           compact
-                          active={group.id === activeGroupId}
+                          active={group.id === activeGroup.id}
                           onClick={() => selectNavigationGroup(group)}
                         />
                       ))}
                     </div>
                   </div>
+                  {activeGroup.id === 'apps' && selectedAppSetting && (
+                    <div className="flex gap-1 overflow-x-auto pb-1">
+                      {appNavigationItems.map(app => <AppSettingsNavigationButton key={app.appId} app={app} compact
+                        active={app.appId === selectedAppSetting.appId} onClick={() => selectApp(app)} />)}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+              {selectedAppSetting ? <section className="flex min-h-0 flex-1 flex-col" data-selected-app-setting={selectedAppSetting.id}>
+                <div data-app-settings-header className="shrink-0 space-y-3 border-b border-sidebar-border px-4 py-3 sm:px-5 lg:px-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-xl" aria-label="返回 Apps 设置"
+                        onClick={() => selectNavigationGroup(activeGroup)}><ChevronLeft aria-hidden="true" className="h-4 w-4" /></Button>
+                      <AppIcon icon={selectedAppSetting.appIcon} className="h-8 w-8 rounded-xl" />
+                      <h1 className="min-w-0 truncate text-base font-semibold text-foreground" title={selectedAppSetting.appTitle}>{selectedAppSetting.appTitle}</h1>
+                    </div>
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      <AppToolbarActions app={selectedApp} onRefresh={() => setAppRefreshKey(value => value + 1)} onOpenSettings={route => {
+                        const entry = selectedAppEntries.find(item => item.route === route);
+                        if (entry) selectAppSetting(entry);
+                      }} />
+                      {onOpenAppManagement && <Button variant="outline" size="sm" className="h-8 shrink-0 rounded-xl text-xs" onClick={() => onOpenAppManagement(selectedAppSetting.appName)}>应用管理</Button>}
+                    </div>
+                  </div>
+                  {!toolbarSettingsEntry && selectedAppEntries.length > 1 && <nav className="flex gap-1 overflow-x-auto" aria-label={`${selectedAppSetting.appTitle} 设置页面`}>
+                    {selectedAppEntries.map(entry => <button key={entry.id} type="button" data-app-setting={entry.id}
+                      aria-current={entry.id === selectedAppSetting.id ? 'page' : undefined} onClick={() => selectAppSetting(entry)}
+                      className={cn('shrink-0 rounded-xl px-3 py-2 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring',
+                        entry.id === selectedAppSetting.id ? 'bg-sidebar-accent font-medium text-sidebar-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/80')}>
+                      {entry.title}
+                    </button>)}
+                  </nav>}
+                </div>
+                <div className="min-h-0 flex-1"><EmbeddedAppView key={`${selectedAppSetting.id}:${selectedAppSetting.version}:${selectedAppSetting.route}:${appRefreshKey}`} appName={selectedAppSetting.appName} app={selectedApp} route={selectedAppSetting.route} compact /></div>
+              </section> : <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
                   <div className="px-1">
                     <h1 className="text-2xl font-semibold tracking-normal text-foreground">
@@ -1338,7 +1496,7 @@ export function SettingsView({
                     </Surface>
                   ) : null}
 
-                  {visibleSections.length === 0 ? (
+                  {visibleSections.length === 0 && visibleAppEntries.length === 0 ? (
                     <Surface className="p-6">
                       <p className="text-sm font-medium text-foreground">没有找到匹配的设置项</p>
                       <p className="mt-2 text-sm leading-7 text-muted-foreground">
@@ -1354,6 +1512,7 @@ export function SettingsView({
                       </Button>
                     </Surface>
                   ) : null}
+
 
                 {visibleSections.some((section) => section.id === 'basic-info') ? (
                   <SettingsSection
@@ -1773,6 +1932,8 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
+
+
                 {visibleSections.some((section) => section.id === 'tool-performance') ? (
                   <SettingsSection
                     id="tool-performance"
@@ -2107,6 +2268,13 @@ export function SettingsView({
                           />
                         </div>
                       </SettingsRow>
+                      <SettingsRow
+                        title="手动整理长期记忆"
+                        description="立即整理本机共享的长期记忆，不受自动整理开关、时间间隔或会话数限制。"
+                        stacked
+                      >
+                        <MemoryDreamControl enabled={Boolean(autoMemoryDraft.enabled)} />
+                      </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>
                 ) : null}
@@ -2119,7 +2287,6 @@ export function SettingsView({
                     }}
                     className="scroll-mt-6"
                   >
-                    <div className="mb-8"><ComputerUseSettings /></div>
                     <div className="mb-3 px-1">
                       <h3 className="text-[15px] font-semibold text-foreground">Moss 内置工具</h3>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground">常驻工具会在每次请求中提供完整参数；按需工具只公布名称，首次命中时会按分组一起加载。</p>
@@ -2127,13 +2294,10 @@ export function SettingsView({
                     <ToolLoadingSettingsTable
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
-                      featureEnabled={{
-                        computerUse: settingsDraft?.computerUse?.enabled === true,
-                      }}
                     />
                     <div className="mb-3 mt-8 px-1">
                       <h3 className="text-[15px] font-semibold text-foreground">App 提供的工具</h3>
-                      <p className="mt-1 text-sm leading-6 text-muted-foreground">统一按需加载，随 App 启停。请在 App 管理中启停应用或调整授权。</p>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">工具范围由 App 统一声明，默认需在会话中选择。选中的 App 或子服务工具常驻；未选中的全局工具按需加载。</p>
                     </div>
                     <AppToolSettingsTable apps={apps} />
                   </section>
@@ -2526,47 +2690,7 @@ export function SettingsView({
                   </SettingsSection>
                 ) : null}
 
-                {visibleSections.some((section) => section.id === 'buddy') ? (
-                  <SettingsSection
-                    id="buddy"
-                    title="Buddy"
-                    sectionRef={(element) => {
-                      sectionRefs.current.buddy = element;
-                    }}
-                  >
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="Buddy 伴侣精灵"
-                        description="开启后在侧边栏显示你的专属宠物陪伴。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={buddyEnabled}
-                            onCheckedChange={onBuddyEnabledChange}
-                            label="启用 Buddy 伴侣精灵"
-                          />
-                        </div>
-                      </SettingsRow>
 
-                      {buddyEnabled ? (
-                        <SettingsRow
-                          title="Buddy 状态"
-                          description="在这里孵化、查看和编辑当前的陪伴精灵。"
-                          stacked
-                        >
-                          <BuddySummary />
-                        </SettingsRow>
-                      ) : (
-                        <div className="px-4 py-4">
-                          <div className="rounded-[18px] border border-dashed border-black/10 bg-[#fafafc] px-4 py-3 text-xs leading-6 text-muted-foreground dark:border-white/10 dark:bg-background/[0.35]">
-                            Buddy 已关闭。重新开启后，侧边栏会恢复显示宠物陪伴。
-                          </div>
-                        </div>
-                      )}
-                    </SettingsGroup>
-                  </SettingsSection>
-                ) : null}
 
                 {visibleSections.some((section) => section.id === 'appearance') ? (
                   <SettingsSection
@@ -2758,8 +2882,9 @@ export function SettingsView({
                     </SettingsGroup>
                   </SettingsSection>
                 ) : null}
+                  {(activeGroup.id === 'apps' || deferredSearchQuery) && Boolean(visibleAppEntries.length) && <AppSettingsGroups entries={visibleAppEntries} onSelect={selectAppSetting} />}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
       </div>

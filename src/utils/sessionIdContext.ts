@@ -1,3 +1,4 @@
+import type { AppToolPolicy } from './appToolPolicy.js'
 import { AsyncLocalStorage } from 'async_hooks'
 import type { CronProvider } from '../../shared/cron-provider.js'
 import type { SessionId } from '../types/ids.js'
@@ -12,6 +13,7 @@ export type SessionRuntime = {
   desktopCronHostId?: string
   cron?: CronProvider
   unattended?: boolean
+  appToolPolicy?: AppToolPolicy
 }
 
 export type ScopedWorkerResources = {

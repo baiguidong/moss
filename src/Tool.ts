@@ -309,14 +309,7 @@ export type ToolUseContext = {
 
 /** App event types for MossTool */
 export type MossAppEvent =
-  | { type: 'computer_use'; input: Record<string, unknown>; signal?: AbortSignal }
-  | { type: 'app_build'; input: MossAppBuildInput }
-  | { type: 'app_preview'; input: MossAppPreviewInput }
-  | { type: 'app_publish'; input: MossAppPublishInput }
-  | { type: 'app_launch'; input: { name: string } }
-  | { type: 'app_update'; input: MossAppUpdateInput }
-  | { type: 'app_extract_to_workspace'; input: MossAppExtractToWorkspaceInput }
-  | { type: 'app_get_versions'; input: { name: string } }
+  | { type: 'self_test'; input: { action: 'list' | 'start' | 'status' | 'record' | 'stop'; case_ids?: string[]; run_id?: string; case_id?: string; status?: 'passed' | 'failed' | 'blocked'; checks?: { index: number; passed: boolean; actual: string }[]; evidence?: string[]; notes?: string } }
   | { type: 'browser_open'; input: MossBrowserOpenInput }
   | { type: 'browser_snapshot'; input: MossBrowserSnapshotInput }
   | { type: 'browser_click'; input: MossBrowserElementActionInput & { click_count?: 1 | 2 } }
@@ -338,51 +331,9 @@ export type MossAppEvent =
         requestId: string
       }
       signal?: AbortSignal
+      /** In-process authority from the actual Agent tool call; never sent to an App. */
+      authorizeCommand?: (command: string) => Promise<void>
     }
-
-export type MossAppBuildInput = {
-  kind?: 'app'
-  name: string
-}
-
-export type MossAppPreviewInput = {
-  kind?: 'app'
-  buildDir?: string
-}
-
-export type MossAppPublishInput = {
-  kind?: 'app'
-  name: string
-  buildDir?: string
-  description: string
-  reason?: string
-}
-
-export type MossAppSaveInput = {
-  name: string
-  title?: string
-  description?: string
-  icon?: string
-  width?: number
-  height?: number
-  resizable?: boolean
-  html: string
-  prd?: string
-}
-
-export type MossAppUpdateInput = {
-  kind?: 'app'
-  name: string
-  description?: string
-  buildDir?: string
-  reason?: string
-}
-
-export type MossAppExtractToWorkspaceInput = {
-  kind?: 'app'
-  name: string
-  versionId?: string
-}
 
 export type MossBrowserOpenInput = {
   url?: string
@@ -471,6 +422,7 @@ export type MossAppEventResult =
       items?: unknown[]
       resource?: unknown
       browser?: unknown
+      selfTest?: unknown
       result?: unknown
     }
   | { ok: false; error: string }
@@ -601,6 +553,8 @@ export type Tool<
   aliases?: string[]
   /** Omitted for tools available in either environment. Applied before model exposure. */
   requiresDesktop?: boolean
+  /** Host-mediated capabilities reserved for the attended main session. */
+  requiresInteractiveMainSession?: boolean
   supportedEnvironments?: readonly import('./utils/sessionIdContext.js').SessionExecutionEnvironment[]
   /**
    * One-line capability phrase used by ToolSearch for keyword matching.
@@ -688,7 +642,7 @@ export type Tool<
    */
   mcpInfo?: { serverName: string; toolName: string }
   /** Host-provided App identity, used to activate sibling contribution tools together. */
-  appInfo?: { appId: string }
+  appInfo?: { appId: string; toolScope?: 'global' | 'session'; toolSelection?: 'app' | 'services'; serviceId?: string }
   readonly name: string
   /**
    * Maximum size in characters for tool result before it gets persisted to disk.

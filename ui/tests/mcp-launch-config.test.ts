@@ -16,7 +16,7 @@ test('portable home paths resolve for macOS, Linux and Windows, including spaces
 test('only command and path arguments expand, without shell evaluation or mutating storage', () => {
   const config = { type: 'stdio', command: '~/bin/mcp', args: ['--output-dir', '~/My Files', '--output-dir=~/.moss', '~other/files', 'prefix~/file', '$HOME/file', '$(touch sentinel)', '"~/quoted"'], env: { VALUE: '~/literal' } }
   const original = structuredClone(config)
-  expect(resolveMcpLaunchConfig(config)).toEqual({ ...config, command: path.join(homedir(), 'bin/mcp'), args: ['--output-dir', path.join(homedir(), 'My Files'), `--output-dir=${path.join(homedir(), '.moss')}`, ...config.args.slice(3)] })
+  expect(resolveMcpLaunchConfig(config)).toEqual({ ...config, env: { ...config.env, MOSS_SESSION_WORKSPACE: '' }, command: path.join(homedir(), 'bin/mcp'), args: ['--output-dir', path.join(homedir(), 'My Files'), `--output-dir=${path.join(homedir(), '.moss')}`, ...config.args.slice(3)] })
   expect(config).toEqual(original)
   const http = { type: 'http', url: 'https://example.com/~user', headers: { Token: '~/literal' } }
   expect(resolveMcpLaunchConfig(http)).toEqual(http)

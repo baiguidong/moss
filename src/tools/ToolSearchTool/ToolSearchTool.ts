@@ -131,6 +131,7 @@ function getProviderGroup(tool: Tool): string | undefined {
   if (tool.isMcp) {
     return tool.mcpInfo?.serverName ? `mcp:${tool.mcpInfo.serverName}` : undefined
   }
+  if (tool.appInfo?.toolSelection === 'services' && tool.appInfo.serviceId) return `app-service:${JSON.stringify([tool.appInfo.appId, tool.appInfo.serviceId])}`
   return tool.appInfo?.appId ? `app:${tool.appInfo.appId}` : undefined
 }
 

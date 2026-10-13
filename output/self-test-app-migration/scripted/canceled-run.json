@@ -1,0 +1,78 @@
+{
+  "id": "4d258c9f-0292-498c-98aa-0620c743e983",
+  "phase": "canceled",
+  "message": "用户停止自测 测试实例和数据已保留，可直接查看。",
+  "appVersion": "40.8.3",
+  "selfTestAppVersion": "0.1.0",
+  "appearance": {
+    "themeMode": "light",
+    "cssThemeId": "default",
+    "toolDisplayMode": "expanded",
+    "chatFontSize": 14,
+    "chatLineHeight": 1.55,
+    "chatMessageSpacing": 10,
+    "showAssistantMessageBorder": false,
+    "showAssistantAvatar": true
+  },
+  "catalogRevision": "15e979ca203048d2e9517a2b9f99ee47aa10365dfdb9f39e24ed9acff6dba94d",
+  "model": "gpt-5.5",
+  "permissionMode": "bypassPermissions",
+  "preparation": {
+    "stage": "controller",
+    "label": "测试窗口已就绪，正在创建 AI 控制会话…",
+    "updatedAt": 1791779592177
+  },
+  "directory": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/runs/4d258c9f-0292-498c-98aa-0620c743e983",
+  "home": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/target/home",
+  "evidenceDir": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/runs/4d258c9f-0292-498c-98aa-0620c743e983/evidence",
+  "fixturePath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/target/home/self-test-workspace/self-test-note.txt",
+  "reportPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/runs/4d258c9f-0292-498c-98aa-0620c743e983/report.json",
+  "startedAt": 1791779592164,
+  "finishedAt": 1791779593270,
+  "reportHtmlPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/runs/4d258c9f-0292-498c-98aa-0620c743e983/report.html",
+  "sessionId": "8dd4169d-ec7b-4e27-b944-6ee1ddf35332",
+  "cases": [
+    {
+      "id": "startup",
+      "title": "启动与主界面",
+      "default": true,
+      "requiresModel": false,
+      "prerequisites": [
+        "独立测试实例已启动"
+      ],
+      "steps": [
+        "选择带本轮标识的 Moss 主页面，等待加载完成。",
+        "读取页面并截图，检查侧栏、新建会话入口和消息输入区域。"
+      ],
+      "expected": [
+        "主界面正常显示，没有白屏或启动错误覆盖层。",
+        "新建会话和设置入口可见且可交互。"
+      ]
+    }
+  ],
+  "results": {
+    "startup": {
+      "status": "pending",
+      "checks": [],
+      "evidence": []
+    }
+  },
+  "engineVersion": "0.0.83",
+  "targetId": "588453f6-e24d-48c4-b9ad-7a30911a5795",
+  "inheritedApps": [
+    {
+      "id": "moss.self-test",
+      "version": "0.1.0",
+      "enabled": true,
+      "grants": [
+        "agent:permissions:bypass",
+        "local-files:open",
+        "testing:control"
+      ]
+    }
+  ],
+  "instanceLogPath": "/private/var/folders/w_/g9w8c0r5307c9vwn43kwc7hh0000gn/T/moss-self-test-app-gr7heo/apps-data/moss.self-test/instances/moss.self-test--default/target/instance.log",
+  "endpoint": "http://127.0.0.1:54909",
+  "activeCaseId": null,
+  "disabled": false
+}

@@ -48,6 +48,7 @@ import {
   completeDreamTask,
   failDreamTask,
   isDreamTask,
+  DreamTask,
 } from '../../tasks/DreamTask/DreamTask.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
@@ -75,20 +76,17 @@ function isGateOpen(): boolean {
   return isAutoDreamEnabled()
 }
 
-// Ant-build-only test override. Bypasses enabled/time/session gates but NOT
-// the lock (so repeated turns don't pile up dreams) or the memory-dir
-// precondition. Still scans sessions so the prompt's session-hint is populated.
-function isForced(): boolean {
-  return false
-}
-
 type AppendSystemMessageFn = NonNullable<ToolUseContext['appendSystemMessage']>
+
+export type ManualDreamOptions = { signal?: AbortSignal; transcriptDir: string }
+export type DreamResult = { sessionsReviewed: number; summary: string; filesTouched: string[] }
 
 let runner:
   | ((
       context: REPLHookContext,
       appendSystemMessage?: AppendSystemMessageFn,
-    ) => Promise<void>)
+      manual?: ManualDreamOptions,
+    ) => Promise<DreamResult | undefined>)
   | null = null
 
 /**
@@ -99,9 +97,9 @@ export function initAutoDream(): void {
   const lastSessionScanAtByMemoryRoot = new Map<string, number>()
   const activeMemoryRoots = new Set<string>()
 
-  runner = async function runAutoDream(context, appendSystemMessage) {
+  runner = async function runAutoDream(context, appendSystemMessage, manual) {
     const cfg = getConfig()
-    const force = isForced()
+    const force = manual !== undefined
     if (!force && !isGateOpen()) return
     const memoryRoot = getAutoMemPath()
 
@@ -149,15 +147,18 @@ export function initAutoDream(): void {
       return
     }
 
-    if (activeMemoryRoots.has(memoryRoot)) return
+    if (activeMemoryRoots.has(memoryRoot)) {
+      if (manual) throw new Error('长期记忆正在整理中，请稍后重试。')
+      return
+    }
     activeMemoryRoots.add(memoryRoot)
 
     let consolidationLock: ConsolidationLock | undefined
     let lockSettled = false
     try {
       // --- Lock ---
-      // Forced test runs leave both the checkpoint and active lock untouched.
-      if (!force) {
+      // Manual runs skip scheduling gates, but share the automatic runner's lock.
+      {
         try {
           consolidationLock =
             (await tryAcquireConsolidationLock(lastAt)) ?? undefined
@@ -165,9 +166,13 @@ export function initAutoDream(): void {
           logForDebugging(
             `[autoDream] lock acquire failed: ${(e as Error).message}`,
           )
+          if (manual) throw e
           return
         }
-        if (!consolidationLock) return
+        if (!consolidationLock) {
+          if (manual) throw new Error('长期记忆正在整理中，请稍后重试。')
+          return
+        }
       }
 
       logForDebugging(
@@ -187,10 +192,14 @@ export function initAutoDream(): void {
         consolidationLock,
         abortController,
       })
+      const abort = () => abortController.abort()
+      manual?.signal?.addEventListener('abort', abort, { once: true })
+      if (manual?.signal?.aborted) abort()
 
       try {
+        abortController.signal.throwIfAborted()
         const transcriptDir =
-          getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
+          manual?.transcriptDir ?? getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
         // Tool constraints are specific to the background fork, so keep them
         // out of the reusable consolidation prompt body.
         const extra = `
@@ -211,6 +220,14 @@ ${sessionIds.map(id => `- ${id}`).join('\n')}`
           overrides: { abortController },
           onMessage: makeDreamProgressWatcher(taskId, setAppState),
         })
+        abortController.signal.throwIfAborted()
+        const lastAssistant = result.messages.findLast(message => message.type === 'assistant')
+        if (!lastAssistant || lastAssistant.isApiErrorMessage || lastAssistant.message.stop_reason === 'tool_use') {
+          const errorText = lastAssistant?.isApiErrorMessage
+            ? lastAssistant.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
+            : ''
+          throw new Error(errorText || '模型未完成长期记忆整理，请重试。')
+        }
 
         completeDreamTask(taskId, setAppState)
         lockSettled = true
@@ -236,13 +253,22 @@ ${sessionIds.map(id => `- ${id}`).join('\n')}`
           output: result.totalUsage.output_tokens,
           sessions_reviewed: sessionIds.length,
         })
+        return {
+          sessionsReviewed: sessionIds.length,
+          summary: isDreamTask(dreamState)
+            ? dreamState.turns.filter(turn => turn.text).at(-1)?.text || '长期记忆整理完成。'
+            : '长期记忆整理完成。',
+          filesTouched: isDreamTask(dreamState) ? dreamState.filesTouched : [],
+        }
       } catch (e: unknown) {
         // If the user killed from the bg-tasks dialog, DreamTask.kill already
         // aborted, rolled back the lock, and set status=killed. Don't overwrite
         // or double-rollback.
         if (abortController.signal.aborted) {
+          await DreamTask.kill(taskId, setAppState)
           lockSettled = true
           logForDebugging('[autoDream] aborted by user')
+          if (manual) throw new Error('已停止整理长期记忆。')
           return
         }
         logForDebugging(`[autoDream] fork failed: ${(e as Error).message}`)
@@ -252,6 +278,9 @@ ${sessionIds.map(id => `- ${id}`).join('\n')}`
           await rollbackConsolidationLock(consolidationLock)
         }
         lockSettled = true
+        if (manual) throw e
+      } finally {
+        manual?.signal?.removeEventListener('abort', abort)
       }
     } finally {
       if (consolidationLock && !lockSettled) {
@@ -314,4 +343,17 @@ export async function executeAutoDream(
   appendSystemMessage?: AppendSystemMessageFn,
 ): Promise<void> {
   await runner?.(context, appendSystemMessage)
+}
+
+/** Global maintenance entry; it does not submit a prompt to a chat session. */
+export async function executeManualDream(
+  context: REPLHookContext,
+  options: ManualDreamOptions,
+): Promise<DreamResult> {
+  if (!isAutoMemoryEnabled()) throw new Error('请先开启长期记忆。')
+  options.signal?.throwIfAborted()
+  if (!runner) initAutoDream()
+  const result = await runner!(context, undefined, options)
+  if (!result) throw new Error('无法完成长期记忆整理，请稍后重试。')
+  return result
 }

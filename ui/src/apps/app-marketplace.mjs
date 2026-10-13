@@ -5,6 +5,7 @@ import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import semver from 'semver'
 import { APP_HOST_API_VERSION } from '../../../packages/app-sdk/src/index.mjs'
+import { getAppCategory } from '../../../packages/app-sdk/src/categories.mjs'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
@@ -12,8 +13,9 @@ import { installAppArchive } from './app-runtime.mjs'
 import { describeAppTools } from './app-tool-disclosure.mjs'
 
 const INSTALL_CANCELED = 'MOSS_APP_MARKET_INSTALL_CANCELED'
-const MARKET_CACHE_VERSION = 1
+const MARKET_CACHE_VERSION = 2
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000
+const MARKET_REQUEST_TIMEOUT_MS = 15_000
 const MAX_CATALOG_BYTES = 5 * 1024 * 1024
 const MAX_APP_BYTES = 250 * 1024 * 1024
 const SUPPORTED_PLATFORMS = new Set([
@@ -56,36 +58,38 @@ export function normalizeMarketplaceVersion(raw, baseUrl) {
   const platforms = normalizeStringArray(raw.platforms, 'platforms', { required: true })
   const unsupported = platforms.find((platform) => !SUPPORTED_PLATFORMS.has(platform))
   if (unsupported) throw new Error(`Unsupported App marketplace platform: ${unsupported}`)
-  const artifact = raw.artifact
-  if (!isObject(artifact)) throw new Error(`Missing App artifact for version ${version}`)
-  const sha256 = safeString(artifact.sha256, 'artifact.sha256').toLowerCase()
-  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`Invalid App artifact SHA-256 for version ${version}`)
-  const fileName = safeString(artifact.fileName, 'artifact.fileName')
-  if (path.basename(fileName) !== fileName || !fileName.endsWith('.zip')) {
-    throw new Error(`Invalid App artifact filename for version ${version}`)
+  const normalizeArtifact = (artifact) => {
+    if (!isObject(artifact)) throw new Error(`Missing App artifact for version ${version}`)
+    const sha256 = safeString(artifact.sha256, 'artifact.sha256').toLowerCase()
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`Invalid App artifact SHA-256 for version ${version}`)
+    const fileName = safeString(artifact.fileName, 'artifact.fileName')
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._+-]*\.zip$/.test(fileName)) throw new Error(`Invalid App artifact filename for version ${version}`)
+    const size = Number(artifact.size)
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_APP_BYTES) throw new Error(`Invalid App artifact size for version ${version}`)
+    return { ...artifact, fileName, downloadUrl: safeHttpsUrl(artifact.downloadUrl, baseUrl, 'artifact.downloadUrl'), sha256, size,
+      signed: artifact.signed === true,
+      publisherId: safeString(artifact.publisherId, 'artifact.publisherId', { required: false }),
+      keyId: safeString(artifact.keyId, 'artifact.keyId', { required: false }) }
   }
-  const size = Number(artifact.size)
-  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_APP_BYTES) {
-    throw new Error(`Invalid App artifact size for version ${version}`)
-  }
-  return {
-    version,
-    hostApi,
-    platforms,
+  let delivery
+  if (raw.artifacts !== undefined) {
+    if (!isObject(raw.artifacts)) throw new Error('Invalid artifact platform map')
+    if (!semver.subset(hostApi, '>=3.3.0')) throw new Error('Platform artifacts require Host API >=3.3.0')
+    const keys = Object.keys(raw.artifacts)
+    if (keys.length !== platforms.length || keys.some(key => !platforms.includes(key))) throw new Error('Artifact platforms must exactly match version platforms')
+    delivery = { artifacts: Object.fromEntries(keys.map(key => [key, normalizeArtifact(raw.artifacts[key])])) }
+  } else delivery = { artifact: normalizeArtifact(raw.artifact) }
+  return { version, hostApi, platforms,
     permissions: normalizeStringArray(raw.permissions || [], 'permissions'),
     publishedAt: safeString(raw.publishedAt, 'publishedAt', { required: false }),
     releaseNotes: safeString(raw.releaseNotes, 'releaseNotes', { required: false, maxLength: 20_000 }),
-    artifact: {
-      fileName,
-      downloadUrl: safeHttpsUrl(artifact.downloadUrl, baseUrl, 'artifact.downloadUrl'),
-      sha256,
-      size,
-      signed: artifact.signed === true,
-      publisherId: safeString(artifact.publisherId, 'artifact.publisherId', { required: false }),
-      keyId: safeString(artifact.keyId, 'artifact.keyId', { required: false }),
-    },
-  }
+    ...delivery }
 }
+
+export function selectMarketplaceArtifact(version, platform) {
+  return version.platforms.includes(platform) ? (version.artifacts?.[platform] || version.artifact || null) : null
+}
+const forPlatform = (version, platform) => ({ ...version, artifact: selectMarketplaceArtifact(version, platform) })
 
 function normalizePublisher(raw) {
   if (!isObject(raw)) return null
@@ -105,6 +109,8 @@ function normalizeMarketplaceSummary(raw, indexUrl) {
     displayName: safeString(raw.displayName, 'app.displayName'),
     summary: safeString(raw.summary, 'app.summary', { maxLength: 160 }),
     publisher: normalizePublisher(raw.publisher),
+    category: getAppCategory(raw.category).id,
+    keywords: normalizeStringArray(raw.keywords || [], 'app.keywords'),
     categories: normalizeStringArray(raw.categories || [], 'app.categories'),
     featured: raw.featured === true,
     iconUrl: raw.iconUrl ? safeHttpsUrl(raw.iconUrl, indexUrl, 'app.iconUrl') : '',
@@ -145,6 +151,7 @@ export function normalizeMarketplaceDetail(raw, detailUrl, expectedAppId) {
     summary: safeString(raw.summary, 'app.summary', { maxLength: 160 }),
     description: safeString(raw.description, 'app.description', { required: false, maxLength: 8_000 }),
     publisher: normalizePublisher(raw.publisher),
+    category: getAppCategory(raw.category).id,
     categories: normalizeStringArray(raw.categories || [], 'app.categories'),
     keywords: normalizeStringArray(raw.keywords || [], 'app.keywords'),
     homepage: raw.homepage ? safeHttpsUrl(raw.homepage, detailUrl, 'app.homepage') : '',
@@ -198,7 +205,7 @@ async function writeCache(cachePath, value) {
 
 function platformCompatibility(version, platform) {
   return {
-    platformCompatible: version.platforms.includes(platform),
+    platformCompatible: Boolean(selectMarketplaceArtifact(version, platform)),
     hostCompatible: semver.satisfies(APP_HOST_API_VERSION, version.hostApi),
   }
 }
@@ -208,8 +215,10 @@ function enrichSummary(summary, installedApps, platform) {
   const compatibility = platformCompatibility(summary.latest, platform)
   return {
     ...summary,
+    latest: forPlatform(summary.latest, platform),
     ...compatibility,
     installedVersion: installed?.currentVersion || null,
+    localModification: Boolean(installed?.localModification),
     updateAvailable: Boolean(installed?.currentVersion && semver.gt(summary.latestVersion, installed.currentVersion)),
   }
 }
@@ -219,6 +228,7 @@ export function createAppMarketplaceService(options = {}) {
   const cachePath = path.resolve(options.cachePath || path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'))
   const platform = options.platform || `${process.platform}-${process.arch}`
   const download = options.download || downloadFileBuffer
+  const requestTimeoutMs = options.requestTimeoutMs ?? MARKET_REQUEST_TIMEOUT_MS
   const archiveInstaller = options.installArchive || installAppArchive
   const packageValidator = options.validatePackage || validateAppPackage
   const trustedPublishers = options.trustedPublishers || {}
@@ -226,11 +236,24 @@ export function createAppMarketplaceService(options = {}) {
   const installLocks = new Map()
   const enrichDetail = (detail) => ({
     ...detail,
-    versions: detail.versions.map((version) => ({ ...version, ...platformCompatibility(version, platform) })),
+    versions: detail.versions.map((version) => ({ ...forPlatform(version, platform), ...platformCompatibility(version, platform) })),
   })
 
   async function downloadJson(url) {
-    const buffer = await download(url, { userAgent: 'Moss-AppMarket/1.0', maxBytes: MAX_CATALOG_BYTES })
+    // Bound the entire request, including DNS, redirects and a stalled response body.
+    const signal = AbortSignal.timeout(requestTimeoutMs)
+    let buffer
+    try {
+      buffer = await download(url, {
+        userAgent: 'Moss-AppMarket/1.0', maxBytes: MAX_CATALOG_BYTES,
+        timeoutMs: requestTimeoutMs, signal,
+      })
+    } catch (error) {
+      if (signal.aborted || /timeout/i.test(error.message || '')) {
+        throw new Error(`应用市场请求超时（${requestTimeoutMs / 1000} 秒），请检查网络后重试`, { cause: error })
+      }
+      throw new Error(`应用市场请求失败：${error.message || String(error)}`, { cause: error })
+    }
     try { return JSON.parse(Buffer.from(buffer).toString('utf8')) }
     catch (error) { throw new Error(`Invalid App marketplace JSON: ${error.message}`) }
   }
@@ -250,7 +273,7 @@ export function createAppMarketplaceService(options = {}) {
       return { index, cached: false, warning: '' }
     } catch (error) {
       if (!memoryCache?.index) throw error
-      return { index: memoryCache.index, cached: true, warning: `市场连接失败，正在显示缓存：${error.message}` }
+      return { index: memoryCache.index, cached: true, warning: `市场刷新失败，正在显示缓存：${error.message}` }
     }
   }
 
@@ -311,6 +334,8 @@ export function createAppMarketplaceService(options = {}) {
       if (!version.artifact.signed) throw new Error(`App ${appId}@${version.version} is not signed`)
 
       const runtime = options.getRuntime()
+      const installedEntry = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
+      if (installedEntry?.localModification) throw new Error('此 App 包含本地修改。请保留源码并明确卸载本地版本后，再安装市场版本。')
       const installation = runtime.getInstallation(appId)
       const previousVersion = installation?.activeVersion || null
       if (installation?.activeVersion === version.version) {
@@ -347,9 +372,12 @@ export function createAppMarketplaceService(options = {}) {
           onProgress: report,
           installPackage: async (packageRoot) => {
             report({ phase: 'validating' })
-            const packageInfo = await packageValidator(packageRoot, { trustedPublishers, requireTrustedPublisher: true })
+            const packageInfo = await packageValidator(packageRoot, { trustedPublishers, requireTrustedPublisher: true, platform })
             if (packageInfo.manifest.id !== appId || packageInfo.manifest.version !== version.version) {
               throw new Error(`Downloaded App identity mismatch: expected ${appId}@${version.version}`)
+            }
+            if (version.artifacts && (!packageInfo.manifest.platforms || packageInfo.manifest.platforms.length !== 1 || packageInfo.manifest.platforms[0] !== platform)) {
+              throw new Error(`Downloaded App platform mismatch: expected ${platform}`)
             }
             if (packageInfo.trust.publisherId !== detail.publisher?.id) {
               throw new Error(`Downloaded App publisher mismatch: ${appId}@${version.version}`)

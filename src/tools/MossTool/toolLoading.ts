@@ -4,16 +4,6 @@ export type MossToolLoadingMode = 'always' | 'deferred'
 
 export const MOSS_TOOL_GROUPS = {
   browser: ['moss_browser_open'],
-  computer: ['computer_use'],
-  app: [
-    'app_build',
-    'app_preview',
-    'app_publish',
-    'app_launch',
-    'app_update',
-    'app_extract_to_workspace',
-    'app_get_versions',
-  ],
   connector: [
     'connector_cli_setup',
     'connector_mcp_authenticate',
@@ -26,14 +16,6 @@ export const MOSS_TOOL_GROUPS = {
 
 export const DEFAULT_MOSS_TOOL_LOADING = {
   moss_browser_open: 'always',
-  computer_use: 'always',
-  app_build: 'deferred',
-  app_preview: 'deferred',
-  app_publish: 'deferred',
-  app_launch: 'deferred',
-  app_update: 'deferred',
-  app_extract_to_workspace: 'deferred',
-  app_get_versions: 'deferred',
   connector_cli_setup: 'deferred',
   connector_mcp_authenticate: 'deferred',
   image_generate: 'deferred',

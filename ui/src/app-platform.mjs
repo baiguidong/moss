@@ -8,7 +8,6 @@ import semver from 'semver'
 import {
   AppPackageStore,
   validateAppPackage,
-  writePackageChecksums,
 } from '../../packages/app-runtime/src/index.mjs'
 import { APP_ERROR_CODES, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
 import { MOSS_HOME } from './moss-home.mjs'
@@ -16,8 +15,17 @@ import { MOSS_HOME } from './moss-home.mjs'
 const execFileAsync = promisify(execFile)
 export const APPS_DIR = path.join(MOSS_HOME, 'apps')
 export const APP_REGISTRY_PATH = path.join(MOSS_HOME, 'app-registry.json')
-const WORKSPACE_APPS_SUBDIR = 'apps'
-const BUILD_SUBDIR = 'build'
+const revisionsPath = path.join(MOSS_HOME, 'app-installation-revisions.json')
+const installationQueues = new Map()
+let activateInstallation = null
+export function setAppInstallationActivation(handler) { activateInstallation = handler }
+export function getAppInstallationRevision(appId) { return Number(readJsonFile(revisionsPath, {})[appId]) || 0 }
+function advanceInstallationRevision(appId) {
+  const revisions = readJsonFile(revisionsPath, {})
+  revisions[appId] = (Number(revisions[appId]) || 0) + 1
+  writeJsonFile(revisionsPath, revisions)
+  return revisions[appId]
+}
 
 export const APP_KINDS = Object.freeze({ app: 'app' })
 
@@ -52,11 +60,6 @@ function readAppIconData(packageRoot, relativePath) {
   })[extension]
   if (!mime || !fs.existsSync(iconPath) || !fs.statSync(iconPath).isFile()) return ''
   return `data:${mime};base64,${fs.readFileSync(iconPath).toString('base64')}`
-}
-async function copyDir(source, destination) {
-  await fsp.rm(destination, { recursive: true, force: true })
-  await fsp.mkdir(path.dirname(destination), { recursive: true })
-  await fsp.cp(source, destination, { recursive: true, errorOnExist: true, force: false })
 }
 async function tarDirectory(sourceDir, outPath) {
   await fsp.rm(outPath, { force: true })
@@ -97,88 +100,11 @@ export function getAppVersionDir(appId, version) {
   return path.join(getAppRoot(appId), 'versions', version)
 }
 export function getAppCurrentPath(appId) { return path.join(getAppRoot(appId), 'current.json') }
-export function getWorkspaceAppDir(workspace, appId) { return path.join(workspace, WORKSPACE_APPS_SUBDIR, slugifyId(appId)) }
-export function getAppWorkspaceBuildDir(workspace, appId) { return path.join(getWorkspaceAppDir(workspace, appId), BUILD_SUBDIR) }
-export function getAppManifestPath(workspace, appId) { return path.join(getWorkspaceAppDir(workspace, appId), 'app.moss.json') }
-
-export function validateAppManifestV2(rawManifest) { return validateAppManifest(rawManifest) }
-export function readAppManifestFromWorkspace(workspace, appId) {
-  const manifestPath = getAppManifestPath(workspace, appId)
-  const manifest = readJsonFile(manifestPath)
-  if (!manifest) throw new Error(`Missing or invalid App manifest: ${manifestPath}`)
-  return validateAppManifest(manifest)
-}
 export function readAppManifestFromDir(rootDir) {
   const manifestPath = path.join(rootDir, 'app.moss.json')
   const manifest = readJsonFile(manifestPath)
   if (!manifest) throw new Error(`Missing or invalid App manifest: ${manifestPath}`)
   return validateAppManifest(manifest)
-}
-
-async function runPackageBuild(sourceRoot, report, options) {
-  const packagePath = path.join(sourceRoot, 'package.json')
-  if (!fs.existsSync(packagePath) || options.runPackageBuild === false) return
-  const packageJson = readJsonFile(packagePath, {})
-  if (!packageJson?.scripts?.build) return
-  try {
-    await execFileAsync('npm', ['run', 'build'], { cwd: sourceRoot, timeout: 120_000, maxBuffer: 20 * 1024 * 1024 })
-    report.steps.push('npm run build completed')
-  } catch (error) {
-    report.errors.push(String(error.stderr || error.stdout || error.message))
-    throw new Error('App build failed')
-  }
-}
-
-async function materializeUiFallback(sourceRoot, manifest, report) {
-  if (!manifest.ui) return
-  const target = path.join(sourceRoot, manifest.ui.entry)
-  if (fs.existsSync(target)) return
-  const source = [path.join(sourceRoot, 'src/index.html'), path.join(sourceRoot, 'public/index.html'), path.join(sourceRoot, 'index.html')]
-    .find((candidate) => fs.existsSync(candidate))
-  if (!source) return
-  await fsp.mkdir(path.dirname(target), { recursive: true })
-  await fsp.copyFile(source, target)
-  report.warnings.push(`Used static UI fallback: ${path.relative(sourceRoot, source)}`)
-}
-
-export async function buildAppFromWorkspace(workspace, appId, options = {}) {
-  const manifestPath = getAppManifestPath(workspace, appId)
-  const sourceRoot = path.dirname(manifestPath)
-  const manifest = readAppManifestFromWorkspace(workspace, appId)
-  const artifactDir = getAppWorkspaceBuildDir(workspace, manifest.id)
-  const temporary = `${artifactDir}.${randomUUID()}.tmp`
-  const report = { ok: false, kind: 'app', appId: manifest.id, version: manifest.version, steps: [], warnings: [], errors: [] }
-  await runPackageBuild(sourceRoot, report, options)
-  await materializeUiFallback(sourceRoot, manifest, report)
-  await fsp.rm(temporary, { recursive: true, force: true })
-  await fsp.mkdir(temporary, { recursive: true })
-  try {
-    for (const directory of ['dist', 'schemas', 'assets']) {
-      const source = path.join(sourceRoot, directory)
-      if (fs.existsSync(source)) await fsp.cp(source, path.join(temporary, directory), { recursive: true })
-    }
-    await fsp.writeFile(path.join(temporary, 'app.moss.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-    report.ok = true
-    await fsp.writeFile(path.join(temporary, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`)
-    await writePackageChecksums(temporary)
-    await validateAppPackage(temporary)
-    await fsp.rm(artifactDir, { recursive: true, force: true })
-    await fsp.rename(temporary, artifactDir)
-  } catch (error) {
-    await fsp.rm(temporary, { recursive: true, force: true })
-    throw error
-  }
-  return {
-    ok: true,
-    kind: 'app',
-    appId: manifest.id,
-    version: manifest.version,
-    buildDir: artifactDir,
-    filePath: manifest.ui ? path.join(artifactDir, manifest.ui.entry) : null,
-    entry: manifest.ui ? path.join(artifactDir, manifest.ui.entry) : null,
-    buildReportPath: path.join(artifactDir, 'build-report.json'),
-    warnings: report.warnings,
-  }
 }
 
 export function listAppVersions(appId) {
@@ -221,19 +147,27 @@ export function listAppVersions(appId) {
 function registryEntryFromPublished(published, previous = {}) {
   const versions = listAppVersions(published.id)
   const latest = versions[0]
+  const metadata = readJsonFile(path.join(getAppRoot(published.id), 'version-metadata', `${published.version}.json`), {})
   return {
     ...previous,
+    localModification: metadata.localModification || null,
+    marketplaceSource: metadata.marketplaceSource || previous.marketplaceSource || null,
     id: published.id,
     name: published.id,
     kind: 'app',
     displayName: published.displayName,
     title: published.displayName,
     description: published.description,
+    category: published.manifest.category,
+    keywords: published.manifest.keywords,
     icon: published.icon,
     width: published.width,
     height: published.height,
     resizable: published.resizable,
     hasUi: Boolean(published.manifest.ui),
+    hasSettings: Boolean(published.manifest.contributes?.settings?.length),
+    navigation: published.manifest.navigation,
+    uiContributes: { views: published.manifest.contributes?.views || [], settings: published.manifest.contributes?.settings || [] },
     hasBackend: Boolean(published.manifest.backend),
     backend: published.manifest.backend || null,
     permissions: published.manifest.permissions,
@@ -249,6 +183,20 @@ function registryEntryFromPublished(published, previous = {}) {
 }
 
 export async function publishAppFromBuild(buildDir, options = {}) {
+  const manifest = readAppManifestFromDir(buildDir)
+  const previous = installationQueues.get(manifest.id) || Promise.resolve()
+  const task = previous.then(() => publishAppFromBuildNow(buildDir, options), () => publishAppFromBuildNow(buildDir, options))
+  installationQueues.set(manifest.id, task)
+  try { return await task } finally { if (installationQueues.get(manifest.id) === task) installationQueues.delete(manifest.id) }
+}
+
+export function refreshAppRegistryFromCurrent(appId) {
+  return upsertAppRegistryEntry(registryEntryFromPublished(
+    getPublishedApp(appId), readAppRegistry().apps.find(item => item.id === appId),
+  ))
+}
+
+async function publishAppFromBuildNow(buildDir, options = {}) {
   const resolvedBuildDir = path.resolve(buildDir)
   const validationOptions = {
     trustedPublishers: options.trustedPublishers,
@@ -261,23 +209,35 @@ export async function publishAppFromBuild(buildDir, options = {}) {
     reason: options.reason || 'published',
     note: options.note || '',
     publishedAt: now(),
-    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource } : {}),
+    localModification: options.localModification || null,
+    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource, localModification: null } : {}),
   })
-  writeJsonFile(getAppCurrentPath(source.manifest.id), { version: source.manifest.version, updatedAt: now() })
-  const sourceRoot = options.sourceRoot
-    ? path.resolve(options.sourceRoot)
-    : path.dirname(path.resolve(buildDir))
-  await fsp.mkdir(path.join(getAppRoot(source.manifest.id), 'sources'), { recursive: true })
-  await tarDirectory(sourceRoot, path.join(getAppRoot(source.manifest.id), 'sources', `${source.manifest.version}.tar.gz`))
+  // Modern packages retain their authoritative source in versions/<version>.
+  // Preserve explicitly supplied legacy sources only; a runtime archive is not source.
+  if (options.sourceRoot && !fs.existsSync(path.join(resolvedBuildDir, 'source-manifest.json'))) {
+    await fsp.mkdir(path.join(getAppRoot(source.manifest.id), 'sources'), { recursive: true })
+    await tarDirectory(path.resolve(options.sourceRoot), path.join(getAppRoot(source.manifest.id), 'sources', `${source.manifest.version}.tar.gz`))
+  }
+  options.validateCommit?.()
+  if (options.expectedInstallationRevision !== undefined
+    && (getAppInstallationRevision(source.manifest.id) !== options.expectedInstallationRevision
+      || (readJsonFile(getAppCurrentPath(source.manifest.id), {})?.version || null) !== options.expectedBaseVersion)) {
+    throw new Error('App installation changed before commit')
+  }
+  const installationRevision = advanceInstallationRevision(source.manifest.id)
+  writeJsonFile(getAppCurrentPath(source.manifest.id), { version: source.manifest.version, installationRevision, updatedAt: now() })
   const published = getPublishedApp(source.manifest.id)
   const registryEntry = registryEntryFromPublished(
     published,
     readAppRegistry().apps.find((item) => item.id === source.manifest.id),
   )
-  return upsertAppRegistryEntry({
+  const entry = upsertAppRegistryEntry({
     ...registryEntry,
-    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource } : {}),
+    ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource, localModification: null } : {}),
+    ...(options.localModification ? { localModification: options.localModification } : {}),
   })
+  if (activateInstallation) await activateInstallation(entry)
+  return entry
 }
 
 export function getPublishedApp(appId, version = null) {
@@ -297,6 +257,8 @@ export function getPublishedApp(appId, version = null) {
     displayName: manifest.displayName,
     title: manifest.displayName,
     description: manifest.description,
+    category: manifest.category,
+    keywords: manifest.keywords,
     icon: readAppIconData(versionDir, manifest.icon),
     width: manifest.ui?.window.width || 1100,
     height: manifest.ui?.window.height || 760,
@@ -340,6 +302,9 @@ export function listAppsFromRegistry() {
         height: Number(app.height) || 760,
         resizable: app.resizable !== false,
         manifest: null,
+        // Keep only display metadata for the same installed version; this never authorizes launch.
+        navigation: app.currentVersion === currentVersion ? app.navigation : undefined,
+        uiContributes: app.currentVersion === currentVersion ? app.uiContributes : undefined,
         filePath: null,
         entryPath: null,
         currentVersion,
@@ -379,7 +344,7 @@ export function getAppRuntimeStatus(appId) {
 export function rollbackAppToVersion(appId, version) {
   const versionDir = getAppVersionDir(appId, version)
   if (!fs.existsSync(versionDir)) throw new Error(`Unknown App version: ${version}`)
-  writeJsonFile(getAppCurrentPath(appId), { version, updatedAt: now() })
+  writeJsonFile(getAppCurrentPath(appId), { version, installationRevision: advanceInstallationRevision(appId), updatedAt: now() })
   const published = getPublishedApp(appId, version)
   return upsertAppRegistryEntry(registryEntryFromPublished(
     published,
@@ -388,42 +353,7 @@ export function rollbackAppToVersion(appId, version) {
 }
 
 export async function deleteApp(appId) {
+  advanceInstallationRevision(appId)
   await fsp.rm(getAppRoot(appId), { recursive: true, force: true })
   removeAppRegistryEntry(appId)
-}
-
-export async function extractAppToWorkspace(appId, sessionRecord, version = null) {
-  if (!sessionRecord?.workspace) throw new Error('Session workspace is required for App extraction')
-  const published = getPublishedApp(appId, version)
-  const destination = getWorkspaceAppDir(sessionRecord.workspace, appId)
-  await fsp.rm(destination, { recursive: true, force: true })
-  await fsp.mkdir(destination, { recursive: true })
-  const sourceTar = path.join(getAppRoot(appId), 'sources', `${published.version}.tar.gz`)
-  if (fs.existsSync(sourceTar)) {
-    await execFileAsync('tar', ['-xzf', sourceTar, '-C', destination], { maxBuffer: 20 * 1024 * 1024 })
-  } else {
-    for (const item of ['dist', 'schemas', 'assets', 'app.moss.json']) {
-      const source = path.join(published.versionDir, item)
-      if (fs.existsSync(source)) await fsp.cp(source, path.join(destination, item), { recursive: true })
-    }
-  }
-  return {
-    app: { id: appId, name: appId, kind: 'app', title: published.displayName, displayName: published.displayName, currentVersion: published.version, extractedVersion: published.version },
-    metadataPath: path.join(destination, 'app.moss.json'),
-    htmlPath: published.manifest.ui ? path.join(destination, published.manifest.ui.entry) : null,
-  }
-}
-
-export function createDefaultAppManifest({ id, displayName, description = '' }) {
-  const appId = slugifyId(id || displayName || `app-${randomUUID().slice(0, 8)}`)
-  return {
-    schemaVersion: 2,
-    id: appId,
-    version: '0.1.0',
-    displayName: displayName || appId,
-    description,
-    hostApi: '^2.1.0',
-    ui: { entry: 'dist/ui/index.html', window: { width: 1100, height: 760, resizable: true } },
-    permissions: [],
-  }
 }

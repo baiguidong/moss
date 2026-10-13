@@ -168,4 +168,12 @@ describe('explicit file-card preview', () => {
     expect(calls[0]).toEqual({ session: sessions.remote, filePath: '/remote/only-on-server.md' });
     await expect(preview(null, { sessionId: 'missing', filePath: '/tmp/missing.md' })).rejects.toThrow('Session not found');
   });
+  it('resolves remote attachment URLs to the owning session and rejects mismatched sessions', async () => {
+    const { preview, calls, sessions } = await setup();
+    const filePath = 'moss-remote-workspace://session/remote/inputs/my%20report.md';
+    expect((await preview(null, { filePath })).content).toBe('remote content');
+    expect(calls[0]).toEqual({ session: sessions.remote, filePath: 'inputs/my report.md' });
+    await expect(preview(null, { sessionId: 'local', filePath })).rejects.toThrow('another session');
+  });
+
 });

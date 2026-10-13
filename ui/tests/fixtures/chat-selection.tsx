@@ -343,8 +343,7 @@ api.runAppearanceChecks = async () => {
       <SettingsView settingsDraft={settings} setSettingsDraft={setSettings} settingsNotice=""
         autoSaveSettings={async () => {}} autoSaveImageSettings={async () => {}}
         themeMode="light" setThemeMode={() => {}} cssThemeId="default" setCssThemeId={() => {}}
-        onToolDisplayModeChange={() => {}} onAppearancePreview={commit} onAppearanceCommit={commit}
-        buddyEnabled={false} onBuddyEnabledChange={() => {}} initialSection="appearance" />
+        onToolDisplayModeChange={() => {}} onAppearancePreview={commit} onAppearanceCommit={commit} initialSection="appearance" />
     </div>;
   }
   render(<SettingsFixture />);
@@ -384,3 +383,9 @@ api.prepareAppearancePreview = async (theme: string, showAssistantMessageBorder:
   await delay();
 };
 api.selectionFixtureReady = true;
+
+api.prepareChatInteractions = async () => {
+  const { runChatInteractionChecks } = await import('./chat-interactions');
+  render(<input id="native-drag-file" type="file" />);
+  api.runChatInteractionChecks = () => runChatInteractionChecks(render, document.querySelector<HTMLInputElement>('#native-drag-file')!.files![0]);
+};

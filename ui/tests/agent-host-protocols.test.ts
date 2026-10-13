@@ -80,11 +80,12 @@ describe('Account and Agent Host protocols', () => {
     })).toThrow(/unknown field: internal/)
   })
 
-  it('rejects unsafe Agent permission modes and malformed binding policies', () => {
+  it('accepts the grant-gated unrestricted mode and rejects malformed policies', () => {
     expect(() => validateAgentHostInput('binding.update', {
       externalConversationId: 'chat-1',
-      patch: { permissionMode: 'bypassPermissions' },
+      patch: { permissionMode: 'invalid-mode' },
     })).toThrow(/permissionMode/)
+    expect(validateAgentHostInput('binding.update', {externalConversationId:'chat-1',patch:{permissionMode:'bypassPermissions'}})).toMatchObject({patch:{permissionMode:'bypassPermissions'}})
     expect(() => validateAgentHostInput('binding.update', {
       externalConversationId: 'chat-1',
       patch: { resources: { tools: ['Read'], credentials: ['secret'] } },

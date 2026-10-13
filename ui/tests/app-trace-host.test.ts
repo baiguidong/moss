@@ -122,3 +122,26 @@ test('Core generates record identities and reports disk failures without changin
   expect(status.droppedRecords).toBeGreaterThan(0)
   expect(status.error).toBeTruthy()
 })
+
+test('associates the first continuing request by compact ID and keeps concurrent sessions isolated', async () => {
+  const { withTraceRequestMetadata } = await import('../../src/services/trace/requestMetadata');
+  const f = await fixture(); f.install(); await f.host.refresh();
+  await withTraceScope(f.home, async () => {
+    await Promise.all(['session-1', 'session-2'].map(async sessionId => {
+      const traced = createTraceFetch(async () => new Response('{"content":[]}'), { sessionId });
+      for await (const _ of withTraceRequestMetadata({ compactBoundaryId: `compact-${sessionId}` }, async function* () {
+        const response = await traced('https://example.test/messages', { method: 'POST', body: JSON.stringify({ model: 'test', system: 'system rules', messages: [{ role: 'user', content: sessionId }] }) });
+        await response.text(); yield true;
+      })) {}
+    }));
+    await drainTraceFetchForTests(); await output.drainTraceOutput(f.home);
+  });
+  const result = await f.host.getCompactionRequest({ agentMode: 'local', id: 'desktop', underlyingSessionId: 'session-1' }, 'compact-session-1');
+  expect(result.request.content.messages[0].content).toBe('session-1');
+  expect(result.request.content.system).toBe('system rules');
+  expect(result.request.status).toBe('ok');
+  expect((await f.host.getCompactionRequest({ agentMode: 'local', id: 'session-2' }, 'compact-session-1')).request).toBeNull();
+  expect((await f.host.getCompactionRequest({ agentMode: 'remote-direct', id: 'remote' }, 'compact')).request).toBeNull();
+  f.installation.enabled = false;
+  expect((await f.host.getCompactionRequest({ agentMode: 'local', id: 'session-1' }, 'compact-session-1')).request).toBeNull();
+});

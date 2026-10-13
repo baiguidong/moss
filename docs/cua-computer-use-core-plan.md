@@ -1,4 +1,8 @@
+> 2026-10-11：Computer Use 已迁移到独立 App。本文保留为历史记录；当前实现与验收见 [迁移交付记录](../ui/docs/computer-use-app-delivery.md)。
+
 # Moss Core 接入 Cua Driver 规划
+
+2026-10-11 后续：当前源码已完善工具契约与结果信息；独立 App 的边界、原生 SDK 外置和迁移验收见 [Computer Use App 迁移规划](../ui/docs/computer-use-app-plan.md)。下文保留最初 Core 内置方案，不代表迁移已经实施。
 
 日期：2026-10-08。状态：macOS 首版 Core、设置页、应用授权和随包驱动已实现，正在交付测试包；实施结果和测试边界见 [安装与测试说明](cua-computer-use-delivery.md)。本文保留原始设计及正式发布验收目标；签名升级矩阵、长任务稳定性和 Windows 仍是后续阶段。独立驱动的早期测试见 [Claude Code Haha 测试记录](cua-claude-code-haha-smoke-test.md)。
 

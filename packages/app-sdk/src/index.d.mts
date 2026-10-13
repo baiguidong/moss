@@ -98,10 +98,11 @@ export type AgentPermission =
   | 'agent:sessions:write'
   | 'agent:turns:read'
   | 'agent:turns:write'
+  | 'agent:permissions:bypass'
 
 export type AgentReplyMode = 'human_only' | 'ai_auto' | 'ai_draft_review' | 'mention_only' | 'inherit'
 export type AgentSessionMode = 'fixed' | 'rotating' | 'new_each_turn'
-export type AgentPermissionMode = 'default' | 'acceptEdits' | 'dontAsk'
+export type AgentPermissionMode = 'bypassPermissions' | 'default' | 'acceptEdits' | 'dontAsk'
 export type AgentCatalogKind = 'agents' | 'tools' | 'skills' | 'connectors'
 export type AgentHostMethod =
   | 'catalog.list'
@@ -333,6 +334,13 @@ export interface OpenIMHostRequestMap {
   'conversation.group.prepare': { userIds: string[] }
 }
 
+export interface OpenIMHostResultMap {
+  'session.issue': { available: true; userID: string; imToken: string; expiresIn: number; apiAddr: string; wsAddr: string; rtcEnabled: boolean; capabilities: { createGroup: boolean }; user: { id: string; name: string; email?: string | null; orgId: string } }
+  'directory.list': { departments: Array<AccountDirectoryDepartment & { userCount: number }>; users: Array<AccountDirectoryUser & { openimUserID: string }>; nextCursor?: string | null; revision?: string }
+  'conversation.direct.prepare': { userID: string; name: string; email?: string | null }
+  'conversation.group.prepare': { groupID: string; memberUserIDs: string[] }
+}
+
 export interface AppHostApi extends TypedHostRequests {
   subscribe?: TypedHostSubscriptions<HostEventContext>['subscribe']
   on<Result = unknown>(
@@ -357,7 +365,71 @@ export interface AppActionManifest {
   timeoutMs?: number
 }
 
+/** Host API 3.2 native adapters execute in the trusted Electron main domain. */
+export interface NativeDesktopSession {
+  id: string
+  title?: string
+  appIds?: string[]
+  appServiceIds?: string[]
+  agentMode?: string
+  sessionKind?: string
+  originChannel?: string
+  isSubAgent?: boolean
+  parentSessionId?: string
+  activeAgentMailTurn?: unknown
+}
+/** bundleId is an opaque adapter-defined target identity; preserve returned values. */
+export interface NativeDesktopControl {
+  readonly epoch: number
+  readonly inFlight?: boolean
+  readonly suspended: boolean
+  readonly owner?: { id: string; title: string; runId: string; action?: string; app?: { name: string; bundleId: string }; foreground?: boolean } | null
+  settings(): { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> }
+  status(): Record<string, unknown>
+  changed(): void
+  assertLocal(session: NativeDesktopSession): void
+  guard(session: NativeDesktopSession, epoch?: number): void
+  authorize(session: NativeDesktopSession, target: { bundleId: string; name: string }, foreground: boolean, signal: AbortSignal, epoch: number): Promise<void>
+  run<T>(session: NativeDesktopSession, signal: AbortSignal | undefined, operation: (signal: AbortSignal, epoch: number) => Promise<T>): Promise<T>
+  stop(reason?: string, sessionId?: string): Promise<void>
+  finish(sessionId: string): Promise<void>
+}
+export interface NativeDesktopAdapterContext {
+  packageRoot: string
+  expectedBundleId: string
+  control: NativeDesktopControl
+}
+export interface NativeDesktopAdapter {
+  invokeTool(action: string, input: unknown, session: NativeDesktopSession, signal?: AbortSignal): Promise<unknown>
+  status(): Record<string, unknown>
+  check(options?: { restart?: boolean }): Promise<unknown>
+  requestPermissions(): Promise<void>
+  stop(reason?: string): Promise<void>
+  finish(runId: string): Promise<void>
+  invalidate?(): void
+}
+
+export type AppCategory = 'communication' | 'knowledge' | 'automation' | 'ai' | 'development' | 'diagnostics' | 'other'
+export interface AppCategoryDefinition { readonly id: AppCategory; readonly label: string }
+export type AppNavigation = { location: 'more' | 'settings'; viewId: string } | { location: 'none'; viewId?: never }
+export type AppSettingsGroup = 'integrations' | 'tools' | 'apps'
+export interface AppViewContribution { id: string; title: string; route: string; icon?: string; order?: number; permission?: string }
+export interface AppSettingsContribution { id: string; title: string; viewId: string; group?: AppSettingsGroup; order?: number; permission?: string }
+export const APP_CATEGORIES: readonly AppCategoryDefinition[]
+export function getAppCategory(value?: unknown): AppCategoryDefinition
+
 export interface AppManifestV2 {
+  /** Primary discovery category; legacy Apps without one appear in other. */
+  category?: AppCategory
+  keywords?: string[]
+  /** Optional signed OS/architecture allowlist; requires Host API >=3.3.0. */
+  platforms?: Array<'darwin-arm64' | 'darwin-x64' | 'win32-x64' | 'win32-arm64' | 'linux-x64' | 'linux-arm64'>;
+  nativeAdapter?: { kind: 'desktop-control'; apiVersion: 1; entry: string }
+  toolScope?: 'global' | 'session'
+  /** Independent child selection; requires Host API >=3.8.0. */
+  toolSelection?: 'app' | 'services'
+  /** Explicit primary entry; requires Host API >=3.4.0. */
+  navigation?: AppNavigation
   schemaVersion: 2
   id: string
   version: string
@@ -377,8 +449,9 @@ export interface AppManifestV2 {
     configuration?: { schema?: string; secrets?: string }
   }
   contributes?: {
-    views: Array<Record<string, any>>
-    settings: Array<Record<string, any>>
+    services?: Array<{ id: string; title: string; description?: string }>
+    views: AppViewContribution[]
+    settings: AppSettingsContribution[]
     commands: Array<Record<string, any>>
     tools: Array<Record<string, any>>
     resourceProviders: Array<Record<string, any>>
@@ -429,12 +502,29 @@ export type AppActionHandler<Input = unknown, Output = unknown> =
 
 export type AppCallResult<T> = { ok: true; result: T } | { ok: false; error: { code: string; message: string; details?: unknown } }
 
+export interface AppAppearance {
+  themeMode: 'light' | 'dark' | 'system'
+  [key: string]: unknown
+}
+export interface AppUiInfo {
+  id: string
+  name: string
+  kind: 'app'
+  displayName: string
+  description: string
+  version: string | null
+  hasUi: boolean
+  hasBackend: boolean
+  backend: AppManifestV2['backend'] | null
+  permissions: string[]
+  appearance: AppAppearance
+}
 export interface AppUiApi {
   composer: {
     prepare(input: { providerId: string; intent: "create" | "edit" | "use"; ref?: Record<string, unknown> }): Promise<{ ok: true }>
   }
   app: {
-    getInfo(): Promise<Record<string, unknown>>
+    getInfo(): Promise<AppUiInfo>
     getStatus(): Promise<Record<string, unknown>>
     getVersions(): Promise<Array<Record<string, unknown>>>
     getInstallationState(): Promise<Record<string, unknown> | null>
@@ -557,7 +647,7 @@ export function validateHostData(value: unknown, label?: string): Record<string,
 export function requireHostProtocol(protocols: string[], protocol: string): true
 export function requireHostPermission(permissions: string[], requiredPermission?: string | null, options?: { source?: 'declaration' | 'grant' }): true
 export function ensureSafeRelativePath(value: unknown, fieldName?: string): string
-export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string }): AppManifestV2
+export function validateAppManifest(rawManifest: unknown, options?: { hostApiVersion?: string; requireNavigation?: boolean }): AppManifestV2
 export function validateAppToolInputSchema(schema: unknown, fieldName?: string): Record<string, unknown> & { type: 'object' }
 export function resolveAppProtocols(manifest: AppManifestV2): AppBackendProtocol[]
 export function loadJsonSchema(packageRoot: string, relativePath: string, fieldName?: string): Record<string, unknown>
@@ -594,3 +684,5 @@ export function createCloudStorageClient(host: AppHostApi): {
 export * from './execution/index.mjs'
 
 export const MAX_INLINE_FILE_BASE64_LENGTH: number
+
+export * from './tool-services.mjs'

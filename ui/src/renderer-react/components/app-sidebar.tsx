@@ -43,10 +43,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AppIcon } from "@/components/app-icon";
+import { groupApps } from '@/lib/app-categories';
+import { getAppPrimaryEntry } from '@/lib/app-navigation';
 import type { StoredApp } from "../types";
 
 export interface SidebarSession {
@@ -90,17 +94,17 @@ export function getSidebarMoreViews({
 
 export function getSidebarMoreApps(apps: StoredApp[]) {
   return apps
-    .filter((app) => app.enabled && app.hasUi && app.packageStatus !== 'invalid' && app.packageStatus !== 'incompatible')
-    .map((app) => {
-      const view = [...(app.contributes?.views || [])]
-        .filter((item) => !item.permission || app.grants?.includes(item.permission))
-        .sort((left, right) => (left.order || 0) - (right.order || 0))[0];
-      return {
+    .flatMap((app) => {
+      const entry = getAppPrimaryEntry(app);
+      if (!entry || entry.location !== 'more' || entry.unavailableReason) return [];
+      return [{
         id: app.id || app.name,
         name: app.name,
         title: app.displayName || app.title || app.name,
-        route: view?.route || '',
-      };
+        ...(app.category ? { category: app.category } : {}),
+        icon: app.icon,
+        route: entry.route,
+      }];
     })
     .sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'));
 }
@@ -337,6 +341,7 @@ export function AppSidebar({
     agentMailEnabled,
   });
   const moreApps = getSidebarMoreApps(apps);
+  const moreAppGroups = groupApps(moreApps);
   const isMoreViewActive = activeView === 'embedded-app' || moreViews.some((view) => view === activeView);
   const sessionGroupIcons = {
     apps: Bot,
@@ -397,6 +402,9 @@ export function AppSidebar({
                 <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
                   moss
                 </div>
+                {typeof window !== 'undefined' && new URLSearchParams(window.location?.search || '').has('moss-self-test') && (
+                  <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">测试实例</span>
+                )}
               </div>
             </div>
           )}
@@ -478,7 +486,7 @@ export function AppSidebar({
                 {!collapsed && "更多"}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent side="right" align="start" sideOffset={6} className="w-40">
+            <DropdownMenuContent side="right" align="start" sideOffset={6} className="w-56 max-h-[min(70vh,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto">
               {moreViews.map((view) => {
                 const item = SIDEBAR_MORE_VIEW_CONFIG[view];
                 const ItemIcon = item.icon;
@@ -494,17 +502,20 @@ export function AppSidebar({
                 );
               })}
               {moreApps.length > 0 && <DropdownMenuSeparator />}
-              {moreApps.map((app) => (
+              {moreAppGroups.map(group => <React.Fragment key={group.id}>
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{group.label} · {group.apps.length}</DropdownMenuLabel>
+                {group.apps.map((app) => (
                 <DropdownMenuItem
                   key={app.id}
                   data-app-id={app.id}
                   data-app-route={app.route}
                   onSelect={() => onLaunchApp(app.name, app.route)}
                 >
-                  <Monitor className="h-4 w-4" />
-                  {app.title}
+                  <AppIcon icon={app.icon} className="h-4 w-4 rounded-sm" />
+                  <span className="truncate">{app.title}</span>
                 </DropdownMenuItem>
               ))}
+              </React.Fragment>)}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

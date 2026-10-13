@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID, verify as verifySignature } from 'node:crypto'
 import semver from 'semver'
+import { validateSourcePackage } from './source.mjs'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -12,8 +13,8 @@ import {
 } from '../../../app-sdk/src/index.mjs'
 
 export const DEFAULT_PACKAGE_LIMITS = Object.freeze({
-  maxFileBytes: 50 * 1024 * 1024,
-  maxPackageBytes: 250 * 1024 * 1024,
+  maxFileBytes: 128 * 1024 * 1024,
+  maxPackageBytes: 512 * 1024 * 1024,
   maxFiles: 10_000,
 })
 
@@ -228,6 +229,10 @@ export async function validateAppPackage(packageRoot, options = {}) {
     throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `Cannot read app.moss.json: ${error.message}`)
   }
   const manifest = validateAppManifest(rawManifest, { hostApiVersion: options.hostApiVersion })
+  const platform = options.platform || `${process.platform}-${process.arch}`
+  if (manifest.platforms && !manifest.platforms.includes(platform)) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `App ${manifest.id}@${manifest.version} does not support ${platform}; package supports ${manifest.platforms.join(', ')}`)
+  }
   const icon = await ensureDeclaredFile(root, manifest.icon, 'icon')
   if (icon) {
     if (!['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico'].includes(path.extname(icon.realPath).toLowerCase())) {
@@ -239,6 +244,7 @@ export async function validateAppPackage(packageRoot, options = {}) {
   }
   await ensureDeclaredFile(root, manifest.ui?.entry, 'ui.entry')
   await ensureDeclaredFile(root, manifest.backend?.entry, 'backend.entry')
+  await ensureDeclaredFile(root, manifest.nativeAdapter?.entry, 'nativeAdapter.entry')
   for (const action of manifest.backend?.actions || []) {
     if (action.inputSchema) loadJsonSchema(root, action.inputSchema, `action ${action.name} inputSchema`)
     if (action.outputSchema) loadJsonSchema(root, action.outputSchema, `action ${action.name} outputSchema`)
@@ -247,6 +253,10 @@ export async function validateAppPackage(packageRoot, options = {}) {
     if (command.inputSchema) loadJsonSchema(root, command.inputSchema, `command ${command.id} inputSchema`)
   }
   for (const tool of manifest.contributes?.tools || []) {
+    if (tool.instructions) {
+      const file = await ensureDeclaredFile(root, tool.instructions, `tool ${tool.id} instructions`)
+      if (file.stat.size > 64 * 1024) throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'Tool instructions exceed 64 KiB')
+    }
     validateAppToolInputSchema(
       loadJsonSchema(root, tool.inputSchema, `tool ${tool.id} inputSchema`),
       `App ${manifest.id} tool ${tool.id} inputSchema (${tool.inputSchema})`,
@@ -292,6 +302,7 @@ export async function validateAppPackage(packageRoot, options = {}) {
     }
   }
   const trust = await validatePackageSignature(root, manifest, actualChecksums, options)
+  await validateSourcePackage(root, { required: options.requireSource === true })
   return deepFreeze({ root, manifest, checksums: actualChecksums, files, trust })
 }
 

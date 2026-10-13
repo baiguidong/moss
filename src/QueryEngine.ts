@@ -34,6 +34,7 @@ import type { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { loadMemoryPrompt } from './memdir/memdir.js'
 import { hasAutoMemPathOverride } from './memdir/paths.js'
 import { query } from './query.js'
+import { executeManualDream, type ManualDreamOptions } from './services/autoDream/autoDream.js'
 import { categorizeRetryableAPIError } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
 import type { AppState } from './state/AppState.js'
@@ -190,11 +191,10 @@ export class QueryEngine {
     this.totalUsage = EMPTY_USAGE
   }
 
-  /** Host-only execution entry. App processes never receive the internal context. */
-  async executeAppAgent(params: Omit<AppAgentRunParams, 'toolUseContext' | 'canUseTool'> & { allowedTools?: string[] }) {
+  private createControlContext(abortController: AbortController, allowedTools?: string[]): ToolUseContext {
     const config = this.config
     const pool = config.refreshTools ? config.refreshTools() : config.tools
-    const tools = params.allowedTools ? pool.filter(tool => params.allowedTools!.includes(tool.name)) : pool
+    const tools = allowedTools ? pool.filter(tool => allowedTools.includes(tool.name)) : pool
     const context = {
       messages: [], setMessages: () => {}, onChangeAPIKey: () => {},
       handleElicitation: config.handleElicitation,
@@ -208,7 +208,7 @@ export class QueryEngine {
         theme: resolveThemeSetting(getGlobalConfig().theme),
       },
       getAppState: config.getAppState, setAppState: config.setAppState,
-      abortController: params.abortController, readFileState: this.readFileState,
+      abortController, readFileState: this.readFileState,
       nestedMemoryAttachmentTriggers: new Set<string>(), loadedNestedMemoryPaths: new Set<string>(),
       dynamicSkillDirTriggers: new Set<string>(), discoveredSkillNames: new Set<string>(),
       setInProgressToolUseIDs: () => {}, setResponseLength: () => {},
@@ -216,7 +216,32 @@ export class QueryEngine {
       emitAppEvent: config.emitAppEvent,
       updateAttributionState: () => {},
     } as ToolUseContext
+    return context
+  }
+
+  /** Host-only execution entry. App processes never receive the internal context. */
+  async executeAppAgent(params: Omit<AppAgentRunParams, 'toolUseContext' | 'canUseTool'> & { allowedTools?: string[] }) {
+    const config = this.config
+    const context = this.createControlContext(params.abortController, params.allowedTools)
     return runAppAgent({ ...params, toolUseContext: context, canUseTool: config.canUseTool })
+  }
+
+  async consolidateMemory(options: ManualDreamOptions) {
+    const context = this.createControlContext(new AbortController(), ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'])
+    const { defaultSystemPrompt, systemContext } = await fetchSystemPromptParts({
+      tools: context.options.tools,
+      mainLoopModel: context.options.mainLoopModel,
+      additionalWorkingDirectories: [],
+      mcpClients: [],
+      customSystemPrompt: undefined,
+    })
+    return executeManualDream({
+      messages: [],
+      systemPrompt: asSystemPrompt(defaultSystemPrompt),
+      userContext: {},
+      systemContext,
+      toolUseContext: context,
+    }, options)
   }
 
   async *submitMessage(

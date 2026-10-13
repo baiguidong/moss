@@ -402,6 +402,7 @@ export function getPolicySettingsOrigin():
 export function updateSettingsForSource(
   source: EditableSettingSource,
   settings: SettingsJson,
+  options: { replace?: boolean } = {},
 ): { error: Error | null } {
   if (
     (source as unknown) === 'policySettings' ||
@@ -456,7 +457,7 @@ export function updateSettingsForSource(
       }
     }
 
-    const updatedSettings = mergeWith(
+    const updatedSettings = options.replace ? settings : mergeWith(
       existingSettings || {},
       settings,
       (

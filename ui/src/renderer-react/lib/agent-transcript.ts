@@ -1,3 +1,4 @@
+import { buildCompactionRecords, type CompactionRecord } from './compaction';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
 import { getSearchMessageId } from '../../session-search-index.mjs';
@@ -103,6 +104,7 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   type: 'system';
   role: 'system';
   content: string;
+  compaction?: CompactionRecord;
   variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact' | 'app_task' | 'app_flow_result';
   status?: 'pending' | 'success' | 'failed';
 };
@@ -1019,6 +1021,7 @@ function isNonHumanUserEvent(event: AgentEvent): boolean {
 function isHiddenUserMetaEvent(event: AgentEvent): boolean {
   if (event?.type !== 'user') return false;
   if (
+    event.isCompactSummary === true ||
     event.isMeta === true ||
     event.isSynthetic === true ||
     event.isVisibleInTranscriptOnly === true
@@ -1093,7 +1096,7 @@ function sanitizeMainHistory(history: AgentEvent[]): AgentEvent[] {
   const result: AgentEvent[] = [];
   for (const event of history) {
     if (!event || typeof event !== 'object') continue;
-    if (isHiddenUserMetaEvent(event)) continue;
+    if (isHiddenUserMetaEvent(event) && !event.isCompactSummary) continue;
     if (isNonHumanUserEvent(event)) continue;
     // Drop events that belong to a worker sub-agent (isSidechain path)
     if (isSidechainEvent(event)) continue;
@@ -1155,6 +1158,8 @@ export function buildMainChatRenderMessagesFromHistory(
 export function buildTranscriptRenderMessages(
   history: AgentEvent[],
 ): TranscriptRenderMessage[] {
+  const compactions = buildCompactionRecords(history);
+  const emittedCompactions = new Set<string>();
   const state: RenderBuilderState = {
     items: [],
     currentAssistantTurn: null,
@@ -1379,7 +1384,14 @@ export function buildTranscriptRenderMessages(
         const count = typeof preTokens === 'number' && Number.isFinite(preTokens) && preTokens > 0
           ? `（压缩前约 ${Math.round(preTokens).toLocaleString('en-US')} tokens）`
           : '';
+        const id = event.uuid || event.id || `compact-${index}`;
+        if (emittedCompactions.has(id)) continue;
+        emittedCompactions.add(id);
         addSystemRenderMessage(state, timestamp, `已${trigger}压缩上下文${count}`, undefined, 'compact');
+        const marker = state.items.at(-1) as SystemRenderMessage;
+        marker.id = `compact:${id}`;
+        marker.sourceMessageIds = [id];
+        marker.compaction = compactions.get(id);
         continue;
       }
       const isLocalCommand = event.subtype === 'local_command';

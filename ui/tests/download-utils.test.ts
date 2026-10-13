@@ -21,6 +21,34 @@ async function serve(handler: http.RequestListener) {
 }
 
 describe('Download progress', () => {
+  it('aborts an active response at the overall deadline even while bytes keep arriving', async () => {
+    const url = await serve((_request, response) => {
+      response.writeHead(200);
+      response.write('first');
+      const timer = setInterval(() => response.write('more'), 10);
+      response.on('close', () => clearInterval(timer));
+    });
+    const signal = AbortSignal.timeout(80);
+    await expect(downloadFileBuffer(url, { signal, timeoutMs: 1000 })).rejects.toThrow();
+    expect(signal.aborted).toBe(true);
+  }, 2000);
+
+  it('keeps the same abort deadline after a redirect to a stalled server', async () => {
+    let followed = false;
+    const url = await serve((request, response) => {
+      if (request.url === '/redirect') {
+        response.writeHead(302, { location: '/stalled' });
+        response.end();
+      } else {
+        followed = true;
+      }
+    });
+    const signal = AbortSignal.timeout(80);
+    await expect(downloadFileBuffer(`${url}/redirect`, { signal })).rejects.toThrow();
+    expect(followed).toBe(true);
+    expect(signal.aborted).toBe(true);
+  }, 2000);
+
   it('reports bytes before a redirected download finishes and flushes the final count', async () => {
     let finishResponse: () => void = () => {}
     let sendNextChunk: () => void = () => {}

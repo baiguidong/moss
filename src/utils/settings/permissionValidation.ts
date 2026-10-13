@@ -129,6 +129,16 @@ export function validatePermissionRule(rule: string): {
     return { valid: true } // Valid MCP rule
   }
 
+  // App contributions have canonical lowercase names, just like MCP tools.
+  // Keep these names unchanged: capitalization would grant a nonexistent tool.
+  if (parsed.toolName.startsWith('app__')) {
+    if (!/^app__[a-zA-Z0-9_]+__(?:[a-zA-Z0-9_]+|\*)$/.test(parsed.toolName)
+      || parsed.ruleContent !== undefined || countUnescapedChar(rule, '(') > 0) {
+      return { valid: false, error: 'Use an App tool name or app__<app>__* without parentheses' }
+    }
+    return { valid: true }
+  }
+
   // Tool name validation (for non-MCP tools)
   if (!parsed.toolName || parsed.toolName.length === 0) {
     return { valid: false, error: 'Tool name cannot be empty' }

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { writePackageChecksums } from '../../packages/app-runtime/src/index.mjs'
+import { APP_HOST_API_VERSION } from '../../packages/app-sdk/src/index.mjs'
 
 const roots: string[] = []
 
@@ -23,7 +24,14 @@ describe('App V2 registry hydration', () => {
       id: 'fixture.registry-v2',
       version: '1.0.0',
       displayName: 'Registry V2',
-      hostApi: '^3.0.0',
+      category: 'knowledge',
+      keywords: ['资料', '文档'],
+      hostApi: '^3.4.0',
+      navigation: { location: 'settings', viewId: 'configuration' },
+      contributes: {
+        views: [{ id: 'configuration', title: 'Configuration', route: '#/settings' }],
+        settings: [{ id: 'preferences', title: 'Preferences', viewId: 'configuration', group: 'integrations' }],
+      },
       ui: { entry: 'dist/ui/index.html' },
       permissions: [],
     }, null, 2)}\n`)
@@ -47,6 +55,10 @@ describe('App V2 registry hydration', () => {
         hasUi: Boolean(app.manifest?.ui),
         filePath: app.filePath,
         currentVersion: app.currentVersion,
+        category: app.category,
+        keywords: app.keywords,
+        navigation: app.manifest?.navigation,
+        settingsGroup: app.manifest?.contributes?.settings?.[0]?.group,
       }))));
     `], {
       env: { ...process.env, HOME: home },
@@ -60,6 +72,10 @@ describe('App V2 registry hydration', () => {
       hasUi: true,
       filePath: await fs.realpath(path.join(packageRoot, 'dist', 'ui', 'index.html')),
       currentVersion: '1.0.0',
+      category: 'knowledge',
+      keywords: ['资料', '文档'],
+      navigation: { location: 'settings', viewId: 'configuration' },
+      settingsGroup: 'integrations',
     }])
   })
 
@@ -121,7 +137,7 @@ describe('App V2 registry hydration', () => {
       currentVersion: '1.3.0',
       packageStatus: 'incompatible',
       requiredHostApi: '^1.3.0',
-      packageError: 'App requires Host API ^1.3.0; this Host provides 3.0.0',
+      packageError: `App requires Host API ^1.3.0; this Host provides ${APP_HOST_API_VERSION}`,
     }])
   })
 })

@@ -4,6 +4,10 @@ export function normalizeSessionKind(value) {
   return 'chat';
 }
 
+export function normalizeSessionEffort(value) {
+  return ['low', 'medium', 'high', 'xhigh', 'max'].includes(value) ? value : null;
+}
+
 export function normalizeOriginChannel(value, sessionKind) {
   if (value === 'agent-mail' || sessionKind === 'agent-mail') return 'agent-mail';
   if (value === 'cron' || sessionKind === 'cron') return 'cron';

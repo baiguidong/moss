@@ -1,11 +1,4 @@
-const IMAGE_MIME_MAP: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/bmp': '.bmp',
-  'image/svg+xml': '.svg',
-};
+import { collectFileAttachments } from "./file-attachments";
 
 class PasteServiceClass {
   private handlers: Map<string, (event: ClipboardEvent) => Promise<boolean>> = new Map();
@@ -53,48 +46,16 @@ class PasteServiceClass {
     onFilesAdded: (files: Array<{ name: string; path: string }>) => void,
     onTextPaste?: (text: string) => void
   ): Promise<boolean> {
-    event.stopPropagation();
-
-    const clipboardText = event.clipboardData?.getData('text');
-    const files = event.clipboardData?.files;
-
-    if (files && files.length > 0) {
-      const fileList: Array<{ name: string; path: string }> = [];
-
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const filePath = (file as File & { path?: string }).path;
-
-        if (filePath && file.type.startsWith('image/')) {
-          fileList.push({ name: file.name, path: filePath });
-        } else if (file.type.startsWith('image/')) {
-          const ext = IMAGE_MIME_MAP[file.type] || '.png';
-          const timeStr = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
-          const fileName = `pasted_image_${timeStr}${ext}`;
-
-          try {
-            const arrayBuffer = await file.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            const tempPath = await window.agentDesktop.fs.createTempFile(fileName);
-            if (tempPath) {
-              await window.agentDesktop.fs.writeFile(tempPath, Array.from(uint8Array));
-              fileList.push({ name: fileName, path: tempPath });
-            }
-          } catch (error) {
-            console.error('Failed to save pasted image:', error);
-          }
-        }
-      }
-
-      if (fileList.length > 0) {
-        onFilesAdded(fileList);
-        return true;
-      }
-    }
-
-    if (clipboardText && (!files || files.length === 0) && onTextPaste) {
-      onTextPaste(clipboardText);
+    const files = Array.from(event.clipboardData?.files || []);
+    if (files.length) {
+      event.preventDefault(); event.stopPropagation();
+      const result = await collectFileAttachments(files);
+      onFilesAdded(result.attachments);
       return true;
+    }
+    const text = event.clipboardData?.getData('text');
+    if (text && onTextPaste) {
+      event.preventDefault(); onTextPaste(text); return true;
     }
 
     return false;

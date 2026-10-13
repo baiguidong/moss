@@ -1,7 +1,9 @@
+import { isToolSourceAvailable } from '../../../packages/app-sdk/src/tool-services.mjs'
 import { createMcpProtocolDefinition as contractDefinition, validateMcpHostInput as contractInput, validateMcpHostOutput } from '../../../packages/app-sdk/src/mcp/index.mjs'
 import { mcpLimits } from '../../../packages/host-contracts/src/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/protocol/index.mjs'
 import fs from 'node:fs/promises'
+import { getAppToolScope } from '../../../packages/app-sdk/src/tool-scope.mjs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { writePrivateFileAtomic } from '../../../shared/security/credential-crypto.mjs'
@@ -104,9 +106,15 @@ export class AppMcpHost {
     try { document = JSON.parse(await fs.readFile(file, 'utf8')) }
     catch (error) { if (error.code !== 'ENOENT') throw error; document = { version: 1, servers: {} } }
     if (document.version !== 1 || !document.servers || typeof document.servers !== 'object' || Array.isArray(document.servers)) throw new Error('MCP 配置无法读取，请恢复备份后重试。')
+    let migratedIds = false
+    for (const entry of Object.values(document.servers)) {
+      if (!entry.id) { entry.id = randomUUID(); migratedIds = true }
+    }
+    if (migratedIds) writePrivateFileAtomic(file, `${JSON.stringify(document, null, 2)}\n`)
     const credentials = await this.getRuntime().credentials.get(context.appId, context.instanceId)
     const secrets = decodeSecrets(credentials)
-    const provider = { ...context, signal: undefined, document, file, secrets }
+    const pkg = await this.getRuntime().getActivePackage(context.appId)
+    const provider = { ...context, toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', signal: undefined, document, file, secrets }
     this.providers.set(key(context), provider)
     return provider
   }
@@ -130,7 +138,7 @@ export class AppMcpHost {
       .catch(() => {}) // A failed cleanup may retain encrypted obsolete values, never discard live credentials.
     return provider
   }
-  encode(config, enabled, secrets) {
+  encode(config, enabled, secrets, id = randomUUID()) {
     const stored = structuredClone(config), secretId = randomUUID(), values = {}
     for (const field of ['env', 'headers']) {
       if (!stored[field]) continue
@@ -138,7 +146,7 @@ export class AppMcpHost {
       stored[field] = Object.fromEntries(Object.keys(stored[field]).map(name => [name, '']))
     }
     secrets[secretId] = values
-    return { config: stored, enabled, updatedAt: Date.now(), secretId }
+    return { id, config: stored, enabled, updatedAt: Date.now(), secretId }
   }
   async migrate(context, provider) {
     if (context.appId !== 'moss.mcp' || !this.active(context)) return provider
@@ -166,7 +174,7 @@ export class AppMcpHost {
         const pkg = await runtime.getActivePackage(installation.appId).catch(() => null)
         if (!pkg?.manifest.host?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
         for (const instance of runtime.instances.list(installation.appId)) {
-          const context = { appId: installation.appId, instanceId: instance.id, version: installation.activeVersion,
+          const context = { appId: installation.appId, instanceId: instance.id, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope),
             dataDir: runtime.appDataPath(runtime.dataDir, installation.appId, 'instances', instance.id) }
           current.add(key(context))
           const provider = await this.load(context)
@@ -177,17 +185,26 @@ export class AppMcpHost {
       this.onCatalogChanged?.()
     })
   }
-  enabledServers() {
+  serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
+  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry) } }
+  enabledServers(appIds, workspace, appServiceIds = []) {
     const result = {}
     for (const provider of this.providers.values()) {
       if (!this.active(provider)) continue
       for (const [name, entry] of Object.entries(provider.document.servers)) {
+        if (Array.isArray(appIds) && !isToolSourceAvailable(this.owner(provider, entry), appIds, appServiceIds)) continue
         const config = restoreConfig(entry, provider.secrets)
-        if (entry.enabled && config) result[runtimeName(provider.appId, name)] = resolveMcpLaunchConfig(config)
+        if (entry.enabled && config) result[runtimeName(provider.appId, name)] = resolveMcpLaunchConfig(config, { workspace })
       }
     }
     return result
   }
+  serverOwners() {
+    return Object.fromEntries([...this.providers.values()].flatMap(provider =>
+      Object.keys(provider.document.servers).map(name => [runtimeName(provider.appId, name), this.owner(provider, provider.document.servers[name])]),
+    ))
+  }
+  effectiveScope(provider) { return this.getRuntime()?.getToolScope?.(provider.appId, provider.toolScope) ?? getAppToolScope(provider.toolScope) }
   findServer(name) {
     for (const provider of this.providers.values()) {
       if (!this.active(provider)) continue
@@ -213,6 +230,7 @@ export class AppMcpHost {
           : !this.active(provider) ? 'unauthorized' : !server.enabled ? 'disabled'
             : server.credentialsMissing ? 'credentials-missing' : server.check?.state || 'unchecked'
         result.push({ appId, instanceId: provider.instanceId, name: server.name,
+          serviceId: this.serviceId(provider, provider.document.servers[server.name]),
           runtimeName: runtimeName(appId, server.name), revision: this.toolRevision(provider, provider.document.servers[server.name]),
           status, tools: server.check?.tools || [], error: server.check?.error,
           truncated: server.check?.truncated || false })
@@ -299,7 +317,7 @@ export class AppMcpHost {
           if (config[field][name] === '' && previous?.[field]?.[name] !== undefined) config[field][name] = previous[field][name]
         }
         if (input.previousName && input.previousName !== input.name) delete document.servers[input.previousName]
-        document.servers[input.name] = this.encode(config, input.enabled, secrets)
+        document.servers[input.name] = this.encode(config, input.enabled, secrets, entry?.id)
       } else if (method === 'servers.remove') delete document.servers[input.name]
       else document.servers[input.name] = { ...entry, enabled: input.enabled, updatedAt: Math.max(Date.now(), (entry.updatedAt || 0) + 1) }
       provider = await this.commit(context, document, secrets)

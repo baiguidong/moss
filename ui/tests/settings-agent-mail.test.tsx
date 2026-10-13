@@ -78,8 +78,6 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
       onToolDisplayModeChange={() => {}}
       onAppearancePreview={() => {}}
       onAppearanceCommit={() => {}}
-      buddyEnabled={false}
-      onBuddyEnabledChange={() => {}}
     />,
   );
 

@@ -18,6 +18,14 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('migrates computer control grants and keeps the generic Host setting on subsequent saves', () => {
+    const legacy = { computerUse: { enabled:true, apps:[{bundleId:'com.example',name:'Example'}] } };
+    const migrated = normalizeDesktopSettings(legacy);
+    expect(migrated.desktopControl).toEqual({version:1,enabled:true,apps:[{bundleId:'com.example',name:'Example'}]});
+    expect(migrated).not.toHaveProperty('computerUse');
+    expect(normalizeDesktopSettings({language:'zh'},migrated).desktopControl).toEqual(migrated.desktopControl);
+    expect(normalizeDesktopSettings({desktopControl:{enabled:false}},migrated).desktopControl.enabled).toBe(false);
+  });
   it('keeps reply appearance choices across restarts and unrelated settings saves', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-reply-appearance-'));
     temporaryRoots.push(root);
@@ -118,9 +126,7 @@ describe('desktop settings', () => {
     const defaults = normalizeDesktopSettings({}).toolLoading;
     expect(defaults).toMatchObject({
       moss_browser_open: 'always',
-      app_build: 'deferred',
-      app_launch: 'deferred',
-      connector_cli_setup: 'deferred',
+          connector_cli_setup: 'deferred',
       image_generate: 'deferred',
     });
 
@@ -129,13 +135,13 @@ describe('desktop settings', () => {
         browser_open: 'deferred',
         browser_snapshot: 'always',
         browser_click: 'always',
-        app_build: 'always',
+        connector_cli_setup: 'always',
         image_generate: 'invalid',
         unknown_tool: 'always',
       },
     }).toolLoading;
     expect(customized.moss_browser_open).toBe('deferred');
-    expect(customized.app_build).toBe('always');
+    expect(customized.connector_cli_setup).toBe('always');
     expect(customized.image_generate).toBe('deferred');
     expect(customized).not.toHaveProperty('unknown_tool');
     expect(customized).not.toHaveProperty('browser_snapshot');
@@ -567,19 +573,19 @@ describe('desktop settings', () => {
       ...store.value,
       toolLoading: {
         moss_browser_open: 'deferred',
-        app_build: 'always',
+        connector_cli_setup: 'always',
       },
     });
 
     const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     expect(persisted.toolLoading.moss_browser_open).toBe('deferred');
-    expect(persisted.toolLoading.app_build).toBe('always');
+    expect(persisted.toolLoading.connector_cli_setup).toBe('always');
     expect(persisted.toolLoading.image_generate).toBe('deferred');
 
     const reloaded = createDesktopSettingsStore({ settingsPath });
     expect(reloaded.value.toolLoading).toMatchObject({
       moss_browser_open: 'deferred',
-      app_build: 'always',
+      connector_cli_setup: 'always',
       image_generate: 'deferred',
     });
   });

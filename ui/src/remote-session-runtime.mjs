@@ -368,6 +368,7 @@ export function createRemoteRuntimeFactory({
           await beforePrompt(manager.setPermissionMode?.(
             normalizePermissionMode(sessionRecord.permissionMode, getSettings().permissionMode),
           ));
+          if (sessionRecord.effort) await beforePrompt(manager.setEffort(sessionRecord.effort));
           if (turn.abortRequested) throw new Error('Request interrupted by user.');
           const sent = manager.sendMessage(prompt);
           if (!sent) {
@@ -439,6 +440,14 @@ export function createRemoteRuntimeFactory({
         if (activeManager?.isConnected?.()) {
           await activeManager.setPermissionMode(mode);
         }
+      },
+      async getEffort() {
+        if (!activeManager?.isConnected?.()) throw new Error('云电脑连接后可设置推理强度。');
+        return activeManager.getEffort();
+      },
+      async setEffort(effort) {
+        if (!activeManager?.isConnected?.()) throw new Error('云电脑连接后可设置推理强度。');
+        return activeManager.setEffort(effort);
       },
       dispose() {
         disposed = true;

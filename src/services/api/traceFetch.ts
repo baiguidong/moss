@@ -1,3 +1,4 @@
+import { getTraceRequestMetadata } from '../trace/requestMetadata.js'
 import type { ClientOptions } from '@anthropic-ai/sdk'
 import {
   createTraceBodySnapshot,
@@ -98,6 +99,7 @@ export function createTraceFetch(
       return inner(input, init)
     }
 
+    const requestMetadata = { ...getTraceRequestMetadata() }
     const id = createTraceCallId()
     const startedAtMs = Date.now()
     const startedAt = new Date(startedAtMs).toISOString()
@@ -121,7 +123,7 @@ export function createTraceFetch(
         request: { method, url, headers, body: raw },
       }
       await inScope(() => capture!.recordCall({
-        ...base, status: 'pending', metadata: { phase: 'api_call_started' },
+        ...base, status: 'pending', metadata: { ...requestMetadata, phase: 'api_call_started' },
       }, captureOptions))
       await inScope(() => capture!.recordEvent({
         sessionId, callId: id, source: 'anthropic', model, timestamp: startedAt,
@@ -140,7 +142,7 @@ export function createTraceFetch(
         await inScope(() => capture!.recordCall({
           ...base, status: 'error', error, completedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAtMs,
-          metadata: { phase: 'api_call_failed', ...(signal?.aborted ? { aborted: true } : {}) },
+          metadata: { ...requestMetadata, phase: 'api_call_failed', ...(signal?.aborted ? { aborted: true } : {}) },
         }, captureOptions))
         await inScope(() => capture!.recordEvent({
           sessionId, callId: id, source: 'anthropic', model: base.model,
@@ -176,7 +178,7 @@ export function createTraceFetch(
         // fetch and response delivery never wait for parsing or trace I/O.
         if (requestOutputBudget) captured.protocolTrace.outputBudget = requestOutputBudget
         const metadata = {
-          phase, ...(aborted ? { aborted: true } : {}),
+          ...requestMetadata, phase, ...(aborted ? { aborted: true } : {}),
           responseBytesObserved: captured.bytesObserved,
           ...(captured.firstByteAt === undefined ? {} : { firstByteMs: captured.firstByteAt - startedAtMs }),
           protocolTrace: captured.protocolTrace,
