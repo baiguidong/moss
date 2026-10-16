@@ -11,7 +11,8 @@ const env = {
   MOSS_HOME: process.env.MOSS_HOME || path.join(os.homedir(), '.moss-web'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(require('electron'), [uiRoot, ...process.argv.slice(2)], { cwd: uiRoot, env, stdio: 'inherit' });
+const linuxFlags = process.platform === 'linux' ? ['--ozone-platform=headless', '--disable-gpu'] : [];
+const child = spawn(require('electron'), [...linuxFlags, uiRoot, ...process.argv.slice(2)], { cwd: uiRoot, env, stdio: 'inherit' });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
 child.on('error', error => { console.error(error.message); process.exitCode = 1; });
 child.on('exit', (code, signal) => {

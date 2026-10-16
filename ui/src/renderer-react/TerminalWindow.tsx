@@ -103,6 +103,7 @@ export default function TerminalWindow() {
         <strong className="shrink-0">{info.title}</strong>
         <span className="min-w-0 flex-1 truncate text-slate-400" title={info.cwd}>{info.cwd}</span>
         <span className="shrink-0 text-slate-400">{status}</span>
+        {window.mossWeb && <span className="shrink-0 text-slate-400">关闭页面后继续运行，输入 exit 结束</span>}
         {(error || status.startsWith('已退出')) && (
           <button className="rounded px-2 py-1 hover:bg-white/10" onClick={() => setGeneration((value) => value + 1)}>重新启动</button>
         )}

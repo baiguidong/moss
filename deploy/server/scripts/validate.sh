@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 
 for required in .env.example compose.yaml nginx.conf configure.sh install.sh upgrade.sh \
-  package.sh start.sh stop.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
+  package.sh start.sh stop.sh nginx-webui.conf scripts/webui-start.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
   [[ -f "$ROOT/$required" ]] || { echo "ERROR: missing $required" >&2; exit 1; }
 done
 
@@ -18,7 +18,7 @@ done
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   rendered_config="$(docker compose --project-directory "$ROOT" --env-file "$ROOT/.env.example" \
-    -f "$ROOT/compose.yaml" --profile cloud --profile cloud-init config --format json)"
+    -f "$ROOT/compose.yaml" --profile cloud --profile cloud-init --profile webui config --format json)"
   jq -e '
     .networks["moss-integration"].name == "moss-integrations"
     and .networks["moss-db"].internal == true
@@ -33,11 +33,16 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services["silo-init"].ports // [] | length) == 0
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
+    and (.services.webui.ports // [] | length) == 0
+    and .services.webui.environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
+    and (.services.webui.volumes | all(.type == "volume" and .target == "/home/moss"))
+    and .services["webui-proxy"].ports[0].published == "8444"
   ' <<<"$rendered_config" >/dev/null
 fi
 
 grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx.conf"
 grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
+grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx-webui.conf"
 grep -Fq 'docker pull "$(env_value MOSS_RUNTIME_IMAGE)"' "$ROOT/start.sh"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
@@ -73,6 +78,15 @@ jq -e \
   "$test_root/home/settings.json" >/dev/null
 openssl x509 -in "$test_root/deployment/tls/server.crt" -noout -text \
   | grep -Fq 'IP Address:10.0.1.181'
+grep -Fxq 'MOSS_WEB_ENABLED=0' "$test_root/deployment/.env"
+grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181:8444' "$test_root/deployment/.env"
+MOSS_WEB_ENABLED=1 MOSS_WEB_OWNER_ID=test-owner \
+  "$test_root/deployment/configure.sh" >/dev/null
+grep -Fxq 'MOSS_WEB_OWNER_ID=test-owner' "$test_root/deployment/.env"
+if MOSS_WEB_HTTPS_PORT=443 "$test_root/deployment/configure.sh" >/dev/null 2>&1; then
+  echo 'ERROR: conflicting HTTPS ports were accepted' >&2; exit 1
+fi
+MOSS_WEB_HTTPS_PORT=8444 "$test_root/deployment/configure.sh" >/dev/null
 
 # Reconfiguration must retain credentials and all cloud storage overrides.
 first_password="$(sed -n 's/^SILO_ROOT_PASSWORD=//p' "$test_root/deployment/.env")"
@@ -85,6 +99,7 @@ jq -e '.cloudStorage.enabled == false and .cloudStorage.endpoint == "https://ext
 
 mkdir -p "$test_root/upgrade"
 cp "$ROOT/.env.example" "$test_root/upgrade/.env"
+original_web_image="$(sed -n 's/^MOSS_WEB_IMAGE=//p' "$test_root/upgrade/.env")"
 cp "$ROOT/upgrade.sh" "$test_root/upgrade/upgrade.sh"
 printf '%s\n' '#!/usr/bin/env bash' '[[ "${PULL_IMAGES:-}" == 1 ]]' \
   > "$test_root/upgrade/start.sh"
@@ -95,6 +110,8 @@ grep -Fxq 'MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:1.2.3' \
   "$test_root/upgrade/.env"
 grep -Fxq 'MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:1.2.3' \
   "$test_root/upgrade/.env"
+# Server upgrades must not implicitly replace/update the personal Linux image.
+grep -Fxq "MOSS_WEB_IMAGE=$original_web_image" "$test_root/upgrade/.env"
 
 if grep -RInE --exclude='README.md' --exclude='validate.sh' \
   --exclude-dir='tls' '/Users/|git clone|curl.+github.com' "$ROOT"; then

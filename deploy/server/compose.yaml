@@ -12,6 +12,35 @@ networks:
     external: true
 
 services:
+  webui:
+    image: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
+    profiles: [webui]
+    environment:
+      MOSS_WEB_AUTH_SERVER: http://server:43127
+      MOSS_WEB_OWNER_ID: ${MOSS_WEB_OWNER_ID:-}
+      MOSS_WEB_OWNER_ORG_ID: ${MOSS_WEB_OWNER_ORG_ID:-}
+      MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-}
+    volumes:
+      - moss-web-home:/home/moss
+    expose: ["43128"]
+    shm_size: 256mb
+    stop_grace_period: 60s
+    restart: unless-stopped
+    networks: [moss-server]
+
+  webui-proxy:
+    image: ${NGINX_IMAGE}
+    profiles: [webui]
+    depends_on:
+      webui: { condition: service_healthy }
+    ports:
+      - "${MOSS_WEB_HTTPS_PORT:-8444}:443"
+    volumes:
+      - ./nginx-webui.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    networks: [moss-server]
+
   mysql:
     image: ${MYSQL_IMAGE}
     environment:
@@ -108,3 +137,6 @@ services:
       - ./tls:/etc/nginx/tls:ro
     restart: unless-stopped
     networks: [moss-server]
+
+volumes:
+  moss-web-home:

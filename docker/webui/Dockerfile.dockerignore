@@ -9,7 +9,7 @@
 **/tmp
 **/.playwright-mcp
 ui/electron-direct.mjs
-ui/resources
+ui/resources/runtimes
 ui/tests
 ui/docs
 ui/bun.lockb

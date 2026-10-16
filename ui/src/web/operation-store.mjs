@@ -10,7 +10,10 @@ export function createOperationStore(filename) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created INTEGER NOT NULL, result TEXT)');
   db.prepare('UPDATE operations SET result=? WHERE result IS NULL').run(stringifyWire({ ok: false, error: 'Host 已重启，此请求的结果需要核对。请求未自动重新执行。' }));
-  db.prepare('DELETE FROM operations WHERE created < ?').run(Date.now() - MAX_REQUEST_AGE * 2);
+  const prune = () => db.prepare('DELETE FROM operations WHERE result IS NOT NULL AND created < ?').run(Date.now() - MAX_REQUEST_AGE * 2);
+  prune();
+  const cleanup = setInterval(prune, 3600_000);
+  cleanup.unref();
   const pending = new Map();
   return {
     async run(request, principal, execute) {
@@ -38,6 +41,6 @@ export function createOperationStore(filename) {
       pending.set(key, result);
       return result;
     },
-    async close() { await Promise.allSettled([...pending.values()]); db.close(); },
+    async close() { clearInterval(cleanup); await Promise.allSettled([...pending.values()]); db.close(); },
   };
 }

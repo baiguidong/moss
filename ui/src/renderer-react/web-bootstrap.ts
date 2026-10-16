@@ -40,6 +40,7 @@ export async function initializeHostClient() {
   window.mossWeb = { fileUrl, uploadFile, snapshot: null };
   const transport = createWebTransport({
     url: `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/ws`,
+    isAuthenticated: async () => (await jsonFetch('/api/auth')).authenticated,
     onStatus(value: string) {
       label.textContent = ({ connected: '我的云电脑', connecting: '正在连接…', disconnected: '连接已断开，正在重连…', unauthenticated: '登录已失效，请刷新', incompatible: '版本已更新，请刷新' })[value] || value;
     },
@@ -50,9 +51,12 @@ export async function initializeHostClient() {
   });
   const client = createMossClient(transport) as Window['agentDesktop'];
   client.fs.uploadFile = uploadFile;
-  client.pickFiles = () => new Promise(resolve => {
+  client.pickFiles = () => new Promise((resolve, reject) => {
     const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
-    input.onchange = async () => resolve(await Promise.all(Array.from(input.files || []).map(uploadFile)));
+    input.onchange = async () => {
+      try { resolve(await Promise.all(Array.from(input.files || []).map(uploadFile))); }
+      catch (error) { reject(error); }
+    };
     input.oncancel = () => resolve([]); input.click();
   });
   client.pickDirectory = async () => {

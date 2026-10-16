@@ -1,0 +1,123 @@
+name: Build Moss Release Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: WebUI version (empty generates a unique prerelease)
+        type: string
+        default: ''
+      publish:
+        description: Publish the versioned WebUI image to GHCR
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      source_ref:
+        type: string
+        default: ''
+      publish:
+        type: boolean
+        default: true
+      latest:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: webui-package-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  webui-linux-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.0'
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Select release version
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED_VERSION:-0.0.1-webui.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}}"
+          node scripts/sync-ui-version.mjs "$version"
+          version="${version#v}"
+          [[ "$version" != *+* ]] || { echo 'Docker release versions must not contain + metadata'; exit 1; }
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-webui:$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Verify packaging and deployment contracts
+        run: |
+          node --test scripts/docker-webui.test.mjs
+          bash deploy/server/scripts/validate.sh
+      - name: Build Linux AMD64 image on GitHub
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: node scripts/docker-webui.mjs build --platform linux/amd64 --tag "$IMAGE" --version "$VERSION" --progress plain
+      - name: Install browser validation tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/webui-browser" --no-package-lock playwright@1.58.2
+          "$RUNNER_TEMP/webui-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify real browser and container restart
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          MOSS_WEB_TEST_BROWSER: chromium
+        run: |
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/webui-browser/node_modules/playwright/index.mjs"
+          node scripts/test-webui-image.mjs "$IMAGE"
+      - name: Export offline WebUI package and Server deployment
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: |
+          node scripts/docker-webui.mjs package --skip-build --platform linux/amd64 --tag "$IMAGE" --version "$VERSION" --output-dir dist/webui-release
+          sed -i "s|^MOSS_WEB_IMAGE=.*|MOSS_WEB_IMAGE=$IMAGE|" deploy/server/.env.example
+          deploy/server/package.sh "$VERSION" dist/webui-release
+      - name: Publish validated image
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.release.outputs.image }}
+          PUBLISH_LATEST: ${{ inputs.latest || false }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          if [[ "$PUBLISH_LATEST" == true ]]; then
+            latest="${IMAGE%:*}:latest"
+            docker tag "$IMAGE" "$latest"
+            docker push "$latest"
+          fi
+      - name: Upload deployment packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: moss-webui-linux-amd64-${{ steps.release.outputs.version }}
+          path: dist/webui-release/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webui-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/webui-validation
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Deployment information
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: |
+          printf '### Linux AMD64 WebUI\n\nImage: `%s`\n\nEnable with `MOSS_WEB_ENABLED=1 MOSS_WEB_IMAGE=%s ./install.sh`.\n' "$IMAGE" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

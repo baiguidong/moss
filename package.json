@@ -20,7 +20,9 @@
     "connectors:sync-ragflow": "node scripts/sync-local-connectors.mjs ragflow --remove=moss-rag",
     "connectors:sync-shareone": "node scripts/sync-shareone-connector.mjs",
     "postinstall": "bun run scripts/copy-vendor.js",
-    "docker:build-webui": "docker build -f docker/webui/Dockerfile -t moss-webui:local ."
+    "docker:build-webui": "node scripts/docker-webui.mjs build",
+    "docker:package-webui": "node scripts/docker-webui.mjs package",
+    "test:webui-release": "node --test scripts/docker-webui.test.mjs"
   },
   "dependencies": {
     "@alcalzone/ansi-tokenize": "^0.3.0",

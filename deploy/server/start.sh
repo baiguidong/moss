@@ -46,11 +46,14 @@ if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
 fi
 
 log 'Starting Moss Server with HTTPS'
-if ! compose up -d --remove-orphans; then
+if ! compose up -d mysql server nginx; then
   show_failure_logs
   die 'failed to start Moss Server'
 fi
 wait_for_server
+if [[ "$(env_value MOSS_WEB_ENABLED)" == 1 ]]; then
+  "$SCRIPT_DIR/scripts/webui-start.sh"
+fi
 if ! "$SCRIPT_DIR/scripts/cloud-storage-init.sh"; then
   echo 'Cloud storage initialization failed. Moss Server remains available; rerun scripts/cloud-storage-init.sh to retry.' >&2
 fi

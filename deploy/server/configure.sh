@@ -58,6 +58,11 @@ apply_setting MOSS_REGISTRY ghcr.io
 apply_setting MOSS_REGISTRY_USERNAME ''
 apply_setting MOSS_SERVER_IMAGE ''
 apply_setting MOSS_RUNTIME_IMAGE ''
+apply_setting MOSS_WEB_ENABLED 0
+apply_setting MOSS_WEB_IMAGE ghcr.io/baiguidong/moss-webui:latest
+apply_setting MOSS_WEB_HTTPS_PORT 8444
+apply_setting MOSS_WEB_OWNER_ID ''
+apply_setting MOSS_WEB_OWNER_ORG_ID ''
 apply_setting NGINX_IMAGE docker.m.daocloud.io/library/nginx:alpine
 apply_setting MINIO_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
 apply_setting SILO_MC_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
@@ -115,6 +120,23 @@ else
 fi
 public_url="https://${public_authority}"
 [[ "$https_port" == 443 ]] || public_url="${public_url}:${https_port}"
+
+web_enabled="$(read_value MOSS_WEB_ENABLED)"
+[[ "$web_enabled" == 0 || "$web_enabled" == 1 ]] || die 'MOSS_WEB_ENABLED must be 0 or 1'
+web_port="$(read_value MOSS_WEB_HTTPS_PORT)"
+[[ "$web_port" =~ ^[0-9]+$ ]] && ((web_port >= 1 && web_port <= 65535)) \
+  || die 'MOSS_WEB_HTTPS_PORT must be between 1 and 65535'
+if [[ "$web_enabled" == 1 && "$web_port" == "$https_port" ]]; then
+  die 'MOSS_WEB_HTTPS_PORT must differ from MOSS_HTTPS_PORT'
+fi
+web_origin="$(read_value MOSS_WEB_ORIGIN)"
+if [[ -z "$web_origin" ]]; then
+  web_origin="https://${public_authority}"
+  [[ "$web_port" == 443 ]] || web_origin="${web_origin}:${web_port}"
+fi
+[[ "$web_origin" =~ ^https://([A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$ ]] \
+  || die 'MOSS_WEB_ORIGIN must be an HTTPS origin without a path'
+set_env MOSS_WEB_ORIGIN "$web_origin"
 
 install -d -m 0700 "$server_home" "$server_home/var/lib" \
   "$server_home/var/run" "$server_home/var/log" "$ROOT_DIR/tls"

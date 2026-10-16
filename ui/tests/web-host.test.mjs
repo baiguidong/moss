@@ -65,6 +65,10 @@ test('authenticated Host: shared handlers, reconnect without duplicate execution
   const send = request('agent:send', { sessionId: 'one', prompt: 'hello' });
   first.ws.send(stringifyWire(send));
   while (!finish) await new Promise(resolve => setTimeout(resolve, 5));
+  const concurrent = request('agent:send', { sessionId: 'one', prompt: 'another turn' });
+  first.ws.send(stringifyWire(concurrent));
+  assert.equal((await first.next(message => message.id === concurrent.id)).ok, false);
+  assert.equal(executions, 1);
   first.ws.terminate();
   const second = await connect(); second.ws.send(stringifyWire(send));
   finish();
@@ -118,4 +122,7 @@ test('shared client preserves Electron subscriptions and binary document values'
   off(); assert.equal(listeners.size, 0);
   const data = new Uint8Array([1, 255, 3]).buffer;
   assert.deepEqual(new Uint8Array(parseWire(stringifyWire({ data })).data), new Uint8Array(data));
+  const args = parseWire(stringifyWire([undefined]));
+  assert.equal(args[0], undefined);
+  assert.equal(((payload = {}) => payload.includeArchived)(...args), undefined);
 });

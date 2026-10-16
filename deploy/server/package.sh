@@ -23,7 +23,9 @@ files=(
   start.sh
   stop.sh
   nginx.conf
+  nginx-webui.conf
   scripts/common.sh
+  scripts/webui-start.sh
   scripts/cloud-storage-init.sh
   scripts/silo-init.sh
   scripts/validate.sh

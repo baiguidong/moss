@@ -12,7 +12,7 @@ COPY vendor ./vendor
 COPY scripts ./scripts
 RUN bun install --frozen-lockfile
 COPY ui/package.json ui/bun.lock ./ui/
-RUN cd ui && bun install --frozen-lockfile && node node_modules/electron/install.js
+RUN cd ui && bun install --frozen-lockfile --ignore-scripts && node node_modules/electron/install.js
 COPY src ./src
 COPY shared ./shared
 COPY packages ./packages
@@ -20,7 +20,8 @@ COPY tsconfig.json ./
 COPY ui ./ui
 COPY bin ./bin
 RUN cd ui && node scripts/build-direct.mjs && node scripts/build-renderer.mjs \
-    && node node_modules/@electron/rebuild/lib/cli.js -f -w node-pty
+    && node node_modules/@electron/rebuild/lib/cli.js -f -w node-pty \
+    && node scripts/prepare-web-image.mjs /opt/moss-release
 
 FROM ${NODE_IMAGE}
 ARG MOSS_VERSION=dev
@@ -34,13 +35,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && usermod -l moss -d /home/moss -m node \
     && printf 'moss ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/moss \
     && chmod 0440 /etc/sudoers.d/moss
-COPY --from=build /opt/moss /opt/moss
+COPY --from=build /opt/moss-release /opt/moss
 COPY docker/webui/entrypoint.sh /usr/local/bin/moss-web-entrypoint
-RUN chmod +x /usr/local/bin/moss-web-entrypoint
+RUN chmod +x /usr/local/bin/moss-web-entrypoint \
+    && ELECTRON_RUN_AS_NODE=1 /opt/moss/ui/node_modules/electron/dist/electron --version
 ENV MOSS_WEB_MODE=1 MOSS_WEB_HOST=0.0.0.0 MOSS_WEB_PORT=43128 \
     MOSS_HOME=/home/moss/.moss MOSS_CONFIG_DIR=/home/moss/.moss \
     MOSS_WEB_NODE_PATH=/usr/local/bin/node MOSS_WEB_PYTHON_PATH=/usr/bin/python3 \
-    NODE_ENV=production LANG=C.UTF-8 SHELL=/bin/bash
+    NODE_ENV=production LANG=C.UTF-8 SHELL=/bin/bash USE_BUILTIN_RIPGREP=0
 USER moss
 WORKDIR /opt/moss/ui
 EXPOSE 43128

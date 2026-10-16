@@ -1,7 +1,7 @@
 import { MOSS_PROTOCOL_VERSION } from './methods.mjs';
 import { stringifyWire, parseWire } from './wire.mjs';
 
-export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = () => {}, onSnapshot = () => {} }) {
+export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = () => {}, onSnapshot = () => {}, isAuthenticated = async () => true }) {
   const listeners = new Map();
   const pending = new Map();
   let socket; let timer; let stopped = false; let ready = false;
@@ -35,11 +35,12 @@ export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = 
       }
     });
     socket.addEventListener('error', () => {});
-    socket.addEventListener('close', event => {
+    socket.addEventListener('close', async event => {
       ready = false;
-      if ([4401, 4406].includes(event.code)) {
+      const authenticated = stopped ? true : await isAuthenticated().catch(() => true);
+      if (!authenticated || [4401, 4406].includes(event.code)) {
         stopped = true;
-        onStatus(event.code === 4401 ? 'unauthenticated' : 'incompatible');
+        onStatus(event.code === 4406 ? 'incompatible' : 'unauthenticated');
         for (const entry of pending.values()) entry.reject(new Error('连接需要重新登录或刷新，已接受的任务仍由 Host 管理。'));
         pending.clear();
       }

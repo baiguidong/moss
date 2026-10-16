@@ -40,6 +40,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   let eventBytes = 0;
   const history = [];
   const connections = new Set();
+  const activeOperations = new Set();
   const loginAttempts = new Map();
   const originFor = req => env.MOSS_WEB_ORIGIN || `http://${req.headers.host}`;
   const sameOrigin = req => req.headers.origin === originFor(req);
@@ -147,6 +148,8 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
       if (!principal || connections.size >= 32) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
       wss.handleUpgrade(req, socket, head, ws => {
         ws.principal = principal; connections.add(ws);
+        ws.alive = true;
+        ws.on('pong', () => { ws.alive = true; });
         ws.on('error', () => {});
         ws.on('close', () => connections.delete(ws));
         ws.on('message', async data => {
@@ -169,14 +172,23 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
             const { method, args } = request;
             if (!allowed.has(method) && !overrides.has(method)) throw new Error('这项功能需要桌面客户端，当前 Web Host 尚未提供。');
             const context = Object.freeze({ transport: 'web', principal, requestId: request.id });
-            const result = await operations.run(request, principal, () => overrides.has(method)
-              ? overrides.get(method)(context, ...args) : registry.invoke(method, context, ...args));
+            const result = await operations.run(request, principal, async () => {
+              const key = ['agent:send', 'agent:approve-plan'].includes(method)
+                ? `turn:${args[0]?.sessionId}`
+                : ['agent:answer-question', 'agent:reject-question'].includes(method) ? `decision:${args[0]?.requestId}` : null;
+              if (key && activeOperations.has(key)) throw new Error('这个会话或确认正在处理，请等待当前操作完成。');
+              if (key) activeOperations.add(key);
+              try {
+                return await (overrides.has(method) ? overrides.get(method)(context, ...args) : registry.invoke(method, context, ...args));
+              } finally { if (key) activeOperations.delete(key); }
+            });
             send(ws, { type: 'result', id: request.id, ...result });
           } catch (error) { send(ws, { type: 'result', id: request?.id, ok: false, error: error.message }); }
         });
         const check = setInterval(async () => {
           if (!await auth.authenticate(req)) ws.close(4401, 'Authentication expired');
-          else ws.ping();
+          else if (!ws.alive) ws.terminate();
+          else { ws.alive = false; ws.ping(); }
         }, 30_000);
         ws.once('close', () => clearInterval(check));
       });

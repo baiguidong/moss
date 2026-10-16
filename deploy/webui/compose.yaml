@@ -1,11 +1,8 @@
 services:
   webui:
     image: ${MOSS_WEB_IMAGE:-moss-webui:local}
-    build:
-      context: ../..
-      dockerfile: docker/webui/Dockerfile
     ports:
-      - "${MOSS_WEB_BIND:-127.0.0.1}:43128:43128"
+      - "${MOSS_WEB_BIND:-127.0.0.1}:${MOSS_WEB_PUBLISHED_PORT:-43128}:43128"
     environment:
       MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-http://localhost:43128}
       MOSS_WEB_AUTH_SERVER: ${MOSS_WEB_AUTH_SERVER:-}

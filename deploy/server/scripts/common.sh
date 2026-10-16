@@ -21,8 +21,10 @@ ensure_integration_network() {
 }
 
 compose() {
+  local profiles=()
+  [[ "$(env_value MOSS_WEB_ENABLED)" != 1 ]] || profiles=(--profile webui)
   docker compose --project-directory "$SERVER_ROOT" --env-file "$ENV_FILE" \
-    -f "$COMPOSE_FILE" "$@"
+    -f "$COMPOSE_FILE" "${profiles[@]}" "$@"
 }
 
 show_failure_logs() {

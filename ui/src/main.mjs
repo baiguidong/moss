@@ -4908,6 +4908,7 @@ async function requestAskUserQuestion(sessionRecord, input, request = {}) {
     const pendingRequest = {
       requestId,
       sessionId: sessionRecord.id,
+      requestedAt: payload.requestedAt,
       input,
       projectId: project?.id || null,
       decisionId: projectDecision?.id || null,
@@ -7917,11 +7918,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   };
   const configurationService = createMossSettingsService({
     receiptsPath: path.join(MOSS_HOME, 'state', 'configuration-receipts.json'),
-    confirm: async change => (await dialog.showMessageBox(mainWindow, {
+    confirm: async change => {
+      if (isWebHost) throw new Error('这项配置变更需要在 Moss 设置页面中确认。');
+      return (await dialog.showMessageBox(mainWindow, {
       type: 'question', title: '修改 Moss 配置', message: `应用请求修改${settingsAreaNames[change.domain] || 'Moss 设置'}`,
       detail: `${change.target.label || change.target.id}\n\n${change.changes.map(item => describeSettingsChange(change.domain,item)).join('\n\n')}`,
       buttons: ['取消', '应用修改'], defaultId: 0, cancelId: 0,
-    })).response === 1,
+      })).response === 1;
+    },
     adapters: createMossSettingsAdapters({
       getDesktop: () => {
         const snapshot = desktopSettingsStore.reload();
@@ -8381,7 +8385,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     overrides.set('computer-use:status', () => ({ supported: false, enabled: false, phase: 'unsupported', requests: [], apps: [], sessionApps: [] }));
     webServer = await startWebServer({
       registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides,
-      snapshot: async () => ({ questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, input }) => ({ requestId, sessionId, input })) }),
+      snapshot: async () => ({ questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, requestedAt, input }) => ({ requestId, sessionId, requestedAt, input })) }),
     });
     console.log(`[moss-web] Ready on ${webServer.address.address}:${webServer.address.port}`);
     if (webServer.auth.mode === 'token') console.log(`[moss-web] Access token file: ${webServer.auth.tokenPath}`);
@@ -8406,6 +8410,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   sessionRuntimePool.start();
   prewarmLocalAgentGlobalInit();
   scheduleNativeWebSearchCapabilityDetection(0);
+}).catch(error => {
+  if (!isWebHost) throw error;
+  console.error('[moss-web] Host initialization failed:', error?.message || String(error));
+  app.exit(1);
 });
 
 function getInstallBlockers() {
