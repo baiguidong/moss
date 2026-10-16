@@ -2518,6 +2518,30 @@ export default function App() {
     />
   );
 
+  const notificationCenter = (
+    <NotificationCenter
+      placement={window.mossWeb ? 'sidebar' : 'window'}
+      notifications={appNotifications}
+      onMarkRead={(id) => {
+        void window.agentDesktop.notifications.markRead(id);
+      }}
+      onMarkAllRead={() => {
+        void window.agentDesktop.notifications.markAllRead();
+      }}
+      onRemove={(id) => {
+        void window.agentDesktop.notifications.remove(id);
+      }}
+      onClear={() => {
+        void window.agentDesktop.notifications.clear()
+          .then(() => { saveAppNotifications([], window.localStorage); })
+          .catch(() => {});
+      }}
+      onResolveDecision={async (decisionId, allowed, choice) => {
+        await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
+      }}
+    />
+  );
+
   return (
     <AppToolSelectionContext.Provider value={{ apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: (activeSessionId ? activeDetail?.agentMode !== 'remote-direct' : newSessionAgentMode === 'local'), pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
     <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource }}>
@@ -2529,7 +2553,7 @@ export default function App() {
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
       style={getChatAppearanceStyle(desktopSettings?.appearance)}
     >
-      <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
+      {!window.mossWeb && <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
         <div
           className="moss-window-drag h-9"
           style={{ paddingLeft: isMacOS ? 84 : 0 }}
@@ -2538,28 +2562,9 @@ export default function App() {
           className="absolute top-1"
           style={{ right: isMacOS ? 8 : 144 }}
         >
-          <NotificationCenter
-            notifications={appNotifications}
-            onMarkRead={(id) => {
-              void window.agentDesktop.notifications.markRead(id);
-            }}
-            onMarkAllRead={() => {
-              void window.agentDesktop.notifications.markAllRead();
-            }}
-            onRemove={(id) => {
-              void window.agentDesktop.notifications.remove(id);
-            }}
-            onClear={() => {
-              void window.agentDesktop.notifications.clear()
-                .then(() => { saveAppNotifications([], window.localStorage); })
-                .catch(() => {});
-            }}
-            onResolveDecision={async (decisionId, allowed, choice) => {
-              await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
-            }}
-          />
+          {notificationCenter}
         </div>
-      </div>
+      </div>}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
@@ -2568,6 +2573,7 @@ export default function App() {
         >
           <ComputerUseControl />
           <AppSidebar
+            headerActions={window.mossWeb ? notificationCenter : undefined}
             sessions={sidebarSessions}
             apps={apps}
             activeSessionId={activeSessionId}

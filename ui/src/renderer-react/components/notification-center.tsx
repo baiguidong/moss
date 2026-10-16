@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from 'react-dom';
 import {
   Bell,
   BellOff,
@@ -40,6 +41,7 @@ export function NotificationCenter({
   onRemove,
   onClear,
   onResolveDecision,
+  placement = 'window',
 }: {
   notifications: AppNotification[];
   onMarkRead: (id: string) => void;
@@ -47,6 +49,7 @@ export function NotificationCenter({
   onRemove: (id: string) => void;
   onClear: () => void;
   onResolveDecision: (decisionId: string, allowed: boolean, choice?: string) => Promise<void>;
+  placement?: 'window' | 'sidebar';
 }) {
   const [open, setOpen] = React.useState(false);
   const [confirmClear, setConfirmClear] = React.useState(false);
@@ -112,6 +115,7 @@ export function NotificationCenter({
         title="消息中心"
         aria-label={`消息中心${unreadCount ? `，${unreadCount} 条未读` : ""}`}
         aria-expanded={open}
+        aria-haspopup="dialog"
       >
         <Bell className="h-3.5 w-3.5" />
         {unreadCount > 0 ? (
@@ -121,7 +125,7 @@ export function NotificationCenter({
         ) : null}
       </button>
 
-      {open ? (
+      {open ? createPortal(
         <>
           <button
             type="button"
@@ -132,7 +136,7 @@ export function NotificationCenter({
           <section
             role="dialog"
             aria-label="消息中心"
-            className="fixed right-2 top-10 z-[80] flex max-h-[min(660px,calc(100vh-48px))] w-[min(420px,calc(100vw-16px))] flex-col overflow-hidden rounded-md border border-border bg-background shadow-2xl"
+            className={cn("fixed z-[80] flex max-h-[min(660px,calc(100dvh-64px))] w-[min(420px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl", placement === 'sidebar' ? 'left-2 top-14' : 'right-2 top-10')}
           >
             <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
               <div className="min-w-0 flex-1">
@@ -317,7 +321,7 @@ export function NotificationCenter({
               )}
             </div>
           </section>
-        </>
+        </>, document.body
       ) : null}
     </div>
   );

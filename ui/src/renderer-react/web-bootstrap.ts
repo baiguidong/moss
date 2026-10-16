@@ -10,41 +10,24 @@ async function jsonFetch(url: string, init?: RequestInit) {
 
 export async function initializeHostClient() {
   if (window.agentDesktop) return;
+  const { showWebLogin, mountWebSessionControls } = await import('./web-interface');
   const auth = await jsonFetch('/api/auth');
   if (!auth.authenticated) {
-    const root = document.getElementById('root')!;
-    root.innerHTML = `<div style="font:15px system-ui;max-width:340px;margin:15vh auto;padding:32px;border:1px solid #ddd;border-radius:16px"><h1>Moss</h1><p>登录我的云电脑</p><form>${auth.mode === 'server' ? '<label>账号<input name="username" autocomplete="username" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label>' : '<label>访问密钥<input name="token" type="password" autocomplete="current-password" required></label>'}<button type="submit">登录</button><p role="alert"></p></form><style>input,button{box-sizing:border-box;display:block;width:100%;margin:10px 0 20px;padding:10px}button{cursor:pointer}</style></div>`;
-    await new Promise<void>(resolve => {
-      const form = root.querySelector('form')!;
-      form.addEventListener('submit', async event => {
-        event.preventDefault();
-        const button = form.querySelector('button')!;
-        button.disabled = true; button.textContent = '正在进入云电脑…';
-        try {
-          const login = await jsonFetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-          if (login.reload) { location.reload(); return; }
-          root.replaceChildren(); resolve();
-        } catch (error) { form.querySelector('[role=alert]')!.textContent = (error as Error).message; }
-        finally { button.disabled = false; button.textContent = '登录'; }
-      });
-    });
+    await showWebLogin(auth.mode, values => jsonFetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+    }));
   }
-  const status = document.createElement('div');
-  status.style.cssText = 'position:fixed;right:14px;bottom:5px;z-index:9999;font:11px system-ui;background:var(--background,#fff);border-radius:4px;padding:2px 5px';
-  const label = document.createElement('span');
-  const logout = document.createElement('button');
-  logout.textContent = '退出'; logout.style.marginLeft = '12px';
-  logout.onclick = async () => { await jsonFetch('/api/logout', { method: 'POST' }); localStorage.clear(); sessionStorage.clear(); location.reload(); };
-  status.append(label, logout); document.body.append(status);
+  const updateStatus = mountWebSessionControls(async () => {
+    await jsonFetch('/api/logout', { method: 'POST' });
+    localStorage.clear(); sessionStorage.clear(); location.reload();
+  });
   const fileUrl = (filePath: string) => `/api/files?path=${encodeURIComponent(filePath)}`;
   const uploadFile = (file: File) => jsonFetch(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
   window.mossWeb = { fileUrl, uploadFile, snapshot: null };
   const transport = createWebTransport({
     url: `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/ws`,
     isAuthenticated: async () => (await jsonFetch('/api/auth')).authenticated,
-    onStatus(value: string) {
-      label.textContent = ({ connected: '我的云电脑', connecting: '正在连接…', disconnected: '连接已断开，正在重连…', unauthenticated: '登录已失效，请刷新', incompatible: '版本已更新，请刷新' })[value] || value;
-    },
+    onStatus: updateStatus,
     onSnapshot(snapshot: unknown) {
       window.mossWeb!.snapshot = snapshot;
       window.dispatchEvent(new CustomEvent('moss:reconnected', { detail: snapshot }));

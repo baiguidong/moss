@@ -138,6 +138,7 @@ interface AppSidebarProps {
   onTogglePin: (sessionId: string) => void;
   onSearchChange: (query: string) => void;
   onOpenGlobalSearch?: () => void;
+  headerActions?: React.ReactNode;
 }
 
 function SessionItem({
@@ -312,6 +313,7 @@ export function AppSidebar({
   onTogglePin,
   onSearchChange,
   onOpenGlobalSearch,
+  headerActions,
 }: AppSidebarProps) {
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
@@ -408,16 +410,19 @@ export function AppSidebar({
               </div>
             </div>
           )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="h-8 w-8 rounded-xl"
-            onClick={handleSearchClick}
-            title={onOpenGlobalSearch ? "搜索所有消息 (⌘/Ctrl+K)" : isSearchOpen ? "关闭搜索" : "搜索会话"}
-            aria-label={onOpenGlobalSearch ? "搜索所有消息" : isSearchOpen ? "关闭搜索" : "搜索会话"}
-          >
-            {isSearchOpen && !onOpenGlobalSearch ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
-          </Button>
+          <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
+            {headerActions}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="h-8 w-8 rounded-xl"
+              onClick={handleSearchClick}
+              title={onOpenGlobalSearch ? "搜索所有消息 (⌘/Ctrl+K)" : isSearchOpen ? "关闭搜索" : "搜索会话"}
+              aria-label={onOpenGlobalSearch ? "搜索所有消息" : isSearchOpen ? "关闭搜索" : "搜索会话"}
+            >
+              {isSearchOpen && !onOpenGlobalSearch ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
 
         {!collapsed && isSearchOpen && !onOpenGlobalSearch ? (
