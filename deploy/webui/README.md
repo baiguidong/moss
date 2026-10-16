@@ -2,7 +2,7 @@
 
 同一份 React 界面通过 IPC 服务 Desktop，通过 HTTP/WebSocket 服务浏览器。Web 镜像运行完整的 Moss Host，Agent 和工具在容器内使用本地模式执行。Moss Server 可作为认证中心；本次不新增或删减 Server 的会话能力。
 
-本版本覆盖统一接口与单用户浏览器闭环。一份部署对应一名用户；用户环境自动创建、系统盘快照恢复、跨节点调度属于后续阶段。
+本目录提供独立单用户部署；同一镜像也提供统一云电脑门户，通过 [Server 部署](../server/README.md) 为每个账号自动创建并长期保留一个容器。系统盘灾难恢复与跨节点调度另行安排。
 
 ## GitHub CLI 构建与发布（Linux AMD64）
 
@@ -34,12 +34,12 @@ gh run download <run-id> --dir artifacts
 
 ```sh
 cd moss-server
-sudo env MOSS_PUBLIC_HOST=你的服务器IP MOSS_WEB_ENABLED=1 bash install.sh
+sudo env MOSS_PUBLIC_HOST=你的服务器IP MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud bash install.sh
 ```
 
-Server 管理界面仍为 `https://服务器IP/admin/`；WebUI 为 `https://服务器IP:8444/`。首次启用时脚本通过 Server 已有认证 API 确定管理员的用户 ID，并持久绑定给此单用户 WebUI。用户仍用 Server 账号密码登录；其他账号不能进入这个环境。
+Server 管理界面仍为 `https://服务器IP/admin/`；WebUI 为 `https://服务器IP:8444/`。cloud 模式复用 Server 账号认证，每名用户首次登录创建专属 Linux 容器，后续回到同一容器，项目和聊天不会创建新电脑。
 
-为指定用户部署时传入 `MOSS_WEB_OWNER_ID`，可同时指定 `MOSS_WEB_OWNER_ORG_ID`。已有管理员密码变更时，应指定用户 ID，或提供当前安装管理员凭据完成第一次绑定。绑定成功后不再用安装密码查找用户。
+使用 `./webui.sh list` 查看环境，`./webui.sh stop <environment-id>` 停止空闲环境，`./webui.sh upgrade <environment-id> <image>` 在保留原容器与 apt 安装的前提下更新 Moss 程序。统一入口的网关持有 Docker socket，个人容器没有该权限。原固定用户部署继续使用 `MOSS_WEB_DEPLOY_MODE=single` 和 `MOSS_WEB_OWNER_ID`；不会自动迁移或删除其容器。
 
 可用 `MOSS_WEB_HTTPS_PORT`、`MOSS_WEB_ORIGIN` 和 `MOSS_WEB_IMAGE` 覆盖 WebUI 端口、外部 origin 和镜像。私有 GHCR 镜像使用 Server 原有的 registry 登录配置，详见 [Server 部署说明](../server/README.md)。默认关闭 WebUI，保持已有 Server 部署行为。
 
@@ -97,7 +97,7 @@ Electron 使用容器内无窗口模式，容器入口使用 `--no-sandbox`；�
 
 浏览器断线不停止任务。Host/容器停止会中断进程；重启后会话和文件继续存在，未能确认完成的请求会报告结果待核对，不会自动重放外部副作用。
 
-`docker compose stop/start` 保留原容器的系统写层，apt 安装可继续使用。**删除/重建容器只挂回 `/home/moss`，不能恢复 apt 写入的系统目录。** 本阶段镜像不代替后续持久化系统盘方案；升级或重建前需要自行保存系统环境。`docker compose down -v` 会删除用户卷。
+`docker compose stop/start` 保留原容器的系统写层，apt 安装可继续使用。**删除/重建容器只挂回 `/home/moss`，不能恢复 apt 写入的系统目录。** 日常使用保留同一个容器；cloud 模式支持在原容器更新程序。独立 single 模式的管理脚本不自动替换容器，完整系统备份/恢复仍属后续工作。`docker compose down -v` 会删除用户卷。
 
 ## 当前能力边界
 
