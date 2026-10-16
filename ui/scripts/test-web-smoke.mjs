@@ -55,7 +55,10 @@ try {
   await page.screenshot({ path: path.join(output, 'logout-confirm.png') });
   await logoutDialog.getByRole('button', { name: '取消', exact: true }).click();
   assert.equal(await page.evaluate(async () => (await (await fetch('/api/auth')).json()).authenticated), true);
-  previousSettings = await page.evaluate(() => window.agentDesktop.getSettings());
+  previousSettings = await page.evaluate(async () => {
+    const { url, apiKey, model, fastModel, thinkingMode } = await window.agentDesktop.getSettings();
+    return { url, apiKey, model, fastModel, thinkingMode };
+  });
   const basic = await page.evaluate(async () => {
     const api = window.agentDesktop;
     const created = await api.createSession({ title: 'Web validation', agentMode: 'local' });
