@@ -4,36 +4,61 @@
 
 本版本覆盖统一接口与单用户浏览器闭环。一份部署对应一名用户；用户环境自动创建、系统盘快照恢复、跨节点调度属于后续阶段。
 
-## 构建与运行
+## GitHub CLI 构建与发布（Linux AMD64）
 
-在仓库根目录执行：
-
-```sh
-bun run docker:build-webui
-docker compose -f deploy/webui/compose.yaml up -d --wait
-docker compose -f deploy/webui/compose.yaml exec webui cat /home/moss/.moss/web/access-token
-```
-
-打开 `http://localhost:43128`，使用上一条命令读取的访问密钥登录。密钥初次启动自动生成并保存在用户卷中，不输出到服务日志。默认仅监听部署主机的回环地址。
-
-Dockerfile 从源码构建 UI、Agent 和 Linux 原生依赖，不依赖开发机上的 macOS/Windows 构建产物。基础镜像可通过 `NODE_IMAGE` 切换，例如 Docker Hub 无法访问时使用镜像源：
+正式构建运行在 GitHub 的 Linux AMD64 runner。本机只需要 GitHub CLI，不需要 Docker、Node 或 Bun。
 
 ```sh
-docker build -f docker/webui/Dockerfile \
-  --build-arg NODE_IMAGE=public.ecr.aws/docker/library/node:22.22.0-bookworm-slim \
-  -t moss-webui:local .
+# --ref 指向包含本工作流的分支；合入主分支后可使用 main。
+gh workflow run build-release.yml --ref codex/webui-amd64-release \
+  -f version=0.0.1-webui.20261016.1 -f publish=true
+gh run list --workflow build-release.yml --limit 5
+gh run watch <run-id> --exit-status
+gh run download <run-id> --name moss-webui-linux-amd64-0.0.1-webui.20261016.1
 ```
 
-镜像为构建平台的 CPU 架构；amd64/arm64 需要分别构建验证。导出离线部署包：
+每次构建使用新的版本号。省略 `version` 时自动生成唯一预发布版本。`publish=false` 仅生成离线包，不推送 GHCR。工作流不启动部署主机上的服务。
+
+产物包含：
+
+- `ghcr.io/baiguidong/moss-webui:<version>`：经过浏览器测试的 Linux AMD64 镜像。
+- `moss-webui-<version>-linux-amd64.tar.gz` 和 SHA256：内含镜像、Compose、配置示例、管理脚本及镜像元数据的离线包。
+- `moss-server-compose-<version>.tar.gz` 和 SHA256：支持可选 WebUI 的 Server 一键部署包；其中 WebUI 镜像固定到本次版本。
+- 验证截图与报告：登录、文件、工具执行、断线恢复、权限确认、终端、同容器重启。
+
+`release.yml` 的正式版本发布也会调用此构建流程，将 WebUI 包加入完整 Release。独立构建仅发布指定版本；正式稳定版发布才更新 `latest`。Server 与 runtime 的现有构建和会话功能保持原有职责。
+
+## 随 Moss Server 一键部署
+
+解压上面的 Server Compose 包，在 Linux AMD64 主机执行：
 
 ```sh
-docker save -o moss-webui.tar moss-webui:local
-# 目标机器
-docker load -i moss-webui.tar
-docker compose -f deploy/webui/compose.yaml up -d --wait
+cd moss-server
+sudo env MOSS_PUBLIC_HOST=你的服务器IP MOSS_WEB_ENABLED=1 bash install.sh
 ```
 
-压缩为 `.tar.gz` 的镜像包同样可以直接用 `docker load -i 包文件.tar.gz` 导入。
+Server 管理界面仍为 `https://服务器IP/admin/`；WebUI 为 `https://服务器IP:8444/`。首次启用时脚本通过 Server 已有认证 API 确定管理员的用户 ID，并持久绑定给此单用户 WebUI。用户仍用 Server 账号密码登录；其他账号不能进入这个环境。
+
+为指定用户部署时传入 `MOSS_WEB_OWNER_ID`，可同时指定 `MOSS_WEB_OWNER_ORG_ID`。已有管理员密码变更时，应指定用户 ID，或提供当前安装管理员凭据完成第一次绑定。绑定成功后不再用安装密码查找用户。
+
+可用 `MOSS_WEB_HTTPS_PORT`、`MOSS_WEB_ORIGIN` 和 `MOSS_WEB_IMAGE` 覆盖 WebUI 端口、外部 origin 和镜像。私有 GHCR 镜像使用 Server 原有的 registry 登录配置，详见 [Server 部署说明](../server/README.md)。默认关闭 WebUI，保持已有 Server 部署行为。
+
+## 独立离线部署
+
+目标 Linux 主机需要 Docker 和 Compose v2；运行时不需要源码、Node 或 Bun：
+
+```sh
+sha256sum -c moss-webui-<version>-linux-amd64.tar.gz.sha256
+tar -xzf moss-webui-<version>-linux-amd64.tar.gz
+cd moss-webui
+# 如需远程访问，先复制 .env.example 为 .env 并配置访问 origin/反向代理。
+./manage.sh install
+./manage.sh token
+```
+
+默认打开 `http://localhost:43128`，使用访问密钥登录。`manage.sh` 支持 `load`、`start`、`stop`、`status`、`logs`、`token`。`install` 会校验文件、导入镜像并启动服务；保留已有 `.env` 和运行容器。
+
+首次生成的 `.env` 固定 Compose 项目名称，后续部署目录改变时仍使用同一个 HOME 卷。接入已有部署时必须保持原项目名称，避免创建一个看似空白的新卷。
 
 ## 使用 Moss Server 认证
 
@@ -80,9 +105,14 @@ Electron 使用容器内无窗口模式，容器入口使用 `--no-sandbox`；�
 
 Electron 原生 App 窗口、嵌入 webview、桌面自动更新、原生电脑操控及依赖本机弹窗的安装流程尚未提供 Web 适配。后端明确拒绝这些网络调用，保留 Desktop 的原有实现。现有远程连接代码也继续保留，本阶段的浏览器验收集中在本地执行。
 
-## 本地开发与验证
+## 开发与 CI 内部入口
+
+以下源码命令供 Linux 构建机/CI 使用；日常发布优先使用上面的 `gh` 命令。
 
 ```sh
+node scripts/docker-webui.mjs build --platform linux/amd64 --tag moss-webui:local
+node scripts/docker-webui.mjs package --skip-build --platform linux/amd64 --tag moss-webui:local
+node --test scripts/docker-webui.test.mjs
 cd ui
 bun run build:web
 MOSS_HOME=/绝对路径/独立测试目录 bun run start:web

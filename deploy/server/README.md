@@ -14,6 +14,41 @@ dependencies can use stable container DNS names instead of host IP addresses.
 
 ## Linux 部署入口
 
+### 同时启用单用户 WebUI
+
+GitHub CLI 在远端构建 Linux AMD64 WebUI 镜像及部署包，本机无需 Docker：
+
+```bash
+gh workflow run build-release.yml --ref codex/webui-amd64-release -f publish=true
+gh run list --workflow build-release.yml --limit 5
+gh run watch <run-id> --exit-status
+gh run download <run-id> --dir artifacts
+```
+
+下载、解压 `moss-server-compose-<version>.tar.gz`，在 Linux 主机运行：
+
+```bash
+sudo env MOSS_PUBLIC_HOST=10.0.1.181 MOSS_WEB_ENABLED=1 bash install.sh
+```
+
+WebUI 默认地址为 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。
+首次启用通过现有认证 API 将单用户 WebUI 绑定到安装管理员，后续用同一账号密码登录。
+也可明确指定 `MOSS_WEB_OWNER_ID`、`MOSS_WEB_OWNER_ORG_ID`；已有管理员密码变更时，
+首次绑定需要当前凭据或显式用户 ID。其他有效账号不能访问此个人环境。
+
+`MOSS_WEB_IMAGE`、`MOSS_WEB_HTTPS_PORT` 和 `MOSS_WEB_ORIGIN` 可分别指定镜像、端口与
+外部访问 origin。WebUI 默认关闭。启用后单独保存 HOME 卷，无 Docker socket 挂载。
+Server 现有会话和 runtime 服务继续保留。
+
+`start.sh`、`stop.sh` 和 Server 升级会保留已有 WebUI 容器及 apt 安装；`stop.sh` 现在停止
+容器而不删除它们。WebUI 镜像/配置变更不会静默替换个人容器，用户归属/origin 不匹配时
+会要求先处理环境迁移。**删除或重建 WebUI 容器后，仅凭 HOME 卷仍无法恢复系统软件。**
+完整系统恢复和独立 Host 升级属于下一阶段，见 [WebUI 计划](../../ui/docs/webui-next-steps.md)。
+
+工作流合入主分支后，`--ref` 可改为 `main`。独立构建包固定 WebUI 版本；
+Server 和 runtime 使用包中原有发布配置。完整 `release.yml` 会同时构建和发布 WebUI。
+离线 WebUI 单独部署方法见 [WebUI 部署说明](../webui/README.md)。
+
 复制到 Linux 后，按需要选择安装方式：
 
 | 复制的内容 | 执行入口 | Server 镜像来源 |

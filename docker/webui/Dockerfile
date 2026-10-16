@@ -18,8 +18,7 @@ COPY shared ./shared
 COPY packages ./packages
 COPY tsconfig.json ./
 COPY ui ./ui
-COPY bin ./bin
-RUN cd ui && node scripts/build-direct.mjs && node scripts/build-renderer.mjs \
+RUN mkdir -p bin && cd ui && node scripts/build-direct.mjs && node scripts/build-renderer.mjs \
     && node node_modules/@electron/rebuild/lib/cli.js -f -w node-pty \
     && node scripts/prepare-web-image.mjs /opt/moss-release
 

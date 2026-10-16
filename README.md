@@ -7,12 +7,18 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 - [部署总览](deploy/README.md)
 - [Moss Server API](server/API.md)
 - [Moss Server Docker Compose 部署](deploy/server/README.md)
+- [Moss 单用户 WebUI 镜像与部署](deploy/webui/README.md)
+- [WebUI 系统持久化与多用户后续计划](ui/docs/webui-next-steps.md)
 - [飞书 App 配置与完整权限清单](https://github.com/baiguidong/moss-apps/tree/main/apps/feishu)
 
 服务端源码位于独立的 `server/` package，远程客户端位于
 `src/remote/`，共享连接协议位于 `packages/direct-connect-protocol/`。
 
 ## Server Docker Compose 部署
+
+WebUI 镜像由 GitHub Actions 构建为 Linux AMD64，本机通过 `gh workflow run build-release.yml`
+触发并下载产物。Server 一键安装增加 `MOSS_WEB_ENABLED=1` 可同时启用单用户 WebUI，
+复用 Server 认证；具体命令见 [WebUI 部署说明](deploy/webui/README.md)。
 
 目标机需要 Linux x86_64、Docker Engine、Docker Compose v2、`curl`、`jq`
 和 `openssl`。Server、Nginx HTTPS 代理和 session runtime 均通过 Docker
