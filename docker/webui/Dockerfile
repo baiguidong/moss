@@ -32,7 +32,7 @@ LABEL org.opencontainers.image.title="Moss WebUI" \
       io.moss.web.data-schema="1"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini bash ca-certificates curl git python3 python3-pip python3-venv ripgrep sudo \
-    libgtk-3-0 libnss3 libasound2 libgbm1 libxss1 libdrm2 libx11-xcb1 libatk-bridge2.0-0 \
+    libgtk-3-0 libnss3 libasound2 libgbm1 libxss1 libdrm2 libx11-xcb1 libatk-bridge2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && usermod -l moss -d /home/moss -m node \
     && printf 'moss ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/moss \
