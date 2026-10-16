@@ -1,5 +1,5 @@
 export type FileAttachment = { name: string; path: string };
-type AttachmentHost = Pick<Window['agentDesktop']['fs'], 'getPathForFile' | 'getFileMetadata' | 'createTempFile' | 'writeFile'>;
+type AttachmentHost = Pick<Window['agentDesktop']['fs'], 'uploadFile' | 'getPathForFile' | 'getFileMetadata' | 'createTempFile' | 'writeFile'>;
 
 export function mergeFileAttachments(current: FileAttachment[], incoming: FileAttachment[]): FileAttachment[] {
   const paths = new Set(current.map(file => file.path));
@@ -18,6 +18,7 @@ export async function collectFileAttachments(files: readonly File[], host: Attac
   for (const file of files) {
     try {
       let path = host.getPathForFile(file);
+      if (!path && host.uploadFile) path = (await host.uploadFile(file)).path;
       if (!path) {
         path = await host.createTempFile(file.name || 'attachment');
         if (!path || !await host.writeFile(path, Array.from(new Uint8Array(await file.arrayBuffer())))) {

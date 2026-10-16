@@ -96,6 +96,7 @@ import { getAPIContextManagement } from '../compact/apiMicrocompact.js'
 
 import { feature } from 'bun:bundle'
 import { ensureResponseId } from './responseIdentity.js'
+import { normalizeToolImagesForModel } from './toolImageCompatibility.js'
 import type { ClientOptions } from '@anthropic-ai/sdk'
 import {
   APIConnectionTimeoutError,
@@ -1527,7 +1528,7 @@ async function* queryModel(
 
     return {
       model: normalizeModelStringForAPI(options.model),
-      messages: addCacheBreakpoints(
+      messages: normalizeToolImagesForModel(addCacheBreakpoints(
         messagesForAPI,
         enablePromptCaching,
         options.querySource,
@@ -1535,7 +1536,7 @@ async function* queryModel(
         consumedCacheEdits,
         consumedPinnedEdits,
         options.skipCacheWrite,
-      ),
+      ), options.model),
       system,
       tools: allTools,
       tool_choice: options.toolChoice,

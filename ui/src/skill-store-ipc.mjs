@@ -1,5 +1,6 @@
+import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
-const { ipcMain, dialog } = electron;
+const { dialog } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';

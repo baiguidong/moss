@@ -19,6 +19,7 @@ import {
   type ToolDisplayMode,
 } from '@/components/chat/tool-display-settings';
 import { AppComposerContext, resourceContext, type AppComposerResource } from '@/lib/app-composer';
+import { reconcileComposerIntent, restoreComposerIntent, type ComposerIntent, type ComposerIntentState } from '@/lib/composer-intent';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
@@ -146,7 +147,6 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type ComposerIntent = 'chat' | 'boss';
 type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
 type QueuedMessage = {
   appSelection?: AppComposerResource | null;
@@ -287,11 +287,6 @@ function mergeSessionHistorySnapshot(
   return historyCompletenessScore(incoming) >= historyCompletenessScore(current)
     ? incoming
     : current;
-}
-
-function restoreComposerIntent(session?: Pick<SessionSummary, 'composerIntent'> | null): ComposerIntent {
-  const persistedIntent = session?.composerIntent as string | undefined;
-  return persistedIntent === 'boss' || persistedIntent === 'coordinator' ? 'boss' : 'chat';
 }
 
 function buildCliConnectorSetupPrompt(connector: InstalledConnector, _cli: Record<string, any> | null) {
@@ -464,6 +459,7 @@ export default function App() {
   const [embeddedAppRoute, setEmbeddedAppRoute] = React.useState('');
   const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
+  const composerIntentStatesRef = React.useRef(new Map<string, ComposerIntentState>());
   const [newSessionAgentMode, setNewSessionAgentMode] = React.useState<'local' | 'remote-direct'>('local');
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
@@ -822,7 +818,7 @@ export default function App() {
     activeSessionIdRef.current = sessionId;
     activeDetailRef.current = detail;
     setActiveSessionId(sessionId);
-    setComposerIntent(restoreComposerIntent(detail));
+    setComposerIntent(reconcileComposerIntent(detail, composerIntentStatesRef.current));
     setActiveDetail(detail);
     if (workspaceChanged) clearSessionWorkspaceState();
     return true;
@@ -1171,6 +1167,23 @@ export default function App() {
   }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshAssistants, refreshConnectors]);
 
   React.useEffect(() => {
+    if (!window.mossWeb) return;
+    const restore = () => {
+      const snapshot = window.mossWeb?.snapshot;
+      if (Array.isArray(snapshot?.questions)) {
+        questionRequestsRef.current = snapshot.questions;
+        setQuestionRequests(snapshot.questions);
+      }
+      void refreshSummaries().catch(() => {});
+      const sessionId = activeSessionIdRef.current;
+      if (sessionId) void openSession(sessionId).catch(() => {});
+    };
+    restore();
+    window.addEventListener('moss:reconnected', restore);
+    return () => window.removeEventListener('moss:reconnected', restore);
+  }, [refreshSummaries, openSession]);
+
+  React.useEffect(() => {
     if (!desktopSettings?.remoteEnabled) return;
     const timer = window.setInterval(() => {
       void window.agentDesktop.syncRemoteSessions().catch(() => {});
@@ -1211,7 +1224,7 @@ export default function App() {
       if (payload?.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary));
         if (payload.summary.id === activeSessionIdRef.current) {
-          setComposerIntent(restoreComposerIntent(payload.summary));
+          setComposerIntent(reconcileComposerIntent(payload.summary, composerIntentStatesRef.current));
           setActiveDetail((prev) => {
             if (!prev) return prev;
             const nextHistory = mergeSessionHistorySnapshot(
@@ -1281,7 +1294,7 @@ export default function App() {
       if (removedSessionIdsRef.current.has(summary.id)) return;
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
-        setComposerIntent(restoreComposerIntent(summary));
+        setComposerIntent(reconcileComposerIntent(summary, composerIntentStatesRef.current));
         setActiveDetail((prev) => {
           if (!prev) return prev;
           const next = { ...prev, ...summary };
@@ -1298,6 +1311,9 @@ export default function App() {
         setSummaries((prev) => upsertSummary(prev, payload.summary!));
       }
       if (payload.sessionId === activeSessionIdRef.current) {
+        if (payload.summary) {
+          setComposerIntent(reconcileComposerIntent(payload.summary, composerIntentStatesRef.current));
+        }
         setActiveDetail((prev) => {
           if (!prev) return prev;
           const nextHistory = payload.replaceHistory
@@ -1317,6 +1333,7 @@ export default function App() {
 
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
       removedSessionIdsRef.current.add(sessionId);
+      composerIntentStatesRef.current.delete(sessionId);
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       setAgentTeamsBySession((previous) => {
         const next = { ...previous };
@@ -1675,6 +1692,12 @@ export default function App() {
         showPermissionNotice('项目会话固定使用 Boss 模式', 'info', 3000);
       }
       return;
+    }
+    if (activeSessionIdRef.current) {
+      composerIntentStatesRef.current.set(activeSessionIdRef.current, {
+        ...composerIntentStatesRef.current.get(activeSessionIdRef.current),
+        selected: intent,
+      });
     }
     setComposerIntent(intent);
   }, [showPermissionNotice]);

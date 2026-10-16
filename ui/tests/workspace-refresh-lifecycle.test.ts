@@ -21,7 +21,7 @@ test('reopening the active session does not clear its loaded root directory', as
     window: { agentDesktop: { getSession: async ({ sessionId }: { sessionId: string }) => ({ ...active.current, id: sessionId }) } },
     activeDetailRef: active, activeSessionIdRef: sessionId,
     setActiveView() {}, setActiveSessionId() {}, setComposerIntent() {}, setActiveDetail() {},
-    restoreComposerIntent: () => 'chat',
+    reconcileComposerIntent: () => 'chat', composerIntentStatesRef: { current: new Map() },
     clearSessionWorkspaceState: () => { clears++; },
   });
   expect(await open('same')).toBe(true);

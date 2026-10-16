@@ -53,6 +53,24 @@ afterEach(async () => {
 })
 
 describe('App Runtime lifecycle', () => {
+  it('replaces a running old generation and rejects preparation from an old queued action', async () => {
+    const runtime = await createRuntime('persistent-single')
+    try {
+      const appId = 'fixture.persistent-single', instanceId = defaultInstanceId(appId)
+      const previous = runtime.runtimeForInstance(appId, instanceId)
+      const oldPid = runtime.supervisor.status(previous.key).pid
+      const current = await runtime.runtimes.bumpGeneration(previous.key)
+      await runtime.prepareRuntime(current)
+      // Registration must not pretend that the already-running process changed.
+      expect(runtime.supervisor.status(previous.key).generation).toBe(previous.generation)
+      await expect(runtime.prepareRuntime(previous)).rejects.toMatchObject({ code: 'APP_STALE_GENERATION' })
+      await runtime.supervisor.start(current.key)
+      expect(runtime.supervisor.status(current.key).pid).not.toBe(oldPid)
+      expect(runtime.supervisor.processes.get(current.key).definition.generation).toBe(current.generation)
+      expect((await runtime.invoke(appId, instanceId, 'echo', 'after-upgrade')).input).toBe('after-upgrade')
+    } finally { await runtime.shutdown() }
+  })
+
   it('supports status and reentrant Host events while a Backend is initializing', async () => {
     const runtime = await createRuntime('persistent-single', { hostRequestTimeoutMs: 10, maxHostTimeoutMs: 1_000 }, async (source) => {
       const manifestPath = path.join(source, 'app.moss.json')

@@ -25,6 +25,9 @@ describe('desktop appearance settings', () => {
 
     expect(normalizeAppearance(appearance)).toEqual(appearance);
     expect(hasPersistedAppearance({ appearance })).toBe(true);
+    const takt = normalizeAppearance({ ...appearance, cssThemeId: 'takt-theme' });
+    expect(takt.cssThemeId).toBe('takt-theme');
+    expect(normalizeAppearance({ themeMode: 'dark' }, takt).cssThemeId).toBe('takt-theme');
   });
 
   it('falls back per field when persisted values are invalid', () => {

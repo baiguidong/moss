@@ -40,7 +40,7 @@ import {
   appStructuredSubagentPrompt,
 } from './prompts.js'
 type AppAgentOptions = { label?: string; schema?: unknown; agentType?: string }
-import { parseStructuredAgentText } from './structuredOutput.js'
+import { collectAppAgentResponse } from './structuredOutput.js'
 
 const NESTED_ORCHESTRATION_TOOLS = [
   AGENT_TOOL_NAME,
@@ -188,71 +188,73 @@ export async function runAppAgent(
     ...resumedMessages,
     createUserMessage({ content: promptText }),
   ]
-  let structuredOutput: unknown
-
-  const iterator = runAgent({
-    agentDefinition,
-    promptMessages,
-    persistedMessageCount: resumedMessages.length,
-    stopAfterStructuredOutput: Boolean(schemaTool),
-    toolUseContext: {
-      ...toolUseContext,
-      abortController,
-      agentId,
-      agentType: agentDefinition.agentType,
-      options: {
-        ...toolUseContext.options,
-        tools: availableTools,
-      },
+  const response = await collectAppAgentResponse({
+    schema: wrappedSchema,
+    signal: abortController.signal,
+    execute: async outputOnly => {
+      // Continue the same transcript. A formatting repair cannot repeat file,
+      // network or other business tools used in the original pass.
+      if (outputOnly) {
+        messages.push(createUserMessage({ content:
+          'The task has already been performed. Only submit its existing result through StructuredOutput now, using the tool input schema (including its result wrapper). Do not repeat the task or perform any additional operations. If information is missing, report that accurately inside the requested result.',
+        }))
+      }
+      const history = [...promptMessages, ...messages.filter(message => message.type !== 'attachment')]
+      const passTools = outputOnly ? [schemaTool!.tool] : availableTools
+      const passMessages: Message[] = []
+      let structuredOutput: unknown
+      const iterator = runAgent({
+        agentDefinition: outputOnly ? { ...agentDefinition, tools: [SYNTHETIC_OUTPUT_TOOL_NAME] } : agentDefinition,
+        promptMessages: history,
+        persistedMessageCount: outputOnly ? history.length - 1 : resumedMessages.length,
+        ...(outputOnly ? { maxTurns: 3 } : {}),
+        stopAfterStructuredOutput: Boolean(schemaTool),
+        toolUseContext: {
+          ...toolUseContext,
+          abortController,
+          agentId,
+          agentType: agentDefinition.agentType,
+          options: {
+            ...toolUseContext.options,
+            tools: passTools,
+          },
+        },
+        canUseTool,
+        isAsync: false,
+        canShowPermissionPrompts: true,
+        querySource: 'app_agent',
+        availableTools: passTools,
+        description: opts?.label ?? prompt.slice(0, 60),
+        ...(ownerAgentId ? { ownerAgentId } : {}),
+        override: { agentId, abortController },
+      })
+      for await (const message of iterator) {
+        messages.push(message)
+        passMessages.push(message)
+        if (
+          message.type === 'attachment' &&
+          message.attachment.type === 'structured_output'
+        ) {
+          structuredOutput = message.attachment.data
+          continue
+        }
+        if (message.type !== 'assistant') continue
+        updateProgressFromMessage(
+          tracker,
+          message,
+          resolveActivity,
+          toolUseContext.options.tools,
+        )
+        onProgress({
+          tokens: getTokenCountFromTracker(tracker),
+          toolCalls: tracker.toolUseCount,
+          lastToolName: getLastToolUseName(message),
+        })
+      }
+      return { structuredOutput, text: extractFinalText(passMessages) }
     },
-    canUseTool,
-    isAsync: false,
-    canShowPermissionPrompts: true,
-    querySource: 'app_agent',
-    availableTools,
-    description: opts?.label ?? prompt.slice(0, 60),
-    ...(ownerAgentId ? { ownerAgentId } : {}),
-    override: { agentId, abortController },
   })
-  for await (const message of iterator) {
-    messages.push(message)
-    if (
-      message.type === 'attachment' &&
-      message.attachment.type === 'structured_output'
-    ) {
-      structuredOutput = message.attachment.data
-      continue
-    }
-    if (message.type !== 'assistant') continue
-    updateProgressFromMessage(
-      tracker,
-      message,
-      resolveActivity,
-      toolUseContext.options.tools,
-    )
-    onProgress({
-      tokens: getTokenCountFromTracker(tracker),
-      toolCalls: tracker.toolUseCount,
-      lastToolName: getLastToolUseName(message),
-    })
-  }
-
-  if (schemaTool && structuredOutput === undefined) {
-    const fallback = parseStructuredAgentText(
-      extractFinalText(messages),
-      wrappedSchema,
-    )
-    if (!fallback.ok) {
-      throw new Error(
-        `agent({schema}): no valid structured output was returned (${fallback.error})`,
-      )
-    }
-    structuredOutput = fallback.value
-  }
-
-  const value = schemaTool
-    ? (structuredOutput as { result: unknown }).result
-    : extractFinalText(messages)
+  const value = schemaTool ? (response as { result: unknown }).result : response
 
   return {
     agentId,

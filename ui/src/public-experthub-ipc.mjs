@@ -1,5 +1,6 @@
+import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
-const { ipcMain } = electron;
+
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';

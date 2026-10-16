@@ -1,4 +1,5 @@
 import { ChevronDown, ShieldCheck } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -38,17 +39,29 @@ export function PermissionModeSelector({
   disabled?: boolean;
   compact?: boolean;
 }) {
+  const [confirmBypass, setConfirmBypass] = useState(false);
+  const confirmation = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  useEffect(() => {
+    const dialog = confirmation.current;
+    if (!dialog) return;
+    if (confirmBypass && !disabled) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) dialog.close();
+  }, [confirmBypass, disabled]);
   const selectMode = (rawMode: string) => {
     const mode = rawMode as PermissionMode;
     if (mode === value) return;
-    if (
-      mode === 'bypassPermissions'
-      && !window.confirm('完全放行会跳过常规权限确认，Agent 可直接修改文件并执行命令。确定启用吗？')
-    ) return;
+    if (mode === 'bypassPermissions') {
+      setConfirmBypass(true);
+      return;
+    }
     void onChange(mode);
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
@@ -80,5 +93,18 @@ export function PermissionModeSelector({
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+    <dialog ref={confirmation} aria-labelledby={titleId} aria-describedby={descriptionId}
+      onCancel={() => setConfirmBypass(false)} onClose={() => setConfirmBypass(false)}
+      className="fixed inset-0 m-auto w-[calc(100%_-_2rem)] max-w-md rounded-xl border border-border bg-card p-6 text-foreground shadow-2xl backdrop:bg-black/45">
+      <h2 id={titleId} className="text-base font-semibold">启用完全放行？</h2>
+      <p id={descriptionId} className="mt-3 text-sm leading-6 text-muted-foreground">完全放行会跳过常规权限确认，Agent 可直接修改文件并执行命令。确定启用吗？</p>
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" autoFocus className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+          onClick={() => setConfirmBypass(false)}>取消</button>
+        <button type="button" disabled={disabled} className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          onClick={() => { setConfirmBypass(false); void onChange('bypassPermissions'); }}>确定启用</button>
+      </div>
+    </dialog>
+    </>
   );
 }

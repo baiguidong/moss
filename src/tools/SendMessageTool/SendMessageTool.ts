@@ -660,20 +660,22 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
         if (agentId) {
           const task = appState.tasks[agentId]
           if (isLocalAgentTask(task) && !isMainSessionTask(task)) {
-            if (task.status === 'running') {
+            if (
               queuePendingMessage(
                 agentId,
                 input.message,
                 context.setAppStateForTasks ?? context.setAppState,
               )
+            ) {
               return {
                 data: {
                   success: true,
-                  message: `Message queued for delivery to ${input.to} at its next tool round.`,
+                  message: `Message queued for delivery to ${input.to} at its next model turn.`,
                 },
               }
             }
-            // task exists but stopped — auto-resume
+            // A closed inbox can still be finishing metadata/MCP cleanup.
+            // Resume waits for that execution before reading its transcript.
             try {
               const result = await resumeAgentBackground({
                 agentId,
@@ -685,7 +687,7 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
               return {
                 data: {
                   success: true,
-                  message: `Agent "${input.to}" was stopped (${task.status}); resumed it in the background with your message. You'll be notified when it finishes. Output: ${result.outputFile}`,
+                  message: `Agent "${input.to}" resumed in the background with your message. You'll be notified when it finishes. Output: ${result.outputFile}`,
                 },
               }
             } catch (e) {

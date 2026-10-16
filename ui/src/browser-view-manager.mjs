@@ -282,6 +282,11 @@ function safeTitleFromUrl(url) {
   }
 }
 
+function isAbortedNavigation(error) {
+  return error?.code === 'ERR_ABORTED' || error?.errno === -3
+    || /\bERR_ABORTED\b/.test(error?.message || '');
+}
+
 export function normalizeBrowserUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return BROWSER_DEFAULT_URL;
@@ -684,9 +689,15 @@ export function createBrowserViewManager({
     };
     configureTabWebContents(session, tab);
 
-    if (!options.deferLoad && url !== BROWSER_DEFAULT_URL) {
+    // A newly allocated blank view still needs its initial document. Without
+    // navigation it remains a target with URL "" and fresh CDP clients can hang
+    // waiting for that target to initialize. Adopted popup contents already own
+    // their navigation and must not be overwritten.
+    if (url === BROWSER_DEFAULT_URL ? !options.webContents : !options.deferLoad) {
       Promise.resolve(view.webContents.loadURL(url, options.loadOptions)).catch((error) => {
-        if (tab.closing) return;
+        // Electron rejects the earlier load when navigation is superseded or
+        // stopped. Match did-fail-load handling: this is not a page failure.
+        if (tab.closing || isAbortedNavigation(error)) return;
         tab.isLoading = false;
         tab.error = error instanceof Error ? error.message : String(error);
         openFailedUrlExternally(session, tab, url);
@@ -741,7 +752,7 @@ export function createBrowserViewManager({
       return;
     }
     Promise.resolve(tab.view.webContents.loadURL(url)).catch((error) => {
-      if (tab.closing) return;
+      if (tab.closing || isAbortedNavigation(error)) return;
       tab.isLoading = false;
       tab.error = error instanceof Error ? error.message : String(error);
       openFailedUrlExternally(session, tab, url);
@@ -1130,7 +1141,7 @@ export function createBrowserViewManager({
             updateTabFromNavigation(session, tab);
           }
         } catch (error) {
-          if (!tab.closing) {
+          if (!tab.closing && !isAbortedNavigation(error)) {
             tab.isLoading = false;
             tab.error = error instanceof Error ? error.message : String(error);
             openFailedUrlExternally(session, tab, normalizedUrl);

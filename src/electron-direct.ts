@@ -26,6 +26,7 @@ import { getSessionEffortConfiguration, isEffortLevel, type EffortLevel } from '
 export { getSessionEffortConfiguration } from './utils/effort.js'
 import { createStore } from './state/store.js'
 import { stopTask as stopBackgroundTask } from './tasks/stopTask.js'
+import { killAllRunningAgentTasks } from './tasks/LocalAgentTask/LocalAgentTask.js'
 import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
@@ -782,6 +783,7 @@ export class ClaudeSession {
   #mcpDisposed: Promise<void> | null = null
   #forkContentReplacementsSeeded = false
   #abortController: AbortController | null = null
+  #abortEpoch = 0
   // Session's git root (or cwd), resolved during engine bootstrap. Passed
   // into the per-send ALS context so getProjectRoot() resolves per-session.
   #projectRoot: string | undefined
@@ -1256,6 +1258,7 @@ export class ClaudeSession {
     if (this.#disposed) throw new Error('Session has been disposed')
 
     // 串行队列
+    const abortEpoch = this.#abortEpoch
     const queueStart = Date.now()
     await new Promise<void>(resolve => {
       this.#queue.push(resolve)
@@ -1272,8 +1275,18 @@ export class ClaudeSession {
       coordinator_mode: this.#opts.coordinatorMode,
     })
 
+    // Cancellation must cover queue acquisition and first-turn initialization,
+    // before a QueryEngine exists. A later send starts with a fresh epoch.
+    const internalAbort = new AbortController()
+    this.#abortController = internalAbort
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, internalAbort.signal])
+      : internalAbort.signal
+    const interruptEngine = () => this.#interruptEngine()
+    combinedSignal.addEventListener('abort', interruptEngine, { once: true })
     try {
       if (this.#disposed) throw new Error('Session has been disposed')
+      if (abortEpoch !== this.#abortEpoch || combinedSignal.aborted) return
       initLocalAgentRuntimeOnce()
 
       const sessionId = asSessionId(this.sessionId)
@@ -1322,6 +1335,7 @@ export class ClaudeSession {
       logForDiagnosticsNoPII('info', 'local_agent_send_storage_activated', {
         duration_ms: Date.now() - activateStorageStart,
       })
+      if (combinedSignal.aborted) return
 
       // Re-evaluate after activation: resume may have just restored a
       // worktree into the slot, and the engine/turn contexts must run there.
@@ -1347,15 +1361,11 @@ export class ClaudeSession {
       })
 
       // Reset the engine's abort controller from any previous interrupt so
-      // this turn can run cleanly.
+      // this turn can run cleanly, but never erase this turn's cancellation.
+      if (combinedSignal.aborted) return
       engine.resetAbort()
 
       const prompt = typeof text === 'string' ? text : text as any
-      const internalAbort = new AbortController()
-      this.#abortController = internalAbort
-      const combinedSignal = signal
-        ? AbortSignal.any([signal, internalAbort.signal])
-        : internalAbort.signal
       const waitSignal = combinedSignal
       let finalResult: SDKMessage | undefined
 
@@ -1379,11 +1389,13 @@ export class ClaudeSession {
       const hasRunningBackgroundTasks = () => {
         const state = this.#store?.getState()
         if (!state) return false
-        return getRunningTasks(state).some(
+        return Object.values(state.tasks).some(
           task =>
-            isBackgroundTask(task) &&
             task.type !== 'in_process_teammate' &&
-            this.#opts.coordinatorMode,
+            this.#opts.coordinatorMode && (
+              isBackgroundTask(task) ||
+              (task.type === 'local_agent' && task.notificationPending && !task.notified)
+            ),
         )
       }
 
@@ -1574,6 +1586,7 @@ export class ClaudeSession {
         ),
       )
     } finally {
+      combinedSignal.removeEventListener('abort', interruptEngine)
       logForDiagnosticsNoPII('info', 'local_agent_send_completed', {
         duration_ms: Date.now() - sendStart,
         reused_engine: hadEngineAtStart,
@@ -1833,14 +1846,21 @@ export class ClaudeSession {
   }
 
   /** 中止正在进行的请求 */
+  #interruptEngine() {
+    this.#engine?.interrupt()
+    const store = this.#store
+    if (this.#opts.coordinatorMode && store) {
+      killAllRunningAgentTasks(store.getState().tasks, update => store.setState(update))
+    }
+  }
+
   abort() {
+    this.#abortEpoch++
     if (this.#abortController) {
       this.#abortController.abort()
       this.#abortController = null
     }
-    if (this.#engine) {
-      this.#engine.interrupt()
-    }
+    this.#interruptEngine()
   }
 
   /** 订阅 app state 变化（用于通知前端新 teammate task 等） */

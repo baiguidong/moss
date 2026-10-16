@@ -1,11 +1,13 @@
+import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
 import { libreOfficeService } from '../services/libreoffice-service.mjs';
 
-const { ipcMain, BrowserWindow } = electron;
+const { BrowserWindow } = electron;
 
 let installState = { installing: false };
 
 function emitToAll(channel, payload) {
+  ipcMain.publish(channel, payload);
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send(channel, payload);

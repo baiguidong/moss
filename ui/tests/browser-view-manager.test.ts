@@ -136,7 +136,7 @@ class FakeView {
   setBackgroundColor(color: string) { this.background = color; }
 }
 
-function createHarness({ loadErrorAtView = -1, loadFinalUrlAtView = -1 } = {}) {
+function createHarness({ loadErrorAtView = -1, loadFinalUrlAtView = -1, loadFailure = new Error('load failed') } = {}) {
   const views: Array<{ view: FakeView; options: Record<string, any> }> = [];
   const events: Array<{ channel: string; payload: any }> = [];
   const externalUrls: string[] = [];
@@ -160,7 +160,7 @@ function createHarness({ loadErrorAtView = -1, loadFinalUrlAtView = -1 } = {}) {
     createView: (options: Record<string, any>) => {
       const view = new FakeView(options.webContents);
       if (views.length === loadErrorAtView) {
-        view.webContents.loadError = new Error('load failed');
+        view.webContents.loadError = loadFailure;
       }
       if (views.length === loadFinalUrlAtView) {
         view.webContents.loadFinalUrl = 'https://example.com/redirected';
@@ -192,6 +192,38 @@ describe('browser URL and bounds normalization', () => {
 });
 
 describe('BrowserViewManager', () => {
+  it('does not turn a superseded navigation into a failed page or external browser launch', async () => {
+    const { manager, views, externalUrls } = createHarness();
+    const initial = manager.getState('superseded');
+    const webContents = views[0]!.view.webContents;
+    let rejectEarlier!: (error: Error) => void;
+    const load = webContents.loadURL.bind(webContents);
+    webContents.loadURL = (url, options) => url.endsWith('/first')
+      ? new Promise<void>((_resolve, reject) => { rejectEarlier = reject; })
+      : load(url, options);
+    manager.navigate({ sessionId: 'superseded', tabId: initial.activeTabId, url: 'https://example.test/first' });
+    manager.navigate({ sessionId: 'superseded', tabId: initial.activeTabId, url: 'https://example.test/second' });
+    webContents.emit('did-navigate', {}, 'https://example.test/second');
+    webContents.emit('did-stop-loading');
+    rejectEarlier(Object.assign(new Error('ERR_ABORTED (-3) loading first'), { code: 'ERR_ABORTED', errno: -3 }));
+    await Promise.resolve();
+    expect(manager.getState('superseded').tabs[0]).toMatchObject({ url: 'https://example.test/second', error: null, isLoading: false });
+    expect(externalUrls).toEqual([]);
+  });
+
+  it('ignores an aborted blank initializer while preserving awaited cancellation for the caller', async () => {
+    const aborted = new Error('ERR_ABORTED (-3)');
+    const blank = createHarness({ loadErrorAtView: 0, loadFailure: aborted });
+    blank.manager.getState('blank-abort');
+    await Promise.resolve();
+    expect(blank.manager.getState('blank-abort').tabs[0].error).toBeNull();
+    expect(blank.externalUrls).toEqual([]);
+    const awaited = createHarness({ loadErrorAtView: 1, loadFailure: aborted });
+    await expect(awaited.manager.openTabAndWait({ sessionId: 'awaited-abort', url: 'https://example.test' })).rejects.toThrow('ERR_ABORTED');
+    expect(awaited.manager.getState('awaited-abort').tabs[1].error).toBeNull();
+    expect(awaited.externalUrls).toEqual([]);
+  });
+
   it('waits for agent-opened pages and reports failures without opening the system browser', async () => {
     const { manager, views } = createHarness();
     await expect(manager.openTabAndWait({

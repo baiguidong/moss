@@ -71,6 +71,8 @@ export default function TerminalWindow() {
     const timer = window.setTimeout(() => {
       void api.start({ requestId, cols: terminal.cols, rows: terminal.rows }).then((result) => {
         if (disposed || !result) return;
+        const restored = (result as typeof result & { buffer?: string }).buffer;
+        if (restored) terminal.write(restored);
         running = !exited;
         setInfo(result);
         document.title = `${result.title} - Moss`;

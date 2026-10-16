@@ -826,7 +826,7 @@ export type DesktopSettings = {
   };
   appearance: {
     themeMode: 'dark' | 'light' | 'system';
-    cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme';
+    cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme' | 'takt-theme';
     toolDisplayMode: 'expanded' | 'collapsed' | 'merged';
     chatFontSize: number;
     chatLineHeight: number;
@@ -1272,6 +1272,7 @@ export type BackgroundTaskInfo = {
 
 declare global {
   interface Window {
+    mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any };
     mossTerminal: {
       start: (payload: { requestId: string; cols: number; rows: number }) => Promise<{ title: string; cwd: string; shell: string } | null>;
       write: (payload: { requestId: string; data: string }) => Promise<void>;
@@ -1639,6 +1640,7 @@ declare global {
       };
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;
+        uploadFile?: (file: File) => Promise<{ path: string; name: string }>;
         getPathForFile: (file: File) => string;
         getFileMetadata: (path: string) => Promise<{ size: number; isFile?: boolean } | null>;
         getHomeDir: () => Promise<string>;

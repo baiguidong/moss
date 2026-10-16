@@ -11,9 +11,9 @@ function tools(...names: string[]): Tools {
 }
 
 describe('coordinator tool pool', () => {
-  test('keeps the narrow native tool set for other coordinator sessions', () => {
-    const filtered = applyCoordinatorToolFilter(tools('Agent', 'SendMessage', 'TaskStop', 'Read', 'Edit', 'Bash'))
-    expect(filtered.map(tool => tool.name)).toEqual(['Agent', 'SendMessage', 'TaskStop'])
+  test('supports real user decisions without granting coordinator file execution tools', () => {
+    const filtered = applyCoordinatorToolFilter(tools('Agent', 'AskUserQuestion', 'SendMessage', 'TaskStop', 'Read', 'Edit', 'Bash'))
+    expect(filtered.map(tool => tool.name)).toEqual(['Agent', 'AskUserQuestion', 'SendMessage', 'TaskStop'])
   })
 })
 

@@ -119,7 +119,6 @@ import {
   applyTaskOffsetsAndEvictions,
 } from './task/framework.js'
 import { getTaskOutputPath } from './task/diskOutput.js'
-import { drainPendingMessages } from '../tasks/LocalAgentTask/LocalAgentTask.js'
 import type { TaskType, TaskStatus } from '../Task.js'
 import {
   getOriginalCwd,
@@ -773,9 +772,6 @@ export async function getAttachments(
           ),
         ]
       : []),
-    maybe('agent_pending_messages', async () =>
-      getAgentPendingMessageAttachments(toolUseContext),
-    ),
     maybe('critical_system_reminder', () =>
       Promise.resolve(getCriticalSystemReminderAttachment(toolUseContext)),
     ),
@@ -931,24 +927,6 @@ export async function getQueuedCommandAttachments(
       }
     }),
   )
-}
-
-export function getAgentPendingMessageAttachments(
-  toolUseContext: ToolUseContext,
-): Attachment[] {
-  const agentId = toolUseContext.agentId
-  if (!agentId) return []
-  const drained = drainPendingMessages(
-    agentId,
-    toolUseContext.getAppState,
-    toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState,
-  )
-  return drained.map(msg => ({
-    type: 'queued_command' as const,
-    prompt: msg,
-    origin: { kind: 'coordinator' as const },
-    isMeta: true,
-  }))
 }
 
 async function buildImageContentBlocks(

@@ -380,6 +380,9 @@ export class AppRuntimeHost {
     if (!current || current.key !== runtimeRecord.key) {
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
     }
+    if (current.generation !== runtimeRecord.generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
+    }
   }
 
   async getApp(appId) {
@@ -1043,7 +1046,13 @@ export class AppRuntimeHost {
     const packageInfo = await this.getActivePackage(runtimeRecord.appId)
     const instance = this.instances.get(runtimeRecord.instanceId)
     if (!instance) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance does not exist')
-    this.registerRuntime(packageInfo, instance, runtimeRecord, await this.credentials.get(runtimeRecord.appId, runtimeRecord.instanceId))
+    const secrets = await this.credentials.get(runtimeRecord.appId, runtimeRecord.instanceId)
+    // A queued action can outlive an upgrade while package/credentials are read.
+    this.authorizeInvocation(runtimeRecord)
+    if (this.installations.get(runtimeRecord.appId)?.activeVersion !== packageInfo.manifest.version) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App version is stale')
+    }
+    this.registerRuntime(packageInfo, instance, runtimeRecord, secrets)
   }
 
   registerRuntime(packageInfo, instance, runtimeRecord, secrets) {

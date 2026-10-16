@@ -1,16 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Button } from "@/components/ui/button";
 import { documentIpc } from "@/ipc/document.ipc";
-import { shellIpc } from "@/ipc/shell.ipc";
+import { OfficePreviewToolbar } from "../OfficePreviewToolbar";
 import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
 
 const pdfCache = new Map<string, { pdfPath: string; timestamp: number }>();
 const CACHE_TIMEOUT = 5 * 60 * 1000;
 
-export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVersion?: number }) {
+export function PPTViewer({ filePath, fileVersion, toolbarContainer }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
   const [useOfv, setUseOfv] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
@@ -55,10 +54,7 @@ export function PPTViewer({ filePath, fileVersion }: { filePath: string; fileVer
   if (pdfPath) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void load(true)}>刷新</Button>
-          <Button variant="ghost" size="sm" className="text-xs" onClick={() => void shellIpc.openFile(filePath)}>用系统应用打开</Button>
-        </div>
+        <OfficePreviewToolbar filePath={filePath} onRefresh={() => void load(true)} container={toolbarContainer} />
         <div className="min-h-0 flex-1">
           <PDFViewer filePath={pdfPath} title={filePath} />
         </div>

@@ -58,6 +58,7 @@
         "tailwind-merge": "^3.3.1",
         "turndown": "^7.2.4",
         "tw-animate-css": "1.3.3",
+        "ws": "8.20.0",
         "xlsx-republish": "^0.20.3",
         "xml-formatter": "^3.7.0",
         "yauzl": "^3.2.1",
@@ -1763,6 +1764,8 @@
     "wrap-ansi-cjs": ["wrap-ansi@7.0.0", "https://registry.npmmirror.com/wrap-ansi/-/wrap-ansi-7.0.0.tgz", { "dependencies": { "ansi-styles": "^4.0.0", "string-width": "^4.1.0", "strip-ansi": "^6.0.0" } }, "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q=="],
 
     "wrappy": ["wrappy@1.0.2", "https://registry.npmmirror.com/wrappy/-/wrappy-1.0.2.tgz", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
+
+    "ws": ["ws@8.20.0", "https://registry.npmmirror.com/ws/-/ws-8.20.0.tgz", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA=="],
 
     "xlsx": ["@stackline/xlsx@1.0.7", "https://registry.npmmirror.com/@stackline/xlsx/-/xlsx-1.0.7.tgz", {}, "sha512-bvapFJgADVvt+unWcqvSVt8wRDsY1rWt652NqoTAecGR01WKOcO1WimBCKQibhURBYkuTDxL3P6DdxT2T2p7IQ=="],
 

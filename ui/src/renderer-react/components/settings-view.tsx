@@ -336,6 +336,12 @@ const THEME_PREVIEW_STYLES: Record<string, React.CSSProperties> = {
   'gradient-theme': {
     background: 'linear-gradient(135deg, #eefaf5 0%, #d8ebe7 100%)',
   },
+  'takt-theme': {
+    backgroundColor: '#fbfcfa',
+    backgroundImage: 'radial-gradient(#b6c8b9 1px, transparent 1px)',
+    backgroundSize: '11px 11px',
+    boxShadow: 'inset 0 -8px 0 #f0f5ef',
+  },
 };
 
 function Surface({ children, className }: SettingsGroupProps) {
@@ -741,11 +747,12 @@ function ThemePresetButton({ selected, themeId, themeName, onClick }: ThemePrese
   return (
     <button
       type="button"
+      aria-pressed={selected}
       onClick={onClick}
       className={cn(
-        'flex min-w-[110px] flex-1 items-center gap-3 rounded-[18px] border px-3 py-3 text-left transition-colors',
+        'flex min-w-max flex-auto items-center gap-3 rounded-[18px] border px-3 py-3 text-left transition-colors',
         selected
-          ? 'border-sky-500 bg-sky-50/90 text-sky-700 dark:border-primary dark:bg-primary/10 dark:text-primary'
+          ? 'border-primary bg-primary/10 text-primary'
           : 'border-sidebar-border bg-sidebar-accent/65 text-sidebar-foreground hover:bg-sidebar-accent/85',
       )}
     >
@@ -754,7 +761,7 @@ function ThemePresetButton({ selected, themeId, themeName, onClick }: ThemePrese
         style={THEME_PREVIEW_STYLES[themeId] || THEME_PREVIEW_STYLES.default}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium">{themeName}</span>
+        <span className="block whitespace-nowrap text-[13px] font-medium">{themeName}</span>
       </span>
       {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
     </button>

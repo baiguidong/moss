@@ -105,10 +105,11 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
  */
 
 /**
- * Tools allowed in coordinator mode - only output and agent management tools for the coordinator
+ * Tools allowed in coordinator mode - output, user decisions and agent management.
  */
 export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
   SAVE_SESSION_SUMMARY_TOOL_NAME,
+  ASK_USER_QUESTION_TOOL_NAME,
   AGENT_TOOL_NAME,
   TASK_STOP_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,

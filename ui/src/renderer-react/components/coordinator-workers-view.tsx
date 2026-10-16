@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
+import { GroupedVirtuoso, type GroupedVirtuosoHandle } from "react-virtuoso";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { SessionSummary } from "../types";
@@ -84,8 +85,6 @@ export function CoordinatorWorkersSummary({
   if (sorted.length === 0) return null;
 
   const visible = sorted.slice(0, 8);
-  const compactHiddenCount = Math.max(0, sorted.length - 4);
-  const wideHiddenCount = sorted.length - visible.length;
   const summary = statusSummary(sorted);
 
   return (
@@ -104,7 +103,10 @@ export function CoordinatorWorkersSummary({
                   type="button"
                   className={cn(
                     "h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    index < 4 ? "flex" : "hidden sm:flex",
+                    index === 0 ? "flex"
+                      : index < 2 ? "hidden @[140px]/worker-summary:flex"
+                        : index < 4 ? "hidden @[240px]/worker-summary:flex"
+                          : "hidden @[400px]/worker-summary:flex",
                   )}
                   aria-label={`打开子 Agent：${worker.title}，${STATUS_LABELS[status]}`}
                   onClick={() => onSelect(worker.id)}
@@ -116,30 +118,26 @@ export function CoordinatorWorkersSummary({
             </Tooltip>
           );
         })}
-        {compactHiddenCount > 0 ? (
+        {([
+          [1, "flex @[140px]/worker-summary:hidden"],
+          [2, "hidden @[140px]/worker-summary:flex @[240px]/worker-summary:hidden"],
+          [4, "hidden @[240px]/worker-summary:flex @[400px]/worker-summary:hidden"],
+          [8, "hidden @[400px]/worker-summary:flex"],
+        ] as const).map(([limit, display]) => sorted.length > limit ? (
           <button
+            key={limit}
             type="button"
-            className="flex h-6 shrink-0 items-center rounded-full px-1.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden"
+            className={cn("h-6 shrink-0 items-center rounded-full px-1.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", display)}
             onClick={onOpen}
-            aria-label={`查看另外 ${compactHiddenCount} 个子 Agent`}
+            aria-label={`查看另外 ${sorted.length - limit} 个子 Agent`}
           >
-            +{compactHiddenCount}
+            +{sorted.length - limit}
           </button>
-        ) : null}
-        {wideHiddenCount > 0 ? (
-          <button
-            type="button"
-            className="hidden h-6 shrink-0 items-center rounded-full px-1.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
-            onClick={onOpen}
-            aria-label={`查看另外 ${wideHiddenCount} 个子 Agent`}
-          >
-            +{wideHiddenCount}
-          </button>
-        ) : null}
+        ) : null)}
       </div>
       <button
         type="button"
-        className="hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
+        className="hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @[640px]/worker-summary:flex"
         onClick={onOpen}
         aria-label={`打开子 Agent 列表，${summary}`}
       >
@@ -168,7 +166,7 @@ function WorkerRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        "flex min-h-16 w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6",
+        "flex min-h-16 w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6",
         selected && "bg-muted/55",
       )}
       aria-label={`打开子 Agent：${worker.title}，${STATUS_LABELS[status]}`}
@@ -239,16 +237,34 @@ export function CoordinatorWorkersView({
   onOpenWorker: (workerId: string) => void;
 }) {
   const selectedRowRef = React.useRef<HTMLButtonElement | null>(null);
-
-  React.useEffect(() => {
-    if (!selectedWorkerId) return;
-    selectedRowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [selectedWorkerId]);
-
+  const virtualListRef = React.useRef<GroupedVirtuosoHandle>(null);
   const sorted = React.useMemo(() => sortWorkers(workers), [workers]);
   const running = sorted.filter((worker) => getCoordinatorWorkerStatus(worker) === "running");
   const failed = sorted.filter((worker) => getCoordinatorWorkerStatus(worker) === "failed");
   const completed = sorted.filter((worker) => getCoordinatorWorkerStatus(worker) === "completed");
+  const virtual = sorted.length > 100;
+  const selectedIndex = sorted.findIndex(worker => worker.id === selectedWorkerId);
+  const selectedExists = selectedIndex >= 0;
+  const previousSelectionRef = React.useRef({ id: selectedWorkerId, virtual, exists: selectedExists });
+  React.useEffect(() => {
+    const previous = previousSelectionRef.current;
+    previousSelectionRef.current = { id: selectedWorkerId, virtual, exists: selectedExists };
+    if (!selectedWorkerId || !selectedExists) return;
+    if (virtual) {
+      // Let Virtuoso measure a fresh list before applying imperative scrolls;
+      // initialTopMostItemIndex handles selection when the list mounts.
+      if (previous.virtual && (previous.id !== selectedWorkerId || !previous.exists)) {
+        virtualListRef.current?.scrollToIndex({ index: selectedIndex, align: "center" });
+      }
+    } else selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+    // Keep the user's scroll position during status updates. Scroll again only
+    // for an explicit selection, a newly arrived worker, or a layout change.
+  }, [selectedWorkerId, selectedExists, virtual]);
+  const groups = [
+    { label: "进行中", count: running.length },
+    { label: "需要关注", count: failed.length },
+    { label: "历史", count: completed.length },
+  ].filter(group => group.count > 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -269,11 +285,25 @@ export function CoordinatorWorkersView({
           {failed.length > 0 ? ` · 失败 ${failed.length}` : ""}
         </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {virtual ? <GroupedVirtuoso
+        ref={virtualListRef}
+        className="min-h-0 flex-1"
+        initialTopMostItemIndex={Math.max(0, selectedIndex)}
+        groupCounts={groups.map(group => group.count)}
+        increaseViewportBy={200}
+        groupContent={index => groups[index] ? <div className="flex h-9 items-center justify-between border-b border-border/60 bg-background px-4 text-[11px] font-medium text-muted-foreground sm:px-6">
+          <span>{groups[index].label}</span><span className="tabular-nums">{groups[index].count}</span>
+        </div> : null}
+        itemContent={index => {
+          const worker = sorted[index];
+          return worker ? <WorkerRow key={worker.id} worker={worker}
+            selected={worker.id === selectedWorkerId} onOpen={() => onOpenWorker(worker.id)} /> : null;
+        }}
+      /> : <div className="min-h-0 flex-1 overflow-y-auto">
         <WorkerSection label="进行中" workers={running} selectedWorkerId={selectedWorkerId} selectedRowRef={selectedRowRef} onOpenWorker={onOpenWorker} />
         <WorkerSection label="需要关注" workers={failed} selectedWorkerId={selectedWorkerId} selectedRowRef={selectedRowRef} onOpenWorker={onOpenWorker} />
         <WorkerSection label="历史" workers={completed} selectedWorkerId={selectedWorkerId} selectedRowRef={selectedRowRef} onOpenWorker={onOpenWorker} />
-      </div>
+      </div>}
     </div>
   );
 }

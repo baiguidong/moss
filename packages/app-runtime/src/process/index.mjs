@@ -125,7 +125,7 @@ export class AppProcessSupervisor {
       instanceId: definition?.instanceId,
       state: hosted?.state || 'stopped',
       pid: isChildRunning(hosted?.child) ? hosted.child.pid : null,
-      generation: definition?.generation || null,
+      generation: (hosted?.definition || definition)?.generation || null,
       owner: definition?.owner || null,
       startedAt: hosted?.startedAt || null,
       lastError: hosted?.lastError || null,
@@ -163,7 +163,13 @@ export class AppProcessSupervisor {
     const definition = this.definitions.get(key)
     if (!definition) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Unknown App runtime: ${key}`)
     const current = this.processes.get(key)
-    if (current?.state === 'running') return this.status(key)
+    if (current?.state === 'running') {
+      if (current.definition.generation === definition.generation && current.definition.version === definition.version) return this.status(key)
+      // An action may start the previous definition while an upgrade is awaiting
+      // its state writes. Reconcile the actual process, not just the registry.
+      await this.stopNow(key)
+      return this.startNow(key, options)
+    }
     if (current?.state === 'crash-loop' && !options.clearCrashLoop) {
       throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App runtime is in crash-loop: ${key}`)
     }

@@ -120,7 +120,7 @@ function buildDirtyMetadata(file: WorkspacePreviewData, content: string): Previe
   };
 }
 
-export function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
+export function PreviewViewer({ file, toolbarContainer }: { file: WorkspacePreviewData; toolbarContainer?: HTMLElement | null }) {
   const metadata = getPreviewMetadata(file);
   const previewPath = typeof metadata.localPreviewPath === "string" && metadata.localPreviewPath
     ? metadata.localPreviewPath
@@ -136,11 +136,11 @@ export function PreviewViewer({ file }: { file: WorkspacePreviewData }) {
     case "html":
       return <HTMLViewer content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
-      return <WordViewer filePath={previewPath} fileVersion={fileVersion} />;
+      return <WordViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "excel":
-      return <ExcelViewer filePath={previewPath} fileVersion={fileVersion} />;
+      return <ExcelViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "ppt":
-      return <PPTViewer filePath={previewPath} fileVersion={fileVersion} />;
+      return <PPTViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "diff":
       return <DiffViewer content={file.content} />;
     case "url":
@@ -199,6 +199,7 @@ export function PreviewDrawer({
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const [editMode, setEditMode] = React.useState(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
+  const [viewerToolbarContainer, setViewerToolbarContainer] = React.useState<HTMLDivElement | null>(null);
   const activeTabRef = React.useRef<HTMLButtonElement | null>(null);
   const autoSavedContentRef = React.useRef<Map<string, string>>(new Map());
   const historyTarget = React.useMemo(
@@ -517,12 +518,15 @@ export function PreviewDrawer({
       <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
         <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <div className="flex w-max items-center gap-1 px-2">
+            <div ref={setViewerToolbarContainer} className="flex shrink-0 items-center gap-1 empty:hidden" />
             <Button
               variant="ghost"
               size="sm"
               className="h-7 rounded-md px-2 text-xs"
               onClick={() => void handleOpenInSystem()}
               disabled={activeFile.contentType !== "url" && (isVirtualPreview || !externalOpenPath)}
+              title={activeFile.contentType === "url" ? "在浏览器中打开" : "用系统应用打开"}
+              aria-label={activeFile.contentType === "url" ? "在浏览器中打开" : "用系统应用打开"}
             >
               <ExternalLink className="h-3.5 w-3.5" />
               打开
@@ -613,7 +617,7 @@ export function PreviewDrawer({
             />
           </div>
         ) : (
-          <PreviewViewer file={activeFile} />
+          <PreviewViewer file={activeFile} toolbarContainer={viewerToolbarContainer} />
         )}
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { getSdkAgentProgressSummariesEnabled } from '../../bootstrap/state.js';
+import { randomUUID } from 'node:crypto';
 import { OUTPUT_FILE_TAG, STATUS_TAG, SUMMARY_TAG, TASK_ID_TAG, TASK_NOTIFICATION_TAG, TOOL_USE_ID_TAG, WORKTREE_BRANCH_TAG, WORKTREE_PATH_TAG, WORKTREE_TAG } from '../../constants/xml.js';
 import { abortSpeculation } from '../../services/PromptSuggestion/speculation.js';
 import type { AppState } from '../../state/AppState.js';
@@ -121,6 +122,12 @@ export type LocalAgentTaskState = TaskStateBase & {
   agentType: string;
   model?: string;
   abortController?: AbortController;
+  /** Identifies one execution when SendMessage reuses the same agent ID. */
+  executionId?: string;
+  /** Runtime only: the query and transcript metadata have finished unwinding. */
+  executionSettled?: Promise<void>;
+  /** A terminal task can still be preparing its result notification. */
+  notificationPending?: boolean;
   unregisterCleanup?: () => void;
   error?: string;
   result?: AgentToolResult;
@@ -132,8 +139,12 @@ export type LocalAgentTaskState = TaskStateBase & {
   lastReportedTokenCount: number;
   // Whether the task has been backgrounded (false = foreground running, true = backgrounded)
   isBackgrounded: boolean;
-  // Messages queued mid-turn via SendMessage, drained at tool-round boundaries
+  // Messages queued mid-turn via SendMessage, drained at model-turn boundaries
   pendingMessages: string[];
+  // The query closes its inbox before asynchronous metadata/MCP cleanup.
+  // SendMessage then waits for this execution and resumes instead of queueing
+  // input that no model request can consume.
+  isMessageQueueClosed?: boolean;
   // UI is holding this task: blocks eviction, enables stream-append, triggers
   // disk bootstrap. Set by enterTeammateView. Separate from viewingAgentTaskId
   // (which is "what am I LOOKING at") — retain is "what am I HOLDING."
@@ -159,11 +170,14 @@ export function isLocalAgentTask(task: unknown): task is LocalAgentTaskState {
 export function isPanelAgentTask(t: unknown): t is LocalAgentTaskState {
   return isLocalAgentTask(t) && t.agentType !== 'main-session';
 }
-export function queuePendingMessage(taskId: string, msg: string, setAppState: (f: (prev: AppState) => AppState) => void): void {
-  updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => ({
-    ...task,
-    pendingMessages: [...task.pendingMessages, msg]
-  }));
+export function queuePendingMessage(taskId: string, msg: string, setAppState: (f: (prev: AppState) => AppState) => void): boolean {
+  let accepted = false;
+  updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
+    if (!isLocalAgentTask(task) || task.status !== 'running' || task.isMessageQueueClosed) return task;
+    accepted = true;
+    return { ...task, pendingMessages: [...task.pendingMessages, msg] };
+  });
+  return accepted;
 }
 
 /**
@@ -178,17 +192,21 @@ export function appendMessageToLocalAgent(taskId: string, message: Message, setA
     messages: [...(task.messages ?? []), message]
   }));
 }
-export function drainPendingMessages(taskId: string, getAppState: () => AppState, setAppState: (f: (prev: AppState) => AppState) => void): string[] {
-  const task = getAppState().tasks[taskId];
-  if (!isLocalAgentTask(task) || task.pendingMessages.length === 0) {
-    return [];
-  }
-  const drained = task.pendingMessages;
-  updateTaskState<LocalAgentTaskState>(taskId, setAppState, t => ({
-    ...t,
-    pendingMessages: []
-  }));
+export function drainPendingMessages(taskId: string, setAppState: (f: (prev: AppState) => AppState) => void, closeIfEmpty = false): string[] {
+  let drained: string[] = [];
+  updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
+    if (!isLocalAgentTask(task)) return task;
+    drained = task.pendingMessages;
+    if (drained.length) return { ...task, pendingMessages: [] };
+    return closeIfEmpty ? { ...task, isMessageQueueClosed: true } : task;
+  });
   return drained;
+}
+
+export function closeAgentMessageQueue(taskId: string, setAppState: SetAppState): void {
+  updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => (
+    isLocalAgentTask(task) && !task.isMessageQueueClosed ? { ...task, isMessageQueueClosed: true } : task
+  ));
 }
 
 /**
@@ -492,6 +510,7 @@ export function registerAsyncAgent({
     prompt,
     selectedAgent,
     agentType: selectedAgent.agentType ?? 'general-purpose',
+    executionId: randomUUID(),
     abortController,
     retrieved: false,
     lastReportedToolCount: 0,

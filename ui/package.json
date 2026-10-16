@@ -29,7 +29,10 @@
     "check:host-contracts": "node ../packages/host-contracts/scripts/generate.mjs --check && node ../packages/app-sdk/scripts/export-types.mjs --check",
     "test:buddy": "node --test tests/moss-settings-service.test.mjs && electron tests/buddy.electron.mjs",
     "test:buddy-main": "electron tests/buddy-main.electron.mjs",
-    "build:mcp-app": "node scripts/build-mcp-app.mjs"
+    "build:mcp-app": "node scripts/build-mcp-app.mjs",
+    "start:web": "node scripts/start-web.mjs",
+    "build:web": "node scripts/build-direct.mjs && node scripts/build-renderer.mjs",
+    "test:web": "node --test tests/web-*.test.mjs"
   },
   "build": {
     "appId": "com.moss.ai",
@@ -285,7 +288,8 @@
     "tw-animate-css": "1.3.3",
     "xlsx-republish": "^0.20.3",
     "xml-formatter": "^3.7.0",
-    "yauzl": "^3.2.1"
+    "yauzl": "^3.2.1",
+    "ws": "8.20.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.0",

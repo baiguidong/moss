@@ -1,4 +1,5 @@
 export function toFileUrl(filePath: string): string {
+  if (window.mossWeb) return window.mossWeb.fileUrl(filePath);
   const normalized = filePath.replace(/\\/g, "/");
   if (/^[a-zA-Z]:\//.test(normalized)) {
     return `file:///${encodeURI(normalized)}`;

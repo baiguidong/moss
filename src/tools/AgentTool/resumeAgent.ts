@@ -5,7 +5,7 @@ import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { getAdvancedSettingsEnvironment } from '../../services/advancedSettings.js'
 import type { ToolUseContext } from '../../Tool.js'
-import { registerAsyncAgent } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
+import { isLocalAgentTask, registerAsyncAgent } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { assembleToolPool } from '../../tools.js'
 import { asAgentId } from '../../types/ids.js'
 import { runWithAgentContext } from '../../utils/agentContext.js'
@@ -25,6 +25,7 @@ import {
 } from '../../utils/sessionIdContext.js'
 import {
   getAgentTranscript,
+  flushSessionStorage,
   readAgentMetadata,
 } from '../../utils/sessionStorage.js'
 import { buildEffectiveSystemPrompt } from '../../utils/systemPrompt.js'
@@ -33,6 +34,7 @@ import { getTaskOutputPath } from '../../utils/task/diskOutput.js'
 import { getParentSessionId } from '../../utils/teammate.js'
 import { reconstructForSubagentResume } from '../../utils/toolResultStorage.js'
 import { runAsyncAgentLifecycle } from './agentToolUtils.js'
+import { waitForAgentWorktreeCleanup } from './worktreeCleanup.js'
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import { FORK_AGENT, isForkSubagentEnabled } from './forkSubagent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
@@ -71,10 +73,18 @@ export async function resumeAgentBackground({
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState
   const permissionMode = appState.toolPermissionContext.mode
 
-  const [transcript, meta] = await Promise.all([
+  const previousTask = appState.tasks[agentId]
+  if (isLocalAgentTask(previousTask)) await previousTask.executionSettled
+  // Stop can finish before the transcript writer's debounce expires. Resume
+  // must read the just-finished run, including its initial prompt and receipts.
+  await flushSessionStorage()
+  const [transcript, savedMetadata] = await Promise.all([
     getAgentTranscript(asAgentId(agentId)),
     readAgentMetadata(asAgentId(agentId)),
   ])
+  const meta = await waitForAgentWorktreeCleanup(savedMetadata?.worktreePath, toolUseContext.abortController.signal)
+    ? await readAgentMetadata(asAgentId(agentId))
+    : savedMetadata
   if (!transcript) {
     throw new Error(`No transcript found for agent ID: ${agentId}`)
   }
@@ -228,6 +238,7 @@ export async function resumeAgentBackground({
       ...resumedMessages,
       createUserMessage({ content: prompt }),
     ],
+    persistedMessageCount: resumedMessages.length,
     toolUseContext,
     canUseTool,
     isAsync: true,
@@ -281,6 +292,7 @@ export async function resumeAgentBackground({
     prompt,
     selectedAgent,
     setAppState: rootSetAppState,
+    parentAbortController: isCoordinatorMode() ? toolUseContext.abortController : undefined,
     toolUseId: toolUseContext.toolUseId,
   })
 

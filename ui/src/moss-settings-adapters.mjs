@@ -9,7 +9,7 @@ const clone = value => structuredClone(value)
 const desktopSchema = inferConfigurationSchema(DEFAULT_DESKTOP_SETTINGS)
 const object = {type:'object',additionalProperties:true}
 const enums = {
-  'appearance.themeMode':['light','dark','system'], 'appearance.cssThemeId':['default','grid-theme','dot-theme','gradient-theme'],
+  'appearance.themeMode':['light','dark','system'], 'appearance.cssThemeId':['default','grid-theme','dot-theme','gradient-theme','takt-theme'],
   'appearance.toolDisplayMode':['expanded','collapsed','merged'], 'permissionMode':PERMISSION_MODES,
   'thinkingMode':['adaptive','enabled','disabled'],
 }

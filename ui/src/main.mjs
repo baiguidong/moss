@@ -37,8 +37,11 @@ import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } fr
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
+import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { startWebServer } from './web/server.mjs';
+import { createWebTerminals } from './web/terminal.mjs';
 import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
-const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents, powerMonitor } = electron;
+const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents, powerMonitor } = electron;
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -231,7 +234,7 @@ import {
 } from './shared/session-fork.mjs';
 import {
   isAgentTeamSidechain,
-  isSubAgentFailureEntry,
+  parseSubAgentTranscript,
   resolveSubAgentStatus,
 } from './shared/subagent-lifecycle.mjs';
 import { softDeleteProjectRecord } from './shared/project-record.mjs';
@@ -347,6 +350,19 @@ import {
 } from './agent-mail-context.mjs';
 import { createAgentMailStore } from './agent-mail-store.mjs';
 import { createAgentMailPoller } from './agent-mail-poller.mjs';
+
+const isWebHost = process.env.MOSS_WEB_MODE === '1';
+let webServer = null;
+let webTerminals = null;
+if (isWebHost) {
+  if (!process.env.MOSS_HOME) throw new Error('Web Host requires a dedicated MOSS_HOME.');
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('ozone-platform', 'headless');
+    app.disableHardwareAcceleration();
+  }
+  process.on('SIGTERM', () => app.quit());
+  process.on('SIGINT', () => app.quit());
+}
 
 // Resolve the Desktop data root and isolate Electron state before taking the
 // single-instance lock. The default profile keeps Electron's historical path.
@@ -627,6 +643,7 @@ const sessionSendQueues = new Map();
 const agentTeamSessionShutdowns = new Map();
 const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
+const subAgentSyncQueues = new Map();
 const appWindows = new Map();
 const appWindowStates = new Map();
 const pendingEmbeddedApps = new Map();
@@ -4500,6 +4517,7 @@ async function reopenCompletedProjectSession(sessionRecord) {
 
 function getBootStatus() {
   return {
+    hostMode: isWebHost ? 'web' : 'desktop',
     repoRoot,
     uiRoot,
     sdkPath,
@@ -4527,6 +4545,7 @@ function getBootStatus() {
 }
 
 function emitToRenderer(channel, payload) {
+  ipcMain.publish(channel, payload);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(channel, payload);
 }
@@ -4802,7 +4821,7 @@ async function settleProjectDecisionRequest(pending, permissionDecision) {
 }
 
 async function requestAskUserQuestion(sessionRecord, input, request = {}) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+  if (!isWebHost && (!mainWindow || mainWindow.isDestroyed())) {
     return {
       behavior: 'deny',
       message: 'No desktop window is available to answer the question.',
@@ -6220,30 +6239,6 @@ async function findSessionSubagentDir(sessionRecord) {
   return null;
 }
 
-function parseSubAgentTranscript(raw) {
-  const history = [];
-  let failed = false;
-  let terminalStatus = null;
-  for (const line of String(raw || '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const entry = JSON.parse(trimmed);
-      if (isSubAgentFailureEntry(entry)) {
-        failed = true;
-      }
-      if (entry?.type === 'result') {
-        terminalStatus = entry?.subtype === 'success' ? 'completed' : 'failed';
-      }
-      const displayEntry = entry?.isSidechain ? { ...entry, isSidechain: false } : entry;
-      if (isDisplayTranscriptEntry(displayEntry)) history.push(displayEntry);
-    } catch {
-      // The worker may still be appending a partial final line.
-    }
-  }
-  return { history, failed, terminalStatus };
-}
-
 async function removeMirroredAgentTeamSidechain(id) {
   const existing = subAgentSessions.get(id);
   if (!existing) return false;
@@ -6260,6 +6255,26 @@ async function removeMirroredAgentTeamSidechain(id) {
 }
 
 async function syncSubAgentSessionsForParent(parentSession) {
+  if (!parentSession) return [];
+  const existing = subAgentSyncQueues.get(parentSession.id);
+  if (existing) {
+    existing.pendingParent = parentSession;
+    existing.next ||= existing.promise.catch(() => {}).then(() => (
+      syncSubAgentSessionsForParent(existing.pendingParent)
+    ));
+    return existing.next;
+  }
+  const entry = { pendingParent: parentSession, promise: null, next: null };
+  // One active pass and one pending pass per parent. Each caller can finish
+  // after its pass even if worker updates continue arriving indefinitely.
+  entry.promise = Promise.resolve().then(() => syncSubAgentSessionsForParentNow(parentSession)).finally(() => {
+    if (subAgentSyncQueues.get(parentSession.id) === entry) subAgentSyncQueues.delete(parentSession.id);
+  });
+  subAgentSyncQueues.set(parentSession.id, entry);
+  return entry.promise;
+}
+
+async function syncSubAgentSessionsForParentNow(parentSession) {
   const isLiveParent = () => Boolean(
     parentSession &&
     !parentSession.deleted &&
@@ -6275,6 +6290,10 @@ async function syncSubAgentSessionsForParent(parentSession) {
     return [];
   }
   if (!isLiveParent()) return [];
+  const inheritedResourceManifest = parentSession.projectResourceManifest || await readJsonFileAsync(
+    getLocalSessionResourceManifestPath(parentSession.id),
+    null,
+  );
   const synced = [];
   let runningCount = 0;
   for (const metaFileName of fileNames.filter((name) => /^agent-.+\.meta\.json$/.test(name))) {
@@ -6296,9 +6315,9 @@ async function syncSubAgentSessionsForParent(parentSession) {
     if (!isLiveParent()) return synced;
     const id = `subagent-${agentId}`;
     const existing = subAgentSessions.get(id);
-    const transcriptChanged = !existing ||
-      existing.sourceTranscriptMtimeMs !== stat.mtimeMs ||
-      existing.sourceTranscriptSize !== stat.size;
+    const sourceTranscriptSignature = JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
+    const transcriptChanged = existing?.sourceTranscriptSignature !== sourceTranscriptSignature;
+    const sourceResourceManifestSignature = JSON.stringify([inheritedResourceManifest || null, meta?.projectResources || null]);
     let parsed = {
       history: Array.isArray(existing?.history) ? existing.history : [],
       failed: existing?.sourceTranscriptFailed === true,
@@ -6324,6 +6343,39 @@ async function syncSubAgentSessionsForParent(parentSession) {
         ? meta.agentType.trim()
         : '子会话';
     const workspace = createDefaultWorkspacePath(id);
+    const runtimeState = parentSession.runtime?.getAppState?.();
+    const runtimeTask = runtimeState?.tasks?.[agentId];
+    const status = resolveSubAgentStatus({
+      metadataStatus: meta?.status,
+      transcriptStatus: parsed.terminalStatus,
+      transcriptFailed: parsed.failed,
+      parentBusy: parentSession.busy,
+      runtimeStatus: runtimeTask?.type === 'local_agent' ? runtimeTask.status : undefined,
+      runtimeAvailable: Boolean(runtimeState),
+    });
+    if (status === 'running') runningCount += 1;
+    // Compare the actual metadata projection, including fields which can arrive
+    // after the transcript or change without another model message.
+    const mirroredMetadata = {
+      title,
+      workspace,
+      subagentStatus: status,
+      parentSessionId: parentSession.id,
+      projectId: parentSession.projectId || null,
+      permissionMode: normalizePermissionMode(parentSession.permissionMode, desktopSettings.permissionMode),
+      assistantName: typeof meta?.agentType === 'string' ? meta.agentType : null,
+      workerName: typeof meta?.agentName === 'string' ? meta.agentName : null,
+      appIds: normalizeStringList(parentSession.runtimeAppIds || parentSession.appIds),
+      appServiceIds: normalizeStringList(parentSession.runtimeAppServiceIds || parentSession.appServiceIds),
+      connectorIds: parentSession.projectId
+        ? normalizeStringList(meta?.projectResources?.connectorIds)
+        : normalizeStringList(parentSession.connectorIds),
+      sourceResourceManifestSignature,
+    };
+    const hasChanged = transcriptChanged || Object.entries(mirroredMetadata).some(
+      ([field, value]) => JSON.stringify(existing?.[field]) !== JSON.stringify(value),
+    );
+    if (!hasChanged) continue;
     const workspaceDirectories = getProjectSessionWorkspaceDirectories(parentSession.projectId);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
@@ -6333,15 +6385,13 @@ async function syncSubAgentSessionsForParent(parentSession) {
       )),
     ]);
     const childTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(id, agentId);
-    await fsp.copyFile(transcriptPath, childTranscriptPath);
+    if (transcriptChanged || existing?.workspace !== workspace) {
+      await fsp.copyFile(transcriptPath, childTranscriptPath);
+    }
     if (!isLiveParent()) {
       await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
       return synced;
     }
-    const inheritedResourceManifest = parentSession.projectResourceManifest || await readJsonFileAsync(
-      getLocalSessionResourceManifestPath(parentSession.id),
-      null,
-    );
     if (inheritedResourceManifest && typeof inheritedResourceManifest === 'object') {
       const parentAssetRoot = path.join(parentSession.workspace, '.moss', 'project-assets');
       const childAssetRoot = path.join(workspace, '.moss', 'project-assets');
@@ -6369,26 +6419,12 @@ async function syncSubAgentSessionsForParent(parentSession) {
       await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
       return synced;
     }
-    const status = resolveSubAgentStatus({
-      metadataStatus: meta?.status,
-      transcriptStatus: parsed.terminalStatus,
-      transcriptFailed: parsed.failed,
-      parentBusy: parentSession.busy,
-      runtimeActive: Boolean(parentSession.runtime),
-    });
-    if (status === 'running') runningCount += 1;
-    const hasChanged = !existing || transcriptChanged || existing.title !== title ||
-      existing.workspace !== workspace || existing.subagentStatus !== status ||
-      existing.parentSessionId !== parentSession.id || existing.projectId !== parentSession.projectId;
-    if (!hasChanged) continue;
     const record = {
       ...(existing || {}),
+      ...mirroredMetadata,
       id,
-      title,
-      workspace,
       remoteWorkspace: null,
       agentMode: 'local',
-      permissionMode: normalizePermissionMode(parentSession.permissionMode, desktopSettings.permissionMode),
       sessionDir: getLocalSessionDir(id),
       isCoordinatorMode: false,
       createdAt: existing?.createdAt || stat.birthtimeMs || stat.ctimeMs || Date.now(),
@@ -6411,32 +6447,21 @@ async function syncSubAgentSessionsForParent(parentSession) {
       workspaceWatcherSyncTimer: existing?.workspaceWatcherSyncTimer || null,
       persistTimer: existing?.persistTimer || null,
       isSubAgent: true,
-      assistantName: typeof meta?.agentType === 'string' ? meta.agentType : null,
-      workerName: typeof meta?.agentName === 'string' ? meta.agentName : null,
       assistantSystemPrompt: '',
-      projectId: parentSession.projectId || null,
-      appIds: normalizeStringList(parentSession.runtimeAppIds || parentSession.appIds),
-      appServiceIds: normalizeStringList(parentSession.runtimeAppServiceIds || parentSession.appServiceIds),
-      connectorIds: parentSession.projectId
-        ? normalizeStringList(meta?.projectResources?.connectorIds)
-        : normalizeStringList(parentSession.connectorIds),
       sessionKind: 'chat',
       sourceSessionId: null,
       cronTaskId: null,
-      parentSessionId: parentSession.id,
       sessionRole: 'chat',
-      subagentStatus: status,
       sourceTranscriptFailed: parsed.failed,
       sourceTranscriptTerminalStatus: parsed.terminalStatus,
-      sourceTranscriptMtimeMs: stat.mtimeMs,
-      sourceTranscriptSize: stat.size,
+      sourceTranscriptSignature,
     };
     subAgentSessions.set(id, record);
     schedulePersistSession(record, true);
     emitSessionMeta(record);
     // Push the refreshed transcript too, so an open sub-agent view repaints live
     // as the worker appends — meta alone only updates preview/status.
-    emitSessionHistory(record);
+    if (transcriptChanged) emitSessionHistory(record);
     synced.push(record);
   }
   if (synced.length > 0) {
@@ -8224,13 +8249,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
   });
   registerAgentIpcHandlers();
-  terminalManager = registerTerminalIpc({
-    ipcMain, app, BrowserWindow,
-    canOpen: (sender) => !updateInstallPreparation.isPreparing() && sender === mainWindow?.webContents,
-    preloadPath: path.join(__dirname, 'terminal-preload.mjs'),
-    rendererHtml,
-    rendererDevServerUrl,
-    resolveLaunch: async ({ sessionId, action } = {}) => {
+  const resolveTerminalLaunch = async ({ sessionId, action } = {}) => {
       assertUpdateWorkAllowed();
       const sessionRecord = getSessionRecord(sessionId);
       await waitForManagedRuntimesBeforeLocalSession();
@@ -8248,8 +8267,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         pythonPath: managedRuntimes.python.installed ? managedRuntimes.python.path : null,
         mossHome: MOSS_HOME,
       });
-    },
+    };
+  if (isWebHost) {
+    webTerminals = createWebTerminals({ registry: ipcMain, resolveLaunch: resolveTerminalLaunch });
+  } else {
+    terminalManager = registerTerminalIpc({
+    ipcMain, app, BrowserWindow,
+    canOpen: (sender) => !updateInstallPreparation.isPreparing() && sender === mainWindow?.webContents,
+    preloadPath: path.join(__dirname, 'terminal-preload.mjs'),
+    rendererHtml,
+    rendererDevServerUrl,
+    resolveLaunch: resolveTerminalLaunch,
   });
+  }
   registerCronIpcHandlers({ ipcMain, mossHome: MOSS_HOME });
   registerRemoteCronIpc({
     ipcMain,
@@ -8261,7 +8291,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     findSession: findRemoteDirectSessionRecord,
   });
   startMossCronScheduler();
-  await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
+  if (!isWebHost) await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
   registerLibreOfficeIpcHandlers();
   registerPreviewHistoryIpcHandlers();
@@ -8346,8 +8376,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createSessionRecord({ title, workspace, agentMode: 'local', connectorIds: [], appIds: [] });
     }
   }
-  createWindow();
-  if (!selfTestTarget) initializeAutoUpdater();
+  if (isWebHost) {
+    const overrides = new Map(webTerminals.handlers);
+    overrides.set('computer-use:status', () => ({ supported: false, enabled: false, phase: 'unsupported', requests: [], apps: [], sessionApps: [] }));
+    webServer = await startWebServer({
+      registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides,
+      snapshot: async () => ({ questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, input }) => ({ requestId, sessionId, input })) }),
+    });
+    console.log(`[moss-web] Ready on ${webServer.address.address}:${webServer.address.port}`);
+    if (webServer.auth.mode === 'token') console.log(`[moss-web] Access token file: ${webServer.auth.tokenPath}`);
+  } else {
+    createWindow();
+    if (!selfTestTarget) initializeAutoUpdater();
+  }
   void recoverInterruptedProjectCoordinatorTasks().catch((error) => {
     mossLog('error', 'project-task', 'Unable to recover interrupted Project Coordinator tasks', {
       error: error instanceof Error ? error.message : String(error),
@@ -8355,6 +8396,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
 
   app.on('activate', () => {
+    if (isWebHost) return;
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
       mossLog('info', 'app', 'Main window recreated on activate');
@@ -8397,6 +8439,7 @@ function shutdownDesktop() {
     const attempt = async (operation) => {
       try { await operation(); } catch (error) { errors.push(error); }
     };
+    await attempt(() => webTerminals?.close());
     await attempt(() => appTestingHost.close());
     await attempt(async () => { memoryDreamService.stop(); await memoryDreamService.waitForIdle(); });
     await attempt(() => computerUseService.stop('quit'));
@@ -8422,6 +8465,7 @@ function shutdownDesktop() {
     await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
     await attempt(async () => { await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
     void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
+    await attempt(() => webServer?.close());
     if (errors.length) throw new Error(`退出准备未完成：${errors.map(error => error?.message || String(error)).join('；')}`);
     appShutdownComplete = true;
   })().finally(() => { desktopShutdownPromise = null; });
@@ -8429,6 +8473,7 @@ function shutdownDesktop() {
 }
 
 app.on('window-all-closed', () => {
+  if (isWebHost) return;
   if (selfTestTarget) { app.quit(); return; }
   void computerUseService.stop('window-closed').catch(() => {});
   if (process.platform !== 'darwin') {
@@ -10901,7 +10946,7 @@ ipcMain.handle('app-ui:composer:prepare', async (event, input) => {
   const providerId = `${state.id}/${String(input?.providerId || '')}`;
   const context = { providerId, intent: input?.intent, ref: input?.ref };
   const sessionId = typeof input?.ref?.projectRef === 'string'
-    ? appAuthoring.resumeProject(input.ref.projectRef, { appId: state.id, owner: appRuntime.currentOwner() }) : undefined;
+    ? appAuthoring.resumeProject(input.ref.projectRef, { appId: state.id, owner: appRuntime.currentOwner() }) : state.sessionId;
   const prepared = await appComposer.resolve(context, { sessionId: state.sessionId, workspace: state.workspace });
   emitToRenderer('app:composer:prepare', { sessionId, context: { ...context, ref: prepared.ref }, title: prepared.title, prompt: prepared.prompt, route: prepared.route, workspace: prepared.workspace, appId: state.id });
   mainWindow?.show();

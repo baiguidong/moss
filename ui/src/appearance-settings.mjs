@@ -10,7 +10,7 @@ export const DEFAULT_APPEARANCE = Object.freeze({
 });
 
 const THEME_MODES = new Set(['light', 'dark', 'system']);
-const CSS_THEME_IDS = new Set(['default', 'grid-theme', 'dot-theme', 'gradient-theme']);
+const CSS_THEME_IDS = new Set(['default', 'grid-theme', 'dot-theme', 'gradient-theme', 'takt-theme']);
 const TOOL_DISPLAY_MODES = new Set(['expanded', 'collapsed', 'merged']);
 
 function asObject(value) {

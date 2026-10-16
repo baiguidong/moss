@@ -282,7 +282,7 @@ export class AppMcpHost {
     const entry = provider?.document.servers[input.name]
     if (!entry || !this.active(provider) || !entry.enabled) throw new Error('服务已停用或未授权，请在 App 管理中检查。')
     if (this.toolRevision(provider, entry) !== input.revision) throw new Error('连接配置已变化，请重新加载。')
-    await this.handle('servers.inspect', { name: input.name }, { ...provider, expectedToolRevision: input.revision, signal: AbortSignal.timeout(60_000) })
+    await this.handle('servers.inspect', { name: input.name }, { ...provider, expectedToolRevision: input.revision, signal: AbortSignal.timeout(300_000) })
     return this.toolCatalog(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
   }
   list(provider, extra = {}, focusName = '') {
@@ -369,7 +369,12 @@ export class AppMcpHost {
     const { config, entry } = prepared, name = runtimeName(context.appId, input.name)
     try {
       let check
-      if (method === 'servers.inspect') check = await this.inspect(name, config, context.signal)
+      if (method === 'servers.inspect') {
+        check = await this.inspect(name, config, context.signal)
+        // MCP Implementation may include title, websiteUrl, icons and other
+        // metadata. The App protocol exposes only its declared identity fields.
+        if (check.serverInfo) check = { ...check, serverInfo: { name: check.serverInfo.name, version: check.serverInfo.version } }
+      }
       else {
         if (!['http', 'sse'].includes(config.type)) throw new Error('本地进程连接不需要浏览器授权。')
         if (method === 'auth.start') await this.authenticate(name, config, context.signal)

@@ -1,6 +1,7 @@
+import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
 
-const { ipcMain } = electron;
+
 
 export function registerWorkspaceIpcHandlers({
   getSessionRecord,

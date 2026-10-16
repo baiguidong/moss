@@ -1,6 +1,7 @@
+import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
 
-const { ipcMain, shell } = electron;
+const { shell } = electron;
 
 export function registerShellIpcHandlers() {
   ipcMain.handle('shell.open-file', async (_event, filePath) => {

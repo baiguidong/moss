@@ -6,7 +6,7 @@ export function PDFViewer({ filePath, title }: { filePath: string; title: string
   const webviewRef = React.useRef<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const pdfSrc = React.useMemo(() => `file://${filePath}#navpanes=0`, [filePath]);
+  const pdfSrc = React.useMemo(() => (window.mossWeb ? window.mossWeb.fileUrl(filePath) : `file://${filePath}`) + "#navpanes=0", [filePath]);
 
   React.useEffect(() => {
     const webview = webviewRef.current;
@@ -34,6 +34,8 @@ export function PDFViewer({ filePath, title }: { filePath: string; title: string
       webview.removeEventListener("did-fail-load", handleError);
     };
   }, [pdfSrc]);
+
+  if (window.mossWeb) return <iframe title={title} src={pdfSrc} className="h-full w-full border-0" />;
 
   if (error) {
     return (

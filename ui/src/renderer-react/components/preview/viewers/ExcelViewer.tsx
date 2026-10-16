@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { documentIpc } from "@/ipc/document.ipc";
-import { shellIpc } from "@/ipc/shell.ipc";
+import { OfficePreviewToolbar } from "../OfficePreviewToolbar";
 import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
 import { UnsupportedViewer } from "./UnsupportedViewer";
@@ -85,7 +85,7 @@ function estimateTableContentWidth(sheets: Array<{ data?: any[][] }>) {
   return maxEstimatedWidth;
 }
 
-export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileVersion?: number }) {
+export function ExcelViewer({ filePath, fileVersion, toolbarContainer }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
   const [excelData, setExcelData] = React.useState<any | null>(null);
   const [activeSheet, setActiveSheet] = React.useState("");
@@ -162,14 +162,7 @@ export function ExcelViewer({ filePath, fileVersion }: { filePath: string; fileV
   if (pdfPath) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-end gap-2 border-b border-border/70 px-4 py-2.5">
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void load(true)}>
-            刷新
-          </Button>
-          <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => void shellIpc.openFile(filePath)}>
-            用系统应用打开
-          </Button>
-        </div>
+        <OfficePreviewToolbar filePath={filePath} onRefresh={() => void load(true)} container={toolbarContainer} />
         <div className="min-h-0 flex-1">
           <PDFViewer filePath={pdfPath} title={filePath} />
         </div>

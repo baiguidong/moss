@@ -1,3 +1,4 @@
+import { hostIpc as ipcMain } from './host/ipc.mjs';
 /**
  * App IPC handlers and storage utilities
  *
@@ -7,7 +8,7 @@
  */
 
 import electron from 'electron';
-const { ipcMain } = electron;
+
 import fsp from 'node:fs/promises';
 import * as path from 'node:path'
 import * as fs from 'node:fs'

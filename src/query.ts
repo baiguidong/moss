@@ -46,6 +46,7 @@ import {
   createUserMessage,
   createUserInterruptionMessage,
   normalizeMessagesForAPI,
+  normalizeAttachmentForAPI,
   createSystemMessage,
   createAssistantAPIErrorMessage,
   getMessagesAfterCompactBoundary,
@@ -105,6 +106,13 @@ import {
 } from './bootstrap/state.js'
 import { createBudgetTracker, checkTokenBudget } from './query/tokenBudget.js'
 import { count } from './utils/array.js'
+import { closeAgentMessageQueue, drainPendingMessages } from './tasks/LocalAgentTask/LocalAgentTask.js'
+
+function takeAgentMessages(context: ToolUseContext, closeIfEmpty = false): UserMessage[] {
+  if (!context.agentId) return []
+  return drainPendingMessages(context.agentId, context.setAppStateForTasks ?? context.setAppState, closeIfEmpty)
+    .flatMap(prompt => normalizeAttachmentForAPI({ type: 'queued_command', prompt, isMeta: true, origin: { kind: 'coordinator' } }))
+}
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const taskSummaryModule = feature('BG_SESSIONS')
@@ -235,7 +243,13 @@ export async function* query(
   Terminal
 > {
   const consumedCommandUuids: string[] = []
-  const terminal = yield* queryLoop(params, consumedCommandUuids)
+  let terminal: Terminal
+  try {
+    terminal = yield* queryLoop(params, consumedCommandUuids)
+  } finally {
+    const context = params.toolUseContext
+    if (context.agentId) closeAgentMessageQueue(context.agentId, context.setAppStateForTasks ?? context.setAppState)
+  }
   // Only reached if queryLoop returned normally. Skipped on throw (error
   // propagates through yield*) and on .return() (Return completion closes
   // both generators). This gives the same asymmetric started-without-completed
@@ -1248,6 +1262,31 @@ async function* queryLoop(
         }
       }
 
+      // A text-only response is also a turn boundary. Atomically consume
+      // accepted messages or close the inbox before async agent cleanup starts.
+      // Yield ordinary user messages so sidechain persistence retains them.
+      const pendingMessages = takeAgentMessages(toolUseContext, true)
+      if (pendingMessages.length) {
+        for (const message of pendingMessages) yield message
+        if (maxTurns && turnCount + 1 > maxTurns) {
+          yield createAttachmentMessage({ type: 'max_turns_reached', maxTurns, turnCount: turnCount + 1 })
+          return { reason: 'max_turns', turnCount: turnCount + 1 }
+        }
+        state = {
+          ...state,
+          messages: [...messagesForQuery, ...assistantMessages, ...pendingMessages],
+          toolUseContext,
+          autoCompactTracking: tracking,
+          turnCount: turnCount + 1,
+          maxOutputTokensRecoveryCount: 0,
+          hasAttemptedReactiveCompact: false,
+          maxOutputTokensOverride: undefined,
+          pendingToolUseSummary: undefined,
+          stopHookActive: undefined,
+          transition: { reason: 'next_turn' },
+        }
+        continue
+      }
       return { reason: 'completed' }
     }
 
@@ -1466,6 +1505,11 @@ async function* queryLoop(
     )) {
       yield attachment
       toolResults.push(attachment)
+    }
+
+    for (const message of takeAgentMessages(updatedToolUseContext)) {
+      yield message
+      toolResults.push(message)
     }
 
     // Inject prefetched skill discovery. collectSkillDiscoveryPrefetch emits

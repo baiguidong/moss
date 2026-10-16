@@ -3,6 +3,7 @@ function normalizePortablePath(value: string): string {
 }
 
 export function createOfflinePreviewUrl(filePath: string, rootPath?: string): string {
+  if (typeof window !== "undefined" && window.mossWeb) return window.mossWeb.fileUrl(filePath);
   const normalizedFile = normalizePortablePath(filePath);
   const lastSlash = normalizedFile.lastIndexOf("/");
   const fallbackRoot = lastSlash > 0 ? normalizedFile.slice(0, lastSlash) : ".";

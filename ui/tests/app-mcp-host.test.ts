@@ -271,6 +271,20 @@ test('checks real unmasked configuration, caches only current results, and redac
   expect(f.calls).toContainEqual({ auth: 'docs' }); expect(f.calls).toContainEqual({ clear: 'docs' })
 })
 
+test('inspection projects extended upstream server metadata into the App protocol', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'excel', enabled: true, config }, f.context)
+  f.host.inspect = async () => ({ state: 'connected', tools: [], checkedAt: 10,
+    serverInfo: { name: 'excel-mcp-server', version: '2.0.0', title: 'Excel MCP Server',
+      description: 'Workbooks', websiteUrl: 'https://example.com', icons: [{ src: 'https://example.com/icon.png' }] } })
+  const expected = { name: 'excel-mcp-server', version: '2.0.0' }
+  const inspected = await f.host.handle('servers.inspect', { name: 'excel' }, f.context)
+  expect(inspected.servers[0].check.state).toBe('connected')
+  expect(inspected.servers[0].check.serverInfo).toEqual(expected)
+  expect((await f.host.handle('servers.list', {}, f.context)).servers[0].check.serverInfo).toEqual(expected)
+  expect(f.host.toolCatalog('moss.mcp')[0].status).toBe('connected')
+})
+
 test('failed migration leaves legacy data intact and rejects cross-App identifiers and missing grants', async () => {
   const f = await fixture({ version: 1, servers: { docs: { enabled: true, config } } })
   f.runtime.credentials.set = async () => { throw new Error('disk full') }

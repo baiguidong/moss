@@ -75,11 +75,13 @@ function runtimeInstallDir(name, version) {
 }
 
 function nodeExecutablePath() {
+  if (process.env.MOSS_WEB_MODE === '1' && process.env.MOSS_WEB_NODE_PATH) return process.env.MOSS_WEB_NODE_PATH;
   const root = runtimeInstallDir('node', MANAGED_RUNTIME_VERSIONS.node);
   return process.platform === 'win32' ? path.join(root, 'node.exe') : path.join(root, 'bin', 'node');
 }
 
 function pythonExecutableCandidates() {
+  if (process.env.MOSS_WEB_MODE === '1' && process.env.MOSS_WEB_PYTHON_PATH) return [process.env.MOSS_WEB_PYTHON_PATH];
   const root = runtimeInstallDir('python', MANAGED_RUNTIME_VERSIONS.python);
   if (process.platform === 'win32') {
     return [
@@ -402,7 +404,10 @@ export async function ensureManagedRuntimes(options = {}) {
       continue;
     }
     try {
-      results[name] = await fn();
+      const external = process.env.MOSS_WEB_MODE === '1' && ({ node: process.env.MOSS_WEB_NODE_PATH, python: process.env.MOSS_WEB_PYTHON_PATH })[name];
+      results[name] = external
+        ? { ok: await verifyExecutable(external), executablePath: external, external: true }
+        : await fn();
       if (results[name]?.ok) {
         mossLog('info', 'runtime', `${name} runtime ready`, {
           installed: Boolean(results[name].installed),

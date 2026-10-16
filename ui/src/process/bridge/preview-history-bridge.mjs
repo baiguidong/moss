@@ -1,7 +1,8 @@
+import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
 import { previewHistoryService } from '../services/preview-history-service.mjs';
 
-const { ipcMain } = electron;
+
 
 export function registerPreviewHistoryIpcHandlers() {
   ipcMain.handle('previewHistory.list', async (_event, { target }) => {

@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle';
+import { runAgentWorktreeCleanup } from './worktreeCleanup.js';
 import { cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -725,31 +726,33 @@ export const AgentTool = buildTool({
       // Null out to make idempotent — guards against double-call if code
       // between cleanup and end of try throws into catch
       worktreeInfo = null;
-      if (hookBased) {
-        // Hook-based worktrees are always kept since we can't detect VCS changes
-        logForDebugging(`Hook-based agent worktree kept at: ${worktreePath}`);
-        return {
-          worktreePath
-        };
-      }
-      if (headCommit) {
-        const changed = await hasWorktreeChanges(worktreePath, headCommit);
-        if (!changed) {
-          await removeAgentWorktree(worktreePath, worktreeBranch, gitRoot);
-          // Clear worktreePath from metadata so resume doesn't try to use
-          // a deleted directory. Fire-and-forget to match runAgent's
-          // writeAgentMetadata handling.
-          void updateAgentMetadata(asAgentId(earlyAgentId), {
-            worktreePath: undefined
-          }).catch(_err => logForDebugging(`Failed to clear worktree metadata: ${_err}`));
-          return {};
+      return runAgentWorktreeCleanup(worktreePath, async () => {
+        if (hookBased) {
+          // Hook-based worktrees are always kept since we can't detect VCS changes
+          logForDebugging(`Hook-based agent worktree kept at: ${worktreePath}`);
+          return {
+            worktreePath
+          };
         }
-      }
-      logForDebugging(`Agent worktree has changes, keeping: ${worktreePath}`);
-      return {
-        worktreePath,
-        worktreeBranch
-      };
+        if (headCommit) {
+          const changed = await hasWorktreeChanges(worktreePath, headCommit);
+          if (!changed) {
+            const removed = await removeAgentWorktree(worktreePath, worktreeBranch, gitRoot);
+            if (!removed) return { worktreePath, worktreeBranch };
+            // Clear worktreePath from metadata so resume doesn't try to use
+            // a deleted directory. Finish this write before a resume can read it.
+            await updateAgentMetadata(asAgentId(earlyAgentId), {
+              worktreePath: undefined
+            }).catch(_err => logForDebugging(`Failed to clear worktree metadata: ${_err}`));
+            return {};
+          }
+        }
+        logForDebugging(`Agent worktree has changes, keeping: ${worktreePath}`);
+        return {
+          worktreePath,
+          worktreeBranch
+        };
+      });
     };
     if (shouldRunAsync) {
       const asyncAgentId = earlyAgentId;
@@ -759,9 +762,10 @@ export const AgentTool = buildTool({
         prompt,
         selectedAgent,
         setAppState: rootSetAppState,
-        // Don't link to parent's abort controller -- background agents should
-        // survive when the user presses ESC to cancel the main thread.
-        // They are killed explicitly via chat:killAgents.
+        // Coordinator Stop owns the delegated work, including agents that
+        // finish registering after cancellation began. Ordinary background
+        // agents can still outlive their parent turn.
+        parentAbortController: isCoordinator ? toolUseContext.abortController : undefined,
         toolUseId: toolUseContext.toolUseId
       });
 

@@ -432,6 +432,33 @@ export async function runAsyncAgentLifecycle({
     worktreeBranch?: string
   }>
 }): Promise<void> {
+  const initialTask = toolUseContext.getAppState().tasks[taskId]
+  const executionId = isLocalAgentTask(initialTask) ? initialTask.executionId : undefined
+  const isCurrentExecution = (state: AppState) => {
+    const task = state.tasks[taskId]
+    return isLocalAgentTask(task) && task.executionId === executionId
+  }
+  // Task IDs survive a resume. An older run may still be publishing its
+  // terminal notification after the new run has registered under that ID.
+  const setRootState = rootSetAppState
+  rootSetAppState = update => setRootState(previous => (
+    isCurrentExecution(previous) ? update(previous) : previous
+  ))
+  let settleExecution!: () => void
+  const executionSettled = new Promise<void>(resolve => { settleExecution = resolve })
+  rootSetAppState(previous => ({
+    ...previous,
+    tasks: { ...previous.tasks, [taskId]: { ...previous.tasks[taskId]!, executionSettled, notificationPending: true } },
+  }))
+  const finishWorktree = async () => {
+    try { return await getWorktreeResult() }
+    catch (error) {
+      // Cleanup enriches a receipt; its failure must not replace the actual
+      // execution outcome or strand a coordinator waiting for that receipt.
+      logForDebugging(`Agent worktree cleanup failed: ${errorMessage(error)}`)
+      return {}
+    }
+  }
   let stopSummarization: (() => void) | undefined
   const agentMessages: MessageType[] = []
   try {
@@ -450,45 +477,51 @@ export async function runAsyncAgentLifecycle({
           stopSummarization = stop
         }
       : undefined
-    for await (const message of makeStream(onCacheSafeParams)) {
-      agentMessages.push(message)
-      // Append immediately when UI holds the task (retain). Bootstrap reads
-      // disk in parallel and UUID-merges the prefix — disk-write-before-yield
-      // means live is always a suffix of disk, so merge is order-correct.
-      rootSetAppState(prev => {
-        const t = prev.tasks[taskId]
-        if (!isLocalAgentTask(t) || !t.retain) return prev
-        const base = t.messages ?? []
-        return {
-          ...prev,
-          tasks: {
-            ...prev.tasks,
-            [taskId]: { ...t, messages: [...base, message] },
-          },
-        }
-      })
-      updateProgressFromMessage(
-        tracker,
-        message,
-        resolveActivity,
-        toolUseContext.options.tools,
-      )
-      updateAsyncAgentProgress(
-        taskId,
-        getProgressUpdate(tracker),
-        rootSetAppState,
-      )
-      const lastToolName = getLastToolUseName(message)
-      if (lastToolName) {
-        emitTaskProgress(
+    try {
+      for await (const message of makeStream(onCacheSafeParams)) {
+        agentMessages.push(message)
+        // Append immediately when UI holds the task (retain). Bootstrap reads
+        // disk in parallel and UUID-merges the prefix — disk-write-before-yield
+        // means live is always a suffix of disk, so merge is order-correct.
+        rootSetAppState(prev => {
+          const t = prev.tasks[taskId]
+          if (!isLocalAgentTask(t) || !t.retain) return prev
+          const base = t.messages ?? []
+          return {
+            ...prev,
+            tasks: {
+              ...prev.tasks,
+              [taskId]: { ...t, messages: [...base, message] },
+            },
+          }
+        })
+        updateProgressFromMessage(
           tracker,
-          taskId,
-          toolUseContext.toolUseId,
-          description,
-          metadata.startTime,
-          lastToolName,
+          message,
+          resolveActivity,
+          toolUseContext.options.tools,
         )
+        updateAsyncAgentProgress(
+          taskId,
+          getProgressUpdate(tracker),
+          rootSetAppState,
+        )
+        const lastToolName = getLastToolUseName(message)
+        if (lastToolName) {
+          emitTaskProgress(
+            tracker,
+            taskId,
+            toolUseContext.toolUseId,
+            description,
+            metadata.startTime,
+            lastToolName,
+          )
+        }
       }
+    } finally {
+      // Resume waits for query/metadata cleanup, not optional worktree or
+      // notification enrichment, which can be slow independently of execution.
+      settleExecution()
     }
 
     stopSummarization?.()
@@ -503,7 +536,7 @@ export async function runAsyncAgentLifecycle({
 
     const finalMessage = extractTextContent(agentResult.content, '\n')
 
-    const worktreeResult = await getWorktreeResult()
+    const worktreeResult = await finishWorktree()
 
     enqueueAgentNotification({
       taskId,
@@ -538,7 +571,7 @@ export async function runAsyncAgentLifecycle({
         reason:
           'user_kill_async' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       })
-      const worktreeResult = await getWorktreeResult()
+      const worktreeResult = await finishWorktree()
       const partialResult = extractPartialResult(agentMessages)
       enqueueAgentNotification({
         taskId,
@@ -553,7 +586,7 @@ export async function runAsyncAgentLifecycle({
     }
     const msg = errorMessage(error)
     failAsyncAgent(taskId, msg, rootSetAppState)
-    const worktreeResult = await getWorktreeResult()
+    const worktreeResult = await finishWorktree()
     enqueueAgentNotification({
       taskId,
       description,
@@ -564,6 +597,9 @@ export async function runAsyncAgentLifecycle({
       ...worktreeResult,
     })
   } finally {
-    clearInvokedSkillsForAgent(agentIdForCleanup)
+    settleExecution()
+    if (isCurrentExecution(toolUseContext.getAppState())) {
+      clearInvokedSkillsForAgent(agentIdForCleanup)
+    }
   }
 }

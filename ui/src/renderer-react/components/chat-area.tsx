@@ -103,6 +103,7 @@ import {
 } from "@/components/skill-selection-area";
 import { AppComposerContext, resourceKey, useAppComposerResources, type AppComposerResource } from '@/lib/app-composer';
 import { AppConversationFlow } from '@/components/app-conversation-flow';
+import { AppWorkbenchButton, AppConversationWorkbench, useAppConversationWorkbench } from '@/components/app-conversation-workbench';
 import { ComposerResourceSelectionArea } from "@/components/composer-resource-selection-area";
 import { WorkspaceSelector } from "@/components/workspace-selector";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
@@ -189,6 +190,7 @@ export function SessionTabBar({
   onReturnToParentSession,
   onOpenWorkers,
   onSelectWorker,
+  appWorkbenchAction,
 }: {
   title: string;
   leftCollapsed: boolean;
@@ -211,6 +213,7 @@ export function SessionTabBar({
   onReturnToParentSession?: () => void;
   onOpenWorkers: () => void;
   onSelectWorker: (workerId: string) => void;
+  appWorkbenchAction?: React.ReactNode;
 }) {
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
@@ -243,12 +246,12 @@ export function SessionTabBar({
 
   return (
     <div
-      className="relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur"
+      className="@container/session-header relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur"
       aria-label={title ? `会话操作：${title}` : "会话操作"}
     >
       <div className={cn(
         "mx-auto flex w-full min-w-0 items-center justify-between gap-3",
-        MAIN_CHAT_CONTENT_CLASS_NAME,
+        "max-w-[1120px] px-4 @[640px]/session-header:px-6 @[1024px]/session-header:px-12",
       )}>
         <Button
           variant="ghost"
@@ -260,7 +263,7 @@ export function SessionTabBar({
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
-        <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+        <div className="@container/worker-summary flex min-w-0 flex-1 items-center justify-center gap-2">
           {onReturnToParentSession ? (
             <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs" onClick={onReturnToParentSession}>
               <ArrowLeft className="h-4 w-4" />
@@ -276,6 +279,7 @@ export function SessionTabBar({
           {childSessions.length > 0 ? (
             <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           ) : null}
+          {appWorkbenchAction}
           <CoordinatorWorkersSummary
             workers={childSessions}
             onOpen={onOpenWorkers}
@@ -2519,6 +2523,7 @@ export function ChatArea({
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
+  const appWorkbench = useAppConversationWorkbench(sessionId, backgroundTasks || []);
   const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
   const [coordinatorWorkersOpen, setCoordinatorWorkersOpen] = React.useState(false);
   const [selectedCoordinatorWorkerId, setSelectedCoordinatorWorkerId] = React.useState<string | null>(null);
@@ -2588,6 +2593,27 @@ export function ChatArea({
     () => deriveComposerActivity(messages, loading),
     [messages, loading],
   );
+  const conversationRequest = toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
+              <ToolPermissionCard
+                request={toolPermissionRequest}
+                onSubmit={onSubmitToolPermission}
+                onReject={onRejectToolPermission}
+              />
+            ) : questionRequest && onSubmitQuestion && onDiscussQuestion ? (
+              <AskUserQuestionCard
+                key={questionRequest.requestId}
+                request={questionRequest}
+                onSubmit={onSubmitQuestion}
+                onDiscuss={onDiscussQuestion}
+              />
+            ) : pendingPlanApproval ? (
+              <PlanApprovalCard
+                pendingPlanApproval={pendingPlanApproval}
+                busy={planDecisionBusy || loading}
+                onApprove={onApprovePlan}
+                onReject={onRejectPlan}
+              />
+            ) : undefined;
   const showAgentTeamsWorkbench = Boolean(
     agentTeamsOpen && agentTeams && agentTeams.teams.length > 0,
   );
@@ -2685,21 +2711,28 @@ export function ChatArea({
         sessionInfo={sessionInfo}
         childSessions={childSessions}
         onReturnToParentSession={onReturnToParentSession}
+        appWorkbenchAction={<AppWorkbenchButton entries={appWorkbench.entries} entry={appWorkbench.entry} open={appWorkbench.open} onClick={() => {
+          if (appWorkbench.open) appWorkbench.close();
+          else { setAgentTeamsOpen(false); setCoordinatorWorkersOpen(false); appWorkbench.show(); }
+        }}/>}
         onOpenWorkers={() => {
+          appWorkbench.close();
           setAgentTeamsOpen(false);
           setSelectedCoordinatorWorkerId(null);
           setCoordinatorWorkersOpen(true);
         }}
         onSelectWorker={(workerId) => {
+          appWorkbench.close();
           setAgentTeamsOpen(false);
           setSelectedCoordinatorWorkerId(workerId);
           setCoordinatorWorkersOpen(true);
         }}
       />
 
-      <AppConversationFlow sessionId={sessionId} tasks={backgroundTasks || []}>
-      {!agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
+      <AppConversationFlow sessionId={sessionId} tasks={backgroundTasks || []} suspended={appWorkbench.open}>
+      {!appWorkbench.open && !agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
         <AgentTeamsStrip state={agentTeams} onOpen={() => {
+          appWorkbench.close();
           setCoordinatorWorkersOpen(false);
           setAgentTeamsOpen(true);
         }} />
@@ -2718,6 +2751,8 @@ export function ChatArea({
           onOpenWorker={(workerId) => onOpenChildSession?.(workerId)}
         />
       ) : (
+        <div className="relative min-h-0 flex-1">
+        <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? 'invisible pointer-events-none' : ''}`} inert={appWorkbench.open} aria-hidden={appWorkbench.open}>
         <ToolDisplaySettingsProvider toolDisplayMode={toolDisplayMode}>
           <MessageListPane
             key={sessionId || "default"}
@@ -2735,31 +2770,16 @@ export function ChatArea({
             latestMessageActions={onForkSession ? (
               <ForkSessionButton onFork={onForkSession} forking={forkingSession} disabledReason={forkDisabledReason} />
             ) : undefined}
-            footer={toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
-              <ToolPermissionCard
-                request={toolPermissionRequest}
-                onSubmit={onSubmitToolPermission}
-                onReject={onRejectToolPermission}
-              />
-            ) : questionRequest && onSubmitQuestion && onDiscussQuestion ? (
-              <AskUserQuestionCard
-                key={questionRequest.requestId}
-                request={questionRequest}
-                onSubmit={onSubmitQuestion}
-                onDiscuss={onDiscussQuestion}
-              />
-            ) : pendingPlanApproval ? (
-              <PlanApprovalCard
-                pendingPlanApproval={pendingPlanApproval}
-                busy={planDecisionBusy || loading}
-                onApprove={onApprovePlan}
-                onReject={onRejectPlan}
-              />
-            ) : undefined}
+            footer={appWorkbench.open ? undefined : conversationRequest}
           />
         </ToolDisplaySettingsProvider>
+        </div>
+        {appWorkbench.mounted && appWorkbench.entry && <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? '' : 'invisible pointer-events-none'}`} inert={!appWorkbench.open} aria-hidden={!appWorkbench.open}>
+          <AppConversationWorkbench sessionId={sessionId} entries={appWorkbench.entries} entry={appWorkbench.entry} onSelect={appWorkbench.select} onClose={appWorkbench.close}/>
+        </div>}
+        </div>
       )}
-
+      {appWorkbench.open && conversationRequest && <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 py-2" aria-label="会话待处理请求">{conversationRequest}</div>}
 
       {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
         <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
@@ -2767,8 +2787,8 @@ export function ChatArea({
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
           )}>
-          {backgroundTasks && backgroundTasks.some((task) => task.appId !== "moss.workflow") && (
-            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.appId !== "moss.workflow")} />
+          {backgroundTasks && backgroundTasks.some((task) => task.appId !== "moss.workflow" && !appWorkbench.appIds.has(task.appId || "")) && (
+            <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.appId !== "moss.workflow" && !appWorkbench.appIds.has(task.appId || ""))} />
           )}
           {loading && composerActivity && loadingStartTime != null && (
             <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />
@@ -2820,7 +2840,7 @@ export function ChatArea({
             permissionMode={permissionMode}
             onPermissionModeChange={onPermissionModeChange}
             permissionModeChanging={permissionModeChanging}
-            onSend={(files, skills, agent) => onSend(files, undefined, skills, agent)}
+            onSend={(files, skills, agent) => { appWorkbench.close(); onSend(files, undefined, skills, agent); }}
             onStop={onStop}
             installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}

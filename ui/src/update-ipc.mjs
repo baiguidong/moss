@@ -1,3 +1,4 @@
+import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +10,7 @@ import { createAutoUpdaterService } from './auto-updater-service.mjs';
 import { createUpdateCoordinator } from './update-coordinator.mjs';
 import { registerUpdateHandlers } from './update-ipc-handlers.mjs';
 
-const { ipcMain, app, shell, net, powerMonitor } = electron;
+const { app, shell, net, powerMonitor } = electron;
 const DEFAULT_REPO = 'baiguidong/moss';
 let mainWindow = null;
 let coordinator;

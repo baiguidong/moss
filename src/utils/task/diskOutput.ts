@@ -13,6 +13,7 @@ import { getErrnoCode } from '../errors.js'
 import { readFileRange, tailFile } from '../fsOperations.js'
 import { logError } from '../log.js'
 import { getProjectTempDir } from '../permissions/filesystem.js'
+import { getSessionIdContext } from '../sessionIdContext.js'
 
 // SECURITY: O_NOFOLLOW prevents following symlinks when opening task output files.
 // Without this, an attacker in the sandbox could create symlinks in the tasks directory
@@ -47,7 +48,19 @@ export const MAX_TASK_OUTPUT_BYTES_DISPLAY = '5GB'
  * bash tasks surviving /clear need their output files to stay reachable.
  */
 let _taskOutputDir: string | undefined
+const sessionTaskOutputDirs = new Map<string, string>()
 export function getTaskOutputDir(): string {
+  // Embedded desktop/server sessions share a process. Cache each session's
+  // first directory independently; workers and later turns keep that path.
+  const scopedSessionId = getSessionIdContext()
+  if (scopedSessionId) {
+    let directory = sessionTaskOutputDirs.get(scopedSessionId)
+    if (!directory) {
+      directory = join(getProjectTempDir(), scopedSessionId, 'tasks')
+      sessionTaskOutputDirs.set(scopedSessionId, directory)
+    }
+    return directory
+  }
   if (_taskOutputDir === undefined) {
     _taskOutputDir = join(getProjectTempDir(), getSessionId(), 'tasks')
   }
@@ -57,6 +70,7 @@ export function getTaskOutputDir(): string {
 /** Test helper — clears the memoized dir. */
 export function _resetTaskOutputDirForTest(): void {
   _taskOutputDir = undefined
+  sessionTaskOutputDirs.clear()
 }
 
 /**

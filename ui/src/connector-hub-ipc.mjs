@@ -1,5 +1,6 @@
+import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
-const { ipcMain } = electron;
+
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';

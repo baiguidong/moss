@@ -75,7 +75,8 @@ export function registerResourceMonitorIpc(options) {
   });
   ipcMain.handle('resource-monitor:snapshot', (event, payload = {}) => {
     const window = getWindow();
-    if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
+    const webOwner = event?.transport === 'web' && Boolean(event.principal?.userId);
+    if (!webOwner && (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)) {
       throw new Error('资源监控请求来源无效');
     }
     return service.getSnapshot({ since: Number(payload?.since) || 0, active: payload?.active !== false });

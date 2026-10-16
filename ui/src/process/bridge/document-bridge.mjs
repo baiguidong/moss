@@ -1,9 +1,10 @@
+import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { conversionService } from '../services/conversion-service.mjs';
 
-const { ipcMain } = electron;
+
 
 const MAMMOTH_EXTENSIONS = new Set(['.docx', '.docm', '.dotx']);
 const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx', '.xlsm', '.xlsb', '.ods', '.csv', '.tsv']);

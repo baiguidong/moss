@@ -5,6 +5,26 @@ const MAX_STRUCTURED_TEXT_CHARS = 100_000
 export type StructuredTextParseResult =
   { ok: true; value: unknown } | { ok: false; error: string }
 
+/** Repair only the response format; callers must restrict repair passes to the output tool. */
+export async function collectAppAgentResponse(options: {
+  schema: unknown
+  signal: AbortSignal
+  execute: (outputOnly: boolean) => Promise<{ text: string; structuredOutput?: unknown }>
+}): Promise<unknown> {
+  let failure = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    options.signal.throwIfAborted()
+    const response = await options.execute(attempt > 0)
+    options.signal.throwIfAborted()
+    if (options.schema === undefined) return response.text
+    if (response.structuredOutput !== undefined) return response.structuredOutput
+    const fallback = parseStructuredAgentText(response.text, options.schema)
+    if (fallback.ok) return fallback.value
+    failure = fallback.error
+  }
+  throw new Error(`agent({schema}): no valid structured output was returned (${failure})`)
+}
+
 /**
  * Strict fallback for runtimes that return the requested JSON object as final
  * text instead of invoking the synthetic output tool.
