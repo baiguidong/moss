@@ -32,6 +32,8 @@ required=(
   stop.sh
   nginx.conf
   nginx-webui.conf
+  nginx-web-cloud.conf
+  webui.sh
   scripts/common.sh
   scripts/webui-start.sh
   scripts/cloud-storage-init.sh
@@ -47,10 +49,10 @@ install -d -m 0700 "$INSTALL_DIR" "$INSTALL_DIR/scripts"
 stage_real="$(cd "$STAGE_DIR" && pwd -P)"
 install_real="$(cd "$INSTALL_DIR" && pwd -P)"
 if [[ "$stage_real" != "$install_real" ]]; then
-  for file in README.md .env.example compose.yaml nginx.conf nginx-webui.conf; do
+  for file in README.md .env.example compose.yaml nginx.conf nginx-webui.conf nginx-web-cloud.conf; do
     install -m 0644 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
   done
-  for file in configure.sh install.sh upgrade.sh package.sh start.sh stop.sh; do
+  for file in configure.sh install.sh upgrade.sh package.sh start.sh stop.sh webui.sh; do
     install -m 0755 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
   done
   for script in cloud-storage-init.sh silo-init.sh webui-start.sh; do

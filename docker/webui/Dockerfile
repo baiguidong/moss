@@ -18,6 +18,7 @@ COPY shared ./shared
 COPY packages ./packages
 COPY tsconfig.json ./
 COPY ui ./ui
+COPY cloud ./cloud
 RUN mkdir -p bin && cd ui && node scripts/build-direct.mjs && node scripts/build-renderer.mjs \
     && node node_modules/@electron/rebuild/lib/cli.js -f -w node-pty \
     && node scripts/prepare-web-image.mjs /opt/moss-release
@@ -26,7 +27,9 @@ FROM ${NODE_IMAGE}
 ARG MOSS_VERSION=dev
 LABEL org.opencontainers.image.title="Moss WebUI" \
       org.opencontainers.image.description="Single-user Moss Host with shared browser UI and local Linux execution" \
-      org.opencontainers.image.version="$MOSS_VERSION"
+      org.opencontainers.image.version="$MOSS_VERSION" \
+      io.moss.web.runtime="bookworm-node22-v1" \
+      io.moss.web.data-schema="1"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini bash ca-certificates curl git python3 python3-pip python3-venv ripgrep sudo \
     libgtk-3-0 libnss3 libasound2 libgbm1 libxss1 libdrm2 libx11-xcb1 libatk-bridge2.0-0 \
@@ -34,7 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && usermod -l moss -d /home/moss -m node \
     && printf 'moss ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/moss \
     && chmod 0440 /etc/sudoers.d/moss
-COPY --from=build /opt/moss-release /opt/moss
+COPY --from=build /opt/moss-release /opt/moss-releases/bootstrap
+RUN ln -s /opt/moss-releases/bootstrap /opt/moss
 COPY docker/webui/entrypoint.sh /usr/local/bin/moss-web-entrypoint
 RUN chmod +x /usr/local/bin/moss-web-entrypoint \
     && ELECTRON_RUN_AS_NODE=1 /opt/moss/ui/node_modules/electron/dist/electron --version

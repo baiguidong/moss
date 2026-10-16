@@ -10,6 +10,7 @@ import { MOSS_METHODS, MOSS_PROTOCOL_VERSION } from '../client/methods.mjs';
 import { stringifyWire, parseWire } from '../client/wire.mjs';
 import { createWebAuth } from './auth.mjs';
 import { createOperationStore } from './operation-store.mjs';
+import { createWebLifecycle } from './lifecycle.mjs';
 
 // These operations require an Electron window or an app's restricted sender.
 // Browser equivalents are installed explicitly, never by spoofing that sender.
@@ -32,7 +33,7 @@ async function readJson(req) {
   return JSON.parse(body || '{}');
 }
 
-export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}) }) {
+export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), getBlockers = () => [] }) {
   const auth = createWebAuth({ home, env });
   const operations = createOperationStore(path.join(home, 'web', 'requests.sqlite'));
   const epoch = randomUUID();
@@ -41,6 +42,8 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   const history = [];
   const connections = new Set();
   const activeOperations = new Set();
+  let activeRequests = 0;
+  const lifecycle = createWebLifecycle({ secret: env.MOSS_WEB_CONTROL_TOKEN, getBlockers, activeCount: () => activeRequests });
   const loginAttempts = new Map();
   const originFor = req => env.MOSS_WEB_ORIGIN || `http://${req.headers.host}`;
   const sameOrigin = req => req.headers.origin === originFor(req);
@@ -84,9 +87,25 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    let counted = false;
     try {
       const url = new URL(req.url, 'http://local');
-      if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { ok: true, protocol: MOSS_PROTOCOL_VERSION });
+      if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { ok: true, protocol: MOSS_PROTOCOL_VERSION, version: lifecycle.version });
+      if (url.pathname.startsWith('/internal/')) {
+        if (!lifecycle.authorized(req)) return json(res, 403, { error: 'Forbidden' });
+        if (req.method === 'GET' && url.pathname === '/internal/status') return json(res, 200, lifecycle.status());
+        if (req.method === 'POST' && url.pathname === '/internal/drain') return json(res, 200, lifecycle.drain());
+        if (req.method === 'POST' && url.pathname === '/internal/resume') { lifecycle.resume(); return json(res, 200, { ok: true }); }
+        if (req.method === 'POST' && url.pathname === '/internal/login') {
+          const id = await auth.login(await readJson(req), { trustedToken: true });
+          return json(res, 200, { cookie: `moss_web=${id}` });
+        }
+        return json(res, 404, { error: 'Unknown control request' });
+      }
+      if (req.method === 'POST') {
+        lifecycle.assertWorkAllowed();
+        activeRequests++; counted = true;
+      }
       if (req.method === 'POST' && !sameOrigin(req)) return json(res, 403, { error: '请求来源无效。' });
       if (req.method === 'POST' && url.pathname === '/api/login') {
         const key = req.socket.remoteAddress;
@@ -113,6 +132,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
       if (url.pathname.startsWith('/api/')) {
         if (!principal) return json(res, 401, { error: '请先登录。' });
         if (req.method === 'POST' && url.pathname === '/api/upload') {
+          lifecycle.assertWorkAllowed();
           const dir = path.join(home, 'web', 'uploads', randomUUID());
           await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
           const name = path.basename((url.searchParams.get('name') || 'attachment').replaceAll('\\', '/')).replace(/[\x00-\x1f]/g, '_');
@@ -138,7 +158,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
     } catch (error) {
       if (!res.headersSent) json(res, error.code === 'ENOENT' ? 404 : 400, { error: error.message });
       else res.destroy();
-    }
+    } finally { if (counted) activeRequests--; }
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   server.on('upgrade', async (req, socket, head) => {
@@ -172,7 +192,10 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
             const { method, args } = request;
             if (!allowed.has(method) && !overrides.has(method)) throw new Error('这项功能需要桌面客户端，当前 Web Host 尚未提供。');
             const context = Object.freeze({ transport: 'web', principal, requestId: request.id });
-            const result = await operations.run(request, principal, async () => {
+            lifecycle.assertWorkAllowed();
+            activeRequests++;
+            let result;
+            try { result = await operations.run(request, principal, async () => {
               const key = ['agent:send', 'agent:approve-plan'].includes(method)
                 ? `turn:${args[0]?.sessionId}`
                 : ['agent:answer-question', 'agent:reject-question'].includes(method) ? `decision:${args[0]?.requestId}` : null;
@@ -182,6 +205,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
                 return await (overrides.has(method) ? overrides.get(method)(context, ...args) : registry.invoke(method, context, ...args));
               } finally { if (key) activeOperations.delete(key); }
             });
+            } finally { activeRequests--; }
             send(ws, { type: 'result', id: request.id, ...result });
           } catch (error) { send(ws, { type: 'result', id: request?.id, ok: false, error: error.message }); }
         });
@@ -196,7 +220,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(env.MOSS_WEB_PORT || 43128), env.MOSS_WEB_HOST || '127.0.0.1', resolve); });
   return {
-    address: server.address(), auth,
+    address: server.address(), auth, assertWorkAllowed: () => lifecycle.assertWorkAllowed(),
     async close() {
       unsubscribe();
       for (const ws of connections) ws.terminate();

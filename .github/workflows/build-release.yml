@@ -60,7 +60,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: Verify packaging and deployment contracts
         run: |
-          node --test scripts/docker-webui.test.mjs
+          node --test scripts/docker-webui.test.mjs cloud/tests/*.test.mjs
           bash deploy/server/scripts/validate.sh
       - name: Build Linux AMD64 image on GitHub
         env:
@@ -78,6 +78,12 @@ jobs:
         run: |
           export PLAYWRIGHT_MODULE="$RUNNER_TEMP/webui-browser/node_modules/playwright/index.mjs"
           node scripts/test-webui-image.mjs "$IMAGE"
+      - name: Verify per-user cloud computers and in-place program upgrade
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: |
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/webui-browser/node_modules/playwright/index.mjs"
+          node scripts/test-cloud-image.mjs "$IMAGE"
       - name: Export offline WebUI package and Server deployment
         env:
           VERSION: ${{ steps.release.outputs.version }}

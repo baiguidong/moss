@@ -4,6 +4,18 @@ umask 077
 SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_ROOT/common.sh"
 [[ "$(env_value MOSS_WEB_ENABLED)" == 1 ]] || exit 0
+if [[ "$(env_value MOSS_WEB_DEPLOY_MODE)" == cloud ]]; then
+  old="$(compose --profile webui ps --status running --quiet webui webui-proxy)"
+  if [[ -n "$old" ]]; then
+    die 'The legacy single-user WebUI is running. Stop it explicitly or retain MOSS_WEB_DEPLOY_MODE=single; its container will not be deleted.'
+  fi
+  compose up -d --no-deps --wait --wait-timeout 120 web-gateway
+  compose up -d --no-deps --wait --wait-timeout 60 web-cloud-proxy
+  printf 'Moss Cloud: %s — one persistent computer per user.\n' "$(env_value MOSS_WEB_ORIGIN)"
+  exit 0
+fi
+
+[[ -z "$(compose --profile web-cloud ps --status running --quiet web-gateway web-cloud-proxy)" ]] || die 'Cloud portal is running. Stop it explicitly before switching deployment mode.'
 
 set_owner_value() {
   local key="$1" value="$2"

@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 
 for required in .env.example compose.yaml nginx.conf configure.sh install.sh upgrade.sh \
-  package.sh start.sh stop.sh nginx-webui.conf scripts/webui-start.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
+  package.sh start.sh stop.sh webui.sh nginx-web-cloud.conf nginx-webui.conf scripts/webui-start.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
   [[ -f "$ROOT/$required" ]] || { echo "ERROR: missing $required" >&2; exit 1; }
 done
 
@@ -18,7 +18,7 @@ done
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   rendered_config="$(docker compose --project-directory "$ROOT" --env-file "$ROOT/.env.example" \
-    -f "$ROOT/compose.yaml" --profile cloud --profile cloud-init --profile webui config --format json)"
+    -f "$ROOT/compose.yaml" --profile cloud --profile cloud-init --profile webui --profile web-cloud config --format json)"
   jq -e '
     .networks["moss-integration"].name == "moss-integrations"
     and .networks["moss-db"].internal == true
@@ -34,6 +34,8 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
     and (.services.webui.ports // [] | length) == 0
+    and (.services["web-gateway"].volumes | any(.target == "/state"))
+    and (.services["web-gateway"].volumes | any(.target == "/var/run/docker.sock"))
     and .services.webui.environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
     and (.services.webui.volumes | all(.type == "volume" and .target == "/home/moss"))
     and .services["webui-proxy"].ports[0].published == "8444"

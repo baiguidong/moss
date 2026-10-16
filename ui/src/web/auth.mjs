@@ -27,18 +27,18 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
     }
   };
   async function upstream(endpoint, init) {
-    const response = await fetchImpl(`${serverUrl}${endpoint}`, { ...init, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    const response = await fetchImpl(`${serverUrl}${endpoint}`, { ...init, headers: { ...init?.headers, ...(env.MOSS_WEB_CONTROL_TOKEN ? { 'X-Moss-Host-Token': env.MOSS_WEB_CONTROL_TOKEN, 'X-Moss-Environment': env.MOSS_ENVIRONMENT_ID || '' } : {}) }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error('认证失败，请检查账号或登录状态。');
     return response.json();
   }
   const cookieId = req => /(?:^|;\s*)moss_web=([A-Za-z0-9_-]+)/.exec(req.headers.cookie || '')?.[1];
   return {
     mode: serverUrl ? 'server' : 'token', tokenPath,
-    async login(input) {
+    async login(input, { trustedToken = false } = {}) {
       let accessToken;
       let expiresAt = Date.now() + 12 * 3600_000;
       if (serverUrl) {
-        const result = await upstream('/api/v1/auth/login', {
+        const result = trustedToken && input.accessToken ? { access_token: input.accessToken } : await upstream('/api/v1/auth/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: input.username, password: input.password }),
         });

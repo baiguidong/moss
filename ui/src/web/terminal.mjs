@@ -48,5 +48,5 @@ export function createWebTerminals({ registry, resolveLaunch, loadPty = () => im
     ['terminal:resize', ({ principal }, payload) => entryFor(principal, payload).pty?.resize(dimension(payload.cols, 100), dimension(payload.rows, 30))],
     ['terminal:stop', ({ principal }, payload) => { const entry = entryFor(principal, payload); stop(entry); terminals.delete(entry.terminalId); }],
   ]);
-  return { handlers, close() { for (const entry of terminals.values()) stop(entry); terminals.clear(); } };
+  return { handlers, activeCount: () => [...terminals.values()].filter(entry => entry.pty).length, close() { for (const entry of terminals.values()) stop(entry); terminals.clear(); } };
 }

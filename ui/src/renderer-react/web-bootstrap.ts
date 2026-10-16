@@ -19,12 +19,13 @@ export async function initializeHostClient() {
       form.addEventListener('submit', async event => {
         event.preventDefault();
         const button = form.querySelector('button')!;
-        button.disabled = true;
+        button.disabled = true; button.textContent = '正在进入云电脑…';
         try {
-          await jsonFetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          const login = await jsonFetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          if (login.reload) { location.reload(); return; }
           root.replaceChildren(); resolve();
         } catch (error) { form.querySelector('[role=alert]')!.textContent = (error as Error).message; }
-        finally { button.disabled = false; }
+        finally { button.disabled = false; button.textContent = '登录'; }
       });
     });
   }
@@ -33,7 +34,7 @@ export async function initializeHostClient() {
   const label = document.createElement('span');
   const logout = document.createElement('button');
   logout.textContent = '退出'; logout.style.marginLeft = '12px';
-  logout.onclick = async () => { await jsonFetch('/api/logout', { method: 'POST' }); location.reload(); };
+  logout.onclick = async () => { await jsonFetch('/api/logout', { method: 'POST' }); localStorage.clear(); sessionStorage.clear(); location.reload(); };
   status.append(label, logout); document.body.append(status);
   const fileUrl = (filePath: string) => `/api/files?path=${encodeURIComponent(filePath)}`;
   const uploadFile = (file: File) => jsonFetch(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });

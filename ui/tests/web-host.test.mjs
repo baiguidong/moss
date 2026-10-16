@@ -126,3 +126,34 @@ test('shared client preserves Electron subscriptions and binary document values'
   assert.equal(args[0], undefined);
   assert.equal(((payload = {}) => payload.includeArchived)(...args), undefined);
 });
+
+test('maintenance requires control token and blocks active uploads and new RPCs', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-web-drain-'));
+  const registry = createRequestRegistry(); registry.handle('agent:get-status', () => ({ local: true }));
+  const secret = 'test-control'; let blockers = ['pending permission', 'terminal'];
+  const server = await startWebServer({ registry, home, rendererRoot: home, getBlockers: () => blockers,
+    env: { MOSS_WEB_TOKEN: token, MOSS_WEB_PORT: '0', MOSS_WEB_CONTROL_TOKEN: secret } });
+  t.after(async () => { await server.close(); await fs.rm(home, { recursive: true, force: true }); });
+  const origin = `http://127.0.0.1:${server.address.port}`;
+  const control = route => fetch(`${origin}/internal/${route}`, { method: route === 'status' ? 'GET' : 'POST', headers: { 'X-Moss-Control': secret } });
+  assert.equal((await fetch(`${origin}/internal/status`)).status, 403);
+  assert.equal((await control('drain')).status, 400); blockers = [];
+  const login = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ token }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  let streamController;
+  const body = new ReadableStream({ start(c) { streamController = c; c.enqueue(new TextEncoder().encode('first')); } });
+  const upload = fetch(`${origin}/api/upload?name=slow`, { method: 'POST', headers: { Origin: origin, Cookie: cookie }, body, duplex: 'half' });
+  for (let attempt = 0; ; attempt++) { if ((await (await control('status')).json()).blockers.length) break; assert.ok(attempt < 100); await new Promise(r => setTimeout(r, 10)); }
+  assert.equal((await control('drain')).status, 400);
+  streamController.close(); assert.equal((await upload).status, 200);
+  assert.equal((await control('drain')).status, 200);
+  const ws = new WebSocket(origin.replace('http:', 'ws:') + '/api/ws', { headers: { Cookie: cookie, Origin: origin } });
+  t.after(() => ws.terminate()); const next = mailbox(ws);
+  await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  ws.send(stringifyWire({ type: 'hello', version: 1 })); await next(m => m.type === 'ready');
+  const req = request('agent:get-status'); ws.send(stringifyWire(req));
+  assert.match((await next(m => m.id === req.id)).error, /维护/);
+  assert.equal((await control('resume')).status, 200);
+  const allowed = request('agent:get-status'); ws.send(stringifyWire(allowed)); assert.equal((await next(m => m.id === allowed.id)).ok, true);
+  ws.terminate();
+});

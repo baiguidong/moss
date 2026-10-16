@@ -24,6 +24,8 @@ files=(
   stop.sh
   nginx.conf
   nginx-webui.conf
+  nginx-web-cloud.conf
+  webui.sh
   scripts/common.sh
   scripts/webui-start.sh
   scripts/cloud-storage-init.sh

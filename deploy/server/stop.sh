@@ -8,4 +8,4 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/scripts/common.sh"
 # Keep personal system layers as well as data volumes. down removes apt installs.
-compose --profile webui --profile cloud --profile cloud-init stop
+compose --profile webui --profile web-cloud --profile cloud --profile cloud-init stop

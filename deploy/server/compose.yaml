@@ -12,6 +12,42 @@ networks:
     external: true
 
 services:
+  web-gateway:
+    image: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
+    profiles: [web-cloud]
+    user: "0:0"
+    entrypoint: [node, /opt/moss/cloud/gateway.mjs]
+    environment:
+      MOSS_WEB_AUTH_SERVER: http://server:43127
+      MOSS_WEB_IMAGE: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
+      MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-}
+      MOSS_CLOUD_STATE: /state
+      MOSS_CLOUD_MAX_USERS: ${MOSS_CLOUD_MAX_USERS:-20}
+      MOSS_CLOUD_CPUS: ${MOSS_CLOUD_CPUS:-1}
+      MOSS_CLOUD_MEMORY_MB: ${MOSS_CLOUD_MEMORY_MB:-1024}
+      MOSS_CLOUD_PIDS: ${MOSS_CLOUD_PIDS:-512}
+    volumes:
+      - moss-cloud-state:/state
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    mem_limit: 256m
+    stop_grace_period: 60s
+    restart: unless-stopped
+    networks: [moss-server]
+
+  web-cloud-proxy:
+    image: ${NGINX_IMAGE}
+    profiles: [web-cloud]
+    depends_on:
+      web-gateway: { condition: service_healthy }
+    ports:
+      - "${MOSS_WEB_HTTPS_PORT:-8444}:443"
+    volumes:
+      - ./nginx-web-cloud.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    networks: [moss-server]
+
   webui:
     image: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
     profiles: [webui]
@@ -139,4 +175,5 @@ services:
     networks: [moss-server]
 
 volumes:
+  moss-cloud-state:
   moss-web-home:

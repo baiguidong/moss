@@ -49,6 +49,11 @@ apply_setting() {
   set_env "$key" "$value"
 }
 
+# Older deployments used a fixed owner. Preserve that mode unless explicitly changed.
+if [[ -z "${MOSS_WEB_DEPLOY_MODE:-}" && -f "$SOURCE_ENV" && -z "$(read_file_value "$SOURCE_ENV" MOSS_WEB_DEPLOY_MODE)" && -n "$(read_file_value "$SOURCE_ENV" MOSS_WEB_OWNER_ID)" ]]; then
+  MOSS_WEB_DEPLOY_MODE=single
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 0600 "$ENV_EXAMPLE" "$ENV_FILE"
 fi
@@ -59,6 +64,13 @@ apply_setting MOSS_REGISTRY_USERNAME ''
 apply_setting MOSS_SERVER_IMAGE ''
 apply_setting MOSS_RUNTIME_IMAGE ''
 apply_setting MOSS_WEB_ENABLED 0
+apply_setting MOSS_WEB_DEPLOY_MODE cloud
+apply_setting MOSS_CLOUD_MAX_USERS 20
+apply_setting MOSS_CLOUD_CPUS 1
+apply_setting MOSS_CLOUD_MEMORY_MB 1024
+apply_setting MOSS_CLOUD_PIDS 512
+[[ "$(read_value MOSS_WEB_DEPLOY_MODE)" == single || "$(read_value MOSS_WEB_DEPLOY_MODE)" == cloud ]] || die 'MOSS_WEB_DEPLOY_MODE must be single or cloud'
+
 apply_setting MOSS_WEB_IMAGE ghcr.io/baiguidong/moss-webui:latest
 apply_setting MOSS_WEB_HTTPS_PORT 8444
 apply_setting MOSS_WEB_OWNER_ID ''

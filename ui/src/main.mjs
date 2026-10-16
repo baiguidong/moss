@@ -8385,6 +8385,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     overrides.set('computer-use:status', () => ({ supported: false, enabled: false, phase: 'unsupported', requests: [], apps: [], sessionApps: [] }));
     webServer = await startWebServer({
       registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides,
+      getBlockers: () => [...getInstallBlockers(), ...(pendingQuestionRequests.size ? ['待确认请求'] : []), ...(webTerminals?.activeCount() ? ['运行中的终端'] : [])],
       snapshot: async () => ({ questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, requestedAt, input }) => ({ requestId, sessionId, requestedAt, input })) }),
     });
     console.log(`[moss-web] Ready on ${webServer.address.address}:${webServer.address.port}`);
@@ -8433,6 +8434,7 @@ function getInstallBlockers() {
 
 const updateInstallPreparation = createUpdateInstallPreparation({ getBlockers: getInstallBlockers, shutdown: shutdownDesktop });
 function assertUpdateWorkAllowed() {
+  webServer?.assertWorkAllowed();
   if (updateInstallPreparation.isPreparing()) throw new Error('正在准备安装更新，请完成安装或退出后重新打开 Moss。');
 }
 

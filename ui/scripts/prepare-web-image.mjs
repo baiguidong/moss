@@ -9,7 +9,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const target = path.resolve(process.argv[2] || '/opt/moss-release');
 if (target === repo || target.startsWith(repo + path.sep)) throw new Error('Release directory must be outside the source tree.');
 await fs.mkdir(target, { recursive: true });
-for (const relative of ['package.json', 'bin', 'shared', 'packages', 'ui/package.json', 'ui/src', 'ui/dist', 'ui/electron-direct.mjs', 'ui/build', 'ui/resources']) {
+for (const relative of ['package.json', 'cloud', 'bin', 'shared', 'packages', 'ui/package.json', 'ui/src', 'ui/dist', 'ui/electron-direct.mjs', 'ui/build', 'ui/resources']) {
   try { await fs.cp(path.join(repo, relative), path.join(target, relative), { recursive: true, filter: source => !source.includes('/node_modules/') && !source.includes('/resources/runtimes/') }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
 }

@@ -97,7 +97,7 @@ test('Server WebUI startup pins owner once and retains containers; changed owner
 const fs = require('fs'); const args = process.argv.slice(2);
 fs.appendFileSync(process.env.MOCK_LOG, JSON.stringify(args) + '\\n');
 if (args.includes('exec')) { process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({userId:'user-1',orgId:'org-1'}))); }
-else if (args.includes('ps') && process.env.MOCK_EXISTING) console.log('existing-container');
+else if (args.includes('ps') && !args.includes('--status') && process.env.MOCK_EXISTING) console.log('existing-container');
 else if (args[0] === 'inspect') console.log(JSON.stringify(['MOSS_WEB_OWNER_ID=old-owner']));
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MOCK_LOG: log };
