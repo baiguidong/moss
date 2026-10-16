@@ -167,7 +167,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
         {loading && !catalog ? (
           <div className="flex min-h-72 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在加载应用市场…</div>
         ) : visibleApps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' ? "此分类暂无 App" : "应用市场暂无 App"}</div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' ? "此分类暂无 App" : "暂无适用于当前系统的 App"}</div>
         ) : (
           <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
             {visibleApps.map((entry) => {
@@ -222,7 +222,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                     <Button size="sm" variant="outline" className="h-8" onClick={() => void toggleDetails(entry)}>
                       {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}详情
                     </Button>
-                    {!compatible && <span className="text-xs text-destructive">当前系统或 Moss 版本不兼容</span>}
+                    {!compatible && <span className="text-xs text-destructive">{!(selectedRelease.platformCompatible ?? entry.platformCompatible) ? "此版本不支持当前系统" : `此版本需要 Host API ${selectedRelease.hostApi}，当前为 ${catalog?.hostApiVersion}`}</span>}
                     {installed?.currentVersion && <span title={installed.currentVersion} className={`ml-auto flex items-center gap-1 text-[11px] ${installedUnavailable ? "text-destructive" : "text-emerald-600"}`}><CheckCircle2 className="h-3.5 w-3.5" />已安装 {installed.currentVersion.replace(/-local\..*$/, " · 本地版")}{installedUnavailable ? " · 当前版本不可用" : ""}</span>}
                   </div>
                   {localModification && <p className="mt-2 text-xs leading-5 text-muted-foreground">{sameVersion
@@ -239,7 +239,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                           <label className="grid max-w-xs gap-1 text-muted-foreground">
                             <span>可用版本</span>
                             <select className="h-8 rounded-md border border-input bg-background px-2" value={selectedVersion} disabled={busy} onChange={(event) => setSelectedVersions((current) => ({ ...current, [entry.id]: event.target.value }))}>
-                              {detail.versions.map((version) => <option key={version.version} value={version.version}>{version.version}</option>)}
+                              {detail.versions.filter((version) => version.platformCompatible).map((version) => <option key={version.version} value={version.version}>{version.version}</option>)}
                             </select>
                           </label>
                           {selectedRelease.releaseNotes && <div><div className="mb-1 font-medium">更新说明</div><p className="whitespace-pre-wrap leading-5 text-muted-foreground">{selectedRelease.releaseNotes}</p></div>}

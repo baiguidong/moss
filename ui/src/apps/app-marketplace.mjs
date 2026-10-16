@@ -288,7 +288,11 @@ export function createAppMarketplaceService(options = {}) {
       warning: result.warning,
       platform,
       hostApiVersion: APP_HOST_API_VERSION,
-      apps: result.index.apps.map((entry) => enrichSummary(entry, installedApps, platform)),
+      // The Host owns the target platform. A browser's OS is unrelated to the
+      // Linux computer where its Apps execute. Keep the shared cache complete.
+      apps: result.index.apps
+        .filter((entry) => selectMarketplaceArtifact(entry.latest, platform))
+        .map((entry) => enrichSummary(entry, installedApps, platform)),
     }
   }
 

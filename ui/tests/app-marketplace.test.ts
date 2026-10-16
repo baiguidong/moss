@@ -252,6 +252,37 @@ it('restores the local version when activating the marketplace replacement fails
 })
 
 describe('App marketplace', () => {
+  it('filters listings by Host OS and architecture without losing entries from the catalog cache', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-platform-'))
+    roots.push(root)
+    const base = catalog(version(Buffer.from('app')))
+    const entry = (id: string, platforms: string[], hostApi = '^3.0.0') => ({
+      ...base.apps[0], id, latest: { ...base.apps[0].latest, platforms, hostApi },
+    })
+    const index = { ...base, apps: [
+      entry('mac.app', ['darwin-arm64']),
+      entry('linux.app', ['linux-x64']),
+      entry('arm.app', ['linux-arm64']),
+      entry('future.app', ['linux-x64'], '>=99.0.0'),
+    ] }
+    const options = {
+      indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'),
+      getInstalledApps: async () => [{ id: 'mac.app', currentVersion: '1.2.0' }],
+      download: async () => Buffer.from(JSON.stringify(index)),
+    }
+    const linux = createAppMarketplaceService({ ...options, platform: 'linux-x64' })
+    for (const listing of [await linux.list(), await linux.list()]) {
+      expect(listing.platform).toBe('linux-x64')
+      expect(listing.apps.map(app => app.id)).toEqual(['linux.app', 'future.app'])
+      expect(listing.apps[1].hostCompatible).toBe(false)
+    }
+    const cached = JSON.parse(await fs.readFile(options.cachePath, 'utf8'))
+    expect(cached.index.apps).toHaveLength(4)
+    const mac = createAppMarketplaceService({ ...options, platform: 'darwin-arm64' })
+    expect((await mac.list()).apps.map(app => app.id)).toEqual(['mac.app'])
+    await expect(linux.install({ appId: 'mac.app' })).rejects.toThrow()
+  })
+
   it('retains primary category and searchable keywords, with other as the legacy and future fallback', () => {
     const release = version(Buffer.from('app'));
     const index = catalog(release);
