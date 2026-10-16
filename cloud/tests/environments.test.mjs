@@ -60,6 +60,8 @@ test('busy upgrade rejected; program switch, failed boot rollback and interrupte
   assert.equal(fx.store.get(a.id).version, 'old'); assert.equal(fx.store.get(a.id).upgrade, null);
   fx.setFail(false); const updated = await fx.manager.upgrade(a.id, 'new'); assert.equal(updated.version, 'new'); assert.equal(updated.containerId, a.containerId);
   fx.store.update(a.id, { upgrade: { previous: '/opt/moss-releases/bootstrap', previousVersion: 'old' } });
+  fx.setBusy(true); await assert.rejects(fx.manager.ensure(identity('a')), /busy/);
+  assert.ok(fx.store.get(a.id).upgrade); fx.setBusy(false);
   const recovered = await fx.manager.ensure(identity('a')); assert.equal(recovered.version, 'old'); assert.equal(recovered.containerId, a.containerId);
   assert.ok(fx.calls.filter(c => c[0] === 'helper-remove').every(c => c[1] !== a.containerId));
 });

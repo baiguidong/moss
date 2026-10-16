@@ -48,7 +48,7 @@ export class Environments {
       headers: { 'Content-Type': 'application/json', 'X-Moss-Control': row.controlToken }, body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'error', signal: AbortSignal.timeout(timeout) });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Cloud computer control request failed');
+    if (!response.ok) throw Object.assign(new Error(result.error || 'Cloud computer control request failed'), { status: response.status });
     return result;
   }
   async ready(row, version) {
@@ -89,6 +89,7 @@ export class Environments {
       if (!info.State.Running) await this.docker.start(info.Id);
       if (row.upgrade) row = await this.recoverUpgrade(row);
       const status = await this.ready(row);
+      if (status.maintenance) await this.control(row, 'resume', {});
       return this.store.update(row.id, { state: 'ready', version: status.version, lastActiveAt: Date.now() });
     });
   }
@@ -107,13 +108,18 @@ export class Environments {
     if (!journal) return row;
     const info = await this.inspect(row);
     if (!info.State.Running) await this.docker.start(info.Id);
+    // A controller may have been down longer than the maintenance lease. Recheck
+    // a responsive Host before restarting so resumed tasks are not interrupted.
+    let responsive = false;
+    try { await this.control(row, 'status', undefined, 2000); responsive = true; } catch {}
+    if (responsive) await this.control(row, 'drain', {});
     if (journal.previous) {
       await this.switchProgram(info.Id, journal.previous);
       await this.docker.restart(info.Id);
     } else { await this.control(row, 'resume', {}); }
     const status = await this.ready(row, journal.previousVersion);
     if (journal.helper) await this.docker.removeHelper(journal.helper).catch(() => {});
-    return this.store.update(row.id, { state: 'ready', version: status.version, upgrade: null, error: 'Interrupted update rolled back; original container retained.' });
+    return this.store.update(row.id, { state: 'ready', version: status.version, programImage: journal.previousProgramImage || row.programImage, upgrade: null, error: 'Interrupted update rolled back; original container retained.' });
   }
   stop(id) {
     return this.locked(id, async () => {
@@ -130,8 +136,8 @@ export class Environments {
   }
   upgrade(id, imageReference) {
     return this.locked(id, async () => {
-      const row = this.store.get(id); if (!row) throw new Error('Unknown environment');
-      if (row.upgrade) await this.recoverUpgrade(row);
+      let row = this.store.get(id); if (!row) throw new Error('Unknown environment');
+      if (row.upgrade) row = await this.recoverUpgrade(row);
       const info = await this.inspect(row); if (!info.State.Running) throw new Error('Start the cloud computer before upgrading');
       const base = await this.docker.image(row.programImage || info.Image), image = await this.docker.image(imageReference);
       for (const key of ['io.moss.web.runtime', 'io.moss.web.data-schema']) {
@@ -147,7 +153,7 @@ export class Environments {
       try {
         await this.control(row, 'drain', {});
         previous = await this.docker.exec(info.Id, ['node', '-e', 'const fs=require("fs");if(!fs.lstatSync("/opt/moss").isSymbolicLink())throw Error("Runtime does not support program switching");console.log(fs.realpathSync("/opt/moss"));']);
-        this.store.update(id, { state: 'upgrading', upgrade: { image: image.Id, version, previous, previousVersion: before.version, startedAt: Date.now() } });
+        this.store.update(id, { state: 'upgrading', upgrade: { image: image.Id, version, previous, previousVersion: before.version, previousProgramImage: row.programImage || info.Image, startedAt: Date.now() } });
         await this.docker.exec(info.Id, ['node', '-e', 'require("fs").mkdirSync(process.argv[1],{recursive:true})', directory]);
         helper = (await this.docker.create(`moss-release-${randomUUID()}`, { Image: image.Id, Labels: { 'io.moss.role': 'release-helper' }, Entrypoint: ['/bin/true'] })).Id;
         this.store.update(id, { upgrade: { ...this.store.get(id).upgrade, helper } });
