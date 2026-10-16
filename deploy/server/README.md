@@ -8,7 +8,7 @@ dependencies can use stable container DNS names instead of host IP addresses.
 ## Requirements
 
 - Linux x86_64 for published releases; source builds also support ARM64 with compatible dependency images
-- Docker Engine and Docker Compose v2
+- Docker Engine and Docker Compose v2 (cloud portal requires Engine 28+ / API 1.48+)
 - `curl`, `jq`, and `openssl`
 - Port 443 available (or set `MOSS_HTTPS_PORT`)
 

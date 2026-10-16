@@ -6,7 +6,7 @@ export class Docker {
   async request(method, route, body, { stream = false, input, timeout = 180000 } = {}) {
     return new Promise((resolve, reject) => {
       const data = body === undefined ? null : JSON.stringify(body);
-      const req = http.request({ socketPath: this.socketPath, path: `/v1.45${route}`, method,
+      const req = http.request({ socketPath: this.socketPath, path: `/v1.48${route}`, method,
         headers: input ? { 'Content-Type': 'application/x-tar' } : data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {} }, res => {
         if (stream && res.statusCode < 300) return resolve(res);
         const chunks = []; let size = 0;
@@ -50,7 +50,7 @@ export class Docker {
     }
   }
   async connect(network, container) {
-    try { await this.request('POST', `/networks/${network}/connect`, { Container: container, EndpointConfig: { Aliases: ['moss-cloud-gateway'] } }); }
+    try { await this.request('POST', `/networks/${network}/connect`, { Container: container, EndpointConfig: { Aliases: ['moss-cloud-gateway'], GwPriority: -1 } }); }
     catch (error) { if (!/already exists|already connected/i.test(error.message)) throw error; }
   }
   archive(id, location) { return this.request('GET', `/containers/${id}/archive?path=${encodeURIComponent(location)}`, undefined, { stream: true }); }

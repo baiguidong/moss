@@ -84,6 +84,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       if (closing) return json(res, 503, { error: 'Gateway is restarting' });
       if (!req.url.startsWith('/') || req.url.startsWith('//')) return json(res, 400, { error: 'Invalid request URL' });
       const url = new URL(req.url, origin);
+      if (url.origin !== origin || url.pathname.startsWith('//')) return json(res, 400, { error: 'Invalid request URL' });
       if (url.pathname === '/healthz') return json(res, 200, { ok: true, mode: 'cloud' });
       if (url.pathname.startsWith('/_moss-auth/')) {
         const row = store.get(String(req.headers['x-moss-environment'] || ''));
@@ -133,7 +134,8 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         if (url.pathname.startsWith('/api/') || !['GET', 'HEAD'].includes(req.method)) return json(res, 401, { error: '请先登录。' });
         return await serveLoginAsset(req, res);
       }
-      const upstream = http.request(new URL(req.url, await computers.target(auth.row)), { method: req.method, headers: proxyHeaders(req, auth.session) }, response => {
+      const target = new URL(await computers.target(auth.row)); target.pathname = url.pathname; target.search = url.search;
+      const upstream = http.request(target, { method: req.method, headers: proxyHeaders(req, auth.session) }, response => {
         const headers = { ...response.headers }; delete headers['set-cookie']; delete headers['clear-site-data'];
         headers['cache-control'] = 'no-store';
         res.writeHead(response.statusCode, headers); response.on('error', () => res.destroy()); response.pipe(res);

@@ -60,7 +60,7 @@ try {
   const contextA = await browser.newContext(), contextB = await browser.newContext();
   const a = await contextA.newPage(), b = await contextB.newPage();
   await a.goto(origin); await a.locator('[name=username]').fill('alice'); await a.locator('[name=password]').fill('ci-fixture-only');
-  const concurrent = apiLogin('alice');
+  const concurrent = apiLogin('alice'); concurrent.catch(() => {}); // Await below; keep early errors inside the test cleanup.
   await a.getByRole('button', { name: '登录', exact: true }).click(); await pageReady(a); await concurrent;
   let rows = await admin('list'); assert.equal(rows.length, 1); const alice = rows[0]; owned.push(alice.containerId);
   await b.goto(origin); await b.locator('[name=username]').fill('bob'); await b.locator('[name=password]').fill('ci-fixture-only');

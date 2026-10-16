@@ -46,6 +46,14 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   const loginA = await post('/api/login', { username: 'alice', password: 'test' });
   assert.equal(loginA.status, 200); assert.match(loginA.headers.get('set-cookie'), /HttpOnly; SameSite=Strict; Secure/);
   const ca = loginA.headers.get('set-cookie').split(';')[0];
+  for (const requestPath of ['//attacker.invalid/path', '/\\attacker.invalid/path', '/a/..//attacker.invalid/path']) {
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request(base(), { path: requestPath, headers: { Cookie: ca } }, res => { res.resume(); resolve(res.statusCode); });
+      req.on('error', reject); req.end();
+    });
+    assert.equal(status, 400);
+  }
+
   const loginB = await post('/api/login', { username: 'bob', password: 'test' }); const cb = loginB.headers.get('set-cookie').split(';')[0];
   assert.equal(gateway.store.all().length, 2);
   const response = await fetch(base() + '/api/private?environmentId=bob', { headers: { Cookie: ca, 'X-Moss-Control': 'spoof', Authorization: 'Bearer spoof' } });
