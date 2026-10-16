@@ -49,7 +49,7 @@ try {
   await docker('network', 'create', network);
   await docker('run', '-d', '--name', gateway, '--network', network, '--add-host', 'host.docker.internal:host-gateway',
     '-p', '127.0.0.1:43129:43128', '-v', `${state}:/state`, '-v', '/var/run/docker.sock:/var/run/docker.sock',
-    '--user', '0', '--entrypoint', 'node', '-e', `MOSS_WEB_ORIGIN=${origin}`, '-e', `MOSS_WEB_IMAGE=${image}`,
+    '--user', '0', '--entrypoint', 'node', '-e', `MOSS_WEB_ORIGIN=${origin}`, '-e', 'MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS=90', '-e', `MOSS_WEB_IMAGE=${image}`,
     '-e', `MOSS_WEB_AUTH_SERVER=http://host.docker.internal:${auth.address().port}`, image, '/opt/moss/cloud/gateway.mjs');
   await ready(); console.log('[cloud-ci] Gateway ready'); installation = await docker('exec', gateway, 'cat', '/state/installation-id');
   assert.equal((await fetch(`${origin}/internal/status`)).status, 403);

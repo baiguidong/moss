@@ -69,6 +69,7 @@ apply_setting MOSS_CLOUD_MAX_USERS 20
 apply_setting MOSS_CLOUD_CPUS 1
 apply_setting MOSS_CLOUD_MEMORY_MB 1024
 apply_setting MOSS_CLOUD_PIDS 512
+apply_setting MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS 300
 [[ "$(read_value MOSS_WEB_DEPLOY_MODE)" == single || "$(read_value MOSS_WEB_DEPLOY_MODE)" == cloud ]] || die 'MOSS_WEB_DEPLOY_MODE must be single or cloud'
 
 apply_setting MOSS_WEB_IMAGE ghcr.io/baiguidong/moss-webui:latest

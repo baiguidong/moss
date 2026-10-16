@@ -26,6 +26,7 @@ services:
       MOSS_CLOUD_CPUS: ${MOSS_CLOUD_CPUS:-1}
       MOSS_CLOUD_MEMORY_MB: ${MOSS_CLOUD_MEMORY_MB:-1024}
       MOSS_CLOUD_PIDS: ${MOSS_CLOUD_PIDS:-512}
+      MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS: ${MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS:-300}
     volumes:
       - moss-cloud-state:/state
       - /var/run/docker.sock:/var/run/docker.sock

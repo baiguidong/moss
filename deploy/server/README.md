@@ -29,7 +29,7 @@ MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
 
 新部署默认 cloud；原固定用户 WebUI 可继续设置 `MOSS_WEB_DEPLOY_MODE=single`，老配置有 owner ID 时自动保持 single。两种模式不能同时占用同一门户端口，切换需先显式停止旧入口；脚本不迁移/删除旧个人容器。WebUI 默认关闭。
 
-网关单独保存环境映射卷并持有 Docker socket。**个人容器没有 Docker socket**，使用独立 HOME 卷和私有网络。`MOSS_CLOUD_MAX_USERS`、`MOSS_CLOUD_CPUS`、`MOSS_CLOUD_MEMORY_MB`、`MOSS_CLOUD_PIDS` 设置数量和单容器资源上限；磁盘目前没有硬配额，按宿主容量设置用户上限并监控增长。
+网关单独保存环境映射卷并持有 Docker socket。**个人容器没有 Docker socket**，使用独立 HOME 卷和私有网络。`MOSS_CLOUD_MAX_USERS`、`MOSS_CLOUD_CPUS`、`MOSS_CLOUD_MEMORY_MB`、`MOSS_CLOUD_PIDS` 设置数量和单容器资源上限；磁盘目前没有硬配额，按宿主容量设置用户上限并监控增长。`MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS` 默认 300 秒，适应有磁盘负载的主机冷启动；可在 30–900 秒之间调整。
 
 ```bash
 ./webui.sh list

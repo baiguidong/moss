@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export class Environments {
-  constructor({ store, docker, installation, gatewayContainer, image, origin, cpu = 1, memoryMb = 1024, pids = 512 }) {
-    Object.assign(this, { store, docker, installation, gatewayContainer, image, origin, cpu, memoryMb, pids });
+  constructor({ store, docker, installation, gatewayContainer, image, origin, cpu = 1, memoryMb = 1024, pids = 512, startupTimeoutMs = 300000 }) {
+    Object.assign(this, { store, docker, installation, gatewayContainer, image, origin, cpu, memoryMb, pids, startupTimeoutMs });
     this.locks = new Map();
     // Fence every Docker call, including calls resumed after an awaited copy.
     this.docker = new Proxy(docker, { get: (target, key) => typeof target[key] === 'function'
@@ -52,7 +52,7 @@ export class Environments {
     return result;
   }
   async ready(row, version) {
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       try {
         const status = await this.control(row, 'status', undefined, 2000);

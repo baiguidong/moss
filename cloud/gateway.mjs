@@ -29,7 +29,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
   catch (error) { if (error.code !== 'ENOENT') throw error; installation = randomUUID().replaceAll('-', ''); await fsp.writeFile(installationPath, installation, { flag: 'wx', mode: 0o600 }); }
   if (!/^[a-f0-9]{32}$/.test(installation)) throw new Error('Invalid installation identity');
   const computers = new Environments({ store, docker, installation, gatewayContainer: env.MOSS_CLOUD_GATEWAY_CONTAINER || env.HOSTNAME,
-    image: env.MOSS_WEB_IMAGE, origin, cpu: number(env.MOSS_CLOUD_CPUS, 1, 0.1, 256), memoryMb: number(env.MOSS_CLOUD_MEMORY_MB, 1024, 256, 1048576), pids: number(env.MOSS_CLOUD_PIDS, 512, 64, 65536) });
+    image: env.MOSS_WEB_IMAGE, origin, cpu: number(env.MOSS_CLOUD_CPUS, 1, 0.1, 256), memoryMb: number(env.MOSS_CLOUD_MEMORY_MB, 1024, 256, 1048576), pids: number(env.MOSS_CLOUD_PIDS, 512, 64, 65536), startupTimeoutMs: number(env.MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS, 300, 30, 900) * 1000 });
   await computers.reconnectNetworks();
   let closing = false;
   const sessions = new Map(); const sockets = new Map(); const loginAttempts = new Map();
