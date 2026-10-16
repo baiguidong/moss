@@ -35,6 +35,8 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
     and (.services.webui.ports // [] | length) == 0
     and (.services["web-gateway"].volumes | any(.target == "/state"))
+    and .services["web-gateway"].sysctls["net.ipv4.ip_forward"] == "0"
+    and (.services["web-gateway"].cap_drop | index("ALL")) != null
     and (.services["web-gateway"].volumes | any(.target == "/var/run/docker.sock"))
     and .services.webui.environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
     and (.services.webui.volumes | all(.type == "volume" and .target == "/home/moss"))

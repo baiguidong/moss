@@ -49,7 +49,7 @@ try {
   await docker('network', 'create', network);
   await docker('run', '-d', '--name', gateway, '--network', network, '--add-host', 'host.docker.internal:host-gateway',
     '-p', '127.0.0.1:43129:43128', '-v', `${state}:/state`, '-v', '/var/run/docker.sock:/var/run/docker.sock',
-    '--user', '0', '--entrypoint', 'node', '-e', `MOSS_WEB_ORIGIN=${origin}`, '-e', 'MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS=90', '-e', `MOSS_WEB_IMAGE=${image}`,
+    '--user', '0', '--cap-drop', 'ALL', '--sysctl', 'net.ipv4.ip_forward=0', '--sysctl', 'net.ipv6.conf.all.forwarding=0', '--entrypoint', 'node', '-e', `MOSS_WEB_ORIGIN=${origin}`, '-e', 'MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS=90', '-e', `MOSS_WEB_IMAGE=${image}`,
     '-e', `MOSS_WEB_AUTH_SERVER=http://host.docker.internal:${auth.address().port}`, image, '/opt/moss/cloud/gateway.mjs');
   await ready(); console.log('[cloud-ci] Gateway ready'); installation = await docker('exec', gateway, 'cat', '/state/installation-id');
   assert.equal((await fetch(`${origin}/internal/status`)).status, 403);
@@ -69,6 +69,7 @@ try {
   assert.notEqual(alice.containerId, bob.containerId); console.log('[cloud-ci] Concurrent login and two users ready');
   const ai = await inspect(alice.containerId), bi = await inspect(bob.containerId);
   assert.notEqual(ai.HostConfig.NetworkMode, bi.HostConfig.NetworkMode);
+  assert.equal(await docker('exec', gateway, 'cat', '/proc/sys/net/ipv4/ip_forward'), '0');
   assert.notEqual(ai.Mounts[0].Name, bi.Mounts[0].Name);
   assert.ok(!ai.Mounts.some(m => m.Destination.includes('docker.sock')));
   const sessions = await a.evaluate(async () => {
@@ -89,6 +90,7 @@ try {
   console.log('[cloud-ci] Browser files isolated; apt package installed');
   await a.screenshot({ path: path.join(output, 'alice.png') }); await b.screenshot({ path: path.join(output, 'bob.png') });
   await docker('restart', gateway); await ready(); await apiLogin('alice'); await verifyPersistent();
+  assert.equal(await docker('exec', gateway, 'cat', '/proc/sys/net/ipv4/ip_forward'), '0');
   await admin('stop', alice.id); assert.equal((await inspect(alice.containerId)).State.Running, false);
   await apiLogin('alice'); await verifyPersistent();
   console.log('[cloud-ci] Gateway restart and same-container stop/start passed');

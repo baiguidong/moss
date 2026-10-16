@@ -31,6 +31,10 @@ services:
       - moss-cloud-state:/state
       - /var/run/docker.sock:/var/run/docker.sock
     read_only: true
+    cap_drop: [ALL]
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
     mem_limit: 256m
     stop_grace_period: 60s
     restart: unless-stopped
