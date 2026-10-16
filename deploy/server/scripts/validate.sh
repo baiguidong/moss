@@ -85,6 +85,13 @@ grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181:8444' "$test_root/deployment/.env"
 MOSS_WEB_ENABLED=1 MOSS_WEB_OWNER_ID=test-owner \
   "$test_root/deployment/configure.sh" >/dev/null
 grep -Fxq 'MOSS_WEB_OWNER_ID=test-owner' "$test_root/deployment/.env"
+grep -Fxq 'MOSS_WEB_DEPLOY_MODE=cloud' "$test_root/deployment/.env"
+# An old, owner-bound installation must not silently switch to a fresh cloud computer.
+sed '/^MOSS_WEB_DEPLOY_MODE=/d' "$test_root/deployment/.env" > "$test_root/deployment/legacy.env"
+"$test_root/deployment/configure.sh" "$test_root/deployment/legacy.env" >/dev/null
+grep -Fxq 'MOSS_WEB_DEPLOY_MODE=single' "$test_root/deployment/.env"
+MOSS_WEB_DEPLOY_MODE=cloud "$test_root/deployment/configure.sh" >/dev/null
+
 if MOSS_WEB_HTTPS_PORT=443 "$test_root/deployment/configure.sh" >/dev/null 2>&1; then
   echo 'ERROR: conflicting HTTPS ports were accepted' >&2; exit 1
 fi

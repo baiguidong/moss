@@ -35,7 +35,10 @@ async function ready() {
   for (let i = 0; i < 120; i++) { try { if ((await fetch(`${origin}/healthz`)).ok) return; } catch {} await delay(1000); }
   throw new Error('Gateway not healthy');
 }
-const admin = async (...args) => JSON.parse(await docker('exec', gateway, 'node', '/opt/moss/cloud/cli.mjs', ...args));
+const admin = async (...args) => {
+  try { return JSON.parse(await docker('exec', gateway, 'node', '/opt/moss/cloud/cli.mjs', ...args)); }
+  catch (error) { throw new Error(error.stdout?.trim() || error.message); }
+};
 async function apiLogin(user) {
   const res = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user, password: 'ci-fixture-only' }) });
   assert.equal(res.status, 200, await res.clone().text()); return res.headers.get('set-cookie').split(';')[0];
@@ -48,7 +51,7 @@ try {
     '-p', '127.0.0.1:43129:43128', '-v', `${state}:/state`, '-v', '/var/run/docker.sock:/var/run/docker.sock',
     '--user', '0', '--entrypoint', 'node', '-e', `MOSS_WEB_ORIGIN=${origin}`, '-e', `MOSS_WEB_IMAGE=${image}`,
     '-e', `MOSS_WEB_AUTH_SERVER=http://host.docker.internal:${auth.address().port}`, image, '/opt/moss/cloud/gateway.mjs');
-  await ready(); installation = await docker('exec', gateway, 'cat', '/state/installation-id');
+  await ready(); console.log('[cloud-ci] Gateway ready'); installation = await docker('exec', gateway, 'cat', '/state/installation-id');
   assert.equal((await fetch(`${origin}/internal/status`)).status, 403);
   assert.equal((await fetch(`${origin}/_cloud/environments`)).status, 403);
   assert.equal((await fetch(`${origin}/api/files?path=/etc/passwd`)).status, 401);
@@ -63,7 +66,7 @@ try {
   await b.goto(origin); await b.locator('[name=username]').fill('bob'); await b.locator('[name=password]').fill('ci-fixture-only');
   await b.getByRole('button', { name: '登录', exact: true }).click(); await pageReady(b);
   rows = await admin('list'); assert.equal(rows.length, 2); const bob = rows.find(r => r.userId === 'bob'); owned.push(bob.containerId);
-  assert.notEqual(alice.containerId, bob.containerId);
+  assert.notEqual(alice.containerId, bob.containerId); console.log('[cloud-ci] Concurrent login and two users ready');
   const ai = await inspect(alice.containerId), bi = await inspect(bob.containerId);
   assert.notEqual(ai.HostConfig.NetworkMode, bi.HostConfig.NetworkMode);
   assert.notEqual(ai.Mounts[0].Name, bi.Mounts[0].Name);
@@ -83,14 +86,17 @@ try {
     assert.equal(await docker('exec', alice.containerId, 'cat', '/home/moss/cloud-check'), 'home');
     assert.match(await docker('exec', alice.containerId, 'tree', '--version'), /tree/);
   };
+  console.log('[cloud-ci] Browser files isolated; apt package installed');
   await a.screenshot({ path: path.join(output, 'alice.png') }); await b.screenshot({ path: path.join(output, 'bob.png') });
   await docker('restart', gateway); await ready(); await apiLogin('alice'); await verifyPersistent();
   await admin('stop', alice.id); assert.equal((await inspect(alice.containerId)).State.Running, false);
   await apiLogin('alice'); await verifyPersistent();
+  console.log('[cloud-ci] Gateway restart and same-container stop/start passed');
   await fs.writeFile(path.join(temporary, 'Dockerfile'), `ARG BASE\nFROM \${BASE}\nUSER root\nARG TEST_VERSION\nARG BREAK_BOOT=0\nRUN TEST_VERSION="$TEST_VERSION" BREAK_BOOT="$BREAK_BOOT" node -e 'const fs=require("fs"),p="/opt/moss/package.json",j=JSON.parse(fs.readFileSync(p));j.version=process.env.TEST_VERSION;fs.writeFileSync(p,JSON.stringify(j));if(process.env.BREAK_BOOT==="1")fs.writeFileSync("/opt/moss/ui/src/main.mjs","process.exit(42);")'\nLABEL org.opencontainers.image.version="$TEST_VERSION"\nUSER moss\n`);
   for (const broken of [false, true]) {
     const version = `0.0.0-cloud-ci.${broken ? 'bad' : 'good'}`, tag = `${suffix}:${broken ? 'bad' : 'good'}`;
     await docker('build', '--build-arg', `BASE=${image}`, '--build-arg', `TEST_VERSION=${version}`, '--build-arg', `BREAK_BOOT=${broken ? 1 : 0}`, '-t', tag, temporary);
+    console.log(`[cloud-ci] Testing ${broken ? 'bad release rollback' : 'program upgrade'}`);
     if (broken) await assert.rejects(admin('upgrade', alice.id, tag));
     else assert.equal((await admin('upgrade', alice.id, tag)).version, version);
     assert.equal((await admin('list')).find(r => r.id === alice.id).version, '0.0.0-cloud-ci.good');
@@ -105,9 +111,18 @@ try {
   assert.equal(missing.status, 503); assert.match(await missing.text(), /原容器已丢失/);
   await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ ok: true, concurrentLogin: true, twoUserIsolation: true, multipleChatsOneContainer: true, controllerRestart: true, sameContainerStopStart: true, programUpgrade: true, badReleaseRollback: true, aptAndEtcPreserved: true, missingContainerNotRecreated: true, image }, null, 2));
   console.log('Cloud browser, isolation, persistence, upgrade and rollback validation passed.');
+} catch (error) {
+  for (const [index, page] of (browser?.contexts().flatMap(c => c.pages()) || []).entries()) {
+    await page.screenshot({ path: path.join(output, `failure-${index}.png`) }).catch(() => {});
+  }
+  throw error;
 } finally {
   await browser?.close();
-  for (const id of [gateway, ...owned]) { try { await fs.writeFile(path.join(output, `${id}.log`), await docker('logs', id)); } catch {} }
+  if (installation) {
+    const ids = (await docker('container', 'ls', '-aq', '--filter', `label=io.moss.installation=${installation}`)).split(/\s+/).filter(Boolean);
+    owned = [...new Set([...owned, ...ids])];
+  }
+  for (const id of [gateway, ...owned]) { try { const logs = await run('docker', ['logs', id], { maxBuffer: 16 * 1024 * 1024 }); await fs.writeFile(path.join(output, `${id}.log`), logs.stdout + logs.stderr); } catch {} }
   // Only resources labeled by this isolated CI installation are eligible for cleanup.
   if (installation) {
     const list = async kind => (await docker(kind, 'ls', '-q', '--filter', `label=io.moss.installation=${installation}`)).split(/\s+/).filter(Boolean);

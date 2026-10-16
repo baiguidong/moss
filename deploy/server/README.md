@@ -14,47 +14,36 @@ dependencies can use stable container DNS names instead of host IP addresses.
 
 ## Linux 部署入口
 
-### 同时启用单用户 WebUI
+### 同时启用个人云电脑 WebUI
 
-GitHub CLI 在远端构建 Linux AMD64 WebUI 镜像及部署包，本机无需 Docker：
+GitHub CLI 在 GitHub Linux AMD64 上构建镜像及部署包，本机无需 Docker：
 
 ```bash
 gh workflow run build-release.yml --ref codex/webui-amd64-release -f publish=true
-gh run list --workflow build-release.yml --limit 5
-gh run watch <run-id> --exit-status
-gh run download <run-id> --dir artifacts
+gh run list --workflow build-release.yml
+# 验收通过后，下载对应 moss-webui-linux-amd64-* artifact，解压 Server 部署包
+MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
 ```
 
-下载、解压 `moss-server-compose-<version>.tar.gz`，在 Linux 主机运行：
+默认地址 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。用户以现有 Server 账号登录，首次创建个人 Linux 容器，后续复用同一容器。一个用户的全部聊天、项目和终端共享环境，退出浏览器不会停止它。Server 的现有会话能力保持不变。
+
+新部署默认 cloud；原固定用户 WebUI 可继续设置 `MOSS_WEB_DEPLOY_MODE=single`，老配置有 owner ID 时自动保持 single。两种模式不能同时占用同一门户端口，切换需先显式停止旧入口；脚本不迁移/删除旧个人容器。WebUI 默认关闭。
+
+网关单独保存环境映射卷并持有 Docker socket。**个人容器没有 Docker socket**，使用独立 HOME 卷和私有网络。`MOSS_CLOUD_MAX_USERS`、`MOSS_CLOUD_CPUS`、`MOSS_CLOUD_MEMORY_MB`、`MOSS_CLOUD_PIDS` 设置数量和单容器资源上限；磁盘目前没有硬配额，按宿主容量设置用户上限并监控增长。
 
 ```bash
-sudo env MOSS_PUBLIC_HOST=10.0.1.181 MOSS_WEB_ENABLED=1 bash install.sh
+./webui.sh list
+./webui.sh stop <environment-id>
+./webui.sh upgrade <environment-id> ghcr.io/baiguidong/moss-webui:<version>
 ```
 
-WebUI 默认地址为 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。
-首次启用通过现有认证 API 将单用户 WebUI 绑定到安装管理员，后续用同一账号密码登录。
-也可明确指定 `MOSS_WEB_OWNER_ID`、`MOSS_WEB_OWNER_ORG_ID`；已有管理员密码变更时，
-首次绑定需要当前凭据或显式用户 ID。其他有效账号不能访问此个人环境。
+升级会检查空闲和运行时/schema 兼容性，在原容器内切换 Moss 程序并重启，保留 container ID、apt 安装、`/etc` 与 HOME；失败或中断时回退程序。新镜像不自动覆盖已有个人电脑。私有仓库先执行宿主 `docker login ghcr.io`；离线部署先 `docker load`，升级命令可直接使用已载入镜像。
 
-`MOSS_WEB_IMAGE`、`MOSS_WEB_HTTPS_PORT` 和 `MOSS_WEB_ORIGIN` 可分别指定镜像、端口与
-外部访问 origin。WebUI 默认关闭。启用后单独保存 HOME 卷，无 Docker socket 挂载。
-Server 现有会话和 runtime 服务继续保留。
+`stop.sh` 停止 Compose 服务与门户，不删除个人容器；cloud 模式下也不会自动停止全部用户电脑。`webui.sh stop` 只停止指定空闲电脑，再次登录会启动原容器。需要限制账号访问时使用认证中心账号管理。
 
-`start.sh`、`stop.sh` 和 Server 升级会保留已有 WebUI 容器及 apt 安装；`stop.sh` 现在停止
-容器而不删除它们。WebUI 镜像/配置变更不会静默替换个人容器，用户归属/origin 不匹配时
-会要求先处理环境迁移。**删除或重建 WebUI 容器后，仅凭 HOME 卷仍无法恢复系统软件。**
-完整系统恢复和独立 Host 升级属于下一阶段，见 [WebUI 计划](../../ui/docs/webui-next-steps.md)。
+**删除容器或节点损坏后的完整系统恢复尚未实现**；不要用 `docker rm`、`compose down -v` 或卷清理代替正常停止。HOME 卷无法独立恢复 apt 系统软件。状态卷也必须保留，否则失去归属映射。备份与灾难恢复的后续计划见 [WebUI 计划](../../ui/docs/webui-next-steps.md)。
 
-工作流合入主分支后，`--ref` 可改为 `main`。独立构建包固定 WebUI 版本；
-Server 和 runtime 使用包中原有发布配置。完整 `release.yml` 会同时构建和发布 WebUI。
-离线 WebUI 单独部署方法见 [WebUI 部署说明](../webui/README.md)。
-
-复制到 Linux 后，按需要选择安装方式：
-
-| 复制的内容 | 执行入口 | Server 镜像来源 |
-| --- | --- | --- |
-| `deploy/server` 目录或解压后的部署包 | `install.sh` | 拉取 `.env` 配置的镜像，不编译源码 |
-| 完整源码仓库 | `deploy/server/local.sh` | 按服务器架构自动编译，再安装和启动 |
+独立构建只推送固定版本；完整 `release.yml` 复用相同验收并按稳定版本策略更新 latest。工作流合入主分支后，`--ref` 可改为 `main`。[独立单用户部署](../webui/README.md)继续保留。
 
 ### 使用已发布镜像
 

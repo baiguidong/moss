@@ -187,7 +187,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(env.MOSS_WEB_PORT || 43128), env.MOSS_WEB_HOST || '0.0.0.0', resolve); });
   return { server, store, computers, async close() { closing = true; clearInterval(cleanup); for (const id of sessions.keys()) removeSession(id); await new Promise(resolve => server.close(resolve)); await new Promise(resolve => admin.close(resolve)); await Promise.allSettled([...computers.locks.values()]); store.close(); } };
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const gateway = await startGateway();
   console.log('[moss-cloud] Gateway ready');
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await gateway.close(); process.exit(0); });
