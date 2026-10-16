@@ -191,6 +191,6 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const gateway = await startGateway();
-  console.log('[moss-cloud] Gateway ready');
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await gateway.close(); process.exit(0); });
+  console.log('[moss-cloud] Gateway ready');
 }
