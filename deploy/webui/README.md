@@ -11,10 +11,10 @@
 ```sh
 # --ref 指向包含本工作流的分支；合入主分支后可使用 main。
 gh workflow run build-release.yml --ref codex/webui-amd64-release \
-  -f version=0.0.1-webui.20261016.1 -f publish=true
+  -f publish=true
 gh run list --workflow build-release.yml --limit 5
 gh run watch <run-id> --exit-status
-gh run download <run-id> --name moss-webui-linux-amd64-0.0.1-webui.20261016.1
+gh run download <run-id> --dir artifacts
 ```
 
 每次构建使用新的版本号。省略 `version` 时自动生成唯一预发布版本。`publish=false` 仅生成离线包，不推送 GHCR。工作流不启动部署主机上的服务。

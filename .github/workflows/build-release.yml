@@ -84,8 +84,7 @@ jobs:
           IMAGE: ${{ steps.release.outputs.image }}
         run: |
           node scripts/docker-webui.mjs package --skip-build --platform linux/amd64 --tag "$IMAGE" --version "$VERSION" --output-dir dist/webui-release
-          sed -i "s|^MOSS_WEB_IMAGE=.*|MOSS_WEB_IMAGE=$IMAGE|" deploy/server/.env.example
-          deploy/server/package.sh "$VERSION" dist/webui-release
+          MOSS_WEB_PACKAGE_IMAGE="$IMAGE" deploy/server/package.sh "$VERSION" dist/webui-release
       - name: Publish validated image
         if: ${{ inputs.publish }}
         env:

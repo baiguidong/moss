@@ -53,6 +53,8 @@ fi
 wait_for_server
 if [[ "$(env_value MOSS_WEB_ENABLED)" == 1 ]]; then
   "$SCRIPT_DIR/scripts/webui-start.sh"
+else
+  compose --profile webui stop webui-proxy webui
 fi
 if ! "$SCRIPT_DIR/scripts/cloud-storage-init.sh"; then
   echo 'Cloud storage initialization failed. Moss Server remains available; rerun scripts/cloud-storage-init.sh to retry.' >&2

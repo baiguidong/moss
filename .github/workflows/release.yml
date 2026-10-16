@@ -319,7 +319,8 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           OUTPUT_DIR=dist/server-compose
-          deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
+          MOSS_WEB_PACKAGE_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-webui:$VERSION" \
+            deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz.sha256" \

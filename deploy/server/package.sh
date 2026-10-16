@@ -47,6 +47,12 @@ mkdir -p "$tmp_dir/$PACKAGE_ROOT/scripts"
 for file in "${files[@]}"; do
   install -m 0644 "$SCRIPT_DIR/$file" "$tmp_dir/$PACKAGE_ROOT/$file"
 done
+if [[ -n "${MOSS_WEB_PACKAGE_IMAGE:-}" ]]; then
+  [[ "$MOSS_WEB_PACKAGE_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]*$ ]] \
+    || die 'MOSS_WEB_PACKAGE_IMAGE must be an image reference'
+  sed -i.bak "s|^MOSS_WEB_IMAGE=.*|MOSS_WEB_IMAGE=$MOSS_WEB_PACKAGE_IMAGE|" "$tmp_dir/$PACKAGE_ROOT/.env.example"
+  rm -f "$tmp_dir/$PACKAGE_ROOT/.env.example.bak"
+fi
 chmod 0755 "$tmp_dir/$PACKAGE_ROOT/"*.sh "$tmp_dir/$PACKAGE_ROOT/scripts/"*.sh
 find "$tmp_dir/$PACKAGE_ROOT" -type f -name '._*' -delete
 if command -v xattr >/dev/null 2>&1; then

@@ -60,7 +60,7 @@ test('offline package contains checksums, pinned image and deployment files, exc
   const entries = execFileSync('tar', ['-tzf', result.archive], { encoding: 'utf8' });
   assert.match(entries, /moss-webui\/images\/moss-webui.tar/);
   assert.match(entries, /moss-webui\/SHA256SUMS/);
-  assert.doesNotMatch(entries, /moss-webui\/\.env\n|node_modules|node_modules|\.DS_Store/);
+  assert.doesNotMatch(entries, /moss-webui\/\.env\n|node_modules|\.DS_Store/);
   const config = execFileSync('tar', ['-xOzf', result.archive, 'moss-webui/.env.example'], { encoding: 'utf8' });
   assert.match(config, /MOSS_WEB_IMAGE=example\/webui:test/);
   assert.equal(result.release.builtFromCheckout, false);
@@ -121,4 +121,6 @@ else if (args[0] === 'inspect') console.log(JSON.stringify(['MOSS_WEB_OWNER_ID=o
   execFileSync('bash', [path.join(target, 'stop.sh')], { env });
   calls = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(calls.at(-1).at(-1), 'stop');
+  await fs.writeFile(envFile, (await fs.readFile(envFile, 'utf8')).replace('MOSS_WEB_ENABLED=1', 'MOSS_WEB_ENABLED=0'));
+  execFileSync('bash', [path.join(target, 'stop.sh')], { env });
 });
