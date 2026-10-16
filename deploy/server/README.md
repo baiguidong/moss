@@ -19,7 +19,7 @@ dependencies can use stable container DNS names instead of host IP addresses.
 GitHub CLI 在 GitHub Linux AMD64 上构建镜像及部署包，本机无需 Docker：
 
 ```bash
-gh workflow run build-release.yml --ref codex/webui-amd64-release -f publish=true
+gh workflow run build-release.yml --ref main -f publish=true
 gh run list --workflow build-release.yml
 # 验收通过后，下载对应 moss-webui-linux-amd64-* artifact，解压 Server 部署包
 MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
@@ -43,7 +43,7 @@ MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
 
 **删除容器或节点损坏后的完整系统恢复尚未实现**；不要用 `docker rm`、`compose down -v` 或卷清理代替正常停止。HOME 卷无法独立恢复 apt 系统软件。状态卷也必须保留，否则失去归属映射。备份与灾难恢复的后续计划见 [WebUI 计划](../../ui/docs/webui-next-steps.md)。
 
-独立构建只推送固定版本；完整 `release.yml` 复用相同验收并按稳定版本策略更新 latest。工作流合入主分支后，`--ref` 可改为 `main`。[独立单用户部署](../webui/README.md)继续保留。
+独立构建只推送固定版本；完整 `release.yml` 复用相同验收并按稳定版本策略更新 latest。[独立单用户部署](../webui/README.md)继续保留。
 
 ### 使用已发布镜像
 

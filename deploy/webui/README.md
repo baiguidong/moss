@@ -9,8 +9,7 @@
 正式构建运行在 GitHub 的 Linux AMD64 runner。本机只需要 GitHub CLI，不需要 Docker、Node 或 Bun。
 
 ```sh
-# --ref 指向包含本工作流的分支；合入主分支后可使用 main。
-gh workflow run build-release.yml --ref codex/webui-amd64-release \
+gh workflow run build-release.yml --ref main \
   -f publish=true
 gh run list --workflow build-release.yml --limit 5
 gh run watch <run-id> --exit-status
