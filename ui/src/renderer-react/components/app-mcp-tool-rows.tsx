@@ -11,11 +11,12 @@ const statusLabels = {
 const needsDiscovery = (service: AppMcpServiceTools) => ['unchecked', 'authorized'].includes(service.status);
 
 /** Each service loads independently so a slow connection never hides other Apps' tools. */
-export function AppMcpToolRows({ app, service }: { app: StoredApp; service: AppMcpServiceTools }) {
+export function AppMcpToolRows({ app, service, onDiscovered }: { app: StoredApp; service: AppMcpServiceTools; onDiscovered?: (service: AppMcpServiceTools) => void }) {
   const [result, setResult] = React.useState<{ sourceStatus: AppMcpServiceTools['status']; value: AppMcpServiceTools } | null>(null);
   const [loading, setLoading] = React.useState(needsDiscovery(service));
   const [error, setError] = React.useState('');
   const live = React.useRef(true);
+  const report = React.useRef(onDiscovered); report.current = onDiscovered;
   const eligible = needsDiscovery(service);
   const { appId, instanceId, name, revision, status } = service;
   React.useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -24,7 +25,7 @@ export function AppMcpToolRows({ app, service }: { app: StoredApp; service: AppM
     try {
       const next = await window.agentDesktop.inspectAppMcpTools({ appId, instanceId, name, revision });
       if (!next || next.revision !== revision) throw new Error('连接配置已变化，请重新加载。');
-      if (live.current) setResult({ sourceStatus: status, value: next });
+      if (live.current) { setResult({ sourceStatus: status, value: next }); report.current?.(next); }
     } catch (cause) {
       if (live.current) setError(cleanIpcErrorMessage(cause));
     } finally { if (live.current) setLoading(false); }
@@ -34,11 +35,11 @@ export function AppMcpToolRows({ app, service }: { app: StoredApp; service: AppM
   const available = ['unchecked', 'authorized', 'connected', 'failed', 'needs-auth'].includes(current.status);
   const label = !app.enabled ? 'App 已停用' : !available ? statusLabels[current.status] : loading ? '正在加载工具…' : error ? '加载失败' : statusLabels[current.status];
   const tools = current.tools;
-  const serviceHeader = <th scope="rowgroup" rowSpan={Math.max(tools.length, 1)} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-middle text-xs font-normal">
+  const serviceHeader = <th scope="rowgroup" rowSpan={Math.max(tools.length, 1)} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-top text-xs font-normal">
     <span className="block break-words font-semibold text-foreground">{app.displayName || app.title || app.name}</span>
     <code className="mt-1 block break-all text-[11px] text-muted-foreground">{app.id || app.name}.{name}</code>
     <div className="mt-2 text-muted-foreground">
-      <span>{current.truncated ? `仅展示前 ${tools.length} 个工具` : `${tools.length} 个工具`}</span>
+      <span>{current.truncated ? `仅展示前 ${tools.length} 个工具` : !tools.length && current.status !== 'connected' ? '工具数量待发现' : `${tools.length} 个工具`}</span>
       <span aria-hidden="true"> · </span><span role="status">{label}</span>
     </div>
     {available && app.enabled && <button type="button" disabled={loading} className="mt-2 text-primary disabled:opacity-50" onClick={() => void load()} aria-label={`重新加载 ${name} 工具`}>{loading ? '正在加载' : '重新加载工具'}</button>}

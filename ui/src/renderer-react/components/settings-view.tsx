@@ -545,7 +545,7 @@ export function ToolLoadingSettingsTable({
 }
 
 export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
-  const groups = apps.filter(app => app.enabled && (app.agentTools?.length || app.mcpServices?.length));
+  const groups = apps.filter(app => app.enabled && (app.agentTools?.length || app.mcpServices?.length || app.contributes?.skills?.length));
   const hasServices = groups.some(app => app.mcpServices?.length);
   return (
     <Surface>
@@ -591,6 +591,10 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
                     </tr>
                   ))}
                 </tbody>}
+                {!!app.contributes?.skills?.length && <tbody className="border-b border-sidebar-border">{app.contributes.skills.map((skill,index)=><tr key={skill.id} className="border-t border-sidebar-border">
+                  {index===0&&<th scope="rowgroup" rowSpan={app.contributes!.skills!.length} className="border-r border-sidebar-border px-4 py-3 text-center text-xs">{app.displayName||app.name}</th>}
+                  <td className="px-4 py-3 text-xs"><span className="block font-medium">{skill.title}</span><code>CLI skill · {skill.id}</code></td><td className="px-4 py-3 text-xs text-muted-foreground">{skill.description}</td><td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope==='global'?'全局 · 按需':'指定 · 选择后常驻'}</td><td className="px-3 py-3 text-xs text-muted-foreground">已注册</td>
+                </tr>)}</tbody>}
                 {app.mcpServices?.map(service => <AppMcpToolRows key={`${service.instanceId}/${service.name}/${service.revision}`} app={app} service={service} />)}
               </React.Fragment>
             ))}

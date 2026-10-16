@@ -78,7 +78,7 @@ describe('Apps management', () => {
       ],
     };
     const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
-    expect(markup).toContain('AI 工具（2 个）');
+    expect(markup).toContain('2 个 AI 工具');
     expect(markup).toContain('查询记录');
     expect(markup).toContain('查找应用中的记录');
     expect(markup).toContain('只读');
@@ -94,13 +94,13 @@ describe('Apps management', () => {
   test('makes tool registration visible on the App card before opening management', () => {
     const app = { ...settingsApp(), agentTools: [{ id: 'lookup', title: '查询', description: '查找记录', effect: 'read' as const }] };
     const markup = renderToStaticMarkup(<AppsPanel apps={[app]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
-    expect(markup).toContain('提供 1 个 AI 工具');
+    expect(markup).toContain('1 个 AI 工具');
   });
 
   test('does not present UI Backend actions as Agent tools', () => {
     const app = { ...settingsApp(), backend: { lifecycle: 'on-demand' as const, actions: [{ name: 'request.send' }] }, agentTools: [] };
     const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
-    expect(markup).toContain('此 App 未向 AI 助手提供工具');
+    expect(markup).toContain('此 App 当前没有声明供 Agent 调用的工具或 skill');
     expect(markup).not.toContain('request.send');
     expect(markup).not.toContain('已注册');
   });

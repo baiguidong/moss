@@ -451,6 +451,7 @@ export interface AppManifestV2 {
     configuration?: { schema?: string; secrets?: string }
   }
   contributes?: {
+    skills?: Array<{ id: string; title: string; description: string; path: string; cli: string }>
     services?: Array<{ id: string; title: string; description?: string }>
     views: AppViewContribution[]
     settings: AppSettingsContribution[]

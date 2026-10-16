@@ -56,7 +56,7 @@ export function getVisibleAppSettingsEntries(apps: StoredApp[]): AppSettingsEntr
 
 export function getAppToolbarSettingsEntry(app: StoredApp): AppSettingsEntry | undefined {
   // MCP tools can be discovered after connection, so use the declared capability.
-  const hasTools = Boolean(app.agentTools?.length || app.contributes?.tools?.length
+  const hasTools = Boolean(app.contributes?.skills?.length || app.agentTools?.length || app.contributes?.tools?.length
     || app.permissions?.some(permission => permission === 'mcp:connect' || permission === 'mcp:manage'));
   return hasTools ? getAppSettingsEntries([app])[0] : undefined;
 }

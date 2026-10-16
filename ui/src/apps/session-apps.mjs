@@ -1,3 +1,4 @@
+import { resolveAppSkills } from './app-skills.mjs'
 import { normalizeStringList } from '../shared/string-list.mjs'
 import { getAppToolServices, isToolSourceAvailable, parseAppServiceKey } from '../../../packages/app-sdk/src/tool-services.mjs'
 
@@ -76,7 +77,9 @@ export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRunti
       if (!installation?.enabled) throw new Error('请先启用要加入会话的 App')
       const { tools } = await runtime.listContributions({ appId: id, kinds: ['tools'] })
       const services = getMcpHost()?.toolCatalog(id) || []
-      if (!tools.length && !services.some(service => !['app-disabled', 'instance-disabled', 'unauthorized', 'disabled'].includes(service.status))) {
+      if (!tools.length && !services.some(service => !['app-disabled', 'instance-disabled', 'unauthorized', 'disabled'].includes(service.status))
+        && !((await runtime.getActivePackage?.(id))?.manifest.contributes?.skills?.length
+          && (await resolveAppSkills(runtime, [id])).skills.some(skill => skill.appId === id))) {
         throw new Error('此 App 暂未提供可用工具，请检查授权或服务配置')
       }
     }

@@ -6,7 +6,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.11.0'
+export const APP_HOST_API_VERSION = '3.14.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -186,7 +186,12 @@ function normalizeContributes(contributes, manifest) {
       ...normalizeContributionPermission(widget, requestedPermissions, `widget ${widget.id}`),
     }
   }, contributionIds)
-  const normalized = { views, settings, commands, tools, resourceProviders, widgets, ...(services.length ? { services } : {}) }
+  const skills = normalizeContributionList(contributes.skills, 'skill', skill => ({
+    id: skill.id, title: skill.title.trim(), description: skill.description.trim(),
+    path: ensureSafeRelativePath(skill.path, `skill ${skill.id} path`),
+    cli: ensureSafeRelativePath(skill.cli, `skill ${skill.id} cli`),
+  }), contributionIds)
+  const normalized = { views, settings, commands, tools, resourceProviders, widgets, ...(services.length ? { services } : {}), ...(skills.length ? { skills } : {}) }
   return Object.values(normalized).some((items) => items.length) ? normalized : undefined
 }
 
@@ -310,6 +315,12 @@ export function validateAppManifest(rawManifest, options = {}) {
       || candidate.host.protocols.some(protocol => !['moss.mcp/v1', 'moss.host/v1'].includes(protocol))) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP App requires only the MCP Host permissions and protocols')
     }
+  }
+  if (candidate.contributes?.skills?.length && candidate.toolSelection === 'services') {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'App skills require whole-app selection')
+  }
+  if (candidate.contributes?.skills?.length && !semver.subset(candidate.hostApi, '>=3.14.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'App skills require hostApi >=3.14.0')
   }
   const contributes = normalizeContributes(candidate.contributes, candidate)
   validateNavigation(candidate, contributes, options.requireNavigation)

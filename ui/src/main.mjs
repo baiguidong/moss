@@ -1,3 +1,4 @@
+import { resolveAppSkills } from './apps/app-skills.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
 import { AppExecutionHost } from './apps/app-execution-host.mjs';
@@ -2953,6 +2954,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
           return [];
         }),
   ]);
+  const appSkills = sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
   const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: appMcpHost?.serverOwners() || {} };
   if (sessionRecord?.appTestRunId) appToolPolicy.mcpServers[TEST_BROWSER_SERVER] = { appId: TEST_APP_ID, toolScope: 'session' };
   if (sessionRecord) {
@@ -2971,12 +2973,14 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     projectContextPrompt,
     connectorSystemPrompt,
     runtimeSystemPrompt,
+    appSkills.prompt,
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean)
     .join('\n\n');
   const mcpServers = getSessionMcpServers(sessionRecord, connectorRuntimeCredentials, selectedAppIds, selectedAppServiceIds);
   if (sessionRecord) sessionRecord.runtimeToolAppIds = new Set([
+    ...appSkills.skills.map(skill => skill.appId),
     ...appTools.map(tool => tool.appId || tool.id.split('/')[0]),
     ...Object.keys(mcpServers).map(name => appToolPolicy.mcpServers[name]?.appId).filter(Boolean),
   ]);
@@ -3003,7 +3007,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     mcpServers,
     appTools,
     appToolPolicy,
-    addDirs: getSessionAddDirs(sessionRecord),
+    addDirs: [...new Set([...getSessionAddDirs(sessionRecord), ...appSkills.directories])],
     disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
     allowedTools: sessionRecord?.appTestRunId ? TEST_ALLOWED_TOOLS : sessionRecord?.channelRuntimePolicy
       ? resolveAgentChannelToolSelectors(sessionRecord.channelRuntimePolicy, Object.keys(mcpServers))

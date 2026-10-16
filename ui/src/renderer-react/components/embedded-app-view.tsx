@@ -5,18 +5,14 @@ import { ArrowLeft, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppToolbarActions } from '@/components/app-settings';
 import { useAppAuthoring } from '@/lib/app-authoring';
+import { AppCapabilityButton } from '@/components/app-capabilities';
 import type { StoredApp } from '@/types';
 
 type EmbeddedAppSession = {
   embedId: string;
   url: string;
   preload: string;
-  app?: {
-    id: string;
-    name: string;
-    displayName: string;
-    description: string;
-  };
+  app?: {id:string;name:string;displayName:string;description:string};
 };
 
 export function EmbeddedAppView({
@@ -40,6 +36,20 @@ export function EmbeddedAppView({
   const [reloadKey, setReloadKey] = React.useState(0);
   const [settingsRoute, setSettingsRoute] = React.useState<string | null>(null);
   const authoring = useAppAuthoring();
+  const [capabilityApp, setCapabilityApp] = React.useState<StoredApp | undefined>(app);
+  React.useEffect(() => {
+    let active = true;
+    setCapabilityApp(app);
+    const refresh = () => {
+      if (session && window.agentDesktop.listApps) void window.agentDesktop.listApps().then(apps => {
+        const found = apps.find(candidate => candidate.name === appName || candidate.id === appName || candidate.id === session.app?.id);
+        if (active && found) setCapabilityApp(found);
+      }).catch(() => {});
+    };
+    refresh();
+    const off = window.agentDesktop.onAppsChanged?.(refresh);
+    return () => { active = false; off?.(); };
+  }, [app, appName, session]);
   React.useEffect(() => { setSettingsRoute(null); }, [appName, route]);
 
   React.useEffect(() => {
@@ -126,6 +136,7 @@ export function EmbeddedAppView({
         </div>
         {(authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} variant="outline" size="sm" onClick={() => { void window.agentDesktop.prepareAppAuthoring(appName).catch(error => setError(error.message)); }}>迭代</Button>}
         {settingsRoute !== null && <Button variant="ghost" size="sm" onClick={() => setSettingsRoute(null)}><ArrowLeft className="h-3.5 w-3.5" />返回应用</Button>}
+        {capabilityApp && <AppCapabilityButton app={capabilityApp} discover />}
         <AppToolbarActions app={app} onRefresh={() => setReloadKey(value => value + 1)} onOpenSettings={setSettingsRoute} />
       </div>
       }

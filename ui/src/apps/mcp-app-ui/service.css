@@ -1,6 +1,8 @@
 .service-workspace { max-width:1000px; margin:0 auto; padding:30px 28px 18px; display:flex; flex-direction:column; gap:20px; }
 .service-header,.service-brand,.connection-top,.service-target,.service-tools summary { display:flex; align-items:center; }
 .service-header,.connection-top { justify-content:space-between; gap:16px; }
+.service-header { justify-content:flex-end; }
+.service-title-accessible { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .service-brand { gap:12px; }
 .service-mark { display:grid; place-items:center; width:46px; height:46px; background:color-mix(in oklab,var(--primary) 9%,var(--card)); color:var(--primary); border:1px solid color-mix(in oklab,var(--primary) 20%,var(--border)); border-radius:12px; }
 .service-header h1 { font-size:20px; letter-spacing:-.035em; }

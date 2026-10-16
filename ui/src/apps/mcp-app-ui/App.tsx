@@ -63,7 +63,7 @@ export function App() {
   const tools = allTools.filter(tool => `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase()))
   const examples = presentation?.examples || []
   return <main className="app-shell"><div className="service-workspace">
-    <header className="service-header"><div className="service-brand"><span className="service-mark"><Workflow size={24} strokeWidth={1.6} /></span><div><h1>{title}</h1><p>{title} · MCP</p></div></div><button id="settings" className="button" onClick={() => setEditor(true)} disabled={!catalog || busy || unavailable}><Settings2 size={15} />{title}设置</button></header>
+    <header className="service-header"><h1 className="service-title-accessible">{title}</h1><button id="settings" className="button" onClick={() => setEditor(true)} disabled={!catalog || busy || unavailable}><Settings2 size={15} />连接设置</button></header>
     <section className="service-card connection-card" aria-label={`${title}服务状态`} aria-busy={busy}>
       <div className="connection-top"><span className={`service-status ${failed || unavailable ? 'failure' : checked ? 'ready' : ''}`} role="status">{busy ? <Loader2 size={16} className="spin" /> : failed || unavailable ? <CircleAlert size={16} /> : checked ? <Check size={16} /> : <Wrench size={16} />}{label}</span><button id="inspect" className="button primary" onClick={() => void inspect()} disabled={busy || unavailable}><RefreshCw size={15} className={busy ? 'spin' : ''} />检查服务</button></div>
       <h2>{presentation?.headline || `在对话中使用${title}`}</h2><p className="service-lead">{info?.description}</p>

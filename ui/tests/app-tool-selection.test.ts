@@ -40,3 +40,10 @@ describe('selectable tool Apps', () => {
     expect(canSelectToolApp(app('disabled', { enabled: false, mcpServices: [service('unchecked')] }))).toBe(false);
   });
 });
+
+test('CLI skill apps are discoverable and selectable without native or MCP tools', () => {
+  const cli = app('cli', { agentTools: [], contributes: { skills: [{ id: 'convert', title: 'Convert', description: 'Document conversion', path: 'SKILL.md', cli: 'cli.mjs' }] } });
+  expect(canSelectToolApp(cli)).toBe(true);
+  expect(filterToolApps([cli], '').map(value => value.id)).toEqual(['cli']);
+  expect(canSelectToolApp({ ...cli, enabled: false })).toBe(false);
+});

@@ -546,6 +546,45 @@
               }
             }
           }
+        },
+        "skills": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "description",
+              "path",
+              "cli"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cli": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     },

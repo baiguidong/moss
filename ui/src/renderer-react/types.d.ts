@@ -952,6 +952,7 @@ export type StoredApp = {
   }>;
   mcpServices?: AppMcpServiceTools[];
   contributes?: {
+    skills?: Array<{ id: string; title: string; description: string; path: string; cli: string }>;
     services?: Array<{ id: string; title: string; description?: string }>;
     views?: Array<{ id: string; title: string; route: string; icon?: string; order?: number; permission?: string }>;
     settings?: import('../../../packages/app-sdk/src/index.mjs').AppSettingsContribution[];

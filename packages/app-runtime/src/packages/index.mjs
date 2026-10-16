@@ -257,6 +257,11 @@ export async function validateAppPackage(packageRoot, options = {}) {
     if (action.inputSchema) loadJsonSchema(root, action.inputSchema, `action ${action.name} inputSchema`)
     if (action.outputSchema) loadJsonSchema(root, action.outputSchema, `action ${action.name} outputSchema`)
   }
+  for (const skill of manifest.contributes?.skills || []) {
+    const file = await ensureDeclaredFile(root, skill.path, `skill ${skill.id} path`)
+    if (file.stat.size > 64 * 1024) throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'Skill instructions exceed 64 KiB')
+    await ensureDeclaredFile(root, skill.cli, `skill ${skill.id} cli`)
+  }
   for (const command of manifest.contributes?.commands || []) {
     if (command.inputSchema) loadJsonSchema(root, command.inputSchema, `command ${command.id} inputSchema`)
   }
