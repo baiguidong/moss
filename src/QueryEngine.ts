@@ -181,6 +181,7 @@ export class QueryEngine {
   // many turns in SDK mode.
   private discoveredSkillNames = new Set<string>()
   private loadedNestedMemoryPaths = new Set<string>()
+  private finishAfterTools = false
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -429,6 +430,7 @@ export class QueryEngine {
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
         refreshTools,
+        shouldFinishAfterTools: () => this.finishAfterTools,
       },
       getAppState,
       setAppState,
@@ -595,6 +597,7 @@ export class QueryEngine {
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         maxBudgetUsd,
         refreshTools,
+        shouldFinishAfterTools: () => this.finishAfterTools,
       },
       getAppState,
       setAppState,
@@ -1246,9 +1249,15 @@ export class QueryEngine {
     this.abortController.abort()
   }
 
+  /** Finish a trusted result-producing turn after its pending tool receipts. */
+  requestCompletion(): void {
+    this.finishAfterTools = true
+  }
+
   /** Reset the abort controller so the engine can be reused after an interrupt. */
   resetAbort(): void {
     this.abortController = createAbortController()
+    this.finishAfterTools = false
   }
 
   getMessages(): readonly Message[] {

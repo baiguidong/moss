@@ -1,7 +1,7 @@
 import { MOSS_PROTOCOL_VERSION } from './methods.mjs';
 import { stringifyWire, parseWire } from './wire.mjs';
 
-export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = () => {}, onSnapshot = () => {}, isAuthenticated = async () => true }) {
+export function createWebTransport({ url, generation, viewId = crypto.randomUUID(), WebSocketImpl = WebSocket, onStatus = () => {}, onSnapshot = () => {}, isAuthenticated = async () => true }) {
   const listeners = new Map();
   const pending = new Map();
   let socket; let timer; let stopped = false; let ready = false;
@@ -11,7 +11,7 @@ export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = 
     if (stopped) return;
     onStatus('connecting');
     socket = new WebSocketImpl(url);
-    socket.addEventListener('open', () => socket.send(stringifyWire({ type: 'hello', version: MOSS_PROTOCOL_VERSION, epoch, sequence })));
+    socket.addEventListener('open', () => socket.send(stringifyWire({ type: 'hello', version: MOSS_PROTOCOL_VERSION, epoch, sequence, viewId })));
     socket.addEventListener('message', event => {
       const message = parseWire(String(event.data));
       if (message.type === 'hello') {
@@ -22,6 +22,11 @@ export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = 
         sequence = message.sequence;
         emit(message.method, message.payload);
       } else if (message.type === 'ready') {
+        if (generation !== undefined && message.snapshot?.identity?.generation !== generation) {
+          stopped = true; ready = false; onStatus('environment-changed');
+          for (const entry of pending.values()) entry.reject(new Error('环境已恢复，请刷新页面。'));
+          pending.clear(); socket.close(); return;
+        }
         ready = true; backoff = 500;
         onSnapshot(message.snapshot);
         onStatus('connected');
@@ -37,10 +42,11 @@ export function createWebTransport({ url, WebSocketImpl = WebSocket, onStatus = 
     socket.addEventListener('error', () => {});
     socket.addEventListener('close', async event => {
       ready = false;
+      if (!stopped) onStatus('disconnected');
       const authenticated = stopped ? true : await isAuthenticated().catch(() => true);
-      if (!authenticated || [4401, 4406].includes(event.code)) {
+      if (authenticated === 'changed' || !authenticated || [4401, 4406].includes(event.code)) {
         stopped = true;
-        onStatus(event.code === 4406 ? 'incompatible' : 'unauthenticated');
+        onStatus(authenticated === 'changed' ? 'environment-changed' : event.code === 4406 ? 'incompatible' : 'unauthenticated');
         for (const entry of pending.values()) entry.reject(new Error('连接需要重新登录或刷新，已接受的任务仍由 Host 管理。'));
         pending.clear();
       }

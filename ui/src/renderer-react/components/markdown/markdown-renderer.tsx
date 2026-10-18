@@ -7,11 +7,41 @@ import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { normalizeCodeLanguage, renderStructuredCodeBlock } from "@/components/structured/structured-renderer-registry";
-import { handleMarkdownLinkClick, markdownUrlTransform } from "@/lib/markdown-links";
+import { fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from "@/lib/markdown-links";
+import { remarkFileReferences } from '@/lib/remark-file-references';
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
+import { isInlineFileReference } from '../../../shared/file-reference.mjs';
+import { resolveVisibleFileReference } from '@/lib/file-reference-cache';
+
+function FileCode({ code, sessionId, onError, children, ...props }: any) {
+  const [available, setAvailable] = React.useState(false);
+  React.useEffect(() => {
+    let active = true; setAvailable(false);
+    if (sessionId && isInlineFileReference(code)) void resolveVisibleFileReference(sessionId, code).then(value => { if (active) setAvailable(value); });
+    return () => { active = false; };
+  }, [code, sessionId]);
+  const content = <code {...props}>{children}</code>;
+  return available ? <a href={code} className="text-primary hover:underline" onClick={event => void handleMarkdownLinkClick(event, code, window.agentDesktop, sessionId).catch(onError)}>{content}</a> : content;
+}
 
 function looksInline(code: string) {
   return !code.includes("\n");
+}
+
+function MarkdownLink({ href, children, sessionId, validate, onError }: { href?: string; children: React.ReactNode; sessionId?: string; validate: boolean; onError: (error: unknown) => void }) {
+  const [available, setAvailable] = React.useState(!validate);
+  React.useEffect(() => {
+    let active = true;
+    if (!validate) { setAvailable(true); return; }
+    setAvailable(false);
+    if (sessionId && href) void resolveVisibleFileReference(sessionId, href).then(value => { if (active) setAvailable(value); });
+    return () => { active = false; };
+  }, [href, sessionId, validate]);
+  if (!available) return <>{children}</>;
+  const label = typeof children === 'string' ? fileLinkLabel(href, children) : null;
+  return <a href={href} title={label ? href : undefined} target="_blank" rel="noopener noreferrer"
+    className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+    onClick={event => void handleMarkdownLinkClick(event, href, window.agentDesktop, sessionId).catch(onError)}>{label || children}</a>;
 }
 
 export const MarkdownRenderer = React.memo(function MarkdownRenderer({
@@ -19,13 +49,16 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
   variant = "default",
   sourceId = "markdown",
   chatDensity = false,
+  sessionId,
 }: {
   content: string;
   variant?: "default" | "document" | "compact";
   sourceId?: string;
   chatDensity?: boolean;
+  sessionId?: string;
 }) {
   const compact = variant === "compact";
+  const contentRef = React.useRef(content); contentRef.current = content;
   const [linkError, setLinkError] = React.useState("");
   React.useEffect(() => setLinkError(""), [content]);
   // Component types must survive content and parent updates, otherwise React
@@ -38,14 +71,15 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
       const offset = props.node?.position?.start?.offset ?? props.node?.position?.start?.line ?? code.length;
       const blockId = `${sourceId}:code:${language}:${offset}`;
 
-      if (looksInline(code)) {
+      const fenced = /^(?:```|~~~)/.test(contentRef.current.slice(props.node?.position?.start?.offset || 0));
+      if (looksInline(code) && !match && !fenced) {
         return (
-          <code
+          <FileCode code={code} sessionId={sessionId} onError={(error: unknown) => setLinkError(cleanIpcErrorMessage(error))}
             className={cn("rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.9em]", className)}
             {...props}
           >
             {children}
-          </code>
+          </FileCode>
         );
       }
 
@@ -55,21 +89,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
       return <CodeViewer code={code} language={language} maxLines={24} showLineNumbers />;
     },
     pre: ({ children }) => <>{children}</>,
-    a: ({ href, children }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary underline-offset-4 hover:underline"
-        onClick={(event) => {
-          setLinkError("");
-          void handleMarkdownLinkClick(event, href, window.agentDesktop)
-            .catch((error) => setLinkError(`无法打开链接：${cleanIpcErrorMessage(error)}`));
-        }}
-      >
-        {children}
-      </a>
-    ),
+    a: ({ href, children, ...props }: any) => <MarkdownLink href={href} sessionId={sessionId} validate={Boolean(props['data-file-reference'])} onError={error => setLinkError(`无法打开链接：${cleanIpcErrorMessage(error)}`)}>{children}</MarkdownLink>,
     table: ({ children }) => (
       <div className="my-3 overflow-x-auto rounded-2xl border border-border/70">
         <table className="min-w-full">{children}</table>
@@ -114,7 +134,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
         className="my-3 max-h-[420px] max-w-full rounded-2xl border border-border/60 object-contain"
       />
     ),
-  }), [compact, chatDensity, sourceId]);
+  }), [compact, chatDensity, sourceId, sessionId]);
   return (
     <div
       className={cn(
@@ -127,7 +147,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
       } : undefined}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkFileReferences]}
         urlTransform={markdownUrlTransform}
         components={components}
       >

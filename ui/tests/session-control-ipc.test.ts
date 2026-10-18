@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { registerSessionControlIpc } from '../src/session-control-ipc.mjs';
 import { loadDesktopPreload } from './helpers/desktop-preload';
 
-function fixture() {
+function fixture(context = {}) {
   const handlers = new Map<string, Function>();
   const actions: string[] = [];
   const pending = { requestId: 'q1', sessionId: 's1', input: { questions: ['choose'] }, appDecisionId: null as string | null };
@@ -36,12 +36,20 @@ function fixture() {
   const { api } = loadDesktopPreload((channel, payload) => {
     const handler = handlers.get(channel);
     if (!handler) throw new Error(`Unexpected channel: ${channel}`);
-    return handler({}, payload);
+    return handler(context, payload);
   });
   return { api, deps, actions, decisions, pending, record };
 }
 
 describe('Desktop session controls through preload and IPC', () => {
+  it('records the trusted Web transport for browser approvals and rejections', async () => {
+    const allowed = fixture({ transport: 'web' });
+    await allowed.api.answerQuestion({ requestId: 'q1', sessionId: 's1', answers: {} });
+    expect(allowed.decisions[0]).toMatchObject({ decision: { source: 'web', allowed: true } });
+    const denied = fixture({ transport: 'web' });
+    await denied.api.rejectQuestion({ requestId: 'q1', sessionId: 's1' });
+    expect(denied.decisions[0]).toMatchObject({ decision: { source: 'web', allowed: false } });
+  });
   it('rejects cross-session approvals and rejections without resolving the request', async () => {
     const { api, deps, decisions } = fixture();
     await expect(api.answerQuestion({ requestId: 'q1', sessionId: 'other', answers: {} })).rejects.toThrow('does not belong');
@@ -101,5 +109,20 @@ describe('Desktop session controls through preload and IPC', () => {
     await expect(api.abort({ sessionId: 's1' })).rejects.toThrow('interrupt failed');
     expect(actions).toEqual(['apps:s1']);
     expect(deps.pendingQuestionRequests.has('q1')).toBe(true);
+  });
+
+  it('cancels preparation before asynchronous cleanup even when no runtime exists', async () => {
+    const { api, deps, record } = fixture();
+    record.runtime = null as any;
+    const controller = new AbortController();
+    let release!: () => void;
+    registerSessionControlIpc({ ...deps,
+      abortPendingSends: () => controller.abort(),
+      stopComputerUse: () => new Promise<void>(resolve => { release = resolve; }),
+    });
+    const stopping = api.abort({ sessionId: 's1' });
+    expect(controller.signal.aborted).toBe(true);
+    release();
+    expect(await stopping).toEqual({ ok: true });
   });
 });

@@ -171,6 +171,7 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
 
 export async function createAppRuntime(options) {
   const runtime = new AppRuntimeHost({
+    automaticStartAllowed: options.automaticStartAllowed,
     rootDir: options.mossHome,
     beforeAppDeactivation: options.beforeAppDeactivation,
     nativeAdapterHost: options.nativeAdapterHost,

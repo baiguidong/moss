@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'bun:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ToolCallBlock } from '../src/renderer-react/components/chat/tool-call-block';
+import { isMergeableActivityTool } from '../src/renderer-react/components/chat/message-list';
+import { ToolDisplaySettingsProvider } from '../src/renderer-react/components/chat/tool-display-settings';
 import {
   getToolExecutionState,
   resolveToolDisplayMode,
@@ -23,7 +28,7 @@ describe('tool display settings', () => {
     })).toBe(false);
   });
 
-  it('keeps only actively executing tools expanded', () => {
+  it('keeps running and failed tools visible', () => {
     expect(shouldAutoCollapseToolCall({
       mode: 'collapsed',
       status: 'running',
@@ -47,7 +52,7 @@ describe('tool display settings', () => {
       status: 'error',
       failed: true,
       hasResult: true,
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it('collapses as soon as a pending tool receives a terminal result', () => {
@@ -89,4 +94,15 @@ describe('tool display settings', () => {
     expect(shouldExpandThinking('merged', true)).toBe(false);
     expect(shouldExpandThinking('merged', false)).toBe(false);
   });
+});
+
+it('moss_present follows collapsed/expanded/merged preferences including its status card', () => {
+  const tool: any = { id: 'present', toolUseId: 'present', type: 'tool_use', role: 'assistant', timestamp: new Date(0), toolName: 'moss_present', displayName: '展示成果', status: 'success', input: { title: '笑话文件' } };
+  const result: any = { id: 'result', toolUseId: 'present', content: JSON.stringify({ ok: true, schema: 'moss.presentation-result/v1', request_id: 'present', items: [], presentation: { state: 'deferred' } }) };
+  const render = (mode: 'expanded' | 'collapsed') => renderToStaticMarkup(React.createElement(ToolDisplaySettingsProvider, { toolDisplayMode: mode, children: React.createElement(ToolCallBlock, { toolCall: tool, result }) }));
+  expect(render('collapsed')).not.toContain('已收录到结果');
+  expect(render('expanded')).toContain('已收录到结果');
+  expect(isMergeableActivityTool(tool)).toBe(true);
+  result.content = JSON.stringify({ ok: false, schema: 'moss.presentation-result/v1', request_id: 'present', presentation: { state: 'unavailable' } });
+  expect(render('collapsed')).toContain('内容不可用');
 });

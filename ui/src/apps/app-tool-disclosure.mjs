@@ -14,7 +14,7 @@ const effectLabels = { read: '只读', write: '可修改数据', destructive: '�
 export async function confirmAppInstallation(dialog, manifest, permissions = [], details = '') {
   const tools = describeAppTools(manifest)
   const skills = manifest.contributes?.skills || []
-  if (!permissions.length && !tools.length && !skills.length && !details) return true
+  if (!permissions.length && !tools.length && !skills.length && !details && !manifest.nativeAdapter) return true
   const sections = details ? [details] : []
   if (manifest.nativeAdapter) sections.push('原生控制适配器将在 Moss 主进程运行，需要可信签名及宿主允许的发布者。系统权限归属于 Moss，目标应用和前台控制仍由 Moss 单独询问；更换已加载的驱动需重启 Moss。')
   if (permissions.length) sections.push(['新增权限', ...permissions.map(permission => `• ${permission}`)].join('\n'))

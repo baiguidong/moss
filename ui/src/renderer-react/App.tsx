@@ -1,5 +1,11 @@
 import { AppToolSelectionContext, canSelectToolApp, toolAppId, getAppToolServices, parseAppServiceKey } from '@/lib/app-tool-selection';
 import * as React from 'react';
+import { subscribeNotificationState } from '../client/notification-sync.mjs';
+import { WebInteractions } from '@/components/web-interactions';
+import { WebAppPreviews } from '@/components/web-app-previews';
+import { WebAuthorizations } from '@/components/web-authorizations';
+import { WebComposerDraft } from '@/components/web-composer-draft';
+import { HostConfirmations } from '@/components/host-confirmations';
 import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
@@ -25,6 +31,8 @@ import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
+import { usePresentation } from '@/lib/use-presentation';
+import { PresentationToolbar, PresentationContent } from '@/components/presentation/presentation-panel';
 import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AppWidgetHost } from '@/components/app-widget-host';
 import { SettingsView } from '@/components/settings-view';
@@ -545,6 +553,9 @@ export default function App() {
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
+  const presentation = usePresentation(activeSessionId, activeDetail?.workspace, activeView === 'chat', () => {
+    setLayout(previous => ({ ...previous, rightCollapsed: false, rightWidth: clamp(Math.max(previous.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max) }));
+  });
   const openSessionRequestIdRef = React.useRef(0);
   const workspaceDirectoryLoader = React.useMemo(() => createWorkspaceDirectoryLoader({
     getScope: () => {
@@ -687,6 +698,7 @@ export default function App() {
   // edits stay in normal state and send-clearing works untouched.
   const composerDraftsRef = React.useRef<Record<string, { text: string; files: ComposerAttachment[]; appSelection?: AppComposerResource | null }>>({});
   const draftSessionKeyRef = React.useRef<string>('home');
+  const [hydratedComposerKey, setHydratedComposerKey] = React.useState('home');
   const appSelectionDraftRef = React.useRef<AppComposerResource | null>(null);
   appSelectionDraftRef.current = appSelection;
   const inputDraftRef = React.useRef('');
@@ -703,7 +715,7 @@ export default function App() {
       files: composerAttachmentsRef.current,
       appSelection: appSelectionDraftRef.current,
     };
-    draftSessionKeyRef.current = nextKey;
+    draftSessionKeyRef.current = nextKey; setHydratedComposerKey(nextKey);
     const draft = composerDraftsRef.current[nextKey];
     setInput(draft?.text ?? '');
     setAppSelection(draft?.appSelection || null);
@@ -916,18 +928,14 @@ export default function App() {
   }, [activeDetail]);
 
   React.useEffect(() => {
-    let receivedChange = false;
-    const unsubscribe = window.agentDesktop.notifications.onChanged((payload) => {
-      receivedChange = true;
-      setAppNotifications(payload.notifications);
-    });
     // SQLite is authoritative. Re-importing this retired cache after a database
     // clear would resurrect notifications the user already removed.
     saveAppNotifications([], window.localStorage);
-    void window.agentDesktop.notifications.list().then((notifications) => {
-      if (!receivedChange) setAppNotifications(notifications);
-    }).catch(() => {});
-    return unsubscribe;
+    return subscribeNotificationState({
+      api: window.agentDesktop.notifications,
+      onChanged: setAppNotifications,
+      reconnectTarget: window.mossWeb ? window : undefined,
+    });
   }, []);
 
   React.useEffect(() => () => {
@@ -1476,16 +1484,9 @@ export default function App() {
   }, [activeDetail?.workspace, directoryCache, expandedDirs, workspaceQuery]);
 
   const openPreviewWindow = React.useCallback((file: WorkspacePreviewData) => {
-    const existing = previewTabsRef.current.find((entry) => entry.path === file.path);
-    const nextFile = enrichWorkspacePreviewFile(file, activeSessionId, activeDetail?.workspace, existing);
     setSelectedFilePath(file.path);
-    setPreviewTabs((prev) => {
-      if (existing) {
-        return prev.map((entry) => (entry.path === file.path ? nextFile : entry));
-      }
-      return [...prev, nextFile];
-    });
-    void previewIpc.open({ file: nextFile }).catch((error) => {
+    if (!activeSessionId) return;
+    void window.agentDesktop.presentation.open({ sessionId: activeSessionId, input: { items: [{ path: file.path }] } }).catch((error) => {
       console.warn('[preview] failed to open preview window:', error instanceof Error ? error.message : error);
     });
   }, [activeDetail?.workspace, activeSessionId]);
@@ -1524,6 +1525,7 @@ export default function App() {
         });
     }
     if (targetSessionId) {
+      void window.agentDesktop.presentation.action({ sessionId: targetSessionId, action: { type: 'select', id: 'browser' } });
       setActiveView('chat');
       setLayout((prev) => ({
         ...prev,
@@ -1542,12 +1544,15 @@ export default function App() {
   }, [openRightBrowser]);
 
   const toggleSidebar = React.useCallback((side: 'left' | 'right') => {
+    if (side === 'right') presentation.action(layoutRef.current.rightCollapsed
+      ? { type: 'select', id: presentation.snapshot?.state.activeId || 'workspace' }
+      : { type: 'close' });
     setLayout((prev) => (
       side === 'left'
         ? { ...prev, leftCollapsed: !prev.leftCollapsed }
         : { ...prev, rightCollapsed: !prev.rightCollapsed }
     ));
-  }, []);
+  }, [presentation.action, presentation.snapshot?.state.activeId]);
 
   const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
     const start = layoutRef.current;
@@ -2122,8 +2127,9 @@ export default function App() {
 
   const handleOpenWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
-    await window.agentDesktop.openWorkspace({ sessionId: activeSessionId });
-  }, [activeSessionId]);
+    try { await window.agentDesktop.openWorkspace({ sessionId: activeSessionId }); }
+    catch (error) { showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000); }
+  }, [activeSessionId, showPermissionNotice]);
 
   const handleToggleFolder = React.useCallback(async (path: string) => {
     const detail = activeDetailRef.current;
@@ -2391,7 +2397,7 @@ export default function App() {
       return;
     }
     composerDraftsRef.current.home = { text:payload.prompt, files:[], appSelection:selection };
-    draftSessionKeyRef.current = 'home';
+    draftSessionKeyRef.current = 'home'; setHydratedComposerKey('home');
     if (!navigateToHome({ preserveIntent: true, preserveAgentMode: true })) return;
     setComposerAttachments([]);
     setSelectedAssistant(null);
@@ -2537,6 +2543,13 @@ export default function App() {
           .catch(() => {});
       }}
       onResolveDecision={async (decisionId, allowed, choice) => {
+        if (window.mossWeb?.capabilities?.features.confirmations) {
+          const pending = await window.agentDesktop.confirmations.list();
+          if (pending.requests.some(item => item.id === decisionId)) {
+            window.dispatchEvent(new CustomEvent('moss:show-confirmation', { detail: decisionId }));
+            return;
+          }
+        }
         await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
       }}
     />
@@ -2553,6 +2566,13 @@ export default function App() {
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
       style={getChatAppearanceStyle(desktopSettings?.appearance)}
     >
+      <HostConfirmations />
+      <WebAuthorizations />
+      <WebAppPreviews />
+      <WebInteractions />
+      {window.mossWeb && hydratedComposerKey === (activeSessionId || 'home') && <WebComposerDraft key={activeSessionId || 'home'} session={activeSessionId || 'home'}
+        value={{ text: input, files: composerAttachments, appSelection }}
+        restore={draft => { setInput(draft.text); setComposerAttachments(draft.files); setAppSelection(draft.appSelection || null); }} />}
       {!window.mossWeb && <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
         <div
           className="moss-window-drag h-9"
@@ -2842,6 +2862,11 @@ export default function App() {
               style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth, minWidth: layout.rightCollapsed ? 0 : RIGHT_WIDTH_RANGE.min }}
             >
               <TaskPanel
+                browserTabId={presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot.state.activeId)?.source.tabId}
+                onBrowserReady={() => { const request = presentation.snapshot?.request; if (request) void window.agentDesktop.presentation.acknowledge({ sessionId: activeSessionId, ...request, state: 'shown' }).catch(() => {}); }}
+                navigation={<PresentationToolbar snapshot={presentation.snapshot} action={presentation.action}/>}
+                showBrowser={presentation.snapshot?.state.activeId === 'browser' || presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot.state.activeId && resource.source.type === 'browser-tab' && resource.availability !== 'expired' && resource.availability !== 'unavailable')}
+                content={presentation.snapshot && !['workspace', 'browser'].includes(presentation.snapshot.state.activeId) ? <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/> : undefined}
                 collapsed={layout.rightCollapsed}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}
@@ -2867,7 +2892,7 @@ export default function App() {
                 workspace={activeDetail?.workspace}
                 workspaceRemote={activeDetail?.agentMode === 'remote-direct'}
                 workspaceBusy={Boolean(activeDetail?.busy)}
-                hasUnsavedEdits={previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
+                hasUnsavedEdits={Boolean(presentation.snapshot?.state.dirty) || previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
                 onVersionRestored={handleRefreshWorkspace}
               />
             </div>

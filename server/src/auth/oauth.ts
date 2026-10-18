@@ -48,7 +48,7 @@ function requireValue(value: string, name: string, pattern: RegExp): string {
   return normalized
 }
 
-function requireLoopbackRedirectUri(value: string): string {
+export function requireOAuthRedirectUri(value: string, trustedWebCallbacks: string[] = []): string {
   const normalized = value.trim()
   let url: URL
   try {
@@ -56,6 +56,7 @@ function requireLoopbackRedirectUri(value: string): string {
   } catch {
     throw new OAuthLoginError(400, 'Invalid redirect_uri')
   }
+  if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && trustedWebCallbacks.includes(url.toString())) return url.toString()
   const loopbackHosts = new Set(['127.0.0.1', '[::1]'])
   if (
     url.protocol !== 'http:' ||
@@ -97,6 +98,7 @@ export class OAuthLoginService {
   constructor(
     private readonly authService: AuthService,
     private readonly now: () => number = Date.now,
+    private readonly trustedWebCallbacks: string[] = (process.env.MOSS_OAUTH_WEB_CALLBACKS || '').split(',').map(value => value.trim()).filter(Boolean),
   ) {}
 
   async start(input: {
@@ -119,7 +121,7 @@ export class OAuthLoginService {
       throw new OAuthLoginError(400, 'code_challenge_method must be S256')
     }
 
-    const redirectUri = requireLoopbackRedirectUri(input.redirectUri)
+    const redirectUri = requireOAuthRedirectUri(input.redirectUri, this.trustedWebCallbacks)
     const state = requireValue(input.state, 'state', STATE_PATTERN)
     const codeChallenge = requireValue(
       input.codeChallenge,
@@ -253,7 +255,7 @@ export class OAuthLoginService {
     code?: string
   }): Promise<{ canceled: boolean }> {
     const state = requireValue(input.state, 'state', STATE_PATTERN)
-    const redirectUri = requireLoopbackRedirectUri(input.redirectUri)
+    const redirectUri = requireOAuthRedirectUri(input.redirectUri, this.trustedWebCallbacks)
     const code = input.code?.trim()
     const requestCanceled =
       await this.authService.deleteOAuthAuthorizationRequestByState(
@@ -288,7 +290,7 @@ export class OAuthLoginService {
     if (!authorization) {
       throw new OAuthLoginError(400, '授权码无效或已过期，请重新认证。')
     }
-    const redirectUri = requireLoopbackRedirectUri(input.redirectUri)
+    const redirectUri = requireOAuthRedirectUri(input.redirectUri, this.trustedWebCallbacks)
     const codeVerifier = requireValue(
       input.codeVerifier,
       'code_verifier',

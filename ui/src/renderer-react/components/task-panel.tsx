@@ -74,6 +74,7 @@ function SessionTasks({
   tasks: SessionTask[];
   projectName?: string | null;
 }) {
+  const [expanded, setExpanded] = React.useState(true);
   const taskCounts = React.useMemo(() => {
     const counts: Record<SessionTaskStatus, number> = {
       pending: 0,
@@ -86,7 +87,7 @@ function SessionTasks({
 
   return (
     <section className="shrink-0 border-b border-border/80 px-3 py-2.5" aria-label="会话任务">
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} className="mb-2 flex w-full items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
           <ListChecks className="h-3.5 w-3.5 shrink-0" />
           <span>{projectName ? "项目任务" : "会话任务"}</span>
@@ -94,9 +95,9 @@ function SessionTasks({
         <Badge variant={tasks.length > 0 ? "default" : "secondary"}>
           {tasks.length} 项
         </Badge>
-      </div>
+      </button>
 
-      {tasks.length > 0 ? (
+      {expanded && tasks.length > 0 ? (
         <>
           <div className="mb-2 grid grid-cols-3 gap-1.5 text-[10px] text-muted-foreground">
             <div className="rounded-md border border-border/55 bg-background/55 px-1.5 py-1">
@@ -157,11 +158,11 @@ function SessionTasks({
             })}
           </div>
         </>
-      ) : (
+      ) : expanded ? (
         <div className="rounded-md border border-dashed border-border/60 px-2 py-2 text-center text-[11px] text-muted-foreground">
           暂无任务
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -188,6 +189,11 @@ export function TaskPanel({
   workspaceBusy = false,
   hasUnsavedEdits = false,
   onVersionRestored,
+  navigation,
+  content,
+  showBrowser,
+  browserTabId,
+  onBrowserReady,
 }: {
   collapsed: boolean;
   searchQuery: string;
@@ -210,6 +216,11 @@ export function TaskPanel({
   workspaceBusy?: boolean;
   hasUnsavedEdits?: boolean;
   onVersionRestored?: () => void | Promise<void>;
+  navigation?: React.ReactNode;
+  content?: React.ReactNode;
+  showBrowser?: boolean;
+  browserTabId?: string;
+  onBrowserReady?: () => void;
 }) {
   const [activeView, setActiveView] = React.useState<TaskPanelView>("files");
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -248,7 +259,8 @@ export function TaskPanel({
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/80 px-3 py-2">
+      {sessionTasks.length > 0 && <SessionTasks key={sessionId} tasks={sessionTasks} projectName={projectName} />}
+      {navigation || <div className="shrink-0 border-b border-border/80 px-3 py-2">
         <div className="grid grid-cols-2 gap-1 rounded-md border border-border/70 bg-muted/35 p-1">
           {(Object.keys(viewMeta) as TaskPanelView[]).map((view) => {
             const Icon = viewMeta[view].icon;
@@ -270,13 +282,12 @@ export function TaskPanel({
             );
           })}
         </div>
-      </div>
+      </div>}
 
-      {activeView === "browser" ? (
-        <BrowserPanel sessionId={sessionId} />
-      ) : (
+      {(showBrowser ?? activeView === "browser") ? (
+        <BrowserPanel sessionId={sessionId} tabId={browserTabId} onReady={onBrowserReady} />
+      ) : content || (
         <>
-          {sessionTasks.length > 0 && <SessionTasks tasks={sessionTasks} projectName={projectName} />}
 
           {sessionId && workspace ? <WorkspaceVersions
             key={`${sessionId}:${workspace}`}

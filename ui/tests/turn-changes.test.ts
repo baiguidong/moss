@@ -6,6 +6,17 @@ import {
 } from '../src/shared/turn-changes.mjs';
 
 describe('turn changes', () => {
+  test('continues collecting successful writes after an unverified Bash result', () => {
+    const changes = collectTurnChanges([
+      { type: 'user', uuid: 'turn', message: { content: 'write a file' } },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'bash', name: 'Bash' }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'bash' }] }, toolUseResult: { stdout: '' } },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'write', name: 'Write' }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'write' }] }, toolUseResult: { type: 'create', filePath: '/repo/a.txt', content: 'a\n' } },
+    ]);
+    expect(changes[0].files.map(file => file.filePath)).toEqual(['/repo/a.txt']);
+    expect(changes[0].hasUnverifiedChanges).toBe(true);
+  });
   test('groups sequential edits by the user message that started the turn', () => {
     const history = [
       { type: 'user', uuid: 'turn-1', message: { content: 'change it' } },

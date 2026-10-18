@@ -110,7 +110,9 @@ try {
   assert.equal((await inspect(alice.containerId)).State.Running, true);
   await docker('rm', '-f', bob.containerId); // Explicitly destroy ONLY a disposable CI user's container to test refusal to recreate.
   const missing = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ username: 'bob', password: 'ci-fixture-only' }) });
-  assert.equal(missing.status, 503); assert.match(await missing.text(), /原容器已丢失/);
+  assert.equal(missing.status, 200); // Control-plane login remains available for explicit snapshot recovery.
+  assert.equal((await admin('list')).find(row => row.id === bob.id).containerId, bob.containerId);
+  assert.equal((await admin('list')).find(row => row.id === bob.id).state, 'error');
   await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ ok: true, concurrentLogin: true, twoUserIsolation: true, multipleChatsOneContainer: true, controllerRestart: true, sameContainerStopStart: true, programUpgrade: true, badReleaseRollback: true, aptAndEtcPreserved: true, missingContainerNotRecreated: true, image }, null, 2));
   console.log('Cloud browser, isolation, persistence, upgrade and rollback validation passed.');
 } catch (error) {

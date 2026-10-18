@@ -116,7 +116,8 @@ export function registerLogIpcHandlers(options = {}) {
 
   ipcMain.handle('log:get-path', () => MOSS_LOG_PATH);
 
-  ipcMain.handle('log:download', async () => {
+  ipcMain.handle('log:download', async context => {
+    if (context?.transport === 'web') { flushLogSync(); return { canceled: false, path: MOSS_LOG_PATH }; }
     const result = await dialog.showSaveDialog({
       title: '下载日志文件',
       defaultPath: path.join(os.homedir(), 'moss.log'),

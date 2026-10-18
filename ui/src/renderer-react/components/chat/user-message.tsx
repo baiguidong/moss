@@ -5,7 +5,7 @@ import { FilePreview } from "@/components/file-preview";
 import { UserAvatar } from "@/components/user-avatar";
 import type { UserTextRenderMessage } from "@/lib/agent-transcript";
 
-export const UserMessage = React.memo(function UserMessage({ message }: { message: UserTextRenderMessage }) {
+export const UserMessage = React.memo(function UserMessage({ message, sessionId }: { message: UserTextRenderMessage; sessionId?: string }) {
   const hasText = message.content.trim().length > 0;
   const attachments = message.attachments || [];
 
@@ -23,7 +23,7 @@ export const UserMessage = React.memo(function UserMessage({ message }: { messag
         {attachments.length > 0 && (
           <div className="flex flex-wrap justify-end gap-2">
             {attachments.map((attachment) => (
-              <FilePreview
+              <FilePreview sessionId={sessionId}
                 key={`${attachment.kind}:${attachment.path}`}
                 path={attachment.path}
                 name={attachment.name}

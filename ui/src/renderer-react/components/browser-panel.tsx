@@ -1,4 +1,6 @@
 "use client";
+import { WebBrowserPanel } from './web-browser-panel';
+import { isWebUI } from '@/lib/host-environment';
 
 import * as React from "react";
 import { createPortal } from "react-dom";
@@ -83,6 +85,7 @@ export function openBrowserPanelUrl(
   connectorAuth?: BrowserConnectorAuthContext | null,
   mcpAuth?: BrowserMcpAuthContext | null,
 ) {
+  if (isWebUI()) { window.mossWeb!.pendingBrowserUrl = url; window.dispatchEvent(new CustomEvent('moss:browser-open', { detail: url })); return Promise.resolve(null); }
   return window.agentDesktop.browser.openTab({
     sessionId: sessionId || FALLBACK_SESSION_KEY,
     url,
@@ -91,7 +94,12 @@ export function openBrowserPanelUrl(
   });
 }
 
-export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
+export function BrowserPanel({ sessionId, tabId, onReady }: { sessionId?: string | null; tabId?: string; onReady?: () => void }) {
+  if (isWebUI()) return <WebBrowserPanel onReady={onReady} />;
+  return <DesktopBrowserPanel sessionId={sessionId} tabId={tabId} onReady={onReady} />;
+}
+
+function DesktopBrowserPanel({ sessionId, tabId, onReady }: { sessionId?: string | null; tabId?: string; onReady?: () => void }) {
   const sessionKey = sessionId || FALLBACK_SESSION_KEY;
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -136,6 +144,13 @@ export function BrowserPanel({ sessionId }: { sessionId?: string | null }) {
       unsubscribe();
     };
   }, [sessionKey]);
+
+  React.useEffect(() => {
+    if (tabId) void applyState(window.agentDesktop.browser.activateTab({ sessionId: sessionKey, tabId }));
+  }, [sessionKey, tabId, applyState]);
+  React.useEffect(() => {
+    if (activeTab && (!tabId || activeTab.id === tabId) && !activeTab.isLoading && !activeTab.error) onReady?.();
+  }, [activeTab?.id, activeTab?.isLoading, activeTab?.error, tabId, onReady]);
 
   React.useEffect(() => onNativeOverlayVisibilityChange(setNativeOverlayOpen), []);
 

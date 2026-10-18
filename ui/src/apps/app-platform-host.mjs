@@ -49,6 +49,8 @@ function copyIntoCache(sourcePath, context, preferredName) {
 }
 
 export function createAppPlatformHandlers({
+  web = false,
+  webCapture,
   desktopCapturer,
   dialog,
   nativeImage,
@@ -56,11 +58,12 @@ export function createAppPlatformHandlers({
   shell,
   systemPreferences,
   allowMediaFile = () => {},
+  resolveMediaUrl,
   fetchImpl = fetch,
 }) {
   const authorize = (file) => {
     allowMediaFile(file.path)
-    return file
+    return resolveMediaUrl ? Promise.resolve(resolveMediaUrl(file.path)).then(url => ({ ...file, mediaUrl: url })) : file
   }
   return {
     async 'file.pick'(input, context) {
@@ -68,6 +71,8 @@ export function createAppPlatformHandlers({
       context?.signal?.throwIfAborted()
       const kind = String(input.kind || 'file')
       const response = await dialog.showOpenDialog({
+        title: `${context?.appId || 'App'} 请求选择文件`,
+        ...(web ? { signal: context?.signal } : {}),
         properties: ['openFile', ...(input.multiple === false ? [] : ['multiSelections'])],
         ...(FILE_FILTERS[kind] ? { filters: FILE_FILTERS[kind] } : {}),
       })
@@ -75,7 +80,7 @@ export function createAppPlatformHandlers({
       context?.signal?.throwIfAborted()
       if (response.canceled) return { files: [] }
       if (response.filePaths.length > platformLimits.pickedFiles) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many selected files')
-      return { files: response.filePaths.map((filePath) => authorize(copyIntoCache(filePath, context))) }
+      return { files: await Promise.all(response.filePaths.map((filePath) => authorize(copyIntoCache(filePath, context)))) }
     },
 
     'file.materialize'(input, context) {
@@ -125,11 +130,18 @@ export function createAppPlatformHandlers({
       context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       fs.writeFileSync(cachedPath, image.toPNG(), { mode: 0o600 })
-      authorize({ path: cachedPath })
-      return { path: cachedPath, mediaUrl: mediaUrl(cachedPath) }
+      return authorize({ path: cachedPath, mediaUrl: mediaUrl(cachedPath) })
     },
 
     async 'screen.capture'(_input, context) {
+      context?.assertCurrent?.(); context?.signal?.throwIfAborted();
+      if (web) {
+        if (!webCapture) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, '此 Host 未提供浏览器截图。');
+        const selected = await webCapture(context);
+        context?.assertCurrent?.(); context?.signal?.throwIfAborted();
+        if (!selected) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, '截图已取消');
+        return authorize(copyIntoCache(selected, context, `screenshot-${Date.now()}.png`));
+      }
       context?.assertCurrent?.()
       context?.signal?.throwIfAborted()
       const permission = process.platform === 'darwin'
@@ -166,7 +178,7 @@ export function createAppPlatformHandlers({
     async 'file.download'(input, context = {}) {
       const { signal } = context
       signal?.throwIfAborted()
-      const selected = await dialog.showSaveDialog({ defaultPath: safeName(input.fileName, 'download') })
+      const selected = web ? { filePath: path.join(cacheRoot(context), `${randomUUID()}-${safeName(input.fileName, 'download')}`) } : await dialog.showSaveDialog({ defaultPath: safeName(input.fileName, 'download') })
       signal?.throwIfAborted()
       if (selected.canceled || !selected.filePath) return { canceled: true }
       const response = await fetchImpl(input.url, { signal })
@@ -202,6 +214,10 @@ export function createAppPlatformHandlers({
         context.assertCurrent?.()
         signal?.throwIfAborted()
         fs.renameSync(temporaryFile, selected.filePath)
+        if (web) {
+          const error = await shell.openPath(selected.filePath)
+          if (error) return { canceled: true }
+        }
         return { canceled: false, filePath: selected.filePath }
       } finally {
         signal?.removeEventListener('abort', cancelBody)
@@ -219,7 +235,9 @@ export function createAppPlatformHandlers({
       context.signal?.throwIfAborted()
       const url = new URL(input.url)
       if (!['http:', 'https:'].includes(url.protocol)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Only HTTP and HTTPS links are supported')
-      await shell.openExternal(url.href)
+      const opened = await shell.openExternal(url.href)
+      context.signal?.throwIfAborted()
+      if (web && opened !== true) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, '打开链接已取消')
       return { opened: true }
     },
   }

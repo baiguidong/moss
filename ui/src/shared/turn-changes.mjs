@@ -6,9 +6,9 @@ function isObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function isTopLevelUserMessage(event) {
+export function isTopLevelUserMessage(event) {
   if (!isObject(event) || event.type !== 'user') return false;
-  if (event.isCompactSummary === true || event.isMeta === true || event.isSynthetic === true) return false;
+  if (event.isSidechain || event.parent_tool_use_id || event.isVisibleInTranscriptOnly || event.isCompactSummary === true || event.isMeta === true || event.isSynthetic === true) return false;
   if (event.origin?.kind && event.origin.kind !== 'human') return false;
   if (event.toolUseResult || event.tool_use_result) return false;
   const blocks = Array.isArray(event.message?.content) ? event.message.content : [];
@@ -297,11 +297,12 @@ export function collectTurnChanges(history) {
     }
     if (!current) continue;
     collectToolUses(event, current.toolNames);
-    current.hasUnverifiedChanges ||= collectToolResults(
+    const hasUnverifiedChanges = collectToolResults(
       event,
       current.files,
       current.toolNames,
     );
+    current.hasUnverifiedChanges ||= hasUnverifiedChanges;
   }
   finish();
   return turns;

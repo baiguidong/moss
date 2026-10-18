@@ -99,10 +99,11 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.testing/v1 / target.reset | testing:control | fixtures, title | backend |  |
 | moss.testing/v1 / target.close | testing:control | {} | backend |  |
 | moss.testing/v1 / target.attach | testing:control | runId* | backend |  |
-| moss.testing/v1 / controller.create | testing:control | runId*, engineEntry*, disabledTools*, title* | backend |  |
-| moss.testing/v1 / controller.turn.start | testing:control | sessionId*, prompt* | backend |  |
+| moss.testing/v1 / controller.create | testing:control | runId*, engineEntry*, disabledTools*, title*, evidenceReview | backend |  |
+| moss.testing/v1 / controller.turn.start | testing:control | sessionId*, prompt*, evidence | backend |  |
 | moss.testing/v1 / controller.turn.status | testing:control | sessionId* | backend |  |
 | moss.testing/v1 / controller.turn.abort | testing:control | sessionId* | backend |  |
+| moss.testing/v1 / controller.turn.finish | testing:control | sessionId* | backend |  |
 | moss.testing/v1 / controller.dispose | testing:control | sessionId* | backend |  |
 | moss.testing/v1 / controller.caller | testing:control | {} | backend |  |
 | moss.testing/v1 / controller.open | testing:control | sessionId* | backend |  |

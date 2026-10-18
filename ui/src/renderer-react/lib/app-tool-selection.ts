@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { StoredApp } from '@/types';
 import { filterApps, groupApps } from '@/lib/app-categories';
+import { hasMcpCatalog } from '@/lib/app-capabilities';
 import { getAppToolServices, parseAppServiceKey, type AppToolService } from '../../../../packages/app-sdk/src/tool-services.mjs';
 export { getAppToolServices, parseAppServiceKey };
 
@@ -58,7 +59,8 @@ export function getToolPickerItems(apps: StoredApp[], query: string, selectedIds
       const selected = selectedServiceIds.includes(service.id);
       if (!service.available && !selected) continue;
       if (!matches(service.title, service.description, toolAppTitle(app), app.description || '')) continue;
-      const state = !service.available ? '不可用' : ['unchecked', 'authorized'].includes(service.status) ? '工具待发现' : `${service.toolCount} 个工具`;
+      const catalog = app.mcpServices?.find(item => item.serviceId === service.serviceId);
+      const state = !service.available ? '不可用' : ['unchecked', 'authorized'].includes(service.status) && (!catalog || !hasMcpCatalog(catalog)) ? '连接时加载工具' : `${service.toolCount} 个工具`;
       result.push({ id: service.id, app, service, title: service.title,
         description: `${toolAppTitle(app)} · ${state}${service.description ? ` · ${service.description}` : ''}`,
         selected, available: service.available, expandable: false });
@@ -69,12 +71,12 @@ export function getToolPickerItems(apps: StoredApp[], query: string, selectedIds
 export function toolAppDescription(app: StoredApp) {
   const services = app.mcpServices || [];
   const count = (app.agentTools?.length || 0) + services.reduce((n, service) => n + service.tools.filter(tool => !tool.disabled).length, 0);
-  const waiting = services.some(service => ['unchecked', 'authorized'].includes(service.status));
+  const waiting = services.some(service => ['unchecked', 'authorized'].includes(service.status) && !hasMcpCatalog(service));
   const unavailable = !canSelectToolApp(app);
   const needsGrant = app.agentTools?.some(tool => tool.permission && !app.grants?.includes(tool.permission)) || services.some(service => service.status === 'unauthorized');
   const status = !app.enabled ? 'App 已停用'
     : unavailable ? needsGrant ? '工具需要授权' : '工具服务已停用或未配置'
-    : waiting ? 'MCP 工具数量待发现' : app.contributes?.skills?.length ? `${app.contributes.skills.length} 个 CLI skill${count ? ` · ${count} 个工具` : ''}` : `${count} 个工具`;
+    : waiting ? (count ? `至少 ${count} 个工具` : '连接时加载工具') : app.contributes?.skills?.length ? `${app.contributes.skills.length} 个 CLI skill${count ? ` · ${count} 个工具` : ''}` : `${count} 个工具`;
   return `${app.toolScope === 'global' ? '全局' : '指定'} · ${status}${app.description ? ` · ${app.description}` : ''}`;
 }
 export function filterToolApps(apps: StoredApp[], query: string, selectedIds: string[] = [], category = 'all') {

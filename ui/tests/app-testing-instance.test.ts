@@ -86,8 +86,18 @@ describe('fixed reusable test instance', () => {
     expect(await readFile(path.join(data, 'demo.txt'), 'utf8')).toBe('retain');
     await manager.open();
     expect(launches[1]).toEqual({ ...launches[0], prepare: false });
+    const removed = ['app-tasks/run.json', 'app-authoring/draft.json', 'cloud-transfers/job.json', 'apps-data/workflow/run.json', 'cron_tasks.json'];
+    const retained = ['apps/example/versions/1.0.0/package.json', 'credentials/test.json', 'skills/test/SKILL.md'];
+    for (const file of [...removed, ...retained]) {
+      await mkdir(path.dirname(path.join(manager.home, file)), { recursive: true });
+      await writeFile(path.join(manager.home, file), 'fixture');
+    }
+    await writeFile(path.join(directory, 'report.json'), 'previous report');
     await manager.clearData();
     await expect(readFile(path.join(data, 'demo.txt'))).rejects.toThrow();
+    for (const file of removed) await expect(readFile(path.join(manager.home, file))).rejects.toThrow();
+    for (const file of retained) expect(await readFile(path.join(manager.home, file), 'utf8')).toBe('fixture');
+    expect(await readFile(path.join(directory, 'report.json'), 'utf8')).toBe('previous report');
     expect(launches[2].prepare).toBe(false);
     await manager.refresh();
     expect(launches[3].prepare).toBe(true);
@@ -103,11 +113,24 @@ describe('fixed reusable test instance', () => {
   });
 });
 
+test('a cleanup failure leaves a closed retryable target instead of an endless preparation state', async () => {
+  const directory = await temporary();
+  const manager = createReusableTestInstance({ directory, getSettings: () => ({}), getAppRuntime: () => null, getRuntimeHome: () => '' } as any);
+  await manager.getStatus();
+  await writeFile(path.join(manager.home, 'app-runtime-state.json'), '{broken');
+  await expect(manager.clearData()).rejects.toThrow();
+  expect(manager.snapshot()).toMatchObject({ phase: 'closed', pid: null, progress: null });
+});
+
 describe('test target isolation and App browser connection', () => {
-  test('fully allows tools while refusing stale or mismatched test browser connections', () => {
+  test('limits controller tools while refusing stale or mismatched test browser connections', () => {
     const record = { id: 'controller', appTestRunId: 'run' };
     const run = { id: 'run', phase: 'running', sessionId: 'controller' };
-    expect(TEST_ALLOWED_TOOLS).toBeNull();
+    expect(TEST_ALLOWED_TOOLS).toContain('Read');
+    expect(TEST_ALLOWED_TOOLS).toContain('moss_test_browser__*');
+    expect(TEST_ALLOWED_TOOLS).toContain('app__moss_self_test__*');
+    expect(TEST_ALLOWED_TOOLS).not.toContain('Bash');
+    expect(TEST_ALLOWED_TOOLS).not.toContain('*');
     for (const name of ['Read', 'Bash', 'Write', 'ToolSearch', 'app__moss_self_test__self_test', 'mcp__moss_test_browser__browser_click']) {
       expect(validateTestToolUse(record, true, name)).toBeNull();
     }
@@ -141,6 +164,13 @@ describe('test target isolation and App browser connection', () => {
     expect(env).not.toHaveProperty('OPENAI_API_KEY');
     expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
     expect(env).not.toHaveProperty('NODE_OPTIONS');
+    expect(env).not.toHaveProperty('MOSS_MCP_PYTHON_HOME');
+    const cached = targetEnvironment({ MOSS_MCP_PYTHON_HOME: '/untrusted/cache' }, {
+      home: '/isolated', id: 'run', runtimeHome: '/shared/runtimes', pythonRuntimeHome: '/shared/dependencies',
+    });
+    expect(cached.MOSS_HOME).toBe('/isolated');
+    expect(cached.MOSS_RUNTIME_HOME).toBe('/shared/runtimes');
+    expect(cached.MOSS_MCP_PYTHON_HOME).toBe('/shared/dependencies');
     expect(selfTestRendererUrl('file:///app/index.html', { id: 'run' })).toContain('moss-self-test=run');
   });
 

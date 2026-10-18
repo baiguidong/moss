@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { canSelectToolApp, filterToolApps } from '../src/renderer-react/lib/app-tool-selection';
+import { canSelectToolApp, filterToolApps, toolAppDescription, getToolPickerItems } from '../src/renderer-react/lib/app-tool-selection';
 import type { AppMcpServiceTools, StoredApp } from '../src/renderer-react/types';
 
 const tool = { id: 'search', title: '搜索', description: '查找', effect: 'read' as const };
@@ -46,4 +46,16 @@ test('CLI skill apps are discoverable and selectable without native or MCP tools
   expect(canSelectToolApp(cli)).toBe(true);
   expect(filterToolApps([cli], '').map(value => value.id)).toEqual(['cli']);
   expect(canSelectToolApp({ ...cli, enabled: false })).toBe(false);
+});
+
+test('cached MCP counts stay visible in App and service pickers without changing authorization', () => {
+  const cached = { ...service('unchecked', false), appId: 'mcp', instanceId: 'one', name: 'docs', serviceId: 'mcp/one/docs', catalogSource: 'cache' as const, checkedAt: 10 };
+  const value = app('mcp', { agentTools: [], mcpServices: [cached] });
+  expect(toolAppDescription(value)).toContain('1 个工具');
+  expect(toolAppDescription(value)).not.toContain('连接时加载');
+  const items = getToolPickerItems([{ ...value, toolSelection: 'services' }], '', [], [], 'mcp');
+  expect(items[0].description).toContain('1 个工具');
+  expect(items[0].available).toBe(true);
+  expect(canSelectToolApp({ ...value, mcpServices: [{ ...cached, status: 'unauthorized' }] })).toBe(false);
+  expect(toolAppDescription({ ...value, mcpServices: [service('unchecked')] })).toContain('连接时加载工具');
 });

@@ -9,7 +9,7 @@ import { PDFViewer } from "./PDFViewer";
 const pdfCache = new Map<string, { pdfPath: string; timestamp: number }>();
 const CACHE_TIMEOUT = 5 * 60 * 1000;
 
-export function WordViewer({ filePath, fileVersion, toolbarContainer }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null }) {
+export function WordViewer({ filePath, fileVersion, toolbarContainer, onReady, onError }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null; onReady?: () => void; onError?: (message: string) => void }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
   const [useOfv, setUseOfv] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
@@ -56,14 +56,14 @@ export function WordViewer({ filePath, fileVersion, toolbarContainer }: { filePa
       <div className="flex h-full min-h-0 flex-col">
         <OfficePreviewToolbar filePath={filePath} onRefresh={() => void load(true)} container={toolbarContainer} />
         <div className="min-h-0 flex-1">
-          <PDFViewer filePath={pdfPath} title={filePath} />
+          <PDFViewer onReady={onReady} onError={onError} filePath={pdfPath} title={filePath} />
         </div>
       </div>
     );
   }
 
   if (useOfv) {
-    return <LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" />;
+    return <LazyOpenFileViewer onReady={onReady} onError={onError} filePath={filePath} fileName={filePath} capability="basic" />;
   }
 
   return null;

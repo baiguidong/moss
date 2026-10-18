@@ -17,7 +17,8 @@ it.each([0, 1].flatMap(response => [
   { response, acceptPermissions: false, permissions: ['agent:turns:write'] },
   { response, acceptPermissions: true, permissions: ['agent:turns:write'] },
   { response, acceptPermissions: false, permissions: [] },
-]))('confirms verified marketplace tools even with no pending permissions (%o)', async ({ response, acceptPermissions, permissions }) => {
+  { response, acceptPermissions: true, permissions: ['agent:turns:write'], tools: [] },
+]))('confirms verified marketplace tools even with no pending permissions (%o)', async ({ response, acceptPermissions, permissions, tools = [{ id: 'lookup', title: '查询记录', description: '搜索应用记录', effect: 'read' }] }) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-tools-'))
   roots.push(root)
   const archive = Buffer.from('verified package with tools')
@@ -42,7 +43,7 @@ it.each([0, 1].flatMap(response => [
     validatePackage: async () => {
       validated = true
       return {
-        manifest: { id: 'example.app', version: latest.version, displayName: 'Example', permissions, contributes: { tools: [{ id: 'lookup', title: '查询记录', description: '搜索应用记录', effect: 'read' }] } },
+        manifest: { id: 'example.app', version: latest.version, displayName: 'Example', permissions, contributes: { tools } },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }
     },
@@ -56,9 +57,8 @@ it.each([0, 1].flatMap(response => [
   })
   const result = await service.install({ appId: 'example.app', acceptPermissions })
   expect(prompts).toHaveLength(1)
-  expect(prompts[0].detail).toContain('查询记录（lookup） · 只读')
-  expect(prompts[0].detail).toContain('搜索应用记录')
-  expect(prompts[0].detail.includes('agent:turns:write')).toBe(permissions.length > 0 && !acceptPermissions)
+  if (tools.length) { expect(prompts[0].detail).toContain('查询记录（lookup） · 只读'); expect(prompts[0].detail).toContain('搜索应用记录') }
+  expect(prompts[0].detail.includes('agent:turns:write')).toBe(permissions.length > 0)
   expect(installs).toBe(response)
   expect(registrations).toBe(response)
   expect(result.ok).toBe(response === 1)
@@ -347,7 +347,7 @@ describe('App marketplace', () => {
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
-        manifest: { id: 'example.app', version: '1.2.0' },
+        manifest: { id: 'example.app', version: '1.2.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
       installPackage: async () => ({ id: 'example.app', currentVersion: '1.2.0' }),
@@ -404,7 +404,7 @@ describe('App marketplace', () => {
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
-        manifest: { id: 'example.app', version: '1.2.0' },
+        manifest: { id: 'example.app', version: '1.2.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
       installPackage: async () => ({ id: 'example.app', name: 'example.app', currentVersion: '1.2.0' }),
@@ -460,7 +460,7 @@ describe('App marketplace', () => {
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
-        manifest: { id: 'example.app', version: '2.0.0' },
+        manifest: { id: 'example.app', version: '2.0.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
       installPackage: async () => ({ id: 'example.app', currentVersion: '2.0.0' }),
@@ -513,7 +513,7 @@ describe('App marketplace', () => {
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
-        manifest: { id: 'example.app', version: '1.2.0' },
+        manifest: { id: 'example.app', version: '1.2.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
       installPackage: async () => ({ id: 'example.app', currentVersion: '1.2.0' }),
@@ -568,7 +568,7 @@ describe('App marketplace', () => {
         return options.installPackage('/verified-package')
       },
       validatePackage: async () => ({
-        manifest: { id: 'example.app', version: '1.3.0' },
+        manifest: { id: 'example.app', version: '1.3.0', permissions: newVersion.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
       installPackage: async () => ({ id: 'example.app', currentVersion: '1.3.0' }),
@@ -660,7 +660,7 @@ it.each(['darwin-arm64', 'win32-x64'])('downloads only the matching signed varia
     installArchive: async (_r: any, _a: any, options: any) => options.installPackage(root),
     validatePackage: async (_root: string, options: any) => {
       expect(options.platform).toBe(platform)
-      return { manifest: { id: 'example.app', version: latest.version, platforms: [declaredPlatform], permissions: [] }, trust: { publisherId: 'moss', keyId: 'release-1' } }
+      return { manifest: { id: 'example.app', version: latest.version, platforms: [declaredPlatform], permissions: latest.permissions }, trust: { publisherId: 'moss', keyId: 'release-1' } }
     },
     installPackage: async () => { installs++; return {} },
   })

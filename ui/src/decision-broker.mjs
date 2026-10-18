@@ -23,6 +23,7 @@ export function createDecisionBroker({
   now = () => Date.now(),
 }) {
   const liveHandlers = new Map();
+  const responseGuards = new Map();
   const expirationTimers = new Map();
 
   function buildActionToken(decision) {
@@ -60,6 +61,7 @@ export function createDecisionBroker({
     clearExpiration(decisionId);
     const handler = liveHandlers.get(decisionId);
     liveHandlers.delete(decisionId);
+    responseGuards.delete(decisionId);
     try {
       await handler?.({ allowed: false, expired: true, source, context: null });
     } catch {
@@ -81,12 +83,15 @@ export function createDecisionBroker({
     payload = {},
     expiresAt = now() + DEFAULT_DECISION_TTL_MS,
     handler,
+    responseGuard,
+    mobilePolicy = 'summary',
   }) {
     const id = randomUUID();
     const notificationId = `decision:${id}`;
     const unsigned = { id, expiresAt };
     const actionToken = buildActionToken(unsigned);
     if (typeof handler === 'function') liveHandlers.set(id, handler);
+    if (typeof responseGuard === 'function') responseGuards.set(id, responseGuard);
     const decision = store.createDecision({
       id,
       sessionId,
@@ -106,7 +111,7 @@ export function createDecisionBroker({
       details: desktopDetails,
       mobileTitle: title,
       mobileSummary: summary,
-      mobilePolicy: 'summary',
+      mobilePolicy,
       decisionRequestId: id,
       decisionOptions: desktopOptions,
     }, { id: notificationId, now: decision.createdAt });
@@ -118,6 +123,9 @@ export function createDecisionBroker({
   async function respond({ decisionId, allowed, source, actionToken, context = null }) {
     const decision = store.getDecision(decisionId);
     if (!decision) throw new Error('Decision request not found.');
+    // Validate the reviewed content and caller before consuming the decision.
+    // Notification/mobile shortcuts cannot bypass a full Host confirmation.
+    responseGuards.get(decisionId)?.({ allowed, source, context });
     if (source === 'external') {
       if (!actionToken || !safeEqual(hashToken(actionToken), decision.actionTokenHash)) {
         throw new Error('Decision action token is invalid.');
@@ -141,6 +149,7 @@ export function createDecisionBroker({
         resolution: resolution || { allowed: Boolean(allowed) },
       });
       liveHandlers.delete(decisionId);
+      responseGuards.delete(decisionId);
       notificationBroker.resolveDecision(decisionId);
       onChanged({ decision: settled, reason: 'resolved' });
       return settled;
@@ -150,6 +159,7 @@ export function createDecisionBroker({
         status: 'failed', source, error: message,
       });
       liveHandlers.delete(decisionId);
+      responseGuards.delete(decisionId);
       notificationBroker.resolveDecision(decisionId);
       onChanged({ decision: failed, reason: 'failed' });
       throw error;

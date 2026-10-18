@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+import { createServer } from 'vite';
+import { startWebServer } from '../src/web/server.mjs';
+import { createRequestRegistry } from '../src/host/request-registry.mjs';
+import { createWebResources } from '../src/web/resources.mjs';
+import { createWebApps } from '../src/web/apps.mjs';
+import { createDesktopStateStore } from '../src/desktop-state-store.mjs';
+import { createAppNotificationBroker } from '../src/app-notification-broker.mjs';
+import { createDecisionBroker } from '../src/decision-broker.mjs';
+import { createHostConfirmations } from '../src/host/confirmations.mjs';
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const harness = await fs.mkdtemp(path.join(uiRoot, 'tests', '.web-adaptations-'));
+const home = await fs.mkdtemp(path.join(os.tmpdir(), 'web-adaptations-'));
+const db = new DatabaseSync(':memory:');
+let vite, host, browser, confirmations, apps;
+try {
+  const registry = createRequestRegistry();
+  const broker = createDecisionBroker({ store: createDesktopStateStore(db), notificationBroker: createAppNotificationBroker(db), getSigningSecret: () => 'test-secret' });
+  confirmations = createHostConfirmations({ broker, mode: 'web', publish: (method, payload) => registry.publish(method, payload) }); confirmations.register(registry);
+  let installs = 0;
+  registry.handle('app:install-archive', async () => { const allowed = await confirmations.request({ title: '安装权限测试', message: '安装测试 App', detail: '完整权限详情\n'.repeat(500) + '最后一项：可修改数据' }); if (allowed) installs++; return { allowed }; });
+  registry.handle('app:list', () => []); registry.handle('app:authoring:get', () => ({ available: false }));
+  const appRoot = path.join(home, 'app'); await fs.mkdir(appRoot);
+  await fs.writeFile(path.join(appRoot, 'asset.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="red"/></svg>');
+  await fs.writeFile(path.join(appRoot, 'index.html'), `<html><body><img id="asset" src="asset.svg"><div id="info"></div><script>
+    window.rootClient = typeof window.agentDesktop;
+    try { window.parentReadable = !!parent.document; } catch { window.parentReadable = false; }
+    mossApp.app.getInfo().then(info => document.querySelector('#info').textContent = info.id);
+    mossApp.actions.invoke('echo', { sample: 42 }).then(result => { window.actionResult = result; });
+    fetch('/api/auth', { credentials: 'include' }).then(response=>response.json()).then(()=>{window.apiReadable=true;}).catch(()=>{window.apiReadable=false;});
+  </script></body></html>`);
+  const runtime = { installations: { get: () => ({ enabled: true, activeVersion: '1' }) }, invoke: async (appId, instanceId, name, input) => ({ appId, instanceId, input }) };
+  const resources = createWebResources();
+  apps = createWebApps({ registry, resources, resolveApp: async () => ({ id: 'fixture.app', runtime, manifest: { ui: { entry: 'index.html' } }, entryPath: path.join(appRoot, 'index.html') }) });
+  const env = { MOSS_WEB_TOKEN: 'test-very-long-browser-access-token', MOSS_WEB_PORT: '0' };
+  host = await startWebServer({ registry, home, env, rendererRoot: home, resources, apps, overrides: new Map(apps.handlers), snapshot: () => ({ confirmations: confirmations.snapshot() }) });
+  const target = `http://127.0.0.1:${host.address.port}`;
+  await fs.writeFile(path.join(harness, 'index.html'), '<html><body><div id="root"></div><script type="module" src="./main.tsx"></script></body></html>');
+  await fs.writeFile(path.join(harness, 'main.tsx'), `
+    import React from 'react'; import { createRoot } from 'react-dom/client';
+    import { initializeHostClient } from '@/web-bootstrap'; import { HostConfirmations } from '@/components/host-confirmations';
+    import { WebComposerDraft } from '@/components/web-composer-draft'; import { EmbeddedAppView } from '@/components/embedded-app-view'; import '@/globals.css';
+    await initializeHostClient();
+    await new Promise(resolve => { if(window.mossWeb.snapshot)resolve();else window.addEventListener('moss:reconnected',resolve,{once:true}); });
+    window.beginInstall = () => { window.installResult = null; window.agentDesktop.ipcInvoke('app:install-archive').then(value=>window.installResult=value); };
+    function Harness() { const [draft,setDraft] = React.useState({ text:'', files:[] });
+      return <main><HostConfirmations /><textarea aria-label="草稿" value={draft.text} onChange={e=>setDraft({...draft,text:e.target.value})}/><button onClick={()=>setDraft({...draft,files:[{name:'uploaded.txt',path:'/cloud/uploads/uploaded.txt'}]})}>添加已上传附件</button><span data-files>{draft.files.length}</span><WebComposerDraft session="test-session" value={draft} restore={setDraft}/><div style={{height:300}}><EmbeddedAppView appName="fixture.app" /></div></main>; }
+    createRoot(document.getElementById('root')).render(<React.StrictMode><Harness/></React.StrictMode>);
+  `);
+  vite = await createServer({ root: uiRoot, configFile: path.join(uiRoot, 'vite.config.ts'), logLevel: 'error', server: { port: 0, strictPort: false, hmr: false, proxy: { '/api': { target, ws: true }, '/_moss': { target } } } }); await vite.listen();
+  env.MOSS_WEB_ORIGIN = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  browser = await chromium.launch({ channel: process.env.MOSS_WEB_TEST_BROWSER || 'chrome', headless: true });
+  const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  await context.request.post(env.MOSS_WEB_ORIGIN + '/api/login', { headers: { Origin: env.MOSS_WEB_ORIGIN }, data: { token: env.MOSS_WEB_TOKEN } });
+  const url = `${env.MOSS_WEB_ORIGIN}/tests/${path.basename(harness)}/index.html`;
+  const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(url); await page.getByRole('textbox', { name: '草稿' }).waitFor();
+  const iframe = page.frameLocator('iframe[title="App 页面"]'); await iframe.locator('#info').getByText('fixture.app').waitFor();
+  const child = page.frames().find(frame => frame.url().includes('/_moss/resource/'));
+  assert.equal(await child.evaluate(() => window.rootClient), 'undefined'); assert.equal(await child.evaluate(() => window.parentReadable), false);
+  await child.waitForFunction(() => window.apiReadable === false && !!window.actionResult);
+  assert.equal(await child.evaluate(() => document.querySelector('#asset').naturalWidth), 20);
+  assert.deepEqual(await child.evaluate(() => window.actionResult), { ok: true, result: { appId: 'fixture.app', instanceId: 'fixture.app--default', input: { sample: 42 } } });
+  await page.evaluate(() => window.beginInstall()); const modal = page.getByRole('dialog', { name: '安装权限测试' }); await modal.waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement.textContent), '取消'); assert.match(await modal.textContent(), /最后一项：可修改数据/);
+  await page.keyboard.press('Escape'); await modal.waitFor({ state: 'hidden' }); assert.equal(installs, 0);
+  const second = await context.newPage(); second.on('pageerror', error => errors.push(error.message)); await second.goto(url); await second.getByRole('textbox', { name: '草稿' }).waitFor();
+  await page.evaluate(() => window.beginInstall()); await modal.waitFor(); await second.getByRole('button', { name: /待确认操作/ }).waitFor(); assert.equal(await second.getByRole('dialog').isVisible(), false);
+  await page.reload(); await page.getByRole('dialog', { name: '安装权限测试' }).waitFor();
+  await second.getByRole('button', { name: /待确认操作/ }).click(); await second.getByRole('dialog', { name: '安装权限测试' }).getByRole('button', { name: '允许', exact: true }).click();
+  await page.getByRole('dialog', { name: '安装权限测试' }).waitFor({ state: 'hidden' }); assert.equal(installs, 1);
+  await page.getByRole('textbox', { name: '草稿' }).fill('第一标签的草稿'); await page.getByRole('button', { name: '添加已上传附件' }).click();
+  const saved = async (page, text) => page.waitForFunction(async expected => { const drafts = await import('/src/renderer-react/lib/web-drafts.ts'); return (await drafts.listDrafts(drafts.draftScope(), 'test-session')).some(row=>row.value.text===expected); }, text);
+  await saved(page, '第一标签的草稿'); await second.getByRole('textbox', { name: '草稿' }).fill('第二标签的不同草稿'); await saved(second, '第二标签的不同草稿');
+  await page.reload(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="草稿"]')?.value === '第一标签的草稿'); assert.equal(await page.locator('[data-files]').textContent(), '1');
+  await second.reload(); await second.waitForFunction(() => document.querySelector('textarea[aria-label="草稿"]')?.value === '第二标签的不同草稿'); assert.equal(installs, 1);
+  await page.evaluate(async () => { const drafts = await import('/src/renderer-react/lib/web-drafts.ts'); await drafts.clearUserDrafts(); if ((await drafts.listDrafts(drafts.draftScope())).length) throw Error('Logout did not clear user drafts'); });
+  assert.deepEqual(errors, []);
+  if (process.env.MOSS_WEB_TEST_OUTPUT) { await fs.mkdir(process.env.MOSS_WEB_TEST_OUTPUT, { recursive: true }); await page.screenshot({ path: path.join(process.env.MOSS_WEB_TEST_OUTPUT, 'web-adaptations.png') }); }
+  console.log('Chrome: real WebSocket confirmations, cancel/default focus, refresh, cross-tab single approval, isolated App SDK and relative asset, drafts/attachments/tab conflicts/logout passed.');
+} finally { await browser?.close(); apps?.close(); await confirmations?.close(); await host?.close(); await vite?.close(); db.close(); await fs.rm(harness, { recursive: true, force: true }); await fs.rm(home, { recursive: true, force: true }); }

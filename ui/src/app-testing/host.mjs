@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createReusableTestInstance } from './reusable-instance.mjs'
 import { TEST_APP_ID, TEST_BROWSER_SERVER } from './browser.mjs'
+import { attachReviewEvidence } from './review-evidence.mjs'
 
 export const TESTING_PROTOCOL = 'moss.testing/v1'
 const message = error => error instanceof Error ? error.message : String(error)
@@ -54,8 +55,9 @@ export function createAppTestingHost(options) {
     return { ...await entry.target.getStatus(), operation: entry.operation, operationError: entry.operationError }
   }
   async function manageTarget(entry, method, input) {
-    if (method === 'open' && entry.controller && entry.targetProcess?.isAlive()) {
-      await entry.target.open({ signal: entry.lifecycle.signal })
+    if (method === 'open' && entry.run && entry.targetProcess?.isAlive()) {
+      // A run owns this process and its environment until it finishes.
+      entry.targetProcess.focus?.()
       return targetStatus(entry)
     }
     if (entry.controller) throw new Error('请先停止自测，再管理测试实例。')
@@ -113,7 +115,8 @@ export function createAppTestingHost(options) {
       if (method === 'environment') {
         context.assertCurrent?.()
         const settings = getSettings()
-        return { appVersion: options.appVersion, model: settings.model || '', appearance: settings.appearance || {}, disabled: Boolean(isTarget) }
+        return { appVersion: options.appVersion, model: settings.model || '', appearance: settings.appearance || {}, disabled: Boolean(isTarget),
+          ...(options.hostBuildId ? { hostBuildId: options.hostBuildId } : {}) }
       }
       const entry = await entryFor(context)
       if (method === 'controller.caller') return { sessionId: context.invocation?.surface === 'tool' ? context.invocation.sessionId || null : null }
@@ -134,7 +137,7 @@ export function createAppTestingHost(options) {
       if (method === 'controller.create') {
         options.assertWorkAllowed?.()
         if (entry.controller || entry.run?.id !== input.runId || !entry.targetProcess?.isAlive()) throw new Error('测试实例或运行标识无效。')
-        const controller = { runId: input.runId, sessionId: null, state: 'idle', error: null }
+        const controller = { runId: input.runId, sessionId: null, state: 'idle', error: null, evidenceReview: input.evidenceReview === true }
         entry.controller = controller
         controller.creating = (async () => {
           try {
@@ -148,7 +151,8 @@ export function createAppTestingHost(options) {
             if (await fs.realpath(evidenceDir) !== path.join(actualRoot, 'runs', input.runId, 'evidence')) throw new Error('测试证据目录无效。')
             const node = await options.getNodeExecutable()
             assertLive(entry)
-            controller.sessionId = await createController({ ...entry.run, instanceId: entry.instanceId, directory, evidenceDir, title: input.title }, {
+            controller.evidenceDir = evidenceDir
+            controller.sessionId = await createController({ ...entry.run, instanceId: entry.instanceId, directory, evidenceDir, title: input.title, evidenceReview: controller.evidenceReview }, {
               type: 'stdio', command: node, args: [engine, '--cdp-endpoint', entry.targetProcess.endpoint, '--output-dir', evidenceDir],
               env: { ELECTRON_RUN_AS_NODE: '1' }, disabledTools: input.disabledTools,
             })
@@ -175,9 +179,11 @@ export function createAppTestingHost(options) {
         controller.abort = new AbortController()
         controller.state = 'running'; controller.error = null
         const signal = AbortSignal.any([controller.abort.signal, entry.lifecycle.signal])
-        controller.pending = Promise.resolve().then(() => {
+        controller.pending = Promise.resolve().then(async () => {
           assertLive(entry); signal.throwIfAborted()
-          return executeController(controller.sessionId, input.prompt, signal)
+          const prompt = controller.evidenceReview || input.evidence?.length ? await attachReviewEvidence(input.prompt, input.evidence, controller.evidenceDir) : input.prompt
+          assertLive(entry); signal.throwIfAborted()
+          return executeController(controller.sessionId, prompt, signal)
         }).then(() => { controller.state = signal.aborted ? 'canceled' : 'completed' }, error => {
           controller.state = signal.aborted ? 'canceled' : 'failed'; controller.error = message(error)
         })
@@ -194,6 +200,13 @@ export function createAppTestingHost(options) {
       if (method === 'controller.turn.abort') {
         controller.abort?.abort(new Error('控制回合已停止。'))
         await interruptController(controller.sessionId)
+        return turnStatus(controller)
+      }
+      if (method === 'controller.turn.finish') {
+        if (controller.state === 'running' && !controller.disposing) {
+          if (!options.finishController) throw new Error('当前宿主不支持结果提交后正常结束。')
+          await options.finishController(controller.sessionId)
+        }
         return turnStatus(controller)
       }
       if (method === 'controller.dispose') { await dispose(entry); return { disposed: true } }

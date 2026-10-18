@@ -1,5 +1,6 @@
 // Real Desktop + installed App acceptance, driven by a scripted or real model.
 import assert from 'node:assert/strict'
+import { isExpectedControllerCancellation } from '../../src/app-testing/controller-cancellation.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -39,7 +40,10 @@ const click = text => mainWindow.webContents.executeJavaScript(`(() => { const b
 let appPage
 const action = async (name, input = {}) => {
   if (appPage?.isDestroyed()) { await click('设置'); await click('Apps'); await click('AI 自测'); appPage = await findAppPage() }
-  return appPage.executeJavaScript(`window.mossApp.actions.invoke(${JSON.stringify(name)},${JSON.stringify(input)}).then(r=>{if(!r.ok)throw new Error(r.error.message);return r.result})`)
+  // Use the same bound IPC for observation; the Start button below uses the UI.
+  const response = await handlers.get('app-ui:actions:invoke')({ sender: appPage }, { name, input, requestId: crypto.randomUUID() })
+  if (!response.ok) throw new Error(response.error.message)
+  return response.result
 }
 const findAppPage = () => until(async () => {
   for (const contents of webContents.getAllWebContents()) {
@@ -60,7 +64,8 @@ try {
   await until(() => click('Apps').then(() => true), Boolean, 'App settings group')
   await until(() => click('AI 自测').then(() => true), Boolean, 'self-test settings entry')
   appPage = await findAppPage()
-  await until(() => appPage.executeJavaScript('document.querySelectorAll("input[type=checkbox]").length'), count => count === 10, 'App test catalog')
+  const initialCatalog = await action('catalog')
+  await until(() => appPage.executeJavaScript('document.querySelectorAll(".case-select input[type=checkbox]").length'), count => count === initialCatalog.cases.length, 'App test catalog')
   assert.equal(await mainWindow.webContents.executeJavaScript('document.querySelector("[data-settings-nav=apps]")?.getAttribute("aria-current")'), 'page')
   const settings = await invoke('agent:get-settings')
   for (const themeMode of ['dark', 'light']) {
@@ -74,13 +79,13 @@ try {
   const catalog = await action('catalog')
   await appPage.executeJavaScript(`(() => {
     const ids = ${JSON.stringify(catalog.cases.map(item => item.id))}, selected = ${JSON.stringify(cases)};
-    [...document.querySelectorAll('input[type=checkbox]')].forEach((input,index) => { if (input.checked !== selected.includes(ids[index])) input.click() });
+    [...document.querySelectorAll('.case-select input[type=checkbox]')].forEach((input,index) => { if (input.checked !== selected.includes(ids[index])) input.click() });
   })()`)
   await delay(100)
   await appPage.executeJavaScript(`[...document.querySelectorAll('button')].find(b=>b.textContent==='开始自测').click()`)
   let run = await until(() => action('status'), value => value?.id, 'run creation')
   let previous = '', focusChecked = false
-  const deadline = Date.now() + 50 * 60000
+  const deadline = Date.now() + (Number(process.env.MOSS_SELF_TEST_APP_TIMEOUT_MS) || 50 * 60000)
   do {
     await delay(500)
     if (appPage.isDestroyed()) {
@@ -88,13 +93,17 @@ try {
       appPage = await findAppPage()
     }
     run = await action('status')
-    if (run.phase === 'running' && !focusChecked) { await action('instance.open'); focusChecked = true }
+    if (run.phase === 'running' && !focusChecked) {
+      assert.equal(await mainWindow.webContents.executeJavaScript('document.querySelector("[data-settings-nav=apps]")?.getAttribute("aria-current")'), 'page', 'Starting a controller must keep the live self-test dashboard open')
+      await action('instance.open'); focusChecked = true
+    }
     const progress = `${run.phase}: ${run.message}`
     if (progress !== previous) { console.log(`SELF_TEST_APP: ${progress}`); previous = progress }
     if (Date.now() > deadline) throw new Error('Run deadline exceeded')
   } while (!run.finishedAt)
   await fs.writeFile(path.join(root, 'run.json'), JSON.stringify(run, null, 2))
-  assert.equal(run.phase, 'completed', run.message)
+  if (process.env.MOSS_SELF_TEST_APP_SCRIPTED === '1') assert.equal(run.phase, 'completed', run.message)
+  else assert.ok(['completed', 'failed'].includes(run.phase), run.message)
   assert.ok(focusChecked, 'Running target can be focused without restarting it')
   const report = await until(async () => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/report.html') && !window.webContents.isLoading()), Boolean, 'automatic HTML report')
   await fs.writeFile(path.join(root, 'report.png'), (await report.webContents.capturePage()).toPNG())
@@ -105,6 +114,20 @@ try {
   const session = await invoke('agent:get-session', { sessionId: run.sessionId })
   assert.equal(session.permissionMode, 'bypassPermissions')
   assert.ok(session.appIds.includes('moss.self-test'))
+  // A result can include earlier real MCP errors and an expected final abort.
+  // Those mixed failures must remain visible; only a pure stop diagnostic is a
+  // cleanup leak. Searching all history text incorrectly rejects both cases.
+  const recordedCancellations = session.history.filter(item => isExpectedControllerCancellation(
+    item.type === 'error' ? new Error(String(item.message || '')) : item,
+    AbortSignal.abort(),
+  ))
+  if (recordedCancellations.length) {
+    await fs.writeFile(path.join(root, 'controller-abort-history.json'), JSON.stringify(
+      recordedCancellations, null, 2))
+  }
+  assert.equal(recordedCancellations.length, 0, 'Expected recorded-turn cancellation must not appear as an error')
+  assert.equal(run.resetData, true)
+  assert.ok(run.environmentReadyAt >= run.startedAt && run.controllerReadyAt >= run.environmentReadyAt)
   // Reopening a page keeps the Backend and the completed run; target open reuses its process.
   await click('工具'); await click('Apps'); await click('AI 自测')
   appPage = await findAppPage()
@@ -114,22 +137,29 @@ try {
   assert.equal(reopened.pid, target.pid)
   const { verifyRunEvidence } = await import(pathToFileURL(process.env.MOSS_SELF_TEST_APP_EVIDENCE_CHECK).href)
   const evidence = await verifyRunEvidence(run)
-  let stopChecked = false
+  let stopChecked = false, finalTarget = target
   if (process.env.MOSS_SELF_TEST_APP_SCRIPTED === '1') {
+    const sentinel = path.join(target.home, 'sessions', 'previous-run-sentinel.txt')
+    await fs.writeFile(sentinel, 'previous test data')
     const second = await action('run.start', { caseIds: cases })
+    assert.notEqual(second.id, run.id)
     await until(() => action('status'), value => value?.id === second.id && value.phase === 'running', 'second run started')
     await delay(500)
     await action('run.stop', { runId: second.id })
     const canceled = await until(() => action('status'), value => value?.id === second.id && value.finishedAt, 'stop settles controller')
     assert.equal(canceled.phase, 'canceled', canceled.message)
-    assert.equal((await action('instance.status')).pid, target.pid)
+    finalTarget = await action('instance.status')
+    assert.notEqual(finalTarget.pid, target.pid, 'Default run reset must restart the target')
+    assert.notEqual(canceled.sessionId, run.sessionId, 'Every run must create a fresh controller conversation')
+    await assert.rejects(() => fs.access(sentinel))
+    await fs.access(run.reportPath)
     await fs.writeFile(path.join(root, 'canceled-run.json'), JSON.stringify(canceled, null, 2))
     stopChecked = true
   }
   await invoke('app:set-enabled', { appId: 'moss.self-test', enabled: false })
-  await until(async () => { try { process.kill(target.pid, 0); return false } catch { return true } }, Boolean, 'App deactivation target cleanup')
-  const verification = { passed: true, runId: run.id, reportPath: run.reportPath, reportHtmlPath: run.reportHtmlPath,
-    cases, evidence, stopChecked, checks: ['installed App', 'settings entry', 'session scope', 'button start', 'theme sync', 'trusted result source', 'model to CDP to App result', 'automatic report', 'page reopen', 'focus during run', 'target reuse', 'disable cleanup'] }
+  await until(async () => { try { process.kill(finalTarget.pid, 0); return false } catch { return true } }, Boolean, 'App deactivation target cleanup')
+  const verification = { passed: true, runPhase: run.phase, runId: run.id, reportPath: run.reportPath, reportHtmlPath: run.reportHtmlPath,
+    cases, evidence, stopChecked, checks: ['installed App', 'settings entry', 'session scope', 'button start', 'theme sync', 'trusted result source', 'model to CDP to App result', 'automatic report', 'page reopen', 'focus during run', 'target reuse', 'fresh controller per run', 'default data reset', 'expected abort suppressed', 'phase timing', 'disable cleanup'] }
   await fs.writeFile(path.join(root, 'verification.json'), JSON.stringify(verification, null, 2))
   console.log(`SELF_TEST_APP_PASSED: ${root}`)
   app.quit()

@@ -1,5 +1,6 @@
 import type { AppSettingsGroup } from '../../../../packages/app-sdk/src/index.mjs';
 import type { StoredApp } from '../types';
+import { supportsHostFeature } from './host-environment';
 
 export const APP_SETTINGS_GROUPS: Record<AppSettingsGroup, string> = {
   integrations: '连接与集成', tools: '工具', apps: '其他应用设置',
@@ -22,6 +23,7 @@ export type AppSettingsEntry = {
 };
 
 export function appPageUnavailableReason(app: StoredApp, ...permissions: Array<string | undefined>) {
+  if (!supportsHostFeature('embeddedApps')) return '此 Host 尚未提供 App 页面。';
   if (app.packageStatus === 'incompatible') return '此 App 与当前 Moss 不兼容，请在应用管理中更新版本。';
   if (app.packageStatus === 'invalid') return '此 App 安装包不可用，请在应用管理中重新安装。';
   if (!app.enabled) return '此 App 已停用，请先在应用管理中启用。';

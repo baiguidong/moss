@@ -8,6 +8,7 @@ export type SessionExecutionEnvironment = 'desktop' | 'server'
 
 /** Host-owned capabilities, inherited by workers; never taken from model input. */
 export type SessionRuntime = {
+  presentationTurn?: { id: string; sessionId: string; epoch?: string }
   executionEnvironment: SessionExecutionEnvironment
   image?: ImageSettings
   desktopCronHostId?: string

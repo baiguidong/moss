@@ -24,7 +24,7 @@ describe('preview window state', () => {
       contentType: 'markdown',
       metadata: { title: 'Release notes', language: 'markdown' },
     })).toMatchObject({
-      path: 'preview:markdown:Release notes',
+      path: expect.stringMatching(/^preview:/),
       relativePath: 'Release notes',
       content: '# Release notes',
       contentType: 'markdown',

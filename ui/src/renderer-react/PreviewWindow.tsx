@@ -26,6 +26,7 @@ function applyTheme(mode: ThemeMode) {
 
 export default function PreviewWindow() {
   const [tabs, setTabs] = React.useState<WorkspacePreviewData[]>([]);
+  const [error, setError] = React.useState('');
   const [activePath, setActivePath] = React.useState<string | null>(null);
   const tabsRef = React.useRef(tabs);
 
@@ -70,7 +71,7 @@ export default function PreviewWindow() {
       if (!Array.isArray(files) || files.length === 0) return;
       updateTabs((current) => syncPreviewTabs(current, files));
     });
-    void previewIpc.ready();
+    void previewIpc.ready().catch(reason => setError(String(reason)));
     return () => {
       unsubscribeOpen();
       unsubscribeSync();
@@ -120,6 +121,7 @@ export default function PreviewWindow() {
 
   return (
     <div className="app-shell h-screen min-h-0 w-full overflow-hidden bg-background">
+      {error && <p role="alert" className="p-4">{error}</p>}
       <PreviewDrawer
         visible={tabs.length > 0}
         tabs={tabs}

@@ -19,8 +19,13 @@ export async function openAssistantOutputFile(file: AssistantOutputFile, action:
   if (action === "reveal") {
     await host.shell.showItemInFolder(path);
   } else if (action === "preview") {
-    const preview = await host.preview.readFile({ sessionId, filePath: path });
-    await host.preview.open({ file: { ...preview, metadata: { ...preview.metadata, sessionId, workspace, originalContent: preview.content, dirty: false } } });
+    if (host.presentation) {
+      const result = await host.presentation.open({ sessionId, input: { items: [{ path }] } });
+      if (!result.ok) throw new Error(result.error || '无法打开文件');
+    } else {
+      const preview = await host.preview.readFile({ sessionId, filePath: path });
+      await host.preview.open({ file: { ...preview, metadata: { ...preview.metadata, sessionId, workspace, originalContent: preview.content, dirty: false } } });
+    }
   } else {
     const error = await host.shell.openFile(path);
     if (error) throw new Error(error);
@@ -62,7 +67,7 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="truncate text-sm font-semibold" title={file.name}>{file.name}</span>
               <span className="rounded-full border border-border/70 bg-background/50 px-2 py-0.5 text-[10px] font-medium tracking-wider text-muted-foreground">{file.type}</span>
-              <span className="text-xs text-muted-foreground">{file.operation === "create" ? "已创建" : "已更新"}</span>
+              <span className="text-xs text-muted-foreground">{file.operation === "create" ? "已创建" : file.operation === "update" ? "已更新" : "可查看"}</span>
             </span>
             {file.subtitle !== file.name && <span className="truncate text-xs text-muted-foreground" title={file.path}>{file.subtitle}</span>}
           </span>
@@ -73,7 +78,7 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
             <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="gap-1 rounded-full px-2 sm:px-3" disabled={busy}>打开方式<ChevronDown className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => void act("preview")}><Eye />Moss 预览<span className="ml-auto pl-3 text-xs text-muted-foreground">默认</span></DropdownMenuItem>
-              <DropdownMenuItem disabled={remote} onSelect={() => void act("system")}><ExternalLink />系统方式打开</DropdownMenuItem>
+              <DropdownMenuItem disabled={remote} onSelect={() => void act("system")}><ExternalLink />{typeof window !== 'undefined' && window.mossWeb ? '打开或下载文件' : '系统方式打开'}</DropdownMenuItem>
               <DropdownMenuItem disabled={remote} onSelect={() => void act("reveal")}><FolderOpen />文件夹显示</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void act("copy")}><Copy />复制路径</DropdownMenuItem>

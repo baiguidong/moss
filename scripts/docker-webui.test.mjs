@@ -14,7 +14,7 @@ async function fixture(t) {
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.mkdir(path.join(root, 'deploy/webui'), { recursive: true });
   await fs.writeFile(path.join(root, 'package.json'), '{"version":"0.1.0"}');
-  for (const name of ['README.md', 'compose.yaml', '.env.example', 'manage.sh']) {
+  for (const name of ['README.md', 'compose.yaml', 'compose.managed.yaml', '.env.example', 'manage.sh']) {
     await fs.copyFile(path.join(repo, 'deploy/webui', name), path.join(root, 'deploy/webui', name));
   }
   await fs.writeFile(path.join(root, 'deploy/webui/.env'), 'SECRET=must-not-be-packaged');

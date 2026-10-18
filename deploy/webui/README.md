@@ -128,3 +128,22 @@ MOSS_WEB_TEST_TOKEN_FILE=/绝对路径/测试目录/web/access-token \
 ```
 
 脚本可通过 `PLAYWRIGHT_MODULE` 指定已安装的 Playwright 模块路径，通过 `MOSS_WEB_TEST_URL` 指定 Host 地址。验证容器时，将 `MOSS_WEB_TEST_MODEL_HOST` 设置为容器可访问测试机的地址，例如 Docker Desktop 的 `host.docker.internal`。脚本在该测试环境创建会话，临时替换模型设置并在结束后恢复；默认截图输出到 `output/webui-validation`。
+
+
+## 环境快照与独立运行
+
+新安装由 `compose.managed.yaml` 启动一个控制器，再为固定本地所有者创建长期保留的云电脑容器。不需要 Server，`./manage.sh token` 显示访问密钥；密钥与控制器身份分别保存，轮换密钥不会创建新环境。不要删除 `moss-controller` 卷或其中的 installation ID。
+
+设置中的“环境快照”和 `/?window=cloud-environment` 管理页提供创建、列表、删除和恢复。管理页在用户 Host 停止或损坏时仍可使用。每次创建默认**不勾选数据卷**：仅系统恢复保留当前 HOME；带数据卷恢复使用一个新 HOME 卷，旧资源保留 24 小时。自动保护与本次恢复范围相同，计入总额度。默认 5 个 / 20 GiB；Server 管理员可以集中设置，缺少配置或读取失败使用共用默认值。
+
+恢复后自动任务暂停，旧标签页需要刷新，恢复前浏览器草稿可以手动复制文字。仅环境恢复要求快照与当前环境的实际 Moss 程序一致，否则拒绝对当前数据做未经确认的迁移。快照不包含运行中进程内存、外部服务或浏览器数据；自行运行的数据库应先正常停止。
+
+快照归档存放在控制器独立的 `moss-snapshots` 卷，用户 Host 不挂载 Docker socket。普通非 Docker Web Host 仍可独立运行，但不提供环境快照。
+
+旧版单容器部署继续使用 `compose.yaml`，`manage.sh start` 不会替换原容器。需要接管时，先把原容器中的 Moss 程序升级到支持快照的版本并完成当前工作；为控制器配置一个空闲端口和对应 origin，然后运行：
+
+```sh
+MOSS_WEB_MANAGED=1 ./manage.sh adopt <原容器完整ID>
+```
+
+接管保留原容器写层、HOME 卷和容器 ID，更新启动配置后重启，并建立明确的所有者记录。不要先登录新控制器创建空白环境；已有所有者环境时接管会拒绝覆盖。接管后使用新控制器地址访问；原容器旧端口由部署管理员关闭外部访问。非标准挂载、其他控制器管理的容器、旧程序不支持快照等情况会拒绝接管。

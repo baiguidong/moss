@@ -49,6 +49,7 @@ test('authenticated Host: shared handlers, reconnect without duplicate execution
   const sockets = [];
   t.after(async () => { finish?.(); sockets.forEach(ws => ws.terminate()); await server.close(); await fs.rm(home, { recursive: true, force: true }); });
   assert.equal((await fetch(`${origin}/api/files?path=/etc/passwd`)).status, 401);
+  assert.equal((await fetch(`${origin}/api/file-browser`)).status, 401);
   assert.equal((await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: 'https://evil.example' }, body: JSON.stringify({ token }) })).status, 403);
   const login = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ token }) });
   assert.equal(login.status, 200);
@@ -86,8 +87,16 @@ test('authenticated Host: shared handlers, reconnect without duplicate execution
   assert.equal(download.status, 206); assert.equal(await download.text(), '<script');
   assert.match(download.headers.get('content-disposition'), /^attachment/);
   assert.match(download.headers.get('content-security-policy'), /sandbox/);
+  const browse = await fetch(`${origin}/api/file-browser?path=${encodeURIComponent(path.dirname(file.path))}`, { headers: { Cookie: cookie } });
+  assert.equal(browse.status, 200);
+  assert.equal((await browse.json()).entries[0].path, file.path);
+  const selection = { method: 'POST', headers: { Cookie: cookie, Origin: origin }, body: JSON.stringify({ kind: 'file', paths: [file.path] }) };
+  assert.equal((await fetch(`${origin}/api/file-browser/selection`, { ...selection, headers: { Cookie: cookie, Origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await (await fetch(`${origin}/api/file-browser/selection`, selection)).json())[0].path, file.path);
+  assert.equal((await fetch(`${origin}/api/file-browser?path=relative`, { headers: { Cookie: cookie } })).status, 400);
   await fetch(`${origin}/api/logout`, { method: 'POST', headers: { Cookie: cookie, Origin: origin } });
   assert.equal((await fetch(`${origin}/api/files?path=${encodeURIComponent(file.path)}`, { headers: { Cookie: cookie } })).status, 401);
+  assert.equal((await fetch(`${origin}/api/file-browser`, { headers: { Cookie: cookie } })).status, 401);
 });
 
 test('operation results persist across Host restart and cannot change payload', async t => {

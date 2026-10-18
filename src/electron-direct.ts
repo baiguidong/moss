@@ -12,6 +12,7 @@ export { assertWorkflowAppPolicy } from './services/appExecution/policy.js'
 
 import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessionIdContext.js'
 export { inspectDesktopMcpServer } from './services/mcp/desktopProbe.js'
+export { onMcpToolCatalog } from './services/mcp/catalogUpdates.js'
 export { configureTraceOutput, writeTraceSessionSnapshot, traceOutputStatus, drainTraceOutput } from './services/trace/traceOutput.js'
 export { toTraceMessages } from './services/api/traceMessages.js'
 import type { ImageSettings } from './services/imageGeneration.js'
@@ -113,6 +114,7 @@ import { restoreCostStateForSession } from './cost-tracker.js'
 import { asSessionId, type SessionId } from './types/ids.js'
 import {
   runWithSessionIdContext,
+  getSessionRuntimeContext,
   runWithSessionIdContextGenerator,
   type TaskScope,
 } from './utils/sessionIdContext.js'
@@ -384,6 +386,7 @@ export async function authenticateDesktopMcpServer(
     onAuthorizationUrl?: (url: string) => void
     onWaitingForCallback?: (submit: (callbackUrl: string) => void) => void
     skipBrowserOpen?: boolean
+    webCallback?: { redirectUri: string; listen: (state: string) => Promise<{ callback: Promise<string>; close: () => Promise<void> }> }
     signal?: AbortSignal
   } = {},
 ): Promise<{ authorizationUrl?: string }> {
@@ -395,6 +398,7 @@ export async function authenticateDesktopMcpServer(
   }, options.signal, {
     onWaitingForCallback: options.onWaitingForCallback,
     skipBrowserOpen: options.skipBrowserOpen,
+    webCallback: options.webCallback,
   })
   return { authorizationUrl }
 }
@@ -1234,7 +1238,11 @@ export class ClaudeSession {
       // Desktop and server clients render thinking/text deltas as they arrive.
       includePartialMessages: true,
       initialMessages: resumedMessages ?? bootstrapMessages,
-      emitAppEvent: onAppEvent,
+      emitAppEvent: onAppEvent ? event => {
+        const turn = getSessionRuntimeContext()?.presentationTurn
+        const scopedEvent = { ...event, hostPresentationScope: turn ? { turnId: turn.id, sessionId: turn.sessionId, epoch: turn.epoch } : undefined }
+        return onAppEvent(scopedEvent)
+      } : undefined,
       refreshTools: computeTools,
     })
     logForDiagnosticsNoPII('info', 'local_agent_engine_query_engine_created', {
@@ -1254,7 +1262,7 @@ export class ClaudeSession {
    * @param text    用户消息文本，或 Anthropic content block 数组
    * @param signal  可选 AbortSignal
    */
-  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal, turnOptions?: { preparedTools?: string[] }): AsyncGenerator<SDKMessage> {
+  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal, turnOptions?: { userMessageId?: string; preparedTools?: string[]; presentationTurn?: { id: string; sessionId: string; epoch?: string } }): AsyncGenerator<SDKMessage> {
     if (this.#disposed) throw new Error('Session has been disposed')
 
     // 串行队列
@@ -1291,12 +1299,13 @@ export class ClaudeSession {
 
       const sessionId = asSessionId(this.sessionId)
       const projectDir = this.#opts.projectDir
+      const turnRuntime = { ...this.#opts.runtime, ...(turnOptions?.presentationTurn ? { presentationTurn: Object.freeze({ ...turnOptions.presentationTurn }) } : {}) }
       const runInSessionContext = <T>(fn: () => T): T =>
         runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
           this.#opts.taskScope,
           this.#opts.environment,
-          this.#opts.runtime,
+          turnRuntime,
         )
 
       // Resolve the project root before entering the ALS wrappers so even
@@ -1524,6 +1533,9 @@ export class ClaudeSession {
                   | undefined = {
                   value: prompt,
                   mode: 'prompt',
+                  // Use the host identity for both the live message and JSONL.
+                  // Background notifications keep their own IDs below.
+                  uuid: turnOptions?.userMessageId,
                 }
 
                 // Keep the foreground send alive for coordinator workers and
@@ -1577,7 +1589,7 @@ export class ClaudeSession {
                 ),
               this.#opts.taskScope,
               this.#opts.environment,
-              this.#opts.runtime,
+              turnRuntime,
             ),
           {
             projectRoot: this.#projectRoot,
@@ -1861,6 +1873,11 @@ export class ClaudeSession {
       this.#abortController = null
     }
     this.#interruptEngine()
+  }
+
+  /** Host-only normal completion; does not create a user-interruption record. */
+  completeTurn() {
+    this.#engine?.requestCompletion()
   }
 
   /** 订阅 app state 变化（用于通知前端新 teammate task 等） */

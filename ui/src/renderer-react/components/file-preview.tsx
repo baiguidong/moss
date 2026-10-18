@@ -4,8 +4,8 @@ import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { fileActionCapabilities, performFileAction } from '@/lib/file-actions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
-export function FilePreview({ path, name, onRemove, readonly = false }: {
-  path: string; name?: string; onRemove?: () => void; readonly?: boolean;
+export function FilePreview({ path, name, onRemove, readonly = false, sessionId }: {
+  path: string; name?: string; onRemove?: () => void; readonly?: boolean; sessionId?: string;
 }) {
   const remote = path.startsWith('moss-remote-workspace://');
   const resource = isAppResourceUri(path);
@@ -33,7 +33,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: {
   }, [path, remote, resource, isImage]);
   async function act(action: Parameters<typeof performFileAction>[1]) {
     setBusy(true); setError('');
-    try { await performFileAction(path, action); }
+    try { await performFileAction(path, action, window.agentDesktop, sessionId); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   }
@@ -56,7 +56,7 @@ export function FilePreview({ path, name, onRemove, readonly = false }: {
           <DropdownMenuTrigger asChild><button type="button" disabled={busy} aria-label={`${fileName} 操作`} className="p-1.5 text-muted-foreground hover:text-foreground"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => void act('preview')}><Eye />预览</DropdownMenuItem>
-            {capabilities.system && <DropdownMenuItem onSelect={() => void act('system')}><ExternalLink />用系统应用打开</DropdownMenuItem>}
+            {capabilities.system && <DropdownMenuItem onSelect={() => void act('system')}><ExternalLink />{typeof window !== 'undefined' && window.mossWeb ? '打开或下载文件' : '用系统应用打开'}</DropdownMenuItem>}
             {capabilities.reveal && <DropdownMenuItem onSelect={() => void act('reveal')}><FolderOpen />在文件夹中显示</DropdownMenuItem>}
             <DropdownMenuItem onSelect={() => void act('copy')}><Copy />复制路径</DropdownMenuItem>
           </DropdownMenuContent>

@@ -7,9 +7,11 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { defaultInstanceId } from '../../../packages/app-runtime/src/state/index.mjs'
+import { defaultInstanceId, normalizeAppOwner, DEFAULT_APP_OWNER } from '../../../packages/app-runtime/src/state/index.mjs'
+import { inheritTestApps, inheritTestResources, clearTestAppCredentials, clearTestResources } from '../../src/app-testing/profile.mjs'
+import { AppCredentialAdapter } from '../../src/apps/app-runtime.mjs'
 
-export async function runSelfTestApp({ packageRoot, settings, caseIds = ['startup'] }) {
+export async function runSelfTestApp({ packageRoot, settings, sourceHome, caseIds = ['startup'] }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-self-test-app-'))
   const uiRoot = fileURLToPath(new URL('../..', import.meta.url))
   const require = createRequire(import.meta.url)
@@ -36,14 +38,20 @@ export async function runSelfTestApp({ packageRoot, settings, caseIds = ['startu
         const run = JSON.parse(await fs.readFile(path.join(directory, ids.find(id => id !== 'latest.json'), 'report.json'), 'utf8'))
         const results = (body.messages || []).flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === 'tool_result') : [])
         assert.ok(!results.some(result => result.is_error), 'Agent tool returned an error: ' + JSON.stringify(results).slice(-2000))
-        const record = 'app__moss_self_test__self_test', snapshot = 'mcp__moss_test_browser__browser_snapshot', shot = 'mcp__moss_test_browser__browser_take_screenshot'
+        const record = 'app__moss_self_test__self_test'
         assert.ok(body.tools.some(tool => tool.name === record), 'Selected App result tool must be resident')
+        const screenshots = run.results.startup.observation.evidence
         const steps = [
-          { name: 'ToolSearch', input: { query: `select:${snapshot},${shot}` } },
-          { name: snapshot, input: {} },
-          { name: shot, input: { filename: path.join(run.evidenceDir, 'startup.png'), type: 'png' } },
-          { name: record, input: { action: 'record', run_id: run.id, case_id: 'startup', status: 'passed', checks: run.cases[0].expected.map((_, index) => ({ index, passed: true, actual: 'Scripted transport verification: actual isolated Electron snapshot and screenshot captured.' })), evidence: ['startup.png'] } },
+          // All evidence must already be on the first request; no discovery calls.
+          { name: record, input: { action: 'review', run_id: run.id,
+            reviews: [{ case_id: 'startup', status: 'passed', notes: 'Scripted transport verification: actual isolated Electron screenshots received as image blocks.' }] } },
         ]
+        {
+          const contents = body.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+          assert.ok(contents.filter(block => block.type === 'image').length >= screenshots.length, 'Initial evidence review request must contain all native images')
+          assert.ok(body.tools.every(tool => tool.name === record), 'Evidence reviewer must not receive Read/browser tools')
+          assert.ok(!results.some(result => Array.isArray(result.content) && result.content.some(block => block.type === 'image')), 'Images must not be serialized inside tool results')
+        }
         const next = steps[stage++]
         if (next) calls.push(next.name)
         const events = [
@@ -63,12 +71,30 @@ export async function runSelfTestApp({ packageRoot, settings, caseIds = ['startu
     settings = { model: 'gpt-5.5', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'scripted-test-key', permissionMode: 'default', maxTurns: 20, appearance: { themeMode: 'light', cssThemeId: 'default' } }
   }
   await fs.writeFile(path.join(root, '.self-test-app-verification'), 'isolated self-test App verification')
+  if (sourceHome) {
+    const snapshot = JSON.parse(await fs.readFile(path.join(sourceHome, 'app-runtime-state.json'), 'utf8'))
+    await inheritTestApps({ home: root, runtime: {
+      state: { snapshot: () => snapshot }, appsDir: path.join(sourceHome, 'apps'), rootDir: sourceHome,
+      credentialAdapter: new AppCredentialAdapter(sourceHome),
+      storageAppId: (appId, owner) => normalizeAppOwner(owner).key === DEFAULT_APP_OWNER.key ? appId
+        : `owners/${Buffer.from(normalizeAppOwner(owner).key).toString('base64url')}/${appId}`,
+    } })
+    await inheritTestResources({ sourceHome, home: root })
+  }
   await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify(settings), { mode: 0o600 })
+  const catalog = JSON.parse(await fs.readFile(path.join(packageRoot, 'resources/self-tests/catalog.json'), 'utf8'))
+  const runBudgetMs = Math.max(45 * 60000, 300000 + catalog.cases.filter(test => caseIds.includes(test.id))
+    .reduce((sum, test) => sum + (test.timeoutSeconds || 180) * 1000, 0))
   const env = { ...process.env, MOSS_HOME: root, MOSS_CONFIG_DIR: root, MOSS_SELF_TEST_APP_ROOT: root, MOSS_SELF_TEST_APP_ZIP: zip,
+    MOSS_SELF_TEST_APP_TIMEOUT_MS: String(runBudgetMs),
     MOSS_SELF_TEST_APP_SCRIPTED: server ? '1' : '0', MOSS_SELF_TEST_APP_CASES: JSON.stringify(caseIds), MOSS_SELF_TEST_APP_EVIDENCE_CHECK: path.join(packageRoot, 'source/apps/self-test/tests/verify-evidence.mjs'), MOSS_OPEN_DEVTOOLS: 'false' }
   delete env.ELECTRON_RUN_AS_NODE
   delete env.MOSS_SELF_TEST_RUN_ID
   delete env.VITE_DEV_SERVER_URL
+  if (sourceHome) {
+    env.MOSS_RUNTIME_HOME = path.join(sourceHome, 'runtimes')
+    env.MOSS_MCP_PYTHON_HOME = path.join(sourceHome, 'mcp', 'python')
+  }
   const child = spawn(require('electron'), [path.join(uiRoot, 'tests/helpers/self-test-app-main.mjs')], { cwd: uiRoot, env, stdio: ['ignore', 'pipe', 'pipe'] })
   const log = createWriteStream(path.join(root, 'desktop.log'), { mode: 0o600 })
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false })
@@ -79,13 +105,13 @@ export async function runSelfTestApp({ packageRoot, settings, caseIds = ['startu
     for (const line of lines) if (line.startsWith('SELF_TEST_APP')) { console.log(line); if (line.startsWith('SELF_TEST_APP_PASSED')) passed = true }
   })
   console.log(`SELF_TEST_APP: artifacts ${root}`)
-  const timeout = setTimeout(() => child.kill('SIGTERM'), server ? 180000 : 55 * 60000)
+  const timeout = setTimeout(() => child.kill('SIGTERM'), server ? 180000 : runBudgetMs + 300000)
   try {
     const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve) })
     if (failure) throw failure
     assert.equal(code, 0, `Desktop test failed; see ${root}/desktop.log`)
     assert.ok(passed, `Desktop test did not finish; see ${root}/desktop.log`)
-    if (server) { assert.equal(calls.length, 4); assert.ok(awaitingFinal, 'Controller must interrupt the pending final reply after recording') }
+    if (server) { assert.deepEqual(calls, ['app__moss_self_test__self_test']); assert.equal(awaitingFinal, false, 'A successful result must finish without another model request or user interruption') }
     return root
   } finally {
     clearTimeout(timeout); log.end()
@@ -95,6 +121,12 @@ export async function runSelfTestApp({ packageRoot, settings, caseIds = ['startu
       const value = await fs.readFile(file, 'utf8').then(JSON.parse).catch(() => null)
       if (value) await fs.writeFile(file, JSON.stringify({ model: value.models?.text?.model || value.model,
         appearance: value.appearance, permissionMode: value.permissionMode }), { mode: 0o600 })
+    }
+    for (const home of [root, path.join(root, 'apps-data/moss.self-test/instances', defaultInstanceId('moss.self-test'), 'target/home')]) {
+      await clearTestAppCredentials(home)
+      await clearTestResources(home)
+      // Disposable dependency caches can dwarf the screenshots and reports.
+      for (const name of ['mcp', 'runtimes', 'electron']) await fs.rm(path.join(home, name), { recursive: true, force: true })
     }
   }
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod/v4'
+import { randomUUID } from 'node:crypto'
 import {
   buildTool,
   getGlobalAppEventBridge,
@@ -8,12 +9,14 @@ import {
   type ToolDef,
   type ToolUseContext,
 } from '../../Tool.js'
-import { getTaskScopeContext } from '../../utils/sessionIdContext.js'
+import { getTaskScopeContext, getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
+import { PRESENTATION_INPUT_SCHEMA, validatePresentationInput } from '../../../ui/src/shared/presentation-contracts.mjs'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { getProjectConnectorScopeError } from '../AgentTool/projectResourceScope.js'
 import type { MossToolName } from './toolLoading.js'
 
 const mossOutputSchema = z.object({
+  presentationResult: z.unknown().optional(),
   ok: z.boolean(),
   app: z.unknown().optional(),
   apps: z.array(z.unknown()).optional(),
@@ -51,7 +54,7 @@ type MossToolConfig<InputSchema extends MossInputSchema> = {
   searchHint: string
   inputSchema: InputSchema
   inputJSONSchema?: ToolInputJSONSchema
-  event: (input: z.infer<InputSchema>) => MossAppEvent
+  event: (input: z.infer<InputSchema>, context: ToolUseContext) => MossAppEvent
   readOnly?: boolean
   supportedEnvironments?: readonly ('desktop' | 'server')[]
   userFacingName?: string
@@ -118,6 +121,7 @@ async function callMossHost(
   return {
     data: {
       ok: true,
+      presentationResult: result.presentationResult,
       app: result.app,
       apps: result.apps,
       versions: result.versions,
@@ -226,7 +230,7 @@ function createMossTool<InputSchema extends MossInputSchema>(
             : new Error('Request interrupted.')
         }
 
-        const pending = callMossHost(config.event(input), context)
+        const pending = callMossHost(config.event(input, context), context)
         repeatedCall.pending = pending
         try {
           const result = await pending
@@ -238,17 +242,39 @@ function createMossTool<InputSchema extends MossInputSchema>(
           }
         }
       }
-      return callMossHost(config.event(input), context)
+      return callMossHost(config.event(input, context), context)
     },
     mapToolResultToToolResultBlockParam(content: MossOutput, toolUseID: string) {
       return {
         tool_use_id: toolUseID,
         type: 'tool_result' as const,
-        content: jsonStringify(content),
+        content: jsonStringify(content.presentationResult ?? content),
       }
     },
   } satisfies ToolDef<InputSchema, MossOutput>)
 }
+
+export const MossPresentTool = createMossTool({
+  name: 'moss_present',
+  description: 'Present existing files or authorized App artifacts in the current Moss conversation. Group related outputs and mark at most one primary. This does not create files. Pending/deferred is not shown; never repeat the call to force focus.',
+  searchHint: 'present preview artifact deliverable files results right panel',
+  inputSchema: z.object({
+    items: z.array(z.record(z.string(), z.unknown())).min(1).max(32),
+    title: z.string().max(256).optional(),
+    mode: z.enum(['auto', 'background']).optional(),
+  }).strict().superRefine((input, context) => {
+    try { validatePresentationInput(input) } catch (error) { context.addIssue({ code: 'custom', message: String(error) }) }
+  }),
+  inputJSONSchema: PRESENTATION_INPUT_SCHEMA as ToolInputJSONSchema,
+  event(input, context) {
+    const turn = getSessionRuntimeContext()?.presentationTurn
+    if (!turn) throw new Error('Presentation requires an active Moss conversation turn')
+    return { type: 'present', input, presentationContext: { turnId: turn.id, sessionId: turn.sessionId, epoch: turn.epoch,
+      toolUseId: context.toolUseId || randomUUID(), agentId: context.agentId } }
+  },
+  readOnly: true,
+  userFacingName: '展示成果',
+})
 
 const browserOpenSchema = z.strictObject({
   url: z.string().min(1).optional().describe('URL to open only in the Moss embedded browser for manual viewing.'),
@@ -352,6 +378,7 @@ export const ConnectorMcpAuthenticateTool = createMossTool({
 })
 
 export const MossTools = [
+  MossPresentTool,
   MossBrowserOpenTool,
   ConnectorCliSetupTool,
   ConnectorMcpAuthenticateTool,

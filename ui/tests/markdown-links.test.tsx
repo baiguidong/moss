@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarkdownRenderer } from '../src/renderer-react/components/markdown/markdown-renderer';
-import { handleMarkdownLinkClick, markdownUrlTransform } from '../src/renderer-react/lib/markdown-links';
+import { fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from '../src/renderer-react/lib/markdown-links';
+import { remarkFileReferences } from '../src/renderer-react/lib/remark-file-references';
 import { isAppResourceUri } from '../src/shared/app-resource-uri.mjs';
 const uri = 'example-notes://document/11112222?revision=abc&name=Notes';
 function setup() {
@@ -38,4 +39,36 @@ describe('Markdown App resource links', () => {
     expect(markdownUrlTransform(uri, 'src')).toBe('');
     expect(markdownUrlTransform('moss-media://session/image.png', 'src')).toBe('moss-media://session/image.png');
   });
+});
+
+test('long workspace labels render as visible filename links and keep the original target', () => {
+  const file = '/Users/bgd/.moss/sessions/session/workspace/joke_write.txt';
+  const html = renderToStaticMarkup(<MarkdownRenderer content={`[${file}](${file}:1)`} sessionId="session" />);
+  expect(html).toContain(`href="${file}:1"`);
+  expect(html).toContain('>joke_write.txt</a>');
+  expect(html).toContain('underline underline-offset');
+  expect(fileLinkLabel('/x/report.txt', '业务报告')).toBeNull();
+});
+
+test('bare path candidates do not alter web links, existing links or code blocks', () => {
+  const text = (value: string) => ({ type: 'text', value });
+  const tree = { type: 'root', children: [
+    { type: 'paragraph', children: [text('路径：/tmp/joke.txt。 https://example.com/f.txt'), { type: 'link', url: '/tmp/a', children: [text('/tmp/a')] }, { type: 'inlineCode', value: '/tmp/b' }] },
+    { type: 'code', value: '/tmp/c' },
+  ] };
+  remarkFileReferences()(tree);
+  const children = tree.children[0].children as any[];
+  expect(children.filter(item => item.type === 'link').map(item => item.url)).toEqual(['/tmp/joke.txt', '/tmp/a']);
+  expect(children.find(item => item.url === '/tmp/a').children).toEqual([text('/tmp/a')]);
+  expect(children.some(item => item.value?.includes('https://example.com/f.txt'))).toBe(true);
+  expect(tree.children[1]).toEqual({ type: 'code', value: '/tmp/c' });
+});
+
+test('local file navigation retains the owning session and line suffix', async () => {
+  const opened: any[] = [];
+  const host = { ...setup().host, presentation: { open: async (input: any) => { opened.push(input); return { ok: true }; } } } as any;
+  const event = { preventDefault() {} };
+  await handleMarkdownLinkClick(event, '/tmp/joke.txt:1', host, 'owning-session');
+  expect(opened).toEqual([{ sessionId: 'owning-session', input: { items: [{ path: '/tmp/joke.txt:1' }] } }]);
+  await expect(handleMarkdownLinkClick(event, '/tmp/joke.txt', host)).rejects.toThrow('所属会话');
 });

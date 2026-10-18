@@ -50,6 +50,8 @@ export type OpenFileViewerProps = {
   rootPath?: string;
   capability?: "full" | "basic" | "structure";
   content?: string;
+  onReady?: () => void;
+  onError?: (message: string) => void;
 };
 
 function resolveTheme(): "light" | "dark" {
@@ -76,6 +78,8 @@ export function OpenFileViewer({
   rootPath,
   capability = "full",
   content,
+  onReady,
+  onError,
 }: OpenFileViewerProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const [theme, setTheme] = React.useState<"light" | "dark">(resolveTheme);
@@ -127,7 +131,8 @@ export function OpenFileViewer({
         print: true,
         search: true,
       },
-      onError: (viewerError) => setError(viewerError.message || "文件解析失败。"),
+      onLoad: () => onReady?.(),
+      onError: (viewerError) => { setError(viewerError.message || "文件解析失败。"); onError?.(viewerError.message || "文件解析失败。"); },
     });
     return () => viewer.destroy();
   }, [fileName, mimeType, source, theme]);

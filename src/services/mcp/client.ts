@@ -1,5 +1,6 @@
 import { McpConnectionPool, type ConnectionControls } from './connectionPool.js'
 import { mcpToolCatalogCache, McpToolCatalogCache } from './toolCatalogCache.js'
+import { publishMcpToolCatalog } from './catalogUpdates.js'
 import { terminateMcpProcessTree } from './processCleanup.js'
 import { feature } from 'bun:bundle'
 import { prepareMcpDirectoryLaunch } from '../../../packages/app-sdk/src/mcp/directories.mjs'
@@ -1357,6 +1358,7 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
         instructions,
         config: serverRef,
         cacheSessionId,
+        connectionStartedAt: connectStartTime,
         cleanup: wrappedCleanup,
       }
     } catch (error) {
@@ -1427,6 +1429,7 @@ export async function clearServerCache(
  * @returns Connected MCP server client (same or reconnected)
  * @throws Error if server cannot be connected
  */
+const refreshedLiveCatalogs = new WeakMap<ConnectedMCPServer, Promise<void>>()
 export async function ensureConnectedClient(
   client: ConnectedMCPServer,
 ): Promise<ConnectedMCPServer> {
@@ -1441,6 +1444,23 @@ export async function ensureConnectedClient(
       `MCP server "${client.name}" is not connected`,
       'MCP server not connected',
     )
+  }
+  if (client.deferredTools || connectedClient !== client) {
+    // The cached schema defers process startup, never discovery on first use.
+    // Concurrent calls share one refresh per actual connection; reconnects refresh again.
+    let refresh = refreshedLiveCatalogs.get(connectedClient)
+    if (!refresh) {
+      refresh = (async () => {
+        const result = connectedClient.capabilities?.tools
+          ? await connectedClient.client.request({ method: 'tools/list' }, ListToolsResultSchema)
+          : { tools: [] }
+        recordLiveToolCatalog(connectedClient, result)
+        fetchToolsForClient.cache.delete(getMcpClientFetchCacheKey(connectedClient))
+      })()
+      refreshedLiveCatalogs.set(connectedClient, refresh)
+      void refresh.catch(() => refreshedLiveCatalogs.delete(connectedClient))
+    }
+    await refresh
   }
   return connectedClient
 }
@@ -1467,23 +1487,29 @@ export function areMcpConfigsEqual(
 // reconnects), bounded to prevent unbounded growth with many MCP servers.
 const MCP_FETCH_CACHE_SIZE = 20
 
+function recordLiveToolCatalog(client: ConnectedMCPServer, result: ListToolsResult) {
+  if (getSessionRuntimeContext()?.mcpLifetime) {
+    mcpToolCatalogCache.put(mcpCatalogKey(client.name, client.config), {
+      tools: result, capabilities: client.capabilities, serverInfo: client.serverInfo, instructions: client.instructions,
+    })
+  }
+  publishMcpToolCatalog(client.name, client.config, result, client.connectionStartedAt)
+}
+
 export const fetchToolsForClient = memoizeWithLRU(
   async (client: MCPServerConnection): Promise<Tool[]> => {
     if (client.type !== 'connected') return []
 
     try {
       if (!client.capabilities?.tools) {
+        if (!client.deferredTools) recordLiveToolCatalog(client, { tools: [] })
         return []
       }
 
       const result = client.deferredTools || (await client.client.request(
         { method: 'tools/list' }, ListToolsResultSchema,
       )) as ListToolsResult
-      if (!client.deferredTools && getSessionRuntimeContext()?.mcpLifetime) {
-        mcpToolCatalogCache.put(mcpCatalogKey(client.name, client.config), {
-          tools: result, capabilities: client.capabilities, serverInfo: client.serverInfo, instructions: client.instructions,
-        })
-      }
+      if (!client.deferredTools) recordLiveToolCatalog(client, result)
 
       // Sanitize tool data from MCP server
       const toolsToProcess = recursivelySanitizeUnicode(result.tools)

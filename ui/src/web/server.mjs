@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { runWithHostRequestContext } from '../host/request-registry.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -10,16 +11,23 @@ import { MOSS_METHODS, MOSS_PROTOCOL_VERSION } from '../client/methods.mjs';
 import { stringifyWire, parseWire } from '../client/wire.mjs';
 import { createWebAuth } from './auth.mjs';
 import { createOperationStore } from './operation-store.mjs';
+import { createRestoreState } from './restore-state.mjs';
 import { createWebLifecycle } from './lifecycle.mjs';
+import { createWebResources, resourcePrefix } from './resources.mjs';
+import { createWebPortPreviews } from './ports.mjs';
+import { createWebPreviews } from './previews.mjs';
+import { createFileBrowser } from './file-browser.mjs';
+import { createHostCapabilities } from '../shared/host-capabilities.mjs';
 
 // These operations require an Electron window or an app's restricted sender.
 // Browser equivalents are installed explicitly, never by spoofing that sender.
 const desktopMethods = new Set([
-  'agent:pick-directory', 'agent:pick-files', 'agent:remote-authenticate', 'agent:remote-authenticate-cancel',
-  'app:launch', 'app:embedded-open', 'app:embedded-attach', 'app:embedded-close', 'app:install-archive',
-  'app:open-resource', 'app:import-legacy-buddy', 'app-market:install', 'public-skillhub:open-import-dialog',
+  'agent:pick-directory', 'agent:pick-files',
+  'app:launch', 'app:embedded-open', 'app:embedded-attach', 'app:embedded-close',
+  'app:open-resource', 'app:import-legacy-buddy', 'public-skillhub:open-import-dialog',
   'shell.open-file', 'shell.open-external', 'shell.show-item-in-folder', 'workspace:open',
-  'preview.open', 'preview.sync', 'preview.ready', 'preview.close', 'log:download',
+  'preview.open', 'preview.sync', 'preview.ready', 'preview.close',
+  'presentation:popout',
 ]);
 const allowed = new Set(MOSS_METHODS.filter(method => !desktopMethods.has(method) && !method.startsWith('update:') && !method.startsWith('browser:') && !method.startsWith('computer-use:')));
 const mimeTypes = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.pdf': 'application/pdf', '.txt': 'text/plain', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg' };
@@ -33,8 +41,30 @@ async function readJson(req) {
   return JSON.parse(body || '{}');
 }
 
-export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), getBlockers = () => [] }) {
+export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), oauth, apps, resources: providedResources, resolvePreviewResource, getBlockers = () => [], restoreState, onDrain, onResume }) {
+  restoreState ||= createRestoreState(env);
   const auth = createWebAuth({ home, env });
+  await fsp.mkdir(path.join(home, 'web'), { recursive: true, mode: 0o700 });
+  const identityPath = path.join(home, 'web', 'host-id');
+  try { await fsp.writeFile(identityPath, randomUUID(), { flag: 'wx', mode: 0o600 }); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const hostId = (await fsp.readFile(identityPath, 'utf8')).trim();
+  const identity = principal => principal ? { hostId: env.MOSS_ENVIRONMENT_ID || hostId, userId: principal.userId, ...(env.MOSS_ENVIRONMENT_ID ? { generation: restoreState.get().generation ?? Number(env.MOSS_ENVIRONMENT_GENERATION || 0) } : {}) } : null;
+  let portEnv = env;
+  if (!env.MOSS_WEB_PREVIEW_DOMAIN && env.MOSS_ENVIRONMENT_ID) {
+    try {
+      const response = await fetch(`${env.MOSS_WEB_AUTH_SERVER}/web-config`, { headers: { 'X-Moss-Environment': env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': env.MOSS_WEB_CONTROL_TOKEN }, redirect: 'error', signal: AbortSignal.timeout(5000) });
+      if (response.ok) portEnv = { ...env, MOSS_WEB_PREVIEW_DOMAIN: (await response.json()).previewDomain };
+    } catch {} // Older gateways keep the capability unavailable.
+  }
+  const ports = createWebPortPreviews({ env: portEnv });
+  for (const [method, handler] of ports.handlers) overrides.set(method, handler);
+  const capabilities = createHostCapabilities({ mode: 'web', confirmations: registry.has('host:confirmations-list'),
+    remoteOAuth: Boolean(oauth?.enabled), previewWindows: true, embeddedApps: Boolean(apps), portPreview: ports.enabled, appInstallation: registry.has('host:confirmations-list') && registry.has('app:install-archive') });
+  const resources = providedResources || createWebResources({ env });
+  const previews = createWebPreviews({ registry, resources, resolveResource: resolvePreviewResource });
+  for (const [method, handler] of previews.handlers) overrides.set(method, handler);
+  const fileBrowser = createFileBrowser();
   const operations = createOperationStore(path.join(home, 'web', 'requests.sqlite'));
   const epoch = randomUUID();
   let sequence = 0;
@@ -43,7 +73,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   const connections = new Set();
   const activeOperations = new Set();
   let activeRequests = 0;
-  const lifecycle = createWebLifecycle({ secret: env.MOSS_WEB_CONTROL_TOKEN, getBlockers, activeCount: () => activeRequests });
+  const lifecycle = createWebLifecycle({ restoreState, onDrain, onResume, secret: env.MOSS_WEB_CONTROL_TOKEN, getBlockers, activeCount: () => activeRequests });
   const loginAttempts = new Map();
   const originFor = req => env.MOSS_WEB_ORIGIN || `http://${req.headers.host}`;
   const sameOrigin = req => req.headers.origin === originFor(req);
@@ -89,13 +119,23 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     let counted = false;
     try {
-      const url = new URL(req.url, 'http://local');
+      const url = new URL(ports.route(req), 'http://local');
+      if (url.pathname.startsWith('/_moss/port/')) return ports.serve(req, res, url);
+      if (url.pathname.startsWith(resourcePrefix)) return await resources.serve(req, res, url);
+      if (req.method === 'GET' && url.pathname === '/api/oauth/callback') {
+        let ok = true;
+        try { lifecycle.assertWorkAllowed(); if (!oauth) throw new Error('unavailable'); oauth.accept(url); } catch { ok = false; }
+        res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'" });
+        res.end(`<meta charset="utf-8"><title>Moss 授权</title><h1>${ok ? '授权结果已接收' : '授权回调已失效'}</h1><p>请返回 Moss 查看登录结果，可以关闭此页面。</p>`); return;
+      }
       if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { ok: true, protocol: MOSS_PROTOCOL_VERSION, version: lifecycle.version });
       if (url.pathname.startsWith('/internal/')) {
         if (!lifecycle.authorized(req)) return json(res, 403, { error: 'Forbidden' });
         if (req.method === 'GET' && url.pathname === '/internal/status') return json(res, 200, lifecycle.status());
-        if (req.method === 'POST' && url.pathname === '/internal/drain') return json(res, 200, lifecycle.drain());
-        if (req.method === 'POST' && url.pathname === '/internal/resume') { lifecycle.resume(); return json(res, 200, { ok: true }); }
+        if (req.method === 'POST' && url.pathname === '/internal/drain') return json(res, 200, await lifecycle.drain(await readJson(req)));
+        if (req.method === 'POST' && url.pathname === '/internal/resume') { await lifecycle.resume(await readJson(req)); return json(res, 200, { ok: true }); }
+        if (req.method === 'POST' && url.pathname === '/internal/resume-automations') { await lifecycle.resumeAutomations(); return json(res, 200, { ok: true }); }
+        if (req.method === 'POST' && url.pathname === '/internal/generation') { const { generation } = await readJson(req); if (!Number.isSafeInteger(generation) || generation < 0) throw new Error('Invalid generation'); restoreState.update({ generation }); return json(res, 200, { ok: true }); }
         if (req.method === 'POST' && url.pathname === '/internal/login') {
           const id = await auth.login(await readJson(req), { trustedToken: true });
           return json(res, 200, { cookie: `moss_web=${id}` });
@@ -122,15 +162,29 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
         } catch (error) { return json(res, 401, { error: error.message }); }
       }
       const principal = await auth.authenticate(req);
-      if (req.method === 'GET' && url.pathname === '/api/auth') return json(res, 200, { authenticated: Boolean(principal), mode: auth.mode, protocol: MOSS_PROTOCOL_VERSION });
+      if (req.method === 'GET' && url.pathname === '/api/auth') return json(res, 200, { authenticated: Boolean(principal), mode: auth.mode, protocol: MOSS_PROTOCOL_VERSION, identity: identity(principal) });
       if (req.method === 'POST' && url.pathname === '/api/logout') {
-        auth.logout(req);
+        auth.logout(req); if (principal) { resources.revokeOwner(principal.userId); ports.revokeOwner(principal.userId); }
         for (const ws of connections) if (ws.principal?.loginId === principal?.loginId) ws.close(4401, 'Signed out');
         res.setHeader('Set-Cookie', 'moss_web=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
         return json(res, 200, { ok: true });
       }
       if (url.pathname.startsWith('/api/')) {
         if (!principal) return json(res, 401, { error: '请先登录。' });
+        if (req.method === 'GET' && url.pathname === '/api/file-browser') {
+          return json(res, 200, await fileBrowser.list({
+            directory: url.searchParams.get('path') || undefined,
+            reveal: url.searchParams.get('reveal') || undefined,
+            kind: url.searchParams.get('kind') || 'file',
+            hidden: url.searchParams.get('hidden') === 'true',
+            query: url.searchParams.get('query') || '',
+            offset: url.searchParams.get('offset') || 0,
+            extensions: url.searchParams.getAll('extension'),
+          }));
+        }
+        if (req.method === 'POST' && url.pathname === '/api/file-browser/selection') {
+          return json(res, 200, await fileBrowser.select(await readJson(req)));
+        }
         if (req.method === 'POST' && url.pathname === '/api/upload') {
           lifecycle.assertWorkAllowed();
           const dir = path.join(home, 'web', 'uploads', randomUUID());
@@ -163,11 +217,13 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   server.on('upgrade', async (req, socket, head) => {
     try {
+      req.url = ports.route(req);
+      if (req.url.startsWith('/_moss/port/')) { ports.upgrade(req, socket, head, new URL(req.url, 'http://local')); return; }
       if (req.url !== '/api/ws' || !sameOrigin(req)) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
       const principal = await auth.authenticate(req);
       if (!principal || connections.size >= 32) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
       wss.handleUpgrade(req, socket, head, ws => {
-        ws.principal = principal; connections.add(ws);
+        ws.principal = principal; ws.connectionId = randomUUID(); connections.add(ws);
         ws.alive = true;
         ws.on('pong', () => { ws.alive = true; });
         ws.on('error', () => {});
@@ -183,15 +239,18 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
               // Enable live events before yielding for the snapshot. The browser
               // buffers them until it has applied the snapshot/replay boundary.
               ws.initialized = true;
+              ws.viewId = typeof request.viewId === 'string' && /^[\w-]{1,100}$/.test(request.viewId) ? request.viewId : ws.connectionId;
               send(ws, { type: 'hello', version: MOSS_PROTOCOL_VERSION, epoch, sequence, replay });
               if (replay) for (const entry of history) if (entry.event.sequence > request.sequence) send(ws, entry.event);
-              send(ws, { type: 'ready', snapshot: await snapshot() });
+              send(ws, { type: 'ready', snapshot: { ...await snapshot(), capabilities, identity: identity(principal), viewId: ws.viewId } });
               return;
             }
             if (!ws.initialized || request.type !== 'request' || typeof request.method !== 'string' || !Array.isArray(request.args) || request.args.length > 4) throw new Error('请求格式无效。');
             const { method, args } = request;
             if (!allowed.has(method) && !overrides.has(method)) throw new Error('这项功能需要桌面客户端，当前 Web Host 尚未提供。');
-            const context = Object.freeze({ transport: 'web', principal, requestId: request.id });
+            if (method === 'agent:remote-authenticate' && !capabilities.features.remoteOAuth) throw new Error('此 Host 尚未配置公开 HTTPS 登录回调。');
+            if (['app:install-archive', 'app-market:install'].includes(method) && !capabilities.features.appInstallation) throw new Error('此 Host 尚未提供 Web 安装确认。');
+            const context = Object.freeze({ transport: 'web', principal, requestId: request.id, connectionId: ws.connectionId, viewId: ws.viewId });
             lifecycle.assertWorkAllowed();
             activeRequests++;
             let result;
@@ -202,7 +261,8 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
               if (key && activeOperations.has(key)) throw new Error('这个会话或确认正在处理，请等待当前操作完成。');
               if (key) activeOperations.add(key);
               try {
-                return await (overrides.has(method) ? overrides.get(method)(context, ...args) : registry.invoke(method, context, ...args));
+                if (method === 'host:capabilities') return capabilities;
+                return await (overrides.has(method) ? runWithHostRequestContext(context, () => overrides.get(method)(context, ...args)) : registry.invoke(method, context, ...args));
               } finally { if (key) activeOperations.delete(key); }
             });
             } finally { activeRequests--; }
@@ -214,7 +274,10 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
           else if (!ws.alive) ws.terminate();
           else { ws.alive = false; ws.ping(); }
         }, 30_000);
-        ws.once('close', () => clearInterval(check));
+        ws.once('close', () => {
+          clearInterval(check); apps?.disconnect(ws.connectionId);
+          if (registry.has?.('preview-document:disconnect')) void registry.invoke('preview-document:disconnect', { transport: 'web', principal, connectionId: ws.connectionId }).catch(() => {});
+        });
       });
     } catch { socket.destroy(); }
   });
@@ -222,7 +285,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
   return {
     address: server.address(), auth, assertWorkAllowed: () => lifecycle.assertWorkAllowed(),
     async close() {
-      unsubscribe();
+      unsubscribe(); ports.close(); previews.close(); resources.close();
       for (const ws of connections) ws.terminate();
       await new Promise(resolve => server.close(resolve));
       wss.close();

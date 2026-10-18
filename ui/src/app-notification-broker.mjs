@@ -60,7 +60,12 @@ function toNotification(row) {
 
 export function createAppNotificationBroker(db, { onChanged = () => {}, onDeliver = () => {} } = {}) {
   const listStmt = db.prepare(`
-    SELECT * FROM app_notifications ORDER BY updated_at DESC LIMIT ${MAX_NOTIFICATIONS}
+    SELECT * FROM app_notifications
+    WHERE decision_request_id IS NOT NULL OR id IN (
+      SELECT id FROM app_notifications WHERE decision_request_id IS NULL
+      ORDER BY updated_at DESC LIMIT ${MAX_NOTIFICATIONS}
+    )
+    ORDER BY updated_at DESC
   `);
   const getStmt = db.prepare('SELECT * FROM app_notifications WHERE id = ?');
   const listMobileStmt = db.prepare(`
@@ -70,7 +75,7 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
   `);
   const findDuplicateStmt = db.prepare(`
     SELECT * FROM app_notifications
-    WHERE source = ? AND title = ? AND message = ? AND updated_at >= ?
+    WHERE decision_request_id IS NULL AND source = ? AND title = ? AND message = ? AND updated_at >= ?
     ORDER BY updated_at DESC LIMIT 1
   `);
   const insertStmt = db.prepare(`
@@ -100,8 +105,9 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
     WHERE decision_request_id = ?
   `);
   const trimStmt = db.prepare(`
-    DELETE FROM app_notifications WHERE id NOT IN (
-      SELECT id FROM app_notifications ORDER BY updated_at DESC LIMIT ${MAX_NOTIFICATIONS}
+    DELETE FROM app_notifications WHERE decision_request_id IS NULL AND id NOT IN (
+      SELECT id FROM app_notifications WHERE decision_request_id IS NULL
+      ORDER BY updated_at DESC LIMIT ${MAX_NOTIFICATIONS}
     )
   `);
 
@@ -132,7 +138,7 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
     const decisionOptions = normalizeDecisionOptions(input.decisionOptions);
     const duplicate = findDuplicateStmt.get(source, title, message, timestamp - DEDUPE_WINDOW_MS);
     let notification;
-    if (duplicate && !requestedId) {
+    if (duplicate && !requestedId && !decisionRequestId) {
       updateDuplicateStmt.run(severity, details || null, timestamp, duplicate.id);
       notification = toNotification(getStmt.get(duplicate.id));
     } else {
@@ -215,7 +221,7 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
     clear() {
       clearStmt.run();
       emit('cleared');
-      return [];
+      return list();
     },
     resolveDecision(decisionRequestId) {
       resolveDecisionStmt.run(Date.now(), decisionRequestId);

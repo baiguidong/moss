@@ -2,8 +2,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { launchTestInstance } from './instance.mjs';
+import { captureTestEnvironment } from './environment-fingerprint.mjs';
 
-const dataDirectories = ['sessions', 'workspaces', 'projects', 'teams', 'tasks', 'memory', 'apps-data', 'apps-runtime', 'self-test-workspace', 'electron'];
+const dataDirectories = ['sessions', 'workspaces', 'projects', 'teams', 'tasks', 'app-tasks', 'memory', 'apps-data', 'apps-runtime',
+  'app-authoring', 'app-authoring-previews', 'cloud-transfers', 'backups', 'cache', 'logs', 'self-test-workspace', 'electron'];
 
 /** One persistent profile and at most one target process per main Moss. */
 export function createReusableTestInstance({ directory, getSettings, getAppRuntime, getRuntimeHome, executable, args = [], cwd,
@@ -33,24 +35,37 @@ export function createReusableTestInstance({ directory, getSettings, getAppRunti
   async function open({ signal = new AbortController().signal, onProgress = async () => {} } = {}) {
     await initialize();
     signal.throwIfAborted();
-    if (instance?.isAlive()) { instance.focus?.(); return instance; }
     preparing = new AbortController();
     signal = AbortSignal.any([signal, preparing.signal]);
     try {
-      const reused = descriptor.prepared;
-      update({ phase: 'starting', startedAt: Date.now(), progress: null, message: reused ? '正在打开已准备的测试实例…' : '首次准备测试环境…' });
+      const environment = await captureTestEnvironment({ directory, settings: getSettings(), runtime: getAppRuntime() });
+      signal.throwIfAborted();
+      const changed = descriptor.environmentDigest !== environment.digest;
+      if (instance?.isAlive() && !changed) { instance.focus?.(); return instance; }
+      if (instance?.isAlive()) await close();
+      const reused = descriptor.prepared && !changed;
+      update({ phase: 'starting', startedAt: Date.now(), progress: null, message: reused ? '正在打开已准备的测试实例…' : descriptor.prepared ? '主环境有变化，正在同步测试环境…' : '首次准备测试环境…' });
       const run = { id: descriptor.id, directory, home, inheritedApps: descriptor.inheritedApps || [], cases: [] };
-      const settings = reused
-        ? JSON.parse(await fs.readFile(path.join(home, 'settings.json'), 'utf8'))
-        : getSettings();
+      const settings = environment.settings;
       const target = await launch({ run, settings, appRuntime: getAppRuntime(), runtimeHome: getRuntimeHome(),
         ...getFixtures(),
         executable, args, cwd, signal, prepareEnvironment: !reused,
         onProgress: async progress => { update({ progress: { ...progress, updatedAt: Date.now() }, message: progress.label }); await onProgress(progress); },
       });
       if (signal.aborted) { await target.close(); signal.throwIfAborted(); }
+      let completedEnvironment;
+      try { completedEnvironment = await captureTestEnvironment({ directory, settings: getSettings(), runtime: getAppRuntime() }); }
+      catch (error) { await target.close(); throw error; }
+      if (completedEnvironment.digest !== environment.digest) {
+        await target.close();
+        descriptor.prepared = false;
+        await save();
+        update({ prepared: false });
+        throw new Error('同步期间主环境发生变化，请重新开始自测以取得一致环境。');
+      }
       instance = target;
-      descriptor = { ...descriptor, prepared: true, preparedAt: descriptor.preparedAt || Date.now(), inheritedApps: run.inheritedApps };
+      descriptor = { ...descriptor, prepared: true, preparedAt: reused ? descriptor.preparedAt : Date.now(), inheritedApps: run.inheritedApps,
+        environmentDigest: environment.digest, environmentRevision: changed ? randomUUID() : descriptor.environmentRevision };
       try { await save(); }
       catch (error) { await target.close(); instance = null; throw error; }
       update({ phase: 'open', pid: target.pid, prepared: true, preparedAt: descriptor.preparedAt, inheritedApps: descriptor.inheritedApps,
@@ -83,20 +98,24 @@ export function createReusableTestInstance({ directory, getSettings, getAppRunti
 
   async function clearData(options) {
     await initialize(); await close();
-    if (!descriptor.prepared) return open(options);
-    update({ phase: 'starting', startedAt: Date.now(), progress: null, message: '正在清理测试数据，保留已安装环境和历史报告…' });
-    for (const name of dataDirectories) await fs.rm(path.join(home, name), { recursive: true, force: true });
-    for (const name of ['moss.db', 'moss.db-wal', 'moss.db-shm']) await fs.rm(path.join(home, name), { force: true });
-    const appStatePath = path.join(home, 'app-runtime-state.json');
-    const appState = await fs.readFile(appStatePath, 'utf8').then(JSON.parse).catch(error => {
-      if (error.code === 'ENOENT') return null;
+    try {
+      update({ phase: 'starting', startedAt: Date.now(), progress: null, message: '正在清理测试数据，保留已安装环境和历史报告…' });
+      for (const name of dataDirectories) await fs.rm(path.join(home, name), { recursive: true, force: true });
+      for (const name of ['moss.db', 'moss.db-wal', 'moss.db-shm', 'cron_tasks.json']) await fs.rm(path.join(home, name), { force: true });
+      const appStatePath = path.join(home, 'app-runtime-state.json');
+      const appState = await fs.readFile(appStatePath, 'utf8').then(JSON.parse).catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (appState) {
+        appState.runtimes = {};
+        await fs.writeFile(appStatePath, JSON.stringify(appState), { mode: 0o600 });
+      }
+      return await open(options);
+    } catch (error) {
+      update({ phase: 'closed', pid: null, progress: null, message: error.message });
       throw error;
-    });
-    if (appState) {
-      appState.runtimes = {};
-      await fs.writeFile(appStatePath, JSON.stringify(appState), { mode: 0o600 });
     }
-    return open(options);
   }
 
   return { home, snapshot,
@@ -117,6 +136,7 @@ export function createReusableTestInstance({ directory, getSettings, getAppRunti
         .map(item => ({ id: item.appId, version: item.activeVersion, enabled: Boolean(item.enabled), grants: [...(item.grants || [])] }))
         : descriptor.inheritedApps;
       Object.assign(run, { home, targetId: descriptor.id, inheritedApps,
+        environmentRevision: descriptor.environmentRevision, environmentPreparedAt: descriptor.preparedAt,
         instanceLogPath: path.join(directory, 'instance.log') });
       return target;
     }),

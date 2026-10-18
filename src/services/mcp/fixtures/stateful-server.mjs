@@ -9,10 +9,13 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   if (message.method === 'initialize') {
     if (process.env.MCP_TEST_HANDSHAKE_DELAY) await new Promise(resolve => setTimeout(resolve, Number(process.env.MCP_TEST_HANDSHAKE_DELAY)))
     result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {}, ...(process.env.MCP_TEST_RESOURCES ? { resources: {} } : {}) }, serverInfo: { name: 'stateful-fixture', version: '1.0.0' } }
-  } else if (message.method === 'tools/list') result = { tools: [
+  } else if (message.method === 'tools/list') {
+    if (process.env.MCP_TEST_LIST_LOG) fs.appendFileSync(process.env.MCP_TEST_LIST_LOG, `${process.pid}\n`)
+    result = { tools: [
     { name: 'set_value', description: 'Set session value', inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } },
     { name: 'get_value', description: 'Read session value', inputSchema: { type: 'object', properties: {} } },
-  ] }
+    ...(process.env.MCP_TEST_CATALOG_FILE ? JSON.parse(fs.readFileSync(process.env.MCP_TEST_CATALOG_FILE, 'utf8')) : []),
+  ] } }
   else if (message.method === 'tools/call') {
     if (process.env.MCP_TEST_TOOL_DELAY) await new Promise(resolve => setTimeout(resolve, Number(process.env.MCP_TEST_TOOL_DELAY)))
     if (message.params.name === 'set_value') value = message.params.arguments.value

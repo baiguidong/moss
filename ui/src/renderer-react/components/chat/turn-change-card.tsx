@@ -28,20 +28,35 @@ export function TurnChangeCard({
   change,
   rewindSupported,
   rewindDisabledReason,
+  initiallyExpanded = false,
 }: {
   sessionId: string;
   change: TurnChangeSummary;
   rewindSupported: boolean;
   rewindDisabledReason?: string | null;
+  initiallyExpanded?: boolean;
 }) {
-  const [reviewOpen, setReviewOpen] = React.useState(false);
+  const [reviewOpen, setReviewOpen] = React.useState(initiallyExpanded);
   const [selectedPath, setSelectedPath] = React.useState(change.files[0]?.filePath || "");
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<TurnRewindPreview | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const verified = change.coverage === 'complete' || change.coverage === 'partial';
   const selectedFile = change.files.find((file) => file.filePath === selectedPath)
     || change.files[0];
+  const [observedDetail, setObservedDetail] = React.useState<TurnChangeSummary['files'][number] | null>(null);
+  const [detailError, setDetailError] = React.useState('');
+  React.useEffect(() => {
+    let active = true; setObservedDetail(null); setDetailError('');
+    if (reviewOpen && change.observationId && verified && selectedFile && selectedFile.verified !== false) void window.agentDesktop.getObservationDiff({ sessionId, observationId: change.observationId, filePath: selectedFile.filePath })
+      .then(file => { if (active) setObservedDetail(file); }).catch(reason => { if (active) setDetailError(String(reason)); });
+    return () => { active = false; };
+  }, [sessionId, change.observationId, verified, selectedFile?.filePath, selectedFile?.verified, reviewOpen]);
+
+  // Keep empty observations as evidence, but don't show an empty comparison.
+  // Incomplete coverage and zero-line changes (e.g. binary files) remain visible.
+  if (change.coverage === 'complete' && change.files.length === 0 && change.stats.filesChanged === 0) return null;
 
   const openConfirmation = async () => {
     setConfirmOpen(true);
@@ -86,14 +101,16 @@ export function TurnChangeCard({
           onClick={() => setReviewOpen((value) => !value)}
         >
           <span className="truncate text-xs font-medium text-foreground">
-            本轮改动 {change.stats.filesChanged} 个文件
+            {verified ? `${change.coverage === 'partial' ? '已确认变化' : '本轮改动'} ${change.stats.filesChanged} 个文件` : '文件变化未核实'}
           </span>
-          <span className="shrink-0 text-[11px] tabular-nums text-emerald-600 dark:text-emerald-400">
-            +{change.stats.additions}
-          </span>
-          <span className="shrink-0 text-[11px] tabular-nums text-red-600 dark:text-red-400">
-            -{change.stats.deletions}
-          </span>
+          {verified && <>
+            <span className="shrink-0 text-[11px] tabular-nums text-emerald-600 dark:text-emerald-400">
+              +{change.stats.additions}
+            </span>
+            <span className="shrink-0 text-[11px] tabular-nums text-red-600 dark:text-red-400">
+              -{change.stats.deletions}
+            </span>
+          </>}
           {reviewOpen
             ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
@@ -106,11 +123,13 @@ export function TurnChangeCard({
           onClick={() => void openConfirmation()}
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          撤销本轮
+          回退已备份文件
         </button>
       </div>
 
-      {reviewOpen && selectedFile ? (
+      {(change.observationNote || change.excludedCount || !verified) ? <div role="status" className="border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground">{change.observationNote || (!verified ? '缺少本轮文件观察记录，无法确认文件变化。' : '')}{change.excludedCount ? ` · ${change.excludedCount} 项按观察策略排除` : ''}</div> : null}
+
+      {reviewOpen && verified && selectedFile ? (
         <div className="border-t border-border/60">
           <div className="flex min-w-0 gap-1 overflow-x-auto border-b border-border/50 px-2 py-1.5">
             {change.files.map((file) => (
@@ -132,11 +151,12 @@ export function TurnChangeCard({
             ))}
           </div>
           <div className="max-h-[420px] overflow-auto px-1 pb-2">
+            {(observedDetail?.detail || detailError) && <p className="p-3 text-xs text-muted-foreground">{observedDetail?.detail || detailError}</p>}
             <DiffViewer
               filePath={selectedFile.filePath}
               oldString=""
               newString=""
-              structuredPatch={selectedFile.structuredPatch}
+              structuredPatch={observedDetail?.structuredPatch || selectedFile.structuredPatch}
               maxLines={120}
               variant="transcript"
             />
@@ -144,7 +164,7 @@ export function TurnChangeCard({
           {change.hasUnverifiedChanges ? (
             <div className="flex items-start gap-2 border-t border-border/50 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Shell 或外部程序产生的文件写入可能未完整列出。
+              这里只列出已确认的变化，超出观察范围的文件未计入。
             </div>
           ) : null}
         </div>

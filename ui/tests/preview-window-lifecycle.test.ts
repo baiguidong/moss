@@ -38,7 +38,7 @@ function setup() {
     ${source}
     ({open: openPreviewWindow, ready: markPreviewWindowReady, sync: syncPreviewWindow, close: closePreviewWindow});
   `, {
-    BrowserWindow: FakeWindow, path, __dirname: '/ui/src', rendererDevServerUrl: null,
+    BrowserWindow: FakeWindow, path, randomUUID: () => 'test-artifact', previewOwnership: { releaseSender: async () => {} }, __dirname: '/ui/src', rendererDevServerUrl: null,
     rendererHtml: '/ui/dist/renderer/index.html', hasFile: () => true, mossLog: () => {},
   });
   return { api, windows };
@@ -77,7 +77,7 @@ describe('preview window readiness', () => {
     api.ready(new EventEmitter());
     expect(window.messages).toHaveLength(2);
     api.ready(window.webContents);
-    expect(window.messages.at(-1)).toEqual(['preview.open', { content: 'after reload' }]);
+    expect(window.messages.at(-1)).toEqual(['preview.open', { content: 'after reload', metadata: { artifactId: 'test-artifact' } }]);
     expect(window.shown).toBe(3);
   });
 
@@ -90,6 +90,6 @@ describe('preview window readiness', () => {
     api.ready(windows[0]!.webContents);
     expect(windows[1]!.messages).toEqual([]);
     api.ready(windows[1]!.webContents);
-    expect(windows[1]!.messages).toEqual([['preview.open', { content: 'new' }]]);
+    expect(windows[1]!.messages).toEqual([['preview.open', { content: 'new', metadata: { artifactId: 'test-artifact' } }]]);
   });
 });

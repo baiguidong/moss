@@ -1,3 +1,4 @@
+import { CloudSnapshots } from './cloud-snapshots';
 import * as React from 'react';
 import { AppMcpToolRows } from '@/components/app-mcp-tool-rows';
 import { AppIcon } from '@/components/app-icon';
@@ -37,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { PRESET_THEMES } from '@/theme/presets';
 import { PermissionModeSelector } from '@/components/permission-mode-selector';
+import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 import {
   DEFAULT_MOSS_TOOL_LOADING,
   MOSS_TOOL_GROUPS,
@@ -1508,6 +1510,8 @@ export function SettingsView({
                     </h1>
                   </div>
 
+                  {window.mossWeb && activeGroup.id === 'basic' && (window.mossWeb.managed ? <CloudSnapshots /> : <Surface className="p-4 text-sm">当前 Web Host 未接入 Docker 环境控制器，无法创建环境快照。其他功能可正常使用。</Surface>)}
+
                   {settingsDraft.settingsParseError ? (
                     <Surface className="border-amber-200/80 bg-amber-50/90 p-4 text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
                       <div className="flex items-start gap-3">
@@ -1601,8 +1605,8 @@ export function SettingsView({
                       {/* 本地模式 */}
                       <SettingsGroup>
                         <SettingsRow
-                          title="本地模式"
-                          description="在本机运行 Agent，直接使用本地文本模型配置。"
+                          title={isWebUI() ? '云电脑模式' : '本地模式'}
+                          description={isWebUI() ? '在云电脑运行 Agent，使用云电脑上的文本模型配置和文件。' : '在本机运行 Agent，直接使用本地文本模型配置。'}
                           controlClassName="sm:w-[56px]"
                         >
                           <div className="flex justify-start sm:justify-end">
@@ -1730,6 +1734,7 @@ export function SettingsView({
 
                             <SettingsRow
                               title="OAuth 认证"
+                              description={isWebUI() ? (supportsHostFeature('remoteOAuth') ? '在当前浏览器完成授权，凭据保存在云电脑。' : '此 Host 尚未配置公开 HTTPS 登录回调。') : undefined}
                               controlClassName="sm:w-[320px]"
                             >
                               <div className="space-y-2">
@@ -1747,6 +1752,7 @@ export function SettingsView({
                                     type="button"
                                     variant="outline"
                                     className="h-9 shrink-0 gap-2 rounded-lg px-3"
+                                    disabled={!supportsHostFeature('remoteOAuth')}
                                     onClick={() => {
                                       if (remoteAuthState === 'loading') {
                                         void cancelRemoteServerAuthentication();

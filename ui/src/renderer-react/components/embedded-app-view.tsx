@@ -1,4 +1,6 @@
 "use client";
+import { WebAppFrame } from './web-app-frame';
+import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 
 import * as React from "react";
 import { ArrowLeft, MonitorPlay } from "lucide-react";
@@ -19,13 +21,14 @@ export function EmbeddedAppView({
   appName,
   app,
   route = '',
-  sessionId, workspace, compact = false, widget = false,
+  sessionId, workspace, previewRef, compact = false, widget = false,
 }: {
   appName: string;
   app?: StoredApp;
   route?: string;
   sessionId?: string;
   workspace?: string;
+  previewRef?: string;
   compact?: boolean;
   widget?: boolean;
 }) {
@@ -59,7 +62,13 @@ export function EmbeddedAppView({
     setError("");
     setLoading(true);
 
-    window.agentDesktop.openEmbeddedApp({ name: appName, sessionId, workspace }).then((result) => {
+    if (!supportsHostFeature('embeddedApps')) {
+      setLoading(false);
+      setError('此 App 页面尚未适配 WebUI。');
+      return;
+    }
+
+    window.agentDesktop.openEmbeddedApp({ name: appName, sessionId, workspace, previewRef }).then((result) => {
       if (!result?.ok || !result.embedId || !result.url || !result.preload) {
         if (!cancelled) {
           setError(result?.error || "App 加载失败");
@@ -91,10 +100,16 @@ export function EmbeddedAppView({
         void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose });
       }
     };
-  }, [appName, reloadKey, sessionId, workspace]);
+  }, [appName, reloadKey, sessionId, workspace, previewRef]);
 
   React.useEffect(() => {
-    if (!session) return;
+    const reconnect = () => setReloadKey(value => value + 1);
+    window.addEventListener('moss:reconnected', reconnect);
+    return () => window.removeEventListener('moss:reconnected', reconnect);
+  }, []);
+
+  React.useEffect(() => {
+    if (!session || isWebUI()) return;
     const webview = webviewRef.current;
     if (!webview) return;
 
@@ -141,7 +156,7 @@ export function EmbeddedAppView({
       </div>
       }
       <div className={`relative min-h-0 flex-1 ${widget ? 'bg-transparent' : 'bg-background'}`}>
-        {session && (
+        {session && (isWebUI() ? <WebAppFrame key={session.embedId} embedId={session.embedId} url={viewUrl!} onReady={() => setLoading(false)} onError={message => { setLoading(false); setError(message); }} /> :
           <webview
             key={session.embedId}
             ref={webviewRef}
@@ -159,6 +174,7 @@ export function EmbeddedAppView({
               <div className="mt-2 text-xs leading-6 text-muted-foreground">
                 {error || title}
               </div>
+              {error && <Button variant="outline" size="sm" onClick={() => setReloadKey(value => value + 1)}>重新加载</Button>}
             </div>
           </div>
         )}

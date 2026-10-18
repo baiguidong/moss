@@ -5,12 +5,42 @@ import path from 'node:path';
 import { createDesktopDataPaths } from '../src/desktop-data-layout.mjs';
 import { createSessionPaths } from '../src/session-paths.mjs';
 import { createSessionHistoryService } from '../src/session-history-service.mjs';
+import { createTurnObservationService } from '../src/workspace-versions/turn-observation-service.mjs';
+import { createWorkspaceVersionService } from '../src/workspace-versions/workspace-version-service.mjs';
+import { buildMainChatRenderMessagesFromHistory } from '../src/renderer-react/lib/agent-transcript';
+import { collectAssistantOutputCandidates } from '../src/renderer-react/lib/assistant-output-files';
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const user = (text: string, uuid = 'u1') => ({ type: 'user', uuid, message: { content: text } });
 const assistant = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 const jsonl = (history: unknown[]) => history.map(entry => JSON.stringify(entry)).join('\n') + '\n';
+
+it('keeps all three observed outputs after canonical JSONL replaces the live user UUID and after restart', async () => {
+  const { paths, service, record } = await fixture();
+  const workspace = path.join(record.workspace, 'workspace'); await mkdir(workspace); record.workspace = workspace;
+  record.underlyingSessionId = 'engine';
+  const versions = createWorkspaceVersionService({ rootDir: path.join(workspace, '..', 'versions') });
+  const storageRoot = path.join(workspace, '..', 'observations');
+  const bindings = [{ turnId: 'observation', sourceToolUseId: 'present' }];
+  let observer = createTurnObservationService({ storageRoot, versions, getTurnBindings: async () => bindings });
+  const observation = await observer.begin(record, 'observation');
+  for (const [name, lines] of [['write', 4], ['bash', 3], ['python', 5]] as const) await writeFile(path.join(workspace, name + '.txt'), 'line\n'.repeat(lines));
+  await observer.finish(observation, 'live-user');
+  const present = { type: 'assistant', uuid: 'assistant-tool', message: { content: [{ type: 'tool_use', id: 'present', name: 'moss_present', input: {} }] } };
+  record.history = [user('same prompt', 'live-user'), present, { ...assistant('created'), uuid: 'reply' }];
+  expect((await observer.turnsForHistory(record.id, record.history))[0].stats).toEqual({ filesChanged: 3, additions: 12, deletions: 0 });
+  await writeFile(paths.sessionTranscriptPath('session', 'engine'), jsonl([user('same prompt', 'canonical-user'), ...record.history.slice(1)]));
+  const canonical = await service.loadSessionHistoryFromSource(record);
+  expect(canonical[0].uuid).toBe('canonical-user');
+  const turns = await observer.turnsForHistory(record.id, canonical);
+  expect(turns[0]).toMatchObject({ userMessageId: 'canonical-user', coverage: 'complete', stats: { filesChanged: 3, additions: 12, deletions: 0 } });
+  const cards = collectAssistantOutputCandidates(buildMainChatRenderMessagesFromHistory(canonical), { turns });
+  expect([...cards.values()].flat().map(card => card.target.path).sort()).toEqual(['bash', 'python', 'write'].map(name => path.join(observation.workspace, name + '.txt')));
+  // Recovery persists the association, independently of resource retention.
+  observer = createTurnObservationService({ storageRoot, versions });
+  expect(await observer.turnsForHistory(record.id, canonical)).toEqual(turns);
+});
 
 async function fixture(overrides = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'moss-session-history-'));

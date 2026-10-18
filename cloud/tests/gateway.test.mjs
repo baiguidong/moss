@@ -93,3 +93,32 @@ test('gateway executable starts through the versioned image symlink', async t =>
   });
   child.kill('SIGTERM'); assert.equal(await exited, 0);
 });
+
+test('opaque OAuth and resource routes select the registered Host without login cookies; port origins cannot route root APIs', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-gateway-callback-'));
+  const received = [];
+  const host = http.createServer((req, res) => { received.push({ path: req.url, cookie: req.headers.cookie, host: req.headers.host }); res.end('bound-host'); });
+  const hostBase = await listen(host);
+  const env = { MOSS_CLOUD_STATE: dir, MOSS_WEB_ORIGIN: 'https://portal.example', MOSS_WEB_PREVIEW_DOMAIN: 'preview.example', MOSS_WEB_AUTH_SERVER: 'https://auth.example', MOSS_WEB_IMAGE: 'test', MOSS_WEB_HOST: '127.0.0.1', MOSS_WEB_PORT: '0' };
+  const gateway = await startGateway({ env, docker: {}, rendererRoot: dir });
+  t.after(async () => { await gateway.close(); await new Promise(resolve => host.close(resolve)); await fs.rm(dir, { recursive: true, force: true }); });
+  const row = gateway.store.ensure({ user: { id: 'alice' }, organization: { id: 'org' } });
+  gateway.computers.target = async selected => { assert.equal(selected.id, row.id); return hostBase; };
+  const base = `http://127.0.0.1:${gateway.server.address().port}`;
+  const register = (kind, body, token = row.controlToken) => fetch(base + '/_moss-auth/' + kind + '/register', { method: 'POST', headers: { 'X-Moss-Environment': row.id, 'X-Moss-Host-Token': token }, body: JSON.stringify(body) });
+  const state = 's'.repeat(43);
+  assert.equal((await register('oauth', { state, expiresAt: Date.now() + 60000 }, 'wrong')).status, 403);
+  assert.equal((await register('oauth', { state, expiresAt: Date.now() + 60000 })).status, 200);
+  const callback = `/api/oauth/callback?state=${state}&code=test`;
+  assert.equal(await (await fetch(base + callback)).text(), 'bound-host');
+  assert.equal(received.at(-1).cookie, undefined);
+  assert.equal((await fetch(base + callback)).status, 400);
+  const resource = 'r'.repeat(43);
+  assert.equal((await register('resources', { token: resource, expiresAt: Date.now() + 60000 })).status, 200);
+  assert.equal(await (await fetch(base + `/_moss/resource/${resource}/assets/a.js`)).text(), 'bound-host');
+  assert.equal((await fetch(base + `/_moss/resource/${'x'.repeat(43)}/assets/a.js`)).status, 404);
+  const port = 'a'.repeat(48);
+  assert.equal((await register('ports', { token: port, expiresAt: Date.now() + 60000 })).status, 200);
+  const preview = await new Promise((resolve, reject) => { const req = http.get(base + '/api/auth', { headers: { Host: port + '.preview.example', Cookie: 'moss_cloud=never-forward' } }, res => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => resolve(body)); }); req.on('error', reject); });
+  assert.equal(preview, 'bound-host'); assert.equal(received.at(-1).path, `/_moss/port/${port}/api/auth`); assert.equal(received.at(-1).cookie, undefined);
+});

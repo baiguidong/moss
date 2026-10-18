@@ -1,6 +1,7 @@
 export { AppAgentTools } from '@/components/app-capabilities';
 import { AppAgentTools, AppCapabilityButton } from '@/components/app-capabilities';
 "use client";
+import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 
 import * as React from "react";
 import { AppIcon } from "@/components/app-icon";
@@ -354,7 +355,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
         <div className="flex items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="text-xs text-muted-foreground">{apps.length} 个已安装</span></div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" />应用市场</Button>
-          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={installing} onClick={install}><Download className="h-3.5 w-3.5" />{installing ? "安装中…" : "本地安装"}</Button>
+          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={installing || !supportsHostFeature('appInstallation')} onClick={install}><Download className="h-3.5 w-3.5" />{!supportsHostFeature('appInstallation') ? "此 Host 暂不支持安装授权" : installing ? "安装中…" : isWebUI() ? "安装 App" : "本地安装"}</Button>
         </div>
       </div>
       </div>
@@ -396,7 +397,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
-                    <AppCapabilityButton app={app} />
+                    <AppCapabilityButton app={app} compact />
                     {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>}
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
                     {isExpanded && <span>{formatTimestamp(app.updatedAt)}</span>}

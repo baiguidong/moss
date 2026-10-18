@@ -8,10 +8,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 export function CodeViewer({
   content,
   language,
+  line,
+  column,
 }: {
   content: string;
   language?: string;
+  line?: number;
+  column?: number;
 }) {
+  const container = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => { if (line) container.current?.querySelector('[data-source-line="' + line + '"]')?.scrollIntoView({ block: 'center' }); }, [content, line, column]);
   const [dark, setDark] = React.useState(() => document.documentElement.classList.contains("dark"));
 
   React.useEffect(() => {
@@ -26,7 +32,7 @@ export function CodeViewer({
   }, []);
 
   return (
-    <ScrollArea className="h-full bg-background/70">
+    <div ref={container} className="h-full min-h-0"><ScrollArea className="h-full bg-background/70">
       <SyntaxHighlighter
         language={language || "text"}
         style={dark ? atomOneDark : atomOneLight}
@@ -38,9 +44,12 @@ export function CodeViewer({
           fontSize: "12px",
         }}
         wrapLongLines
+        showLineNumbers
+        wrapLines
+        lineProps={number => ({ 'data-source-line': number, style: number === line ? { background: 'var(--color-primary-10, rgba(59,130,246,.14))', display: 'block' } : undefined })}
       >
         {content}
       </SyntaxHighlighter>
-    </ScrollArea>
+    </ScrollArea></div>
   );
 }

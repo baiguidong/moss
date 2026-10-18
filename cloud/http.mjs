@@ -8,6 +8,6 @@ export async function authRequest(base, endpoint, body, accessToken) {
   const response = await fetch(`${base}${endpoint}`, { method: body ? 'POST' : 'GET',
     headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
     body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw Object.assign(new Error('账号或登录状态无效。'), { status: 401 });
+  if (!response.ok) throw Object.assign(new Error('账号或登录状态无效。'), { status: response.status >= 500 ? 503 : 401 });
   return response.json();
 }

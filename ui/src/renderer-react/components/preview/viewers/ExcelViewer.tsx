@@ -85,7 +85,7 @@ function estimateTableContentWidth(sheets: Array<{ data?: any[][] }>) {
   return maxEstimatedWidth;
 }
 
-export function ExcelViewer({ filePath, fileVersion, toolbarContainer }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null }) {
+export function ExcelViewer({ filePath, fileVersion, toolbarContainer, onReady, onError }: { filePath: string; fileVersion?: number; toolbarContainer?: HTMLElement | null; onReady?: () => void; onError?: (message: string) => void }) {
   const [pdfPath, setPdfPath] = React.useState<string>();
   const [excelData, setExcelData] = React.useState<any | null>(null);
   const [activeSheet, setActiveSheet] = React.useState("");
@@ -155,6 +155,8 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer }: { fileP
     void load(false);
   }, [load]);
 
+  React.useEffect(() => { if (!loading && !pdfPath && excelData) onReady?.(); }, [loading, pdfPath, excelData, onReady]);
+
   if (loading) {
     return <UnsupportedViewer title="正在加载 Excel 预览" description="正在尝试 LibreOffice 与降级解析链。" />;
   }
@@ -164,14 +166,14 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer }: { fileP
       <div className="flex h-full min-h-0 flex-col">
         <OfficePreviewToolbar filePath={filePath} onRefresh={() => void load(true)} container={toolbarContainer} />
         <div className="min-h-0 flex-1">
-          <PDFViewer filePath={pdfPath} title={filePath} />
+          <PDFViewer onReady={onReady} onError={onError} filePath={pdfPath} title={filePath} />
         </div>
       </div>
     );
   }
 
   if (useOfv) {
-    return <LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" />;
+    return <LazyOpenFileViewer onReady={onReady} onError={onError} filePath={filePath} fileName={filePath} capability="basic" />;
   }
 
   if (excelData?.sheets?.length) {

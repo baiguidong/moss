@@ -41,7 +41,7 @@ try {
   await win.loadURL(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/app-tool-selection.html`);
   for (let i = 0; i < 100 && !await evaluate("Boolean(document.querySelector('textarea'))"); i++) await wait();
   await evaluate("document.querySelector('[data-picker]').click()"); await wait();
-  assert(await evaluate("document.body.textContent.includes('MCP 工具数量待发现')"));
+  assert(await evaluate("document.body.textContent.includes('连接时加载工具')"));
   assert(!await evaluate("document.body.textContent.includes('纯页面')"));
   assert.deepEqual(await evaluate("[...document.querySelectorAll('[data-app-category]')].map(group => group.dataset.appCategory)"), ['knowledge', 'ai', 'other']);
   await evaluate("{ const select = document.querySelector('select[aria-label=\"App 分类\"]'); select.value = 'knowledge'; select.dispatchEvent(new Event('change', {bubbles:true})); }"); await wait();

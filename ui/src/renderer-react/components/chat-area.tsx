@@ -1487,7 +1487,7 @@ export function ComposerPanel({
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {attachments.map((file, index) => (
-                <FilePreview
+                <FilePreview sessionId={sessionId}
                   key={`${file.path}-${index}`}
                   path={file.path}
                   name={file.name}
@@ -1534,6 +1534,7 @@ export function ComposerPanel({
               />
 
               <PermissionModeSelector
+                key={sessionId || 'new-session'}
                 value={permissionMode}
                 onChange={onPermissionModeChange}
                 disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
@@ -1662,6 +1663,7 @@ export function ComposerPanel({
               />
 
               <PermissionModeSelector
+                key={sessionId || 'new-session'}
                 value={permissionMode}
                 onChange={onPermissionModeChange}
               />
@@ -1685,7 +1687,7 @@ export function ComposerPanel({
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
                 {attachments.map((file, index) => (
-                  <FilePreview key={`${file.path}-${index}`} path={file.path} name={file.name}
+                  <FilePreview sessionId={sessionId} key={`${file.path}-${index}`} path={file.path} name={file.name}
                     onRemove={() => handleRemoveAttachment(index)} />
                 ))}
 
@@ -2753,7 +2755,7 @@ export function ChatArea({
       ) : (
         <div className="relative min-h-0 flex-1">
         <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? 'invisible pointer-events-none' : ''}`} inert={appWorkbench.open} aria-hidden={appWorkbench.open}>
-        <ToolDisplaySettingsProvider toolDisplayMode={toolDisplayMode}>
+        <ToolDisplaySettingsProvider key={sessionId} sessionId={sessionId} toolDisplayMode={toolDisplayMode}>
           <MessageListPane
             key={sessionId || "default"}
             ref={virtualListRef}

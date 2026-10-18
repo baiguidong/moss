@@ -64,6 +64,15 @@ export function createMossClient(transport, platform = {}) {
     onChanged: (callback) => { const handler = (status) => callback(status); transport.on('computer-use:changed', handler); return () => transport.off('computer-use:changed', handler); },
   },
   getStatus: () => transport.invoke('agent:get-status'),
+  getCapabilities: () => transport.invoke('host:capabilities'),
+  confirmations: {
+    list: () => transport.invoke('host:confirmations-list'),
+    respond: payload => transport.invoke('host:confirmations-respond', payload),
+    onChanged: callback => {
+      transport.on('host:confirmations-changed', callback);
+      return () => transport.off('host:confirmations-changed', callback);
+    },
+  },
   getManagedRuntimeStatus: () => transport.invoke('agent:get-managed-runtime-status'),
   ensureManagedRuntimes: (payload) => transport.invoke('agent:ensure-managed-runtimes', payload),
   getAuthDebug: () => transport.invoke('agent:get-auth-debug'),
@@ -130,6 +139,8 @@ export function createMossClient(transport, platform = {}) {
   setSessionEffort: (payload) => transport.invoke('agent:set-session-effort', payload),
   listSessionTasks: (payload) => transport.invoke('agent:list-session-tasks', payload),
   getTurnChanges: (payload) => transport.invoke('agent:get-turn-changes', payload),
+  getObservationDiff: (payload) => transport.invoke('agent:get-observation-diff', payload),
+  onTurnObservation: (callback) => { transport.on('turn-observation:updated', callback); return () => transport.off('turn-observation:updated', callback); },
   previewTurnRewind: (payload) => transport.invoke('agent:preview-turn-rewind', payload),
   rewindTurn: (payload) => transport.invoke('agent:rewind-turn', payload),
   updateSession: (payload) => transport.invoke('agent:update-session', payload),
@@ -202,7 +213,7 @@ export function createMossClient(transport, platform = {}) {
   closeEmbeddedApp: (payload) => transport.invoke('app:embedded-close', payload),
   rollbackApp: (payload) => transport.invoke('app:rollback', payload),
   deleteApp: (payload) => transport.invoke('app:delete', payload),
-  installAppArchive: () => transport.invoke('app:install-archive'),
+  installAppArchive: payload => transport.invoke('app:install-archive', payload),
   getAppInstallProgress: () => transport.invoke('app:get-install-progress'),
   onAppInstallProgress: (callback) => {
     const handler = (payload) => callback(payload);
@@ -291,6 +302,26 @@ export function createMossClient(transport, platform = {}) {
       transport.on('preview.sync', handler);
       return () => transport.off('preview.sync', handler);
     },
+  },
+  previewDocument: {
+    acquire: payload => transport.invoke('preview-document:acquire', payload),
+    update: payload => transport.invoke('preview-document:update', payload),
+    save: payload => transport.invoke('preview-document:save', payload),
+    acknowledge: payload => transport.invoke('preview-document:acknowledge', payload),
+    release: payload => transport.invoke('preview-document:release', payload),
+    on: (event, callback) => { transport.on('preview-document:' + event, callback); return () => transport.off('preview-document:' + event, callback); },
+  },
+  presentation: {
+    refresh: payload => transport.invoke('presentation:refresh', payload),
+    resolve: (payload) => transport.invoke('presentation:resolve', payload),
+    snapshot: (payload) => transport.invoke('presentation:snapshot', payload),
+    action: (payload) => transport.invoke('presentation:action', payload),
+    open: (payload) => transport.invoke('presentation:open', payload),
+    load: (payload) => transport.invoke('presentation:load', payload),
+    acknowledge: (payload) => transport.invoke('presentation:ack', payload),
+    popout: (payload) => transport.invoke('presentation:popout', payload),
+    onResult: callback => { transport.on('presentation:result', callback); return () => transport.off('presentation:result', callback); },
+    onChanged: (callback) => { transport.on('presentation:changed', callback); return () => transport.off('presentation:changed', callback); },
   },
   browser: {
     getState: (payload) => transport.invoke('browser:get-state', payload),

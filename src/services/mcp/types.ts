@@ -201,6 +201,8 @@ export type ConnectedMCPServer = {
   instructions?: string
   config: ScopedMcpServerConfig
   cacheSessionId?: string
+  /** Used by the Host to reject late metadata from a connection predating a config/auth reset. */
+  connectionStartedAt?: number
   cleanup: () => Promise<void>
 }
 

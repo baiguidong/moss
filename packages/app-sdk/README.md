@@ -1,5 +1,13 @@
 # Moss App SDK
 
+## App 页面与宿主头部
+
+Moss 容器负责显示 App 名称、简介、迭代、AI 能力入口与整页刷新。嵌入页面只绘制业务内容，从输入、列表、状态或业务工具栏开始；不要再次绘制 App 名称、Logo、宣传简介或另一组整页管理按钮。SDK 是通信层，不会自动删除页面中的标题。
+
+保留具体页面、对象和分区标题（例如“输入文件”“记忆图谱”、文档名），业务刷新要写明范围（例如“刷新项目”“重新连接”）。同一状态、任务数量和说明只在最相关的区域展示一次。无障碍名称用 `main[aria-label]` 或视觉隐藏的标题提供，不能用全局 CSS 隐藏所有 `h1/header`，也不能通过文字匹配自动删除 DOM。独立网页若需要品牌头部，应显式使用独立布局；不要用 `window.mossApp` 是否存在推断页面是否有外框。
+
+创建与 Skill 转 App 都遵守这条规则。验收必须查看带 Moss 外框的页面，并检查窄窗口、加载、空状态和错误状态，确保应用身份仅显示一次、业务操作仍可见。此约定不增加 Manifest 字段或最低 Host API 版本。完整创建规则见 [App 页面布局](../../ui/docs/app-authoring.md#app-页面布局)。
+
 App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
 
 当前 SDK 对应 Host API `3.11.0`；使用 MCP 目录绑定的 App 声明 `hostApi: "^3.11.0"`。不提供旧 UI 调用签名兼容层。

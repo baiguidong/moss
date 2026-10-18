@@ -1,4 +1,5 @@
 "use client";
+import { supportsHostFeature } from '@/lib/host-environment';
 
 import * as React from "react";
 import { AppCategoryTabs } from '@/components/app-category-tabs';
@@ -215,9 +216,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible} onClick={() => void install(entry)}>
+                    <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible || !supportsHostFeature('appInstallation')} onClick={() => void install(entry)}>
                       {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-                      {actionLabel}
+                      {!supportsHostFeature('appInstallation') ? "此 Host 暂不支持安装授权" : actionLabel}
                     </Button>
                     <Button size="sm" variant="outline" className="h-8" onClick={() => void toggleDetails(entry)}>
                       {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}详情

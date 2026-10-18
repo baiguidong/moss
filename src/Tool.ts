@@ -177,6 +177,8 @@ export type ToolUseContext = {
     querySource?: QuerySource
     /** Optional callback to get the latest tools (e.g., after MCP servers connect mid-query) */
     refreshTools?: () => Tools
+    /** Host-requested successful completion, checked after all tool receipts are yielded. */
+    shouldFinishAfterTools?: () => boolean
   }
   abortController: AbortController
   readFileState: FileStateCache
@@ -309,6 +311,7 @@ export type ToolUseContext = {
 
 /** App event types for MossTool */
 export type MossAppEvent =
+  | { type: 'present'; input: Record<string, unknown>; presentationContext: { turnId: string; sessionId: string; epoch?: string; toolUseId: string; agentId?: string } }
   | { type: 'self_test'; input: { action: 'list' | 'start' | 'status' | 'record' | 'stop'; case_ids?: string[]; run_id?: string; case_id?: string; status?: 'passed' | 'failed' | 'blocked'; checks?: { index: number; passed: boolean; actual: string }[]; evidence?: string[]; notes?: string } }
   | { type: 'browser_open'; input: MossBrowserOpenInput }
   | { type: 'browser_snapshot'; input: MossBrowserSnapshotInput }
@@ -394,6 +397,7 @@ export type MossAgentMailListOutboxInput = {
 export type MossAppEventResult =
   | {
       ok: true
+      presentationResult?: unknown
       app?: unknown
       apps?: unknown[]
       versions?: unknown[]

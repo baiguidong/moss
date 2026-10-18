@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-export function PDFViewer({ filePath, title }: { filePath: string; title: string }) {
+export function PDFViewer({ filePath, title, onReady, onError }: { filePath: string; title: string; onReady?: () => void; onError?: (message: string) => void }) {
   const webviewRef = React.useRef<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -17,10 +17,12 @@ export function PDFViewer({ filePath, title }: { filePath: string; title: string
     const handleLoad = () => {
       setLoading(false);
       setError(null);
+      onReady?.();
     };
     const handleError = (event: any) => {
       setLoading(false);
       setError(event?.description || "PDF 加载失败");
+      onError?.(event?.description || "PDF 加载失败");
     };
     const timeoutId = window.setTimeout(() => {
       setLoading(false);
@@ -35,7 +37,7 @@ export function PDFViewer({ filePath, title }: { filePath: string; title: string
     };
   }, [pdfSrc]);
 
-  if (window.mossWeb) return <iframe title={title} src={pdfSrc} className="h-full w-full border-0" />;
+  if (window.mossWeb) return <iframe onLoad={onReady} title={title} src={pdfSrc} className="h-full w-full border-0" />;
 
   if (error) {
     return (

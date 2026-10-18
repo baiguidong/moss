@@ -1341,6 +1341,12 @@ async function* queryLoop(
     }
     queryCheckpoint('query_tool_execution_end')
 
+    // Complete only after draining the entire tool batch: the transcript must
+    // contain every paired receipt, and ordinary cancellation still takes priority.
+    if (!toolUseContext.abortController.signal.aborted && toolUseContext.options.shouldFinishAfterTools?.()) {
+      return { reason: 'completed' }
+    }
+
     // Generate tool use summary after tool batch completes — passed to next recursive call
     let nextPendingToolUseSummary:
       | Promise<ToolUseSummaryMessage | null>

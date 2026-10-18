@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { AppCredentialAdapter } from '../apps/app-runtime.mjs';
+import { resourceStamp } from './environment-fingerprint.mjs';
 
 async function copyTree(source, target, signal) {
   signal.throwIfAborted();
@@ -31,7 +32,7 @@ export async function inheritTestApps({ runtime, home, signal = new AbortControl
   const source = runtime.state.snapshot();
   const state = { version: source.version, installations: structuredClone(source.installations),
     instances: structuredClone(source.instances), runtimes: {} };
-  const copied = new Set(), apps = [], credentials = new AppCredentialAdapter(home);
+  const copied = new Set(), apps = [];
   const installations = Object.values(state.installations).filter(item => item.activeVersion);
   for (const [index, installation] of installations.entries()) {
     signal.throwIfAborted();
@@ -47,7 +48,17 @@ export async function inheritTestApps({ runtime, home, signal = new AbortControl
     if (!copied.has(key)) {
       const sourceRoot = path.join(runtime.appsDir, appId, 'versions', activeVersion);
       const targetRoot = path.join(home, 'apps', appId, 'versions', activeVersion);
-      await copyTree(sourceRoot, targetRoot, signal);
+      const sourceChecksums = await fs.readFile(path.join(sourceRoot, 'checksums.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      const targetChecksums = await fs.readFile(path.join(targetRoot, 'checksums.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      const targetReady = await fs.stat(path.join(targetRoot, 'app.moss.json')).catch(() => null);
+      const completionFile = path.join(home, '.test-package-copies', appId, `${activeVersion}.json`);
+      const completedChecksums = await fs.readFile(completionFile).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (!sourceChecksums || !targetChecksums?.equals(sourceChecksums) || !completedChecksums?.equals(sourceChecksums) || !targetReady) {
+        await fs.rm(completionFile, { force: true });
+        await copyTree(sourceRoot, targetRoot, signal);
+        signal.throwIfAborted();
+        if (sourceChecksums) { await fs.mkdir(path.dirname(completionFile), { recursive: true }); await fs.writeFile(completionFile, sourceChecksums); }
+      }
       copied.add(key);
     }
     apps.push({ id: appId, version: activeVersion, enabled: Boolean(enabled), grants: [...(grants || [])] });
@@ -55,6 +66,10 @@ export async function inheritTestApps({ runtime, home, signal = new AbortControl
     await onProgress({ stage: 'apps', current: index + 1, total: installations.length, item: appId,
       label: `已复制 ${index + 1}/${installations.length} 个 App，正在继承配置…` });
   }
+  // A removed credential must also disappear from the reused target profile.
+  // Rebuild the store before the adapter performs any credential reads.
+  await clearTestAppCredentials(home);
+  const credentials = new AppCredentialAdapter(home);
   for (const instance of Object.values(state.instances)) {
     signal.throwIfAborted();
     // Re-encrypt App configuration credentials using the test profile's own key.
@@ -80,13 +95,21 @@ export async function inheritTestApps({ runtime, home, signal = new AbortControl
 
 export async function inheritTestResources({ sourceHome, home, signal = new AbortController().signal, onProgress = async () => {} }) {
   if (!sourceHome) return;
+  const stampPath = path.join(home, '.test-resource-stamps.json');
+  const previous = await fs.readFile(stampPath, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return {}; throw error; });
+  const stamps = {};
   for (const directory of ['skills', 'assistants']) {
     signal.throwIfAborted();
     const source = path.join(sourceHome, directory);
-    if (!(await fs.stat(source).catch(error => { if (error.code === 'ENOENT') return null; throw error; }))) continue;
+    if (!(await fs.stat(source).catch(error => { if (error.code === 'ENOENT') return null; throw error; }))) {
+      await fs.rm(path.join(home, directory), { recursive: true, force: true }); continue;
+    }
+    stamps[directory] = await resourceStamp(source);
+    if (previous[directory] === stamps[directory] && await fs.stat(path.join(home, directory)).catch(() => null)) continue;
     await onProgress({ stage: 'resources', item: directory, label: `正在继承${directory === 'skills' ? '个人技能' : '助手'}配置…` });
     await copyTree(source, path.join(home, directory), signal);
   }
+  await fs.writeFile(stampPath, JSON.stringify(stamps), { mode: 0o600 });
 }
 
 export async function clearTestAppCredentials(home) {

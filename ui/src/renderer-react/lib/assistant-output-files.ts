@@ -1,7 +1,7 @@
-import type { TranscriptRenderMessage, ToolResultRenderMessage, ToolUseRenderMessage } from "./agent-transcript";
-import type { OutputFileResolution } from "../types";
+import type { TranscriptRenderMessage, ToolUseRenderMessage } from "./agent-transcript";
+import type { OutputFileResolution, PresentationResource, TurnChangeSummary } from "../types";
 
-type FileOperation = "create" | "update";
+type FileOperation = "create" | "update" | "reference";
 export type OutputCandidate = {
   turnId: string;
   toolUseId: string;
@@ -19,92 +19,43 @@ export type AssistantOutputFile = {
   sourcePaths: string[];
 };
 
-type ToolFile = { path: string; operation: FileOperation };
-type OutputAdapter = (result: Record<string, unknown>) => ToolFile | null;
+export type OutputEvidence = { resources?: PresentationResource[]; turns?: TurnChangeSummary[] };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isPatch(value: unknown): boolean {
-  return Array.isArray(value) && value.every((hunk) => isRecord(hunk)
-    && [hunk.oldStart, hunk.oldLines, hunk.newStart, hunk.newLines].every(Number.isInteger)
-    && Array.isArray(hunk.lines) && hunk.lines.every((line) => typeof line === "string"));
-}
-
-// These are exact runtime tool identities, not humanized display names.
-// New tools must explicitly validate their own result contract here.
-const adapters = new Map<string, OutputAdapter>([
-  ["Write", (result) => {
-    if (typeof result.filePath !== "string" || !isPatch(result.structuredPatch)
-      || (result.type !== "create" && result.type !== "update")
-      || typeof result.content !== "string"
-      || (result.originalFile !== null && typeof result.originalFile !== "string")) return null;
-    return { path: result.filePath, operation: result.type };
-  }],
-  ["Edit", (result) => {
-    if (typeof result.filePath !== "string" || !isPatch(result.structuredPatch)
-      || typeof result.oldString !== "string" || typeof result.newString !== "string"
-      || typeof result.originalFile !== "string" || typeof result.userModified !== "boolean"
-      || typeof result.replaceAll !== "boolean") return null;
-    return { path: result.filePath, operation: "update" };
-  }],
-]);
-
-function adaptToolFile(toolName: string, value: unknown): ToolFile | null {
-  const adapter = adapters.get(toolName);
-  if (!adapter || !isRecord(value)) return null;
-  const file = adapter(value);
-  if (!file) return null;
-  // Preserve the actual filename (including spaces, punctuation and colons).
-  // The host applies the local OS path rules; never infer a working directory.
-  if (!/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(file.path) || /[\u0000\r\n]/.test(file.path)) return null;
-  return file;
-}
-
-// Both live and replayed transcripts use this pure projection. No assistant
-// prose, inputs, generic attachments, checkpoints, or result text are sources.
-export function collectAssistantOutputCandidates(messages: TranscriptRenderMessage[]): Map<string, OutputCandidate[]> {
-  const uses = new Map<string, { call: ToolUseRenderMessage; turnId: string }[]>();
-  const results = new Map<string, { result: ToolResultRenderMessage; turnId: string; index: number }[]>();
+// File cards consume host evidence only. Tool names, inputs, text and Write/Edit
+// result contracts are deliberately not a fallback for file creation claims.
+export function collectAssistantOutputCandidates(messages: TranscriptRenderMessage[], evidence: OutputEvidence = {}): Map<string, OutputCandidate[]> {
+  const uses = new Map<string, { call: ToolUseRenderMessage; turnId: string; index: number }[]>();
   const turns = new Map<string, { owner: Extract<TranscriptRenderMessage, { type: "assistant_text" }>; index: number }>();
   let currentTurn = "initial";
   messages.forEach((message, index) => {
     if (message.type === "user_text") currentTurn = message.turnId || message.id;
     const turnId = message.turnId || currentTurn;
     if (message.type === "assistant_text") turns.set(turnId, { owner: message, index });
-    if (message.type === "tool_use") {
-      const entries = uses.get(message.toolUseId) || [];
-      entries.push({ call: message, turnId });
-      uses.set(message.toolUseId, entries);
-    }
-    if (message.type === "tool_result") {
-      const entries = results.get(message.toolUseId) || [];
-      entries.push({ result: message, turnId, index });
-      results.set(message.toolUseId, entries);
-    }
+    if (message.type === "tool_use") uses.set(message.toolUseId, [...(uses.get(message.toolUseId) || []), { call: message, turnId, index }]);
   });
-
   const candidates = new Map<string, OutputCandidate[]>();
-  for (const [toolUseId, calls] of uses) {
-    // Duplicated call identities, nested agents and missing results are not
-    // enough evidence to assign a file to this local turn.
-    if (!toolUseId || calls.length !== 1) continue;
-    const { call, turnId } = calls[0];
-    const turn = turns.get(turnId);
-    const matchingResults = results.get(toolUseId);
-    if (call.parentToolUseId || call.status !== "success" || !turn || turn.owner.streaming || !matchingResults?.length) continue;
-    const files = matchingResults.map(({ result, turnId: resultTurn, index }) => {
-      if (resultTurn !== turnId || index >= turn.index || result.isError !== false
-        || result.parentToolUseId || result.toolName !== call.toolName) return null;
-      return adaptToolFile(call.toolName, result.structuredResult);
-    });
-    const file = files[0];
-    // Identical replayed results are harmless; conflicting results fail closed.
-    if (!file || files.some((entry) => !entry || entry.path !== file.path || entry.operation !== file.operation)) continue;
+  for (const observation of evidence.turns || []) {
+    const turn = turns.get(observation.userMessageId);
+    if (!turn || turn.owner.streaming || !['complete', 'partial'].includes(observation.coverage || '')) continue;
     const entries = candidates.get(turn.owner.id) || [];
-    entries.push({ turnId, toolUseId, toolName: call.toolName, operation: file.operation, target: { kind: "local", path: file.path } });
-    candidates.set(turn.owner.id, entries);
+    for (const file of observation.files) {
+      if (file.verified !== true || !['added', 'modified'].includes(file.status || '')) continue;
+      if (entries.some(entry => entry.target.path === file.filePath)) continue;
+      entries.push({ turnId: observation.userMessageId, toolUseId: '', toolName: 'file-observation', operation: file.status === 'added' ? 'create' : 'update', target: { kind: 'local', path: file.filePath } });
+    }
+    if (entries.length) candidates.set(turn.owner.id, entries);
+  }
+  for (const resource of evidence.resources || []) {
+    if (resource.source.type !== 'file' || !resource.source.path || resource.isResult === false || ['unavailable', 'expired'].includes(resource.availability || '')) continue;
+    for (const binding of resource.bindings || []) {
+      const calls = uses.get(binding.sourceToolUseId || '');
+      if (calls?.length !== 1 || calls[0].call.parentToolUseId || calls[0].call.status !== 'success') continue;
+      const turn = turns.get(calls[0].turnId);
+      if (!turn || turn.owner.streaming || calls[0].index >= turn.index) continue;
+      const entries = candidates.get(turn.owner.id) || [];
+      if (!entries.some(entry => entry.target.path === resource.source.path)) entries.push({ turnId: calls[0].turnId, toolUseId: binding.sourceToolUseId!, toolName: 'presentation', operation: 'reference', target: { kind: 'local', path: resource.source.path } });
+      candidates.set(turn.owner.id, entries);
+    }
   }
   return candidates;
 }

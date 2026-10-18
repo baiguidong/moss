@@ -264,3 +264,21 @@ function restoreEnv(name: string, value: string | undefined): void {
     process.env[name] = value
   }
 }
+
+describe('WebUI snapshot policy', () => {
+  test('defaults, partial persistence, strict writes and malformed read fallback', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-snapshot-policy-'))
+    process.env.MOSS_SERVER_HOME = tempRoot
+    const mod = await import(`../systemSettings.js?case=${randomUUID()}`)
+    expect(mod.getSystemSettings().webui?.snapshots).toEqual({ maxSnapshotsPerEnvironment: 5, maxBytesPerEnvironment: 21474836480 })
+    mod.updateSystemSettings({ webui: { snapshots: { maxSnapshotsPerEnvironment: 3 } } })
+    expect(mod.getSystemSettings().webui?.snapshots).toEqual({ maxSnapshotsPerEnvironment: 3, maxBytesPerEnvironment: 21474836480 })
+    mod.updateSystemSettings({ webui: { snapshots: { maxBytesPerEnvironment: 10737418240 } } })
+    expect(mod.getSystemSettings().webui?.snapshots).toEqual({ maxSnapshotsPerEnvironment: 3, maxBytesPerEnvironment: 10737418240 })
+    expect(() => mod.updateSystemSettings({ webui: { snapshots: { maxSnapshotsPerEnvironment: 0 } } })).toThrow()
+    const stored = JSON.parse(await readFile(join(tempRoot, 'settings.json'), 'utf8'))
+    stored.webui.snapshots.maxBytesPerEnvironment = 'invalid'
+    await writeFile(join(tempRoot, 'settings.json'), JSON.stringify(stored))
+    expect(mod.getSystemSettings().webui?.snapshots).toEqual({ maxSnapshotsPerEnvironment: 3, maxBytesPerEnvironment: 21474836480 })
+  })
+})

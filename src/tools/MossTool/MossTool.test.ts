@@ -10,12 +10,28 @@ import {
   MossBrowserOpenTool,
   ConnectorMcpAuthenticateTool,
   MossTools,
+  MossPresentTool,
 } from './MossTool.js'
 import { MOSS_TOOL_GROUPS } from './toolLoading.js'
 
 describe('split Moss host tools', () => {
+  test('presentation carries immutable turn identity and preserves the structured host result', async () => {
+    const emitted: MossAppEvent[] = [];
+    const result = { ok: true, schema: 'moss.presentation-result/v1', items: [{ input_index: 0, artifact_id: 'artifact-a', revision: 'v1' }], presentation: { state: 'pending', target: 'right' } };
+    const context = { options: {}, toolUseId: 'use-a', abortController: new AbortController(), emitAppEvent: async (event: MossAppEvent) => { emitted.push(event); return { ok: true, presentationResult: result }; } } as unknown as ToolUseContext;
+    const output = await runWithSessionIdContext(asSessionId('session-a'), undefined, async () => {
+      await Promise.resolve();
+      return MossPresentTool.call({ items: [{ path: 'report.pdf' }] }, context);
+    }, undefined, undefined, { presentationTurn: { id: 'turn-a', sessionId: 'session-a' } });
+    expect(emitted[0]).toMatchObject({ type: 'present', presentationContext: { turnId: 'turn-a', sessionId: 'session-a', toolUseId: 'use-a' } });
+    expect(output.data.presentationResult).toEqual(result);
+    expect(JSON.parse(MossPresentTool.mapToolResultToToolResultBlockParam(output.data, 'use-a').content as string)).toEqual(result);
+    expect(MossPresentTool.inputSchema.safeParse({ items: [{ path: 'a', artifact_id: 'b' }] }).success).toBe(false);
+    expect(MossPresentTool.inputSchema.safeParse({ items: [{ path: 'a' }], sessionId: 'forged' }).success).toBe(false);
+  });
   test('registers one named tool per action', () => {
     expect(MossTools.map(tool => tool.name)).toEqual([
+      'moss_present',
       'moss_browser_open',
       'connector_cli_setup',
       'connector_mcp_authenticate',

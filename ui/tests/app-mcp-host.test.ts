@@ -330,7 +330,97 @@ test('desktop MCP catalog discovers real tools without static contributions or e
   expect(f.reloads()).toBe(reloads)
   expect(notifications).toBe(2)
   const restarted = new AppMcpHost(f.options); await restarted.refresh()
-  expect(restarted.toolCatalog('moss.mcp')[0].status).toBe('unchecked')
+  expect(restarted.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'unchecked', catalogSource: 'cache', checkedAt: 10, tools: result.tools })
+  expect(f.calls).toHaveLength(1)
+  expect((await restarted.handle('servers.list', {}, f.context)).servers[0].check).toBeNull()
+  const persisted = await fs.readFile(path.join(f.context.dataDir, 'mcp-tool-catalog.json'), 'utf8')
+  expect(persisted).not.toContain('fixture-secret')
+  expect(persisted).not.toContain('headers')
+  expect(persisted).not.toContain('connected')
+})
+
+test('failed refresh retains the last successful catalog, while a successful empty result replaces it', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  await f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  f.host.inspect = async () => { throw new Error('offline') }
+  await f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  expect(f.host.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'failed', catalogSource: 'cache', checkedAt: 10, tools: [{ name: 'search' }], error: 'offline' })
+  f.host.inspect = async () => ({ state: 'connected', tools: [], checkedAt: 20 })
+  await f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'unchecked', catalogSource: 'cache', checkedAt: 20, tools: [] })
+})
+
+test('changed configuration, auth reset and recreated services cannot reuse old catalogs', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  await f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  await f.host.handle('servers.save', { name: 'docs', previousName: 'docs', enabled: true, config: { ...config, url: 'https://new.example.com/mcp' } }, f.context)
+  expect(f.host.toolCatalog('moss.mcp')[0]).toMatchObject({ catalogSource: 'unknown', tools: [] })
+  await f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  let release!: (value: any) => void, started!: () => void
+  const ready = new Promise<void>(resolve => { started = resolve })
+  f.host.inspect = () => { started(); return new Promise(resolve => { release = resolve }) }
+  const pending = f.host.handle('servers.inspect', { name: 'docs' }, f.context)
+  await ready
+  await f.host.handle('auth.clear', { name: 'docs' }, f.context)
+  release({ state: 'connected', tools: [{ name: 'stale' }], checkedAt: 30 })
+  await expect(pending).rejects.toThrow('配置已变化')
+  const restarted = new AppMcpHost(f.options); await restarted.refresh()
+  expect(restarted.toolCatalog('moss.mcp')[0]).toMatchObject({ catalogSource: 'unknown', tools: [] })
+  await restarted.recordRuntimeCatalog('docs', { ...config, url: 'https://new.example.com/mcp', scope: 'dynamic' }, { state: 'connected', checkedAt: Date.now(), tools: [{ name: 'late-auth-session' }] }, 1)
+  expect(restarted.toolCatalog('moss.mcp')[0].catalogSource).toBe('unknown')
+  await restarted.handle('servers.inspect', { name: 'docs' }, f.context)
+  await restarted.handle('servers.remove', { name: 'docs' }, f.context)
+  await restarted.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  expect(restarted.toolCatalog('moss.mcp')[0]).toMatchObject({ catalogSource: 'unknown', tools: [] })
+})
+
+test('concurrent desktop discovery shares one transport inspection', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  let release!: (value: any) => void, started!: () => void, calls = 0
+  const ready = new Promise<void>(resolve => { started = resolve })
+  f.host.inspect = () => { calls++; started(); return new Promise(resolve => { release = resolve }) }
+  const { appId, instanceId, name, revision } = f.host.toolCatalog('moss.mcp')[0]
+  const first = f.host.inspectTools({ appId, instanceId, name, revision })
+  const second = f.host.inspectTools({ appId, instanceId, name, revision })
+  await ready
+  release({ state: 'connected', tools: [{ name: 'search', description: '', disabled: false }], checkedAt: 10 })
+  const results = await Promise.all([first, second])
+  expect(calls).toBe(1); expect(results[0]).toEqual(results[1])
+})
+
+test('live Agent discovery updates display metadata only for the current launch configuration', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  const check = { state: 'connected', tools: [{ name: 'live', description: `Uses ${config.headers.Authorization}`, inputSchema: { secret: true } }], checkedAt: 20 }
+  await f.host.recordRuntimeCatalog('docs', { ...config, scope: 'dynamic', url: 'https://old.example.com/mcp' }, check)
+  expect(f.host.toolCatalog('moss.mcp')[0].catalogSource).toBe('unknown')
+  await f.host.recordRuntimeCatalog('docs', { ...config, scope: 'dynamic' }, check)
+  expect(f.calls).toHaveLength(0)
+  expect(f.host.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'connected', catalogSource: 'live', tools: [{ name: 'live', description: 'Uses [已隐藏]' }] })
+  const persisted = await fs.readFile(path.join(f.context.dataDir, 'mcp-tool-catalog.json'), 'utf8')
+  expect(persisted).not.toContain('fixture-secret'); expect(persisted).not.toContain('inputSchema')
+  let release!: () => void
+  const blocker = f.host.serial(() => new Promise<void>(resolve => { release = resolve }))
+  await Promise.resolve()
+  const changed = f.host.handle('servers.save', { name: 'docs', previousName: 'docs', enabled: true, config: { ...config, url: 'https://changed.example.com/mcp' } }, f.context)
+  const stale = f.host.recordRuntimeCatalog('docs', { ...config, scope: 'dynamic' }, check)
+  release(); await blocker; await changed; await stale
+  expect(f.host.toolCatalog('moss.mcp')[0]).toMatchObject({ catalogSource: 'unknown', tools: [] })
+})
+
+test('corrupt display caches are ignored without blocking App startup', async () => {
+  const f = await fixture()
+  await f.host.handle('servers.save', { name: 'docs', enabled: true, config }, f.context)
+  for (const content of ['{broken', JSON.stringify({ version: 2, services: {} }), 'x'.repeat(513 * 1024)]) {
+    await fs.writeFile(path.join(f.context.dataDir, 'mcp-tool-catalog.json'), content)
+    const restarted = new AppMcpHost(f.options); await restarted.refresh()
+    expect(restarted.toolCatalog('moss.mcp')[0]).toMatchObject({ status: 'unchecked', catalogSource: 'unknown', tools: [] })
+  }
+  expect(f.calls).toHaveLength(0)
 })
 
 test('desktop catalog preserves disabled services and prevents probing without grants, credentials, or enabled instances', async () => {
