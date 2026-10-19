@@ -93,13 +93,24 @@ try {
   results.protectionCountedInQuota = true;
   const removed = (await api('/api/cloud/snapshots')).find(s => s.name === '最后一个名额');
   await operation({ action: 'delete', snapshotId: removed.id });
+  // A running supervisor with a broken Host must still be recoverable from the
+  // independent management page, without claiming consistent automatic backup.
+  const brokenId = row.containerId, brokenHome = (await docker.inspect(brokenId)).Mounts[0].Name;
+  await docker.exec(brokenId, ['node', '-e', 'require("fs").renameSync("/opt/moss/ui/src/main.mjs","/opt/moss/ui/src/main.mjs.validation-disabled")']);
+  await docker.restart(brokenId);
+  const degraded = await api('/api/cloud/snapshots/preflight', { action: 'restore', snapshotId: combined.snapshotId });
+  assert.equal(degraded.hostUnavailable, true); assert.equal(degraded.protection, false); assert.match(degraded.impact, /可能中断未完成/);
+  await operation({ action: 'restore', snapshotId: combined.snapshotId }); row = await current();
+  assert.equal((await docker.inspect(brokenId)).State.Running, false); await docker.volume(brokenHome);
+  assert.equal((await api('/api/cloud/snapshots')).length, 4); results.brokenHostExplicitRecovery = true;
   // Deliberate loss of ONLY this disposable user's active container. Management
   // authentication/list/restore must still work without creating an empty Host.
   const lost = await docker.inspect(row.containerId);
   await docker.removeOwnedContainer(lost.Id, { 'io.moss.installation': installation, 'io.moss.environment': environmentId });
+  await docker.removeOwnedVolume(lost.Mounts[0].Name, { 'io.moss.installation': installation, 'io.moss.environment': environmentId });
   await login(); assert.equal((await current()).containerId, lost.Id); assert.equal((await api('/api/cloud/snapshots')).length, 4);
   await operation({ action: 'restore', snapshotId: combined.snapshotId }); row = await current();
-  assert.equal(await read(row.containerId, '/home/moss/snapshot-test'), 'home-before'); results.missingOriginalExplicitRecovery = true;
+  assert.equal(await read(row.containerId, '/home/moss/snapshot-test'), 'home-before'); results.missingOriginalAndHomeExplicitRecovery = true;
   if (page) { await page.reload(); await page.getByRole('heading', { name: '环境快照', exact: true }).waitFor(); await page.screenshot({ path: path.join(output, 'snapshot-management.png'), fullPage: true }); }
   await docker.restart(gateway); await ready(); await login(); assert.equal((await current()).containerId, row.containerId); results.controllerRestartKeepsRestoredEnvironment = true;
   await fs.writeFile(path.join(output, 'snapshots-result.json'), JSON.stringify({ ok: true, image, ...results }, null, 2));

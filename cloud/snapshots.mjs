@@ -57,6 +57,14 @@ export class Snapshots {
     try { const info = await this.docker.inspect(row.containerId); this.computers.checkOwner(row, info); return info; }
     catch (error) { if (allowMissing && error.status === 404) return null; throw error; }
   }
+  async hostStatus(row, allowUnavailable = false) {
+    try { return await this.computers.control(row, 'status'); }
+    catch (error) {
+      // Ownership/authentication failures are never an offline recovery signal.
+      if (allowUnavailable && (error.status >= 500 || ['TypeError', 'TimeoutError', 'SyntaxError'].includes(error.name))) return null;
+      throw error;
+    }
+  }
   async preflight(id, raw, accessToken) {
     return this.computers.locked(id, async () => {
       const input = snapshotInput(raw), row = this.environments.get(id);
@@ -65,17 +73,18 @@ export class Snapshots {
       if (snapshot) input.includesDataVolume = snapshot.includesDataVolume;
       const policyResult = await this.getPolicy(accessToken), policy = normalizeSnapshotPolicy(policyResult.policy);
       const info = input.action === 'delete' ? null : await this.original(row, input.action === 'restore');
-      let homeVolume = row.homeVolume;
+      let homeVolume = row.homeVolume, hostUnavailable = false;
       if (input.action !== 'delete') {
         if (input.action === 'create' || !input.includesDataVolume) homeVolume = await this.home(row, info);
         else { try { homeVolume = !info && !row.homeVolume ? null : await this.home(row, info); } catch (error) { if (error.status !== 404) throw error; homeVolume = null; } }
         if (info?.State.Running) {
-          const status = await this.computers.control(row, 'status');
-          if (status.snapshotProtocol !== 1) throw new Error('请先升级云电脑 Moss，当前版本不支持安全快照');
-          if (status.blockers?.length) throw new Error(`请先完成正在运行的工作：${status.blockers.join('、')}`);
+          const status = await this.hostStatus(row, input.action === 'restore' && input.includesDataVolume);
+          hostUnavailable = !status;
+          if (status && status.snapshotProtocol !== 1) throw new Error('请先升级云电脑 Moss，当前版本不支持安全快照');
+          if (status?.blockers?.length) throw new Error(`请先完成正在运行的工作：${status.blockers.join('、')}`);
         }
       }
-      const protection = input.action === 'restore' && !!info && (!input.includesDataVolume || !!homeVolume);
+      const protection = input.action === 'restore' && !!info && !hostUnavailable && (!input.includesDataVolume || !!homeVolume);
       const existing = this.store.list(id), bytes = existing.reduce((n, s) => n + s.bytes, 0);
       const needsSlot = input.action === 'create' || protection;
       if (needsSlot && existing.length >= policy.maxSnapshotsPerEnvironment) throw new Error('快照数量已达上限，请先删除快照（恢复前保护也占用一个名额）');
@@ -95,12 +104,12 @@ export class Snapshots {
       if (disk.bavail * disk.bsize < estimate + 64 * 1024 ** 2) throw new Error('快照存储磁盘剩余空间不足');
       if (input.action === 'restore') await this.verify(snapshot);
       const token = randomBytes(32).toString('base64url');
-      const result = { token, input, generation: row.generation || 0, protection, homeVolume, originalId: info?.Id || null,
+      const result = { token, input, generation: row.generation || 0, protection, hostUnavailable, homeVolume, originalId: info?.Id || null,
         originalRunning: !!info?.State.Running, estimatedBytes: estimate, availableBytes: policy.maxBytesPerEnvironment - bytes,
         policy, inventory: digest(existing.map(s => [s.id, s.bytes])), source: policyResult.source, expiresAt: Date.now() + 5 * 60_000,
         impact: input.action === 'delete' ? '永久删除这个快照归档，当前环境不变。' : input.action === 'create'
           ? `会短暂停止当前环境。${input.includesDataVolume ? '同时保存 HOME 数据卷。' : '只保存 Docker 环境，不备份数据卷。'}`
-          : `${input.includesDataVolume ? '系统和数据卷恢复到快照时间。' : '系统恢复到快照时间，保留当前数据卷。'}${protection ? '会创建相同范围的恢复前保护快照。' : '原容器或数据卷缺失，无法创建完整的恢复前保护。'}恢复后自动任务暂停，需手动启用。` };
+          : `${input.includesDataVolume ? '系统和数据卷恢复到快照时间。' : '系统恢复到快照时间，保留当前数据卷。'}${hostUnavailable ? '当前 Moss 服务无响应，无法确认是否有工作进行；确认后将停止原容器，可能中断未完成的工作。无法创建一致的恢复前保护快照，原容器和原卷保留供管理员处理，不会自动清理。' : protection ? '会创建相同范围的恢复前保护快照。' : '原容器或数据卷缺失，无法创建完整的恢复前保护。'}恢复后自动任务暂停，需手动启用。` };
       for (const [key, value] of this.preflights) if (value.expiresAt < Date.now()) this.preflights.delete(key);
       if (this.preflights.size >= 500) this.preflights.delete(this.preflights.keys().next().value);
       this.preflights.set(token, { ...result, environmentId: id });
@@ -227,10 +236,16 @@ export class Snapshots {
     if (!info) return;
     this.stage(op, 'stopping', { stopAttempted: true });
     if (info.State.Running) {
-      await this.computers.control(row, 'drain', { operationId: op.id });
+      if (op.preflight?.hostUnavailable) {
+        const status = await this.hostStatus(row, true);
+        if (status) {
+          if (status.snapshotProtocol !== 1 || status.blockers?.length) throw new Error('原环境状态已变化，请重新预检并完成正在运行的工作');
+          await this.computers.control(row, 'drain', { operationId: op.id });
+        }
+      } else await this.computers.control(row, 'drain', { operationId: op.id });
       this.onFence(row.id); await this.docker.stop(info.Id);
       const stopped = await this.docker.inspect(info.Id);
-      if (stopped.State.Running || stopped.State.OOMKilled || stopped.State.ExitCode === 137) throw new Error('环境未正常停止，未创建一致性快照');
+      if (stopped.State.Running || !op.preflight?.hostUnavailable && (stopped.State.OOMKilled || stopped.State.ExitCode === 137)) throw new Error('环境未正常停止，未创建一致性快照');
     }
     this.store.update(op, { originalStopped: true });
   }
@@ -289,15 +304,14 @@ export class Snapshots {
     // while the journal atomically changes its mapping and credentials.
     const promoted = this.store.promote(op, { containerId: result.Id, homeVolume: volume, controlToken, state: 'restoring', automationsPaused: true,
       programDigest: target.programDigest, version: target.version, programImage: target.imageId,
-      retired: [...(row.retired || []), { containerId: row.containerId, homeVolume: row.homeVolume || op.preflight.homeVolume, adopted: row.adoptedId === row.containerId, expiresAt: Date.now() + 24 * 3600_000 }] });
+      retired: [...(row.retired || []), { containerId: row.containerId, homeVolume: row.homeVolume || op.preflight.homeVolume, adopted: row.adoptedId === row.containerId, retain: !!op.preflight.hostUnavailable, expiresAt: Date.now() + 24 * 3600_000 }] });
     this.onFence(row.id);
     await this.activate(op, promoted);
   }
   async activate(op, row) {
     const original = await this.original(op.original, true);
     if (original?.State.Running && original.Id !== row.containerId) {
-      await this.computers.control(op.original, 'drain', { operationId: op.id });
-      await this.docker.stop(original.Id);
+      await this.stopOriginal(op);
     }
     await this.docker.start(row.containerId);
     const status = await this.computers.ready(row, row.version);
@@ -391,12 +405,12 @@ export class Snapshots {
       const row = this.environments.get(record.id); if (row.operation || row.upgrade) return;
       const kept = [];
       for (const resource of row.retired || []) {
-        if (!resource.containerId || resource.adopted || resource.expiresAt > Date.now() || resource.containerId === row.containerId) { kept.push(resource); continue; }
+        if (!resource.containerId || resource.adopted || resource.retain || resource.expiresAt > Date.now() || resource.containerId === row.containerId) { kept.push(resource); continue; }
         try {
           await this.docker.removeOwnedContainer(resource.containerId, this.computers.labels(row));
           // Never remove a shared active HOME or a volume still referenced by a
           // retained container. The Engine independently rejects volumes in use.
-          if (resource.homeVolume && resource.homeVolume !== row.homeVolume && !(row.retired || []).some(other => other !== resource && other.homeVolume === resource.homeVolume && other.expiresAt > Date.now())) {
+          if (resource.homeVolume && resource.homeVolume !== row.homeVolume && !(row.retired || []).some(other => other !== resource && other.homeVolume === resource.homeVolume && (other.retain || other.adopted || other.expiresAt > Date.now()))) {
             await this.docker.removeOwnedVolume(resource.homeVolume, this.computers.labels(row));
           }
         } catch { kept.push(resource); }

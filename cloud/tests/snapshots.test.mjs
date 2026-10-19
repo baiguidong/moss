@@ -151,3 +151,30 @@ test('recovery completes an atomic promotion and stops a restarted old container
   assert.equal(f.store.get(row.id).operation, null);
   assert.equal(f.snapshots.store.operation(row.id, op.id).status, 'completed');
 });
+test('offline Host recovery requires a combined snapshot and retains unprotected originals', async t => {
+  const f = await fixture(t), created = await f.perform({ action: 'create', includesDataVolume: true });
+  const control = f.computers.control;
+  f.computers.control = async (row, ...args) => { if (row.containerId === f.row.containerId) throw new TypeError('fetch failed'); return control(row, ...args); };
+  await assert.rejects(f.snapshots.preflight(f.row.id, { action: 'create' }), /fetch failed/);
+  const input = { action: 'restore', snapshotId: created.snapshotId }, p = await f.snapshots.preflight(f.row.id, input);
+  assert.equal(p.hostUnavailable, true); assert.equal(p.protection, false); assert.match(p.impact, /可能中断未完成/);
+  f.failStop();
+  const op = await f.wait(await f.snapshots.submit(f.row.id, { ...input, requestId: randomUUID(), preflightToken: p.token }));
+  assert.equal(op.status, 'completed', op.error); assert.equal(op.protectionId, null);
+  const row = f.store.get(f.row.id); assert.equal(row.retired[0].retain, true);
+  f.store.update(row.id, { retired: row.retired.map(r => ({ ...r, expiresAt: 0 })) }); await f.snapshots.collectRetired();
+  assert.equal((await f.docker.inspect(f.row.containerId)).State.Running, false); assert.ok(f.volumes.has('home'));
+  assert.equal(f.snapshots.list(row.id).length, 1);
+});
+test('offline preflight never bypasses authentication or a recovered Host with active work', async t => {
+  const f = await fixture(t), created = await f.perform({ action: 'create', includesDataVolume: true });
+  const input = { action: 'restore', snapshotId: created.snapshotId };
+  f.computers.control = async () => { throw Object.assign(new Error('unauthorized'), { status: 401 }); };
+  await assert.rejects(f.snapshots.preflight(f.row.id, input), /unauthorized/);
+  f.computers.control = async () => { throw new TypeError('fetch failed'); };
+  const p = await f.snapshots.preflight(f.row.id, input);
+  f.computers.control = async () => ({ snapshotProtocol: 1, blockers: ['active session'] });
+  const op = await f.wait(await f.snapshots.submit(f.row.id, { ...input, requestId: randomUUID(), preflightToken: p.token }));
+  assert.equal(op.status, 'failed'); assert.match(op.error, /状态已变化/);
+  assert.equal((await f.docker.inspect(f.row.containerId)).State.Running, true);
+});
