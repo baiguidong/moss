@@ -1,6 +1,6 @@
 # WebUI / Desktop 适配审计与完成记录（2026-10-16）
 
-按用户确认的分批方案完成本地实现，并在完成后 review、修复和回归。工作区改动尚未提交或部署。完整云端 Chromium 远程视图按此前约定暂缓；配置前提和当前限制见下文。
+按用户确认的分批方案完成实现，并在完成后 review、修复和回归。2026-10-19 已随 `0.0.1-webui.20261019.3` 的 CI 镜像部署到 181，两台已有云电脑原地升级，容器及 HOME 保留。完整云端 Chromium 远程视图按此前约定暂缓；配置前提和当前限制见下文。
 
 设计约束见 [适配方案](webui-desktop-adaptation-plan.md)，运行架构见 [环境说明](desktop-webui-cloud-environments.md)。
 
@@ -43,7 +43,7 @@ Desktop 保留原生选择器、窗口、浏览器与系统设备权限。共用
 
 ## 部署配置
 
-这些配置尚未写入生产环境。
+181 已配置实际 Web Origin，并在当前 Server 配置 `MOSS_OAUTH_WEB_CALLBACKS=https://10.0.1.181:8444/api/oauth/callback`；HTTP 验证该回调通过、未知 HTTPS 回调拒绝、Desktop loopback 保留。独立预览泛域名尚未配置，对应入口显示配置原因；第三方 OAuth 仍需提供方注册回调。
 
 | 位置 | 配置 | 用途 |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ OAuth 事务和资源/端口映射为内存状态。Host 或 Gateway 重启后�
 - App iframe 直接调用摄像头/麦克风或屏幕 API 仍受隔离策略禁止。已适配的截图通过主页面受控流程完成；没有把云电脑设备权限当作用户设备权限。App 使用浏览器原生存储/Service Worker 的场景也不等价于 Desktop webview，应使用 SDK 存储。
 - 预览资源上限为 64 MiB；App UI 导航到另一文档后需要重新建立上下文。云电脑端口代理屏蔽 Authorization/代理认证头，不承诺支持所有开发服务器认证和硬编码 localhost 地址。
 - 浏览器草稿依赖该设备的 IndexedDB；保留其他页面副本避免误删仍在编辑的数据，登出清理。它不是跨设备同步或云端备份。
-- App 原生依赖须兼容 Host 的 OS/架构；本轮未部署或逐个验收全部市场 App、第三方 OAuth 提供方与生产 DNS/TLS。
+- App 原生依赖须兼容 Host 的 OS/架构；本轮未逐个验收全部市场 App、第三方 OAuth 提供方及预览泛域名 DNS/TLS。
 
 ## 验证证据
 
@@ -84,3 +84,5 @@ PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/test-web-recovery.m
 ```
 
 浏览器脚本默认使用 Chrome，可用 `MOSS_WEB_TEST_BROWSER` 切换。`test-web-file-browser.mjs` 单独覆盖浏览目录、上传与主会话工作区选择。
+
+2026-10-19 的 181 Chromium 复验通过目录选择（含移动端）、上传/下载、工作区、权限取消/Escape/焦点、刷新与跨标签确认、App SDK/资源隔离、草稿及附件恢复。生产 URL 的实际浏览器验收通过目录选择、WebUI 快照设置及 Server 策略面板，无页面异常。CI 与部署证据见 [环境快照交付记录](webui-environment-snapshots-plan.md#实现与验证记录2026-10-19) 及仓库 `output/webui-snapshots-20261019/`。
