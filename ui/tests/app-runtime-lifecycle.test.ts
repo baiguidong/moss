@@ -53,6 +53,36 @@ afterEach(async () => {
 })
 
 describe('App Runtime lifecycle', () => {
+  it('can defer a UI-only App and still reject tampered bytes on first use', async () => {
+    const installed = await createRuntime('ui-only')
+    const root = installed.rootDir
+    const appId = 'fixture.ui-only'
+    await installed.shutdown()
+    await fs.appendFile(path.join(root, 'apps', appId, 'versions', '1.0.0', 'dist/ui/index.html'), 'tampered')
+    const restored = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize({ restore: false })
+    try {
+      await restored.restore({ shouldRestore: () => false })
+      expect(restored.packageCache.has(`${appId}@1.0.0`)).toBe(false)
+      await expect(restored.getActivePackage(appId)).rejects.toThrow(/Checksum mismatch/)
+    } finally { await restored.shutdown() }
+  })
+
+  it('prepares an on-demand Backend only when it is invoked after restoration', async () => {
+    const installed = await createRuntime('on-demand-single')
+    const root = installed.rootDir
+    await installed.shutdown()
+    const restored = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize()
+    try {
+      const appId = 'fixture.on-demand-single'
+      const instanceId = defaultInstanceId(appId)
+      const runtimeRecord = restored.runtimeForInstance(appId, instanceId)
+      expect(runtimeRecord).toBeTruthy()
+      expect(restored.supervisor.processes.has(runtimeRecord.key)).toBe(false)
+      expect(await restored.invoke(appId, instanceId, 'echo', 'started on use')).toMatchObject({ input: 'started on use' })
+      expect(restored.supervisor.status(runtimeRecord.key)?.state).toBe('running')
+    } finally { await restored.shutdown() }
+  })
+
   it('replaces a running old generation and rejects preparation from an old queued action', async () => {
     const runtime = await createRuntime('persistent-single')
     try {

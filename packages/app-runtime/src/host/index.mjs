@@ -180,12 +180,12 @@ export class AppRuntimeHost {
     return this
   }
 
-  async restoreAllOwners({ signal } = {}) {
+  async restoreAllOwners({ signal, concurrency = 1, shouldRestore } = {}) {
     const owners = this.installations.listOwners()
     if (!owners.length) owners.push(this.defaultOwner)
     for (const owner of owners) {
       if (signal?.aborted) break
-      await this.withOwner(owner, () => this.restore({ signal }))
+      await this.withOwner(owner, () => this.restore({ signal, concurrency, shouldRestore }))
     }
     return this
   }
@@ -1148,17 +1148,25 @@ export class AppRuntimeHost {
       return
     }
     if (!this.automaticStartAllowed()) return
-    await this.prepareRuntime(runtimeRecord)
-    if (shouldRun) await this.supervisor.start(runtimeRecord.key)
+    // On-demand Backends are prepared when an action or Host event uses them.
+    if (shouldRun) {
+      await this.prepareRuntime(runtimeRecord)
+      await this.supervisor.start(runtimeRecord.key)
+    }
   }
 
-  async restore({ signal } = {}) {
-    for (const installation of this.installations.list()) {
-      if (signal?.aborted) break
-      try { await this.reconcileApp(installation.appId) } catch (error) {
-        this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
+  async restore({ signal, concurrency = 1, shouldRestore } = {}) {
+    const installations = this.installations.list().filter(installation => !shouldRestore || shouldRestore(installation, this.currentOwner()))
+    const workerCount = Math.min(installations.length, Math.max(1, Math.min(4, Math.trunc(concurrency) || 1)))
+    let next = 0
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (!signal?.aborted && next < installations.length) {
+        const installation = installations[next++]
+        try { await this.reconcileApp(installation.appId) } catch (error) {
+          this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
+        }
       }
-    }
+    }))
   }
 
   async activateVersion(appId, version, options = {}) {

@@ -401,7 +401,7 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
                     <AppCapabilityButton app={app} compact />
-                    {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>}
+                    {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : trust?.status === "unsigned" ? "未签名" : "使用时校验"}</span>}
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
                     {isExpanded && <span>{formatTimestamp(app.updatedAt)}</span>}
                   </div>

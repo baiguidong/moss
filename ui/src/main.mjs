@@ -2,7 +2,7 @@ import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
 import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
 import { createConnectorAppHost } from './apps/connector-app-host.mjs';
 import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/discovery.mjs';
-import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus } from './connector-hub-ipc.mjs';
+import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
@@ -189,7 +189,7 @@ import {
   isAllowedAppMediaPermission,
 } from './apps/app-platform-host.mjs';
 import { createAppMarketplaceService, registerAppMarketplaceIpc } from './apps/app-marketplace.mjs';
-import { requireEnabledAppForLaunch } from './apps/app-launch-policy.mjs';
+import { requireEnabledAppForLaunch, requireVerifiedAppForLaunch } from './apps/app-launch-policy.mjs';
 import { loadAppMarketConfiguration, loadAppTrustConfiguration } from './apps/app-trust.mjs';
 import {
   findAssistantDirByName,
@@ -552,6 +552,7 @@ let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
 let appRuntimeRestorePending = false;
+let deferredUiVersions = new Map();
 let appRuntimeRestoreController = null;
 let appRuntimeRestorePromise = null;
 let connectorAppHost = null;
@@ -6779,8 +6780,9 @@ async function shutdownSessionAgentTeam(sessionRecord) {
  */
 const mossAppEventHandler = createMossAppEventHandler(
   {
-    launchApp: (name) => {
-      launchAppWindow(getPublishedApp(name), { mode: 'published' })
+    launchApp: async (name) => {
+      await requireVerifiedAppForLaunch({ runtime: appRuntime, appId: name });
+      return launchAppWindow(getPublishedApp(name), { mode: 'published' });
     },
     openBrowser: async (payload) => {
       const record = payload.sessionId ? getSessionRecord(payload.sessionId) : null;
@@ -8439,14 +8441,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       });
     }
   };
-  const refreshRestoredAppServices = async () => {
+  const refreshRestoredAppServices = async (storedApps = listAllStoredApps()) => {
     await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
-    for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused)) {
+    const storedById = new Map(storedApps.map(stored => [stored.id, stored]));
+    for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused
+      && (!storedById.has(entry.appId) || !storedById.get(entry.appId)?.manifest
+        || storedById.get(entry.appId).manifest.host?.protocols?.includes(MOSS_AGENT_PROTOCOL)))) {
       for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
         agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
       }
     }
-    await connectorAppHost.refresh();
+    for (const stored of storedApps) {
+      if (!stored.connectorApp && !stored.manifest?.connectorApp) continue;
+      await connectorAppHost.refresh(stored.id, { connectorApp: stored.connectorApp || stored.manifest?.connectorApp });
+    }
     await appTraceHost.refresh();
   };
   if (isWebHost) {
@@ -8485,7 +8493,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     getInstalledApp: id => listAllStoredApps().find(app => (app.id || app.name) === id),
     confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(hostConfirmations.dialog, manifest, permissions, details),
   });
-  connectorAppHost = createConnectorAppHost({ getRuntime: () => appRuntime });
+  connectorAppHost = createConnectorAppHost({ getRuntime: () => appRuntime, isCurrentActivation: isConnectorAppActivationCurrent });
   setConnectorAppLifecycle({
     getInstallation: id => appRuntime?.getInstallation(id),
     install: async () => { throw new Error('请从 App 应用市场安装在线服务'); },
@@ -8743,19 +8751,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     appRuntimeRestoreController = new AbortController();
     const restoreSignal = appRuntimeRestoreController.signal;
     // Let the renderer paint and load its sessions before validating and
-    // starting every installed App. App state is already available to IPC.
+    // starting background Apps. App state is already available to IPC.
     setTimeout(() => {
       if (restoreSignal.aborted) return;
       appRuntimeRestorePromise = (async () => {
         const startedAt = Date.now();
-        await appRuntime.restoreAllOwners({ signal: restoreSignal });
+        const startupApps = listAllStoredApps();
+        deferredUiVersions = new Map(startupApps
+          .filter(stored => stored.manifest && !stored.manifest.backend && stored.currentVersion)
+          .map(stored => [stored.id, stored.currentVersion]));
+        // A bounded number of independent Apps can validate and start together.
+        await appRuntime.restoreAllOwners({
+          signal: restoreSignal,
+          concurrency: 3,
+          shouldRestore: (installation, owner) => owner.key !== 'host'
+            || deferredUiVersions.get(installation.appId) !== installation.activeVersion,
+        });
         if (restoreSignal.aborted) return;
+        const reconciledAt = Date.now();
         await registerStoredApps(restoreSignal);
         if (restoreSignal.aborted) return;
-        await refreshRestoredAppServices();
+        const registeredAt = Date.now();
+        await refreshRestoredAppServices(startupApps);
+        const installations = appRuntime.installations.list();
+        const validatedApps = installations.filter(entry => appRuntime.packageCache.has(`${entry.appId}@${entry.activeVersion}`)).length;
         mossLog('info', 'app-runtime', 'Installed Apps restored after window startup', {
-          count: appRuntime.installations.list().length,
+          count: installations.length,
+          validatedApps,
+          deferredApps: installations.length - validatedApps,
           durationMs: Date.now() - startedAt,
+          reconcileMs: reconciledAt - startedAt,
+          registrationMs: registeredAt - reconciledAt,
+          servicesMs: Date.now() - registeredAt,
         });
       })().catch(error => mossLog('error', 'app-runtime', 'Unable to finish App startup restoration', {
         error: error?.message || String(error),
@@ -10558,9 +10585,11 @@ ipcMain.handle('app:list', async () => {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
     try {
-      if (appRuntimeRestorePending) {
-        // The initial desktop list needs only persisted state and registry
-        // metadata. Full package validation continues after the window paints.
+      if (appRuntimeRestorePending || (deferredUiVersions.has(stored.id)
+        && deferredUiVersions.get(stored.id) === appRuntime?.getInstallation(stored.id)?.activeVersion
+        && !appRuntime.packageCache.has(`${stored.id}@${deferredUiVersions.get(stored.id)}`))) {
+        // A lightweight list can use registry metadata until this package is
+        // verified. UI-only Apps are verified when opened.
         const instances = manifest?.backend ? await Promise.all(
           (appRuntime?.instances.list(stored.id) || []).map(async instance => {
             const secrets = await appRuntime.credentials.get(stored.id, instance.id);
@@ -10642,6 +10671,7 @@ updateGuardedAppIpc.handle('app:launch', async (_event, { name, route }) => {
   try {
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
+    await requireVerifiedAppForLaunch({ runtime: appRuntime, appId: registryEntry.id || name });
     launchAppWindow(getPublishedApp(registryEntry.id || name), { mode: 'published', ...(typeof route === 'string' && /^#\/[a-zA-Z0-9/_?=&.%+-]*$/.test(route) ? { route } : {}) });
     return { ok: true };
   } catch (err) {
@@ -10655,7 +10685,7 @@ updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
     if (!registryEntry) throw new Error(`Unknown App: ${name}`);
     const appEntry = getPublishedApp(registryEntry.id || name);
-    requireEnabledAppForLaunch({
+    await requireVerifiedAppForLaunch({
       runtime: appRuntime,
       appId: appEntry.id || appEntry.name,
       displayName: appEntry.displayName || appEntry.title || appEntry.id || appEntry.name,

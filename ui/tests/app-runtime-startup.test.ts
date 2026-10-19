@@ -5,7 +5,48 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createAppRuntime } from '../src/apps/app-runtime.mjs'
 import { AppMcpHost, createMcpProtocolDefinition, MCP_METHODS, MCP_PROTOCOL } from '../src/apps/app-mcp-host.mjs'
-import { defaultInstanceId, writePackageChecksums } from '../../packages/app-runtime/src/index.mjs'
+import { AppRuntimeHost, defaultInstanceId, writePackageChecksums } from '../../packages/app-runtime/src/index.mjs'
+
+test('desktop restoration runs independent Apps with a bounded worker pool', async () => {
+  const ids = Array.from({ length: 9 }, (_, index) => `app-${index}`)
+  let active = 0, maximum = 0
+  const completed: string[] = []
+  const errors: string[] = []
+  const host = {
+    installations: { list: () => ids.map(appId => ({ appId })) },
+    reconcileApp: async (appId: string) => {
+      active += 1
+      maximum = Math.max(maximum, active)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      active -= 1
+      if (appId === 'app-4') throw new Error('damaged package')
+      completed.push(appId)
+    },
+    publishRuntimeEvent: (event: { appId: string }) => { errors.push(event.appId) },
+  } as unknown as AppRuntimeHost
+  await AppRuntimeHost.prototype.restore.call(host, { concurrency: 3 })
+  expect(maximum).toBe(3)
+  expect(completed).toHaveLength(8)
+  expect(errors).toEqual(['app-4'])
+})
+
+test('desktop restoration stops scheduling new Apps after cancellation', async () => {
+  const controller = new AbortController()
+  const started: string[] = []
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const host = {
+    installations: { list: () => Array.from({ length: 8 }, (_, index) => ({ appId: `app-${index}` })) },
+    reconcileApp: async (appId: string) => { started.push(appId); await gate },
+    publishRuntimeEvent: () => {},
+  } as unknown as AppRuntimeHost
+  const restoring = AppRuntimeHost.prototype.restore.call(host, { signal: controller.signal, concurrency: 3 })
+  expect(started).toHaveLength(3)
+  controller.abort()
+  release()
+  await restoring
+  expect(started).toHaveLength(3)
+})
 
 test('restored Backends can register and inspect MCP before desktop initialization finishes', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-startup-'))

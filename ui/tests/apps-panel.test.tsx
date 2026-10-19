@@ -55,6 +55,13 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 }
 
 describe('Apps management', () => {
+  test('labels an unverified cached App without claiming it is unsigned', () => {
+    const app = settingsApp();
+    const html = renderToStaticMarkup(<AppsPanel apps={[app]} initialExpandedApp={app.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    expect(html).toContain('使用时校验');
+    expect(html).not.toContain('未签名');
+  });
+
   test('keeps the Apps page in a loading state before the first list completes', () => {
     const props = { apps: [], versionsByApp: {}, onLaunch: () => {}, onDelete: () => {}, onIterate: () => {}, onLoadVersions: () => {}, onRollback: () => {}, onRefresh: async () => {} };
     const loading = renderToStaticMarkup(<AppsPanel {...props} loading />);

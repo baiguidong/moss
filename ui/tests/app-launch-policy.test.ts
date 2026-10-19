@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { requireEnabledAppForLaunch } from '../src/apps/app-launch-policy.mjs'
+import { requireEnabledAppForLaunch, requireVerifiedAppForLaunch } from '../src/apps/app-launch-policy.mjs'
 
 function runtimeWith(enabled?: boolean) {
   return {
@@ -28,5 +28,13 @@ describe('App launch policy', () => {
         displayName: '示例 App',
       })).toThrow('“示例 App”未启用，请先启用后再打开。')
     }
+  })
+
+  it('validates the active package before opening a cached App entry', async () => {
+    const runtime = {
+      ...runtimeWith(true),
+      getActivePackage: async () => { throw new Error('Checksum mismatch') },
+    }
+    await expect(requireVerifiedAppForLaunch({ runtime, appId: 'example.app' })).rejects.toThrow('Checksum mismatch')
   })
 })

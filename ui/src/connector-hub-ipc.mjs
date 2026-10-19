@@ -2476,6 +2476,12 @@ export async function exportConnectorPackage(connectorId, destination, expectedR
 }
 
 /** Activate a version while retaining CLI state paths, credentials and user edits. */
+export function isConnectorAppActivationCurrent(appId, appVersion, connectorId) {
+  if (!appId || !appVersion || !connectorId) return false;
+  const meta = readJsonFile(path.join(connectorDir(connectorId), CONNECTOR_META_FILE), null);
+  return meta?.appId === appId && meta?.appVersion === appVersion && meta.enabled !== false;
+}
+
 export async function activateConnectorApp(packageInfo, isCurrent = () => true) {
   const { manifest, root } = packageInfo;
   const id = manifest.connectorApp.id;
