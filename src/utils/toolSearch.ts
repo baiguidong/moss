@@ -6,7 +6,6 @@
  * whose standard schemas are added to the next request.
  */
 
-import memoize from 'lodash-es/memoize.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -115,16 +114,15 @@ export function getAutoToolSearchCharThreshold(model: string): number {
 
 /**
  * Get the total token count for all deferred tools using the token counting API.
- * Memoized by deferred tool names — cache is invalidated when MCP servers connect/disconnect.
+ * Counts are cached by the resolved API schemas and provider identity in analyzeContext.
  * Returns null if the API is unavailable (caller should fall back to char heuristic).
  */
-const getDeferredToolTokenCount = memoize(
-  async (
+async function getDeferredToolTokenCount(
     tools: Tools,
     getToolPermissionContext: () => Promise<ToolPermissionContext>,
     agents: AgentDefinition[],
     model: string,
-  ): Promise<number | null> => {
+): Promise<number | null> {
     const deferredTools = tools.filter(t => isDeferredTool(t))
     if (deferredTools.length === 0) return 0
 
@@ -140,13 +138,7 @@ const getDeferredToolTokenCount = memoize(
     } catch {
       return null // Fall back to char heuristic
     }
-  },
-  (tools: Tools) =>
-    tools
-      .filter(t => isDeferredTool(t))
-      .map(t => t.name)
-      .join(','),
-)
+}
 
 /**
  * Tool search mode. Determines how deferrable tools (MCP + host tools marked

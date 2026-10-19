@@ -456,6 +456,7 @@ export async function createAppAuthoringHost(options) {
     if (grants.some(grant => !artifact.manifest.permissions.includes(grant))) fail('Preview permission was not requested by the target App', APP_ERROR_CODES.permissionDenied)
     if (!await options.authorizePreview?.(artifact.manifest, grants)) fail('Preview execution was not authorized', APP_ERROR_CODES.permissionDenied)
     requireProjectTool(project.id, context)
+    await artifactFor(input.artifactRef, context) // Consent may remain open while the build directory changes.
     const item = operation('preview', input, project, 'starting')
     await changed(item)
     launch(item, async signal => {
@@ -527,6 +528,7 @@ export async function createAppAuthoringHost(options) {
     if (item.grantsHash !== digest([...(getRuntime().installations.get(project.appId)?.grants || [])].sort())) fail('Installation permissions changed after preparation; prepare a new release')
     if (!await options.authorizeInstall(artifact.manifest, item.result)) fail('Installation was not authorized', APP_ERROR_CODES.permissionDenied)
     requireProjectTool(project.id, context)
+    await artifactFor(item.artifactRef, context)
     const authorizedState = await installed(project.appId)
     if (authorizedState.version !== current.version || authorizedState.installationRevision !== current.installationRevision || item.grantsHash !== digest([...(getRuntime().installations.get(project.appId)?.grants || [])].sort())) fail('Installation changed during authorization')
     item.commitKey = input.submissionKey; item.status = 'committing'

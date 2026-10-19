@@ -2,6 +2,7 @@
 // with Main; these handlers preserve the existing IPC responses and ordering.
 export function registerSessionControlIpc({
   ipcMain,
+  abortPendingSends = () => {},
   stopComputerUse = async () => {},
   stopAppTasks = async () => {},
   getSessionRecord,
@@ -17,12 +18,13 @@ export function registerSessionControlIpc({
 }) {
   ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
     const sessionRecord = getSessionRecord(sessionId);
-    await stopComputerUse(sessionId);
-    await stopAppTasks(sessionId);
-    const runtime = sessionRecord.runtime;
+    abortPendingSends(sessionId);
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       projectTaskCancellationRequests.add(sessionRecord.id);
     }
+    await stopComputerUse(sessionId);
+    await stopAppTasks(sessionId);
+    const runtime = sessionRecord.runtime;
     await Promise.resolve(runtime?.abort?.());
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
@@ -57,7 +59,7 @@ export function registerSessionControlIpc({
 
     const result = await respondToPendingQuestionRequest(pending, {
       allowed: true,
-      source: 'desktop',
+      source: _event?.transport === 'web' ? 'web' : 'desktop',
       resolutionAnswers: isPlainObject(answers) ? answers : {},
       permissionDecision: {
         behavior: 'allow',
@@ -82,7 +84,7 @@ export function registerSessionControlIpc({
 
     await respondToPendingQuestionRequest(pending, {
       allowed: false,
-      source: 'desktop',
+      source: _event?.transport === 'web' ? 'web' : 'desktop',
       permissionDecision: {
         behavior: 'deny',
         message: typeof message === 'string' && message.trim()

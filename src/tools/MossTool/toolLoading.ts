@@ -3,6 +3,7 @@ import { getAdvancedSetting } from '../../services/advancedSettings.js'
 export type MossToolLoadingMode = 'always' | 'deferred'
 
 export const MOSS_TOOL_GROUPS = {
+  presentation: ['moss_present'],
   browser: ['moss_browser_open'],
   connector: [
     'connector_cli_setup',
@@ -15,6 +16,7 @@ export const MOSS_TOOL_GROUPS = {
 } as const
 
 export const DEFAULT_MOSS_TOOL_LOADING = {
+  moss_present: 'always',
   moss_browser_open: 'always',
   connector_cli_setup: 'deferred',
   connector_mcp_authenticate: 'deferred',

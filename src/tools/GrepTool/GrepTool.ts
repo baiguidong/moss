@@ -70,16 +70,19 @@ const inputSchema = lazySchema(() =>
     '-i': semanticBoolean(z.boolean().optional()).describe(
       'Case insensitive search (rg -i)',
     ),
+    '-o': semanticBoolean(z.boolean().optional()).describe(
+      'Only show matched text instead of full lines (rg -o). In content mode, context lines are omitted. In count mode, counts occurrences instead of matching lines. Ignored in files_with_matches mode.',
+    ),
     type: z
       .string()
       .optional()
       .describe(
         'File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.',
       ),
-    head_limit: semanticNumber(z.number().optional()).describe(
+    head_limit: semanticNumber(z.number().int().nonnegative().optional()).describe(
       'Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 250 when unspecified. Pass 0 for unlimited (use sparingly — large result sets waste context).',
     ),
-    offset: semanticNumber(z.number().optional()).describe(
+    offset: semanticNumber(z.number().int().nonnegative().optional()).describe(
       'Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0.',
     ),
     multiline: semanticBoolean(z.boolean().optional()).describe(
@@ -150,6 +153,13 @@ const outputSchema = lazySchema(() =>
     numMatches: z.number().optional(), // For count mode
     appliedLimit: z.number().optional(), // The limit that was applied (if any)
     appliedOffset: z.number().optional(), // The offset that was applied
+    totalFiles: z.number().optional(), // All matching files before pagination (file/count modes)
+    totalLines: z.number().optional(), // All output lines before pagination (content mode)
+    totalMatches: z.number().optional(), // Full count-mode sum, in countUnit
+    countUnit: z.enum(['matching_lines', 'occurrences']).optional(),
+    countIsComplete: z.boolean().optional(),
+    truncated: z.boolean().optional(), // Pagination or omitted long-line content
+    contentTruncated: z.boolean().optional(),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>
@@ -257,28 +267,40 @@ export const GrepTool = buildTool({
       numMatches,
       appliedLimit,
       appliedOffset,
+      totalFiles,
+      totalLines,
+      totalMatches,
+      countUnit,
+      countIsComplete,
+      contentTruncated,
     },
     toolUseID,
   ) {
     if (mode === 'content') {
       const limitInfo = formatLimitInfo(appliedLimit, appliedOffset)
-      const resultContent = content || 'No matches found'
+      const resultContent = content || (totalLines ? 'No results on this page.' : 'No matches found')
       const finalContent = limitInfo
         ? `${resultContent}\n\n[Showing results with pagination = ${limitInfo}]`
         : resultContent
       return {
         tool_use_id: toolUseID,
         type: 'tool_result',
-        content: finalContent,
+        content: finalContent + (totalLines !== undefined
+          ? `\n[Showing ${_numLines ?? 0} of ${totalLines} output lines.]` : '') +
+          (contentTruncated ? '\n[Long matching lines were omitted by the output width limit. Use -o or a narrower pattern to read matched text.]' : ''),
       }
     }
 
     if (mode === 'count') {
       const limitInfo = formatLimitInfo(appliedLimit, appliedOffset)
-      const rawContent = content || 'No matches found'
+      const rawContent = content || (totalFiles ? 'No results on this page.' : 'No matches found')
       const matches = numMatches ?? 0
       const files = numFiles ?? 0
-      const summary = `\n\nFound ${matches} total ${matches === 1 ? 'occurrence' : 'occurrences'} across ${files} ${files === 1 ? 'file' : 'files'}.${limitInfo ? ` with pagination = ${limitInfo}` : ''}`
+      const unit = countUnit === 'matching_lines' ? 'matching lines' : countUnit === 'occurrences' ? 'occurrences' : 'matches'
+      const summary = `\n\nShown: ${matches} ${unit} across ${files} files.` +
+        (countIsComplete && totalMatches !== undefined && totalFiles !== undefined
+          ? ` Total: ${totalMatches} ${unit} across ${totalFiles} files.` : '') +
+        (limitInfo ? ` [Pagination: ${limitInfo}]` : '')
       return {
         tool_use_id: toolUseID,
         type: 'tool_result',
@@ -292,11 +314,11 @@ export const GrepTool = buildTool({
       return {
         tool_use_id: toolUseID,
         type: 'tool_result',
-        content: 'No files found',
+        content: totalFiles ? `No results on this page. Total: ${totalFiles} matching files.` : 'No files found',
       }
     }
     // head_limit has already been applied in call() method, so just show all filenames
-    const result = `Found ${numFiles} ${plural(numFiles, 'file')}${limitInfo ? ` ${limitInfo}` : ''}\n${filenames.join('\n')}`
+    const result = `${totalFiles !== undefined ? `Showing ${numFiles} of ${totalFiles} matching files` : `Found ${numFiles} ${plural(numFiles, 'file')}`}${limitInfo ? ` (${limitInfo})` : ''}\n${filenames.join('\n')}`
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
@@ -316,6 +338,7 @@ export const GrepTool = buildTool({
       context,
       '-n': show_line_numbers = true,
       '-i': case_insensitive = false,
+      '-o': only_matching = false,
       head_limit,
       offset = 0,
       multiline = false,
@@ -323,7 +346,7 @@ export const GrepTool = buildTool({
     { abortController, getAppState },
   ) {
     const absolutePath = path ? expandPath(path) : getCwd()
-    const args = ['--hidden']
+    const args = ['--hidden', '--with-filename']
 
     // Exclude VCS directories to avoid noise from version control metadata
     for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
@@ -349,6 +372,7 @@ export const GrepTool = buildTool({
     } else if (output_mode === 'count') {
       args.push('-c')
     }
+    if (only_matching && output_mode !== 'files_with_matches') args.push('-o')
 
     // Add line numbers if requested
     if (show_line_numbers && output_mode === 'content') {
@@ -356,7 +380,7 @@ export const GrepTool = buildTool({
     }
 
     // Add context flags (-C/context takes precedence over context_before/context_after)
-    if (output_mode === 'content') {
+    if (output_mode === 'content' && !only_matching) {
       if (context !== undefined) {
         args.push('-C', context.toString())
       } else if (context_c !== undefined) {
@@ -458,6 +482,10 @@ export const GrepTool = buildTool({
         filenames: [],
         content: finalLines.join('\n'),
         numLines: finalLines.length,
+        totalLines: results.length,
+        countIsComplete: true,
+        contentTruncated: results.some(line => /\[Omitted long (?:matching|context) line\]/.test(line)),
+        truncated: offset > 0 || appliedLimit !== undefined || results.some(line => /\[Omitted long (?:matching|context) line\]/.test(line)),
         ...(appliedLimit !== undefined && { appliedLimit }),
         ...(offset > 0 && { appliedOffset: offset }),
       }
@@ -485,27 +513,23 @@ export const GrepTool = buildTool({
         return line
       })
 
-      // Parse count output to extract total matches and file count
-      let totalMatches = 0
-      let fileCount = 0
-      for (const line of finalCountLines) {
+      const sumCounts = (lines: string[]) => lines.reduce((sum, line) => {
         const colonIndex = line.lastIndexOf(':')
-        if (colonIndex > 0) {
-          const countStr = line.substring(colonIndex + 1)
-          const count = parseInt(countStr, 10)
-          if (!isNaN(count)) {
-            totalMatches += count
-            fileCount += 1
-          }
-        }
-      }
+        const count = Number(line.substring(colonIndex + 1))
+        return sum + (Number.isSafeInteger(count) && count >= 0 ? count : 0)
+      }, 0)
 
       const output = {
         mode: 'count' as const,
-        numFiles: fileCount,
+        numFiles: finalCountLines.length,
         filenames: [],
         content: finalCountLines.join('\n'),
-        numMatches: totalMatches,
+        numMatches: sumCounts(finalCountLines),
+        totalMatches: sumCounts(results),
+        totalFiles: results.length,
+        countUnit: only_matching || multiline ? 'occurrences' as const : 'matching_lines' as const,
+        countIsComplete: true,
+        truncated: offset > 0 || appliedLimit !== undefined,
         ...(appliedLimit !== undefined && { appliedLimit }),
         ...(offset > 0 && { appliedOffset: offset }),
       }
@@ -555,6 +579,9 @@ export const GrepTool = buildTool({
       mode: 'files_with_matches' as const,
       filenames: relativeMatches,
       numFiles: relativeMatches.length,
+      totalFiles: sortedMatches.length,
+      countIsComplete: true,
+      truncated: offset > 0 || appliedLimit !== undefined,
       ...(appliedLimit !== undefined && { appliedLimit }),
       ...(offset > 0 && { appliedOffset: offset }),
     }

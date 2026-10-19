@@ -41,7 +41,13 @@ export function getLargeOutputInstructions(
   contentLength: number,
   formatDescription: string,
   maxReadLength?: number,
+  storage?: { storageComplete?: boolean; storedBytes?: number },
 ): string {
+  if (storage?.storageComplete === false) {
+    return `Result exceeds the output storage limit. Only a partial snapshot (${storage.storedBytes ?? 0} bytes) was saved to ${rawOutputPath}.\n` +
+      `Original format: ${formatDescription}. The saved prefix may not be valid JSON; do not assume jq can parse it.\n` +
+      `Use Read with offset and limit to inspect the saved portion. The omitted content cannot be recovered from this file; use server pagination/filtering if available. State which portion you actually inspected when summarizing.`
+  }
   const baseInstructions =
     `Error: result (${contentLength.toLocaleString()} characters) exceeds maximum allowed tokens. Output has been saved to ${rawOutputPath}.\n` +
     `Format: ${formatDescription}\n` +

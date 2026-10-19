@@ -43,6 +43,8 @@ export function PermissionModeSelector({
   const confirmation = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  // A mode changed elsewhere or a running task invalidates this confirmation.
+  useEffect(() => setConfirmBypass(false), [value, disabled]);
   useEffect(() => {
     const dialog = confirmation.current;
     if (!dialog) return;
@@ -50,6 +52,19 @@ export function PermissionModeSelector({
       if (!dialog.open) dialog.showModal();
     } else if (dialog.open) dialog.close();
   }, [confirmBypass, disabled]);
+  useEffect(() => {
+    if (!confirmBypass) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !confirmation.current?.open
+        || Array.from(document.querySelectorAll('dialog:modal')).at(-1) !== confirmation.current) return;
+      // Radix menus listen at document level too; only dismiss the top dialog.
+      event.preventDefault();
+      event.stopPropagation();
+      setConfirmBypass(false);
+    };
+    window.addEventListener('keydown', cancel, true);
+    return () => window.removeEventListener('keydown', cancel, true);
+  }, [confirmBypass]);
   const selectMode = (rawMode: string) => {
     const mode = rawMode as PermissionMode;
     if (mode === value) return;

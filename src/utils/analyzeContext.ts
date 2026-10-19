@@ -1,3 +1,6 @@
+import { ToolTokenCache } from './toolTokenCache.js'
+import { getSessionApiOverrides } from './sessionApiOverrides.js'
+import { getSessionIdContext } from './sessionIdContext.js'
 import type { Anthropic } from '@anthropic-ai/sdk'
 import {
   getSystemPrompt,
@@ -207,6 +210,8 @@ export interface ContextData {
   } | null
 }
 
+const toolDefinitionTokenCache = new ToolTokenCache()
+
 export async function countToolDefinitionTokens(
   tools: Tools,
   getToolPermissionContext: () => Promise<ToolPermissionContext>,
@@ -223,7 +228,11 @@ export async function countToolDefinitionTokens(
       }),
     ),
   )
-  const result = await countTokensWithFallback([], toolSchemas)
+  const result = await toolDefinitionTokenCache.count([
+    getSessionIdContext(), model, getSessionApiOverrides(),
+    process.env.MOSS_MODEL_BASE_URL, process.env.MOSS_MODEL_AUTH_TOKEN,
+    process.env.ANTHROPIC_BASE_URL, process.env.ANTHROPIC_AUTH_TOKEN, process.env.ANTHROPIC_API_KEY,
+  ], toolSchemas, () => countTokensWithFallback([], toolSchemas))
   if (result === null || result === 0) {
     const toolNames = tools.map(t => t.name).join(', ')
     logForDebugging(

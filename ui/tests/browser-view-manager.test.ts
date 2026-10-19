@@ -255,6 +255,16 @@ describe('BrowserViewManager', () => {
     expect(failing.events.some(event => event.channel === 'browser:external-url')).toBe(false);
   });
 
+  it('creates a background tool tab without changing the currently viewed tab', async () => {
+    const { manager } = createHarness();
+    const before = manager.getState('presentation');
+    const after = await manager.openTabAndWait({ sessionId: 'presentation', url: 'https://example.test/result', activate: false });
+    expect(after.activeTabId).toBe(before.activeTabId);
+    expect(after.openedTabId).not.toBe(before.activeTabId);
+    expect(after.tabs.some(tab => tab.id === after.openedTabId)).toBe(true);
+    expect(manager.activateTab({ sessionId: 'presentation', tabId: after.openedTabId }).activeTabId).toBe(after.openedTabId);
+  });
+
   it('owns tab navigation and attaches only the active WebContentsView', async () => {
     const { manager, views, children } = createHarness();
     const initial = manager.getState('session-1');

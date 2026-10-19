@@ -67,6 +67,7 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
 
   function git(ctx, args, { input, cwd = ctx.directory, index, maxBytes = 32 * 1024 * 1024 } = {}) {
     return new Promise((resolve, reject) => {
+      ctx.signal?.throwIfAborted();
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
       Object.assign(env, {
         GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_ATTR_NOSYSTEM: '1',
@@ -81,12 +82,14 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
       let size = 0;
       let stderr = '';
       let failure;
-      const timer = setTimeout(() => { failure = new Error('版本操作超时，请稍后重试。'); child.kill(); }, 60000);
+      const timer = setTimeout(() => { failure = new Error('版本操作超时，请稍后重试。'); child.kill('SIGKILL'); }, ctx.timeoutMs || 60000);
+      const abort = () => { failure = ctx.signal.reason || new Error('文件观察已取消'); child.kill('SIGKILL'); };
+      ctx.signal?.addEventListener('abort', abort, { once: true });
       child.stdout.on('data', chunk => { size += chunk.length; if (size > maxBytes) { failure = new Error('版本数据超过读取上限。'); child.kill(); } else chunks.push(chunk); });
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
       child.stdin.on('error', () => {});
-      child.on('error', error => { clearTimeout(timer); reject(new Error(error.code === 'ENOENT' ? '未找到 Git，请安装 Git 后重试。' : error.message)); });
-      child.on('close', code => { clearTimeout(timer); if (failure || code !== 0) reject(failure || new Error(`版本操作失败：${stderr.trim() || code}`)); else resolve(Buffer.concat(chunks)); });
+      child.on('error', error => { clearTimeout(timer); ctx.signal?.removeEventListener('abort', abort); reject(new Error(error.code === 'ENOENT' ? '未找到 Git，请安装 Git 后重试。' : error.message)); });
+      child.on('close', code => { clearTimeout(timer); ctx.signal?.removeEventListener('abort', abort); if (failure || code !== 0) reject(failure || new Error(`版本操作失败：${stderr.trim() || code}`)); else resolve(Buffer.concat(chunks)); });
       child.stdin.end(input);
     });
   }
@@ -177,15 +180,20 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
   }
 
   // Read the filesystem, rather than the Agent edit log, to include shell and external edits.
-  async function scan(ctx, capture = false) {
+  async function scan(ctx, capture = false, signal) {
+    signal?.throwIfAborted();
     let staging;
     if (capture) { await fsp.mkdir(ctx.directory, { recursive: true, mode: 0o700 }); staging = await fsp.mkdtemp(path.join(ctx.directory, 'capture-')); }
     const entries = [];
+    const checked = [];
     const excluded = [];
     let total = 0;
     async function walk(directory, prefix = '') {
+      const directoryBefore = capture ? await fsp.stat(directory) : null;
       const names = (await fsp.readdir(directory)).sort();
+      if (capture) checked.push([directory, directoryBefore]);
       for (const name of names) {
+        signal?.throwIfAborted();
         const relative = prefix ? `${prefix}/${name}` : name;
         const absolute = path.join(directory, name);
         const stat = await fsp.lstat(absolute);
@@ -206,16 +214,26 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
           const opened = await handle.stat();
           if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev) throw new Error('文件正在变化，请稍后重试。');
           content = await handle.readFile();
+          signal?.throwIfAborted();
           const after = await handle.stat();
           if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || content.length !== stat.size) throw new Error('文件正在变化，请稍后重试。');
         } finally { await handle.close(); }
         total += content.length;
         const oid = createHash('sha1').update(`blob ${content.length}\0`).update(content).digest('hex');
         if (staging) await fsp.writeFile(path.join(staging, String(entries.length)), content);
+        if (capture) checked.push([absolute, stat]);
         entries.push({ path: relative, oid, size: content.length, mode: stat.mode & 0o111 ? '100755' : '100644' });
       }
     }
-    try { await walk(ctx.root); return { entries, excluded, staging }; }
+    try {
+      await walk(ctx.root);
+      for (const [file, before] of checked) {
+        signal?.throwIfAborted();
+        const after = await fsp.lstat(file);
+        if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('捕获期间文件发生变化，无法确认完整范围');
+      }
+      return { entries, excluded, staging };
+    }
     catch (error) { if (staging) await fsp.rm(staging, { recursive: true, force: true }); throw error; }
   }
 
@@ -366,6 +384,55 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
   }
 
   return {
+    captureObservation: (workspace, { signal } = {}) => run(workspace, async ctx => {
+      ctx.signal = signal; ctx.timeoutMs = 5000;
+      signal?.throwIfAborted();
+      await initialize(ctx);
+      signal?.throwIfAborted();
+      const startedAt = Date.now(), snapshot = await scan(ctx, true, signal);
+      const index = path.join(ctx.directory, `observation-index-${randomUUID()}`);
+      try {
+        signal?.throwIfAborted();
+        if (snapshot.entries.length) {
+          const output = (await git(ctx, ['hash-object', '-w', '--no-filters', '--stdin-paths'], {
+            cwd: snapshot.staging, input: snapshot.entries.map((_, i) => `${i}\n`).join(''),
+          })).toString('utf8').trim().split('\n');
+          if (output.length !== snapshot.entries.length || output.some((oid, i) => oid !== snapshot.entries[i].oid)) throw new Error('文件校验失败');
+        }
+        signal?.throwIfAborted();
+        await git(ctx, ['read-tree', '--empty'], { index });
+        if (snapshot.entries.length) await git(ctx, ['update-index', '-z', '--index-info'], {
+          index, input: snapshot.entries.map(file => `${file.mode} ${file.oid}\t${file.path}\0`).join(''),
+        });
+        const tree = (await git(ctx, ['write-tree'], { index })).toString().trim();
+        signal?.throwIfAborted();
+        const ref = 'refs/moss/observations/' + randomUUID();
+        await git(ctx, ['update-ref', ref, tree]);
+        return { tree, ref, entries: snapshot.entries, excluded: snapshot.excluded, startedAt, finishedAt: Date.now(), workspace: ctx.root };
+      } finally {
+        await fsp.rm(index, { force: true });
+        await fsp.rm(snapshot.staging, { recursive: true, force: true });
+      }
+    }),
+    observationStats: (workspace, before, after) => run(workspace, async ctx => {
+      ctx.timeoutMs = 5000;
+      if (!/^[a-f0-9]{40}$/.test(before) || !/^[a-f0-9]{40}$/.test(after)) throw new Error('Invalid observation');
+      const raw = (await git(ctx, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', before, after])).toString('utf8');
+      return raw.split('\0').filter(Boolean).map(record => {
+        const first = record.indexOf('\t'), second = record.indexOf('\t', first + 1);
+        const added = record.slice(0, first), removed = record.slice(first + 1, second);
+        return { path: record.slice(second + 1), additions: Number(added) || 0, deletions: Number(removed) || 0, binary: added === '-' || removed === '-' };
+      });
+    }),
+    readObservationBlob: (workspace, oid) => run(workspace, async ctx => {
+      if (!/^[a-f0-9]{40}$/.test(oid)) throw new Error('Invalid observation object');
+      return git(ctx, ['cat-file', 'blob', oid], { maxBytes: 1024 * 1024 });
+    }),
+    collectObservationGarbage: workspace => run(workspace, async ctx => { ctx.timeoutMs = 5000; await git(ctx, ['gc', '--auto']); }),
+    releaseObservation: (workspace, ref) => run(workspace, async ctx => {
+      if (!/^refs\/moss\/observations\/[a-f0-9-]+$/.test(ref)) throw new Error('Invalid observation reference');
+      await git(ctx, ['update-ref', '-d', ref]);
+    }),
     isActive(workspace) {
       try { const real = fs.realpathSync(workspace); const key = process.platform === 'win32' ? real.toLowerCase() : real; return [...active].some(root => inside(root, key) || inside(key, root)); } catch { return false; }
     },

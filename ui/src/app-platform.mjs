@@ -160,6 +160,8 @@ function registryEntryFromPublished(published, previous = {}) {
     title: published.displayName,
     description: published.description,
     category: published.manifest.category,
+    discovery: published.manifest.discovery,
+    connectorApp: published.manifest.connectorApp,
     keywords: published.manifest.keywords,
     icon: published.icon,
     width: published.width,
@@ -205,7 +207,8 @@ async function publishAppFromBuildNow(buildDir, options = {}) {
   }
   const source = await validateAppPackage(resolvedBuildDir, validationOptions)
   const store = new AppPackageStore({ appsDir: APPS_DIR, ...validationOptions })
-  await store.installFromDirectory(source.root, validationOptions)
+  const installedPackage = await store.installFromDirectory(source.root, validationOptions)
+  if (options.expectedPackageChecksums && JSON.stringify(Object.entries(installedPackage.checksums).sort()) !== JSON.stringify(Object.entries(options.expectedPackageChecksums).sort())) throw new Error('Reviewed App package changed before commit')
   writeJsonFile(path.join(getAppRoot(source.manifest.id), 'version-metadata', `${source.manifest.version}.json`), {
     reason: options.reason || 'published',
     note: options.note || '',
@@ -219,7 +222,7 @@ async function publishAppFromBuildNow(buildDir, options = {}) {
     await fsp.mkdir(path.join(getAppRoot(source.manifest.id), 'sources'), { recursive: true })
     await tarDirectory(path.resolve(options.sourceRoot), path.join(getAppRoot(source.manifest.id), 'sources', `${source.manifest.version}.tar.gz`))
   }
-  options.validateCommit?.()
+  await options.validateCommit?.(installedPackage)
   if (options.expectedInstallationRevision !== undefined
     && (getAppInstallationRevision(source.manifest.id) !== options.expectedInstallationRevision
       || (readJsonFile(getAppCurrentPath(source.manifest.id), {})?.version || null) !== options.expectedBaseVersion)) {
@@ -237,7 +240,9 @@ async function publishAppFromBuildNow(buildDir, options = {}) {
     ...(options.marketplaceSource ? { marketplaceSource: options.marketplaceSource, localModification: null } : {}),
     ...(options.localModification ? { localModification: options.localModification } : {}),
   })
-  if (activateInstallation) await activateInstallation(entry)
+  options.onCommit?.({ installationRevision, app: entry })
+  const activate = options.activateInstallation || activateInstallation
+  if (activate) await activate(entry)
   return entry
 }
 
@@ -262,6 +267,8 @@ export function getPublishedApp(appId, version = null) {
     title: manifest.displayName,
     description: manifest.description,
     category: manifest.category,
+    discovery: manifest.discovery,
+    connectorApp: manifest.connectorApp,
     keywords: manifest.keywords,
     icon: readAppIconData(versionDir, manifest.icon),
     width: manifest.ui?.window.width || 1100,

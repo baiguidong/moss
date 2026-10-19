@@ -71,7 +71,7 @@ export function showWebLogin(mode: string, onLogin: (values: Record<string, Form
 
 const connectionLabels: Record<string, string> = {
   connected: '已连接', connecting: '正在连接…', disconnected: '正在重连…',
-  unauthenticated: '登录已失效', incompatible: '版本已更新',
+  unauthenticated: '登录已失效', incompatible: '版本已更新', 'environment-changed': '环境已恢复，请刷新',
 };
 
 function WebSessionControls({ status, onLogout }: { status: string; onLogout: () => Promise<void> }) {
@@ -97,7 +97,8 @@ function WebSessionControls({ status, onLogout }: { status: string; onLogout: ()
   return <>
     <div className="moss-web-session" aria-label="云电脑连接">
       <span className="moss-web-connection" role="status"><span className={`moss-web-dot ${status === 'connected' ? 'is-connected' : ''}`} /><span>我的云电脑</span><span className="moss-web-connection-detail">{connectionLabels[status] || status}</span></span>
-      {(status === 'unauthenticated' || status === 'incompatible') && <button type="button" onClick={() => location.reload()}>刷新</button>}
+      {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <button type="button" onClick={() => location.reload()}>刷新</button>}
+      {window.mossWeb?.managed && <a href="/?window=cloud-environment">环境快照</a>}
       <button ref={trigger} type="button" className="moss-web-logout" onClick={() => { setError(''); setOpen(true); }}><LogOut aria-hidden="true" />退出登录</button>
     </div>
     <dialog ref={dialog} className="moss-web-confirm" aria-labelledby="moss-logout-title" aria-describedby="moss-logout-description" aria-busy={pending}

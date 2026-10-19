@@ -10,6 +10,7 @@ export default function TerminalWindow() {
   const [error, setError] = React.useState('');
   const [generation, setGeneration] = React.useState(0);
 
+  const restartRef = React.useRef(false);
   React.useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -69,14 +70,16 @@ export default function TerminalWindow() {
     });
     // Defer startup so StrictMode's discarded mount never launches a second CLI.
     const timer = window.setTimeout(() => {
-      void api.start({ requestId, cols: terminal.cols, rows: terminal.rows }).then((result) => {
+      void api.start({ requestId, cols: terminal.cols, rows: terminal.rows, restart: restartRef.current }).then((result) => {
         if (disposed || !result) return;
         const restored = (result as typeof result & { buffer?: string }).buffer;
         if (restored) terminal.write(restored);
+        restartRef.current = false;
+        exited = result.status === 'exited';
         running = !exited;
         setInfo(result);
         document.title = `${result.title} - Moss`;
-        if (!exited) setStatus('运行中');
+        setStatus(exited ? `已退出（${result.exitCode ?? 0}）` : '运行中');
         resize();
         terminal.focus();
       }).catch((reason) => {
@@ -84,7 +87,15 @@ export default function TerminalWindow() {
         if (!disposed) setStatus('启动失败');
       });
     }, 0);
+    const connection = (event: Event) => {
+      if ((event as CustomEvent).detail !== 'connected') { running = false; setStatus('连接中断，等待重连…'); }
+    };
+    const reconnected = () => { if (!disposed) setGeneration(value => value + 1); };
+    window.addEventListener('moss:connection', connection);
+    window.addEventListener('moss:reconnected', reconnected);
     return () => {
+      window.removeEventListener('moss:connection', connection);
+      window.removeEventListener('moss:reconnected', reconnected);
       disposed = true;
       running = false;
       window.clearTimeout(timer);
@@ -103,9 +114,9 @@ export default function TerminalWindow() {
         <strong className="shrink-0">{info.title}</strong>
         <span className="min-w-0 flex-1 truncate text-slate-400" title={info.cwd}>{info.cwd}</span>
         <span className="shrink-0 text-slate-400">{status}</span>
-        {window.mossWeb && <span className="shrink-0 text-slate-400">关闭页面后继续运行，输入 exit 结束</span>}
+        {window.mossWeb && <><span className="shrink-0 text-slate-400">关闭页面后继续运行</span><button disabled={status !== '运行中'} onClick={() => void window.mossTerminal.terminate?.().catch(reason => setError(String(reason)))}>终止终端</button></>}
         {(error || status.startsWith('已退出')) && (
-          <button className="rounded px-2 py-1 hover:bg-white/10" onClick={() => setGeneration((value) => value + 1)}>重新启动</button>
+          <button className="rounded px-2 py-1 hover:bg-white/10" onClick={() => { restartRef.current = true; setGeneration((value) => value + 1); }}>重新启动</button>
         )}
       </header>
       {error && <div role="alert" className="px-4 py-2 text-sm text-red-300">{error}</div>}

@@ -1,6 +1,8 @@
+import { assertReviewedPackage, packageReviewRevision } from './app-package-review.mjs'
 import { resolveAppResourceFile } from './app-resources.mjs'
 import { installAppArchive } from './app-runtime.mjs'
 import path from 'node:path'
+import fs from 'node:fs/promises'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { confirmAppInstallation, describeAppTools } from './app-tool-disclosure.mjs'
 
@@ -16,6 +18,7 @@ export function registerAppRuntimeIpc(options) {
     installArchivePackage,
     installArchive = installAppArchive,
     validatePackage = validateAppPackage,
+    confirmInstallation = (manifest, permissions, details) => confirmAppInstallation(dialog, manifest, permissions, details),
   } = options
   const runtime = () => {
     const value = getRuntime()
@@ -23,6 +26,7 @@ export function registerAppRuntimeIpc(options) {
     return value
   }
   const changed = async (action, appId, result) => {
+    result = await result
     await emitChanged?.({
       action,
       appId,
@@ -31,8 +35,15 @@ export function registerAppRuntimeIpc(options) {
     return result
   }
 
-  ipcMain.handle('app:install-archive', async () => {
-    const selection = await dialog.showOpenDialog({
+  ipcMain.handle('app:install-archive', async (context, payload = {}) => {
+    let selection;
+    if (context?.transport === 'web') {
+      if (!context.principal?.userId || typeof payload.filePath !== 'string' || !path.isAbsolute(payload.filePath)
+        || path.extname(payload.filePath).toLowerCase() !== '.zip') throw new Error('请选择云电脑上的 ZIP 安装包或上传 ZIP 文件。');
+      const stat = await fs.stat(payload.filePath);
+      if (!stat.isFile() || stat.size > 100 * 1024 * 1024) throw new Error('安装包必须是小于 100 MB 的 ZIP 文件。');
+      selection = { filePaths: [payload.filePath] };
+    } else selection = await dialog.showOpenDialog({
       title: 'Install Moss App', properties: ['openFile'], filters: [{ name: 'Moss App archive', extensions: ['zip'] }],
     })
     if (selection.canceled || !selection.filePaths[0]) return { ok: false, canceled: true }
@@ -43,10 +54,6 @@ export function registerAppRuntimeIpc(options) {
     }
     try {
       report({ phase: 'preparing' })
-      const previousGrants = new Map(runtime().installations.list().map((installation) => [
-        installation.appId,
-        installation.grants || [],
-      ]))
       let approvedGrants = []
       const app = await installArchive(runtime(), selection.filePaths[0], {
         onProgress: report,
@@ -55,22 +62,36 @@ export function registerAppRuntimeIpc(options) {
           const packageInfo = await validatePackage(packageRoot)
           const appId = packageInfo.manifest.id
           report({ appId, version: packageInfo.manifest.version })
-          const currentGrants = previousGrants.get(appId) || []
+          const installation = () => runtime().installations.list().find(item => item.appId === appId);
+          const installationSnapshot = () => JSON.stringify([installation()?.activeVersion, [...(installation()?.grants || [])].sort()]);
+          const expectedSnapshot = installationSnapshot();
+          const installationRevision = options.getInstallationRevision?.(appId);
+          const expectedBaseVersion = options.getInstalledApp?.(appId)?.currentVersion || null;
+          const assertUnchanged = () => {
+            if (installationSnapshot() !== expectedSnapshot || (installationRevision !== undefined && options.getInstallationRevision(appId) !== installationRevision)) {
+              throw new Error('确认期间 App 的安装或授权状态已变化，请重新安装。');
+            }
+          };
+          const currentGrants = installation()?.grants || []
           const addedPermissions = (packageInfo.manifest.permissions || [])
             .filter((permission) => !currentGrants.includes(permission))
-          if (addedPermissions.length || describeAppTools(packageInfo.manifest).length) {
+          if (addedPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length || packageInfo.manifest.nativeAdapter) {
             report({ phase: 'awaiting-permission' })
-            if (!await confirmAppInstallation(dialog, packageInfo.manifest, addedPermissions)) {
+            if (!await confirmInstallation(packageInfo.manifest, addedPermissions, `安装包摘要：${packageReviewRevision(packageInfo)}`)) {
               throw Object.assign(new Error('App installation permission approval was canceled'), {
                 code: INSTALL_PERMISSION_CANCELLED,
               })
             }
           }
+          assertUnchanged();
+          assertReviewedPackage(packageInfo, await validatePackage(packageRoot));
           const declaredPermissions = new Set(packageInfo.manifest.permissions || [])
           const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
           approvedGrants = [...new Set([...retainedGrants, ...addedPermissions])]
           report({ phase: 'installing' })
-          return installArchivePackage(packageRoot)
+          return installArchivePackage(packageRoot, { validateCommit: assertUnchanged, expectedPackageChecksums: packageInfo.checksums,
+            ...(installationRevision !== undefined ? { expectedInstallationRevision: installationRevision, expectedBaseVersion } : {}),
+          })
         },
       })
       const appId = app.id || app.manifest?.id

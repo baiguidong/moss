@@ -30,7 +30,7 @@ test('task panel keeps files and browser views without restoring removed tabs', 
   expect(html).not.toContain('保存到资料库');
 });
 
-test('task panel shows session tasks below the files tab', () => {
+test('task panel keeps session tasks when a resource replaces the file tree', () => {
   const html = renderToStaticMarkup(
     <TaskPanel
       collapsed={false}
@@ -41,6 +41,8 @@ test('task panel shows session tasks below the files tab', () => {
       treeItems={[]}
       expandedPaths={new Set()}
       selectedFilePath={null}
+      content={<div>已打开文档预览</div>}
+      navigation={<nav>内容导航测试</nav>}
       onFocusFile={() => {}}
       onToggleFolder={() => {}}
       onSelectFile={() => {}}
@@ -66,6 +68,9 @@ test('task panel shows session tasks below the files tab', () => {
   );
 
   expect(html).toContain('会话任务');
+  expect(html.match(/aria-label="会话任务"/g)).toHaveLength(1);
+  expect(html.indexOf('aria-label="会话任务"')).toBeLessThan(html.indexOf('内容导航测试'));
+  expect(html).toContain('已打开文档预览');
   expect(html).toContain('2 项');
   expect(html).toContain('正在实现任务展示');
   expect(html).toContain('实现任务展示');

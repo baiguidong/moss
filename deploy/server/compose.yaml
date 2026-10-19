@@ -22,6 +22,7 @@ services:
       MOSS_WEB_IMAGE: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
       MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-}
       MOSS_CLOUD_STATE: /state
+      MOSS_CLOUD_SNAPSHOTS: /snapshots
       MOSS_CLOUD_MAX_USERS: ${MOSS_CLOUD_MAX_USERS:-20}
       MOSS_CLOUD_CPUS: ${MOSS_CLOUD_CPUS:-1}
       MOSS_CLOUD_MEMORY_MB: ${MOSS_CLOUD_MEMORY_MB:-1024}
@@ -29,6 +30,7 @@ services:
       MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS: ${MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS:-300}
     volumes:
       - moss-cloud-state:/state
+      - moss-cloud-snapshots:/snapshots
       - /var/run/docker.sock:/var/run/docker.sock
     read_only: true
     cap_drop: [ALL]
@@ -180,5 +182,6 @@ services:
     networks: [moss-server]
 
 volumes:
+  moss-cloud-snapshots:
   moss-cloud-state:
   moss-web-home:

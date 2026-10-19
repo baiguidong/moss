@@ -75,3 +75,46 @@ test('concurrent resource additions and toggles use the latest persisted selecti
   expect(record.appIds).toEqual(['mcp', 'native'])
   await expect(service.toggle(record, '')).rejects.toThrow('无效')
 })
+
+test('legacy selections stay unchanged and explicitly selected connector Apps retain remote compatibility', async () => {
+  const appId = 'example.team-tools'
+  const installations = new Map([[appId, { enabled: true, grants: ['connector:use'] }]])
+  let connected = true
+  const service = createSessionApps({
+    getRuntime: () => ({ installations, getInstallation: id => installations.get(id), getActivePackage: async () => ({ manifest: { id: appId, connectorApp: { id: 'fixture' } } }) }),
+    getMcpHost: () => null, connectorAvailable: async () => connected,
+    isBusy: () => false, disposeRuntime: () => {}, persist: () => {}, emit: () => {},
+  })
+  const record = { agentMode: 'remote-direct', connectorIds: ['fixture'], appIds: [] as string[] }
+  await service.migrateRecord(record)
+  expect(record.appIds).toEqual([])
+  expect(record.connectorIds).toEqual(['fixture'])
+  await service.toggle(record, appId)
+  await service.migrateRecord(record)
+  expect(record.appIds).toEqual([appId])
+  connected = false
+  await service.toggle(record, appId)
+  await expect(service.toggle(record, appId)).rejects.toThrow('连接')
+})
+
+test('remote App selection uses metadata rather than the App name', async () => {
+  const installations = new Map([
+    ['moss.feishu', { enabled: true, grants: [] as string[] }],
+    ['moss.feishu-cli', { enabled: true, grants: ['connector:use'] }],
+  ])
+  const service = createSessionApps({
+    getRuntime: () => ({
+      installations,
+      getActivePackage: async id => ({ manifest: id === 'moss.feishu-cli' ? { connectorApp: { id: 'feishu' } } : {} }),
+      listContributions: async () => ({ tools: [{ id: 'moss.feishu/send' }] }),
+    }),
+    getMcpHost: () => null, connectorAvailable: async () => true,
+    isBusy: () => false, disposeRuntime: () => {}, persist: () => {}, emit: () => {},
+  })
+  expect(await service.isConnectorApp('moss.feishu')).toBe(false)
+  expect(await service.isConnectorApp('moss.feishu-cli')).toBe(true)
+  const record = { agentMode: 'remote-direct', appIds: [] as string[] }
+  await expect(service.toggle(record, 'moss.feishu')).rejects.toThrow('本地会话')
+  await service.toggle(record, 'moss.feishu-cli')
+  expect(record.appIds).toEqual(['moss.feishu-cli'])
+})

@@ -31,6 +31,8 @@ import { checkRuleBasedPermissions } from '../../utils/permissions/permissions.j
 import { formatError } from '../../utils/toolErrors.js'
 import { isMcpTool } from '../mcp/utils.js'
 import type { McpServerType, MessageUpdateLazy } from './toolExecution.js'
+import { validateRewrittenInput } from './validateRewrittenInput.js'
+import { isDeepStrictEqual } from 'node:util'
 
 export type PostToolUseHooksResult<Output> =
   | MessageUpdateLazy<AttachmentMessage | ProgressMessage<HookProgress>>
@@ -330,6 +332,48 @@ export async function* runPostToolUseFailureHooks<Input extends AnyObject>(
  * (REPL inner calls) so the permission semantics stay in lockstep.
  */
 export async function resolveHookPermissionDecision(
+  hookPermissionResult: PermissionResult | undefined,
+  tool: Tool,
+  input: Record<string, unknown>,
+  toolUseContext: ToolUseContext,
+  canUseTool: CanUseToolFn,
+  assistantMessage: AssistantMessage,
+  toolUseID: string,
+): Promise<{ decision: PermissionDecision; input: Record<string, unknown> }> {
+  if (hookPermissionResult?.behavior === 'deny') return { decision: hookPermissionResult, input }
+  if (hookPermissionResult && 'updatedInput' in hookPermissionResult && hookPermissionResult.updatedInput !== undefined) {
+    input = await validateRewrittenInput(tool, hookPermissionResult.updatedInput, toolUseContext)
+    hookPermissionResult = { ...hookPermissionResult, updatedInput: input }
+  }
+  // Snapshot before invoking permission code: it may mutate input in place.
+  const before = structuredClone(input)
+  const resolved = await resolveHookPermissionDecisionUnchecked(hookPermissionResult, tool, input, toolUseContext, canUseTool, assistantMessage, toolUseID)
+  if (resolved.decision.behavior !== 'allow') return resolved
+  let final = resolved.decision.updatedInput ?? resolved.input
+  if (!isDeepStrictEqual(final, before)) {
+    final = await validateRewrittenInput(tool, final, toolUseContext, true)
+    // Permission UI callbacks may return edited commands/paths. Deny rules
+    // still bind the actual action; a newly applicable ask needs that action.
+    const { _simulatedSedEdit, ...withoutSedEdit } = final
+    const ruleInput = tool.name === 'Bash' ? withoutSedEdit : final
+    const rule = await checkRuleBasedPermissions(tool, ruleInput, toolUseContext)
+    if (rule?.behavior === 'deny') return { decision: rule, input: final }
+    if (rule?.behavior === 'ask') {
+      const approvedInput = structuredClone(final)
+      const decision = await canUseTool(tool, final, toolUseContext, assistantMessage, toolUseID, rule)
+      if (decision.behavior !== 'allow') return { decision, input: final }
+      const checked = await validateRewrittenInput(tool, decision.updatedInput ?? final, toolUseContext, true)
+      if (!isDeepStrictEqual(checked, approvedInput)) {
+        return { decision: { behavior: 'deny', decisionReason: { type: 'other', reason: 'Parameters changed after final approval' }, message: 'Tool parameters changed again during approval. Submit a new tool call with the final parameters.' }, input: checked }
+      }
+      return { decision: { ...decision, updatedInput: checked }, input: checked }
+    }
+  }
+  toolUseContext.abortController.signal.throwIfAborted()
+  return { decision: { ...resolved.decision, updatedInput: final }, input: final }
+}
+
+async function resolveHookPermissionDecisionUnchecked(
   hookPermissionResult: PermissionResult | undefined,
   tool: Tool,
   input: Record<string, unknown>,

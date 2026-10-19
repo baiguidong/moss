@@ -13,6 +13,7 @@ let storedApps = Array.from({ length: 24 }, (_, index) => ({
   category: ['communication', 'knowledge', 'automation', 'ai', 'development', 'diagnostics'][index % 6],
   keywords: index === 2 ? ['Chrome', '网页'] : [],
   description: '检查启用和停用 App 后，列表顶部与底部都能完整显示。',
+  discovery: { group: 'local' },
   enabled: true,
   hasUi: true,
   currentVersion: index === 4 ? '1.0.0-local.1' : '1.0.0',
@@ -22,6 +23,7 @@ let storedApps = Array.from({ length: 24 }, (_, index) => ({
 
 // Keep the test isolated from installed Apps and their real Desktop API.
 (window as any).agentDesktop = {
+  appDiscovery: async () => ({ sections: { installed: 'all', marketplace: 'all' } }),
   onAppInstallProgress: () => () => {},
   getAppInstallProgress: async () => [],
   setAppEnabled: async ({ appId, enabled }: { appId: string; enabled: boolean }) => {

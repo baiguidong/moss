@@ -97,11 +97,4 @@ export default async function afterPack(context) {
   }
   await requireFile(sharpPackage, `sharp-${target}`);
   await requireFile(path.join(resourcesDir, 'node_modules', 'sharp', 'package.json'), 'sharp');
-
-  if (!fs.existsSync(path.join(resourcesDir, 'connectors', 'workbuddy-connectors-config.zip'))) {
-    throw new Error('Packaged connector catalog is missing.');
-  }
-  if (!fs.existsSync(path.join(resourcesDir, 'connectors', 'connector-cli-overrides.json'))) {
-    throw new Error('Packaged connector CLI overrides are missing.');
-  }
 }

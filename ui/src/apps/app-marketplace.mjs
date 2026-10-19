@@ -1,3 +1,5 @@
+import { normalizeAppDiscovery } from '../../../packages/app-sdk/src/discovery.mjs'
+import { assertReviewedPackage, packageReviewRevision } from './app-package-review.mjs'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -113,6 +115,7 @@ function normalizeMarketplaceSummary(raw, indexUrl) {
     keywords: normalizeStringArray(raw.keywords || [], 'app.keywords'),
     categories: normalizeStringArray(raw.categories || [], 'app.categories'),
     featured: raw.featured === true,
+    ...(normalizeAppDiscovery(raw.discovery) ? { discovery: normalizeAppDiscovery(raw.discovery) } : {}),
     iconUrl: raw.iconUrl ? safeHttpsUrl(raw.iconUrl, indexUrl, 'app.iconUrl') : '',
     detailUrl: safeHttpsUrl(raw.detailUrl, indexUrl, 'app.detailUrl'),
     latestVersion: latest.version,
@@ -158,6 +161,7 @@ export function normalizeMarketplaceDetail(raw, detailUrl, expectedAppId) {
     repository: raw.repository ? safeHttpsUrl(raw.repository, detailUrl, 'app.repository') : '',
     license: safeString(raw.license, 'app.license', { required: false }),
     featured: raw.featured === true,
+    ...(normalizeAppDiscovery(raw.discovery) ? { discovery: normalizeAppDiscovery(raw.discovery) } : {}),
     iconUrl: raw.iconUrl ? safeHttpsUrl(raw.iconUrl, detailUrl, 'app.iconUrl') : '',
     latestVersion: raw.latestVersion,
     versions,
@@ -354,9 +358,10 @@ export function createAppMarketplaceService(options = {}) {
       }
       const installationSnapshot = (entry) => JSON.stringify([entry?.currentVersion, entry?.localModification])
       const initialInstallationSnapshot = installationSnapshot(installedEntry)
+      const grantsSnapshot = JSON.stringify([...(installation?.grants || [])].sort())
       const assertInstallationUnchanged = async () => {
         const current = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
-        if (installationSnapshot(current) !== initialInstallationSnapshot
+        if (JSON.stringify([...(runtime.getInstallation(appId)?.grants || [])].sort()) !== grantsSnapshot || installationSnapshot(current) !== initialInstallationSnapshot
           || (installationRevision !== undefined && options.getInstallationRevision(appId) !== installationRevision)) {
           throw new Error('此 App 的安装状态已变化，请重试安装市场版本。')
         }
@@ -386,6 +391,7 @@ export function createAppMarketplaceService(options = {}) {
       const archivePath = path.join(temporaryRoot, version.artifact.fileName)
       let packageInstallStarted = false
       let activationCompleted = false
+      let commitRevision
       try {
         await fsp.writeFile(archivePath, archive, { mode: 0o600 })
         const app = await archiveInstaller(runtime, archivePath, {
@@ -408,23 +414,27 @@ export function createAppMarketplaceService(options = {}) {
             ) {
               throw new Error(`Downloaded App signer mismatch: ${appId}@${version.version}`)
             }
-            const pendingPermissions = acceptPermissions ? [] : addedPermissions
+            if (JSON.stringify([...(packageInfo.manifest.permissions || [])].sort()) !== JSON.stringify([...version.permissions].sort())) throw new Error('市场权限清单与安装包不一致，请联系发布者。')
+            const pendingPermissions = options.confirmInstallation ? addedPermissions : acceptPermissions ? [] : addedPermissions
             await assertInstallationUnchanged()
-            if (localVersion || pendingPermissions.length || describeAppTools(packageInfo.manifest).length) {
+            if (localVersion || pendingPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length || packageInfo.manifest.nativeAdapter) {
               report({ phase: 'awaiting-permission' })
               if (!options.confirmInstallation) throw new Error('安装此 App 前需要确认其 AI 工具列表')
               const replacementDetails = localVersion
                 ? `当前使用的是本地修改版本 ${localVersion}。安装后将切换到市场版本 ${version.version}。\n本地版本及其源码会保留在版本历史中，可通过回滚重新使用；现有 App 配置和数据会保留。`
                 : ''
-              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions, replacementDetails)) {
+              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions, [replacementDetails, `安装包摘要：${packageReviewRevision(packageInfo)}`].filter(Boolean).join('\n\n'))) {
                 throw Object.assign(new Error('App installation was canceled'), { code: INSTALL_CANCELED })
               }
             }
             await assertInstallationUnchanged()
+            assertReviewedPackage(packageInfo, await packageValidator(packageRoot, { trustedPublishers, requireTrustedPublisher: true, platform }))
             report({ phase: 'installing' })
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
               trustedPublishers,
+              onCommit: state => { commitRevision = state.installationRevision },
+              validateCommit: assertInstallationUnchanged, expectedPackageChecksums: packageInfo.checksums,
               requireTrustedPublisher: true,
               marketplaceSource: { catalogUrl: indexUrl, appId, version: version.version },
               ...(installationRevision !== undefined ? {
@@ -437,14 +447,28 @@ export function createAppMarketplaceService(options = {}) {
         const grants = [...new Set([...retainedGrants, ...addedPermissions])]
         report({ phase: 'activating' })
         await runtime.registerInstalled(appId, version.version, { grants })
-        activationCompleted = true
         await options.emitChanged?.({ action: installation ? 'marketplace-updated' : 'marketplace-installed', appId })
+        activationCompleted = true
         return { ok: true, appId, version: version.version, app }
       } catch (error) {
         if (packageInstallStarted && !activationCompleted && error?.code !== 'MOSS_APP_INSTALLATION_CHANGED') {
           try {
             report({ phase: 'rolling-back' })
-            await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version })
+            const restore = async () => {
+              if (commitRevision !== undefined && options.getInstallationRevision?.(appId) !== commitRevision) return
+              const current = runtime.getInstallation(appId)
+              if (current && ![previousVersion, version.version].includes(current.activeVersion)) return
+              await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version })
+              if (current?.activeVersion === version.version) {
+                // Publishing may activate the package before returning. Restore
+                // runtime ownership too, while retaining subsequent grant/enable edits.
+                if (previousVersion) await (runtime.registerInstalledNow || runtime.registerInstalled).call(runtime, appId, previousVersion, { grants: current.grants })
+                else await (runtime.uninstallNow || runtime.uninstall).call(runtime, appId)
+              }
+              await options.emitChanged?.({ action: 'marketplace-rollback', appId })
+            }
+            if (runtime.transitionApp) await runtime.transitionApp(appId, restore)
+            else await restore()
           } catch (rollbackError) {
             throw new Error(`${error.message}; package registry rollback also failed: ${rollbackError.message}`)
           }

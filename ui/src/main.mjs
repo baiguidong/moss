@@ -1,3 +1,9 @@
+import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
+import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
+import { createConnectorAppHost } from './apps/connector-app-host.mjs';
+import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/discovery.mjs';
+import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus } from './connector-hub-ipc.mjs';
+import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
@@ -26,6 +32,7 @@ import { buildFileAttachmentPrompt, createSessionPromptPreparation } from './ses
 import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
 import { registerSessionControlIpc } from './session-control-ipc.mjs';
+import { createSessionSendCancellation } from './session-send-cancellation.mjs';
 import { registerSessionEffortIpc } from './session-effort.mjs';
 import { createDesktopControlFeature } from './desktop-control/feature.mjs';
 import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
@@ -39,7 +46,15 @@ import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
 import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { createSessionInteractions } from './session-interactions.mjs';
+import { createSupplementPreparation } from './session-supplement.mjs';
 import { startWebServer } from './web/server.mjs';
+import { parseRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
+import { createWebResources } from './web/resources.mjs';
+import { sourceHash as hashAuthoringArtifact } from './apps/app-authoring-source.mjs';
+import { createWebInteractions } from './web/interactions.mjs';
+import { createWebApps } from './web/apps.mjs';
+import { createWebOAuth } from './web/oauth.mjs';
 import { createWebTerminals } from './web/terminal.mjs';
 import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
 const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents, powerMonitor } = electron;
@@ -55,8 +70,9 @@ import { resolveRemoteWorkspaceFileUrl } from './remote-browser-file.mjs';
 import { createMemoryCatalog } from './memory-catalog.mjs';
 import { createMemoryDreamService, registerMemoryDreamIpc } from './memory-dream-service.mjs';
 import { createAppTestingHost, TESTING_PROTOCOL } from './app-testing/host.mjs';
+import { isExpectedControllerCancellation } from './app-testing/controller-cancellation.mjs';
 import { configureSelfTestTarget, selfTestRendererUrl } from './app-testing/instance.mjs';
-import { restoreTestController, closeTestController, validateTestToolUse, TEST_APP_ID, TEST_BROWSER_SERVER, TEST_ALLOWED_TOOLS } from './app-testing/browser.mjs';
+import { restoreTestController, closeTestController, validateTestToolUse, TEST_APP_ID, TEST_BROWSER_SERVER, TEST_ALLOWED_TOOLS, TEST_SYSTEM_PROMPT, TEST_REVIEW_ALLOWED_TOOLS, TEST_REVIEW_SYSTEM_PROMPT } from './app-testing/browser.mjs';
 import { synchronizeRemoteSkills } from './remote-profile-sync.mjs';
 import {
   installRemoteWorkspaceProtocol,
@@ -78,7 +94,6 @@ import {
   getCredentialReferenceKeys,
   getConnectorMcpServers,
   findConnectorMcpServer,
-  initializeBundledConnectorCatalog,
   listInstalledConnectors,
   getConnectorProviderAuthUrl,
   getConnectorProviderAuthContext,
@@ -166,6 +181,8 @@ import {
 } from '../../packages/app-sdk/src/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import { confirmAppInstallation, describeAppTools } from './apps/app-tool-disclosure.mjs';
+import { createHostConfirmations } from './host/confirmations.mjs';
+import { createHostCapabilities } from './shared/host-capabilities.mjs';
 import {
   createAppPlatformHandlers,
   isAllowedAppMediaPermission,
@@ -183,7 +200,6 @@ import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
 import { AppAuditHost, createAuditProtocolDefinition, AUDIT_PROTOCOL } from './apps/app-audit-host.mjs';
 import {
-  collectTurnChanges,
   truncateHistoryBeforeUserMessage,
 } from './shared/turn-changes.mjs';
 import {
@@ -292,6 +308,12 @@ import {
   normalizeMcpStore,
 } from './desktop-mcp-settings.mjs';
 import { registerFileSystemIpcHandlers } from './file-system-ipc.mjs';
+import { createPreviewOwnership, registerPreviewOwnershipIpc } from './presentation/preview-ownership.mjs';
+import { createPresentationService } from './presentation/presentation-service.mjs';
+import { createPresentationResolver } from './presentation/resource-resolver.mjs';
+import { registerPresentationIpcHandlers } from './presentation/presentation-ipc.mjs';
+import { MOSS_PRESENTATION_PROMPT } from './shared/presentation-contracts.mjs';
+import { createTurnObservationService } from './workspace-versions/turn-observation-service.mjs';
 import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
 import {
   createRemoteSessionTaskSync,
@@ -353,8 +375,15 @@ import { createAgentMailStore } from './agent-mail-store.mjs';
 import { createAgentMailPoller } from './agent-mail-poller.mjs';
 
 const isWebHost = process.env.MOSS_WEB_MODE === '1';
+const webRestoreState = createRestoreState(isWebHost ? process.env : {});
+let webAutomationsPaused = isWebHost && (webRestoreState.get().automationsPaused || !!webRestoreState.get().maintenance);
 let webServer = null;
 let webTerminals = null;
+let hostConfirmations = null;
+let webOAuth = null;
+let webResources = null;
+let webApps = null;
+let webInteractions = null;
 if (isWebHost) {
   if (!process.env.MOSS_HOME) throw new Error('Web Host requires a dedicated MOSS_HOME.');
   if (process.platform === 'linux') {
@@ -455,7 +484,6 @@ const desktopAgentStore = createDesktopAgentStore({
   userAgentsDir: path.join(MOSS_HOME, 'agents'),
 });
 const MOSS_REPO_ASSISTANTS_DIR = path.join(repoRoot, 'assistants');
-const MOSS_REPO_CONNECTORS_DIR = path.join(uiRoot, 'resources', 'connectors');
 const RESERVED_ASSISTANT_ROOT_NAMES = ['hub', 'system', '_my-custom-assistant'];
 const SESSION_DB_PATH = path.join(MOSS_HOME, 'moss.db');
 const APP_STORAGE_FILENAME = 'storage.json';
@@ -522,6 +550,7 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+let connectorAppHost = null;
 let appAuthoring = null;
 let appMcpHost = null;
 let cloudStorageHost = null;
@@ -588,6 +617,18 @@ const workspaceVersionService = createWorkspaceVersionService({
     if (reason) throw new Error(reason);
   },
 });
+const turnObservationService = createTurnObservationService({
+  storageRoot: path.join(MOSS_HOME, 'turn-observations'), versions: workspaceVersionService, getSessionRecord,
+  async getTurnBindings(sessionId) {
+    const snapshot = await presentationService.snapshot(sessionId);
+    return snapshot.resources.flatMap(resource => resource.bindings || []);
+  },
+  async getRetainedObservationIds(sessionId) {
+    const snapshot = await presentationService.snapshot(sessionId).catch(() => null);
+    const opened = new Set([...(snapshot?.state.openedIds || []), snapshot?.state.activeId, snapshot?.state.pinnedId]);
+    return (snapshot?.resources || []).filter(resource => opened.has(resource.id) && resource.source.type === 'turn-diff').map(resource => resource.source.observationId);
+  },
+});
 
 function workspaceVersionBusyReason(workspace) {
   for (const record of sessions.values()) {
@@ -641,6 +682,7 @@ const projectCoordinatorTaskRuns = new Map();
 const projectTaskCancellationRequests = new Set();
 const sessionPromptQueues = new Map();
 const sessionSendQueues = new Map();
+const sessionSendCancellation = createSessionSendCancellation();
 const agentTeamSessionShutdowns = new Map();
 const sessionForksInProgress = new Set();
 const subAgentSyncTimers = new Map();
@@ -950,6 +992,34 @@ const { buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePen
   schedulePersistSession, takeRemoteAttachmentSource, uploadFileToRemoteSessionWorkspace,
   uploadRemoteDirectWorkspaceData,
 });
+
+const presentationResolver = createPresentationResolver({
+  readWorkspaceFile,
+  async resolveResourceFile(uri, sessionRecord) {
+    if (sessionRecord) {
+      const scheme = new URL(uri).protocol.slice(0, -1);
+      const { resourceProviders = [] } = await appRuntime.listContributions({ kinds: ['resourceProviders'] });
+      const provider = resourceProviders.find(provider => provider.schemes.includes(scheme));
+      if (!provider || !sessionRecord.appIds?.includes(provider.appId)) throw new Error('The resource App is not enabled in this session');
+    }
+    return resolveAppResourceFile(appRuntime, uri);
+  },
+});
+const presentationService = createPresentationService({
+  storageRoot: path.join(MOSS_HOME, 'presentations'), getSessionRecord, emit: emitToRenderer,
+  ...presentationResolver,
+});
+
+const previewOwnership = createPreviewOwnership({
+  storageRoot: path.join(MOSS_HOME, 'preview-drafts'), getSessionRecord,
+  readFile: readWorkspaceFile, writeFile: writeWorkspaceFile,
+  emit(channel, payload) {
+    if (channel === 'preview-document:changed') void presentationService.documentChanged(payload).catch(() => {});
+    emitToRenderer(channel, payload);
+    if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send(channel, payload);
+  },
+});
+registerPreviewOwnershipIpc({ ipcMain, service: previewOwnership });
 
 function getDesktopSettingsPayload(extra = {}) {
   const fingerprint = getCurrentWebSearchCapabilityFingerprint();
@@ -2049,7 +2119,10 @@ function saveDesktopMcpStore(store) {
 }
 
 function reconcileSessionMcpAccess(record) {
-  const allowed = Object.keys(appMcpHost?.enabledServers(record.appIds || [], record.workspace, record.appServiceIds || []) || {});
+  const allowed = Object.keys({
+    ...(appMcpHost?.enabledServers(record.appIds || [], record.workspace, record.appServiceIds || []) || {}),
+    ...getConnectorMcpServers(getRuntimeSessionConnectorIds(record)),
+  });
   return record.runtime?.reconcileAppMcpServers?.(allowed);
 }
 
@@ -2734,10 +2807,15 @@ function getProjectConnectorIds(sessionRecord) {
   return getProjectResourceScope(sessionRecord, project).connectorIds;
 }
 
+function getStoredConnectorId(appId) {
+  try { return connectorIdFromApp(getPublishedApp(appId)); }
+  catch { return null; }
+}
+
 function getSessionConnectorIds(sessionRecord) {
   return mergeProjectConnectorIds(
     getProjectConnectorIds(sessionRecord),
-    sessionRecord?.connectorIds,
+    [...(sessionRecord?.connectorIds || []), ...selectedConnectorIds(sessionRecord?.appIds, listAllStoredApps())],
   );
 }
 
@@ -2939,7 +3017,12 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   restoreTestController(sessionRecord);
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   await sessionApps.migrateRecord(sessionRecord);
-  const selectedAppIds = normalizeStringList(sessionRecord?.appIds);
+  const connectorIds = new Set(getRuntimeSessionConnectorIds(sessionRecord));
+  const connectorAppIds = listAllStoredApps().flatMap(app => {
+    const appId = app.id || app.name;
+    return connectorIds.has(connectorIdFromApp(app)) && appRuntime?.getInstallation(appId) ? [appId] : [];
+  });
+  const selectedAppIds = normalizeStringList([...(sessionRecord?.appIds || []), ...connectorAppIds]);
   const selectedAppServiceIds = normalizeStringList(sessionRecord?.appServiceIds);
   const [connectorRuntimeCredentials, appTools] = await Promise.all([
     resolveSessionConnectorRuntimeCredentials(sessionRecord),
@@ -2955,7 +3038,10 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
         }),
   ]);
   const appSkills = sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
-  const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: appMcpHost?.serverOwners() || {} };
+  const connectorOwners = Object.fromEntries(connectorAppIds.flatMap(appId =>
+    Object.keys(getConnectorMcpServers([getStoredConnectorId(appId)], connectorRuntimeCredentials))
+      .map(name => [name, { appId, toolScope: 'session', toolSelection: 'app' }])));
+  const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: { ...(appMcpHost?.serverOwners() || {}), ...connectorOwners } };
   if (sessionRecord?.appTestRunId) appToolPolicy.mcpServers[TEST_BROWSER_SERVER] = { appId: TEST_APP_ID, toolScope: 'session' };
   if (sessionRecord) {
     sessionRecord.runtimeAppToolIds = new Set(appTools.map(tool => tool.id));
@@ -2974,6 +3060,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     connectorSystemPrompt,
     runtimeSystemPrompt,
     appSkills.prompt,
+    sessionRecord?.sessionKind === 'chat' && sessionRecord?.agentMode !== 'remote-direct' && !sessionRecord?.isSubAgent ? MOSS_PRESENTATION_PROMPT : '',
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean)
@@ -2992,9 +3079,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     image: desktopSettings.image ? { ...desktopSettings.image } : undefined,
     model: desktopSettings.model,
     fastModel: desktopSettings.fastModel || undefined,
-    customSystemPrompt: customSystemPrompt || undefined,
+    customSystemPrompt: sessionRecord?.appTestRunId ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_SYSTEM_PROMPT : TEST_SYSTEM_PROMPT) : customSystemPrompt || undefined,
     effort: sessionRecord?.effort ?? null,
-    appendSystemPrompt: appendSystemPrompt || undefined,
+    appendSystemPrompt: sessionRecord?.appTestRunId ? undefined : appendSystemPrompt || undefined,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(),
     permissionMode: normalizePermissionMode(
@@ -3009,7 +3096,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     appToolPolicy,
     addDirs: [...new Set([...getSessionAddDirs(sessionRecord), ...appSkills.directories])],
     disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
-    allowedTools: sessionRecord?.appTestRunId ? TEST_ALLOWED_TOOLS : sessionRecord?.channelRuntimePolicy
+    allowedTools: sessionRecord?.appTestRunId ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_ALLOWED_TOOLS : TEST_ALLOWED_TOOLS) : sessionRecord?.channelRuntimePolicy
       ? resolveAgentChannelToolSelectors(sessionRecord.channelRuntimePolicy, Object.keys(mcpServers))
       : null,
     workspaceDirectories: sessionRecord
@@ -3276,6 +3363,7 @@ async function getClaudeRuntimeModule() {
         }
       } catch {}
       mod.setDirectConnectFetchImplementation?.(remoteDirectNetFetch);
+      mod.onMcpToolCatalog?.(({ name, config, check, connectionStartedAt }) => appMcpHost?.recordRuntimeCatalog(name, config, check, connectionStartedAt));
       return mod;
     })
     .catch((error) => {
@@ -3346,12 +3434,18 @@ async function getLoadClaudeSessionSnapshotFn() {
   return mod.loadClaudeSessionSnapshot;
 }
 
+const activeMcpAuthentications = new Set();
 async function getAuthenticateDesktopMcpServerFn() {
   const mod = await getClaudeRuntimeModule();
   if (typeof mod.authenticateDesktopMcpServer !== 'function') {
     throw new Error('electron-direct.mjs did not export authenticateDesktopMcpServer.');
   }
-  return mod.authenticateDesktopMcpServer;
+  return async (name, ...args) => {
+    if (activeMcpAuthentications.has(name)) throw new Error('此 MCP 连接器正在授权，请完成或取消已有授权。');
+    activeMcpAuthentications.add(name);
+    try { return await mod.authenticateDesktopMcpServer(name, ...args); }
+    finally { activeMcpAuthentications.delete(name); }
+  };
 }
 
 async function getClearDesktopMcpServerAuthFn() {
@@ -3628,7 +3722,36 @@ function setPendingPlanApproval(sessionRecord, pendingPlanApproval) {
   emitSessionMeta(sessionRecord);
 }
 
-async function runSessionPromptNow({
+async function runSessionPromptNow(options) {
+  options.controllerSignal?.throwIfAborted();
+  const turnContext = { id: randomUUID(), sessionId: options.sessionRecord.id };
+  const presentationTurn = await presentationService.beginTurn(turnContext.sessionId, turnContext.id).catch(error => mossLog('warn', 'presentation', 'Unable to start presentation turn', { error: error.message }));
+  turnContext.epoch = presentationTurn?.epoch;
+  const observation = await turnObservationService.begin(options.sessionRecord, turnContext.id, { signal: options.controllerSignal }).catch(error => {
+    mossLog('warn', 'workspace', 'Unable to establish turn baseline', { error: error.message }); return null;
+  });
+  turnContext.observation = observation;
+  try { return await runSessionPromptObserved({ ...options, turnContext }); }
+  finally {
+    if (observation) {
+      const result = await turnObservationService.finish(observation, turnContext.userMessageId).catch(error => {
+        mossLog('warn', 'workspace', 'Unable to finish turn observation', { error: error.message }); return null;
+      });
+      if (result && !options.sessionRecord.deleted) {
+        emitToRenderer('turn-observation:updated', { sessionId: options.sessionRecord.id });
+        const outputs = result.changes.filter(file => file.status !== 'deleted' && /\.(txt|pdf|docx?|xlsx?|pptx?|html?|md|csv|tsv|svg|png|jpe?g|webp)$/i.test(file.path)).slice(0, 32);
+        if (outputs.length) await presentationService.present(options.sessionRecord.id, { items: outputs.map(file => ({ path: file.filePath })), title: '本轮文件成果' }, { turnId: result.id, epoch: turnContext.epoch, fallback: true, origin: 'tool' }).catch(() => {});
+        if (result.changes.length || result.coverage !== 'complete') await presentationService.register(options.sessionRecord.id, {
+          kind: 'turn-diff', title: result.coverage === 'complete' ? `本轮变更 · ${result.changes.length} 个文件` : '本轮文件观察', revision: String(result.finishedAt),
+          source: { type: 'turn-diff', observationId: result.id }, availability: 'ready', persistence: 'durable',
+          capabilities: { preview: true, edit: false, popout: false },
+        }, { turnId: result.id, epoch: turnContext.epoch, fallback: true }).catch(() => {});
+      }
+    }
+  }
+}
+
+async function runSessionPromptObserved({
   sessionRecord,
   sender,
   runtimePrompt,
@@ -3639,9 +3762,12 @@ async function runSessionPromptNow({
   preparedTools = [],
   composerContext,
   failOnApiError = false,
+  controllerSignal,
   retryEncryptedContentOnce = false,
   agentMailTurn = null,
+  turnContext,
 }) {
+  controllerSignal?.throwIfAborted();
   assertWorkspaceVersionIdle(sessionRecord);
   await localTranscriptSync.refresh(sessionRecord);
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
@@ -3651,6 +3777,7 @@ async function runSessionPromptNow({
     }
   }
   let runtime = await ensureRuntime(sessionRecord, runtimeSystemPrompt);
+  controllerSignal?.throwIfAborted();
   while (sessionRecord.agentMode !== 'remote-direct' && !hasActiveAgentTeam(sessionRecord) && !(sessionRecord.projectId && getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker)) && JSON.stringify([sessionRecord.runtimeAppIds || [], sessionRecord.runtimeAppServiceIds || []]) !== JSON.stringify([normalizeStringList(sessionRecord.appIds), normalizeStringList(sessionRecord.appServiceIds)])) {
     disposeRuntime(sessionRecord);
     await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
@@ -3665,12 +3792,23 @@ async function runSessionPromptNow({
     schedulePersistSession(sessionRecord, true);
   }
 
+  const bindVisibleUser = async userEvent => {
+    if (!turnContext) return;
+    turnContext.userMessageId = userEvent.uuid;
+    sessionRecord.activeInputTurnId = userEvent.uuid;
+    if (turnContext.observation && turnContext.observation.userMessageId !== userEvent.uuid) {
+      await turnObservationService.bindUser(turnContext.observation, userEvent.uuid).catch(error => {
+        mossLog('warn', 'workspace', 'Unable to persist observation turn identity', { sessionId: sessionRecord.id, error: error.message });
+      });
+    }
+  };
   const trimmedUserPrompt = typeof visibleUserPrompt === 'string' ? visibleUserPrompt.trim() : '';
   let activeVisibleUserEvent = null;
   if (trimmedUserPrompt || attachments.length > 0 || resources.length > 0) {
     const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments, resources);
     if (composerContext) userEvent.appContext = composerContext;
     activeVisibleUserEvent = userEvent;
+    await bindVisibleUser(userEvent);
     appendVisibleUserEvent(sessionRecord, sender, userEvent);
     if (sessionRecord.title === 'New Session' && trimmedUserPrompt) {
       sessionRecord.title = buildSessionTitle(trimmedUserPrompt);
@@ -3710,10 +3848,12 @@ async function runSessionPromptNow({
   }
 
   try {
+    const submittedVisibleUserIds = new Set();
     const runRuntimePromptOnce = async (
       prompt,
       {
         expectedVisiblePrompt = '',
+        visibleUserEvent = null,
         suppressPromptTooLong = false,
         suppressEncryptedContentError = false,
       } = {},
@@ -3729,7 +3869,16 @@ async function runSessionPromptNow({
       const expectedVisibleUserPrompt = normalizeReplayUserText(expectedVisiblePrompt);
       const expectedRuntimeUserPrompt = extractTextFromRuntimePrompt(prompt);
 
-      for await (const message of runtime.send(prompt, undefined, { preparedTools })) {
+      controllerSignal?.throwIfAborted();
+      if (visibleUserEvent) {
+        // A retry is a new engine prompt; never reuse an already persisted UUID.
+        if (submittedVisibleUserIds.has(visibleUserEvent.uuid)) visibleUserEvent.uuid = randomUUID();
+        submittedVisibleUserIds.add(visibleUserEvent.uuid);
+        await bindVisibleUser(visibleUserEvent);
+      }
+      for await (const message of runtime.send(prompt, controllerSignal, { userMessageId: visibleUserEvent?.uuid, preparedTools, presentationTurn: turnContext })) {
+        if (isExpectedControllerCancellation(message, controllerSignal)) continue;
+        if (turnContext.observation) turnObservationService.observeMessage(turnContext.observation, message);
         const replayUserText = extractTextFromUserReplayMessage(message);
         if (
           !skippedInitialReplayUser &&
@@ -3741,11 +3890,12 @@ async function runSessionPromptNow({
           )
         ) {
           if (
-            activeVisibleUserEvent &&
+            visibleUserEvent &&
             typeof message.uuid === 'string' &&
             message.uuid.trim()
           ) {
-            activeVisibleUserEvent.uuid = message.uuid.trim();
+            visibleUserEvent.uuid = message.uuid.trim();
+            await bindVisibleUser(visibleUserEvent);
           }
           skippedInitialReplayUser = true;
           continue;
@@ -3864,6 +4014,7 @@ async function runSessionPromptNow({
       }
       return runRuntimePromptOnce(runtimePrompt, {
         expectedVisiblePrompt: visibleUserPrompt,
+        visibleUserEvent: activeVisibleUserEvent,
       });
     };
 
@@ -3871,6 +4022,7 @@ async function runSessionPromptNow({
     try {
       firstRun = await runRuntimePromptOnce(runtimePrompt, {
         expectedVisiblePrompt: visibleUserPrompt,
+        visibleUserEvent: activeVisibleUserEvent,
         suppressPromptTooLong: allowAutoCompactRetry,
         suppressEncryptedContentError: retryEncryptedContentOnce,
       });
@@ -3903,6 +4055,9 @@ async function runSessionPromptNow({
 
     return finishRuntimeRun(firstRun);
   } catch (error) {
+    if (isExpectedControllerCancellation(error, controllerSignal)) {
+      return { latestAssistantText: '', streamedAssistantText: '', interrupted: true };
+    }
     let message = error instanceof Error ? error.message : String(error);
     if (/Failed to authenticate|API Error:\s*403|API Error:\s*401|forbidden|unauthorized/i.test(message)) {
       try {
@@ -3930,6 +4085,7 @@ async function runSessionPromptNow({
       sessionRecord.activeAgentMailTurn = null;
     }
     sessionRecord.syncingLocalTranscript = true;
+    sessionRecord.activeInputTurnId = null;
     sessionRecord.busy = false;
     if (!isSessionBusyForRenderer(sessionRecord)) clearSessionBusyTiming(sessionRecord);
     sessionRecord.updatedAt = Date.now();
@@ -3980,6 +4136,7 @@ async function runSessionPrompt(options) {
     sessionPromptQueues,
     sessionId,
     async () => {
+      options.controllerSignal?.throwIfAborted();
       if (options.sessionRecord.deleted) {
         throw new Error(`Unknown session: ${sessionId}`);
       }
@@ -4522,6 +4679,7 @@ async function reopenCompletedProjectSession(sessionRecord) {
 function getBootStatus() {
   return {
     hostMode: isWebHost ? 'web' : 'desktop',
+    capabilities: createHostCapabilities({ mode: isWebHost ? 'web' : 'desktop', confirmations: Boolean(hostConfirmations), appInstallation: Boolean(hostConfirmations && appRuntime), remoteOAuth: Boolean(webOAuth?.enabled), embeddedApps: Boolean(webApps), previewWindows: isWebHost }),
     repoRoot,
     uiRoot,
     sdkPath,
@@ -5288,6 +5446,7 @@ async function emitAppsChanged(payload = {}) {
       : appRuntime.registerInstalled(appId, version);
     try {
       await activation;
+      await connectorAppHost?.refresh(appId);
       if (openViews.standalone) launchAppWindow(getPublishedApp(appId), { mode: 'published' });
       broadcast();
     } catch (error) {
@@ -5300,6 +5459,7 @@ async function emitAppsChanged(payload = {}) {
     }
     return;
   }
+  if (payload.action !== 'runtime' && appId) await connectorAppHost?.refresh(appId);
   broadcast();
 }
 
@@ -5573,6 +5733,7 @@ function validateAppStorageValue(value) {
 }
 
 function closePublishedAppViews(appId) {
+  webApps?.closeApp(appId);
   let standalone = false;
   let embedded = false;
   for (const [key, win] of appWindows.entries()) {
@@ -5686,6 +5847,7 @@ async function openExternalHttpUrl(url) {
 }
 
 function openConnectorAuthorizationUrl(payload, browserMode = 'system') {
+  if (isWebHost) { webOAuth.show(payload.url); return; }
   if (browserMode === 'moss') {
     emitToRenderer('browser:open', payload);
     return;
@@ -6617,14 +6779,19 @@ const mossAppEventHandler = createMossAppEventHandler(
       launchAppWindow(getPublishedApp(name), { mode: 'published' })
     },
     openBrowser: async (payload) => {
+      const record = payload.sessionId ? getSessionRecord(payload.sessionId) : null;
+      const turnId = payload.presentationScope?.sessionId === record?.id ? payload.presentationScope.turnId : null;
+      const epoch = payload.presentationScope?.epoch || (record ? (await presentationService.snapshot(record.id))?.epoch : undefined);
       const opening = browserViewManager?.openTabAndWait
-        ? browserViewManager.openTabAndWait(payload)
+        ? browserViewManager.openTabAndWait({ ...payload, activate: false })
         : Promise.resolve(browserViewManager?.openTab(payload));
-      emitToRenderer('browser:open', {
-        ...payload,
-        alreadyOpened: Boolean(browserViewManager),
-      });
-      return await opening;
+      const state = await opening;
+      if (record && browserViewManager) {
+        await presentationService.register(record.id, { kind: 'browser', title: '浏览器', revision: String(Date.now()),
+          source: { type: 'browser-tab', tabId: state?.openedTabId || state?.activeTabId }, availability: 'ready', persistence: 'ephemeral',
+          capabilities: { preview: true, edit: false, popout: false } }, { turnId, epoch, mode: turnId ? 'auto' : 'background', origin: 'tool' });
+      } else emitToRenderer('browser:open', { ...payload, alreadyOpened: Boolean(browserViewManager) });
+      return state;
     },
   },
   {
@@ -6710,7 +6877,16 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  if (event?.type === 'present') {
+    const scope = event.presentationContext;
+    if (!scope || scope.sessionId !== sessionRecord?.id || sessionRecord.deleted) return { ok: false, error: 'Presentation session is unavailable' };
+    const input = scope.agentId ? { ...event.input, mode: 'background' } : event.input;
+    const result = await presentationService.present(sessionRecord.id, input, { turnId: scope.turnId, epoch: scope.epoch, toolUseId: scope.toolUseId, requestId: scope.toolUseId, origin: 'tool' });
+    return { ok: true, presentationResult: result };
+  }
   if (event?.type === 'app_tool_invoke') {
+    const originatingTurnId = event.hostPresentationScope?.sessionId === sessionRecord?.id ? event.hostPresentationScope.turnId : null;
+    const epoch = event.hostPresentationScope?.epoch || (await presentationService.snapshot(sessionRecord.id))?.epoch;
     if (sessionRecord?.agentMode === 'remote-direct') {
       return { ok: false, error: 'This session cannot invoke App Tools.' };
     }
@@ -6738,7 +6914,11 @@ async function handleMossHostEvent(event, sessionRecord) {
         : await invoke({ surface: 'tool', origin: 'agent-tool', sessionId: sessionRecord.id, workspace: sessionRecord.workspace });
       if (result?.presentation && /^#\/[a-zA-Z0-9/_?=&.%+-]*$/.test(result.presentation.route || '')) {
         const appId = String(event.input?.contributionId || '').split('/')[0];
-        pushSessionHistoryEvent(sessionRecord, { type:'system', subtype:'app_view', uuid:randomUUID(), timestamp:Date.now(), appId, title:String(result.presentation.title || '').slice(0,512), route:result.presentation.route });
+        const viewEvent = { type:'system', subtype:'app_view', uuid:randomUUID(), timestamp:Date.now(), appId, title:String(result.presentation.title || '').slice(0,512), route:result.presentation.route };
+        pushSessionHistoryEvent(sessionRecord, viewEvent);
+        await presentationService.register(sessionRecord.id, { kind: 'app-view', title: viewEvent.title || appId, revision: viewEvent.uuid,
+          source: { type: 'app-view', appId, route: viewEvent.route }, availability: 'ready', persistence: 'durable',
+          capabilities: { preview: true, edit: false, popout: false } }, { turnId: originatingTurnId, epoch, mode: originatingTurnId ? 'auto' : 'background', requestId: event.input.requestId, origin: 'app' }).catch(error => mossLog('warn', 'presentation', 'App result preview unavailable', { error: error.message }));
       }
       return { ok: true, result };
     } catch (error) {
@@ -7176,7 +7356,7 @@ function initializeAgentMail() {
     consumerId,
     store: agentMailStore,
     getEnabled: () => (
-      desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
+      !webAutomationsPaused && desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
     ),
     getConnection: async () => {
       const connection = await resolveAgentMailConnection();
@@ -7424,7 +7604,9 @@ function createPreviewWindow() {
     });
   }
 
+  const previewSenderId = previewWindow.webContents.id;
   previewWindow.on('closed', () => {
+    void previewOwnership.releaseSender(String(previewSenderId));
     mossLog('info', 'preview', 'Preview window closed');
     previewWindow = null;
     previewWindowReady = false;
@@ -7436,6 +7618,8 @@ function createPreviewWindow() {
 }
 
 async function openPreviewWindow(data) {
+  if (data && !data.file) data = { ...data, metadata: { ...data.metadata, artifactId: data.metadata?.artifactId || randomUUID() } };
+  if (data?.file?.metadata?.sessionId) data = { ...data, file: { ...data.file, metadata: { ...data.file.metadata, takeOwnership: true } } };
   const target = createPreviewWindow();
   if (previewWindowReady) {
     target.webContents.send('preview.open', data);
@@ -7514,6 +7698,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       webviewTag: true,
+      backgroundThrottling: !selfTestTarget,
       allowRunningInsecureContent: false,
       webSecurity: true,
       contextIsolation: true,
@@ -7695,7 +7880,9 @@ const {
   removeTasksForSession: removeCronTasksForSession,
   start: startMossCronScheduler,
   stop: stopMossCronScheduler,
+  skipMissed: skipMissedMossCronTasks,
 } = createMossCronScheduler({
+  canRun: () => !webAutomationsPaused,
   ipcMain,
   mossHome: MOSS_HOME,
   sessions,
@@ -7720,7 +7907,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveDurableDecision: resolveDurableAppDecision,
     onChanged: ({ decision, reason }) => emitToRenderer('decision:changed', { decision, reason }),
   });
-  await appDecisionBroker.restorePending();
+  if (isWebHost && webRestoreState.get().automationsPaused) {
+    for (const decision of desktopStateStore.listPendingDecisions()) await appDecisionBroker.expireDecision(decision.id, '环境已恢复，请重新发起确认。');
+  } else await appDecisionBroker.restorePending();
+  hostConfirmations = createHostConfirmations({ broker: appDecisionBroker, mode: isWebHost ? 'web' : 'desktop',
+    ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner', publish: emitToRenderer,
+    showNative: options => mainWindow && !mainWindow.isDestroyed() ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options),
+  });
+  hostConfirmations.register(ipcMain);
+  if (isWebHost) {
+    webInteractions = createWebInteractions({ registry: ipcMain });
+    webOAuth = createWebOAuth({ publish: emitToRenderer });
+    ipcMain.handle('web:oauth-list', () => webOAuth.list());
+    ipcMain.handle('web:oauth-cancel', (_context, { id }) => webOAuth.cancel(id));
+  }
+  ipcMain.handle('host:capabilities', () => getBootStatus().capabilities);
   for (const decision of desktopStateStore.listPendingDecisions()) {
     if (decision.kind !== 'plan_approval') continue;
     const sessionRecord = sessions.get(decision.sessionId);
@@ -7735,21 +7936,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       );
     }
   }
-  initializeAgentMail();
+  if (!webAutomationsPaused) initializeAgentMail();
   // Initialize bundled skills from repo skills to ~/.moss/skills
   await initializeBundledSkills();
 
   // Initialize bundled assistants from repo assistants to ~/.moss/assistants
   await initializeBundledAssistants();
   await migrateLegacyExpertInstallations();
-
-  await initializeBundledConnectorCatalog({
-    bundledCatalogPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'workbuddy-connectors-config.zip'),
-    bundledCloudAuthPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'cloud-auth-providers.json'),
-    bundledMcpOverridesPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'connector-mcp-overrides.json'),
-    bundledCliOverridesPath: path.join(getBundledResourceDir('connectors', MOSS_REPO_CONNECTORS_DIR), 'connector-cli-overrides.json'),
-    log: mossLog,
-  });
 
   const appMarketResourceDir = getBundledResourceDir('app-market', MOSS_REPO_APP_MARKET_DIR);
   const { trustedPublishers } = loadAppTrustConfiguration(appMarketResourceDir);
@@ -7782,12 +7975,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
     log: (level, message, details) => mossLog(level, 'agent-channel', message, details),
   });
+  const appDialog = isWebHost ? webInteractions.dialog : dialog;
+  const appShell = isWebHost ? {
+    openExternal: url => webInteractions.request('link', { url }),
+    openPath: async file => { const allowed = await webInteractions.request('download', { path: file }); return allowed ? '' : '操作已取消'; },
+    showItemInFolder: file => webInteractions.request('reveal', { path: file }),
+  } : shell;
   const appPlatformHandlers = createAppPlatformHandlers({
+    web: isWebHost,
+    webCapture: async context => (await webInteractions.request('screen', { title: `${context.appId} 请求截取你的浏览器设备屏幕` }, context))?.[0],
+    ...(isWebHost ? { resolveMediaUrl: async file => { const handle = await webResources.create({ root: path.dirname(file), entryPath: file, ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner' }); return (process.env.MOSS_WEB_ORIGIN ? new URL(handle.url, process.env.MOSS_WEB_ORIGIN).href : handle.url); } } : {}),
     desktopCapturer,
-    dialog,
+    dialog: appDialog,
     nativeImage,
     screen,
-    shell,
+    shell: appShell,
     systemPreferences,
     allowMediaFile,
     fetchImpl: remoteDirectNetFetch,
@@ -7798,11 +8000,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveConnection: (options) => resolveRemoteDirectConnection(undefined, options),
     fetchImpl: remoteDirectNetFetch,
     pickFiles: async () => {
-      const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
+      const result = await appDialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
       return result.canceled ? [] : result.filePaths;
     },
     pickDestination: async (name) => {
-      const result = await dialog.showSaveDialog({ defaultPath: path.basename(name) });
+      const result = await appDialog.showSaveDialog({ defaultPath: path.basename(name) });
       return result.canceled ? null : result.filePath;
     },
     authorizeApp: async (context, permission) => {
@@ -7836,6 +8038,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       try {
         return await authenticate(name, config, {
           signal, skipBrowserOpen: true,
+          ...(isWebHost ? { webCallback: { redirectUri: webOAuth.redirectUri, listen: state => webOAuth.listen(state, { label: name, signal }) } } : {}),
           onWaitingForCallback: (submit) => pendingMcpAuthCallbacks.set(name, { submit, createdAt: Date.now(), sessionId: null, displayName: name }),
           onAuthorizationUrl: (url) => openConnectorAuthorizationUrl({ url, mcpAuth: { serverName: name, displayName: name } }, 'moss'),
         });
@@ -7922,14 +8125,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   };
   const configurationService = createMossSettingsService({
     receiptsPath: path.join(MOSS_HOME, 'state', 'configuration-receipts.json'),
-    confirm: async change => {
-      if (isWebHost) throw new Error('这项配置变更需要在 Moss 设置页面中确认。');
-      return (await dialog.showMessageBox(mainWindow, {
-      type: 'question', title: '修改 Moss 配置', message: `应用请求修改${settingsAreaNames[change.domain] || 'Moss 设置'}`,
+    confirm: (change, context) => hostConfirmations.request({
+      title: '修改 Moss 配置', message: `应用请求修改${settingsAreaNames[change.domain] || 'Moss 设置'}`,
       detail: `${change.target.label || change.target.id}\n\n${change.changes.map(item => describeSettingsChange(change.domain,item)).join('\n\n')}`,
-      buttons: ['取消', '应用修改'], defaultId: 0, cancelId: 0,
-      })).response === 1;
-    },
+      confirmLabel: '应用修改',
+    }, { signal: context?.signal, kind: 'settings', sessionId: context?.sessionId }),
     adapters: createMossSettingsAdapters({
       getDesktop: () => {
         const snapshot = desktopSettingsStore.reload();
@@ -8004,6 +8204,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
   appRuntime = await createAppRuntime({
+    automaticStartAllowed: () => !webAutomationsPaused,
     onCreated: (runtime) => { appRuntime = runtime; },
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
@@ -8063,7 +8264,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         method, (input, context) => appAuditHost.handle(method, input, context),
       ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
-      ...createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus }),
+      ...createLocalAppHostHandlers({ dialog: appDialog, shell: appShell, BrowserWindow, getManagedRuntimeStatus, ...(isWebHost ? { preview: async file => { const handle = await webResources.create({ root: path.dirname(file), entryPath: file, ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner' }); if (!await webInteractions.request('link', { title: '打开 App 文件预览', url: (process.env.MOSS_WEB_ORIGIN ? new URL(handle.url, process.env.MOSS_WEB_ORIGIN).href : handle.url) })) throw new Error('文件预览已取消。'); } } : {}) }),
       [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
       [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
         method, (input, context) => cloudStorageHost.handle(method, input, context),
@@ -8091,6 +8292,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         void appTestingHost.deactivate(event.appId, event.instanceId).catch(error => mossLog('error', 'app-testing', error.message));
       }
       if (event.type === 'status' && ['stopping', 'stopped', 'failed', 'crashed', 'crash_loop'].includes(event.state)) appExecutionHost?.deactivate(event.appId, 'App Backend 已停止', event.instanceId);
+      webApps?.publishRuntime(event);
       emitToRenderer('app:runtime-event', event);
       void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
@@ -8100,6 +8302,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (event.appId === 'moss.audit' && (appLifecycleChanged || event.type === 'instance-changed')) appAuditHost?.refresh();
       if (event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
+      }
+      if (appLifecycleChanged && getStoredConnectorId(event.appId)) {
+        void connectorAppHost?.refresh(event.appId).then(() => resetLocalRuntimesForMcpReload()).catch(error => mossLog('error', 'connector-app', error.message));
       }
       if (appLifecycleChanged) {
         void cloudStorageHost?.watch();
@@ -8123,6 +8328,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
     },
   });
+  if (isWebHost) {
+    webResources = createWebResources();
+    webApps = createWebApps({ registry: ipcMain, resources: webResources, assertWorkAllowed: assertUpdateWorkAllowed,
+      appearance: () => desktopSettings.appearance, listVersions: listAppVersions,
+      resolveApp: ({ name, sessionId, workspace }) => {
+        const stored = listAllStoredApps().find(app => app.name === name || app.id === name);
+        if (!stored) throw new Error('找不到 App。');
+        const entry = getPublishedApp(stored.id || name), id = entry.id || entry.name;
+        requireEnabledAppForLaunch({ runtime: appRuntime, appId: id });
+        return { ...entry, id, runtime: appRuntime, entryPath: entry.filePath || entry.entryPath,
+          sessionId, workspace: sessionId ? getSessionRecord(sessionId).workspace : workspace,
+          storagePath: path.join(ensureAppDataDir(id), APP_STORAGE_FILENAME) };
+      },
+      storage: (state, method, input) => {
+        const snapshot = readAppStorageSnapshot(state);
+        if (method === 'list') return Object.keys(snapshot);
+        const key = normalizeAppStorageKey(input.key);
+        if (method === 'get') return snapshot[key];
+        if (method === 'set') { validateAppStorageValue(input.value); snapshot[key] = input.value; }
+        else delete snapshot[key];
+        writeAppStorageSnapshot(state, snapshot); return { ok: true, key };
+      },
+      prepareComposer: async (state, input) => {
+        const providerId = `${state.id}/${String(input?.providerId || '')}`;
+        const context = { providerId, intent: input?.intent, ref: input?.ref };
+        const sessionId = typeof input?.ref?.projectRef === 'string' ? appAuthoring.resumeProject(input.ref.projectRef, { appId: state.id, owner: appRuntime.currentOwner() }) : state.sessionId;
+        const prepared = await appComposer.resolve(context, { sessionId: state.sessionId, workspace: state.workspace });
+        emitToRenderer('app:composer:prepare', { sessionId, context: { ...context, ref: prepared.ref }, title: prepared.title, prompt: prepared.prompt, route: prepared.route, workspace: prepared.workspace, appId: state.id });
+        return { ok: true };
+      },
+    });
+  }
   const previewRoot = path.join(MOSS_HOME, 'app-authoring-previews');
   await fsp.rm(previewRoot, { recursive: true, force: true });
   await fsp.mkdir(previewRoot, { recursive: true });
@@ -8157,20 +8394,25 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       emitToRenderer('app:composer:prepare', { ...draft, title: prepared.title || draft.title, prompt: draft.prompt || prepared.prompt, workspace: prepared.workspace });
       mainWindow?.show();
     },
-    authorizePreview: (manifest, grants) => confirmAppInstallation(dialog, { ...manifest, contributes: undefined }, grants),
-    authorizeInstall: (manifest, result) => confirmAppInstallation(dialog,
-      JSON.stringify(result.tools) === JSON.stringify(result.previousTools) ? { ...manifest, contributes: undefined } : manifest, result.addedPermissions,
+    authorizePreview: (manifest, grants) => {
+      return confirmAppInstallation(hostConfirmations.dialog, manifest, grants);
+    },
+    authorizeInstall: (manifest, result) => confirmAppInstallation(hostConfirmations.dialog,
+      JSON.stringify(result.tools) === JSON.stringify(result.previousTools) ? { ...manifest, contributes: { ...manifest.contributes, tools: [] } } : manifest, result.addedPermissions,
       [result.source?.marketplace && result.source.appId === manifest.id ? `此本地修改将替换市场 App ${manifest.id}。原版本保留，当前版本不再继承市场签名信任；切回市场版本时需要再次确认。` : '',
         result.dataCompatibility === 'migration-tested' ? `数据迁移验证：${result.verification}` : ''].filter(Boolean).join('\n\n')),
     install: async (artifact, { project, expectedGrants, ...expected }) => {
-      const installed = await publishAppFromBuild(artifact.directory, { ...expected, sourceRoot: artifact.source, reason: 'authoring', localModification: { origin: project.origin, sourceHash: artifact.sourceHash }, validateCommit: () => {
+      const installed = await publishAppFromBuild(artifact.directory, { ...expected, sourceRoot: artifact.source, reason: 'authoring', localModification: { origin: project.origin, sourceHash: artifact.sourceHash }, validateCommit: async installedPackage => {
+        if (await hashAuthoringArtifact(installedPackage.root, { packageFiles: true }) !== artifact.hash) throw new Error('App artifact changed before commit');
         if (JSON.stringify([...(appRuntime.installations.get(project.appId)?.grants || [])].sort()) !== JSON.stringify(expectedGrants)) throw new Error('App permissions changed before commit');
       } });
       await appRuntime.setAppGrants(installed.id, artifact.manifest.permissions);
       return { version: installed.currentVersion };
     },
     preview: createAuthoringPreview({ root: previewRoot, getRuntime: () => appRuntime, nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
-      openWindow: ({ artifact, runtime, previewRoot }) => launchAppWindow({ id: artifact.manifest.id, name: artifact.manifest.id, displayName: artifact.manifest.displayName,
+      openWindow: ({ artifact, runtime, previewRoot }) => isWebHost ? webApps.offer({ id: artifact.manifest.id,
+        manifest: artifact.manifest, runtime, entryPath: path.join(artifact.directory, artifact.manifest.ui.entry), bundleRoot: artifact.directory,
+        storagePath: path.join(previewRoot, 'web-storage.json') }, process.env.MOSS_WEB_OWNER_ID || 'owner') : launchAppWindow({ id: artifact.manifest.id, name: artifact.manifest.id, displayName: artifact.manifest.displayName,
         kind: 'app', manifest: artifact.manifest, runtime, version: 'preview', filePath: path.join(artifact.directory, artifact.manifest.ui.entry), entryPath: path.join(artifact.directory, artifact.manifest.ui.entry) },
         { mode: 'preview', buildDir: artifact.directory, previewRoot }),
     }),
@@ -8186,7 +8428,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     });
   }
   await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
-  for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled)) {
+  for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused)) {
     for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
       agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
     }
@@ -8214,7 +8456,26 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     emitChanged: emitAppsChanged,
     emitProgress: emitAppInstallProgress,
     installArchivePackage: installAppPackage,
+    getInstallationRevision: getAppInstallationRevision,
+    getInstalledApp: id => listAllStoredApps().find(app => (app.id || app.name) === id),
+    confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(hostConfirmations.dialog, manifest, permissions, details),
   });
+  connectorAppHost = createConnectorAppHost({ getRuntime: () => appRuntime });
+  setConnectorAppLifecycle({
+    getInstallation: id => appRuntime?.getInstallation(id),
+    install: async () => { throw new Error('请从 App 应用市场安装在线服务'); },
+    uninstall: async appId => {
+      const id = getStoredConnectorId(appId);
+      await appRuntime.uninstall(appId);
+      await connectorAppHost.remove(appId);
+      await deleteApp(appId);
+      await emitAppsChanged({ action: 'deleted', appId });
+      return { ok: true, id };
+    },
+  });
+  // Installations come exclusively from the App marketplace or an explicit
+  // archive import. Never adopt old connectors during Host startup.
+  await connectorAppHost.refresh();
   registerAppMarketplaceIpc({
     ipcMain: updateGuardedAppIpc,
     service: createAppMarketplaceService({
@@ -8225,7 +8486,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       getInstalledApps: () => listAllStoredApps(),
       getInstallationRevision: getAppInstallationRevision,
       installPackage: installAppPackage,
-      confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(dialog, manifest, permissions, details),
+      confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(hostConfirmations.dialog, manifest, permissions, details),
       rollbackPackage: async ({ appId, previousVersion }) => {
         if (previousVersion) rollbackAppToVersion(appId, previousVersion);
         else await deleteApp(appId);
@@ -8235,6 +8496,34 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
 
+  const appDiscoveryPreferences = createAppDiscoveryPreferences({ rootDir: path.join(MOSS_HOME, 'app-preferences') });
+  ipcMain.handle('app:discovery-preferences', (context, input = {}) => {
+    const owner = context?.principal?.userId || appRuntime?.currentOwner?.()?.key || 'desktop';
+    return input.action ? appDiscoveryPreferences.update(owner, input) : appDiscoveryPreferences.read(owner);
+  });
+  updateGuardedAppIpc.handle('app:connector', async (_event, { appId, action = 'status', values } = {}) => {
+    const pkg = await appRuntime.getActivePackage(appId);
+    const id = pkg?.manifest.connectorApp?.id;
+    if (!id) throw new Error('此 App 未提供连接能力');
+    const installation = appRuntime.getInstallation(appId);
+    if (!['status', 'refresh'].includes(action) && (!installation?.enabled || !installation.grants?.includes('connector:use'))) throw new Error('请先启用并授权此 App');
+    let result;
+    if (action === 'credentials') result = await saveConnectorCredentials(id, values);
+    else if (action === 'provision') result = await provisionConnectorCredentials(id);
+    else if (action === 'setup') result = await setupConnectorCli(id, {
+      openBrowser: ({ url, browserMode }) => openConnectorAuthorizationUrl({ url, sessionId: null }, browserMode),
+      emitConnectorsChanged: payload => { emitToRenderer('connector-hub:changed', payload); void emitAppsChanged({ appId }); },
+      onSetupComplete: () => resetLocalRuntimesForMcpReload(),
+    });
+    else if (action === 'auth') result = await authenticateMcpServerByName(id);
+    else if (action === 'refresh') {
+      if (installation?.enabled && installation.grants?.includes('connector:use') && pkg.manifest.connectorApp.capabilities.includes('cli')) result = await refreshConnectorCliStatus(id);
+    }
+    else if (action !== 'status') throw new Error('未知连接操作');
+    if (action !== 'status') { await resetLocalRuntimesForMcpReload(); await emitAppsChanged({ appId }); }
+    const connector = (await listInstalledConnectors()).find(item => item.id === id);
+    return { connector, ...(result?.auth ? { auth: result.auth } : {}) };
+  });
   await appTraceHost.refresh();
 
   // Register app IPC handlers
@@ -8298,7 +8587,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     syncSessions: syncRemoteDirectSessionsFromServer,
     findSession: findRemoteDirectSessionRecord,
   });
-  startMossCronScheduler();
+  if (!webAutomationsPaused) startMossCronScheduler();
   if (!isWebHost) await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
   registerLibreOfficeIpcHandlers();
@@ -8312,7 +8601,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerShellIpcHandlers();
   registerWorkspaceIpcHandlers({
     getSessionRecord,
-    writeWorkspaceFile,
+    writeWorkspaceFile: async (record, filePath, content) => {
+      if (record.agentMode !== 'remote-direct') await previewOwnership.assertUnowned(record.id, filePath);
+      return writeWorkspaceFile(record, filePath, content);
+    },
   });
   registerWorkspaceVersionIpcHandlers({
     ipcMain,
@@ -8358,7 +8650,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     emit: emitToRenderer,
     log: mossLog,
   });
-  agentTeamsService.start();
+  if (!webAutomationsPaused) agentTeamsService.start();
 
   // Initialize custom protocols used by workspace media and plugin apps.
   try {
@@ -8385,12 +8677,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
   }
   if (isWebHost) {
-    const overrides = new Map(webTerminals.handlers);
+    const overrides = new Map([...webTerminals.handlers, ...webApps.handlers, ...webInteractions.handlers]);
     overrides.set('computer-use:status', () => ({ supported: false, enabled: false, phase: 'unsupported', requests: [], apps: [], sessionApps: [] }));
     webServer = await startWebServer({
-      registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides,
-      getBlockers: () => [...getInstallBlockers(), ...(pendingQuestionRequests.size ? ['待确认请求'] : []), ...(webTerminals?.activeCount() ? ['运行中的终端'] : [])],
-      snapshot: async () => ({ questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, requestedAt, input }) => ({ requestId, sessionId, requestedAt, input })) }),
+      restoreState: webRestoreState,
+      onDrain: async () => {
+        webAutomationsPaused = true;
+        stopMossCronScheduler();
+        await agentMailPoller?.stop(); agentMailPoller = null;
+        agentTeamsService?.stop();
+        for (const status of appRuntime?.supervisor.listStatuses() || []) await appRuntime.supervisor.stop(status.key);
+        sessionDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      },
+      onResume: async ({ skipMissed = false } = {}) => {
+        if (skipMissed) await skipMissedMossCronTasks();
+        webAutomationsPaused = false;
+        await appRuntime?.restore(); initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
+      },
+      registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides, oauth: webOAuth, resources: webResources, apps: webApps,
+      resolvePreviewResource: async file => {
+        if (file.metadata?.remote) {
+          const reference = parseRemoteWorkspaceUrl(file.metadata.remoteContentUrl);
+          const record = getSessionRecord(reference.sessionId);
+          return { entryPath: reference.filePath.replace(/^\/+/, ''), read: relative => fetchRemoteWorkspaceProtocolContent(record, relative, new Request('https://preview.invalid')) };
+        }
+        const target = await fsp.realpath(file.path);
+        const record = file.metadata?.sessionId ? getSessionRecord(file.metadata.sessionId) : null;
+        const workspace = record?.workspace ? await fsp.realpath(record.workspace) : null;
+        const relative = workspace ? path.relative(workspace, target) : '..';
+        return { root: workspace && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative) ? workspace : path.dirname(target), entryPath: target };
+      },
+      getBlockers: () => [...getInstallBlockers(), ...(webOAuth?.list().some(entry => ['preparing', 'waiting', 'received'].includes(entry.status)) ? ['账号授权'] : []), ...(pendingQuestionRequests.size || hostConfirmations.snapshot().requests.length ? ['待确认请求'] : []), ...(webTerminals?.activeCount() ? ['运行中的终端'] : [])],
+      snapshot: async () => ({ confirmations: hostConfirmations.snapshot(), questions: [...pendingQuestionRequests.values()].map(({ requestId, sessionId, requestedAt, input }) => ({ requestId, sessionId, requestedAt, input })) }),
     });
     console.log(`[moss-web] Ready on ${webServer.address.address}:${webServer.address.port}`);
     if (webServer.auth.mode === 'token') console.log(`[moss-web] Access token file: ${webServer.auth.tokenPath}`);
@@ -8398,7 +8716,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     createWindow();
     if (!selfTestTarget) initializeAutoUpdater();
   }
-  void recoverInterruptedProjectCoordinatorTasks().catch((error) => {
+  if (!webRestoreState.get().automationsPaused) void recoverInterruptedProjectCoordinatorTasks().catch((error) => {
     mossLog('error', 'project-task', 'Unable to recover interrupted Project Coordinator tasks', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -8432,6 +8750,7 @@ function getInstallBlockers() {
   if (terminalManager?.hasOpenTerminals()) blockers.push('终端窗口');
   if (activeAppUpdateOperations || appRuntime?.supervisor?.listStatuses().some(status => status.pendingActions || status.pendingHostRequests || status.pendingHostEvents)) blockers.push('App 操作');
   if (managedRuntimeInstallPromise) blockers.push('运行时安装');
+  if (memoryDreamService.getStatus().phase === 'running') blockers.push('长期记忆整理');
   if (computerUseService.owner || computerUseService.inFlight) blockers.push('电脑操控');
   return blockers;
 }
@@ -8454,6 +8773,10 @@ function shutdownDesktop() {
       try { await operation(); } catch (error) { errors.push(error); }
     };
     await attempt(() => webTerminals?.close());
+    webInteractions?.close();
+    webApps?.close();
+    webOAuth?.close();
+    await attempt(() => hostConfirmations?.close());
     await attempt(() => appTestingHost.close());
     await attempt(async () => { memoryDreamService.stop(); await memoryDreamService.waitForIdle(); });
     await attempt(() => computerUseService.stop('quit'));
@@ -8654,9 +8977,7 @@ async function confirmRemoteDirectCertificateChange({
     cancelId: 0,
     noLink: true,
   };
-  const result = mainWindow && !mainWindow.isDestroyed()
-    ? await dialog.showMessageBox(mainWindow, options)
-    : await dialog.showMessageBox(options);
+  const result = await hostConfirmations.dialog.showMessageBox(options);
   return result.response === 1;
 }
 
@@ -8692,10 +9013,14 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
       ? 'Moss Server self-signed certificate accepted from the local trust store'
       : 'Moss Server certificate accepted by the system trust store');
     return performRemoteDirectOAuth({
+      ...(isWebHost ? { callbackListener: async state => {
+        const listener = await webOAuth.listen(state, { label: 'Moss Server 登录', signal: controller.signal });
+        return { ...listener, callback: listener.callback.then(url => new URL(url).searchParams.get('code')) };
+      } } : {}),
       serverUrl: parsed.serverUrl,
       fetchImpl: remoteDirectNetFetch,
-      openAuthorization: (authorizationUrl, { redirectUri, signal }) => (
-        openRemoteDirectAuthorizationWindow({
+      openAuthorization: (authorizationUrl, { redirectUri, state, signal }) => (
+        isWebHost ? webOAuth.show(authorizationUrl, { state }) : openRemoteDirectAuthorizationWindow({
           createWindow: (options) => new BrowserWindow(options),
           parentWindow: mainWindow,
           authorizationUrl,
@@ -8893,6 +9218,7 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
 
   const configuredAuthUrl = connectorServer ? getConnectorProviderAuthUrl(connectorServer) : '';
   if (connectorServer && configuredAuthUrl) {
+    if (isWebHost) throw new Error('此连接器需要专用浏览器登录并读取登录状态，请使用连接器的 API Key 配置；标准 MCP OAuth 可在 WebUI 中授权。');
     const configuredAuthContext = getConnectorProviderAuthContext(connectorServer);
     const { browserMode, ...captureContext } = configuredAuthContext || {};
     openConnectorAuthorizationUrl({
@@ -8950,6 +9276,7 @@ async function authenticateMcpServerByName(name, { sessionId = null } = {}) {
   let authorizationUrlOpened = false;
   try {
     authResult = await authenticateDesktopMcpServer(serverName, serverConfig, {
+      ...(isWebHost ? { webCallback: { redirectUri: webOAuth.redirectUri, listen: state => webOAuth.listen(state, { label: connectorServer?.connectorName || serverName }) } } : {}),
       onWaitingForCallback: (submit) => {
         pendingMcpAuthCallbacks.set(serverName, {
           submit,
@@ -9110,6 +9437,7 @@ const memoryDreamService = createMemoryDreamService({
 });
 registerMemoryDreamIpc(ipcMain, memoryDreamService);
 const appTestingHost = createAppTestingHost({
+  hostBuildId: createHash('sha256').update(fs.readFileSync(__filename)).update(fs.existsSync(sdkPath) ? fs.readFileSync(sdkPath) : '').digest('hex'),
   getSettings: () => desktopSettings, getRuntime: () => appRuntime, getRuntimeHome: getManagedRuntimeHome,
   executable: process.execPath, args: app.isPackaged ? [] : [uiRoot], cwd: uiRoot,
   appVersion: app.getVersion(), isTarget: Boolean(selfTestTarget), assertWorkAllowed: assertUpdateWorkAllowed,
@@ -9123,18 +9451,24 @@ const appTestingHost = createAppTestingHost({
       agentMode: 'local', appIds: [TEST_APP_ID], connectorIds: [], permissionMode: 'bypassPermissions' });
     record.appTestRunId = run.id;
     record.appTestInstanceId = run.instanceId;
-    record.appTestMcpServers = { [TEST_BROWSER_SERVER]: config };
-    await fsp.writeFile(path.join(record.sessionDir, 'app-test-controller.json'), JSON.stringify({ runId: run.id, instanceId: run.instanceId }));
-    emitToRenderer('app:open-session', { sessionId: record.id });
+    record.appTestEvidenceReview = run.evidenceReview === true;
+    record.appTestMcpServers = run.evidenceReview ? {} : { [TEST_BROWSER_SERVER]: config };
+    await fsp.writeFile(path.join(record.sessionDir, 'app-test-controller.json'), JSON.stringify({ runId: run.id, instanceId: run.instanceId, evidenceReview: record.appTestEvidenceReview }));
     return record.id;
   },
   executeController: async (sessionId, prompt, signal) => {
     const record = getSessionRecord(sessionId);
     await ensureRuntime(record);
     if (signal.aborted) { await closeTestController(record.runtime); record.runtime = null; signal.throwIfAborted(); }
-    return runSessionPrompt({ sessionRecord: record, runtimePrompt: prompt, visibleUserPrompt: prompt, failOnApiError: true });
+    const visibleUserPrompt = typeof prompt === 'string' ? prompt : prompt.filter(block => block.type === 'text').map(block => block.text).join('\n');
+    return runSessionPrompt({ sessionRecord: record, runtimePrompt: prompt, visibleUserPrompt, failOnApiError: true, controllerSignal: signal });
   },
   interruptController: sessionId => sessions.get(sessionId)?.runtime?.abort(),
+  finishController: sessionId => {
+    const runtime = sessions.get(sessionId)?.runtime;
+    if (typeof runtime?.completeTurn !== 'function') throw new Error('请重新构建并重启 Moss 以启用自测正常完成协议。');
+    runtime.completeTurn();
+  },
   stopController: async sessionId => {
     const record = sessions.get(sessionId);
     if (record?.runtime) { await closeTestController(record.runtime); record.runtime = null; }
@@ -9166,7 +9500,7 @@ ipcMain.handle('decision:respond', (_event, { decisionId, allowed, choice } = {}
   return appDecisionBroker.respond({
     decisionId,
     allowed: Boolean(allowed),
-    source: 'desktop',
+    source: _event?.transport === 'web' ? 'web' : 'desktop',
     context: {
       choice: choice === 'remember' || choice === 'block' ? choice : null,
     },
@@ -9364,7 +9698,7 @@ ipcMain.handle('agent:sync-remote-sessions', async () => {
 
 ipcMain.handle('agent:create-session', async (_event, payload = {}) => {
   const { appIds, appServiceIds } = await sessionApps.validateSelection(payload);
-  if (payload.agentMode === 'remote-direct' && (appIds.length || appServiceIds.length)) throw new Error('App 工具需要本地会话');
+  if (payload.agentMode === 'remote-direct' && ((await Promise.all(appIds.map(sessionApps.isConnectorApp))).some(available => !available) || appServiceIds.length)) throw new Error('App 工具需要本地会话');
   const requestedAssistantName = typeof payload.assistant_name === 'string'
     ? payload.assistant_name.trim()
     : '';
@@ -9649,10 +9983,11 @@ ipcMain.handle('agent:get-turn-changes', async (_event, { sessionId } = {}) => {
   const sessionRecord = getSessionRecord(sessionId);
   const history = await loadSessionHistoryFromSource(sessionRecord);
   return {
-    turns: collectTurnChanges(history),
+    turns: await turnObservationService.turnsForHistory(sessionId, history),
     rewind: getTurnRewindSupport(sessionRecord),
   };
 });
+ipcMain.handle('agent:get-observation-diff', (_event, { sessionId, observationId, filePath }) => turnObservationService.diff(sessionId, observationId, filePath));
 
 ipcMain.handle('agent:preview-turn-rewind', async (_event, { sessionId, userMessageId } = {}) => {
   await interruptedSessionRecoveryPromise;
@@ -10128,6 +10463,7 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 });
 
 registerSessionControlIpc({
+  abortPendingSends: id => sessionSendCancellation.abort(id),
   stopComputerUse: id => computerUseService.stop('abort', id),
   stopAppTasks: async id => { await appExecutionHost?.cancelSession(id); await appAuthoring?.stopSession(id); },
   ipcMain,
@@ -10166,6 +10502,7 @@ function enabledAppContributions(manifest, installation) {
 ipcMain.handle('app:list', async () => {
   const results = [];
   const storedApps = listAllStoredApps();
+  const connectorRecords = new Map((await listInstalledConnectors()).map(item => [item.id, item]));
   for (const stored of storedApps) {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
@@ -10188,6 +10525,8 @@ ipcMain.handle('app:list', async () => {
               : 'stopped';
     results.push({
       ...appEntry,
+      discovery: getAppDiscovery({ ...appEntry, discovery: manifest?.discovery }),
+      connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connectorRecords.get(manifest.connectorApp.id) || null } : undefined,
       hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
       hasSettings: manifest
         ? Boolean(manifest.ui && manifest.contributes?.settings?.length)
@@ -10332,7 +10671,17 @@ updateGuardedAppIpc.handle('app:delete', async (_event, { name, deleteData = fal
       if (key.startsWith(`${appId}:`) && !win.isDestroyed()) win.close();
     }
     if (appRuntime) {
+      if (deleteCredentials && getStoredConnectorId(appId)) {
+        const connector = (await listInstalledConnectors()).find(item => item.appId === appId);
+        for (const name of connector?.mcpServerNames || []) {
+          const server = findConnectorMcpServer(name, { includeUnavailable: true });
+          if (!server || !['http', 'sse'].includes(server.config.type)) continue;
+          const clearAuth = await getClearDesktopMcpServerAuthFn();
+          await clearAuth(server.serverName, server.config);
+        }
+      }
       await appRuntime.uninstall(appId, { deleteData, deleteCredentials });
+      await connectorAppHost?.remove(appId, { deleteData, deleteCredentials });
       await deleteApp(appId);
     } else {
       await deleteApp(appId);
@@ -10512,6 +10861,8 @@ registerFileSystemIpcHandlers({
   resolveResourceFile: uri => resolveAppResourceFile(appRuntime, uri),
 });
 
+registerPresentationIpcHandlers({ ipcMain, service: presentationService, openPreviewWindow, getSessionRecord, resolveItem: presentationResolver.resolveItem });
+
 
 async function sendAgentPromptNow(event, {
   sessionId,
@@ -10528,7 +10879,9 @@ async function sendAgentPromptNow(event, {
   sourceChannel = 'desktop',
   runtimePromptPrefix = '',
   additionalSystemPrompt = '',
+  controllerSignal,
 } = {}) {
+  controllerSignal?.throwIfAborted();
   const sender = event?.sender || mainWindow?.webContents || null;
   const sessionRecord = getSessionRecord(sessionId);
   assertWorkspaceVersionIdle(sessionRecord);
@@ -10718,12 +11071,14 @@ async function sendAgentPromptNow(event, {
   const runtimePrompt = promptText;
 
   const isProjectTaskRoot = isProjectTaskRootSession(sessionRecord);
+  controllerSignal?.throwIfAborted();
   if (isProjectTaskRoot && !isPlanOnly) {
     const activeProjectTaskRun = projectCoordinatorTaskRuns.get(sessionRecord.id);
     await waitForProjectTaskRunBeforeContinuation(
       activeProjectTaskRun,
       () => isProjectTaskStopRequested(sessionRecord),
     );
+    controllerSignal?.throwIfAborted();
     if (!projectCoordinatorTaskRuns.has(sessionRecord.id)) {
       projectTaskCancellationRequests.delete(sessionRecord.id);
     }
@@ -10757,7 +11112,12 @@ async function sendAgentPromptNow(event, {
       composerContext: appContext,
       runtimeSystemPrompt,
       reopenCompletedProjectSession: Boolean(sessionRecord.projectId),
+      controllerSignal,
     });
+
+    if (controllerSignal?.aborted || turn.interrupted) {
+      return { ok: true, sessionId, interrupted: true };
+    }
 
     if (
       isProjectTaskRoot &&
@@ -10905,15 +11265,25 @@ function sendAgentPrompt(event, payload, options = {}) {
   assertUpdateWorkAllowed();
   const sessionId = String(payload?.sessionId || '').trim();
   if (!sessionId) throw new Error('Session id is required.');
-  return runInKeyedQueue(
-    sessionSendQueues,
-    sessionId,
-    () => { assertUpdateWorkAllowed(); return sendAgentPromptNow(event, payload, options); },
-  );
+  return sessionSendCancellation.run(sessionId, async controllerSignal => {
+    try {
+      return await runInKeyedQueue(sessionSendQueues, sessionId, () => {
+        controllerSignal.throwIfAborted();
+        assertUpdateWorkAllowed();
+        return sendAgentPromptNow(event, payload, { ...options, controllerSignal });
+      });
+    } catch (error) {
+      if (isExpectedControllerCancellation(error, controllerSignal)) {
+        return { ok: true, sessionId, interrupted: true };
+      }
+      throw error;
+    }
+  });
 }
 
 const sessionApps = createSessionApps({
   getRuntime: () => appRuntime, getMcpHost: () => appMcpHost,
+  connectorAvailable: async appId => (await listInstalledConnectors()).some(item => item.appId === appId && item.enabled && item.connected),
   isBusy: record => record.busy || record.preparingPrompt || hasActiveAgentTeam(record) || (record.projectId && getProjectWorkerTasks(record).some(isActiveProjectWorker)),
   disposeRuntime, persist: schedulePersistSession, emit: emitSessionMeta,
   onRemoved: async (record, removed) => { await reconcileSessionMcpAccess(record); await computerUseService.removedFromSession(record.id, removed); },
@@ -10974,6 +11344,12 @@ ipcMain.handle('app:list-commands', async (_event, { sessionId } = {}) => {
 });
 
 ipcMain.handle('agent:send', (event, payload) => sendAgentPrompt(event, payload));
+const sessionInteractions = createSessionInteractions({
+  getSessionRecord, publish: pushSessionHistoryEvent, assertWorkAllowed: assertUpdateWorkAllowed,
+  prepareSteer: createSupplementPreparation({ localizeFiles: localizeProjectSessionAttachments,
+    resolveResource: uri => resolveAppResourceFile(appRuntime, uri), isResourceUri: isAppResourceUri, getAgentCatalog: getDesktopAgentCatalog }),
+});
+ipcMain.handle('agent:session-interaction', (_event, payload) => sessionInteractions.handle(payload));
 
 async function applyPlanApprovalDecision(sessionId, allowed, sender = null) {
   const sessionRecord = getSessionRecord(sessionId);

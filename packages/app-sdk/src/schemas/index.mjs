@@ -6,7 +6,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.14.0'
+export const APP_HOST_API_VERSION = '3.15.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -322,6 +322,14 @@ export function validateAppManifest(rawManifest, options = {}) {
   if (candidate.contributes?.skills?.length && !semver.subset(candidate.hostApi, '>=3.14.0')) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'App skills require hostApi >=3.14.0')
   }
+  if (candidate.connectorApp) {
+    if (!semver.subset(candidate.hostApi, '>=3.15.0')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Connector Apps require hostApi >=3.15.0')
+    if (candidate.ui || candidate.backend || candidate.mcpApp || candidate.nativeAdapter || candidate.contributes || candidate.host
+      || (candidate.toolScope && candidate.toolScope !== 'session') || candidate.toolSelection === 'services' || candidate.permissions.length !== 1 || candidate.permissions[0] !== 'connector:use'
+      || candidate.navigation?.location !== 'none') {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Connector Apps require host-managed configuration and connector:use permission')
+    }
+  }
   const contributes = normalizeContributes(candidate.contributes, candidate)
   validateNavigation(candidate, contributes, options.requireNavigation)
   return {
@@ -331,6 +339,8 @@ export function validateAppManifest(rawManifest, options = {}) {
     displayName: candidate.displayName.trim(),
     description: String(candidate.description || '').trim(),
     category: candidate.category || 'other',
+    ...(candidate.discovery ? { discovery: structuredClone(candidate.discovery) } : {}),
+    ...(candidate.connectorApp ? { connectorApp: structuredClone(candidate.connectorApp) } : {}),
     keywords: [...new Set((candidate.keywords || []).map(keyword => keyword.trim()))],
     icon: candidate.icon ? ensureSafeRelativePath(candidate.icon, 'icon') : '',
     hostApi: candidate.hostApi,
@@ -339,7 +349,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     ...(candidate.toolSelection ? { toolSelection: candidate.toolSelection } : {}),
     ...(candidate.toolScope ? { toolScope: candidate.toolScope } : {}),
     ...(candidate.navigation ? { navigation: { ...candidate.navigation } } : {}),
-    host: { protocols: [...(candidate.host?.protocols || [])] },
+    ...(!candidate.connectorApp ? { host: { protocols: [...(candidate.host?.protocols || [])] } } : {}),
     ...(candidate.publisher ? { publisher: { id: candidate.publisher.id, name: candidate.publisher.name.trim() } } : {}),
     ...(candidate.ui ? { ui: normalizeUi(candidate.ui) } : {}),
     ...(candidate.backend ? { backend: normalizeBackend(candidate.backend) } : {}),

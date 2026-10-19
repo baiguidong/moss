@@ -1,3 +1,4 @@
+import { usePreviewDocument } from '@/lib/use-preview-document';
 "use client";
 
 import * as React from "react";
@@ -120,7 +121,11 @@ function buildDirtyMetadata(file: WorkspacePreviewData, content: string): Previe
   };
 }
 
-export function PreviewViewer({ file, toolbarContainer }: { file: WorkspacePreviewData; toolbarContainer?: HTMLElement | null }) {
+export function PreviewViewer({ file, toolbarContainer, onReady, onError }: { file: WorkspacePreviewData; toolbarContainer?: HTMLElement | null; onReady?: () => void; onError?: (message: string) => void }) {
+  React.useEffect(() => {
+    if (['text', 'code', 'markdown', 'diff'].includes(file.contentType)) onReady?.();
+    if (file.contentType === 'unsupported') onError?.('暂不支持该文件格式');
+  }, [file.contentType, file.content, onReady, onError]);
   const metadata = getPreviewMetadata(file);
   const previewPath = typeof metadata.localPreviewPath === "string" && metadata.localPreviewPath
     ? metadata.localPreviewPath
@@ -128,30 +133,30 @@ export function PreviewViewer({ file, toolbarContainer }: { file: WorkspacePrevi
   const fileVersion = typeof metadata.modifiedAt === "number" ? metadata.modifiedAt : undefined;
   switch (file.contentType) {
     case "image":
-      return <ImageViewer filePath={previewPath} alt={file.relativePath} />;
+      return <ImageViewer onReady={onReady} onError={onError} filePath={previewPath} alt={file.relativePath} />;
     case "pdf":
-      return <PDFViewer filePath={previewPath} title={file.relativePath} />;
+      return <PDFViewer onReady={onReady} onError={onError} filePath={previewPath} title={file.relativePath} />;
     case "markdown":
       return <MarkdownViewer content={file.content} />;
     case "html":
-      return <HTMLViewer content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
+      return <HTMLViewer onReady={onReady} content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
-      return <WordViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <WordViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "excel":
-      return <ExcelViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <ExcelViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "ppt":
-      return <PPTViewer filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <PPTViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "diff":
       return <DiffViewer content={file.content} />;
     case "url":
-      return <URLViewer url={file.content} />;
+      return <URLViewer onReady={onReady} url={file.content} />;
     case "code":
-      return <CodeViewer content={file.content} language={file.language} />;
+      return <CodeViewer content={file.content} language={file.language} line={Number(metadata.line) || undefined} column={Number(metadata.column) || undefined} />;
     case "text":
       return <TextViewer content={file.content} />;
     case "ofv":
       return (
-        <LazyOpenFileViewer
+        <LazyOpenFileViewer onReady={onReady} onError={onError}
           filePath={previewPath}
           fileName={file.relativePath || basename(previewPath)}
           mimeType={file.mimeType}
@@ -178,6 +183,8 @@ export function PreviewDrawer({
   onCloseAll,
   onCloseDrawer,
   standalone = false,
+  onReady,
+  onError,
 }: {
   visible: boolean;
   tabs: WorkspacePreviewData[];
@@ -189,11 +196,16 @@ export function PreviewDrawer({
   onCloseAll: () => void;
   onCloseDrawer: () => void;
   standalone?: boolean;
+  onReady?: () => void;
+  onError?: (message: string) => void;
 }) {
-  const activeFile = React.useMemo(
+  const rawActiveFile = React.useMemo(
     () => tabs.find((entry) => entry.path === activePath) || tabs[0] || null,
     [tabs, activePath]
   );
+  const document = usePreviewDocument(rawActiveFile, onUpdateTab);
+  const activeFile = document.file;
+  const updateTab = document.update;
   const [historyItems, setHistoryItems] = React.useState<PreviewSnapshotInfo[]>([]);
   const [historyBusy, setHistoryBusy] = React.useState(false);
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
@@ -277,7 +289,7 @@ export function PreviewDrawer({
       }).then((snapshot) => {
         autoSavedContentRef.current.set(activeFile.path, activeFile.content);
         setHistoryItems((prev) => [snapshot, ...prev.filter((entry) => entry.id !== snapshot.id)].slice(0, 12));
-        onUpdateTab(activeFile.path, {
+        updateTab(activeFile.path, {
           metadata: {
             ...activeMetadata,
             autoSavedAt: Date.now(),
@@ -350,7 +362,7 @@ export function PreviewDrawer({
         setActionNotice("历史快照不存在。");
         return;
       }
-      onUpdateTab(activeFile.path, {
+      updateTab(activeFile.path, {
         content: result.content,
         contentType: activeFile.contentType,
         truncated: false,
@@ -367,7 +379,7 @@ export function PreviewDrawer({
   };
 
   const handleEditorChange = (nextValue: string) => {
-    onUpdateTab(activeFile.path, {
+    updateTab(activeFile.path, {
       content: nextValue,
       truncated: false,
       metadata: buildDirtyMetadata(activeFile, nextValue),
@@ -380,13 +392,14 @@ export function PreviewDrawer({
     if (typeof sessionId !== "string" || !sessionId) return;
     setSaveBusy(true);
     try {
+      if (document.save) { await document.save(); setActionNotice("已保存到工作区文件。"); return; }
       const saved = await workspaceIpc.writeFile({
         sessionId,
         filePath: activeFile.path,
         content: activeFile.content,
       });
       const nextOriginalContent = canEditPreview(saved) ? saved.content : activeFile.content;
-      onUpdateTab(activeFile.path, {
+      updateTab(activeFile.path, {
         ...saved,
         content: activeFile.content,
         truncated: false,
@@ -401,8 +414,8 @@ export function PreviewDrawer({
       });
       autoSavedContentRef.current.set(activeFile.path, activeFile.content);
       setActionNotice("已保存到工作区文件。");
-    } catch {
-      setActionNotice("保存失败。");
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : "保存失败。");
     } finally {
       setSaveBusy(false);
     }
@@ -412,7 +425,7 @@ export function PreviewDrawer({
     const originalContent = typeof activeMetadata.originalContent === "string" ? activeMetadata.originalContent : "";
     if (!activeDirty) return;
     if (!window.confirm("放弃当前未保存修改并恢复到上次保存内容？")) return;
-    onUpdateTab(activeFile.path, {
+    updateTab(activeFile.path, {
       content: originalContent,
       truncated: false,
       metadata: {
@@ -601,6 +614,8 @@ export function PreviewDrawer({
         </div>
       </div>
 
+      {document.recovery && <details className="border-b p-3 text-xs" open><summary>恢复未同步草稿</summary><div className="grid grid-cols-2 gap-2 py-2"><label>当前 Host 草稿<textarea readOnly className="h-32 w-full border bg-background" value={document.recovery.host} /></label><label>本页未同步草稿<textarea readOnly className="h-32 w-full border bg-background" value={document.recovery.local} /></label></div><button disabled={!!document.readOnly} className="mr-3 underline" onClick={document.restoreRecovery}>使用本页草稿继续编辑</button><button className="underline" onClick={document.dismissRecovery}>保留副本并关闭比较</button></details>}
+      {document.notice || document.readOnly ? <div role="status" className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground"><span>{document.notice || "此文件正在其他视图中编辑。"}</span>{document.readOnly ? <button className="ml-auto shrink-0 underline" onClick={() => void document.takeOwnership()}>在此编辑</button> : null}</div> : null}
       {actionNotice ? (
         <div className="pointer-events-none absolute right-3 top-[84px] z-30 rounded-md border border-border/70 bg-popover/95 px-3 py-1.5 text-xs text-popover-foreground shadow-lg backdrop-blur">
           {actionNotice}
@@ -611,13 +626,14 @@ export function PreviewDrawer({
         {editMode && editable ? (
           <div className="h-full p-3">
             <Textarea
+              disabled={saveBusy}
               value={activeFile.content}
               onChange={(event) => handleEditorChange(event.target.value)}
               className="h-full min-h-full resize-none rounded-[22px] border-border/70 bg-background/90 px-4 py-3 font-mono text-sm leading-6"
             />
           </div>
         ) : (
-          <PreviewViewer file={activeFile} toolbarContainer={viewerToolbarContainer} />
+          <PreviewViewer onReady={onReady} onError={onError} file={activeFile} toolbarContainer={viewerToolbarContainer} />
         )}
       </div>
     </div>

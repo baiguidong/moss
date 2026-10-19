@@ -1,5 +1,12 @@
 export const MOSS_TOOL_GROUPS = Object.freeze([
   {
+    id: 'presentation',
+    label: '成果展示',
+    tools: [
+      { name: 'moss_present', description: '展示文件和其他可预览成果', defaultMode: 'always' },
+    ],
+  },
+  {
     id: 'browser',
     label: '内置浏览器',
     tools: [

@@ -1,5 +1,15 @@
+import { connectorIdFromApp } from '../../../packages/app-sdk/src/discovery.mjs';
 import { AppToolSelectionContext, canSelectToolApp, toolAppId, getAppToolServices, parseAppServiceKey } from '@/lib/app-tool-selection';
 import * as React from 'react';
+import { subscribeNotificationState } from '../client/notification-sync.mjs';
+import { WebInteractions } from '@/components/web-interactions';
+import { WebAppPreviews } from '@/components/web-app-previews';
+import { WebAuthorizations } from '@/components/web-authorizations';
+import { WebComposerDraft } from '@/components/web-composer-draft';
+import { latestSessionInteractions, type InteractionKind, type InteractionDetails, type SessionInteraction } from '@/lib/session-interactions';
+import { composerIsEmpty, messageFromDraft, preserveQueuedMessages, recoverQueuedMessages, withdrawMessage,
+  type ComposerAttachment, type ComposerChoices, type ComposerDraft, type QueuedMessage } from '@/lib/composer-queue';
+import { HostConfirmations } from '@/components/host-confirmations';
 import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
@@ -25,6 +35,8 @@ import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
+import { usePresentation } from '@/lib/use-presentation';
+import { PresentationToolbar, PresentationContent } from '@/components/presentation/presentation-panel';
 import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AppWidgetHost } from '@/components/app-widget-host';
 import { SettingsView } from '@/components/settings-view';
@@ -47,15 +59,11 @@ import {
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
-import { isAuthorizedConnector, selectConnectorForNewChat } from '@/lib/connector-selection';
+import { isAuthorizedConnector } from '@/lib/connector-selection';
 import {
   excludeRemovedSessions,
   isSessionAlreadyRemovedError,
 } from '@/lib/session-removal';
-import {
-  attachAuthorizedConnectorToSession,
-  runMcpConnectorAuthorization,
-} from '@/lib/connector-auth-flow';
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -147,16 +155,6 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
-type QueuedMessage = {
-  appSelection?: AppComposerResource | null;
-  id: string;
-  prompt: string;
-  skills?: Array<{ name: string; displayName?: string; source?: string }>;
-  files?: ComposerAttachment[];
-  intent: ComposerIntent;
-  agentType?: string;
-};
 type LayoutState = {
   leftWidth: number;
   rightWidth: number;
@@ -287,26 +285,6 @@ function mergeSessionHistorySnapshot(
   return historyCompletenessScore(incoming) >= historyCompletenessScore(current)
     ? incoming
     : current;
-}
-
-function buildCliConnectorSetupPrompt(connector: InstalledConnector, _cli: Record<string, any> | null) {
-  return [
-    `请帮我完成 Moss 连接器「${connector.name}」的本机 CLI 安装、版本检查和认证。`,
-    '',
-    '执行方式：直接调用 connector_cli_setup 工具，不要使用 Bash/Shell/终端手动执行连接器命令。',
-    '',
-    '请调用：',
-    '```json',
-    JSON.stringify({ connector_id: connector.id }, null, 2),
-    '```',
-    '',
-    'connector_cli_setup 会读取已安装连接器的 cli.json，根据当前系统执行 init/versionCheck/auth/status，自动打开 OAuth 地址到右侧浏览器，并等待认证完成。',
-    '',
-    '要求：',
-    '1. 不要修改连接器目录内部文件，包括 cli.json、mcp.json、SKILL.md、references 或图标。',
-    '2. 不要在对话、日志或输出文件中展示 token、密码、完整授权 URL 或完整敏感凭据。',
-    '3. 工具返回后，用简短中文说明安装、认证和 status 检查结果。',
-  ].join('\n');
 }
 
 function filterVisibleNodes(items: any[], query: string, cache: Map<string, any>, expandedDirs: Set<string>): FileTreeNode[] {
@@ -487,6 +465,9 @@ export default function App() {
   const [queuedMessages, setQueuedMessages] = React.useState<Record<string, QueuedMessage[]>>({});
   const [questionRequests, setQuestionRequests] = React.useState<AskUserQuestionRequest[]>([]);
   const [composerAttachments, setComposerAttachments] = React.useState<ComposerAttachment[]>([]);
+  const [composerChoices, setComposerChoices] = React.useState<ComposerChoices>({ skills: [], agent: null });
+  const composerChoicesRef = React.useRef(composerChoices); composerChoicesRef.current = composerChoices;
+  const queueEpochs = React.useRef(new Map<string, number>());
   // Ref mirrors state so event handlers (registered once) and abort can read
   // and mutate the queue synchronously, ahead of React's re-render.
   const queuedMessagesRef = React.useRef<Record<string, QueuedMessage[]>>({});
@@ -545,6 +526,9 @@ export default function App() {
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
+  const presentation = usePresentation(activeSessionId, activeDetail?.workspace, activeView === 'chat', () => {
+    setLayout(previous => ({ ...previous, rightCollapsed: false, rightWidth: clamp(Math.max(previous.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max) }));
+  });
   const openSessionRequestIdRef = React.useRef(0);
   const workspaceDirectoryLoader = React.useMemo(() => createWorkspaceDirectoryLoader({
     getScope: () => {
@@ -685,8 +669,9 @@ export default function App() {
   // Per-session composer drafts: text + attachments survive session switches
   // (borrowed from sudowork's useSendBoxDraft). Snapshotted on switch, so live
   // edits stay in normal state and send-clearing works untouched.
-  const composerDraftsRef = React.useRef<Record<string, { text: string; files: ComposerAttachment[]; appSelection?: AppComposerResource | null }>>({});
+  const composerDraftsRef = React.useRef<Record<string, ComposerDraft>>({});
   const draftSessionKeyRef = React.useRef<string>('home');
+  const [hydratedComposerKey, setHydratedComposerKey] = React.useState('home');
   const appSelectionDraftRef = React.useRef<AppComposerResource | null>(null);
   appSelectionDraftRef.current = appSelection;
   const inputDraftRef = React.useRef('');
@@ -702,12 +687,14 @@ export default function App() {
       text: inputDraftRef.current,
       files: composerAttachmentsRef.current,
       appSelection: appSelectionDraftRef.current,
+      choices: composerChoicesRef.current,
     };
-    draftSessionKeyRef.current = nextKey;
+    draftSessionKeyRef.current = nextKey; setHydratedComposerKey(nextKey);
     const draft = composerDraftsRef.current[nextKey];
     setInput(draft?.text ?? '');
     setAppSelection(draft?.appSelection || null);
     setComposerAttachments(draft?.files ?? []);
+    setComposerChoices(draft?.choices ?? { skills: [], agent: null });
   }, [activeSessionId]);
 
   React.useEffect(() => {
@@ -863,7 +850,7 @@ export default function App() {
     if (title) payload.title = title;
     if (assistantName) payload.assistant_name = assistantName;
     if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
-    if (agentMode === 'local') { payload.appIds = appIds; payload.appServiceIds = appServiceIds; }
+    payload.appIds = agentMode === 'local' ? appIds : appIds.filter(id => connectorIdFromApp(apps.find(app => (app.id || app.name) === id))); if (agentMode === 'local') payload.appServiceIds = appServiceIds;
     if (permissionMode) payload.permissionMode = permissionMode;
     const created = await window.agentDesktop.createSession(payload);
     setSummaries((prev) => upsertSummary(prev, created.summary));
@@ -879,7 +866,7 @@ export default function App() {
     persistSessionAgentModes(new Map(sessionAgentModes).set(created.summary.id, mode));
     await openSession(created.summary.id);
     return created.summary.id;
-  }, [clearSessionWorkspaceState, openSession, sessionAgentModes, persistSessionAgentModes]);
+  }, [apps, clearSessionWorkspaceState, openSession, sessionAgentModes, persistSessionAgentModes]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
@@ -916,18 +903,14 @@ export default function App() {
   }, [activeDetail]);
 
   React.useEffect(() => {
-    let receivedChange = false;
-    const unsubscribe = window.agentDesktop.notifications.onChanged((payload) => {
-      receivedChange = true;
-      setAppNotifications(payload.notifications);
-    });
     // SQLite is authoritative. Re-importing this retired cache after a database
     // clear would resurrect notifications the user already removed.
     saveAppNotifications([], window.localStorage);
-    void window.agentDesktop.notifications.list().then((notifications) => {
-      if (!receivedChange) setAppNotifications(notifications);
-    }).catch(() => {});
-    return unsubscribe;
+    return subscribeNotificationState({
+      api: window.agentDesktop.notifications,
+      onChanged: setAppNotifications,
+      reconnectTarget: window.mossWeb ? window : undefined,
+    });
   }, []);
 
   React.useEffect(() => () => {
@@ -1147,12 +1130,13 @@ export default function App() {
           setBootError('缺少嵌入式代码会话运行时，请重新构建或安装 Moss。');
         }
         applyDesktopSettings(nextSettings);
-        await Promise.all([
+        const [initialApps] = await Promise.all([
           refreshApps(),
           refreshSummaries(),
           refreshProjects(),
           refreshAssistants('local'),
         ]);
+        if (!cancelled && initialApps.length === 0) setActiveView('apps');
         void refreshConnectors().catch(() => {});
       } catch (error: any) {
         if (!cancelled) {
@@ -1334,6 +1318,7 @@ export default function App() {
     const offRemoved = window.agentDesktop.onSessionRemoved(({ sessionId }) => {
       removedSessionIdsRef.current.add(sessionId);
       composerIntentStatesRef.current.delete(sessionId);
+      updateQueue(sessionId, () => []);
       setSummaries((prev) => prev.filter((entry) => entry.id !== sessionId));
       setAgentTeamsBySession((previous) => {
         const next = { ...previous };
@@ -1476,16 +1461,9 @@ export default function App() {
   }, [activeDetail?.workspace, directoryCache, expandedDirs, workspaceQuery]);
 
   const openPreviewWindow = React.useCallback((file: WorkspacePreviewData) => {
-    const existing = previewTabsRef.current.find((entry) => entry.path === file.path);
-    const nextFile = enrichWorkspacePreviewFile(file, activeSessionId, activeDetail?.workspace, existing);
     setSelectedFilePath(file.path);
-    setPreviewTabs((prev) => {
-      if (existing) {
-        return prev.map((entry) => (entry.path === file.path ? nextFile : entry));
-      }
-      return [...prev, nextFile];
-    });
-    void previewIpc.open({ file: nextFile }).catch((error) => {
+    if (!activeSessionId) return;
+    void window.agentDesktop.presentation.open({ sessionId: activeSessionId, input: { items: [{ path: file.path }] } }).catch((error) => {
       console.warn('[preview] failed to open preview window:', error instanceof Error ? error.message : error);
     });
   }, [activeDetail?.workspace, activeSessionId]);
@@ -1516,14 +1494,23 @@ export default function App() {
       if (!opened) return;
       targetSessionId = payloadSessionId;
     }
+    if (!targetSessionId && !payload.alreadyOpened) {
+      const created = await window.agentDesktop.createSession({ title: '浏览器授权', agentMode: 'local' });
+      setSummaries((previous) => upsertSummary(previous, created.summary));
+      const opened = await openSession(created.summary.id);
+      if (!opened) return;
+      targetSessionId = created.summary.id;
+    }
 
     if (!payload.alreadyOpened) {
       void openBrowserPanelUrl(targetSessionId, payload.url, payload.connectorAuth || null, payload.mcpAuth || null)
         .catch((error: unknown) => {
           console.warn('[browser] failed to open tab:', error instanceof Error ? error.message : error);
+          showPermissionNotice('授权页面打开失败，请重试。', 'error', 6000);
         });
     }
     if (targetSessionId) {
+      void window.agentDesktop.presentation.action({ sessionId: targetSessionId, action: { type: 'select', id: 'browser' } });
       setActiveView('chat');
       setLayout((prev) => ({
         ...prev,
@@ -1532,22 +1519,25 @@ export default function App() {
       }));
       setBrowserOpenSignal((value) => value + 1);
     }
-  }, [openSession]);
+  }, [openSession, showPermissionNotice]);
 
   React.useEffect(() => {
     const unsubscribe = window.agentDesktop.browser.onOpen((payload) => {
-      void openRightBrowser(payload);
+      void openRightBrowser(payload).catch(() => showPermissionNotice('授权页面打开失败，请重试。', 'error', 6000));
     });
     return unsubscribe;
-  }, [openRightBrowser]);
+  }, [openRightBrowser, showPermissionNotice]);
 
   const toggleSidebar = React.useCallback((side: 'left' | 'right') => {
+    if (side === 'right') presentation.action(layoutRef.current.rightCollapsed
+      ? { type: 'select', id: presentation.snapshot?.state.activeId || 'workspace' }
+      : { type: 'close' });
     setLayout((prev) => (
       side === 'left'
         ? { ...prev, leftCollapsed: !prev.leftCollapsed }
         : { ...prev, rightCollapsed: !prev.rightCollapsed }
     ));
-  }, []);
+  }, [presentation.action, presentation.snapshot?.state.activeId]);
 
   const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
     const start = layoutRef.current;
@@ -1779,8 +1769,19 @@ export default function App() {
   ) => {
     // Show activity during IPC/runtime startup, before the first busy event.
     const request = Symbol();
+    const epoch = queueEpochs.current.get(sessionId) ?? 0;
     setPendingSendRequests(previous => new Map(previous).set(sessionId, request));
     try {
+      const paths = files?.filter(file => !file.resource).map(file => file.path) ?? [];
+      if (paths.length) {
+        const detail = await window.agentDesktop.getSession({ sessionId });
+        if (detail.agentMode === 'local') {
+          const resolved = await window.agentDesktop.preview.resolveFiles({ sessionId, paths });
+          const missing = resolved.filter(item => !('file' in item));
+          if (missing.length) throw new Error(`附件已失效，请重新选择：${missing.map(item => item.inputPath).join('、')}`);
+        }
+      }
+      if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，草稿已保留。');
       await window.agentDesktop.send({
         sessionId,
         prompt,
@@ -1801,115 +1802,45 @@ export default function App() {
     }
   }, [selectedAssistant]);
 
-  const handleRunCliConnectorSetup = React.useCallback(async (
-    connector: InstalledConnector,
-    cli: Record<string, any> | null,
-  ) => {
-    try {
-      // The connector is not authorized yet, so it cannot be attached while
-      // creating the bootstrap session. Setup authorizes it for later use.
-      const sessionId = await createAndOpenSession(`设置 ${connector.name} 连接器`);
-      setActiveView('chat');
-      await dispatchToSession(sessionId, buildCliConnectorSetupPrompt(connector, cli), 'chat');
-    } catch (error) {
-      const rawMessage = getErrorMessage(error);
-      const reason = cleanIpcErrorMessage(error);
-      showPermissionNotice(`${connector.name} 设置失败：${reason}`, 'error', 6000);
-      pushAppNotification({
-        severity: 'error',
-        source: '连接器授权',
-        title: `${connector.name} 设置失败`,
-        message: reason,
-        details: [
-          `连接器：${connector.name} (${connector.id})`,
-          `原始错误：${rawMessage}`,
-          error instanceof Error && error.stack ? `调用栈：\n${error.stack}` : '',
-        ].filter(Boolean).join('\n'),
-      });
-    }
-  }, [createAndOpenSession, dispatchToSession, pushAppNotification, showPermissionNotice]);
-
-  const handleAuthenticateMcpConnector = React.useCallback(async (connector: InstalledConnector) => {
-    const serverName = connector.mcpServerNames?.[0] || connector.id;
-    try {
-      const { result } = await runMcpConnectorAuthorization({
-        connectorId: connector.id,
-        createSession: async () => {
-          const sessionId = await createAndOpenSession(`授权 ${connector.name} 连接器`);
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-          return sessionId;
-        },
-        onSessionCreated: async (sessionId) => {
-          await window.agentDesktop.setConnectorAuthStatus({
-            sessionId,
-            connectorId: connector.id,
-            connectorName: connector.name,
-            status: 'pending',
-          });
-        },
-        authenticate: (sessionId) => window.agentDesktop.authenticateMcpServer({ name: serverName, sessionId }),
-        attachConnector: (sessionId, connectorId) => attachAuthorizedConnectorToSession({
-          sessionId,
-          connectorId,
-          getSession: window.agentDesktop.getSession,
-          setSessionConnectors: window.agentDesktop.setSessionConnectors,
-        }),
-        onAuthenticated: (sessionId) => window.agentDesktop.setConnectorAuthStatus({
-          sessionId,
-          connectorId: connector.id,
-          connectorName: connector.name,
-          status: 'success',
-        }),
-        onFailed: async (sessionId, _connectorId, error) => {
-          await window.agentDesktop.setConnectorAuthStatus({
-            sessionId,
-            connectorId: connector.id,
-            connectorName: connector.name,
-            status: 'failed',
-            message: cleanIpcErrorMessage(error),
-          }).catch(() => {});
-        },
-      });
-      setActiveView('chat');
-      await refreshConnectors();
-      const openedAuthUrl = (result as any)?.auth?.status === 'authorization_url_opened';
-      const notice = openedAuthUrl
-        ? `${connector.name} 授权页已打开，请在右侧浏览器完成授权`
-        : `${connector.name} 授权已完成`;
-      showPermissionNotice(notice, 'info', 2500);
-    } catch (err) {
-      const rawMessage = getErrorMessage(err);
-      const reason = cleanIpcErrorMessage(err);
-      showPermissionNotice(`${connector.name} 授权失败：${reason}`, 'error', 6000);
-      pushAppNotification({
-        severity: 'error',
-        source: '连接器授权',
-        title: `${connector.name} 授权失败`,
-        message: reason,
-        details: [
-          `连接器：${connector.name} (${connector.id})`,
-          `MCP 服务：${serverName}`,
-          'IPC 方法：agent:mcp-authenticate',
-          `原始错误：${rawMessage}`,
-          err instanceof Error && err.stack ? `调用栈：\n${err.stack}` : '',
-        ].filter(Boolean).join('\n'),
-      });
-    }
-  }, [createAndOpenSession, pushAppNotification, refreshConnectors, showPermissionNotice]);
-
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
   const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
+  const flushingQueues = React.useRef(new Set<string>());
   React.useEffect(() => {
     flushQueuedMessagesRef.current = (sessionId: string) => {
+      if (flushingQueues.current.has(sessionId)) return;
       const queue = queuedMessagesRef.current[sessionId] ?? [];
-      if (queue.length === 0) return;
-      const [next, ...rest] = queue;
-      updateQueue(sessionId, () => rest);
-      void dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection).catch((err) => {
-        console.error('[queued message] send failed:', err);
-        updateQueue(sessionId, (prev) => [next, ...prev]);
-      });
+      const next = queue.find(item => !item.status || item.status === 'queued');
+      if (!next) return;
+      flushingQueues.current.add(sessionId);
+      const epoch = queueEpochs.current.get(sessionId) ?? 0;
+      updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'dispatching' } : item));
+      void (async () => {
+        try {
+          const detail = await window.agentDesktop.getSession({ sessionId });
+          if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) {
+            updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft', notice: '已停止排队，内容已保留。' } : item));
+            return;
+          }
+          if (next.workspace !== undefined && next.workspace !== detail.workspace) throw new Error('工作区已变化，请切回原工作区后编辑。');
+          await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection);
+          updateQueue(sessionId, items => items.filter(item => item.id !== next.id));
+        } catch (err) {
+          // A transport rejection does not prove that the Host never accepted
+          // the message. Preserve it for review, never enqueue an automatic replay.
+          updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft',
+            notice: `发送未确认，请先核对会话记录。${cleanIpcErrorMessage(err)}` } : item));
+        } finally {
+          flushingQueues.current.delete(sessionId);
+          // turn-end can arrive before send() resolves. Reconcile once after
+          // releasing the lock so that event ordering cannot strand the queue.
+          if (epoch === (queueEpochs.current.get(sessionId) ?? 0) && !removedSessionIdsRef.current.has(sessionId)) {
+            void window.agentDesktop.getSession({ sessionId }).then(detail => {
+              if (!detail.busy && epoch === (queueEpochs.current.get(sessionId) ?? 0)) flushQueuedMessagesRef.current(sessionId);
+            }).catch(() => {});
+          }
+        }
+      })();
     };
   }, [dispatchToSession, updateQueue]);
 
@@ -1927,11 +1858,12 @@ export default function App() {
 
     const prompt = input.trim();
     const selection = appSelection;
-    if (selection && (activeSessionId ? activeDetail?.agentMode : newSessionAgentMode) === 'remote-direct') throw new Error('工作流需要本地会话，请先切换工作电脑');
-    if (selection) await window.agentDesktop.prepareAppResource({ context: resourceContext(selection), sessionId: activeSessionId || undefined, workspace: workspace || appDraftWorkspace });
+    const messageWorkspace = activeSessionId ? activeDetail?.workspace : workspace || appDraftWorkspace;
 
     // Session is busy: queue the message; it is dispatched automatically when
     // the current turn ends (same as typing while the CLI REPL is running).
+    // Claim it before asynchronous App preparation so Stop/turn-end can see it.
+    // The Host resolves and validates App resources again when dispatching.
     if (activeDetail?.busy && activeSessionId) {
       const queued: QueuedMessage = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1940,7 +1872,10 @@ export default function App() {
         files,
         intent,
         agentType: agent?.agentType,
+        agent,
         appSelection: selection,
+        workspace: messageWorkspace,
+        status: 'queued',
       };
       updateQueue(activeSessionId, (prev) => [...prev, queued]);
       setInput('');
@@ -1948,64 +1883,84 @@ export default function App() {
       return;
     }
 
+    let sessionId = activeSessionId;
+    let filesToSend = files;
+    let sendAttempted = false;
+    const submitEpoch = activeSessionId ? queueEpochs.current.get(activeSessionId) ?? 0 : 0;
     setInput('');
     setAppSelection(current => current === selection ? null : current);
-
-    let sessionId = activeSessionId;
-    let sessionJustCreated = false;
-    if (!sessionId) {
-      // Reuse an in-flight creation so a re-entrant submit (double-send or a
-      // retry after an errored first turn) binds to the SAME session/workspace
-      // instead of spawning a second directory.
-      if (!creatingSessionRef.current) {
-        setPreparingNewSession(true);
-        creatingSessionRef.current = createAndOpenSession(
-          undefined,
-          workspace || appDraftWorkspace,
-          selectedAssistant?.name,
-          draftConnectorIds,
-          newSessionPermissionMode,
-          newSessionAgentMode,
-          draftAppIds,
-          draftAppServiceIds,
-        ).finally(() => {
-          creatingSessionRef.current = null;
-          setPreparingNewSession(false);
-        });
-        sessionJustCreated = true;
-      }
-      sessionId = await creatingSessionRef.current;
-      if (sessionJustCreated) { setDraftAppIds([]); setDraftAppServiceIds([]); }
-    }
-    if (!sessionId) return;
-
-    // If we just created a new session and have files, copy them to the new workspace
-    let filesToSend = files;
-    if (sessionJustCreated && hasFiles) {
-      const newFiles: ComposerAttachment[] = [];
-      for (const file of files!) {
-        if (file.resource) {
-          newFiles.push(file);
-          continue;
-        }
-        const result = await window.agentDesktop.copyFileToWorkspace({
-          sessionId,
-          sourcePath: file.path,
-          fileName: file.name,
-        }) as { path: string } | { error: string };
-        if ('path' in result) {
-          newFiles.push({ name: file.name, path: result.path });
-        }
-      }
-      filesToSend = newFiles;
-    }
-
-    setAppSelection(current => current === selection ? null : current);
     try {
+      if (selection && (activeSessionId ? activeDetail?.agentMode : newSessionAgentMode) === 'remote-direct') throw new Error('工作流需要本地会话，请先切换工作电脑');
+      if (selection) await window.agentDesktop.prepareAppResource({ context: resourceContext(selection), sessionId: activeSessionId || undefined, workspace: workspace || appDraftWorkspace });
+      let sessionJustCreated = false;
+      if (!sessionId) {
+        // Reuse an in-flight creation so a re-entrant submit (double-send or a
+        // retry after an errored first turn) binds to the SAME session/workspace
+        // instead of spawning a second directory.
+        if (!creatingSessionRef.current) {
+          setPreparingNewSession(true);
+          creatingSessionRef.current = createAndOpenSession(
+            undefined,
+            workspace || appDraftWorkspace,
+            selectedAssistant?.name,
+            draftConnectorIds,
+            newSessionPermissionMode,
+            newSessionAgentMode,
+            draftAppIds,
+            draftAppServiceIds,
+          ).finally(() => {
+            creatingSessionRef.current = null;
+            setPreparingNewSession(false);
+          });
+          sessionJustCreated = true;
+        }
+        sessionId = await creatingSessionRef.current;
+        if (sessionJustCreated) { setDraftAppIds([]); setDraftAppServiceIds([]); }
+      }
+      if (!sessionId) return;
+
+      // If we just created a new session and have files, copy them to the new workspace
+      if (sessionJustCreated && hasFiles) {
+        const newFiles: ComposerAttachment[] = [];
+        for (const file of files!) {
+          if (file.resource) {
+            newFiles.push(file);
+            continue;
+          }
+          const result = await window.agentDesktop.copyFileToWorkspace({
+            sessionId,
+            sourcePath: file.path,
+            fileName: file.name,
+          }) as { path: string } | { error: string };
+          if ('path' in result) {
+            newFiles.push({ ...file, path: result.path });
+          } else {
+            throw new Error(`附件复制失败：${file.name}。${result.error}`);
+          }
+        }
+        filesToSend = newFiles;
+      }
+
+      if (submitEpoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，草稿已保留。');
+      sendAttempted = true;
       await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType, selection);
-      setAppSelection(current => current === selection ? null : current);
-    } catch(error) { setInput(current => current || prompt); setAppSelection(current => current || selection); throw error }
-  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue]);
+    } catch(error) {
+      const current: ComposerDraft = { text: inputDraftRef.current, files: composerAttachmentsRef.current,
+        choices: composerChoicesRef.current, appSelection: appSelectionDraftRef.current };
+      if (activeSessionIdRef.current === sessionId && composerIsEmpty(current) &&
+        (messageWorkspace === undefined || messageWorkspace === (sessionId ? activeDetailRef.current?.workspace : appDraftWorkspace))) {
+        setInput(prompt); setComposerAttachments(filesToSend ?? []);
+        setComposerChoices({ skills: skills ?? [], agent: agent ?? null });
+        setAppSelection(selection);
+        handleComposerIntentChange(intent);
+      } else {
+        updateQueue(sessionId || 'home', items => [...items, { id: crypto.randomUUID(), prompt, intent, files: filesToSend,
+          skills, agent, agentType: agent?.agentType, appSelection: selection, workspace: messageWorkspace,
+          status: 'draft', notice: sendAttempted ? '发送未确认，请先核对会话记录。' : `发送准备失败，内容已保留。${cleanIpcErrorMessage(error)}` }]);
+      }
+      throw error;
+    }
+  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2027,6 +1982,37 @@ export default function App() {
       });
     }
   }, [composerIntent, submitPrompt, showPermissionNotice, pushAppNotification]);
+
+  const interactionRequests = React.useRef(new Map<string, { id: string; kind: InteractionKind; prompt: string; details?: InteractionDetails }>());
+  const handleSessionInteraction = React.useCallback(async (kind: InteractionKind, prompt: string, details?: InteractionDetails) => {
+    const sessionId = activeSessionId;
+    if (!sessionId) throw new Error('请先打开主会话。');
+    const originalInput = inputDraftRef.current;
+    const epoch = queueEpochs.current.get(sessionId) ?? 0;
+    const key = `${sessionId}:${kind}`;
+    const previous = interactionRequests.current.get(key);
+    const request = previous?.prompt === prompt && JSON.stringify(previous.details) === JSON.stringify(details)
+      ? previous : { id: crypto.randomUUID(), kind, prompt, details };
+    interactionRequests.current.set(key, request);
+    const result = await window.agentDesktop.sessionInteraction({ sessionId, action: kind, id: request.id, prompt, details });
+    if (result.status === 'unknown') throw new Error('上次请求状态未确认，请先核对会话记录。');
+    if (kind === 'steer' && result.status === 'cancelled') throw new Error('这条补充已取消，内容已保留。');
+    if (kind === 'steer' && ['not_running', 'unsupported', 'deferred'].includes(result.status)) {
+      if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，内容已保留。');
+      const queued: QueuedMessage = { ...details, id: request.id, prompt, intent: details?.intent || composerIntent,
+        workspace: details?.workspace || activeDetail?.workspace, status: 'queued' };
+      updateQueue(sessionId, items => items.some(item => item.id === request.id) ? items : [...items, queued]);
+      // Only an explicit non-acceptance can use the ordinary send path. Lost
+      // transport receipts remain retryable with the same ID, never auto-replayed.
+      void window.agentDesktop.getSession({ sessionId }).then(detail => {
+        if (!detail.busy && epoch === (queueEpochs.current.get(sessionId) ?? 0)) flushQueuedMessagesRef.current(sessionId);
+      }).catch(() => {});
+    } else if (!['accepted', 'consumed', 'running', 'completed', 'truncated', 'empty', 'tool_unavailable', 'failed', 'cancelled', 'timeout'].includes(result.status)) {
+      throw new Error('消息接收状态未确认，内容已保留。');
+    }
+    if (interactionRequests.current.get(key) === request) interactionRequests.current.delete(key);
+    if (kind === 'steer' && activeSessionIdRef.current === sessionId && inputDraftRef.current === originalInput) setInput('');
+  }, [activeSessionId, composerIntent, activeDetail?.workspace, updateQueue]);
 
 
   const handleApprovePlan = React.useCallback(async () => {
@@ -2085,23 +2071,59 @@ export default function App() {
 
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
-    // Interrupt drops queued messages back into the input (REPL Esc behavior).
-    // Clear the queue before aborting so the busy=false event doesn't flush it.
+    // Preserve independent snapshots before abort, so busy=false cannot send them.
+    queueEpochs.current.set(activeSessionId, (queueEpochs.current.get(activeSessionId) ?? 0) + 1);
     const queue = queuedMessagesRef.current[activeSessionId] ?? [];
-    if (queue.length > 0) {
-      updateQueue(activeSessionId, () => []);
-      const restored = queue.map((q) => q.prompt).filter(Boolean).join('\n');
-      if (restored) {
-        setInput((prev) => (prev.trim() ? `${prev}\n${restored}` : restored));
+    const preserved = preserveQueuedMessages(queue);
+    const first = preserved.find(item => item.status === 'draft');
+    const current: ComposerDraft = { text: inputDraftRef.current, files: composerAttachmentsRef.current,
+      choices: composerChoicesRef.current, appSelection: appSelectionDraftRef.current };
+    if (first && composerIsEmpty(current)) {
+      const result = withdrawMessage(preserved, first.id, current, activeDetailRef.current?.workspace);
+      updateQueue(activeSessionId, () => result.queue);
+      if (result.restored) {
+        setInput(result.draft.text); setComposerAttachments(result.draft.files);
+        setComposerChoices(result.draft.choices!); setAppSelection(result.draft.appSelection || null);
+        handleComposerIntentChange(result.draft.intent!);
       }
+    } else {
+      updateQueue(activeSessionId, () => preserved);
     }
     updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== activeSessionId));
     await window.agentDesktop.abort({ sessionId: activeSessionId });
-  }, [activeSessionId, updateQueue, updateQuestionRequests]);
+  }, [activeSessionId, updateQueue, updateQuestionRequests, handleComposerIntentChange]);
+
+  const handleEditQueuedMessage = React.useCallback((id: string) => {
+    const sessionId = activeSessionIdRef.current || 'home';
+    const result = withdrawMessage(queuedMessagesRef.current[sessionId] ?? [], id,
+      { text: inputDraftRef.current, files: composerAttachmentsRef.current, choices: composerChoicesRef.current,
+        appSelection: appSelectionDraftRef.current }, activeSessionIdRef.current ? activeDetailRef.current?.workspace : appDraftWorkspace);
+    updateQueue(sessionId, () => result.queue);
+    if (result.restored) {
+      setInput(result.draft.text); setComposerAttachments(result.draft.files);
+      setComposerChoices(result.draft.choices!); setAppSelection(result.draft.appSelection || null);
+      handleComposerIntentChange(result.draft.intent!);
+    }
+  }, [updateQueue, handleComposerIntentChange, appDraftWorkspace]);
+
+  const handleRestoreInteraction = React.useCallback((item: SessionInteraction) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    const queued: QueuedMessage = { ...item.details, id: item.id, prompt: item.prompt, intent: item.details?.intent || composerIntent, status: 'draft' };
+    const existing = queuedMessagesRef.current[sessionId] ?? [];
+    const result = withdrawMessage([...existing.filter(entry => entry.id !== item.id), queued], item.id,
+      { text: inputDraftRef.current, files: composerAttachmentsRef.current, choices: composerChoicesRef.current, appSelection: appSelectionDraftRef.current },
+      activeDetailRef.current?.workspace);
+    updateQueue(sessionId, () => result.queue);
+    if (result.restored) {
+      setInput(result.draft.text); setComposerAttachments(result.draft.files);
+      setComposerChoices(result.draft.choices!); setAppSelection(result.draft.appSelection || null);
+      handleComposerIntentChange(result.draft.intent!);
+    }
+  }, [composerIntent, updateQueue, handleComposerIntentChange]);
 
   const handleRemoveQueuedMessage = React.useCallback((id: string) => {
-    if (!activeSessionId) return;
-    updateQueue(activeSessionId, (prev) => prev.filter((q) => q.id !== id));
+    updateQueue(activeSessionId || 'home', (prev) => prev.filter((q) => q.id !== id || q.status === 'dispatching'));
   }, [activeSessionId, updateQueue]);
 
   const handlePickWorkspace = React.useCallback(async () => {
@@ -2122,8 +2144,9 @@ export default function App() {
 
   const handleOpenWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
-    await window.agentDesktop.openWorkspace({ sessionId: activeSessionId });
-  }, [activeSessionId]);
+    try { await window.agentDesktop.openWorkspace({ sessionId: activeSessionId }); }
+    catch (error) { showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000); }
+  }, [activeSessionId, showPermissionNotice]);
 
   const handleToggleFolder = React.useCallback(async (path: string) => {
     const detail = activeDetailRef.current;
@@ -2286,8 +2309,8 @@ export default function App() {
   }, [enqueueAppSelection, addAppResourceOwner]);
 
   const selectedConnectorIds = React.useMemo(
-    () => activeSessionId ? (activeDetail?.connectorIds ?? []) : draftConnectorIds,
-    [activeDetail?.connectorIds, activeSessionId, draftConnectorIds],
+    () => (activeSessionId ? (activeDetail?.connectorIds ?? []) : draftConnectorIds).filter(id => !apps.some(app => app.connectorApp?.id === id)),
+    [activeDetail?.connectorIds, activeSessionId, draftConnectorIds, apps],
   );
 
   React.useEffect(() => {
@@ -2336,34 +2359,6 @@ export default function App() {
     return true;
   }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
 
-  const handleUseConnector = React.useCallback((connector: InstalledConnector) => {
-    if (!isAuthorizedConnector(connector)) {
-      showPermissionNotice(`${connector.name} 尚未完成认证，不能加入会话`, 'error', 6000);
-      return;
-    }
-    selectConnectorForNewChat({
-      connectorId: connector.id,
-      navigateToNewChat: () => navigateToHome({ resetInput: true }),
-      setDraftConnectorIds,
-    });
-  }, [navigateToHome, showPermissionNotice]);
-
-  const handleConnectorHubError = React.useCallback((error: {
-    title: string;
-    message: string;
-    details?: string;
-  }) => {
-    const reason = cleanIpcErrorMessage(error.message);
-    showPermissionNotice(`${error.title}：${reason}`, 'error', 6000);
-    pushAppNotification({
-      severity: 'error',
-      source: '连接器中心',
-      title: error.title,
-      message: reason,
-      details: [error.details || '', `原始错误：${error.message}`].filter(Boolean).join('\n'),
-    });
-  }, [pushAppNotification, showPermissionNotice]);
-
   React.useEffect(() => window.agentDesktop.onAppOpenSession(({ sessionId, toolUseId }) => {
     void openSession(sessionId).then(opened => {
       if (!opened) { showPermissionNotice('对应会话不存在或当前无法打开。', 'error', 6000); return; }
@@ -2381,17 +2376,17 @@ export default function App() {
   React.useEffect(() => window.agentDesktop.onAppPrepareComposer(payload => { enqueueAppSelection(async () => {
     const appId = await addAppResourceOwner(payload.sessionId, payload.context.providerId);
     const selection = { ...payload.context, appId, title:payload.title, route:payload.route, workspace:payload.workspace };
-    composerDraftsRef.current[draftSessionKeyRef.current] = { text:inputDraftRef.current, files:composerAttachmentsRef.current, appSelection:appSelectionDraftRef.current };
+    composerDraftsRef.current[draftSessionKeyRef.current] = { text:inputDraftRef.current, files:composerAttachmentsRef.current, appSelection:appSelectionDraftRef.current, choices:composerChoicesRef.current };
     if (payload.sessionId) {
       const previous = composerDraftsRef.current[payload.sessionId];
-      composerDraftsRef.current[payload.sessionId] = { text: previous?.text || payload.prompt, files: previous?.files || [], appSelection: selection };
+      composerDraftsRef.current[payload.sessionId] = { ...previous, text: previous?.text || payload.prompt, files: previous?.files || [], appSelection: selection };
       if (!await openSession(payload.sessionId)) return;
       setAppSelection(selection);
       setInput(previous?.text || payload.prompt);
       return;
     }
     composerDraftsRef.current.home = { text:payload.prompt, files:[], appSelection:selection };
-    draftSessionKeyRef.current = 'home';
+    draftSessionKeyRef.current = 'home'; setHydratedComposerKey('home');
     if (!navigateToHome({ preserveIntent: true, preserveAgentMode: true })) return;
     setComposerAttachments([]);
     setSelectedAssistant(null);
@@ -2537,13 +2532,20 @@ export default function App() {
           .catch(() => {});
       }}
       onResolveDecision={async (decisionId, allowed, choice) => {
+        if (window.mossWeb?.capabilities?.features.confirmations) {
+          const pending = await window.agentDesktop.confirmations.list();
+          if (pending.requests.some(item => item.id === decisionId)) {
+            window.dispatchEvent(new CustomEvent('moss:show-confirmation', { detail: decisionId }));
+            return;
+          }
+        }
         await window.agentDesktop.decisions.respond({ decisionId, allowed, choice });
       }}
     />
   );
 
   return (
-    <AppToolSelectionContext.Provider value={{ apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: (activeSessionId ? activeDetail?.agentMode !== 'remote-direct' : newSessionAgentMode === 'local'), pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
+    <AppToolSelectionContext.Provider value={{ apps: (activeSessionId ? activeDetail?.agentMode === 'remote-direct' : newSessionAgentMode === 'remote-direct') ? apps.filter(app => app.connectorApp) : apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: true, pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
     <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource }}>
     <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
@@ -2553,6 +2555,28 @@ export default function App() {
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
       style={getChatAppearanceStyle(desktopSettings?.appearance)}
     >
+      <HostConfirmations />
+      <WebAuthorizations />
+      <WebAppPreviews />
+      <WebInteractions />
+      {hydratedComposerKey === (activeSessionId || 'home') && <WebComposerDraft key={activeSessionId || 'home'} session={activeSessionId || 'home'}
+        value={{ text: input, files: composerAttachments, appSelection, choices: composerChoices, intent: composerIntent,
+          workspace: activeSessionId ? activeDetail?.workspace : appDraftWorkspace, queued: queuedMessages[activeSessionId || 'home'] }}
+        restore={draft => {
+          if (activeSessionId && draft.workspace !== undefined && draft.workspace !== activeDetail?.workspace) {
+            updateQueue(activeSessionId, items => [...items, ...recoverQueuedMessages(draft.queued),
+              ...(composerIsEmpty(draft) ? [] : [{ ...messageFromDraft(draft, crypto.randomUUID()), notice: '工作区已变化，请切回原工作区后编辑。' }])]);
+            return;
+          }
+          setInput(draft.text); setComposerAttachments(draft.files); setAppSelection(draft.appSelection || null);
+          setComposerChoices(draft.choices ?? { skills: [], agent: null });
+          if (!activeSessionId) setAppDraftWorkspace(draft.workspace);
+          if (draft.intent) handleComposerIntentChange(draft.intent);
+          if (draft.queued?.length) updateQueue(activeSessionId || 'home', items => {
+            const ids = new Set(items.map(item => item.id));
+            return [...items, ...recoverQueuedMessages(draft.queued).filter(item => !ids.has(item.id))];
+          });
+        }} />}
       {!window.mossWeb && <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
         <div
           className="moss-window-drag h-9"
@@ -2652,6 +2676,9 @@ export default function App() {
             activeSessionId ? (
               <ChatArea
                 messages={chatMessages}
+                interactions={latestSessionInteractions(activeDetail?.history ?? [])}
+                onRestoreInteraction={handleRestoreInteraction}
+                onInteraction={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionInteraction : undefined}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId))}
                 busyStartedAt={activeDetail?.busyStartedAt ?? null}
@@ -2704,10 +2731,10 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
-                installedConnectors={activeDetail?.projectId ? [] : installedConnectors}
+                installedConnectors={activeDetail?.projectId ? [] : installedConnectors.filter(connector => !apps.some(app => app.connectorApp?.id === connector.id))}
                 selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={activeDetail?.projectId ? undefined : handleToggleConnector}
-                onOpenConnectorHub={() => setActiveView('connectors')}
+                onToggleConnector={activeDetail?.projectId || !installedConnectors.some(connector => !apps.some(app => app.connectorApp?.id === connector.id)) ? undefined : handleToggleConnector}
+                onOpenConnectorHub={() => setActiveView('apps')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
@@ -2718,6 +2745,9 @@ export default function App() {
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                onEditQueuedMessage={handleEditQueuedMessage}
+                composerChoices={composerChoices}
+                onComposerChoicesChange={setComposerChoices}
                 backgroundTasks={backgroundTasks[activeSessionId] ?? []}
                 composerAttachments={composerAttachments}
                 onComposerAttachmentsChange={setComposerAttachments}
@@ -2737,6 +2767,13 @@ export default function App() {
                 value={input}
                 loading={preparingNewSession}
                 hasActiveSession={false}
+                queuedMessages={queuedMessages.home ?? []}
+                onEditQueuedMessage={handleEditQueuedMessage}
+                onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                composerAttachments={composerAttachments}
+                onComposerAttachmentsChange={setComposerAttachments}
+                composerChoices={composerChoices}
+                onComposerChoicesChange={setComposerChoices}
                 sessionTitle=""
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
@@ -2762,10 +2799,10 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
-                installedConnectors={installedConnectors}
+                installedConnectors={installedConnectors.filter(connector => !apps.some(app => app.connectorApp?.id === connector.id))}
                 selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={handleToggleConnector}
-                onOpenConnectorHub={() => setActiveView('connectors')}
+                onToggleConnector={installedConnectors.some(connector => !apps.some(app => app.connectorApp?.id === connector.id)) ? handleToggleConnector : undefined}
+                onOpenConnectorHub={() => setActiveView('apps')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
@@ -2787,15 +2824,10 @@ export default function App() {
               enabled={agentMailEnabled}
               onOpenSettings={() => { setSettingsInitialAppId(null); setActiveView('settings'); }}
             />
-          ) : activeView === 'skills' || activeView === 'connectors' || activeView === 'experts' ? (
+          ) : activeView === 'skills' || activeView === 'experts' ? (
             <ResourceHubView
               activeTab={activeView}
               onChangeTab={setActiveView}
-              onConnectorsChanged={refreshConnectors}
-              onRunCliSetup={handleRunCliConnectorSetup}
-              onAuthenticateMcp={handleAuthenticateMcpConnector}
-              onUseConnector={handleUseConnector}
-              onError={handleConnectorHubError}
             />
           ) : activeView === 'projects' ? (
             <ProjectWorkspace
@@ -2806,9 +2838,10 @@ export default function App() {
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
             />
-          ) : activeView === 'apps' ? (
+          ) : activeView === 'apps' || activeView === 'connectors' ? (
             <AppsPanel
               apps={apps}
+              onUseApp={app => { if (navigateToHome({ resetInput: true })) setDraftAppIds([app.id || app.name]); }}
               versionsByApp={versionsByApp}
               initialExpandedApp={appManagementName}
               onLaunch={handleLaunchApp}
@@ -2842,6 +2875,11 @@ export default function App() {
               style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth, minWidth: layout.rightCollapsed ? 0 : RIGHT_WIDTH_RANGE.min }}
             >
               <TaskPanel
+                browserTabId={presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot.state.activeId)?.source.tabId}
+                onBrowserReady={() => { const request = presentation.snapshot?.request; if (request) void window.agentDesktop.presentation.acknowledge({ sessionId: activeSessionId, ...request, state: 'shown' }).catch(() => {}); }}
+                navigation={<PresentationToolbar snapshot={presentation.snapshot} action={presentation.action}/>}
+                showBrowser={presentation.snapshot?.state.activeId === 'browser' || presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot.state.activeId && resource.source.type === 'browser-tab' && resource.availability !== 'expired' && resource.availability !== 'unavailable')}
+                content={presentation.snapshot && !['workspace', 'browser'].includes(presentation.snapshot.state.activeId) ? <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/> : undefined}
                 collapsed={layout.rightCollapsed}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}
@@ -2867,7 +2905,7 @@ export default function App() {
                 workspace={activeDetail?.workspace}
                 workspaceRemote={activeDetail?.agentMode === 'remote-direct'}
                 workspaceBusy={Boolean(activeDetail?.busy)}
-                hasUnsavedEdits={previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
+                hasUnsavedEdits={Boolean(presentation.snapshot?.state.dirty) || previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
                 onVersionRestored={handleRefreshWorkspace}
               />
             </div>

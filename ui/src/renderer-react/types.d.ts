@@ -1,3 +1,4 @@
+export type PreviewDocumentState = { id: string; path: string; content: string; originalContent: string; dirty: boolean; owner: string | null; client?: string; generation: number; sequence: number };
 export type MemoryDreamStatus = {
   phase: 'idle' | 'running' | 'stopping' | 'completed' | 'failed' | 'canceled';
   message: string;
@@ -179,6 +180,10 @@ export type TurnChangeHunk = {
 };
 
 export type TurnFileChange = {
+  verified?: boolean;
+  status?: 'added' | 'modified' | 'deleted';
+  binary?: boolean;
+  detail?: string;
   filePath: string;
   isNewFile: boolean;
   structuredPatch: TurnChangeHunk[];
@@ -187,6 +192,10 @@ export type TurnFileChange = {
 };
 
 export type TurnChangeSummary = {
+  observationId?: string;
+  coverage?: 'complete' | 'partial' | 'unavailable';
+  observationNote?: string;
+  excludedCount?: number;
   userMessageId: string;
   files: TurnFileChange[];
   stats: {
@@ -897,7 +906,12 @@ export type ManagedRuntimeStatus = {
   installing?: boolean;
 };
 
+export type AppDiscoveryPreferences = { sections: { installed: string; marketplace: string } };
+export type AppDiscoveryPreferenceUpdate = { action?: 'section'; surface?: 'installed' | 'marketplace'; section?: string };
+
 export type StoredApp = {
+  discovery?: import('../../../packages/app-sdk/src/index.mjs').AppDiscovery | { group: 'unknown' };
+  connectorApp?: { id: string; capabilities: Array<'mcp' | 'cli' | 'skills'>; connection?: InstalledConnector | null };
   category?: string;
   keywords?: string[];
   id?: string;
@@ -973,6 +987,10 @@ export type StoredApp = {
 };
 
 export type AppMcpServiceTools = {
+  schemaRevision?: string;
+  catalogStale?: boolean;
+  catalogSource?: 'live' | 'cache' | 'unknown';
+  checkedAt?: number;
   serviceId?: string;
   appId: string;
   instanceId: string;
@@ -1054,6 +1072,7 @@ export type AppMarketplaceVersion = {
 };
 
 export type AppMarketplaceEntry = {
+  discovery?: import('../../../packages/app-sdk/src/index.mjs').AppDiscovery;
   category?: string;
   id: string;
   displayName: string;
@@ -1138,6 +1157,24 @@ export type PreviewOpenPayload =
       contentType: WorkspacePreviewContentType;
       metadata?: Record<string, unknown>;
     };
+
+export type PresentationResource = {
+  bindings?: Array<{ turnId?: string; sourceToolUseId?: string; role?: string }>;
+  isResult?: boolean;
+  id: string; kind: string; title: string; revision: string; view?: string;
+  source: { type: string; path?: string; workspacePath?: string; uri?: string; appId?: string; route?: string; tabId?: string; memberIds?: string[]; observationId?: string };
+  capabilities: { preview: boolean; edit: boolean; popout: boolean };
+  location?: { line?: number; column?: number };
+  availability?: string; updatedAt?: number;
+};
+export type PresentationSnapshot = {
+  sessionId: string; epoch: string; version: number;
+  state: { visible: boolean; activeId: string; activeOrigin: string; autoFollow: boolean; pinnedId: string | null; dirty: boolean; openedIds: string[]; back: string[]; turnId: string | null };
+  resources: PresentationResource[];
+  results?: PresentationResult[];
+  request?: { requestId: string; artifactId: string; revision: string; epoch: string };
+};
+export type PresentationResult = { schema?: string; request_id?: string; ok: boolean; error?: string; presentation?: { state: string; reason?: string }; items?: unknown[] };
 
 export type PreviewHistoryTarget = {
   contentType: WorkspacePreviewContentType;
@@ -1271,11 +1308,21 @@ export type BackgroundTaskInfo = {
 };
 
 
+export type HostConfirmationRequest = {
+  id: string; kind: string; title: string; message: string; detail: string;
+  confirmLabel: string; cancelLabel: string; revision: string;
+  originViewId: string | null; createdAt: number; expiresAt: number;
+};
+export type HostConfirmationSnapshot = { revision: number; requests: HostConfirmationRequest[] };
+
 declare global {
   interface Window {
-    mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any };
+    mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any;
+      managed?: boolean; generation?: number; pendingBrowserUrl?: string; authorizationWindow?: Window; identity?: { hostId: string; userId: string; generation?: number }; capabilities?: import('../shared/host-capabilities.mjs').HostCapabilities;
+    };
     mossTerminal: {
-      start: (payload: { requestId: string; cols: number; rows: number }) => Promise<{ title: string; cwd: string; shell: string } | null>;
+      start: (payload: { requestId: string; cols: number; rows: number; restart?: boolean }) => Promise<{ title: string; cwd: string; shell: string; status?: string; exitCode?: number; buffer?: string } | null>;
+      terminate?: () => Promise<void>;
       write: (payload: { requestId: string; data: string }) => Promise<void>;
       resize: (payload: { requestId: string; cols: number; rows: number }) => Promise<void>;
       stop: (payload: { requestId: string }) => Promise<void>;
@@ -1290,6 +1337,7 @@ declare global {
         decide: (id: string, decision: 'session' | 'always' | 'deny') => Promise<void>;
         onChanged: (callback: (status: ComputerUseStatus) => void) => () => void;
       };
+      logDownload: () => Promise<{ canceled: boolean; path?: string; error?: string }>;
       // 通用 IPC 方法
       /** @deprecated Renderer code should use named methods below. Kept for compatibility. */
       ipcInvoke: (channel: string, payload?: any) => Promise<any>;
@@ -1297,6 +1345,12 @@ declare global {
       ipcOff: (channel: string, handler: any) => void;
 
       getStatus: () => Promise<any>;
+      getCapabilities: () => Promise<import('../shared/host-capabilities.mjs').HostCapabilities>;
+      confirmations: {
+        list: () => Promise<HostConfirmationSnapshot>;
+        respond: (input: { id: string; revision: string; allowed: boolean }) => Promise<unknown>;
+        onChanged: (callback: () => void) => () => void;
+      };
       getManagedRuntimeStatus: () => Promise<ManagedRuntimeStatus>;
       ensureManagedRuntimes: (payload?: { node?: boolean; python?: boolean; git?: boolean }) => Promise<Record<string, unknown>>;
       getAuthDebug: () => Promise<any>;
@@ -1389,6 +1443,8 @@ declare global {
       setSessionEffort: (payload: { sessionId: string; effort: EffortLevel | null }) => Promise<SessionEffortConfiguration>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
+      getObservationDiff: (payload: { sessionId: string; observationId: string; filePath: string }) => Promise<TurnFileChange>;
+      onTurnObservation: (callback: (payload: { sessionId: string }) => void) => () => void;
       previewTurnRewind: (payload: { sessionId: string; userMessageId: string }) => Promise<TurnRewindPreview>;
       rewindTurn: (payload: { sessionId: string; userMessageId: string }) => Promise<{
         ok: boolean;
@@ -1448,6 +1504,7 @@ declare global {
       copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
       /** Resolves after the turn completes; transport/runtime errors reject. */
       send: (payload: SendRequest) => Promise<SendResult>;
+      sessionInteraction: (payload: { sessionId: string; action: 'steer' | 'side_question' | 'cancel_side' | 'inspect'; id: string; prompt?: string; details?: import('./lib/session-interactions').InteractionDetails }) => Promise<{ status: string; id: string }>;
       approvePlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
       rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
       answerQuestion: (payload: AnswerQuestionRequest) => Promise<ControlResult>;
@@ -1458,6 +1515,8 @@ declare global {
       sessionCron: SessionCronApi;
       getInstalledSkills: () => Promise<MarketplaceResponse<unknown[]>>;
       onConnectorsChanged: (callback: (payload: ConnectorsChangedEvent) => void) => () => void;
+      appDiscovery: (payload: AppDiscoveryPreferenceUpdate) => Promise<AppDiscoveryPreferences>;
+      connectorApp: (payload: { appId: string; action?: 'status' | 'refresh' | 'setup' | 'auth' | 'credentials' | 'provision'; values?: Record<string, string> }) => Promise<{ connector: InstalledConnector; auth?: { status?: string } }>;
       appMarketplace: {
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
@@ -1480,7 +1539,7 @@ declare global {
       };
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
-      openEmbeddedApp: (payload: { name: string; sessionId?: string; workspace?: string }) => Promise<{
+      openEmbeddedApp: (payload: { name: string; previewRef?: string; sessionId?: string; workspace?: string }) => Promise<{
         ok: boolean;
         error?: string;
         embedId?: string;
@@ -1497,7 +1556,7 @@ declare global {
       closeEmbeddedApp: (payload: { embedId: string }) => Promise<{ ok: boolean; error?: string }>;
       rollbackApp: (payload: { name: string; versionId: string }) => Promise<{ ok: boolean; app: StoredApp; error?: string }>;
       deleteApp: (payload: { name: string; deleteData?: boolean; deleteCredentials?: boolean }) => Promise<{ ok: boolean; error?: string }>;
-      installAppArchive: () => Promise<{ ok: boolean; canceled?: boolean; app?: StoredApp; error?: string }>;
+      installAppArchive: (payload?: { filePath: string }) => Promise<{ ok: boolean; canceled?: boolean; app?: StoredApp; error?: string }>;
       getAppInstallProgress: () => Promise<AppInstallProgress[]>;
       onAppInstallProgress: (callback: (progress: AppInstallProgress) => void) => () => void;
       openAppResource: (uri: string) => Promise<{ opened: boolean }>;
@@ -1554,6 +1613,26 @@ declare global {
         close: () => Promise<{ ok: boolean }>;
         onOpen: (callback: (payload: PreviewOpenPayload) => void) => () => void;
         onSync: (callback: (payload: { files: WorkspacePreviewData[] }) => void) => () => void;
+      };
+      previewDocument: {
+        acquire(input: { sessionId: string; filePath: string; clientId: string; takeOwnership?: boolean }): Promise<PreviewDocumentState>;
+        update(input: { id: string; generation: number; clientId: string; content: string }): Promise<PreviewDocumentState>;
+        save(input: { id: string; generation: number; clientId: string; sessionId: string }): Promise<{ state: PreviewDocumentState; file: WorkspacePreviewData }>;
+        acknowledge(input: { id: string; transferId: string; clientId: string }): Promise<unknown>;
+        release(input: { id: string; generation: number; clientId: string }): Promise<unknown>;
+        on(event: string, callback: (payload: PreviewDocumentState & { transferId?: string; released?: boolean }) => void): () => void;
+      };
+      presentation: {
+        onResult(callback: (payload: { sessionId: string; result: PresentationResult }) => void): () => void;
+        refresh(input: { sessionId: string }): Promise<PresentationSnapshot>;
+        resolve: (payload: { sessionId: string; references: string[] }) => Promise<Array<{ reference: string; available: boolean; kind?: string }>>;
+        snapshot: (payload: { sessionId?: string | null; activate?: boolean }) => Promise<PresentationSnapshot | null>;
+        action: (payload: { sessionId: string; action: { type: string; id?: string; value?: boolean } }) => Promise<PresentationSnapshot>;
+        open: (payload: { sessionId: string; input: { items: Array<{ path?: string; resource_uri?: string; artifact_id?: string; role?: string; view?: string }>; mode?: string } }) => Promise<PresentationResult>;
+        load: (payload: { sessionId: string; artifactId: string }) => Promise<{ resource: PresentationResource; file: WorkspacePreviewData | null; epoch: string }>;
+        acknowledge: (payload: { sessionId: string; requestId: string; revision: string; epoch: string; state: 'shown' | 'error'; error?: string }) => Promise<{ accepted: boolean }>;
+        popout: (payload: { sessionId: string; artifactId: string }) => Promise<{ ok: boolean }>;
+        onChanged: (callback: (snapshot: PresentationSnapshot) => void) => () => void;
       };
       browser: {
         getState: (payload: { sessionId?: string | null }) => Promise<BrowserState>;

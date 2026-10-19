@@ -291,10 +291,11 @@ export interface TestingHostInputMap {
   "target.reset": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
   "target.close": Record<string, never>
   "target.attach": { "runId": string }
-  "controller.create": { "runId": string; "engineEntry": string; "disabledTools": Array<string>; "title": string }
-  "controller.turn.start": { "sessionId": string; "prompt": string }
+  "controller.create": { "runId": string; "engineEntry": string; "disabledTools": Array<string>; "title": string; "evidenceReview"?: boolean }
+  "controller.turn.start": { "sessionId": string; "prompt": string; "evidence"?: Array<string> }
   "controller.turn.status": { "sessionId": string }
   "controller.turn.abort": { "sessionId": string }
+  "controller.turn.finish": { "sessionId": string }
   "controller.dispose": { "sessionId": string }
   "controller.caller": Record<string, never>
   "controller.open": { "sessionId": string }
@@ -311,6 +312,7 @@ export interface TestingHostOutputMap {
   "controller.turn.start": { [key: string]: unknown }
   "controller.turn.status": { [key: string]: unknown }
   "controller.turn.abort": { [key: string]: unknown }
+  "controller.turn.finish": { [key: string]: unknown }
   "controller.dispose": { [key: string]: unknown }
   "controller.caller": { "sessionId": string | null }
   "controller.open": { "opened": boolean }

@@ -9,8 +9,7 @@ export function previewFileFromPayload(payload: PreviewOpenPayload): WorkspacePr
 
   const title = String(payload.metadata?.title || payload.metadata?.fileName || '').trim();
   const content = String(payload.content || '');
-  const fallback = content.slice(0, 48) || 'untitled';
-  const path = `preview:${payload.contentType}:${title || fallback}`;
+  const path = `preview:${payload.metadata?.artifactId || crypto.randomUUID()}`;
   return {
     path,
     relativePath: title || path,

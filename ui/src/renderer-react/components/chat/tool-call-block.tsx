@@ -1,3 +1,5 @@
+import { handleMarkdownLinkClick } from '@/lib/markdown-links';
+import { PresentationToolStatus, usePresentationToolResult, presentationResultLabel } from '@/components/presentation/presentation-tool-status';
 "use client";
 
 import * as React from "react";
@@ -131,6 +133,7 @@ function InlineSyntax({
 }
 
 function buildHeadline(toolCall: ToolUseRenderMessage, kind: ToolKind) {
+  if (toolCall.toolName === 'moss_present') return '展示成果';
   switch (kind) {
     case "bash":
       return "Ran";
@@ -154,6 +157,7 @@ function buildHeadline(toolCall: ToolUseRenderMessage, kind: ToolKind) {
 }
 
 function buildSubject(toolCall: ToolUseRenderMessage, kind: ToolKind) {
+  if (toolCall.toolName === 'moss_present') return getInputString(getInputRecord(toolCall), ['title']) || '';
   if (kind === "bash") {
     return getToolCommand(toolCall) || summarizeToolLabel(toolCall);
   }
@@ -346,7 +350,7 @@ export function ToolCallBlock({
   defaultCollapsed?: boolean;
   chrome?: "card" | "row";
 }) {
-  const { toolDisplayMode } = useToolDisplaySettings();
+  const { toolDisplayMode, disclosureOverrides, sessionId } = useToolDisplaySettings();
   const isRow = chrome === "row";
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
@@ -374,7 +378,9 @@ export function ToolCallBlock({
     : inlineDiff
       ? getDiffStats(inlineDiff.oldString, inlineDiff.newString)
       : undefined;
-  const failed = toolCall.status === "error" || Boolean(result?.isError) || Boolean(shell?.exitCode);
+  const presentationResult = usePresentationToolResult(toolCall.toolName === 'moss_present' ? result?.rawContent : null, toolCall.toolName === 'moss_present' ? result?.content || '' : '');
+  const failed = toolCall.status === "error" || Boolean(result?.isError) || Boolean(shell?.exitCode)
+    || Boolean(presentationResult && (!presentationResult.ok || ['error', 'unavailable'].includes(presentationResult.presentation?.state || '')));
   const resultText = inlineDiff && !failed
     ? ""
     : shell
@@ -412,8 +418,14 @@ export function ToolCallBlock({
   });
   const focusRequested = focused || expandForFocus;
   const [collapsed, setCollapsed] = React.useState(
-    (defaultCollapsed || shouldAutoCollapse) && !focusRequested,
+    !focusRequested && (disclosureOverrides?.get(toolCall.toolUseId) ?? (defaultCollapsed || shouldAutoCollapse)),
   );
+  const manualCollapsed = React.useRef<boolean | undefined>(disclosureOverrides?.get(toolCall.toolUseId));
+  const toggleCollapsed = () => setCollapsed(value => {
+    manualCollapsed.current = !value;
+    disclosureOverrides?.set(toolCall.toolUseId, !value);
+    return !value;
+  });
   const [outputExpanded, setOutputExpanded] = React.useState(focusRequested);
   const autoCollapseWasEnabledRef = React.useRef(toolDisplayMode === "collapsed");
   const focusWasRequestedRef = React.useRef(focusRequested);
@@ -422,6 +434,8 @@ export function ToolCallBlock({
     if (focusRequested) {
       setCollapsed(false);
       setOutputExpanded(true);
+    } else if (manualCollapsed.current !== undefined) {
+      setCollapsed(manualCollapsed.current);
     } else if (defaultCollapsed) {
       if (focusWasRequestedRef.current) setCollapsed(true);
     } else if (toolDisplayMode === "collapsed") {
@@ -455,7 +469,7 @@ export function ToolCallBlock({
     .join("\n");
   const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
   const headerSubject = normalizeToolHeaderSubject(subject, isRow);
-  const rowResultSummary = executionState === "running"
+  const rowResultSummary = presentationResult ? presentationResultLabel(presentationResult) : executionState === "running"
     ? "执行中"
     : executionState === "failed"
       ? "失败"
@@ -489,6 +503,7 @@ export function ToolCallBlock({
           !isRow && hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}
       >
+        {sessionId && getToolFilePath(toolCall) ? <button type="button" title="打开文件" aria-label="打开工具操作的文件" className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:text-primary" onClick={event => void handleMarkdownLinkClick(event, getToolFilePath(toolCall), window.agentDesktop, sessionId).catch(error => window.alert(String(error)))}>↗</button> : null}
         {isRow ? (
           <RowToolIcon active={executionState === "running"} />
         ) : (
@@ -498,7 +513,7 @@ export function ToolCallBlock({
           type="button"
           disabled={!hasResponse}
           aria-expanded={hasResponse ? !collapsed : undefined}
-          onClick={() => setCollapsed((value) => !value)}
+          onClick={toggleCollapsed}
           className={cn(
             "min-w-0 flex-1 text-left leading-[1.55] disabled:pointer-events-none",
             isRow ? "text-[12.5px]" : "text-[13px]",
@@ -559,7 +574,7 @@ export function ToolCallBlock({
           {hasResponse ? (
             <button
               type="button"
-              onClick={() => setCollapsed((value) => !value)}
+              onClick={toggleCollapsed}
               className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[color:var(--color-repl-muted)] transition-colors hover:bg-white/10 hover:text-[color:var(--color-repl-fg)]"
               title={collapsed ? "展开工具记录" : "折叠到一行"}
               aria-label={collapsed ? "展开工具记录" : "折叠到一行"}
@@ -582,6 +597,7 @@ export function ToolCallBlock({
             ? "mb-2 ml-2 mt-1 border-l border-border/70 py-1 pl-3"
             : "bg-[var(--color-repl-bg)] px-2.5 py-1.5",
         )}>
+          {toolCall.toolName === 'moss_present' && <PresentationToolStatus raw={result?.rawContent} text={resultText}/>}
           <div className="ml-3.5 min-w-0">
             <TranscriptOutput
               segments={segments}

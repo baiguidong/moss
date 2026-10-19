@@ -41,7 +41,9 @@ const outputSchema = lazySchema(() =>
     durationMs: z
       .number()
       .describe('Time taken to execute the search in milliseconds'),
-    numFiles: z.number().describe('Total number of files found'),
+    numFiles: z.number().describe('Number of files shown'),
+    totalMatches: z.number().optional().describe('Total matching files before the display limit'),
+    countIsComplete: z.boolean().optional(),
     filenames: z
       .array(z.string())
       .describe('Array of file paths that match the pattern'),
@@ -152,7 +154,7 @@ export const GlobTool = buildTool({
     const start = Date.now()
     const appState = getAppState()
     const limit = globLimits?.maxResults ?? 100
-    const { files, truncated } = await glob(
+    const { files, truncated, totalMatches, countIsComplete } = await glob(
       input.pattern,
       GlobTool.getPath(input),
       { limit, offset: 0 },
@@ -166,6 +168,8 @@ export const GlobTool = buildTool({
       durationMs: Date.now() - start,
       numFiles: filenames.length,
       truncated,
+      totalMatches,
+      countIsComplete,
     }
     return {
       data: output,
@@ -183,6 +187,7 @@ export const GlobTool = buildTool({
       tool_use_id: toolUseID,
       type: 'tool_result',
       content: [
+        ...(output.totalMatches !== undefined ? [`Showing ${output.numFiles} of ${output.totalMatches} matching files.`] : []),
         ...output.filenames,
         ...(output.truncated
           ? [

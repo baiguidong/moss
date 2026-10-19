@@ -13,6 +13,7 @@ Usage: ./manage.sh <command>
   stop     Stop the container, retaining its system layer and HOME volume.
   status   Show container/health status.
   logs     Show the latest 100 log lines.
+  adopt <full-container-id>  Explicitly attach an upgraded legacy standalone container.
   token    Print the standalone login token (not used with Moss Server auth).
 
 Edit .env before first start to configure origin, port and authentication.
@@ -27,9 +28,21 @@ ensure_env() {
     printf 'Created %s/.env from defaults.\n' "$WEBUI_ROOT"
   fi
 }
+compose_file() {
+  # Existing installations stay on their original compose file until an admin
+  # explicitly requests managed mode. Never replace a user's system layer.
+  if [[ "${MOSS_WEB_MANAGED:-}" == 1 || -f "$WEBUI_ROOT/.managed" ]]; then
+    printf '%s' "$WEBUI_ROOT/compose.managed.yaml"
+  elif docker compose --project-directory "$WEBUI_ROOT" --env-file "$WEBUI_ROOT/.env" -f "$WEBUI_ROOT/compose.yaml" ps -aq webui 2>/dev/null | grep -q .; then
+    printf '%s' "$WEBUI_ROOT/compose.yaml"
+  else
+    touch "$WEBUI_ROOT/.managed"
+    printf '%s' "$WEBUI_ROOT/compose.managed.yaml"
+  fi
+}
 compose() {
   docker compose --project-directory "$WEBUI_ROOT" --env-file "$WEBUI_ROOT/.env" \
-    -f "$WEBUI_ROOT/compose.yaml" "$@"
+    -f "$(compose_file)" "$@"
 }
 load_image() {
   [[ -f "$WEBUI_ROOT/images/moss-webui.tar" && -f "$WEBUI_ROOT/SHA256SUMS" ]] \
@@ -47,16 +60,16 @@ start_service() {
   # up without --no-recreate can silently discard apt installs after config/image changes.
   if ! compose up --detach --wait --wait-timeout 120 --pull never --no-build --no-recreate; then
     compose ps --all || true
-    compose logs --tail 100 webui || true
+    compose logs --tail 100 || true
     return 1
   fi
   printf 'Started. Existing containers are retained; image/config changes need a planned upgrade.\n'
 }
 
-[[ $# -le 1 ]] || { usage; exit 1; }
+[[ $# -le 2 ]] || { usage; exit 1; }
 case "${1:---help}" in
   -h|--help|help) usage; exit 0 ;;
-  install|load|start|stop|status|logs|token) ;;
+  install|load|start|stop|status|logs|token|adopt) ;;
   *) usage; exit 1 ;;
 esac
 command -v docker >/dev/null 2>&1 || die 'Docker is required.'
@@ -65,12 +78,19 @@ case "$1" in
   load) load_image ;;
   install) load_image; ensure_env; start_service ;;
   start) ensure_env; start_service ;;
+  adopt)
+    [[ -n "${2:-}" ]] || die 'Specify the complete original container ID.'
+    [[ "${MOSS_WEB_MANAGED:-}" == 1 ]] || die 'Use MOSS_WEB_MANAGED=1 and a separate port/origin for explicit legacy adoption.'
+    ensure_env; start_service
+    compose exec -T gateway node /opt/moss/cloud/cli.mjs adopt "$2"
+    touch "$WEBUI_ROOT/.managed"
+    ;;
   stop|status|logs|token)
     [[ -f "$WEBUI_ROOT/.env" ]] || die 'No .env found. Run start or install first.'
     case "$1" in
       stop) compose stop ;;
       status) compose ps --all ;;
-      logs) compose logs --tail 100 webui ;;
-      token) compose exec -T webui cat /home/moss/.moss/web/access-token ;;
+      logs) compose logs --tail 100 ;;
+      token) if [[ "$(compose_file)" == *compose.managed.yaml ]]; then compose exec -T gateway cat /state/access-token; else compose exec -T webui cat /home/moss/.moss/web/access-token; fi ;;
     esac ;;
 esac

@@ -12,6 +12,9 @@
  */
 export const DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000
 
+/** Maximum bytes saved for one text tool result; matches Moss's existing shell cap. */
+export const MAX_PERSISTED_TOOL_RESULT_BYTES = 64 * 1024 * 1024
+
 /**
  * Maximum size for tool results in tokens.
  * Based on analysis of tool result sizes, we set this to a reasonable upper bound

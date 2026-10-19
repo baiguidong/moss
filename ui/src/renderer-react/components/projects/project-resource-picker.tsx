@@ -64,7 +64,7 @@ async function loadAuthorizedConnectors(query: string, page: number): Promise<Pr
   if (page > 1) return { items: [], total: 0, hasMore: false };
   const response = await window.agentDesktop.getInstalledConnectors();
   if (!response?.success) {
-    throw new Error(response?.error || '读取已授权连接器失败');
+    throw new Error(response?.error || '读取已连接在线应用失败');
   }
   const items = (Array.isArray(response.data) ? response.data : [])
     .filter(isAuthorizedConnector)
@@ -158,9 +158,9 @@ function resourceCopy(kind: ProjectResourceKind) {
   if (kind === 'connector') {
     return {
       action: '选择',
-      pickerTitle: '选择已授权连接器',
-      searchPlaceholder: '搜索已授权连接器',
-      emptyLabel: '没有匹配的已授权连接器',
+      pickerTitle: '选择已连接在线应用',
+      searchPlaceholder: '搜索已连接在线应用',
+      emptyLabel: '没有匹配的已连接在线应用',
     };
   }
   if (kind === 'skill') {

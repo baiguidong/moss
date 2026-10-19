@@ -1,3 +1,4 @@
+import { DEFAULT_SNAPSHOT_POLICY, normalizeSnapshotPolicy, validateSnapshotPolicyPatch, type SnapshotPolicy } from '../../shared/webui-snapshot-policy.mjs'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import path from 'path'
 import { getMossServerHomeDir } from './lib/env.js'
@@ -37,6 +38,7 @@ export type SystemSettingsPayload = {
   url: string
   apiKey: string
   image: SystemSettingsImage
+  webui?: { snapshots: SnapshotPolicy }
   serverRuntime: SystemSettingsServerRuntime
   openIM: SystemSettingsOpenIM
   settingsPath: string
@@ -79,6 +81,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     apiKey: '',
     model: '',
   },
+  webui: { snapshots: { ...DEFAULT_SNAPSHOT_POLICY } },
   serverRuntime: {
     dockerImage: 'moss-runtime:latest',
   },
@@ -345,6 +348,7 @@ function normalizeSystemSettings(
       DEFAULT_SYSTEM_SETTINGS.openIM.requestTimeoutMs,
   }
 
+  result.webui = { snapshots: normalizeSnapshotPolicy({ ...recordField(recordField(existing, 'webui'), 'snapshots'), ...recordField(recordField(source, 'webui'), 'snapshots') }) }
   return result as PersistedSystemSettings
 }
 
@@ -412,6 +416,7 @@ function toSystemSettingsPayload(
     url: state.value.url,
     apiKey: state.value.apiKey,
     image: state.value.image,
+    webui: state.value.webui,
     serverRuntime: state.value.serverRuntime,
     openIM: state.value.openIM,
     settingsPath: state.path,
@@ -426,6 +431,10 @@ export function getSystemSettings(): SystemSettingsPayload {
 }
 
 export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
+  if (isRecord(patch) && patch.webui !== undefined) {
+    if (!isRecord(patch.webui)) throw new RangeError('webui must be an object')
+    if (patch.webui.snapshots !== undefined) validateSnapshotPolicyPatch(patch.webui.snapshots)
+  }
   const settingsPath = getSystemSettingsPath()
   const state = readSystemSettingsState()
   const currentSettings = state.value
@@ -496,6 +505,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     ...existingFile,
     bypassPermissions: nextSettings.bypassPermissions,
     models,
+    webui: nextSettings.webui,
     serverRuntime: nextSettings.serverRuntime,
     openIM: nextSettings.openIM,
     env,
@@ -530,6 +540,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     url: nextSettings.url,
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
+    webui: nextSettings.webui,
     serverRuntime: nextSettings.serverRuntime,
     openIM: nextSettings.openIM,
     settingsPath,

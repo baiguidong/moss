@@ -34,10 +34,10 @@ describe('App manifest V2', () => {
   })
 
   it('advertises Host API 3 and rejects unpublished older contracts', () => {
-    expect(APP_HOST_API_VERSION).toBe('3.9.0')
+    expect(APP_HOST_API_VERSION).toBe('3.15.0')
     expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.10.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.16.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {
@@ -238,3 +238,27 @@ backend: { ...backend, },
     expect(() => validateAppManifest({ ...valid, hostApi: '^3.1.0', toolScope: 'always' })).toThrow()
     expect(() => validateAppManifest(validateAppManifest(valid))).not.toThrow()
   })
+
+describe('host-managed Connector App contract', () => {
+  const connector = {
+    schemaVersion: 2, id: 'moss.example', version: '1.0.0', displayName: 'Example service',
+    hostApi: '^3.15.0', permissions: ['connector:use'], toolScope: 'session', navigation: { location: 'none' },
+    connectorApp: { id: 'example', capabilities: ['cli'] }, discovery: { group: 'online', authMethods: ['browser'] },
+  }
+  it('retains discovery and capabilities without inventing a Backend or UI', () => {
+    const manifest = validateAppManifest(connector)
+    expect(manifest.connectorApp).toEqual(connector.connectorApp)
+    expect(manifest.discovery).toEqual(connector.discovery)
+    expect(manifest.backend).toBeUndefined()
+    expect(manifest.ui).toBeUndefined()
+    expect(validateAppManifest(manifest)).toEqual(manifest)
+  })
+  it('allows independent App identity while rejecting additional privileges and older host support', () => {
+    expect(validateAppManifest({ ...connector, id: 'other.team-chat' }).connectorApp.id).toBe('example')
+    for (const patch of [
+      { id: 'invalid/app' }, { hostApi: '^3.14.0' }, { permissions: [] }, { toolScope: 'global' },
+      { permissions: ['connector:use', 'filesystem:read'] }, { ui: { entry: 'dist/index.html' } },
+      { discovery: { group: 'mcp' } }, { connectorApp: { id: '../escape', capabilities: ['cli'] } },
+    ]) expect(() => validateAppManifest({ ...connector, ...patch })).toThrow()
+  })
+})

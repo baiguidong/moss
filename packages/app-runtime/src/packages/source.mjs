@@ -3,6 +3,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import Ajv from 'ajv'
 import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/errors.mjs'
+import { readConnectorAppPackage } from './connector-app.mjs'
 
 export const SOURCE_MANIFEST = 'source-manifest.json'
 const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex')
@@ -106,7 +107,9 @@ export async function inspectSourceProject(root, { appRoot = '.', packageManager
   const dependencies = { ...pkg.dependencies, ...pkg.devDependencies, ...workspace.dependencies, ...workspace.devDependencies }
   if (Object.keys(dependencies).length && !hasLock) invalid(`missing ${lockfile}`)
   const files = await sourceFileList(appPath, { filter: (name, entry) => entry.name !== '.moss-sdk' && !excludeSourceEntry(entry.name, name) })
-  if (!(manifest.mcpApp && files.some(file => file.path === 'app.json')) && !files.some(file => /^(src\/|public\/|index\.)/.test(file.path) || (!file.path.includes('/') && /\.(?:[cm]?js|tsx?|jsx|html|py)$/.test(file.path) && !/^(?:build|vite\.config|webpack\.config|rollup\.config|eslint\.config|postcss\.config)\./.test(file.path)))) invalid('missing editable source files')
+  const connectorSource = manifest.connectorApp && files.some(file => file.path === 'connector/connector.json')
+  if (connectorSource) await readConnectorAppPackage(appPath, manifest)
+  if (!connectorSource && !(manifest.mcpApp && files.some(file => file.path === 'app.json')) && !files.some(file => /^(src\/|public\/|index\.)/.test(file.path) || (!file.path.includes('/') && /\.(?:[cm]?js|tsx?|jsx|html|py)$/.test(file.path) && !/^(?:build|vite\.config|webpack\.config|rollup\.config|eslint\.config|postcss\.config)\./.test(file.path)))) invalid('missing editable source files')
   const workspaces = Array.isArray(workspace.workspaces) ? workspace.workspaces : workspace.workspaces?.packages || []
   // Exported workspaces must be explicit, so validation never guesses which
   // sibling projects an original monorepo glob happened to include.

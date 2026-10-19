@@ -123,6 +123,12 @@ type Output = {
   content?: string;
   numLines?: number; // For content mode
   numMatches?: number; // For count mode
+  totalFiles?: number;
+  totalLines?: number;
+  totalMatches?: number;
+  countUnit?: 'matching_lines' | 'occurrences';
+  countIsComplete?: boolean;
+  contentTruncated?: boolean;
 };
 export function renderToolUseMessage({
   pattern,
@@ -168,12 +174,30 @@ export function renderToolResultMessage({
   numFiles,
   content,
   numLines,
-  numMatches
+  numMatches,
+  totalFiles,
+  totalLines,
+  totalMatches,
+  countUnit,
+  countIsComplete,
+  contentTruncated,
 }: Output, _progressMessagesForMessage: ProgressMessage<ToolProgressData>[], {
   verbose
 }: {
   verbose: boolean;
 }): React.ReactNode {
+  if (countIsComplete) {
+    const shown = mode === 'content' ? numLines ?? 0 : mode === 'count' ? numMatches ?? 0 : numFiles;
+    const total = mode === 'content' ? totalLines : mode === 'count' ? totalMatches : totalFiles ?? totalMatches;
+    const unit = mode === 'content' ? 'output lines' : mode === 'count' ? (countUnit === 'matching_lines' ? 'matching lines' : 'occurrences') : 'files';
+    if (total !== undefined) {
+      const details = !mode || mode === 'files_with_matches' ? filenames.join('\n') : content;
+      const summary = `Showing ${shown} of ${total} ${unit}${contentTruncated ? ' (long lines omitted)' : ''}`;
+      return verbose
+        ? <Box flexDirection="column"><Text>{summary}</Text><Box marginLeft={5}><Text>{details}</Text></Box></Box>
+        : <MessageResponse height={1}><Text>{summary} {shown > 0 && <CtrlOToExpand />}</Text></MessageResponse>;
+    }
+  }
   if (mode === 'content') {
     return <SearchResultSummary count={numLines ?? 0} countLabel="lines" content={content} verbose={verbose} />;
   }

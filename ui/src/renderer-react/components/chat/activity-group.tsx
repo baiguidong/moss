@@ -46,10 +46,10 @@ function activityBucket(step: ActivityStep): Omit<SummaryBucket, "count"> {
     return { key: "read", label: (count) => count === 1 ? "读取了一个文件" : `读取了 ${count} 个文件` };
   }
   if (kind === "write") {
-    return { key: "write", label: (count) => count === 1 ? "创建了一个文件" : `创建了 ${count} 个文件` };
+    return { key: "write", label: (count) => count === 1 ? "写入文件 1 次" : `写入文件 ${count} 次` };
   }
   if (kind === "edit") {
-    return { key: "edit", label: (count) => count === 1 ? "编辑了一个文件" : `编辑了 ${count} 个文件` };
+    return { key: "edit", label: (count) => count === 1 ? "编辑文件 1 次" : `编辑文件 ${count} 次` };
   }
   if (kind === "bash") {
     return { key: "bash", label: (count) => count === 1 ? "执行了一条命令" : `执行了 ${count} 条命令` };
@@ -231,8 +231,9 @@ export function ActivityGroup({
   focusedToolUseId,
   isLive = false,
 }: Props) {
-  const { toolDisplayMode } = useToolDisplaySettings();
-  const [pinnedExpanded, setPinnedExpanded] = React.useState<boolean | null>(null);
+  const { toolDisplayMode, disclosureOverrides } = useToolDisplaySettings();
+  const groupId = 'group:' + (toolCalls[0]?.toolUseId || (steps[0]?.kind === 'thinking' ? steps[0].message.id : '') || '');
+  const [pinnedExpanded, setPinnedExpanded] = React.useState<boolean | null>(() => disclosureOverrides?.has(groupId) ? disclosureOverrides.get(groupId) : null);
   const containsFocusedTool = Boolean(
     focusedToolUseId
     && toolCalls.some((toolCall) => (
@@ -271,8 +272,8 @@ export function ActivityGroup({
     );
   }
 
-  const expanded = containsFocusedTool || (pinnedExpanded ?? isLive);
   const failedCount = countFailedTools(toolCalls, resultMap, childToolCallsByParent);
+  const expanded = containsFocusedTool || (pinnedExpanded ?? (isLive || failedCount > 0));
   const summary = buildActivitySummary(steps);
   const duration = isLive ? "" : getActivityDuration(steps, resultMap);
 
@@ -295,7 +296,7 @@ export function ActivityGroup({
       <div className="min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => setPinnedExpanded(!expanded)}
+          onClick={() => { disclosureOverrides?.set(groupId, !expanded); setPinnedExpanded(!expanded); }}
           aria-expanded={expanded}
           title={summary}
           className="-mx-2 flex min-h-7 w-[calc(100%+1rem)] items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] leading-[1.6] text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

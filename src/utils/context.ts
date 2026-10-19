@@ -51,29 +51,36 @@ export function getContextWindowForModel(
   model: string,
   betas?: string[],
 ): number {
-  // [1m] suffix — explicit client-side opt-in, respected over all detection
-  if (has1mContext(model)) {
-    return 1_000_000
-  }
+  return resolveContextWindowForModel(model, betas).contextWindow
+}
 
-  const cap = getModelCapability(model)
-  if (cap?.max_input_tokens && cap.max_input_tokens >= 100_000) {
-    if (
-      cap.max_input_tokens > MODEL_CONTEXT_WINDOW_DEFAULT &&
-      is1mContextDisabled()
-    ) {
-      return MODEL_CONTEXT_WINDOW_DEFAULT
+/** The UI and request/compaction paths must agree on both capacity and provenance. */
+export function resolveContextWindowForModel(
+  model: string,
+  betas?: string[],
+): { contextWindow: number; isDefault: boolean } {
+  // A display suffix must not override the actual provider's advertised limit.
+  const baseModel = model.replace(/\[1m\]$/i, '').trim()
+  const cap = getModelCapability(model) ?? getModelCapability(baseModel)
+  const inputLimit = cap?.max_input_tokens
+  if (typeof inputLimit === 'number' && Number.isSafeInteger(inputLimit) && inputLimit > 0) {
+    return {
+      contextWindow: is1mContextDisabled()
+        ? Math.min(inputLimit, MODEL_CONTEXT_WINDOW_DEFAULT)
+        : inputLimit,
+      isDefault: false,
     }
-    return cap.max_input_tokens
   }
 
-  if (betas?.includes(CONTEXT_1M_BETA_HEADER) && modelSupports1M(model)) {
-    return 1_000_000
+  // Keep the known Claude opt-in when metadata is unavailable, but don't infer
+  // 1M support for arbitrary gateway models from a suffix or beta header.
+  if (modelSupports1M(model) && (
+    has1mContext(model) || betas?.includes(CONTEXT_1M_BETA_HEADER) ||
+    getSonnet1mExpTreatmentEnabled(model)
+  )) {
+    return { contextWindow: 1_000_000, isDefault: false }
   }
-  if (getSonnet1mExpTreatmentEnabled(model)) {
-    return 1_000_000
-  }
-  return MODEL_CONTEXT_WINDOW_DEFAULT
+  return { contextWindow: MODEL_CONTEXT_WINDOW_DEFAULT, isDefault: true }
 }
 
 export function getSonnet1mExpTreatmentEnabled(model: string): boolean {
@@ -170,8 +177,8 @@ export function getModelMaxOutputTokens(model: string): {
     upperLimit = MAX_OUTPUT_TOKENS_UPPER_LIMIT
   }
 
-  const cap = getModelCapability(model)
-  if (cap?.max_tokens && cap.max_tokens >= 4_096) {
+  const cap = getModelCapability(model) ?? getModelCapability(model.replace(/\[1m\]$/i, '').trim())
+  if (cap?.max_tokens && Number.isSafeInteger(cap.max_tokens) && cap.max_tokens > 0) {
     upperLimit = cap.max_tokens
     defaultTokens = Math.min(defaultTokens, upperLimit)
   }

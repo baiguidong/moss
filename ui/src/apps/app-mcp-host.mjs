@@ -12,6 +12,8 @@ import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
 import { readMcpAppConfig } from '../../../packages/app-runtime/src/packages/mcp-app.mjs'
 import { validateMcpPathSettings } from '../../../packages/app-sdk/src/mcp/path-bindings.mjs'
 import { mergeMcpDefaults, adoptMcpSettings } from './mcp-config-defaults.mjs'
+import { catalogSnapshot, readToolCatalog, writeToolCatalog } from './app-mcp-catalog.mjs'
+import { isDeepStrictEqual } from 'node:util'
 
 export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
@@ -88,6 +90,8 @@ export class AppMcpHost {
     Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, getIdleTimeoutMs, reservedName })
     this.providers = new Map()
     this.checks = new Map()
+    this.catalogs = new Map()
+    this.inspections = new Map()
     this.queue = Promise.resolve()
   }
   serial(operation) {
@@ -112,6 +116,7 @@ export class AppMcpHost {
     if (context.permission && !this.getRuntime().installations.get(context.appId)?.grants?.includes(context.permission)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '请在应用管理中授予此操作需要的 MCP 权限。')
   }
   async load(context) {
+    if (!this.catalogs.has(key(context))) this.catalogs.set(key(context), await readToolCatalog(context.dataDir))
     const file = path.join(context.dataDir, 'mcp-servers.json')
     let document
     try { document = JSON.parse(await fs.readFile(file, 'utf8')) }
@@ -256,22 +261,74 @@ export class AppMcpHost {
   }
   hasApp(appId) { return [...this.providers.values()].some(provider => provider.appId === appId) }
   toolRevision(provider, entry) { return `${provider.version}/${entry.secretId}/${entry.updatedAt}/${entry.enabled}` }
+  cachedCatalog(provider, name) {
+    const entry = provider.document.servers[name], cached = this.catalogs.get(key(provider))?.[name]
+    return entry && cached?.revision === this.toolRevision(provider, entry) ? cached : undefined
+  }
+  async rememberCatalog(provider, name, check) {
+    if (check.state !== 'connected') return
+    const config = restoreConfig(provider.document.servers[name], provider.secrets)
+    const snapshot = catalogSnapshot(check, value => value ? safeError(value, [config]) : '')
+    if (!snapshot) return
+    const services = Object.fromEntries(Object.keys(provider.document.servers).flatMap(name => {
+      const cached = this.cachedCatalog(provider, name)
+      return cached ? [[name, cached]] : []
+    }))
+    services[name] = { ...snapshot, revision: this.toolRevision(provider, provider.document.servers[name]) }
+    this.catalogs.set(key(provider), services)
+    await writeToolCatalog(provider.dataDir, services).catch(() => {})
+  }
+  // Live Agent discovery updates the same display cache without starting a probe.
+  async recordRuntimeCatalog(name, config, check, connectionStartedAt) {
+    const found = this.findServer(name)
+    if (!found || !found.enabled || check.state !== 'connected') return
+    if (Number.isFinite(connectionStartedAt) && connectionStartedAt < found.updatedAt) return
+    const { scope: _scope, ...launch } = config
+    const expected = resolveMcpLaunchConfig(restoreConfig(found.provider.document.servers[found.localName], found.provider.secrets), { workspace: config.env?.MOSS_SESSION_WORKSPACE || undefined })
+    if (!isDeepStrictEqual(launch, expected)) return
+    const revision = this.toolRevision(found.provider, found)
+    return this.serial(async () => {
+      if (!this.active(found.provider)) return
+      const current = await this.load(found.provider), entry = current.document.servers[found.localName]
+      if (!entry || !entry.enabled || this.toolRevision(current, entry) !== revision) return
+      await this.rememberCatalog(current, found.localName, check)
+      const cached = this.cachedCatalog(current, found.localName)
+      if (cached) {
+        const { revision: _revision, ...snapshot } = cached
+        this.checks.set(`${key(current)}/${found.localName}`, { ...snapshot, state: 'connected' })
+      }
+      this.onCatalogChanged?.()
+    })
+  }
   /** Desktop disclosure only: never include launch configuration or credentials. */
   toolCatalog(appId) {
     const result = [], runtime = this.getRuntime()
+    let budget = 400 * 1024
     for (const provider of this.providers.values()) {
       if (provider.appId !== appId) continue
       const installation = runtime?.installations.get(appId), instance = runtime?.instances.get(provider.instanceId)
       if (!installation || !instance || installation.activeVersion !== provider.version) continue
       for (const server of this.list(provider).servers) {
+        const cached = this.cachedCatalog(provider, server.name)
+        const live = server.check?.state === 'connected'
+        const knownTools = live ? server.check.tools : cached?.tools || [], tools = []
+        for (const tool of knownTools) {
+          const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1
+          if (bytes > budget) break
+          tools.push(tool); budget -= bytes
+        }
         const status = !installation.enabled ? 'app-disabled' : !instance.enabled ? 'instance-disabled'
           : !this.active(provider) ? 'unauthorized' : !server.enabled ? 'disabled'
             : server.credentialsMissing ? 'credentials-missing' : server.check?.state || 'unchecked'
         result.push({ appId, instanceId: provider.instanceId, name: server.name,
           serviceId: this.serviceId(provider, provider.document.servers[server.name]),
           runtimeName: runtimeName(appId, server.name), revision: this.toolRevision(provider, provider.document.servers[server.name]),
-          status, tools: server.check?.tools || [], error: server.check?.error,
-          truncated: server.check?.truncated || false })
+          status, tools, error: server.check?.error || cached?.error,
+          schemaRevision: live ? server.check.schemaRevision : cached?.schemaRevision,
+          catalogStale: live ? server.check.catalogStale : cached?.catalogStale,
+          catalogSource: live ? 'live' : cached ? 'cache' : 'unknown',
+          checkedAt: live ? server.check.checkedAt : cached?.checkedAt,
+          truncated: Boolean((live ? server.check.truncated : cached?.truncated) || tools.length < knownTools.length) })
       }
     }
     return result
@@ -282,7 +339,13 @@ export class AppMcpHost {
     const entry = provider?.document.servers[input.name]
     if (!entry || !this.active(provider) || !entry.enabled) throw new Error('服务已停用或未授权，请在 App 管理中检查。')
     if (this.toolRevision(provider, entry) !== input.revision) throw new Error('连接配置已变化，请重新加载。')
-    await this.handle('servers.inspect', { name: input.name }, { ...provider, expectedToolRevision: input.revision, signal: AbortSignal.timeout(300_000) })
+    const inspectionKey = `${key(provider)}/${input.name}/${input.revision}`
+    let pending = this.inspections.get(inspectionKey)
+    if (!pending) {
+      pending = this.handle('servers.inspect', { name: input.name }, { ...provider, expectedToolRevision: input.revision, signal: AbortSignal.timeout(300_000) })
+      this.inspections.set(inspectionKey, pending)
+    }
+    try { await pending } finally { if (this.inspections.get(inspectionKey) === pending) this.inspections.delete(inspectionKey) }
     return this.toolCatalog(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
   }
   list(provider, extra = {}, focusName = '') {
@@ -383,8 +446,16 @@ export class AppMcpHost {
       }
       return await this.serial(async () => {
         this.assertCurrent(context)
-        const current = await this.load(context)
+        let current = await this.load(context)
         if (this.toolRevision(current, current.document.servers[input.name] || {}) !== this.toolRevision(prepared.provider, entry)) throw new Error('连接配置已变化，请重新检查。')
+        if (method === 'auth.clear') {
+          const document = structuredClone(current.document)
+          document.servers[input.name].updatedAt = Math.max(Date.now(), (entry.updatedAt || 0) + 1)
+          current = await this.commit(context, document, current.secrets)
+          const catalogs = this.catalogs.get(key(current)) || {}
+          delete catalogs[input.name]
+          await writeToolCatalog(current.dataDir, catalogs).catch(() => {})
+        } else await this.rememberCatalog(current, input.name, check)
         this.checks.set(`${key(context)}/${input.name}`, check)
         this.onCatalogChanged?.()
         return this.list(current, method === 'servers.inspect' ? {} : this.onChanged?.(context.appId) || {}, input.name)

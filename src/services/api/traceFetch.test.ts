@@ -269,3 +269,15 @@ describe('model fetch trace lifecycle', () => {
     expect(cancelled).toBe(true)
   })
 })
+
+test('prompt composition survives terminal capture and remains scoped to the actual request', async () => withTraceScope(scope, async () => {
+  await updateTraceCaptureSettings({ enabled: true })
+  const traced = createTraceFetch(async () => new Response('ok'), { sessionId: 'prompt-diagnostics' })
+  await (await traced('https://model.invalid/messages', request)).text()
+  await drainTraceFetchForTests()
+  const trace = await traceCaptureService.getSessionTrace('prompt-diagnostics')
+  const diagnostic = trace.calls[0].metadata?.promptDiagnostics as any
+  expect(diagnostic).toMatchObject({ version: 1, truncated: false, unmeasuredBlocks: 0 })
+  expect(diagnostic.rows.map((row: any) => row.location)).toEqual(['system', 'messages[0].content'])
+  expect(JSON.stringify(diagnostic)).not.toContain('system prompt')
+}))

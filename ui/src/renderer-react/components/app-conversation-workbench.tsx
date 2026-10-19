@@ -45,6 +45,17 @@ export function useAppConversationWorkbench(sessionId: string | undefined, tasks
   const show = () => setVisibility({ sessionId, open: true, mounted: true });
   const close = React.useCallback(() => setVisibility(previous => ({ ...previous, open: false })), []);
   const select = (key: string) => { setChoice({ sessionId, key }); sessionStorage.setItem(`app-workbench:${sessionId}`, key) };
+  React.useEffect(() => {
+    const openResource = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.sessionId !== sessionId) return;
+      const key = `${detail.appId}:${detail.route}`;
+      if (!entries.some(item => item.key === key)) return;
+      select(key); show();
+    };
+    window.addEventListener('moss:open-app-workbench', openResource);
+    return () => window.removeEventListener('moss:open-app-workbench', openResource);
+  }, [sessionId, entries]);
   React.useEffect(() => window.agentDesktop.onAppPrepareComposer(payload => { if (payload.sessionId === sessionId) close() }), [sessionId, close]);
   return { entries, entry, open, mounted, show, close, select, appIds: new Set(apps.filter(conversationView).map(app => app.id || app.name)) };
 }

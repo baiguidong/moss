@@ -183,7 +183,7 @@ export function WorkspaceSelector({
           </DropdownMenuItem>
           <DropdownMenuItem className="gap-2 py-2.5" onSelect={() => { void openLocalFolder(); }}>
             <FolderOpen className="h-4 w-4" />
-            <span>打开本地文件夹</span>
+            <span>{typeof window !== 'undefined' && window.mossWeb ? '打开云电脑文件夹' : '打开本地文件夹'}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -214,7 +214,7 @@ export function WorkspaceSelector({
             </div>
             <div className="px-6 pb-6">
               <p className="mb-5 text-sm leading-6 text-muted-foreground">
-                为工作空间命名，本地将自动创建同名文件夹，创建后名称不可修改。
+                为工作空间命名，{typeof window !== 'undefined' && window.mossWeb ? '云电脑中' : '本地'}将自动创建同名文件夹，创建后名称不可修改。
               </p>
               <Input
                 autoFocus

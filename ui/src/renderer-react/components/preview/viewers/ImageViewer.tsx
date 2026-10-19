@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Image as ImageIcon } from "lucide-react";
 
-export function ImageViewer({ filePath, alt }: { filePath: string; alt: string }) {
+export function ImageViewer({ filePath, alt, onReady, onError }: { filePath: string; alt: string; onReady?: () => void; onError?: (message: string) => void }) {
   const [imageSrc, setImageSrc] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -17,7 +17,7 @@ export function ImageViewer({ filePath, alt }: { filePath: string; alt: string }
         setLoading(false);
       }
     }).catch(() => {
-      if (!cancelled) setLoading(false);
+      if (!cancelled) { setLoading(false); onError?.("图片加载失败"); }
     });
     return () => {
       cancelled = true;
@@ -29,7 +29,7 @@ export function ImageViewer({ filePath, alt }: { filePath: string; alt: string }
       {loading ? (
         <div className="text-sm text-muted-foreground">正在加载图片...</div>
       ) : imageSrc ? (
-        <img src={imageSrc} alt={alt} className="max-h-full max-w-full rounded-2xl border border-border/70 bg-background shadow-2xl object-contain" />
+        <img onLoad={onReady} onError={() => onError?.("图片加载失败")} src={imageSrc} alt={alt} className="max-h-full max-w-full rounded-2xl border border-border/70 bg-background shadow-2xl object-contain" />
       ) : (
         <div className="flex h-full min-h-[240px] w-full items-center justify-center rounded-2xl border border-dashed border-border/70 bg-background/80 text-muted-foreground">
           <div className="flex items-center gap-2 text-sm">

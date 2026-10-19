@@ -1118,7 +1118,7 @@ export function createBrowserViewManager({
       return serializeSession(session);
     },
 
-    async openTabAndWait({ sessionId, url, connectorAuth, mcpAuth } = {}) {
+    async openTabAndWait({ sessionId, url, connectorAuth, mcpAuth, activate = true } = {}) {
       const session = getSession(sessionId);
       const normalizedUrl = normalizeBrowserUrl(url);
       const tab = createTabRecord(session, normalizedUrl, {
@@ -1129,7 +1129,7 @@ export function createBrowserViewManager({
         allowExternalFallback: false,
       });
       session.tabs.push(tab);
-      session.activeTabId = tab.id;
+      if (activate) session.activeTabId = tab.id;
       syncViews();
       emitState(session);
 
@@ -1152,7 +1152,7 @@ export function createBrowserViewManager({
         }
       }
 
-      return serializeSession(session);
+      return { ...serializeSession(session), openedTabId: tab.id };
     },
 
     activateTab({ sessionId, tabId } = {}) {

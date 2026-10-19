@@ -30,7 +30,7 @@ export function appTaskHistoryEvent(task) {
 export function preserveAppTaskHistory(current, transcript) {
   const next = Array.isArray(transcript) ? transcript : []
   const ids = new Set(next.map(event => event.uuid))
-  const missing = (current || []).filter(event => ['app_task','app_view'].includes(event.subtype) && !ids.has(event.uuid))
+  const missing = (current || []).filter(event => (['app_task','app_view'].includes(event.subtype) || event.type === 'session_interaction') && !ids.has(event.uuid))
   if (!missing.length) return next
   const result = [...next]
   for (const event of missing) {

@@ -73,7 +73,7 @@ import { readFileInRange } from '../../utils/readFileInRange.js'
 import { semanticNumber } from '../../utils/semanticNumber.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { BASH_TOOL_NAME } from '../BashTool/toolName.js'
-import { getDefaultFileReadingLimits } from './limits.js'
+import { getDefaultFileReadingLimits, MAX_IMAGE_READ_BYTES } from './limits.js'
 import {
   DESCRIPTION,
   FILE_READ_TOOL_NAME,
@@ -852,7 +852,7 @@ async function callInner(
   if (IMAGE_EXTENSIONS.has(ext)) {
     // Images have their own size limits (token budget + compression) —
     // don't apply the text maxSizeBytes cap.
-    const data = await readImageWithTokenBudget(resolvedFilePath, maxTokens)
+    const data = await readImageWithTokenBudget(resolvedFilePath, maxTokens, undefined, context.abortController.signal)
     context.nestedMemoryAttachmentTriggers?.add(fullFilePath)
 
     logFileOperation({
@@ -1084,12 +1084,16 @@ export async function readImageWithTokenBudget(
   filePath: string,
   maxTokens: number = getDefaultFileReadingLimits().maxTokens,
   maxBytes?: number,
+  signal?: AbortSignal,
 ): Promise<ImageResult> {
-  // Read file ONCE — capped to maxBytes to avoid OOM on huge files
+  // A caller may lower the input cap, but cannot bypass it with a larger cap.
+  signal?.throwIfAborted()
   const imageBuffer = await getFsImplementation().readFileBytes(
     filePath,
-    maxBytes,
+    Math.min(maxBytes ?? MAX_IMAGE_READ_BYTES, MAX_IMAGE_READ_BYTES),
+    signal,
   )
+  signal?.throwIfAborted()
   const originalSize = imageBuffer.length
 
   if (originalSize === 0) {

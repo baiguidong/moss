@@ -1,6 +1,7 @@
 import { resolveAppSkills } from './app-skills.mjs'
 import { normalizeStringList } from '../shared/string-list.mjs'
 import { getAppToolServices, isToolSourceAvailable, parseAppServiceKey } from '../../../packages/app-sdk/src/tool-services.mjs'
+import { connectorIdFromApp } from '../../../packages/app-sdk/src/discovery.mjs'
 
 /** Scope changes wait for runtime reload; explicitly removing an App still revokes it. */
 export function canInvokeSessionAppTool(record, contribution) {
@@ -9,7 +10,11 @@ export function canInvokeSessionAppTool(record, contribution) {
 }
 
 /** Main owns validated selection; the running runtime keeps its own snapshot. */
-export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRuntime, persist, emit, onRemoved = async () => {} }) {
+export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRuntime, persist, emit, connectorAvailable = async () => false, onRemoved = async () => {} }) {
+  async function isConnectorApp(appId) {
+    const pkg = await getRuntime()?.getActivePackage?.(appId).catch(() => null)
+    return Boolean(connectorIdFromApp(pkg?.manifest))
+  }
   async function catalog(appId) {
     const runtime = getRuntime()
     const installation = runtime?.installations?.get(appId)
@@ -75,6 +80,10 @@ export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRunti
       if (previous.includes(id)) continue // Retain unavailable selections so they can be removed.
       const installation = runtime?.installations.get(id)
       if (!installation?.enabled) throw new Error('请先启用要加入会话的 App')
+      if (await isConnectorApp(id)) {
+        if (!installation.grants?.includes('connector:use') || !await connectorAvailable(id)) throw new Error('请先配置并连接此在线服务')
+        continue
+      }
       const { tools } = await runtime.listContributions({ appId: id, kinds: ['tools'] })
       const services = getMcpHost()?.toolCatalog(id) || []
       if (!tools.length && !services.some(service => !['app-disabled', 'instance-disabled', 'unauthorized', 'disabled'].includes(service.status))
@@ -87,10 +96,11 @@ export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRunti
   }
   const queues = new WeakMap()
   async function updateNow(record, value) {
-    if (record.agentMode === 'remote-direct' || record.isSubAgent) throw new Error('App 工具需要本地普通会话')
+    if (record.isSubAgent) throw new Error('App 工具需要普通会话')
     await migrateRecordNow(record)
     if (typeof value === 'function') value = value(record.appIds || [], record.appServiceIds || [])
     const next = await validateSelection(Array.isArray(value) ? { appIds: value, appServiceIds: record.appServiceIds || [] } : value, record)
+    if (record.agentMode === 'remote-direct' && ((await Promise.all(next.appIds.map(isConnectorApp))).some(available => !available) || next.appServiceIds.length)) throw new Error('此 App 工具需要本地会话')
     const ids = next.appIds
     if (JSON.stringify(ids) === JSON.stringify(record.appIds || []) && JSON.stringify(next.appServiceIds) === JSON.stringify(record.appServiceIds || [])) return false
     const removed = [...new Set([
@@ -137,5 +147,5 @@ export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRunti
     await validateIds([provider.appId])
     return provider.appId
   }
-  return { validateIds, validateServiceIds, validateSelection, migrateRecord, update, toggle, toggleService, setServices, resourceAppId }
+  return { validateIds, validateServiceIds, validateSelection, isConnectorApp, migrateRecord, update, toggle, toggleService, setServices, resourceAppId }
 }

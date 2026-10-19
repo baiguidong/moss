@@ -1924,6 +1924,11 @@ export function startServer(
         return
       }
 
+      if (req.method === 'GET' && pathname === '/api/v1/webui/snapshot-policy') {
+        writeJson(res, 200, getSystemSettings().webui?.snapshots || {})
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/api/v1/settings/system') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, getSystemSettings())
@@ -1933,7 +1938,9 @@ export function startServer(
       if (req.method === 'PATCH' && pathname === '/api/v1/settings/system') {
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
-        const settings = updateSystemSettings(body)
+        let settings
+        try { settings = updateSystemSettings(body) }
+        catch (error) { if (error instanceof RangeError) throw new HttpError(400, error.message); throw error }
         openIMIntegration?.updateConfig(settings.openIM)
         writeJson(res, 200, settings)
         return

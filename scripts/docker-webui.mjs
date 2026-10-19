@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const platforms = new Set(['linux/amd64', 'linux/arm64']);
-const deployFiles = ['README.md', 'compose.yaml', '.env.example', 'manage.sh'];
+const deployFiles = ['README.md', 'compose.yaml', 'compose.managed.yaml', '.env.example', 'manage.sh'];
 
 export const usage = `Usage:
   node scripts/docker-webui.mjs build [options]

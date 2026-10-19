@@ -90,7 +90,7 @@ describe('desktop package contract', () => {
   });
 
   test('exposes only chat and boss as desktop conversation modes', () => {
-    const appSource = readFileSync(path.join(uiRoot, 'src', 'renderer-react', 'App.tsx'), 'utf8');
+    const composerSource = readFileSync(path.join(uiRoot, 'src', 'renderer-react', 'lib', 'composer-intent.ts'), 'utf8');
     const chatSource = readFileSync(
       path.join(uiRoot, 'src', 'renderer-react', 'components', 'chat-area.tsx'),
       'utf8',
@@ -100,7 +100,7 @@ describe('desktop package contract', () => {
       'utf8',
     );
 
-    expect(appSource).toContain("type ComposerIntent = 'chat' | 'boss'");
+    expect(composerSource).toContain("type ComposerIntent = 'chat' | 'boss'");
     expect(chatSource).toContain('type ComposerIntent = "chat" | "boss"');
     expect(chatSource).toContain('id: "boss"');
     expect(chatSource).not.toContain('id: "plan"');
@@ -137,9 +137,10 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
     expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
     expect(verifierSource).toContain('Packaged Moss must not include bundled Apps');
-    expect(verifierSource).toContain("'connectors', 'cloud-auth-providers.json'");
-    expect(verifierSource).toContain("'connectors', 'connector-mcp-overrides.json'");
-    expect(verifierSource).toContain("'connectors', 'connector-cli-overrides.json'");
+    expect(verifierSource).toContain("path.join(paths.resourcesDir, 'connectors')");
+    expect(desktopPackage.build.extraResources.some(
+      (entry: { from?: string; to?: string }) => entry.from === 'resources/connectors' || entry.to === 'connectors',
+    )).toBe(false);
     const workflowSources = [
       readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
       readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),

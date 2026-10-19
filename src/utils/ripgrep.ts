@@ -95,14 +95,27 @@ function isEagainError(stderr: string): boolean {
  * Custom error class for ripgrep timeouts.
  * This allows callers to distinguish between "no matches" and "timed out".
  */
-export class RipgrepTimeoutError extends Error {
+export class RipgrepSearchError extends Error {
   constructor(
     message: string,
     public readonly partialResults: string[],
+    public readonly code?: string | number,
   ) {
     super(message)
+    this.name = 'RipgrepSearchError'
+  }
+}
+
+export class RipgrepTimeoutError extends RipgrepSearchError {
+  constructor(message: string, partialResults: string[]) {
+    super(message, partialResults, 'ETIMEDOUT')
     this.name = 'RipgrepTimeoutError'
   }
+}
+
+function getRipgrepTimeoutMs(): number {
+  const seconds = parseInt(process.env.CLAUDE_CODE_GLOB_TIMEOUT_SECONDS || '', 10)
+  return seconds > 0 ? seconds * 1000 : getPlatform() === 'wsl' ? 60_000 : 20_000
 }
 
 function ripGrepRaw(
@@ -127,10 +140,7 @@ function ripGrepRaw(
   const fullArgs = [...rgArgs, ...threadArgs, ...args, target]
   // Allow timeout to be configured via env var (in seconds), otherwise use platform defaults
   // WSL has severe performance penalty for file reads (3-5x slower on WSL2)
-  const defaultTimeout = getPlatform() === 'wsl' ? 60_000 : 20_000
-  const parsedSeconds =
-    parseInt(process.env.CLAUDE_CODE_GLOB_TIMEOUT_SECONDS || '', 10) || 0
-  const timeout = parsedSeconds > 0 ? parsedSeconds * 1000 : defaultTimeout
+  const timeout = getRipgrepTimeoutMs()
 
   // For embedded ripgrep, use spawn with argv0 (execFile doesn't support argv0 properly)
   if (argv0) {
@@ -189,7 +199,11 @@ function ripGrepRaw(
       settled = true
       clearTimeout(timeoutId)
       clearTimeout(killTimeoutId)
-      if (code === 0 || code === 1) {
+      if (stdoutTruncated || stderrTruncated) {
+        const error: ExecFileException = new Error('Ripgrep output exceeded its buffer limit')
+        error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+        callback(error, stdout, stderr)
+      } else if (code === 0 || code === 1) {
         // 0 = matches found, 1 = no matches (both are success)
         callback(null, stdout, stderr)
       } else {
@@ -347,6 +361,7 @@ export async function ripGrep(
   target: string,
   abortSignal: AbortSignal,
 ): Promise<string[]> {
+  abortSignal.throwIfAborted()
   await codesignRipgrepIfNecessary()
 
   // Test ripgrep on first use and cache the result (fire and forget)
@@ -361,11 +376,14 @@ export async function ripGrep(
       stderr: string,
       isRetry: boolean,
     ): void => {
+      if (abortSignal.aborted) {
+        reject(abortSignal.reason ?? new Error('Ripgrep search cancelled'))
+        return
+      }
       // Success case
       if (!error) {
         resolve(
           stdout
-            .trim()
             .split('\n')
             .map(line => line.replace(/\r$/, ''))
             .filter(Boolean),
@@ -408,24 +426,20 @@ export async function ripGrep(
         return
       }
 
-      // For all other errors, try to return partial results if available
+      // Preserve available rows on the error without reporting a complete search.
       const hasOutput = stdout && stdout.trim().length > 0
-      const isTimeout =
-        error.signal === 'SIGTERM' ||
-        error.signal === 'SIGKILL' ||
-        error.code === 'ABORT_ERR'
+      const isTimeout = error.signal === 'SIGTERM' || error.signal === 'SIGKILL'
       const isBufferOverflow =
         error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
 
       let lines: string[] = []
       if (hasOutput) {
         lines = stdout
-          .trim()
           .split('\n')
           .map(line => line.replace(/\r$/, ''))
           .filter(Boolean)
         // Drop last line for timeouts and buffer overflow - it may be incomplete
-        if (lines.length > 0 && (isTimeout || isBufferOverflow)) {
+        if (lines.length > 0 && !stdout.endsWith('\n') && (isTimeout || isBufferOverflow)) {
           lines = lines.slice(0, -1)
         }
       }
@@ -434,26 +448,27 @@ export async function ripGrep(
         `rg error (signal=${error.signal}, code=${error.code}, stderr: ${stderr}), ${lines.length} results`,
       )
 
-      // code 2 = ripgrep usage error (already handled); ABORT_ERR = caller
-      // explicitly aborted (not an error, just a cancellation — interactive
-      // callers may abort on every keystroke-after-debounce).
+      // Input/search failures are reported to the caller below, not as telemetry.
       if (error.code !== 2 && error.code !== 'ABORT_ERR') {
         logError(error)
       }
 
-      // If we timed out with no results, throw an error so Claude knows the search
-      // didn't complete rather than thinking there were no matches
-      if (isTimeout && lines.length === 0) {
+      // Partial stdout is evidence of an incomplete search, never a success.
+      if (isTimeout) {
         reject(
           new RipgrepTimeoutError(
-            `Ripgrep search timed out after ${getPlatform() === 'wsl' ? 60 : 20} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern.`,
+            `Ripgrep search timed out (configured timeout ${getRipgrepTimeoutMs() / 1000}s). The search did not complete; this does not mean there were no matches. Try a more specific path or pattern.`,
             lines,
           ),
         )
         return
       }
 
-      resolve(lines)
+      reject(new RipgrepSearchError(
+        `Ripgrep search ${isBufferOverflow ? 'exceeded its output limit' : 'failed'}. The search did not complete; this does not mean there were no matches.\n${(stderr.trim() || error.message).slice(0, 4000)}`,
+        lines,
+        error.code ?? undefined,
+      ))
     }
 
     ripGrepRaw(args, target, abortSignal, (error, stdout, stderr) => {

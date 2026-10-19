@@ -84,6 +84,23 @@ test('deactivation waits for the controller and closes its target; revoked grant
   f.installed.grants = ['testing:control']
   await expect(f.request('target.open')).rejects.toThrow('grant')
 })
+test('evidence controller forwards native images on first turn and rejects missing evidence before execution', async () => {
+  const prompts = [], modes = []
+  const f = await fixture({
+    createController: async run => { modes.push(run.evidenceReview); return 'visual-review' },
+    executeController: async (_sessionId, prompt) => { prompts.push(prompt) },
+  })
+  await f.ready()
+  const { sessionId } = await f.request('controller.create', { runId: f.runId, engineEntry: 'engine.mjs', disabledTools: [], title: 'visual', evidenceReview: true })
+  await fs.writeFile(path.join(f.dataDir, 'runs', f.runId, 'evidence', 'real.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+  await f.request('controller.turn.start', { sessionId, prompt: 'review', evidence: ['real.png'] })
+  while ((await f.request('controller.turn.status', { sessionId })).state === 'running') await delay(1)
+  expect(modes).toEqual([true]); expect(prompts[0][2].type).toBe('image')
+  await f.request('controller.turn.start', { sessionId, prompt: 'review', evidence: ['missing.png'] })
+  while ((await f.request('controller.turn.status', { sessionId })).state === 'running') await delay(1)
+  expect((await f.request('controller.turn.status', { sessionId })).state).toBe('failed')
+  expect(prompts).toHaveLength(1)
+})
 test('engine and evidence paths cannot escape the installed package and run directory', async () => {
   const f = await fixture(); await f.ready()
   await fs.writeFile(path.join(f.root, 'outside.mjs'), '')

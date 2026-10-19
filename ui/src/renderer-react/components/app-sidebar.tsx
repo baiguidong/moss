@@ -463,10 +463,10 @@ export function AppSidebar({
             {!collapsed && "项目"}
           </Button>
           <Button
-            variant={activeView === "connectors" || activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}
+            variant={activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("skills")}
-            title="技能·专家·连接器"
+            title="技能·专家"
           >
             <Plug className="h-4 w-4" />
             {!collapsed && (
@@ -474,8 +474,7 @@ export function AppSidebar({
                 <span>技能</span>
                 <span className="mx-px text-[8px] text-muted-foreground" aria-hidden="true" data-resource-nav-separator>·</span>
                 <span>专家</span>
-                <span className="mx-px text-[8px] text-muted-foreground" aria-hidden="true" data-resource-nav-separator>·</span>
-                <span>连接器</span>
+
               </span>
             )}
           </Button>
@@ -664,7 +663,7 @@ export function AppSidebar({
         {/* Apps 和 设置 */}
         <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
           <Button
-            variant={activeView === "apps" ? "secondary" : "ghost"}
+            variant={activeView === "apps" || activeView === "connectors" ? "secondary" : "ghost"}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("apps")}
           >

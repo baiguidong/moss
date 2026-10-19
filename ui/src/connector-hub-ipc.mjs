@@ -2,7 +2,7 @@ import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
 
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -47,6 +47,20 @@ const connectorCredentialStore = createConnectorCredentialStore({
   primaryKeyPath: CREDENTIAL_MASTER_KEY_PATHS.primaryPath,
   backupKeyPath: CREDENTIAL_MASTER_KEY_PATHS.backupPath,
 });
+let connectorAppLifecycle = null;
+export function setConnectorAppLifecycle(value) { connectorAppLifecycle = value; }
+function connectorAvailable(meta) {
+  if (!meta || meta.enabled === false) return false;
+  // Once adopted, the App installation and its grant are authoritative, even
+  // while compatibility files remain for old transcripts and CLI state paths.
+  if (!meta.appId) return !connectorAppLifecycle;
+  const installation = connectorAppLifecycle?.getInstallation?.(meta.appId);
+  return Boolean(installation?.enabled && installation.activeVersion === meta.appVersion && installation.grants?.includes('connector:use'));
+}
+function requireConnectorAppAccess(id) {
+  const meta = readJsonFile(path.join(connectorDir(id), CONNECTOR_META_FILE), null);
+  if ((meta?.appId || connectorAppLifecycle) && !connectorAvailable(meta)) throw new Error('请先从应用市场安装、启用并授权此 App');
+}
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -774,7 +788,9 @@ async function loadCatalogZip() {
   }
   const manifest = JSON.parse(await manifestEntry.async('string'));
   const connectors = Array.isArray(manifest.connectors) ? manifest.connectors : [];
-  return { zip, manifest, connectors, zipPath, updatedAt: stat.mtimeMs };
+  const revision = createHash('sha256').update(buffer)
+    .update(JSON.stringify(readConnectorMcpOverrides())).update(JSON.stringify(readConnectorCliOverrides())).update(JSON.stringify(readCloudAuthProviders())).digest('hex');
+  return { zip, manifest, connectors, zipPath, updatedAt: stat.mtimeMs, revision };
 }
 
 function zipHasEntry(zip, entryPath) {
@@ -1082,7 +1098,7 @@ async function readInstalledConnector(connectorId) {
   const id = normalizeConnectorId(connectorId);
   const baseDir = connectorDir(id);
   const meta = await readJsonFileAsync(path.join(baseDir, CONNECTOR_META_FILE), null);
-  if (!isPlainObject(meta)) return null;
+  if (!isPlainObject(meta) || meta.id !== id) return null;
   const state = await readConnectorRuntimeState(id);
   const mcp = await readJsonFileAsync(path.join(baseDir, 'mcp.json'), null);
   const cli = await readJsonFileAsync(path.join(baseDir, 'cli.json'), null);
@@ -1123,7 +1139,7 @@ async function readInstalledConnector(connectorId) {
     ...meta,
     authMode: normalizeString(selectedMcp.authMode) || normalizeString(meta.authMode),
     installed: true,
-    enabled: meta.enabled !== false,
+    enabled: connectorAvailable(meta),
     connected: (Boolean(state?.connected) || availableWithoutAuthorization) && credentialsConfigured,
     setupStatus: credentialReadFailed
       ? 'credential-error'
@@ -1191,7 +1207,7 @@ export async function listInstalledConnectors() {
 }
 
 export async function listConnectorCatalog() {
-  const { zip, connectors, zipPath, updatedAt } = await loadCatalogZip();
+  const { zip, connectors, zipPath, updatedAt, revision } = await loadCatalogZip();
   const installed = await listInstalledConnectorMap();
   const normalizedBase = connectors
     .map((entry) => normalizeConnectorManifest(entry, zip))
@@ -1199,8 +1215,19 @@ export async function listConnectorCatalog() {
   const normalized = await Promise.all(normalizedBase.map(async (connector) => {
     const connectorWithIcon = await addConnectorIcon(zip, connector);
     const installedRecord = installed.get(connector.id);
+    const prefix = `connectors/${connector.source}/`;
+    const credentialSchema = normalizeConnectorCredentialSchema(await readZipJson(zip, `${prefix}token-schema.json`, null));
+    const rawCli = await readZipJson(zip, `${prefix}cli.json`, null);
+    const cli = rawCli ? applyConnectorCliOverride(connector.id, rawCli) : null;
+    const browserAuth = connector.authMode === 'oauth' || connector.authConfig || findCloudAuthProvider(connector)
+      || cli?.authUrlDomain || cli?.authQrModal || (cli && normalizeCliAuthSteps(cli).some(step => step.authUrlDomain || step.authQrModal));
+    const authMethods = connector.id === 'ragflow' ? ['moss-session', 'api-key']
+      : credentialSchema ? [credentialSchema.fields.some(field => /pass|password|username|email_user/i.test(field.key)) ? 'credentials' : 'api-key']
+        : connector.authMode === 'none' ? ['none']
+          : browserAuth ? ['browser'] : [];
     return {
       ...connectorWithIcon,
+      discovery: { group: 'online', ...(authMethods.length ? { authMethods } : {}) },
       installed: Boolean(installedRecord),
       enabled: installedRecord?.enabled ?? false,
       connected: installedRecord?.connected ?? false,
@@ -1220,6 +1247,7 @@ export async function listConnectorCatalog() {
     catalogPath: zipPath,
     installedDir: CONNECTOR_INSTALLED_DIR,
     updatedAt,
+    revision,
   };
 }
 
@@ -1533,6 +1561,7 @@ export function getConnectorCredentialEnv(connectorIds) {
     if (!isValidConnectorId(connectorId)) continue;
     const baseDir = connectorDir(connectorId);
     const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
+    if (!connectorAvailable(meta)) continue;
     const schema = normalizeConnectorCredentialSchema(
       meta?.credentialSchema || readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
@@ -1551,6 +1580,7 @@ export function getConnectorCredentialEnv(connectorIds) {
 
 export async function saveConnectorCredentials(connectorId, inputValues) {
   const id = normalizeConnectorId(connectorId);
+  requireConnectorAppAccess(id);
   const baseDir = connectorDir(id);
   const schema = normalizeConnectorCredentialSchema(
     await readJsonFileAsync(path.join(baseDir, 'token-schema.json'), null),
@@ -1626,6 +1656,7 @@ export async function saveConnectorCredentials(connectorId, inputValues) {
 
 export async function provisionConnectorCredentials(connectorId, options = {}) {
   const id = normalizeConnectorId(connectorId);
+  requireConnectorAppAccess(id);
   const schema = await readJsonFileAsync(path.join(connectorDir(id), 'token-schema.json'), null);
   const values = await requestProvisionedConnectorCredentials(schema, options);
   const result = await saveConnectorCredentials(id, values);
@@ -1664,6 +1695,7 @@ export function getConnectorProviderAuthContext(connector) {
 
 export async function saveConnectorMcpAccessToken(connectorId, serverName, value) {
   const id = normalizeConnectorId(connectorId);
+  requireConnectorAppAccess(id);
   const name = normalizeString(serverName);
   if (!isValidMcpServerName(name)) throw new Error('Invalid MCP server name.');
   const token = extractAccessToken(value);
@@ -1958,6 +1990,7 @@ export function cliStatusStatePatch(connected) {
 
 export async function refreshConnectorCliStatus(connectorId) {
   const id = normalizeConnectorId(connectorId);
+  requireConnectorAppAccess(id);
   const connector = await readInstalledConnector(id);
   if (!connector) throw new Error(`Connector is not installed: ${id}`);
   const baseDir = connectorDir(id);
@@ -2251,6 +2284,7 @@ export async function setupConnectorCli(connectorId, {
   onSetupComplete,
 } = {}) {
   const id = normalizeConnectorId(connectorId);
+  requireConnectorAppAccess(id);
   const connector = await readInstalledConnector(id);
   if (!connector) throw new Error(`Connector is not installed: ${id}`);
   const baseDir = connectorDir(id);
@@ -2414,7 +2448,108 @@ export async function setupConnectorCli(connectorId, {
   }
 }
 
+/** Build immutable App payloads without installing, authenticating or editing state. */
+export async function exportConnectorPackage(connectorId, destination, expectedRevision) {
+  const id = normalizeConnectorId(connectorId);
+  const { zip, connectors, revision } = await loadCatalogZip();
+  if (expectedRevision && revision !== expectedRevision) throw new Error('服务目录已变化，请刷新后重新安装');
+  const connector = connectors.map(entry => normalizeConnectorManifest(entry, zip)).find(entry => entry?.id === id);
+  if (!connector) throw new Error(`Connector not found: ${id}`);
+  await fsp.mkdir(destination, { recursive: true });
+  if ((await fsp.readdir(destination)).length) throw new Error('Connector package destination must be empty');
+  const prefix = `connectors/${connector.source}/`;
+  await extractZipPrefix(zip, prefix, destination);
+  const rawMcp = await readZipJson(zip, `${prefix}mcp.json`, null);
+  if (connector.hasMcp) await writeJsonFileAsync(path.join(destination, 'mcp.json'), normalizeConnectorMcpPackage(id, rawMcp));
+  if (connector.hasCli) await writeJsonFileAsync(path.join(destination, 'cli.json'), applyConnectorCliOverride(id, await readZipJson(zip, `${prefix}cli.json`, {})));
+  const credentialSchema = normalizeConnectorCredentialSchema(await readZipJson(zip, `${prefix}token-schema.json`, null));
+  if (credentialSchema) await writeJsonFileAsync(path.join(destination, 'token-schema.json'), credentialSchema);
+  const skills = await extractConnectorSkill(zip, connector, destination, '');
+  // Generated skill metadata must not encode a temporary build directory/time.
+  const meta = { ...await addConnectorIcon(zip, connector), enabled: true,
+    authConfig: normalizeConnectorAuthConfig(connector.authConfig, await readZipJson(zip, `${prefix}auth.json`, null), findCloudAuthProvider(connector)),
+    credentialSchema, requiresCliSetup: normalizeString(rawMcp?.preAuth).toLowerCase() === 'cli',
+    mcpServerNames: Object.keys(allConnectorMcpServers(normalizeConnectorMcpPackage(id, rawMcp || {}))),
+    skillName: skills[0]?.name || '', skillNames: skills.map(skill => skill.name) };
+  await writeJsonFileAsync(path.join(destination, CONNECTOR_META_FILE), meta);
+  return meta;
+}
+
+/** Activate a version while retaining CLI state paths, credentials and user edits. */
+export async function activateConnectorApp(packageInfo, isCurrent = () => true) {
+  const { manifest, root } = packageInfo;
+  const id = manifest.connectorApp.id;
+  const baseDir = connectorDir(id);
+  const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
+  if (meta?.appId === manifest.id && meta?.appVersion === manifest.version && meta.enabled !== false) return;
+  const packageRoot = path.join(root, 'connector');
+  const nextMeta = readJsonFile(path.join(packageRoot, CONNECTOR_META_FILE), null);
+  if (nextMeta?.id !== id) throw new Error('Connector App identity mismatch');
+  await ensureConnectorDirs();
+  const staging = `${baseDir}.stage-${randomUUID()}`, backup = `${baseDir}.backup-${randomUUID()}`;
+  let backedUp = false;
+  try {
+    if (meta) await fsp.cp(baseDir, staging, { recursive: true });
+    else await fsp.mkdir(staging, { recursive: true });
+    // Package-owned assets follow the active App version. User configuration
+    // and state are not silently replaced by updated catalog defaults.
+    // Remove obsolete immutable assets; preserve files created by a CLI/user.
+    const oldFiles = readJsonFile(path.join(baseDir, '.app-package-files.json'), []);
+    for (const name of oldFiles) {
+      if (typeof name !== 'string' || name.split(/[\\/]/).includes('..') || path.isAbsolute(name)) continue;
+      if (['mcp.json', 'cli.json'].includes(name)) continue;
+      await fsp.rm(path.join(staging, name), { force: true });
+    }
+    await fsp.cp(packageRoot, staging, { recursive: true, force: true });
+    const packageFiles = Object.keys(packageInfo.checksums).filter(name => name.startsWith('connector/')).map(name => name.slice(10));
+    await writeJsonFileAsync(path.join(staging, '.app-package-files.json'), packageFiles);
+    for (const name of ['mcp.json', 'cli.json']) {
+      const previous = readJsonFile(path.join(baseDir, name), null);
+      const oldDefault = readJsonFile(path.join(baseDir, '.app-package-defaults.json'), {})[name];
+      if (!fs.existsSync(path.join(packageRoot, name))) {
+        if (previous) { await fsp.mkdir(path.join(staging, '.retained-config'), { recursive: true }); await writeJsonFileAsync(path.join(staging, '.retained-config', name), previous); }
+        await fsp.rm(path.join(staging, name), { force: true });
+        continue;
+      }
+      if (previous && (!oldDefault || JSON.stringify(previous) !== JSON.stringify(oldDefault))) await writeJsonFileAsync(path.join(staging, name), previous);
+    }
+    const defaults = Object.fromEntries(['mcp.json', 'cli.json'].map(name => [name, readJsonFile(path.join(packageRoot, name), null)]));
+    await writeJsonFileAsync(path.join(staging, '.app-package-defaults.json'), defaults);
+    await writeJsonFileAsync(path.join(staging, CONNECTOR_META_FILE), { ...nextMeta, enabled: true, appId: manifest.id, appVersion: manifest.version,
+      installedAt: meta?.installedAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
+    if (!isCurrent()) return;
+    if (fs.existsSync(baseDir)) { await fsp.rename(baseDir, backup); backedUp = true; }
+    await fsp.rename(staging, baseDir);
+  } catch (error) {
+    if (backedUp && !fs.existsSync(baseDir)) await fsp.rename(backup, baseDir);
+    throw error;
+  } finally {
+    await fsp.rm(staging, { recursive: true, force: true });
+    if (fs.existsSync(baseDir)) await fsp.rm(backup, { recursive: true, force: true });
+  }
+}
+
+export async function removeConnectorAppData(id, { deleteData = false, deleteCredentials = false } = {}) {
+  const metaPath = path.join(connectorDir(id), CONNECTOR_META_FILE);
+  const meta = readJsonFile(metaPath, null);
+  if (meta) await writeJsonFileAsync(metaPath, { ...meta, enabled: false });
+  if (deleteData) {
+    await fsp.rm(connectorDir(id), { recursive: true, force: true });
+    await fsp.rm(connectorStatePath(id), { force: true });
+  }
+  if (deleteCredentials) await updateConnectorRuntimeState(id, { connected: false, setupStatus: 'needs-auth', setupMessage: '' });
+  if (deleteCredentials) await updateConnectorCredentials(current => ({ ...current,
+    connectorFields: Object.fromEntries(Object.entries(current.connectorFields || {}).filter(([key]) => key !== id)),
+    mcpAccessTokens: Object.fromEntries(Object.entries(current.mcpAccessTokens || {}).filter(([key]) => !key.startsWith(`${id}:`))),
+  }));
+}
+
 export async function installConnector(connectorId) {
+  if (connectorAppLifecycle?.install) {
+    const metadata = await readInstalledConnector(normalizeConnectorId(connectorId));
+    if (!metadata?.appId) throw new Error('请从 App 应用市场安装在线服务');
+    return connectorAppLifecycle.install(metadata.appId);
+  }
   const id = normalizeConnectorId(connectorId);
   const { zip, connectors } = await loadCatalogZip();
   const connector = connectors
@@ -2499,6 +2634,11 @@ export async function installConnector(connectorId) {
 }
 
 export async function uninstallConnector(connectorId) {
+  if (connectorAppLifecycle?.uninstall) {
+    const metadata = await readInstalledConnector(normalizeConnectorId(connectorId));
+    if (!metadata?.appId) throw new Error('请从 App 应用管理卸载在线服务');
+    return connectorAppLifecycle.uninstall(metadata.appId);
+  }
   const id = normalizeConnectorId(connectorId);
   await fsp.rm(connectorDir(id), { recursive: true, force: true });
   await fsp.rm(connectorStatePath(id), { force: true });
@@ -2534,7 +2674,7 @@ export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {
     if (!isValidConnectorId(item)) continue;
     const baseDir = connectorDir(item);
     const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
-    if (!isPlainObject(meta) || meta.enabled === false) continue;
+    if (!isPlainObject(meta) || !connectorAvailable(meta)) continue;
     const rawMcp = readJsonFile(path.join(baseDir, 'mcp.json'), null);
     if (!isPlainObject(rawMcp)) continue;
     const credentialSchema = normalizeConnectorCredentialSchema(
@@ -2558,7 +2698,7 @@ export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {
   return result;
 }
 
-export function findConnectorMcpServer(nameOrConnectorId) {
+export function findConnectorMcpServer(nameOrConnectorId, { includeUnavailable = false } = {}) {
   const target = normalizeString(nameOrConnectorId);
   if (!isValidConnectorId(target) && !isValidMcpServerName(target)) return null;
 
@@ -2575,7 +2715,7 @@ export function findConnectorMcpServer(nameOrConnectorId) {
     if (!isValidConnectorId(connectorId)) continue;
     const baseDir = connectorDir(connectorId);
     const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
-    if (!isPlainObject(meta) || meta.enabled === false) continue;
+    if (!isPlainObject(meta) || (!includeUnavailable && !connectorAvailable(meta))) continue;
     const rawMcp = readJsonFile(path.join(baseDir, 'mcp.json'), null);
     if (!isPlainObject(rawMcp)) continue;
     const credentialSchema = normalizeConnectorCredentialSchema(
@@ -2638,6 +2778,7 @@ export function getConnectorAddDirs(connectorIds) {
   for (const item of normalizeStringList(connectorIds)) {
     if (!isValidConnectorId(item)) continue;
     const baseDir = connectorDir(item);
+    if (!connectorAvailable(readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null))) continue;
     const credentialSchema = normalizeConnectorCredentialSchema(
       readJsonFile(path.join(baseDir, 'token-schema.json'), null),
     );
@@ -2675,7 +2816,10 @@ export function registerConnectorHubIpcHandlers({
 
   ipcMain.handle('connector-hub:get-installed', async () => {
     try {
-      return { success: true, data: await listInstalledConnectors() };
+      const connectors = await listInstalledConnectors();
+      return { success: true, data: connectorAppLifecycle
+        ? connectors.filter(item => item.appId && connectorAppLifecycle.getInstallation?.(item.appId))
+        : connectors };
     } catch (error) {
       return { success: false, error: error?.message || String(error) };
     }

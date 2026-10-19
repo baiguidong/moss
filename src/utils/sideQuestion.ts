@@ -11,6 +11,10 @@ import type { NonNullableUsage } from '../services/api/logging.js'
 import type { Message, SystemAPIErrorMessage } from '../types/message.js'
 import { type CacheSafeParams, runForkedAgent } from './forkedAgent.js'
 import { createUserMessage, extractTextContent } from './messages.js'
+import { queryModelWithStreaming, accumulateUsage, updateUsage } from '../services/api/claude.js'
+import { EMPTY_USAGE } from '../services/api/logging.js'
+import { utf8Prefix } from './boundedToolOutput.js'
+import { asSystemPrompt } from './systemPromptType.js'
 
 // Pattern to detect "/btw" at start of input (case-insensitive, word boundary)
 const BTW_PATTERN = /^\/btw\b/gi
@@ -43,6 +47,39 @@ export function findBtwTriggerPositions(text: string): Array<{
 export type SideQuestionResult = {
   response: string | null
   usage: NonNullableUsage
+  status?: 'completed' | 'empty' | 'truncated' | 'tool_unavailable' | 'failed'
+}
+
+/** Keep completed receipts unchanged; an unfinished tool is not a failed or successful tool. */
+export function snapshotSideQuestionMessages(messages: Message[]): Message[] {
+  type Block = { type: string; id?: string; tool_use_id?: string }
+  const snapshot = structuredClone(messages)
+  const answered = new Set(snapshot.flatMap(message => message.type === 'user' && Array.isArray(message.message.content)
+    ? message.message.content.flatMap((block: Block) => block.type === 'tool_result' ? [block.tool_use_id] : []) : []))
+  return snapshot.flatMap(message => {
+    const pending = message.type === 'assistant' ? message.message.content.filter((block: Block) => block.type === 'tool_use' && typeof block.id === 'string' && !answered.has(block.id)) : []
+    return [message, ...(pending.length ? [createUserMessage({ isMeta: true, content: pending.map((block: Block) => ({
+      type: 'tool_result' as const, tool_use_id: (block as { id: string }).id,
+      content: '[Side-question snapshot: no result has been received for this tool. It may be executing or waiting for approval. Its completion and outcome are unknown.]',
+    })) })] : [])]
+  })
+}
+
+/** Providers may reject historical tool blocks when the request declares no tools. */
+export function sideQuestionApiMessages(messages: Message[]): Message[] {
+  return snapshotSideQuestionMessages(messages).map(message => {
+    if ((message.type !== 'assistant' && message.type !== 'user') || !Array.isArray(message.message.content)) return message
+    const content = message.message.content.flatMap((block: { type: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean }) => {
+      if (block.type === 'tool_use') return [{ type: 'text', text: `[Main conversation tool request ${block.id}: ${block.name}]\n${JSON.stringify(block.input)}` }]
+      if (block.type === 'tool_result') {
+        const result = typeof block.content === 'string' ? [{ type: 'text', text: block.content }]
+          : Array.isArray(block.content) ? block.content.filter(item => item.type === 'text' || item.type === 'image') : []
+        return [{ type: 'text', text: `[Main conversation tool receipt ${block.tool_use_id}${block.is_error ? ', reported error' : ''}]` }, ...result]
+      }
+      return [block]
+    })
+    return { ...message, message: { ...message.message, content } }
+  })
 }
 
 /**
@@ -53,16 +90,21 @@ export type SideQuestionResult = {
 export async function runSideQuestion({
   question,
   cacheSafeParams,
+  abortController,
+  isolated = false,
 }: {
   question: string
   cacheSafeParams: CacheSafeParams
+  abortController?: AbortController
+  isolated?: boolean
 }): Promise<SideQuestionResult> {
   // Wrap the question with instructions to answer without tools
   const wrappedQuestion = `<system-reminder>This is a side question from the user. You must answer this question directly in a single response.
 
 IMPORTANT CONTEXT:
 - You are a separate, lightweight agent spawned to answer this one question
-- The main agent is NOT interrupted - it continues working independently in the background
+- This side question does not interrupt, start, or change the main task; it may be running, waiting, or idle
+- Use only the states recorded in this snapshot; a pending tool is not evidence of completion
 - You share the conversation context but are a completely separate instance
 - Do NOT reference being interrupted or what you were "previously doing" - that framing is incorrect
 
@@ -76,6 +118,41 @@ CRITICAL CONSTRAINTS:
 Simply answer the question with the information you have.</system-reminder>
 
 ${question}`
+
+  if (isolated) {
+    // Desktop/Web side questions use only the model adapter. No query loop,
+    // hooks, tool executor, task mutations, or main transcript writes run here.
+    const { prependUserContext, appendSystemContext } = await import('./api.js')
+    const context = cacheSafeParams.toolUseContext
+    const signal = (abortController ?? new AbortController()).signal
+    signal.throwIfAborted()
+    const output: Message[] = []
+    let usage = { ...EMPTY_USAGE }
+    let truncated = false
+    for await (const message of queryModelWithStreaming({
+      messages: prependUserContext([...sideQuestionApiMessages(cacheSafeParams.forkContextMessages), createUserMessage({ content: wrappedQuestion })], cacheSafeParams.userContext),
+      systemPrompt: asSystemPrompt(appendSystemContext(cacheSafeParams.systemPrompt, cacheSafeParams.systemContext)),
+      tools: [], thinkingConfig: { type: 'disabled' }, signal,
+      options: { model: context.options.mainLoopModel, isNonInteractiveSession: true,
+        querySource: 'side_question', agents: [], mcpTools: [], hasAppendSystemPrompt: false,
+        maxOutputTokensOverride: 4096, skipCacheWrite: true,
+        getToolPermissionContext: async () => context.getAppState().toolPermissionContext },
+    })) {
+      if (message.type === 'stream_event') {
+        if (message.event.type === 'message_delta') {
+          usage = accumulateUsage(usage, updateUsage({ ...EMPTY_USAGE }, message.event.usage))
+          truncated ||= message.event.delta.stop_reason === 'max_tokens'
+        }
+      } else output.push(message)
+    }
+    signal.throwIfAborted()
+    const failed = output.some(message => message.type === 'assistant' && message.isApiErrorMessage)
+    const response = extractSideQuestionResponse(output.filter(message => !(message.type === 'assistant' && message.isApiErrorMessage)))
+      ?? (failed ? extractSideQuestionResponse(output) : null)
+    const limited = response ? utf8Prefix(response, 32_000) : null
+    const usedTool = output.some(message => message.type === 'assistant' && message.message.content.some((block: { type: string }) => block.type === 'tool_use'))
+    return { response: limited, usage, status: truncated && response ? 'truncated' : failed ? 'failed' : usedTool ? 'tool_unavailable' : !response ? 'empty' : limited !== response ? 'truncated' : 'completed' }
+  }
 
   const agentResult = await runForkedAgent({
     promptMessages: [createUserMessage({ content: wrappedQuestion })],

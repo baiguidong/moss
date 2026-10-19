@@ -205,6 +205,7 @@ export function createMossAppEventHandler(windows, events, options = {}) {
           await windows.openBrowser?.({
             url,
             sessionId: sessionRecord?.id || null,
+            ...(event.hostPresentationScope ? { presentationScope: event.hostPresentationScope } : {}),
           })
           return { ok: true, previewUrl: url }
         }

@@ -227,6 +227,7 @@ export interface SystemSettingsOpenIM {
 }
 
 export interface SystemSettings {
+  webui?: { snapshots: { maxSnapshotsPerEnvironment: number; maxBytesPerEnvironment: number } }
   bypassPermissions: boolean
   model: string
   fastModel: string
@@ -245,6 +246,7 @@ export interface SystemSettings {
 }
 
 export interface UpdateSystemSettingsRequest {
+  webui?: SystemSettings['webui']
   bypassPermissions?: boolean
   models?: {
     text?: {

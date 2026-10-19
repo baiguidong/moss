@@ -252,6 +252,13 @@ export function memoizeWithLRU<
 
     const result = f(...args)
     cache.set(key, result)
+    if (result instanceof Promise) {
+      // Share work while pending, but allow a transient failure to be retried.
+      // A late rejection must not evict a replacement installed after clear().
+      void result.catch(() => {
+        if (cache.peek(key) === result) cache.delete(key)
+      })
+    }
     return result
   }
 

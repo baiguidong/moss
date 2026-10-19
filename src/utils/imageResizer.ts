@@ -20,6 +20,7 @@ import { formatFileSize } from './format.js'
 import { logError } from './log.js'
 
 type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+export const MAX_IMAGE_INPUT_PIXELS = 64_000_000
 
 // Error type constants for analytics (numeric to comply with logEvent restrictions)
 const ERROR_TYPE_MODULE_LOAD = 1
@@ -182,6 +183,9 @@ export async function maybeResizeAndDownsampleImageBuffer(
     const sharp = await getImageProcessor()
     const image = sharp(imageBuffer)
     const metadata = await image.metadata()
+    if (metadata.width && metadata.height && metadata.width * metadata.height > MAX_IMAGE_INPUT_PIXELS) {
+      throw new ImageResizeError(`Image exceeds the ${MAX_IMAGE_INPUT_PIXELS} pixel input limit. Please resize it before reading.`)
+    }
 
     const mediaType = metadata.format ?? ext
     // Normalize "jpg" to "jpeg" for media type compatibility
@@ -381,6 +385,10 @@ export async function maybeResizeAndDownsampleImageBuffer(
       },
     }
   } catch (error) {
+    if (error instanceof ImageResizeError) throw error
+    if (classifyImageError(error) === ERROR_TYPE_PIXEL_LIMIT) {
+      throw new ImageResizeError('Image exceeds the decoder pixel input limit. Please resize it before reading.')
+    }
     // Log the error and emit analytics event
     logError(error as Error)
     const errorType = classifyImageError(error)

@@ -8,6 +8,9 @@ const stored = createDesktopSettingsStore({ settingsPath: path.resolve(settingsF
 // Exercise the configured local model in an isolated Desktop, without starting
 // unrelated remote channels or carrying their credentials into the test profile.
 const settings = Object.fromEntries(['model', 'url', 'apiKey', 'fastModel', 'thinkingMode', 'thinkingBudgetTokens',
-  'effortLevel', 'maxTurns', 'appearance', 'toolLoading', 'language'].map(key => [key, stored[key]]))
+  'effortLevel', 'maxTurns', 'appearance', 'toolLoading', 'language', 'models', 'image', 'webSearch'].map(key => [key, stored[key]]))
 assert.ok(settings.model && settings.url && settings.apiKey, 'Settings must include model, url and apiKey')
-await runSelfTestApp({ packageRoot: path.resolve(packageRoot), settings, caseIds: caseIds.length ? caseIds : ['startup', 'apps-list', 'chat-response'] })
+const selected = caseIds.includes('--all') || caseIds.includes('--default')
+  ? JSON.parse(await (await import('node:fs/promises')).readFile(path.join(packageRoot, 'resources/self-tests/catalog.json'), 'utf8')).cases.filter(test => caseIds.includes('--all') || test.default).map(test => test.id)
+  : caseIds.length ? caseIds : ['startup', 'apps-list', 'chat-response']
+await runSelfTestApp({ packageRoot: path.resolve(packageRoot), settings, sourceHome: path.dirname(path.resolve(settingsFile)), caseIds: selected })

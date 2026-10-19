@@ -1547,6 +1547,7 @@ export const SDKAPIRetryMessageSchema = lazySchema(() =>
       attempt: z.number(),
       max_retries: z.number(),
       retry_delay_ms: z.number(),
+      retry_budget: z.object({ attempts: z.number(), maxAttempts: z.number(), waitedMs: z.number(), maxWaitMs: z.number(), remainingWaitMs: z.number() }).optional(),
       error_status: z.number().nullable(),
       error: SDKAssistantMessageErrorSchema(),
       uuid: UUIDPlaceholder(),

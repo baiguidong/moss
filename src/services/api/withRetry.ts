@@ -1,5 +1,7 @@
 import { feature } from 'bun:bundle'
 import type Anthropic from '@anthropic-ai/sdk'
+import { RetryBudget } from './retryBudget.js'
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import {
   APIConnectionError,
   APIError,
@@ -75,18 +77,21 @@ function shouldRetry529(querySource: QuerySource | undefined): boolean {
 }
 
 // CLAUDE_CODE_UNATTENDED_RETRY: for unattended sessions. Retries 429/529
-// indefinitely with higher backoff and periodic keep-alive yields so the host
+// with higher backoff and periodic keep-alive yields so the host
 // environment does not mark the session idle mid-wait.
 // TODO(ANT-344): the keep-alive via SystemAPIErrorMessage yields is a stopgap
 // until there's a dedicated keep-alive channel.
 const PERSISTENT_MAX_BACKOFF_MS = 5 * 60 * 1000
-const PERSISTENT_RESET_CAP_MS = 6 * 60 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 30_000
 
 function isPersistentRetryEnabled(): boolean {
-  return feature('UNATTENDED_RETRY')
+  return Boolean(getSessionRuntimeContext()?.unattended) || (feature('UNATTENDED_RETRY')
     ? isEnvTruthy(process.env.CLAUDE_CODE_UNATTENDED_RETRY)
-    : false
+    : false)
+}
+
+export function createRequestRetryBudget() {
+  return new RetryBudget({ unattended: isPersistentRetryEnabled() })
 }
 
 function isTransientCapacityError(error: unknown): boolean {
@@ -112,6 +117,7 @@ export interface RetryContext {
 }
 
 interface RetryOptions {
+  retryBudget?: RetryBudget
   maxRetries?: number
   model: string
   fallbackModel?: string
@@ -165,6 +171,8 @@ export async function* withRetry<T>(
   options: RetryOptions,
 ): AsyncGenerator<SystemAPIErrorMessage, T> {
   const maxRetries = getMaxRetries(options)
+  const budget = options.retryBudget ?? createRequestRetryBudget()
+  const persistentEnabled = isPersistentRetryEnabled()
   let maxAttempts = maxRetries + 1
   const retryContext: RetryContext = {
     model: options.model,
@@ -181,6 +189,8 @@ export async function* withRetry<T>(
     if (options.signal?.aborted) {
       throw new APIUserAbortError()
     }
+    try { budget.acquireAttempt() }
+    catch (error) { throw new CannotRetryError(error, retryContext) }
 
     try {
       // Get a fresh client instance on first attempt or after authentication errors
@@ -222,7 +232,7 @@ export async function* withRetry<T>(
       }
       if (options.signal?.aborted) throw new APIUserAbortError()
 
-      return await operation(client, attempt, retryContext)
+      return await operation(client, budget.snapshot().attempts, retryContext)
     } catch (error) {
       lastError = error
       logForDebugging(
@@ -297,7 +307,7 @@ export async function* withRetry<T>(
             )
           }
 
-          if (!process.env.IS_SANDBOX && !isPersistentRetryEnabled()) {
+          if (!process.env.IS_SANDBOX && !persistentEnabled) {
             logEvent('tengu_api_custom_529_overloaded_error', {})
             throw new CannotRetryError(
               new Error(REPEATED_529_ERROR_MESSAGE),
@@ -309,7 +319,7 @@ export async function* withRetry<T>(
 
       // Only retry if the error indicates we should
       const persistent =
-        isPersistentRetryEnabled() && isTransientCapacityError(error)
+        persistentEnabled && isTransientCapacityError(error)
       if (attempt >= maxAttempts && !persistent) {
         throw new CannotRetryError(error, retryContext)
       }
@@ -319,7 +329,7 @@ export async function* withRetry<T>(
         handleAwsCredentialError(error) || handleGcpCredentialError(error)
       if (
         !handledCloudAuthError &&
-        (!(error instanceof APIError) || !shouldRetry(error))
+        (!(error instanceof APIError) || !shouldRetry(error, persistentEnabled))
       ) {
         throw new CannotRetryError(error, retryContext)
       }
@@ -378,36 +388,21 @@ export async function* withRetry<T>(
         // Window-based limits (e.g. 5hr Max/Pro) include a reset timestamp.
         // Wait until reset rather than polling every 5 min uselessly.
         const resetDelay = getRateLimitResetDelayMs(error)
-        delayMs =
-          resetDelay ??
-          Math.min(
-            getRetryDelay(
-              persistentAttempt,
-              retryAfter,
-              PERSISTENT_MAX_BACKOFF_MS,
-            ),
-            PERSISTENT_RESET_CAP_MS,
-          )
+        delayMs = Math.max(resetDelay ?? 0, getRetryDelay(persistentAttempt, retryAfter, PERSISTENT_MAX_BACKOFF_MS))
       } else if (persistent) {
         persistentAttempt++
-        // Retry-After is a server directive and bypasses maxDelayMs inside
-        // getRetryDelay (intentional — honoring it is correct). Cap at the
-        // 6hr reset-cap here so a pathological header can't wait unbounded.
-        delayMs = Math.min(
-          getRetryDelay(
-            persistentAttempt,
-            retryAfter,
-            PERSISTENT_MAX_BACKOFF_MS,
-          ),
-          PERSISTENT_RESET_CAP_MS,
-        )
+        // Honor Retry-After. If it exceeds our remaining allowance, stop
+        // instead of shortening it and retrying before the server permits.
+        delayMs = getRetryDelay(persistentAttempt, retryAfter, PERSISTENT_MAX_BACKOFF_MS)
       } else {
         delayMs = getRetryDelay(attempt, retryAfter)
       }
 
-      // In persistent mode the for-loop `attempt` is clamped at maxRetries+1;
-      // use persistentAttempt for telemetry/yields so they show the true count.
-      const reportedAttempt = persistent ? persistentAttempt : attempt
+      // The shared budget counts every attempt, including earlier recovery
+      // loops; the persistent loop counter alone cannot report that total.
+      const reportedAttempt = budget.snapshot().attempts
+      try { budget.checkWait(delayMs) }
+      catch (limit) { throw new CannotRetryError(limit, retryContext) }
       logEvent('tengu_api_retry', {
         attempt: reportedAttempt,
         delayMs: delayMs,
@@ -432,16 +427,21 @@ export async function* withRetry<T>(
         let remaining = delayMs
         while (remaining > 0) {
           if (options.signal?.aborted) throw new APIUserAbortError()
+          try { budget.checkWait(remaining) }
+          catch (limit) { throw new CannotRetryError(limit, retryContext) }
           if (error instanceof APIError) {
             yield createSystemAPIErrorMessage(
               error,
               remaining,
               reportedAttempt,
-              maxRetries,
+              budget.maxAttempts - 1,
+              budget.snapshot(),
             )
           }
           const chunk = Math.min(remaining, HEARTBEAT_INTERVAL_MS)
-          await sleep(chunk, options.signal, { abortError })
+          const started = budget.now()
+          try { await sleep(chunk, options.signal, { abortError }) }
+          finally { budget.recordWait(started) }
           remaining -= chunk
         }
         // Clamp so the for-loop never terminates. Backoff uses the separate
@@ -449,9 +449,11 @@ export async function* withRetry<T>(
         if (attempt >= maxRetries) attempt = maxRetries
       } else {
         if (error instanceof APIError) {
-          yield createSystemAPIErrorMessage(error, delayMs, attempt, maxRetries)
+          yield createSystemAPIErrorMessage(error, delayMs, reportedAttempt, Math.min(maxRetries, budget.maxAttempts - 1), budget.snapshot())
         }
-        await sleep(delayMs, options.signal, { abortError })
+        const started = budget.now()
+        try { await sleep(delayMs, options.signal, { abortError }) }
+        finally { budget.recordWait(started) }
       }
     }
   }
@@ -476,10 +478,12 @@ export function getRetryDelay(
   maxDelayMs = 32000,
 ): number {
   if (retryAfterHeader) {
-    const seconds = parseInt(retryAfterHeader, 10)
-    if (!isNaN(seconds)) {
+    const seconds = Number(retryAfterHeader)
+    if (Number.isFinite(seconds) && seconds >= 0) {
       return seconds * 1000
     }
+    const date = /[a-z]/i.test(retryAfterHeader) ? Date.parse(retryAfterHeader) : NaN
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now())
   }
 
   const baseDelay = Math.min(
@@ -615,9 +619,9 @@ function handleGcpCredentialError(error: unknown): boolean {
   return false
 }
 
-function shouldRetry(error: APIError): boolean {
+function shouldRetry(error: APIError, persistent = isPersistentRetryEnabled()): boolean {
   // Persistent mode: 429/529 always retryable, bypass x-should-retry header.
-  if (isPersistentRetryEnabled() && isTransientCapacityError(error)) {
+  if (persistent && isTransientCapacityError(error)) {
     return true
   }
 
@@ -681,12 +685,14 @@ function shouldRetry(error: APIError): boolean {
 
 export function getDefaultMaxRetries(): number {
   if (process.env.CLAUDE_CODE_MAX_RETRIES) {
-    return parseInt(process.env.CLAUDE_CODE_MAX_RETRIES, 10)
+    const configured = Number(process.env.CLAUDE_CODE_MAX_RETRIES)
+    if (Number.isSafeInteger(configured) && configured >= 0) return configured
   }
   return DEFAULT_MAX_RETRIES
 }
 function getMaxRetries(options: RetryOptions): number {
-  return options.maxRetries ?? getDefaultMaxRetries()
+  const count = options.maxRetries ?? getDefaultMaxRetries()
+  return Number.isSafeInteger(count) && count >= 0 ? count : DEFAULT_MAX_RETRIES
 }
 
 function getRateLimitResetDelayMs(error: APIError): number | null {
@@ -696,5 +702,5 @@ function getRateLimitResetDelayMs(error: APIError): number | null {
   if (!Number.isFinite(resetUnixSec)) return null
   const delayMs = resetUnixSec * 1000 - Date.now()
   if (delayMs <= 0) return null
-  return Math.min(delayMs, PERSISTENT_RESET_CAP_MS)
+  return delayMs
 }

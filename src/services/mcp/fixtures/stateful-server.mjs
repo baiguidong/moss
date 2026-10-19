@@ -8,13 +8,26 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   let result
   if (message.method === 'initialize') {
     if (process.env.MCP_TEST_HANDSHAKE_DELAY) await new Promise(resolve => setTimeout(resolve, Number(process.env.MCP_TEST_HANDSHAKE_DELAY)))
-    result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {}, ...(process.env.MCP_TEST_RESOURCES ? { resources: {} } : {}) }, serverInfo: { name: 'stateful-fixture', version: '1.0.0' } }
-  } else if (message.method === 'tools/list') result = { tools: [
+    result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: { ...(process.env.MCP_TEST_PAGINATED ? { listChanged: true } : {}) }, ...(process.env.MCP_TEST_RESOURCES ? { resources: {} } : {}) }, serverInfo: { name: 'stateful-fixture', version: '1.0.0' } }
+  } else if (message.method === 'tools/list') {
+    if (process.env.MCP_TEST_LIST_LOG) fs.appendFileSync(process.env.MCP_TEST_LIST_LOG, `${process.pid}\n`)
+    result = { tools: [
     { name: 'set_value', description: 'Set session value', inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } },
     { name: 'get_value', description: 'Read session value', inputSchema: { type: 'object', properties: {} } },
+    ...(process.env.MCP_TEST_CATALOG_FILE ? JSON.parse(fs.readFileSync(process.env.MCP_TEST_CATALOG_FILE, 'utf8')) : []),
   ] }
+    if (process.env.MCP_TEST_PAGINATED) {
+      const page = Number(message.params?.cursor || 0), size = 2
+      if (process.env.MCP_TEST_FAIL_PAGE_FILE && fs.existsSync(process.env.MCP_TEST_FAIL_PAGE_FILE) && page > 0) {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'fixture second-page failure' } }) + '\n')
+        continue
+      }
+      result = { tools: result.tools.slice(page * size, (page + 1) * size), ...((page + 1) * size < result.tools.length ? { nextCursor: String(page + 1) } : {}) }
+    }
+  }
   else if (message.method === 'tools/call') {
     if (process.env.MCP_TEST_TOOL_DELAY) await new Promise(resolve => setTimeout(resolve, Number(process.env.MCP_TEST_TOOL_DELAY)))
+    if (message.params.name === 'notify_catalog') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }) + '\n')
     if (message.params.name === 'set_value') value = message.params.arguments.value
     result = { content: [{ type: 'text', text: JSON.stringify({ value, pid: process.pid, cwd: process.cwd() }) }] }
   } else if (message.method === 'resources/list') result = { resources: [] }

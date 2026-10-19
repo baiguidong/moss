@@ -234,11 +234,13 @@ import {
 } from './thinkingFallback.js'
 import {
   CannotRetryError,
+  createRequestRetryBudget,
   FallbackTriggeredError,
   is529Error,
   type RetryContext,
   withRetry,
 } from './withRetry.js'
+import type { RetryBudget } from './retryBudget.js'
 
 // Define a type that represents valid JSON values
 type JsonValue = string | number | boolean | null | JsonObject | JsonArray
@@ -505,7 +507,7 @@ export async function verifyApiKey(
         () =>
           getAnthropicClient({
             apiKey,
-            maxRetries: 3,
+            maxRetries: 0,
             model,
             source: 'verify_api_key',
           }),
@@ -633,6 +635,8 @@ export function assistantMessageToMessageParam(
 }
 
 export type Options = {
+  /** Host-owned allowance for one logical request and its protocol recovery. */
+  retryBudget?: RetryBudget
   getToolPermissionContext: () => Promise<ToolPermissionContext>
   model: string
   modelRole?: SessionModelRole
@@ -769,6 +773,7 @@ export async function* executeNonStreamingRequest(
     fallbackModel?: string
     thinkingConfig: ThinkingConfig
     thinkingFallback?: ThinkingFallbackState
+    retryBudget?: RetryBudget
     fastMode?: boolean
     signal: AbortSignal
     initialConsecutive529Errors?: number
@@ -843,6 +848,7 @@ export async function* executeNonStreamingRequest(
       fallbackModel: retryOptions.fallbackModel,
       thinkingConfig: retryOptions.thinkingConfig,
       thinkingFallback: retryOptions.thinkingFallback,
+      retryBudget: retryOptions.retryBudget,
       ...(isFastModeEnabled() && { fastMode: retryOptions.fastMode }),
       signal: retryOptions.signal,
       initialConsecutive529Errors: retryOptions.initialConsecutive529Errors,
@@ -1394,6 +1400,7 @@ async function* queryModel(
   const consumedCacheEdits = cachedMCEnabled ? consumePendingCacheEdits() : null
   const consumedPinnedEdits = cachedMCEnabled ? getPinnedCacheEdits() : []
   const thinkingFallback: ThinkingFallbackState = {}
+  const retryBudget = options.retryBudget ?? createRequestRetryBudget()
   const dropUnexpectedThinkingBlocks =
     thinkingConfig.type === 'disabled' ||
     isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
@@ -1675,6 +1682,7 @@ async function* queryModel(
         fallbackModel: options.fallbackModel,
         thinkingConfig,
         thinkingFallback,
+        retryBudget,
         ...(isFastModeEnabled() ? { fastMode: isFastMode } : false),
         signal,
         querySource: options.querySource,
@@ -2288,7 +2296,8 @@ async function* queryModel(
       // when a partial stream may already have started a tool (inc-4258).
       const disableFallback =
         isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) ||
-        getAdvancedSetting('moss_disable_nonstreaming_fallback')
+        getAdvancedSetting('moss_disable_nonstreaming_fallback') ||
+        newMessages.some(message => message.message.content.some((block: { type: string }) => block.type === 'tool_use'))
 
       if (disableFallback) {
         logForDebugging(
@@ -2372,6 +2381,7 @@ async function* queryModel(
           fallbackModel: options.fallbackModel,
           thinkingConfig,
           thinkingFallback,
+          retryBudget,
           ...(isFastModeEnabled() && { fastMode: isFastMode }),
           signal,
           initialConsecutive529Errors: is529Error(streamingError) ? 1 : 0,
@@ -2473,6 +2483,7 @@ async function* queryModel(
             fallbackModel: options.fallbackModel,
             thinkingConfig,
             thinkingFallback,
+            retryBudget,
             ...(isFastModeEnabled() && { fastMode: isFastMode }),
             signal,
           },

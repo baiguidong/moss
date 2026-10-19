@@ -1,5 +1,9 @@
 "use client";
 
+import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
+import { useAppDiscoveryPreferences } from '@/lib/app-discovery';
+import { supportsHostFeature } from '@/lib/host-environment';
+
 import * as React from "react";
 import { AppCategoryTabs } from '@/components/app-category-tabs';
 import { filterApps, groupApps } from '@/lib/app-categories';
@@ -41,12 +45,26 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [selectedVersions, setSelectedVersions] = React.useState<Record<string, string>>({});
   const [category, setCategory] = React.useState('all');
+  const [query, setQuery] = React.useState('');
+  const { preferences, update: updatePreference } = useAppDiscoveryPreferences();
+  const section = preferences.sections.marketplace;
   const [loading, setLoading] = React.useState(true);
   const [refreshResult, setRefreshResult] = React.useState<{ kind: "success" | "warning" | "error"; message: string } | null>(null);
   const catalogRequest = React.useRef(0);
   const [pendingAppIds, setPendingAppIds] = React.useState<Set<string>>(() => new Set());
   const [error, setError] = React.useState("");
   const { progress, clearProgress } = useAppInstallProgress("marketplace");
+  const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
+  const [importing, setImporting] = React.useState(false);
+  const importArchive = async () => {
+    setImporting(true); setError(''); clearArchiveProgress('local');
+    try {
+      const result = await window.agentDesktop.installAppArchive();
+      if (!result.ok && !result.canceled) throw new Error(result.error || 'App 安装失败');
+      if (result.ok) await onInstalled();
+    } catch (reason) { setError(cleanIpcErrorMessage(reason)); }
+    finally { setImporting(false); }
+  };
 
   const loadCatalog = React.useCallback(async (forceRefresh = false) => {
     const request = ++catalogRequest.current;
@@ -133,19 +151,23 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   };
 
   const installedById = React.useMemo(() => new Map(installedApps.map((app) => [app.id || app.name, app])), [installedApps]);
-  const visibleApps = groupApps(filterApps(catalog?.apps || [], '', category)).flatMap(group => group.apps);
+  const sectionApps = filterApps(catalog?.apps || [], query, category, { group: section });
+  const visibleApps = groupApps(sectionApps).flatMap(group => group.apps);
+  const changeSection = (value: string) => { setCategory('all'); void updatePreference({ action: 'section', surface: 'marketplace', section: value }).catch(reason => setError(reason.message)); };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div data-app-header className="shrink-0 border-b border-border/70">
-      <div className="mx-auto flex h-12 w-full max-w-[1180px] items-center gap-2 px-4 sm:px-5">
-        <Button variant="ghost" size="icon" className="h-8 w-8" title="返回已安装 App" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>
-        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+      <div className="mx-auto flex min-h-12 w-full max-w-[1180px] flex-wrap items-center gap-x-2 gap-y-1 px-4 py-1 sm:px-5">
+        {installedApps.length > 0 && <Button variant="ghost" size="icon" className="order-1 h-8 w-8" title="返回已安装 App" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>}
+        <div className="order-2 flex shrink-0 items-baseline gap-2">
           <h1 className="text-sm font-semibold">应用市场</h1>
-          {catalog && <span className="text-xs text-muted-foreground">{catalog.apps.length} 个应用</span>}
+          {catalog && <span className="hidden text-xs text-muted-foreground lg:inline">{catalog.apps.length} 个应用</span>}
         </div>
-        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={loading} aria-busy={loading} onClick={() => void loadCatalog(true)}>
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />{loading ? "刷新中…" : "刷新"}
+        <div className="order-5 w-full min-[480px]:order-3 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
+        <Button size="sm" variant="ghost" className="order-3 h-8 shrink-0 px-2.5 text-xs sm:order-4" title="导入安装包" aria-label="导入安装包" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Download className="h-3.5 w-3.5" /><span className="hidden lg:inline">{importing ? '安装中…' : '导入安装包'}</span></Button>
+        <Button size="sm" variant="outline" className="order-4 h-8 shrink-0 px-2.5 text-xs sm:order-5" title="刷新" aria-label="刷新" disabled={loading} aria-busy={loading} onClick={() => void loadCatalog(true)}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /><span className="hidden lg:inline">{loading ? "刷新中…" : "刷新"}</span>
         </Button>
       </div>
       </div>
@@ -161,13 +183,14 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
-        <AppCategoryTabs apps={catalog?.apps || []} value={category} onChange={setCategory} panelId="marketplace-apps" />
+        {archiveProgress.local && <div className="mb-3"><AppInstallProgressView progress={archiveProgress.local} /></div>}
+        <AppCategoryTabs apps={filterApps(catalog?.apps || [], '', 'all', { group: section })} value={category} onChange={setCategory} panelId="marketplace-apps" />
         <div role="tabpanel" id="marketplace-apps" aria-labelledby={`marketplace-apps-${category}`} className="mt-2">
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         {loading && !catalog ? (
           <div className="flex min-h-72 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在加载应用市场…</div>
         ) : visibleApps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' ? "此分类暂无 App" : "暂无适用于当前系统的 App"}</div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' || section !== 'all' || query ? "没有匹配的应用，可切换到全部或调整筛选" : "暂无适用于当前系统的 App"}</div>
         ) : (
           <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
             {visibleApps.map((entry) => {
@@ -215,9 +238,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible} onClick={() => void install(entry)}>
+                    <Button size="sm" className="h-8" disabled={busy || sameVersion || !compatible || !supportsHostFeature('appInstallation')} onClick={() => void install(entry)}>
                       {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-                      {actionLabel}
+                      {!supportsHostFeature('appInstallation') ? "此 Host 暂不支持安装授权" : actionLabel}
                     </Button>
                     <Button size="sm" variant="outline" className="h-8" onClick={() => void toggleDetails(entry)}>
                       {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}详情

@@ -1,5 +1,4 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
-import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
 import * as React from 'react';
 import type { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
 import type { AppState } from 'src/state/AppState.js';
@@ -33,7 +32,7 @@ import { EndTruncatingAccumulator } from '../../utils/stringUtils.js';
 import { getTaskOutputPath } from '../../utils/task/diskOutput.js';
 import { TaskOutput } from '../../utils/task/TaskOutput.js';
 import { isOutputLineTruncated } from '../../utils/terminal.js';
-import { buildLargeToolResultMessage, ensureToolResultsDir, generatePreview, getToolResultPath, PREVIEW_SIZE_BYTES } from '../../utils/toolResultStorage.js';
+import { buildLargeToolResultMessage, persistShellOutput, generatePreview, PREVIEW_SIZE_BYTES } from '../../utils/toolResultStorage.js';
 import { userFacingName as fileEditUserFacingName } from '../FileEditTool/UI.js';
 import { trackGitOperations } from '../shared/gitOperationTracking.js';
 import { bashToolHasPermission, commandHasAnyCd, matchWildcardPattern, permissionRuleExtractPrefix } from './bashPermissions.js';
@@ -281,8 +280,10 @@ const outputSchema = lazySchema(() => z.object({
   returnCodeInterpretation: z.string().optional().describe('Semantic interpretation for non-error exit codes with special meaning'),
   noOutputExpected: z.boolean().optional().describe('Whether the command is expected to produce no output on success'),
   structuredContent: z.array(z.any()).optional().describe('Structured content blocks'),
-  persistedOutputPath: z.string().optional().describe('Path to the persisted full output in tool-results dir (set when output is too large for inline)'),
-  persistedOutputSize: z.number().optional().describe('Total size of the output in bytes (set when output is too large for inline)')
+  persistedOutputPath: z.string().optional().describe('Path to the persisted output snapshot in tool-results dir (set when output is too large for inline)'),
+  persistedOutputSize: z.number().optional().describe('Total size of the output in bytes (set when output is too large for inline)'),
+  persistedOutputStoredBytes: z.number().optional().describe('Actual bytes stored in the snapshot'),
+  persistedOutputTruncated: z.boolean().optional().describe('Whether the saved snapshot is incomplete')
 }));
 type OutputSchema = ReturnType<typeof outputSchema>;
 export type Out = z.infer<OutputSchema>;
@@ -518,7 +519,9 @@ export const BashTool = buildTool({
     backgroundedByUser,
     structuredContent,
     persistedOutputPath,
-    persistedOutputSize
+    persistedOutputSize,
+    persistedOutputStoredBytes,
+    persistedOutputTruncated
   }, toolUseID): ToolResultBlockParam {
     // Handle structured content
     if (structuredContent && structuredContent.length > 0) {
@@ -549,6 +552,9 @@ export const BashTool = buildTool({
       processedStdout = buildLargeToolResultMessage({
         filepath: persistedOutputPath,
         originalSize: persistedOutputSize ?? 0,
+        originalBytes: persistedOutputSize,
+        storedBytes: persistedOutputStoredBytes,
+        storageComplete: persistedOutputTruncated === undefined ? undefined : !persistedOutputTruncated,
         isJson: false,
         preview: preview.preview,
         hasMore: preview.hasMore
@@ -682,28 +688,18 @@ export const BashTool = buildTool({
 
     // Large output: the file on disk has more than getMaxOutputLength() bytes.
     // stdout already contains the first chunk (from getStdout()). Copy the
-    // output file to the tool-results dir so the model can read it via
-    // FileRead. If > 64 MB, truncate after copying.
-    const MAX_PERSISTED_SIZE = 64 * 1024 * 1024;
+    // output to an independent bounded snapshot that FileRead can inspect.
+    // The raw task log is never truncated or linked into the snapshot.
     let persistedOutputPath: string | undefined;
     let persistedOutputSize: number | undefined;
+    let persistedOutputStoredBytes: number | undefined;
+    let persistedOutputTruncated: boolean | undefined;
     if (result.outputFilePath && result.outputTaskId) {
       try {
-        const fileStat = await fsStat(result.outputFilePath);
-        persistedOutputSize = fileStat.size;
-        await ensureToolResultsDir();
-        const dest = getToolResultPath(result.outputTaskId, false);
-        if (fileStat.size > MAX_PERSISTED_SIZE) {
-          await fsTruncate(result.outputFilePath, MAX_PERSISTED_SIZE);
-        }
-        try {
-          await link(result.outputFilePath, dest);
-        } catch {
-          await copyFile(result.outputFilePath, dest);
-        }
-        persistedOutputPath = dest;
+        ({ persistedOutputPath, persistedOutputSize, persistedOutputStoredBytes, persistedOutputTruncated } =
+          await persistShellOutput(result.outputFilePath, result.outputTaskId, toolUseContext.abortController.signal));
       } catch {
-        // File may already be gone — stdout preview is sufficient
+        // No saved-file claim when copying fails; retain the existing stdout preview.
       }
     }
     const commandType = input.command.split(' ')[0];
@@ -755,7 +751,9 @@ export const BashTool = buildTool({
       backgroundedByUser: result.backgroundedByUser,
       dangerouslyDisableSandbox: 'dangerouslyDisableSandbox' in input ? input.dangerouslyDisableSandbox as boolean | undefined : undefined,
       persistedOutputPath,
-      persistedOutputSize
+      persistedOutputSize,
+      persistedOutputStoredBytes,
+      persistedOutputTruncated
     };
     return {
       data

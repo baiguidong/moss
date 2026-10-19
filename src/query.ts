@@ -109,7 +109,7 @@ import { count } from './utils/array.js'
 import { closeAgentMessageQueue, drainPendingMessages } from './tasks/LocalAgentTask/LocalAgentTask.js'
 
 function takeAgentMessages(context: ToolUseContext, closeIfEmpty = false): UserMessage[] {
-  if (!context.agentId) return []
+  if (!context.agentId) return context.takePendingUserMessages?.(closeIfEmpty) ?? []
   return drainPendingMessages(context.agentId, context.setAppStateForTasks ?? context.setAppState, closeIfEmpty)
     .flatMap(prompt => normalizeAttachmentForAPI({ type: 'queued_command', prompt, isMeta: true, origin: { kind: 'coordinator' } }))
 }
@@ -248,6 +248,7 @@ export async function* query(
     terminal = yield* queryLoop(params, consumedCommandUuids)
   } finally {
     const context = params.toolUseContext
+    if (!context.agentId) context.closePendingUserMessages?.()
     if (context.agentId) closeAgentMessageQueue(context.agentId, context.setAppStateForTasks ?? context.setAppState)
   }
   // Only reached if queryLoop returned normally. Skipped on throw (error
@@ -1340,6 +1341,12 @@ async function* queryLoop(
       }
     }
     queryCheckpoint('query_tool_execution_end')
+
+    // Complete only after draining the entire tool batch: the transcript must
+    // contain every paired receipt, and ordinary cancellation still takes priority.
+    if (!toolUseContext.abortController.signal.aborted && toolUseContext.options.shouldFinishAfterTools?.()) {
+      return { reason: 'completed' }
+    }
 
     // Generate tool use summary after tool batch completes — passed to next recursive call
     let nextPendingToolUseSummary:

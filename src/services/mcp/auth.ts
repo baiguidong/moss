@@ -963,6 +963,7 @@ export async function performMCPOAuthFlow(
   onAuthorizationUrl: (url: string) => void,
   abortSignal?: AbortSignal,
   options?: {
+    webCallback?: { redirectUri: string; listen: (state: string) => Promise<{ callback: Promise<string>; close: () => Promise<void> }> }
     skipBrowserOpen?: boolean
     onWaitingForCallback?: (submit: (callbackUrl: string) => void) => void
   },
@@ -1118,7 +1119,9 @@ export async function performMCPOAuthFlow(
     // Some providers accept only app-scheme redirects (and reject RFC 8252
     // loopback redirects). Connector-owned overrides can opt into such a URI;
     // the desktop browser captures it and forwards the callback to this flow.
-    const configuredRedirectUri = serverConfig.oauth?.redirectUri?.trim()
+    if (options?.webCallback && !options.webCallback.redirectUri) throw new Error('Web OAuth requires a public HTTPS callback')
+    if (options?.webCallback && serverConfig.oauth?.redirectUri && serverConfig.oauth.redirectUri !== options.webCallback.redirectUri) throw new Error('此提供方配置了专用回调，请先在提供方登记 WebUI HTTPS 回调地址。')
+    const configuredRedirectUri = options?.webCallback?.redirectUri || serverConfig.oauth?.redirectUri?.trim()
     // Use configured callback port for pre-configured OAuth, otherwise find an available port
     const configuredCallbackPort = serverConfig.oauth?.callbackPort
     const port = configuredCallbackPort ?? (await findAvailablePort())
@@ -1195,6 +1198,7 @@ export async function performMCPOAuthFlow(
 
     // Get the OAuth state from the provider for validation
     const oauthState = await provider.state()
+    const webListener = await options?.webCallback?.listen(oauthState)
 
     // Store the server, timeout, and abort listener references for cleanup
     let server: Server | null = null
@@ -1202,6 +1206,7 @@ export async function performMCPOAuthFlow(
     let abortHandler: (() => void) | null = null
 
     const cleanup = () => {
+      void webListener?.close()
       if (server) {
         server.removeAllListeners()
         // Defensive: removeAllListeners() strips the error handler, so swallow any late error during close
@@ -1246,6 +1251,15 @@ export async function performMCPOAuthFlow(
         abortSignal.addEventListener('abort', abortHandler)
       }
 
+      if (webListener) {
+        void webListener.callback.then(callbackUrl => {
+          const parsed = new URL(callbackUrl), expected = new URL(options!.webCallback!.redirectUri);
+          if (parsed.origin !== expected.origin || parsed.pathname !== expected.pathname || parsed.searchParams.get('state') !== oauthState || !parsed.searchParams.get('code')) {
+            cleanup(); rejectOnce(new Error('Invalid Web OAuth callback')); return;
+          }
+          cleanup(); resolveOnce(parsed.searchParams.get('code')!);
+        }, error => { cleanup(); rejectOnce(error); });
+      }
       // Allow manual callback URL paste for remote/browser-based environments
       // where localhost is not reachable from the user's browser.
       if (options?.onWaitingForCallback) {
@@ -1263,6 +1277,7 @@ export async function performMCPOAuthFlow(
             const state = getCallbackParam('state')
             const error = getCallbackParam('error')
 
+            if (state !== oauthState) return
             if (error) {
               const errorDescription =
                 getCallbackParam('error_description') || ''
@@ -1309,7 +1324,7 @@ export async function performMCPOAuthFlow(
           const errorUri = parsedUrl.query.error_uri as string
 
           // Validate OAuth state to prevent CSRF attacks
-          if (!error && state !== oauthState) {
+          if (state !== oauthState) {
             res.writeHead(400, { 'Content-Type': 'text/html' })
             res.end(
               `<h1>Authentication Error</h1><p>Invalid state parameter. Please try again.</p><p>You can close this window.</p>`,
@@ -1370,7 +1385,7 @@ export async function performMCPOAuthFlow(
         }
       })
 
-      server.listen(port, '127.0.0.1', async () => {
+      const startAuthorization = async () => {
         try {
           logMCPDebug(serverName, `Starting SDK auth`)
           logMCPDebug(serverName, `Server URL: ${serverConfig.url}`)
@@ -1395,7 +1410,9 @@ export async function performMCPOAuthFlow(
           cleanup()
           rejectOnce(new Error(`SDK auth failed: ${errorMessage(error)}`))
         }
-      })
+      }
+      if (webListener) void startAuthorization()
+      else server.listen(port, '127.0.0.1', startAuthorization)
 
       // Don't let the callback server or timeout pin the event loop — if the UI
       // component unmounts without aborting (e.g. parent intercepts Esc), we'd

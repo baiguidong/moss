@@ -119,8 +119,8 @@ async function run() {
       console.log(`PASS ${width}px: first and last Apps remain fully reachable`);
     }
     assert(await evaluate(() => document.querySelector('[data-app-header]').getBoundingClientRect().height <= 49), 'Apps header is too tall');
-    assert.equal(await evaluate(() => document.querySelectorAll('main input:not([role="switch"]), main select').length), 0);
-    assert.deepEqual(await evaluate(() => [...document.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)),
+    assert.equal(await evaluate(() => document.querySelectorAll('main input[aria-label="搜索应用"]').length), 1);
+    assert.deepEqual(await evaluate(() => [...document.querySelectorAll('[aria-label="App 分类"] [role="tab"]')].map(tab => tab.textContent)),
       ['全部24', '沟通协作4', '知识与文件4', '自动化4', 'AI 增强4', '开发工具4', '诊断与审计4']);
     await evaluate(() => document.getElementById('installed-apps-automation').click());
     await delay();
@@ -137,7 +137,7 @@ async function run() {
     await delay();
     assert.equal(await evaluate(() => document.querySelectorAll('input[role="switch"]').length), 24);
     assert.equal(await evaluate(() => document.activeElement.id), 'installed-apps-all');
-    console.log('PASS compact header, category tabs and keyboard navigation without search fields');
+    console.log('PASS compact header, category tabs and keyboard navigation with App search');
 
     const moreTrigger = await evaluate(() => {
       const rect = document.querySelector('[aria-label="更多功能"]').getBoundingClientRect();
@@ -158,7 +158,7 @@ async function run() {
     await delay();
     assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 24);
     assert(await evaluate(() => document.querySelector('[data-app-header]').getBoundingClientRect().height <= 49), 'Marketplace header is too tall');
-    assert.equal(await evaluate(() => document.querySelectorAll('main input, main select').length), 0);
+    assert.equal(await evaluate(() => document.querySelectorAll('main input[aria-label="搜索应用"]').length), 1);
     await evaluate(() => document.getElementById('marketplace-apps-development').click());
     await delay();
     assert.deepEqual(await evaluate(() => [...new Set([...document.querySelectorAll('main [data-app-category]')].map(card => card.dataset.appCategory))]), ['development']);
@@ -172,7 +172,7 @@ async function run() {
     assert(await evaluate(() => [...document.querySelectorAll('main section')].find(card => card.textContent.includes('滚动测试 App 5')).textContent.includes('已安装 1.0.0')));
     console.log('PASS local App offers marketplace installation and refreshes after switching versions');
     await capture('marketplace-category');
-    console.log('PASS marketplace uses category tabs and a compact header without search');
+    console.log('PASS marketplace uses category tabs and a compact header with App search');
   } catch (error) {
     console.error(error);
     await capture('failure');

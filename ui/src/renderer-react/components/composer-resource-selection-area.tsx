@@ -1,3 +1,5 @@
+import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
+import { filterApps } from '@/lib/app-categories';
 import { AppToolSelectionContext, getToolPickerItems, getAppToolServices, toolAppId, toolAppTitle } from '@/lib/app-tool-selection';
 import { AppIcon } from '@/components/app-icon';
 import { AppCategoryFilter } from '@/components/app-category-filter';
@@ -192,6 +194,7 @@ export function ComposerResourceSelectionArea({
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
   const [appCategory, setAppCategory] = React.useState('all');
+  const [appGroup, setAppGroup] = React.useState('all');
   const [serviceAppId, setServiceAppId] = React.useState<string | null>(null);
   const serviceApp = toolApps.apps.find(app => toolAppId(app) === serviceAppId);
   const selectedServiceIds = toolApps.selectedServiceIds || [];
@@ -238,7 +241,8 @@ export function ComposerResourceSelectionArea({
   ], query)), [installedConnectors, query]);
 
   const allToolApps = getToolPickerItems(toolApps.apps, '', toolApps.selectedIds, selectedServiceIds).map(item => item.app);
-  const filteredToolItems = getToolPickerItems(toolApps.apps, query, toolApps.selectedIds, selectedServiceIds, serviceAppId, serviceAppId ? 'all' : appCategory);
+  const pickerApps = serviceAppId ? toolApps.apps : filterApps(toolApps.apps, '', 'all', { group: appGroup });
+  const filteredToolItems = getToolPickerItems(pickerApps, query, toolApps.selectedIds, selectedServiceIds, serviceAppId, serviceAppId ? 'all' : appCategory);
   const availableServiceIds = serviceApp ? getAppToolServices(serviceApp).filter(service => service.available).map(service => service.id) : [];
   const allServicesSelected = availableServiceIds.length > 0 && availableServiceIds.every(id => selectedServiceIds.includes(id));
   if (tabs.length === 0) return null;
@@ -332,7 +336,7 @@ export function ComposerResourceSelectionArea({
           {displayedTab === 'apps' && (serviceApp ? <div className="mb-2 flex items-center justify-between gap-2">
             <button type="button" className="flex min-w-0 items-center gap-1 text-sm" onClick={() => { setServiceAppId(null); setQuery('') }}><ArrowLeft className="h-4 w-4 shrink-0" /><span className="truncate">{toolAppTitle(serviceApp)}</span></button>
             <button type="button" className="shrink-0 text-xs text-primary disabled:opacity-50" disabled={!availableServiceIds.length || toolApps.pending} onClick={() => toolApps.setServices?.(toolAppId(serviceApp), allServicesSelected ? [] : availableServiceIds)}>{allServicesSelected ? '清空服务选择' : '全选当前可用服务'}</button>
-          </div> : <div className="mb-2"><AppCategoryFilter apps={allToolApps} value={appCategory} onChange={setAppCategory} /></div>)}
+          </div> : <div className="mb-2"><AppDiscoveryFilter value={appGroup} onChange={value => { setAppGroup(value); setAppCategory('all'); }} query={query} onQuery={setQuery} hideSearch /><AppCategoryFilter apps={pickerApps} value={appCategory} onChange={setAppCategory} /></div>)}
           {!openTab && (
           <div className="flex items-center gap-1" role="tablist" aria-label="资源类型">
             {tabs.map((tab) => {

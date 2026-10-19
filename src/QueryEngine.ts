@@ -1,4 +1,8 @@
 import { runAppAgent, type AppAgentRunParams } from './services/appExecution/runAppAgent.js'
+import { TurnInputQueue, type TurnInputState } from './utils/turnInputQueue.js'
+import { createUserMessage } from './utils/messages.js'
+import type { CacheSafeParams } from './utils/forkedAgent.js'
+import { runSideQuestion } from './utils/sideQuestion.js'
 import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { randomUUID } from 'crypto'
@@ -181,6 +185,22 @@ export class QueryEngine {
   // many turns in SDK mode.
   private discoveredSkillNames = new Set<string>()
   private loadedNestedMemoryPaths = new Set<string>()
+  private finishAfterTools = false
+  private turnInputs = new TurnInputQueue()
+  private sideQuestionContext: CacheSafeParams | null = null
+
+  beginTurnInputs() { this.turnInputs.open() }
+  closeTurnInputs() { this.turnInputs.close() }
+  steer(text: string, id: string, onState: (state: TurnInputState) => void): boolean {
+    if (this.abortController.signal.aborted) return false
+    return this.turnInputs.accept({ text, id, onState })
+  }
+
+  async askSideQuestion(question: string, abortController: AbortController) {
+    if (!this.sideQuestionContext) throw new Error('当前会话尚未建立模型上下文，请先发送主会话消息。')
+    return runSideQuestion({ question, abortController, isolated: true,
+      cacheSafeParams: { ...this.sideQuestionContext, forkContextMessages: structuredClone(this.mutableMessages) } })
+  }
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -429,6 +449,7 @@ export class QueryEngine {
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
         refreshTools,
+        shouldFinishAfterTools: () => this.finishAfterTools,
       },
       getAppState,
       setAppState,
@@ -595,6 +616,7 @@ export class QueryEngine {
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         maxBudgetUsd,
         refreshTools,
+        shouldFinishAfterTools: () => this.finishAfterTools,
       },
       getAppState,
       setAppState,
@@ -761,6 +783,16 @@ export class QueryEngine {
       : 0
 
     const queryLoopStart = Date.now()
+    processUserInputContext = { ...processUserInputContext,
+      takePendingUserMessages: closeIfEmpty => this.turnInputs.take(closeIfEmpty).map(entry => {
+        const message = createUserMessage({ content: entry.text, uuid: entry.id })
+        entry.onState('consumed')
+        return message
+      }),
+      closePendingUserMessages: () => this.turnInputs.close(),
+    }
+    this.sideQuestionContext = { systemPrompt, userContext, systemContext,
+      toolUseContext: processUserInputContext, forkContextMessages: [] }
     for await (const message of query({
       messages,
       systemPrompt,
@@ -1018,6 +1050,7 @@ export class QueryEngine {
               attempt: message.retryAttempt,
               max_retries: message.maxRetries,
               retry_delay_ms: message.retryInMs,
+              ...(message.retryBudget ? { retry_budget: message.retryBudget } : {}),
               error_status: message.error.status ?? null,
               error: categorizeRetryableAPIError(message.error),
               session_id: getSessionId(),
@@ -1243,12 +1276,19 @@ export class QueryEngine {
   }
 
   interrupt(): void {
+    this.turnInputs.close()
     this.abortController.abort()
+  }
+
+  /** Finish a trusted result-producing turn after its pending tool receipts. */
+  requestCompletion(): void {
+    this.finishAfterTools = true
   }
 
   /** Reset the abort controller so the engine can be reused after an interrupt. */
   resetAbort(): void {
     this.abortController = createAbortController()
+    this.finishAfterTools = false
   }
 
   getMessages(): readonly Message[] {

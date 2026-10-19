@@ -1,5 +1,7 @@
 'use client'
 
+import { normalizeSnapshotPolicy } from '../../../shared/webui-snapshot-policy.mjs'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { DashboardLayout } from '@/components/dashboard-layout'
@@ -41,7 +43,8 @@ import { toast } from 'sonner'
 type EditableSystemSettings = Pick<
   SystemSettings,
   'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
->
+> & { webui: NonNullable<SystemSettings['webui']> }
+
 
 type SettingsSectionProps = {
   icon: ComponentType<{ className?: string }>
@@ -68,6 +71,7 @@ const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
+    webui: { snapshots: normalizeSnapshotPolicy(settings.webui?.snapshots) },
     model: settings.model,
     fastModel: settings.fastModel,
     url: settings.url,
@@ -164,6 +168,7 @@ function buildSystemSettingsPatch(
     patch.openIM = openIMPatch
   }
 
+  if (JSON.stringify(draft.webui.snapshots) !== JSON.stringify(normalizeSnapshotPolicy(settings.webui?.snapshots))) patch.webui = draft.webui
   return patch
 }
 
@@ -758,6 +763,15 @@ export default function SystemSettingsPage() {
                 },
               } : current)}
             />
+          </SettingField>
+        </SettingSection>
+
+        <SettingSection icon={Server} title="WebUI 环境快照" description="每台云电脑的总额度，包含手动和恢复前保护快照。配置不可用时使用内置默认额度；下调额度不会自动删除已有快照。">
+          <SettingField label="快照数量上限">
+            <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxSnapshotsPerEnvironment} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxSnapshotsPerEnvironment: Number(event.target.value) } } } : current)} />
+          </SettingField>
+          <SettingField label="空间上限（GiB）" description="默认 20 GiB。创建时是否包含数据卷由用户单独选择，默认不包含。">
+            <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxBytesPerEnvironment / 1024 ** 3} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxBytesPerEnvironment: Number(event.target.value) * 1024 ** 3 } } } : current)} />
           </SettingField>
         </SettingSection>
 

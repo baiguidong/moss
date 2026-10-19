@@ -117,9 +117,9 @@ export type FsOperations = {
   ): void
   /** Create a writable stream for writing data to a file. */
   createWriteStream(path: string): fs.WriteStream
-  /** Reads raw file bytes as Buffer asynchronously.
-   *  When maxBytes is set, only reads up to that many bytes. */
-  readFileBytes(path: string, maxBytes?: number): Promise<Buffer>
+  /** Reads raw file bytes. With maxBytes, requires a regular file and rejects
+   *  overflow rather than returning a silently truncated file. */
+  readFileBytes(path: string, maxBytes?: number, signal?: AbortSignal): Promise<Buffer>
 }
 
 /**
@@ -575,27 +575,35 @@ export const NodeFsOperations: FsOperations = {
     return fs.createWriteStream(path)
   },
 
-  async readFileBytes(fsPath: string, maxBytes?: number) {
+  async readFileBytes(fsPath: string, maxBytes?: number, signal?: AbortSignal) {
+    signal?.throwIfAborted()
     if (maxBytes === undefined) {
-      return readFilePromise(fsPath)
+      return readFilePromise(fsPath, { signal })
     }
-    const handle = await open(fsPath, 'r')
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('Invalid file byte limit')
+    // A FIFO must not block open before we can inspect the actual handle.
+    const handle = await open(fsPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)
     try {
-      const { size } = await handle.stat()
-      const readSize = Math.min(size, maxBytes)
-      const buffer = Buffer.allocUnsafe(readSize)
-      let offset = 0
-      while (offset < readSize) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          offset,
-          readSize - offset,
-          offset,
-        )
+      signal?.throwIfAborted()
+      const stat = await handle.stat()
+      if (!stat.isFile()) throw new Error(`Cannot read non-regular file: ${fsPath}`)
+      const overflow = () => new Error(`File exceeds maximum read size (${maxBytes} bytes): ${fsPath}`)
+      if (stat.size > maxBytes) throw overflow()
+      const chunks: Buffer[] = []
+      let total = 0
+      // Don't trust the earlier size: files can grow during a read. Probe at
+      // most one byte beyond the cap, never allocate from an untrusted size.
+      while (total <= maxBytes) {
+        signal?.throwIfAborted()
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes - total + 1))
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, total)
         if (bytesRead === 0) break
-        offset += bytesRead
+        total += bytesRead
+        if (total > maxBytes) throw overflow()
+        chunks.push(buffer.subarray(0, bytesRead))
       }
-      return offset < readSize ? buffer.subarray(0, offset) : buffer
+      signal?.throwIfAborted()
+      return Buffer.concat(chunks, total)
     } finally {
       await handle.close()
     }

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { getEmptyToolPermissionContext } from '../../../Tool.js'
 import { createAssistantMessage, createUserMessage } from '../../../utils/messages.js'
 import { queryModelWithStreaming } from '../claude.js'
+import { RetryBudget } from '../retryBudget.js'
 import type { AdvancedSettings } from '../../../../packages/direct-connect-protocol/src/index.js'
 
 const envKeys = [
@@ -78,6 +79,7 @@ async function runQuery(
   fallbackResponse = new Response(JSON.stringify(responseMessage), {
     headers: { 'content-type': 'application/json' },
   }),
+  retryBudget?: RetryBudget,
 ) {
   process.env.MOSS_RUNTIME_ADVANCED_SETTINGS = JSON.stringify(settings)
   const requests: { stream?: boolean }[] = []
@@ -106,6 +108,7 @@ async function runQuery(
       querySource: 'sdk', agents: [], mcpTools: [], hasAppendSystemPrompt: false,
       getToolPermissionContext: async () => getEmptyToolPermissionContext(),
       onStreamingFallback: () => { fallbacks++ },
+      retryBudget,
     },
   })) output.push(message)
   if (requests.length === 0) {
@@ -118,6 +121,19 @@ async function runQuery(
 }
 
 describe('independent stream recovery policy', () => {
+  test('404 recovery shares the streaming request attempt budget', async () => {
+    const result = await runQuery({}, new Response(JSON.stringify({ error: { message: 'stream endpoint unavailable' } }), { status: 404 }), undefined, new RetryBudget({ maxAttempts: 1 }))
+    expect(result.requests).toHaveLength(1)
+    expect(JSON.stringify(result.assistants)).toContain('达到尝试次数上限')
+  })
+  test('an emitted tool call prevents automatic replay even when recovery is enabled', async () => {
+    const result = await runQuery({ moss_streaming_tool_execution: true, moss_disable_nonstreaming_fallback: false }, sse([
+      messageStart, toolStart, toolInput, { type: 'content_block_stop', index: 0 }, streamError,
+    ]))
+    expect(result.requests).toHaveLength(1)
+    expect(result.fallbacks).toBe(0)
+    expect(result.assistants.flatMap(message => message.message.content).filter(block => block.type === 'tool_use')).toHaveLength(1)
+  })
   test.each([
     [false, false], [true, false], [false, true], [true, true],
   ])('streaming tools %s and recovery disabled %s are independent', async (streaming, disabled) => {

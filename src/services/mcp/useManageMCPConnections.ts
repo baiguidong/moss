@@ -11,6 +11,7 @@ import {
   getMcpToolsCommandsAndResources,
   getMcpClientFetchCacheKey,
   reconnectMcpServerImpl,
+  refreshMcpToolCatalog,
 } from './client.js'
 import type {
   MCPServerConnection,
@@ -365,7 +366,7 @@ export function useManageMCPConnections(
                   const fetchKey = getMcpClientFetchCacheKey(client)
                   const previousToolsPromise =
                     fetchToolsForClient.cache.get(fetchKey)
-                  fetchToolsForClient.cache.delete(fetchKey)
+                  await refreshMcpToolCatalog(client, { invalidated: true })
                   const newTools = await fetchToolsForClient(client)
                   const newCount = newTools.length
                   if (previousToolsPromise) {

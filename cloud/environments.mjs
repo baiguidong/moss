@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export class Environments {
-  constructor({ store, docker, installation, gatewayContainer, image, origin, cpu = 1, memoryMb = 1024, pids = 512, startupTimeoutMs = 300000 }) {
-    Object.assign(this, { store, docker, installation, gatewayContainer, image, origin, cpu, memoryMb, pids, startupTimeoutMs });
+  constructor({ store, docker, installation, gatewayContainer, image, origin, previewDomain, cpu = 1, memoryMb = 1024, pids = 512, startupTimeoutMs = 300000 }) {
+    Object.assign(this, { store, docker, installation, gatewayContainer, image, origin, previewDomain, cpu, memoryMb, pids, startupTimeoutMs });
     this.locks = new Map();
     // Fence every Docker call, including calls resumed after an awaited copy.
     this.docker = new Proxy(docker, { get: (target, key) => typeof target[key] === 'function'
@@ -18,7 +18,29 @@ export class Environments {
   }
   labels(row) { return { 'io.moss.installation': this.installation, 'io.moss.environment': row.id, 'io.moss.user': row.userId, 'io.moss.org': row.orgId }; }
   name(row) { return `moss-${this.installation.slice(0, 12)}-${row.id}`; }
+  containerConfig(row, image, volume, { restored = false, imageEnv = [] } = {}) {
+    const managed = {
+      HOME: '/home/moss', MOSS_HOME: '/home/moss/.moss', MOSS_CONFIG_DIR: '/home/moss/.moss',
+      MOSS_WEB_MODE: '1', MOSS_WEB_HOST: '0.0.0.0', MOSS_WEB_PORT: '43128',
+      MOSS_WEB_NODE_PATH: '/usr/local/bin/node', MOSS_WEB_PYTHON_PATH: '/usr/bin/python3',
+      MOSS_WEB_ORIGIN: this.origin, MOSS_WEB_OWNER_ID: row.userId, MOSS_WEB_OWNER_ORG_ID: row.orgId,
+      MOSS_ENVIRONMENT_ID: row.id, MOSS_ENVIRONMENT_GENERATION: String(row.generation || 0),
+      MOSS_WEB_CONTROL_TOKEN: row.controlToken, MOSS_WEB_AUTH_SERVER: 'http://moss-cloud-gateway:43128/_moss-auth',
+      MOSS_RESTORED_PAUSED: restored ? '1' : '0', MOSS_WEB_PREVIEW_DOMAIN: this.previewDomain || '',
+      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', NODE_ENV: 'production', LANG: 'C.UTF-8', SHELL: '/bin/bash', USE_BUILTIN_RIPGREP: '0',
+    };
+    const cleared = Object.fromEntries(imageEnv.map(entry => [entry.split('=')[0], '']));
+    return { Image: image, User: 'moss', WorkingDir: '/opt/moss/ui',
+      Labels: { ...this.labels(row), 'io.moss.role': 'personal-computer' },
+      Env: Object.entries({ ...cleared, ...managed }).map(([key, value]) => `${key}=${value}`),
+      Entrypoint: ['/usr/bin/tini', '--', '/usr/local/bin/node', '-e', `const {spawn}=require('node:child_process');let child,ending=false;function start(){child=spawn('/opt/moss/ui/node_modules/electron/dist/electron',['--no-sandbox','--ozone-platform=headless','--disable-gpu','/opt/moss/ui'],{stdio:'inherit'});child.on('exit',()=>{if(ending)process.exit(0);else setTimeout(start,2000)});}for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>{ending=true;child.kill(s)});start();`], Cmd: [],
+      HostConfig: { NetworkMode: this.name(row), Mounts: [{ Type: 'volume', Source: volume, Target: '/home/moss' }],
+        Memory: this.memoryMb * 1024 * 1024, NanoCpus: Math.round(this.cpu * 1e9), PidsLimit: this.pids, ShmSize: 256 * 1024 ** 2,
+        RestartPolicy: { Name: 'unless-stopped' }, LogConfig: { Type: 'local', Config: { 'max-size': '10m', 'max-file': '3' } } },
+    };
+  }
   checkOwner(row, info) {
+    if (row.adoptedId === info.Id && row.containerId === info.Id) return;
     for (const [key, value] of Object.entries(this.labels(row))) if (info.Config.Labels?.[key] !== value) throw new Error('Container ownership does not match environment registry');
     if (row.containerId && row.containerId !== info.Id) throw new Error('Original personal container was replaced; automatic recreation is disabled');
   }
@@ -66,6 +88,7 @@ export class Environments {
     const record = this.store.ensure(identity);
     return this.locked(record.id, async () => {
       let row = this.store.get(record.id);
+      if (row.operation || row.adoption) return row;
       this.store.update(row.id, { desiredState: 'running' });
       await this.attach(row);
       let info = await this.inspect(row);
@@ -75,13 +98,8 @@ export class Environments {
         const volume = await this.docker.request('POST', '/volumes/create', { Name: `${this.name(row)}-home`, Labels: this.labels(row) });
         for (const [key, value] of Object.entries(this.labels(row))) if (volume.Labels?.[key] !== value) throw new Error('User volume ownership mismatch');
         try {
-          await this.docker.create(this.name(row), { Image: image.Id, Labels: { ...this.labels(row), 'io.moss.role': 'personal-computer' },
-            Env: [`MOSS_WEB_ORIGIN=${this.origin}`, `MOSS_WEB_OWNER_ID=${row.userId}`, `MOSS_WEB_OWNER_ORG_ID=${row.orgId}`,
-              `MOSS_ENVIRONMENT_ID=${row.id}`, `MOSS_WEB_CONTROL_TOKEN=${row.controlToken}`, 'MOSS_WEB_AUTH_SERVER=http://moss-cloud-gateway:43128/_moss-auth'],
-            HostConfig: { NetworkMode: this.name(row), Mounts: [{ Type: 'volume', Source: volume.Name, Target: '/home/moss' }],
-              Memory: this.memoryMb * 1024 * 1024, NanoCpus: Math.round(this.cpu * 1e9), PidsLimit: this.pids,
-              RestartPolicy: { Name: 'unless-stopped' }, LogConfig: { Type: 'local', Config: { 'max-size': '10m', 'max-file': '3' } } },
-          });
+          await this.docker.create(this.name(row), this.containerConfig(row, image.Id, volume.Name));
+          this.store.update(row.id, { homeVolume: volume.Name });
         } catch (error) { if (error.status !== 409) throw error; }
         info = await this.inspect(row);
       }
@@ -98,7 +116,7 @@ export class Environments {
       if (row.containerId) {
         try {
           await this.inspect(row); await this.attach(row);
-          if (row.upgrade) await this.locked(row.id, () => this.recoverUpgrade(row));
+          if (row.upgrade && !row.operation) await this.locked(row.id, () => this.recoverUpgrade(row));
         } catch (error) { this.store.update(row.id, { state: 'error', error: error.message }); }
       }
     }
@@ -124,6 +142,7 @@ export class Environments {
   stop(id) {
     return this.locked(id, async () => {
       const row = this.store.get(id); if (!row) throw new Error('Unknown environment');
+      if (row.operation) throw new Error('快照维护任务正在进行');
       const info = await this.inspect(row);
       if (row.upgrade) throw new Error('Resolve interrupted upgrade before stopping');
       if (info.State.Running) {
@@ -137,6 +156,7 @@ export class Environments {
   upgrade(id, imageReference) {
     return this.locked(id, async () => {
       let row = this.store.get(id); if (!row) throw new Error('Unknown environment');
+      if (row.operation) throw new Error('快照维护任务正在进行');
       if (row.upgrade) row = await this.recoverUpgrade(row);
       const info = await this.inspect(row); if (!info.State.Running) throw new Error('Start the cloud computer before upgrading');
       const base = await this.docker.image(row.programImage || info.Image), image = await this.docker.image(imageReference);
@@ -153,7 +173,7 @@ export class Environments {
       try {
         await this.control(row, 'drain', {});
         previous = await this.docker.exec(info.Id, ['node', '-e', 'const fs=require("fs");if(!fs.lstatSync("/opt/moss").isSymbolicLink())throw Error("Runtime does not support program switching");console.log(fs.realpathSync("/opt/moss"));']);
-        this.store.update(id, { state: 'upgrading', upgrade: { image: image.Id, version, previous, previousVersion: before.version, previousProgramImage: row.programImage || info.Image, startedAt: Date.now() } });
+        this.store.update(id, { state: 'upgrading', programDigest: null, upgrade: { image: image.Id, version, previous, previousVersion: before.version, previousProgramImage: row.programImage || info.Image, startedAt: Date.now() } });
         await this.docker.exec(info.Id, ['node', '-e', 'require("fs").mkdirSync(process.argv[1],{recursive:true})', directory]);
         helper = (await this.docker.create(`moss-release-${randomUUID()}`, { Image: image.Id, Labels: { 'io.moss.role': 'release-helper' }, Entrypoint: ['/bin/true'] })).Id;
         this.store.update(id, { upgrade: { ...this.store.get(id).upgrade, helper } });

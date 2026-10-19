@@ -1,4 +1,6 @@
 import { buildCompactionRecords, type CompactionRecord } from './compaction';
+import { formatApiRetry } from './api-retry';
+import { interactionTurnOwners } from '../../shared/session-interactions.mjs';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
 import { getSearchMessageId } from '../../session-search-index.mjs';
@@ -105,7 +107,7 @@ export type SystemRenderMessage = TranscriptRenderMessageBase & {
   role: 'system';
   content: string;
   compaction?: CompactionRecord;
-  variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact' | 'app_task' | 'app_flow_result';
+  variant?: 'local_command' | 'plan' | 'connector_auth' | 'compact' | 'app_task' | 'app_flow_result' | 'api_retry';
   status?: 'pending' | 'success' | 'failed';
 };
 
@@ -1151,13 +1153,23 @@ export function buildWorkerRenderMessagesFromSubagentEvents(
 export function buildMainChatRenderMessagesFromHistory(
   history: AgentEvent[],
 ): TranscriptRenderMessage[] {
-  const sanitized = sanitizeMainHistory(history);
+  // The model receives prepared file/skill instructions. Display the original
+  // user input and attachments from its Host receipt, without mutating JSONL.
+  const supplements = new Map(history.filter(event => event.type === 'session_interaction' && event.kind === 'steer').map(event => [event.id, event]));
+  const displayHistory = history.map(event => {
+    const receipt = event.type === 'user' ? supplements.get(event.uuid) : undefined;
+    if (!receipt?.details) return event;
+    return { ...event, prompt: receipt.prompt, files: receipt.details.files?.filter((file: any) => !file.resource).map((file: any) => file.path),
+      resources: receipt.details.files?.flatMap((file: any) => file.resource ? [file.resource] : []) };
+  });
+  const sanitized = sanitizeMainHistory(displayHistory);
   return buildTranscriptRenderMessages(sanitized);
 }
 
 export function buildTranscriptRenderMessages(
   history: AgentEvent[],
 ): TranscriptRenderMessage[] {
+  const inputOwners = interactionTurnOwners(history);
   const compactions = buildCompactionRecords(history);
   const emittedCompactions = new Set<string>();
   const state: RenderBuilderState = {
@@ -1203,9 +1215,9 @@ export function buildTranscriptRenderMessages(
         continue;
       }
       finalizeAssistantTurn(state, { complete: true });
-      const turnId = typeof event.uuid === 'string' && event.uuid.trim()
+      const turnId = inputOwners.get(event.uuid) || (typeof event.uuid === 'string' && event.uuid.trim()
         ? event.uuid.trim()
-        : undefined;
+        : undefined);
       state.activeTurnId = turnId;
       addUserRenderMessage(state, timestamp, userText, userAttachments, turnId, sourceMessageId);
       continue;
@@ -1376,6 +1388,19 @@ export function buildTranscriptRenderMessages(
     }
 
     if (event?.type === 'system') {
+      if (event.subtype === 'api_retry' || event.subtype === 'api_error') {
+        const content = formatApiRetry(event);
+        if (state.currentAssistantTurn) {
+          state.currentAssistantTurn.meta = state.currentAssistantTurn.meta.filter(item => !item.startsWith('模型请求重试 · '));
+          appendTurnMeta(state.currentAssistantTurn, content);
+        } else {
+          const previous = state.items.at(-1);
+          if (previous?.type === 'system' && previous.variant === 'api_retry') {
+            previous.content = content; previous.timestamp = timestamp;
+          } else addSystemRenderMessage(state, timestamp, content, undefined, 'api_retry');
+        }
+        continue;
+      }
       if (event.subtype === 'compact_boundary') {
         finalizeAssistantTurn(state, { complete: true });
         const metadata = event.compactMetadata ?? event.compact_metadata;

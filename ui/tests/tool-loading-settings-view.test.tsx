@@ -39,7 +39,7 @@ test('tool loading settings renders grouped resident and deferred radio choices'
   expect(html).toContain('rowSpan="2"');
   expect(html.match(/>内置浏览器</g)).toHaveLength(1);
   expect(html.match(/>App 管理</g)).toBeNull();
-  expect(html.match(/type="radio"/g)).toHaveLength(15);
+  expect(html.match(/type="radio"/g)).toHaveLength(18);
   expect(html).toMatch(/aria-label="connector_cli_setup 常驻"[^>]*checked=""[^>]*value="always"/);
   expect(html).toMatch(/aria-label="image_generate 按需"[^>]*checked=""[^>]*value="deferred"/);
 });
@@ -130,7 +130,7 @@ test('Settings shows dynamically discovered MCP tools alongside static tools, in
   expect(disabled).not.toContain('browser_click')
   expect(disabled).not.toContain('browser_close')
   expect(disabled).not.toContain('App 已停用')
-  for (const [status, label] of [['unchecked', '正在加载工具'], ['disabled', '服务已停用'], ['unauthorized', '未授权'], ['needs-auth', '需要授权'], ['failed', '加载失败']] as const) {
+  for (const [status, label] of [['unchecked', '正在加载工具'], ['disabled', '服务已停用'], ['unauthorized', '未授权'], ['needs-auth', '需要授权'], ['failed', '连接失败']] as const) {
     const pending = renderToStaticMarkup(<AppToolSettingsTable apps={[{ ...app, mcpServices: [{ ...service, status, tools: [] }] }]} />)
     expect(pending).toContain('playwright-cdp')
     expect(pending).toContain(label)

@@ -1,5 +1,8 @@
+import { AsyncResource } from 'node:async_hooks'
+import { LiveToolCatalog, catalogRevision } from './liveToolCatalog.js'
 import { McpConnectionPool, type ConnectionControls } from './connectionPool.js'
 import { mcpToolCatalogCache, McpToolCatalogCache } from './toolCatalogCache.js'
+import { publishMcpToolCatalog } from './catalogUpdates.js'
 import { terminateMcpProcessTree } from './processCleanup.js'
 import { feature } from 'bun:bundle'
 import { prepareMcpDirectoryLaunch } from '../../../packages/app-sdk/src/mcp/directories.mjs'
@@ -39,6 +42,7 @@ import {
   ListRootsRequestSchema,
   type ListToolsResult,
   ListToolsResultSchema,
+  ToolListChangedNotificationSchema,
   McpError,
   type PromptMessage,
   type ResourceLink,
@@ -1348,7 +1352,7 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
         wsIdeCount: serverStats?.wsIdeCount,
         ...mcpBaseUrlAnalytics(serverRef),
       })
-      return {
+      const connection: ConnectedMCPServer = {
         name,
         client,
         type: 'connected' as const,
@@ -1357,8 +1361,17 @@ async function openMcpConnection(name: string, serverRef: ScopedMcpServerConfig,
         instructions,
         config: serverRef,
         cacheSessionId,
+        connectionStartedAt: connectStartTime,
         cleanup: wrappedCleanup,
       }
+      const catalog = liveCatalogFor(connection, controls.signal)
+      if (connection.capabilities.tools?.listChanged) {
+        client.setNotificationHandler(ToolListChangedNotificationSchema, AsyncResource.bind(async () => {
+          try { await catalog.refresh({ invalidated: true }) }
+          catch (error) { logMCPError(name, `Tool catalog refresh failed; retaining previous snapshot: ${errorMessage(error)}`) }
+        }))
+      }
+      return connection
     } catch (error) {
       const connectionDurationMs = Date.now() - connectStartTime
       logEvent('tengu_mcp_server_connection_failed', {
@@ -1427,6 +1440,38 @@ export async function clearServerCache(
  * @returns Connected MCP server client (same or reconnected)
  * @throws Error if server cannot be connected
  */
+const liveCatalogs = new WeakMap<Client, LiveToolCatalog>()
+function liveCatalogFor(connection: ConnectedMCPServer, signal?: AbortSignal): LiveToolCatalog {
+  let catalog = liveCatalogs.get(connection.client)
+  if (!catalog) {
+    const transport = connection.client.transport
+    catalog = new LiveToolCatalog({ signal,
+      assertOpen: () => { if (transport && connection.client.transport !== transport) throw new Error('MCP connection is closed; refresh cannot reconnect it') },
+      page: (cursor, requestSignal) => connection.capabilities.tools
+        ? connection.client.request({ method: 'tools/list', ...(cursor !== undefined ? { params: { cursor } } : {}) }, ListToolsResultSchema, { signal: requestSignal, timeout: 20_000 })
+        : Promise.resolve({ tools: [] }),
+      committed: (result) => {
+        fetchToolsForClient.cache.delete(getMcpClientFetchCacheKey(connection))
+        recordLiveToolCatalog(connection, result)
+      },
+      failed: (state) => {
+        const previous = liveCatalogs.get(connection.client)?.snapshot
+        if (previous) publishMcpToolCatalog(connection.name, connection.config, previous.result, connection.connectionStartedAt, state)
+      },
+    })
+    liveCatalogs.set(connection.client, catalog)
+  }
+  return catalog
+}
+
+/** Refresh an existing transport only. A cached descriptor cannot start a process. */
+export function refreshMcpToolCatalog(connection: ConnectedMCPServer, options: { invalidated?: boolean } = {}) {
+  if (connection.deferredTools) return Promise.reject(new Error('MCP server is not connected; cached metadata cannot be refreshed'))
+  return liveCatalogFor(connection).refresh(options)
+}
+export function getMcpToolCatalogState(connection: ConnectedMCPServer) {
+  return liveCatalogs.get(connection.client)?.state() ?? { stale: false }
+}
 export async function ensureConnectedClient(
   client: ConnectedMCPServer,
 ): Promise<ConnectedMCPServer> {
@@ -1442,6 +1487,9 @@ export async function ensureConnectedClient(
       'MCP server not connected',
     )
   }
+  const catalog = liveCatalogFor(connectedClient)
+  if (!catalog.snapshot || catalog.state().stale) await catalog.refresh()
+
   return connectedClient
 }
 
@@ -1467,23 +1515,27 @@ export function areMcpConfigsEqual(
 // reconnects), bounded to prevent unbounded growth with many MCP servers.
 const MCP_FETCH_CACHE_SIZE = 20
 
+function recordLiveToolCatalog(client: ConnectedMCPServer, result: ListToolsResult) {
+  if (getSessionRuntimeContext()?.mcpLifetime) {
+    mcpToolCatalogCache.put(mcpCatalogKey(client.name, client.config), {
+      tools: result, capabilities: client.capabilities, serverInfo: client.serverInfo, instructions: client.instructions,
+    })
+  }
+  publishMcpToolCatalog(client.name, client.config, result, client.connectionStartedAt, liveCatalogs.get(client.client)?.state())
+}
+
 export const fetchToolsForClient = memoizeWithLRU(
   async (client: MCPServerConnection): Promise<Tool[]> => {
     if (client.type !== 'connected') return []
 
     try {
       if (!client.capabilities?.tools) {
+        if (!client.deferredTools) recordLiveToolCatalog(client, { tools: [] })
         return []
       }
 
-      const result = client.deferredTools || (await client.client.request(
-        { method: 'tools/list' }, ListToolsResultSchema,
-      )) as ListToolsResult
-      if (!client.deferredTools && getSessionRuntimeContext()?.mcpLifetime) {
-        mcpToolCatalogCache.put(mcpCatalogKey(client.name, client.config), {
-          tools: result, capabilities: client.capabilities, serverInfo: client.serverInfo, instructions: client.instructions,
-        })
-      }
+      const catalog = client.deferredTools ? undefined : liveCatalogFor(client)
+      const result = client.deferredTools ?? catalog!.snapshot?.result ?? await catalog!.refresh()
 
       // Sanitize tool data from MCP server
       const toolsToProcess = recursivelySanitizeUnicode(result.tools)
@@ -1591,6 +1643,10 @@ export const fetchToolsForClient = memoizeWithLRU(
               for (let attempt = 0; ; attempt++) {
                 try {
                   const connectedClient = await ensureConnectedClient(client)
+                  const latest = liveCatalogs.get(connectedClient.client)?.snapshot?.result.tools.find(item => item.name === tool.name)
+                  if (latest && catalogRevision(recursivelySanitizeUnicode(latest)) !== catalogRevision(tool) || (!latest && liveCatalogs.get(connectedClient.client)?.snapshot)) {
+                    throw new Error(`MCP tool '${tool.name}' changed or was removed. Refresh the tool list before calling it again.`)
+                  }
                   const mcpResult = await callMCPToolWithUrlElicitationRetry({
                     client: connectedClient,
                     clientConnection: client,
@@ -1710,7 +1766,7 @@ export const fetchToolsForClient = memoizeWithLRU(
         .filter(isIncludedMcpTool)
     } catch (error) {
       logMCPError(client.name, `Failed to fetch tools: ${errorMessage(error)}`)
-      return []
+      throw error
     }
   },
   getMcpClientFetchCacheKey,
@@ -2517,6 +2573,8 @@ export async function processMCPResult(
     persistResult.filepath,
     persistResult.originalSize,
     formatDescription,
+    undefined,
+    persistResult,
   )
 }
 

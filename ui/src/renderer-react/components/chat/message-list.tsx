@@ -342,7 +342,7 @@ function renderTranscriptItem(
 
   const message = item.message;
   if (message.type === "user_text") {
-    return <UserMessage key={message.id} message={message} />;
+    return <UserMessage sessionId={sessionId} key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
     return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
@@ -623,6 +623,8 @@ export const VirtualMessageList = React.forwardRef<
   const [highlightedMessageId, setHighlightedMessageId] = React.useState<string | null>(null);
   const highlightTimerRef = React.useRef<number | null>(null);
   const [turnChanges, setTurnChanges] = React.useState<Map<string, TurnChangeSummary>>(new Map());
+  const [observationVersion, setObservationVersion] = React.useState(0);
+  React.useEffect(() => window.agentDesktop.onTurnObservation?.(event => { if (event.sessionId === sessionId) setObservationVersion(value => value + 1); }), [sessionId]);
   const [rewindSupport, setRewindSupport] = React.useState<TurnChangesPayload["rewind"]>({
     supported: false,
     reason: "当前会话不支持撤销。",
@@ -645,7 +647,7 @@ export const VirtualMessageList = React.forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [loading, messages, sessionId]);
+  }, [loading, messages, sessionId, observationVersion]);
 
   const lastRenderItemByTurn = React.useMemo(() => {
     const result = new Map<string, string>();

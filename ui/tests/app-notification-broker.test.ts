@@ -81,4 +81,41 @@ describe('Main app notification broker', () => {
     expect(result.notifications[0].decisionOptions).toBeUndefined();
     expect(result.mobile).toEqual([]);
   });
+
+  it('retains every pending approval when ordinary history exceeds its limit', () => {
+    const result = runScenario(`
+      const broker = createAppNotificationBroker(db);
+      for (let i = 0; i < 205; i++) broker.create({
+        title: 'Approval', message: 'Allow?', decisionRequestId: 'decision-' + i,
+      }, { id: 'approval-' + i, now: 100 + i });
+      for (let i = 0; i < 220; i++) broker.create({
+        title: 'Ordinary ' + i, message: 'Done',
+      }, { id: 'ordinary-' + i, now: 1000 + i });
+      const items = broker.list();
+      const remaining = broker.clear();
+      broker.resolveDecision('decision-0');
+      broker.clear();
+      console.log(JSON.stringify({
+        pending: items.filter(item => item.decisionRequestId).length,
+        history: items.filter(item => !item.decisionRequestId).length,
+        afterClear: remaining.length, afterResolution: broker.list().length,
+      }));
+    `);
+    expect(result).toEqual({ pending: 205, history: 200, afterClear: 205, afterResolution: 204 });
+  });
+
+  it('keeps independent approvals and ordinary messages separate even with identical text', () => {
+    const result = runScenario(`
+      const broker = createAppNotificationBroker(db);
+      const input = { source: 'App', title: 'Confirm', message: 'Continue?' };
+      broker.create(input, { now: 100 });
+      broker.create({ ...input, decisionRequestId: 'first' }, { now: 101 });
+      broker.create({ ...input, decisionRequestId: 'second' }, { now: 102 });
+      broker.create(input, { now: 103 });
+      console.log(JSON.stringify(broker.list()));
+    `);
+    expect(result).toHaveLength(3);
+    expect(result.filter((item: any) => item.decisionRequestId).map((item: any) => item.decisionRequestId).sort()).toEqual(['first', 'second']);
+    expect(result.find((item: any) => !item.decisionRequestId).occurrences).toBe(2);
+  });
 });

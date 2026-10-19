@@ -144,17 +144,17 @@ describe('app sidebar resource navigation', () => {
 
   test('shows one combined resource entry instead of separate entries', () => {
     const html = renderSidebar();
-    expect(html).toContain('title="技能·专家·连接器"');
-    expect(html.match(/data-resource-nav-separator/g)).toHaveLength(2);
+    expect(html).toContain('title="技能·专家"');
+    expect(html.match(/data-resource-nav-separator/g)).toHaveLength(1);
     expect(html).toContain('text-[8px]');
     expect(html).not.toContain('title="技能"');
     expect(html).not.toContain('title="专家"');
   });
 
   test('highlights the combined entry for each resource view', () => {
-    for (const activeView of ['skills', 'experts', 'connectors'] as const) {
+    for (const activeView of ['skills', 'experts'] as const) {
       const html = renderSidebar({ activeView });
-      expect(html).toMatch(/class="[^"]*bg-secondary[^"]*"[^>]*title="技能·专家·连接器"/);
+      expect(html).toMatch(/class="[^"]*bg-secondary[^"]*"[^>]*title="技能·专家"/);
     }
   });
 });

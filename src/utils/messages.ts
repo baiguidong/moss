@@ -3865,6 +3865,7 @@ export function createSystemAPIErrorMessage(
   retryInMs: number,
   retryAttempt: number,
   maxRetries: number,
+  retryBudget?: import('../services/api/retryBudget.js').RetryBudgetSnapshot,
 ): SystemAPIErrorMessage {
   return {
     type: 'system',
@@ -3875,6 +3876,7 @@ export function createSystemAPIErrorMessage(
     retryInMs,
     retryAttempt,
     maxRetries,
+    ...(retryBudget ? { retryBudget } : {}),
     timestamp: new Date().toISOString(),
     uuid: randomUUID(),
   }

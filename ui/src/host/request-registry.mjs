@@ -1,4 +1,9 @@
 import { EventEmitter } from 'node:events';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const requestContext = new AsyncLocalStorage();
+export const runWithHostRequestContext = (context, operation) => requestContext.run(context, operation);
+export const getHostRequestContext = () => requestContext.getStore();
 
 export function createRequestRegistry(electronIpc) {
   const handlers = new Map();
@@ -6,8 +11,9 @@ export function createRequestRegistry(electronIpc) {
   events.setMaxListeners(100);
   return {
     handle(method, handler) {
-      handlers.set(method, handler);
-      electronIpc?.handle(method, handler);
+      const invoke = (context, ...args) => requestContext.run(context, () => handler(context, ...args));
+      handlers.set(method, invoke);
+      electronIpc?.handle(method, invoke);
     },
     removeHandler(method) {
       handlers.delete(method);

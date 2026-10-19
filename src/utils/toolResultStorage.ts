@@ -3,7 +3,8 @@
  */
 
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir } from 'fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'path'
 import {
   getOriginalCwd,
@@ -14,6 +15,7 @@ import {
   BYTES_PER_TOKEN,
   DEFAULT_MAX_RESULT_SIZE_CHARS,
   MAX_TOOL_RESULT_BYTES,
+  MAX_PERSISTED_TOOL_RESULT_BYTES,
 } from '../constants/toolLimits.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/featureFlags.js'
 import { logEvent } from '../services/analytics/index.js'
@@ -21,11 +23,12 @@ import { sanitizeToolNameForAnalytics } from '../services/analytics/metadata.js'
 import { getAdvancedSetting } from '../services/advancedSettings.js'
 import type { Message } from '../types/message.js'
 import { logForDebugging } from './debug.js'
-import { getErrnoCode, toError } from './errors.js'
+import { toError } from './errors.js'
 import { formatFileSize } from './format.js'
 import { logError } from './log.js'
 import { getProjectDir } from './sessionStorage.js'
 import { jsonStringify } from './slowOperations.js'
+import { persistBoundedOutput, utf8Prefix } from './boundedToolOutput.js'
 
 // Subdirectory name for tool results within a session
 export const TOOL_RESULTS_SUBDIR = 'tool-results'
@@ -88,6 +91,10 @@ export type PersistedToolResult = {
   isJson: boolean
   preview: string
   hasMore: boolean
+  originalBytes?: number
+  storedBytes?: number
+  truncatedAtBytes?: number
+  storageComplete?: boolean
 }
 
 // Error result when persistence fails
@@ -120,7 +127,8 @@ export const PREVIEW_SIZE_BYTES = 2000
  */
 export function getToolResultPath(id: string, isJson: boolean): string {
   const ext = isJson ? 'json' : 'txt'
-  return join(getToolResultsDir(), `${id}.${ext}`)
+  const safeId = /^[a-zA-Z0-9_-]{1,160}$/.test(id) ? id : createHash('sha256').update(id).digest('hex')
+  return join(getToolResultsDir(), `${safeId}.${ext}`)
 }
 
 /**
@@ -134,6 +142,14 @@ export async function ensureToolResultsDir(): Promise<void> {
   }
 }
 
+export async function persistShellOutput(sourcePath: string, id: string, signal?: AbortSignal) {
+  await ensureToolResultsDir()
+  const persistedOutputPath = getToolResultPath(id, false)
+  const stored = await persistBoundedOutput(persistedOutputPath, { file: sourcePath }, { signal })
+  return { persistedOutputPath, persistedOutputSize: stored.originalBytes,
+    persistedOutputStoredBytes: stored.storedBytes, persistedOutputTruncated: stored.truncated }
+}
+
 /**
  * Persist a tool result to disk and return information about the persisted file
  *
@@ -144,6 +160,7 @@ export async function ensureToolResultsDir(): Promise<void> {
 export async function persistToolResult(
   content: NonNullable<ToolResultBlockParam['content']>,
   toolUseId: string,
+  options: { maxBytes?: number; signal?: AbortSignal } = {},
 ): Promise<PersistedToolResult | PersistToolResultError> {
   const isJson = Array.isArray(content)
 
@@ -158,24 +175,23 @@ export async function persistToolResult(
   }
 
   await ensureToolResultsDir()
-  const filepath = getToolResultPath(toolUseId, isJson)
   const contentStr = isJson ? jsonStringify(content, null, 2) : content
+  const originalBytes = Buffer.byteLength(contentStr)
+  // A truncated JSON prefix is plain text, not a parseable JSON document.
+  const completeJson = isJson && originalBytes <= (options.maxBytes ?? MAX_PERSISTED_TOOL_RESULT_BYTES)
+  const filepath = getToolResultPath(toolUseId, completeJson)
 
-  // tool_use_id is unique per invocation and content is deterministic for a
-  // given id, so skip if the file already exists. This prevents re-writing
-  // the same content on every API turn when microcompact replays the
-  // original messages. Use 'wx' instead of a stat-then-write race.
+  // Replays may reuse only a matching complete snapshot. Publication is
+  // bounded and atomic; existing files are never silently overwritten.
+  let stored
   try {
-    await writeFile(filepath, contentStr, { encoding: 'utf-8', flag: 'wx' })
+    stored = await persistBoundedOutput(filepath, { text: contentStr }, options)
     logForDebugging(
-      `Persisted tool result to ${filepath} (${formatFileSize(contentStr.length)})`,
+      `Persisted tool result to ${filepath} (${formatFileSize(stored.storedBytes)} saved of ${formatFileSize(originalBytes)})`,
     )
   } catch (error) {
-    if (getErrnoCode(error) !== 'EEXIST') {
-      logError(toError(error))
-      return { error: getFileSystemErrorMessage(toError(error)) }
-    }
-    // EEXIST: already persisted on a prior turn, fall through to preview
+    logError(toError(error))
+    return { error: getFileSystemErrorMessage(toError(error)) }
   }
 
   // Generate a preview
@@ -184,9 +200,13 @@ export async function persistToolResult(
   return {
     filepath,
     originalSize: contentStr.length,
-    isJson,
+    isJson: completeJson,
     preview,
     hasMore,
+    originalBytes,
+    storedBytes: stored.storedBytes,
+    storageComplete: !stored.truncated,
+    ...(stored.truncated ? { truncatedAtBytes: stored.storedBytes } : {}),
   }
 }
 
@@ -197,7 +217,12 @@ export function buildLargeToolResultMessage(
   result: PersistedToolResult,
 ): string {
   let message = `${PERSISTED_OUTPUT_TAG}\n`
-  message += `Output too large (${formatFileSize(result.originalSize)}). Full output saved to: ${result.filepath}\n\n`
+  message += `Output too large (${formatFileSize(result.originalBytes ?? result.originalSize)}). `
+  message += result.storageComplete === true
+    ? `Full output saved to: ${result.filepath}\n\n`
+    : result.storageComplete === false
+      ? `Only a partial snapshot (${formatFileSize(result.storedBytes ?? result.truncatedAtBytes ?? 0)}) saved to: ${result.filepath}. The remaining output is not in this file. A JSON prefix may be incomplete; do not treat it as a complete JSON document.\n\n`
+      : `Output saved to: ${result.filepath}. Completeness was not recorded.\n\n`
   message += `Preview (first ${formatFileSize(PREVIEW_SIZE_BYTES)}):\n`
   message += result.preview
   message += result.hasMore ? '\n...\n' : '\n'
@@ -321,8 +346,7 @@ async function maybePersistLargeToolResult(
   // Persist the entire content as a unit
   const result = await persistToolResult(content, toolResultBlock.tool_use_id)
   if (isPersistError(result)) {
-    // If persistence failed, return the original block unchanged
-    return toolResultBlock
+    return { ...toolResultBlock, content: failedPersistencePreview(content, result.error) }
   }
 
   const message = buildLargeToolResultMessage(result)
@@ -330,10 +354,10 @@ async function maybePersistLargeToolResult(
   // Log analytics
   logEvent('tengu_tool_result_persisted', {
     toolName: sanitizeToolNameForAnalytics(toolName),
-    originalSizeBytes: result.originalSize,
-    persistedSizeBytes: message.length,
-    estimatedOriginalTokens: Math.ceil(result.originalSize / BYTES_PER_TOKEN),
-    estimatedPersistedTokens: Math.ceil(message.length / BYTES_PER_TOKEN),
+    originalSizeBytes: result.originalBytes ?? result.originalSize,
+    persistedSizeBytes: Buffer.byteLength(message),
+    estimatedOriginalTokens: Math.ceil((result.originalBytes ?? result.originalSize) / BYTES_PER_TOKEN),
+    estimatedPersistedTokens: Math.ceil(Buffer.byteLength(message) / BYTES_PER_TOKEN),
     thresholdUsed: threshold,
   })
 
@@ -347,19 +371,24 @@ export function generatePreview(
   content: string,
   maxBytes: number,
 ): { preview: string; hasMore: boolean } {
-  if (content.length <= maxBytes) {
+  if (Buffer.byteLength(content) <= maxBytes) {
     return { preview: content, hasMore: false }
   }
 
   // Find the last newline within the limit to avoid cutting mid-line
-  const truncated = content.slice(0, maxBytes)
+  const truncated = utf8Prefix(content, maxBytes)
   const lastNewline = truncated.lastIndexOf('\n')
 
   // If we found a newline reasonably close to the limit, use it
   // Otherwise fall back to the exact limit
-  const cutPoint = lastNewline > maxBytes * 0.5 ? lastNewline : maxBytes
+  const cutPoint = lastNewline > truncated.length * 0.5 ? lastNewline : truncated.length
 
   return { preview: content.slice(0, cutPoint), hasMore: true }
+}
+
+function failedPersistencePreview(content: NonNullable<ToolResultBlockParam['content']>, error: string): string {
+  const text = typeof content === 'string' ? content : jsonStringify(content)
+  return `${PERSISTED_OUTPUT_TAG}\nOutput could not be saved: ${utf8Prefix(error, 500)}. Only the following preview is available; it is not the full result.\n${generatePreview(text, PREVIEW_SIZE_BYTES).preview}\n${PERSISTED_OUTPUT_CLOSING_TAG}`
 }
 
 /**
@@ -719,7 +748,7 @@ async function buildReplacement(
   candidate: ToolResultCandidate,
 ): Promise<{ content: string; originalSize: number } | null> {
   const result = await persistToolResult(candidate.content, candidate.toolUseId)
-  if (isPersistError(result)) return null
+  if (isPersistError(result)) return { content: failedPersistencePreview(candidate.content, result.error), originalSize: contentSize(candidate.content) }
   return {
     content: buildLargeToolResultMessage(result),
     originalSize: result.originalSize,

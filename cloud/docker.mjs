@@ -24,10 +24,30 @@ export class Docker {
       if (input) pipeline(input, req).catch(reject); else req.end(data);
     });
   }
+  commit(id, reference) { return this.request('POST', `/commit?container=${encodeURIComponent(id)}&repo=${encodeURIComponent(reference)}&pause=false`); }
+  saveImage(id) { return this.request('GET', `/images/${encodeURIComponent(id)}/get`, undefined, { stream: true, timeout: 3600000 }); }
+  async loadImage(input) {
+    const response = await this.request('POST', '/images/load?quiet=1', undefined, { input, stream: true, timeout: 3600000 });
+    let output = ''; for await (const chunk of response) { output += chunk; if (output.length > 1024 * 1024) throw new Error('Image load response too large'); }
+    for (const line of output.trim().split('\n')) if (line && JSON.parse(line).error) throw new Error(JSON.parse(line).error);
+  }
+  volume(name) { return this.request('GET', `/volumes/${encodeURIComponent(name)}`); }
+  createVolume(name, labels) { return this.request('POST', '/volumes/create', { Name: name, Labels: labels }); }
+  async removeOwnedContainer(id, labels) {
+    let info; try { info = await this.inspect(id); } catch (error) { if (error.status === 404) return; throw error; }
+    for (const [key, value] of Object.entries(labels)) if (info.Config.Labels?.[key] !== value) throw new Error('Container cleanup ownership mismatch');
+    await this.request('DELETE', `/containers/${info.Id}?force=1`);
+  }
+  async removeOwnedVolume(name, labels) {
+    let volume; try { volume = await this.volume(name); } catch (error) { if (error.status === 404) return; throw error; }
+    for (const [key, value] of Object.entries(labels)) if (volume.Labels?.[key] !== value) throw new Error('Volume cleanup ownership mismatch');
+    await this.request('DELETE', `/volumes/${encodeURIComponent(name)}`);
+  }
+  inspectSize(id) { return this.request('GET', `/containers/${encodeURIComponent(id)}/json?size=1`); }
   inspect(id) { return this.request('GET', `/containers/${encodeURIComponent(id)}/json`); }
   image(id) { return this.request('GET', `/images/${encodeURIComponent(id)}/json`); }
   create(name, config) { return this.request('POST', `/containers/create?name=${encodeURIComponent(name)}`, config); }
-  start(id) { return this.request('POST', `/containers/${id}/start`); }
+  async start(id) { try { return await this.request('POST', `/containers/${id}/start`); } catch (error) { if (error.status !== 304) throw error; } }
   stop(id) { return this.request('POST', `/containers/${id}/stop?t=60`); }
   restart(id) { return this.request('POST', `/containers/${id}/restart?t=60`); }
   async exec(id, cmd, user = '0') {

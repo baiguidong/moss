@@ -78,6 +78,7 @@ export function createMossCronScheduler({
   runSessionPrompt,
   hostId = randomUUID(),
   now = Date.now,
+  canRun = () => true,
 }) {
   const filePath = path.join(mossHome, 'cron_tasks.json');
   const recurringMaxAge = 7 * 24 * 60 * 60 * 1000;
@@ -275,6 +276,7 @@ export function createMossCronScheduler({
   }
 
   async function tick() {
+    if (!canRun()) return;
     if (stopped || ticking) return;
     ticking = true;
     try {
@@ -293,6 +295,7 @@ export function createMossCronScheduler({
         }
       });
       for (const task of await readCronTaskStore(filePath)) {
+        if (stopped || !canRun()) return;
         if (task.enabled === false || task.runId || activeRuns.has(task.id)) continue;
         if (Number.isFinite(task.nextRunAt) && task.nextRunAt <= now()) {
           void launch(task.id).catch(error => console.warn('[moss-cron] task run failed:', error?.message || error));
@@ -374,5 +377,14 @@ export function createMossCronScheduler({
     } catch (error) { return { ok: false, error: error?.message || String(error) }; }
   });
 
-  return { hostId, start, stop, tick, removeTasksForSession, waitForIdle: () => Promise.allSettled([...activeRuns.values()]) };
+  async function skipMissed() {
+    await initialize();
+    await updateCronTaskStore(filePath, tasks => {
+      for (const task of tasks) {
+        task.nextRunAt = nextRunAt(task, now());
+        if (task.runId) { task.enabled = false; task.status = 'failed'; task.lastError = '环境已恢复，请检查历史任务结果后手动重试。'; delete task.runId; delete task.runHostId; }
+      }
+    });
+  }
+  return { hostId, start, stop, tick, skipMissed, removeTasksForSession, waitForIdle: () => Promise.allSettled([...activeRuns.values()]) };
 }

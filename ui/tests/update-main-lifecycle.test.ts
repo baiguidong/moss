@@ -27,7 +27,9 @@ function fixture(extra: Record<string, any> = {}) {
     closeWorkspaceWatcher: () => {}, disposeRuntime: (record: { id: string }) => calls.push(`dispose-${record.id}`),
     cloudStorageHost: { close: async () => { calls.push('cloud-close'); } },
     appRuntime: { shutdown: async () => { calls.push('apps-close'); } },
-    fsp: { rm: async () => {} }, REMOTE_PREVIEW_CACHE_DIR: '/test-only', ...extra,
+    fsp: { rm: async () => {} }, REMOTE_PREVIEW_CACHE_DIR: '/test-only',
+    webTerminals: null, webInteractions: null, webApps: null, webOAuth: null,
+    hostConfirmations: null, webServer: null, ...extra,
   };
   const shutdown = runInNewContext(`${body}\nshutdownDesktop`, context);
   return { shutdown, context, calls };
@@ -70,6 +72,7 @@ test('Windows installation blockers include queued work, teams, terminals, App r
     appTestingHost: { isRunning: () => false },
     computerUseService: { owner: null, inFlight: false },
     appRuntime: { supervisor: { listStatuses: () => [{ pendingActions: 1 }] } }, managedRuntimeInstallPromise: Promise.resolve(),
+    memoryDreamService: { getStatus: () => ({ phase: 'idle' }) },
   });
   expect(getBlockers()).toEqual(['会话或后台任务', 'Agent Team', '终端窗口', 'App 操作', '运行时安装']);
 });

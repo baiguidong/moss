@@ -14,6 +14,8 @@
  */
 import { getAdvancedSetting } from 'src/services/advancedSettings.js'
 export const DEFAULT_MAX_OUTPUT_TOKENS = 25000
+// Compressed input bytes, independent of the text and model-output limits.
+export const MAX_IMAGE_READ_BYTES = 20 * 1024 * 1024
 
 /**
  * Env var override for max output tokens. Returns undefined when unset/invalid

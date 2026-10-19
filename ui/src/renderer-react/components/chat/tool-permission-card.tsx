@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { DiffViewer } from "@/components/chat/diff-viewer";
+import { copyToClipboard } from "@/components/chat/clipboard";
 import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
@@ -170,7 +171,9 @@ export function ToolPermissionCard({ request, onSubmit, onReject }: Props) {
             <span className="min-w-0 flex-1 truncate">{filePath}</span>
             <button
               type="button"
-              onClick={() => void navigator.clipboard.writeText(filePath)}
+              onClick={() => void copyToClipboard(filePath).then(copied => {
+                if (!copied) setError('复制失败，请手动选择并复制路径。');
+              })}
               className="shrink-0 rounded-md border border-border/80 bg-background px-2.5 py-1 font-sans text-[11px] text-foreground transition-colors hover:bg-muted"
             >
               复制路径

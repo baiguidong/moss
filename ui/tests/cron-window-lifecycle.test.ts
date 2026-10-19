@@ -24,7 +24,7 @@ test('closing the last macOS window preserves cron runtimes and their workers', 
   const complete = new Promise<void>(resolve => { teamsChecked = resolve; });
   runInNewContext(source.slice(start, end), {
     app: { on: (_name: string, callback: () => void) => { onClose = callback; }, quit: () => { throw new Error('Unexpected quit'); } },
-    process: { platform: 'darwin' }, sessions, subAgentSessions, selfTestTarget: null,
+    process: { platform: 'darwin' }, sessions, subAgentSessions, selfTestTarget: null, isWebHost: false,
     computerUseService: { stop: async (reason: string) => { controlStops.push(reason); } },
     shutdownSessionAgentTeam: async (record: { id: string }) => { shutdown.push(record.id); },
     closeWorkspaceWatcher: () => {},

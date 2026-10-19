@@ -10,11 +10,13 @@ export function HTMLViewer({
   filePath,
   baseUrl,
   sourceOnly = false,
+  onReady,
 }: {
   content: string;
   filePath: string;
   baseUrl?: string;
   sourceOnly?: boolean;
+  onReady?: () => void;
 }) {
   const [mode, setMode] = React.useState<"preview" | "source">(sourceOnly ? "source" : "preview");
   const srcDoc = React.useMemo(() => buildHtmlDocument(content, filePath, baseUrl), [baseUrl, content, filePath]);
@@ -30,7 +32,7 @@ export function HTMLViewer({
         </Button>
       </div>
       {mode === "preview" ? (
-        <iframe title={filePath} srcDoc={srcDoc} sandbox="allow-scripts allow-forms allow-modals" className="h-full w-full bg-white" />
+        <iframe onLoad={onReady} title={filePath} srcDoc={srcDoc} sandbox="allow-scripts allow-forms allow-modals" className="h-full w-full bg-white" />
       ) : (
         <TextViewer content={content} />
       )}

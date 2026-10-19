@@ -209,8 +209,8 @@ function NewProjectDialog({
 
             <ProjectResourcePicker
               kind="connector"
-              title="添加个人授权连接器"
-              description="添加后成员可使用个人账号授权连接。如需配置公共连接器，可在创建项目完成后配置。"
+              title="添加个人账号在线应用"
+              description="添加后成员可使用个人账号授权连接。如需配置公共服务连接，可在创建项目完成后配置。"
               selectedIds={form.connectorIds}
               onChange={(connectorIds) => setForm((prev) => ({ ...prev, connectorIds }))}
             />
@@ -622,8 +622,8 @@ function ProjectConfigPanel({
           </div>
           <ProjectResourcePicker
             kind="connector"
-            title="添加个人授权连接器"
-            description="项目任务将使用所选个人授权连接器。"
+            title="添加个人账号在线应用"
+            description="项目任务将使用所选个人账号在线应用。"
             selectedIds={draft.connectorIds}
             onChange={(connectorIds) => setDraft((prev) => ({ ...prev, connectorIds }))}
           />

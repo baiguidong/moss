@@ -118,6 +118,7 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from './toolHooks.js'
+import { validateRewrittenInput } from './validateRewrittenInput.js'
 
 /** Minimum total hook duration (ms) to show inline timing summary */
 export const HOOK_TIMING_DISPLAY_THRESHOLD_MS = 500
@@ -797,7 +798,7 @@ async function checkPermissionsAndCallTool(
       case 'hookUpdatedInput':
         // Hook provided updatedInput without making a permission decision (passthrough)
         // Update processedInput so it's used in the normal permission flow
-        processedInput = result.updatedInput
+        processedInput = await validateRewrittenInput(tool, result.updatedInput, toolUseContext)
         break
       case 'preventContinuation':
         shouldPreventContinuation = result.shouldPreventContinuation
@@ -859,15 +860,17 @@ async function checkPermissionsAndCallTool(
   // and ask the user for permission if we don't
   const permissionMode = toolUseContext.getAppState().toolPermissionContext.mode
 
-  const resolved = await resolveHookPermissionDecision(
-    hookPermissionResult,
-    tool,
-    processedInput,
-    toolUseContext,
-    canUseTool,
-    assistantMessage,
-    toolUseID,
-  )
+  let resolved: Awaited<ReturnType<typeof resolveHookPermissionDecision>>
+  try {
+    resolved = await resolveHookPermissionDecision(
+      hookPermissionResult, tool, processedInput, toolUseContext,
+      canUseTool, assistantMessage, toolUseID,
+    )
+  } catch (error) {
+    endToolBlockedOnUserSpan('reject', 'unknown')
+    endToolSpan()
+    throw error
+  }
   const permissionDecision = resolved.decision
   processedInput = resolved.input
 

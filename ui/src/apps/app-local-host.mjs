@@ -21,7 +21,7 @@ async function appFile(input, context) {
   if (!(await fs.stat(file)).isFile()) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Expected a file')
   return file
 }
-export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus }) {
+export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus, preview }) {
   return {
     [RUNTIMES_PROTOCOL]: {
       'python.get': () => {
@@ -35,13 +35,13 @@ export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getMa
         if (!/\.html?$/i.test(file)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Preview requires an HTML file')
         context.assertCurrent?.()
         context.signal?.throwIfAborted()
-        await openAppFilePreview(BrowserWindow, file)
+        await (preview ? preview(file) : openAppFilePreview(BrowserWindow, file))
         return { opened: true }
       },
       async pick(input, context) {
         context?.assertCurrent?.()
         context?.signal?.throwIfAborted()
-        const result = await dialog.showOpenDialog({ properties: [input.kind === 'directory' ? 'openDirectory' : 'openFile', ...(input.multiple === false ? [] : ['multiSelections'])] })
+        const result = await dialog.showOpenDialog({ ...(dialog.web ? { title: `${context?.appId || 'App'} 请求选择${input.kind === 'directory' ? '云电脑目录' : '文件'}`, signal: context?.signal } : {}), properties: [input.kind === 'directory' ? 'openDirectory' : 'openFile', ...(input.multiple === false ? [] : ['multiSelections'])] })
         context?.assertCurrent?.()
         context?.signal?.throwIfAborted()
         if (result.filePaths.length > 100) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many selected paths')
@@ -59,7 +59,8 @@ export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getMa
         const file = await appFile(input, context)
         context.assertCurrent?.()
         context.signal?.throwIfAborted()
-        shell.showItemInFolder(file)
+        const revealed = await shell.showItemInFolder(file)
+        if (dialog.web && !revealed) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, '查看文件已取消')
         return { revealed: true }
       },
     },

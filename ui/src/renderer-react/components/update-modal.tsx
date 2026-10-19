@@ -95,6 +95,7 @@ export function UpdateModal() {
   }, [accept]);
 
   React.useEffect(() => {
+    if (window.mossWeb) return;
     const api = window.agentDesktop.update;
     const offState = api.onState(accept);
     const offOpen = api.onOpenModal(() => {

@@ -26,6 +26,11 @@ function createHarness(sessionMode = 'fixed') {
   const noop = () => {};
   const context: any = {
     ...mailContext, normalizeStringList,
+    randomUUID: () => 'test-turn',
+    presentationService: { beginTurn: async () => ({ epoch: 1 }) },
+    turnObservationService: { begin: async () => null },
+    mossLog: noop,
+    isExpectedControllerCancellation: () => false,
     hasActiveAgentTeam: () => false,
     getProjectWorkerTasks: () => [],
     isActiveProjectWorker: () => false,

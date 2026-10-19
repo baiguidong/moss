@@ -1,6 +1,10 @@
+"use client";
+
+import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
+import { AppConnectorSettings, canAuthenticateConnector } from '@/components/app-connector-settings';
+import { useAppDiscoveryPreferences } from '@/lib/app-discovery';
 export { AppAgentTools } from '@/components/app-capabilities';
 import { AppAgentTools, AppCapabilityButton } from '@/components/app-capabilities';
-"use client";
 
 import * as React from "react";
 import { AppIcon } from "@/components/app-icon";
@@ -9,7 +13,7 @@ import { AppCategoryTabs } from '@/components/app-category-tabs';
 import { filterApps, groupApps } from '@/lib/app-categories';
 import { appPageUnavailableReason, getAppPrimaryEntry } from '@/lib/app-navigation';
 import {
-  AlertCircle, Download, ExternalLink, History,
+  AlertCircle, ExternalLink, History,
   KeyRound, Pencil, RefreshCw, RotateCcw,
   Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2,
 } from "lucide-react";
@@ -18,9 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
-import { AppInstallProgressView } from "@/components/app-install-progress";
 import { useAppAuthoring } from '@/lib/app-authoring';
-import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
 function formatTimestamp(timestamp: number) {
@@ -303,7 +305,8 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
 }
 
 
-export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp }: {
+export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp }: {
+  onUseApp?: (app: StoredApp) => void;
   apps: StoredApp[];
   versionsByApp: Record<string, AppVersion[]>;
   onLaunch: (name: string, options?: { settings?: boolean; route?: string }) => void;
@@ -320,12 +323,17 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
   const [versionsOpen, setVersionsOpen] = React.useState<string | null>(null);
   const [marketOpen, setMarketOpen] = React.useState(false);
   const [category, setCategory] = React.useState('all');
+  const [query, setQuery] = React.useState('');
+  const { preferences, update: updatePreference } = useAppDiscoveryPreferences();
+  const [sectionOverride, setSectionOverride] = React.useState<string | null>(initialExpandedApp ? 'all' : null);
+  React.useEffect(() => { if (initialExpandedApp) setSectionOverride('all'); }, [initialExpandedApp]);
+  const section = sectionOverride || preferences.sections.installed;
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
-  const { progress, clearProgress } = useAppInstallProgress("local");
-  const localProgress = progress.local;
-  const installing = busy === "install" || isAppInstallActive(localProgress);
-  const visibleApps = groupApps(filterApps(apps, '', category)).flatMap(group => group.apps);
+  const [authNotice, setAuthNotice] = React.useState<{ appId: string; message: string } | null>(null);
+  const matchedApps = filterApps(apps, query, category, { group: section });
+  const visibleApps = groupApps(matchedApps).flatMap(group => group.apps);
+  const changeSection = (value: string) => { setSectionOverride(value); setCategory('all'); void updatePreference({ action: 'section', surface: 'installed', section: value }).catch(reason => setError(reason.message)); };
 
   const run = async (key: string, operation: () => Promise<unknown>) => {
     setBusy(key);
@@ -335,37 +343,26 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
     finally { setBusy(null); }
   };
 
-  const install = async () => {
-    clearProgress("local");
-    await run("install", async () => {
-      const result = await window.agentDesktop.installAppArchive();
-      if (!result.ok && !result.canceled) throw new Error(result.error || "App 安装失败");
-    });
-  };
-
-  if (marketOpen) {
+  if (marketOpen || apps.length === 0) {
     return <AppMarketplacePanel installedApps={apps} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div data-app-header className="shrink-0 border-b border-border/70">
-      <div className="mx-auto flex h-12 w-full max-w-[1180px] items-center justify-between gap-3 px-4 sm:px-5">
-        <div className="flex items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="text-xs text-muted-foreground">{apps.length} 个已安装</span></div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" />应用市场</Button>
-          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={installing} onClick={install}><Download className="h-3.5 w-3.5" />{installing ? "安装中…" : "本地安装"}</Button>
-        </div>
+      <div className="mx-auto flex min-h-12 w-full max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 sm:px-5">
+        <div className="order-1 flex shrink-0 items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="hidden text-xs text-muted-foreground sm:inline">{apps.length} 个已安装</span></div>
+        <div className="order-3 w-full min-[480px]:order-2 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
+        <Button size="sm" variant="ghost" className="order-2 h-8 shrink-0 px-2.5 text-xs sm:order-3" title="应用市场" aria-label="应用市场" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" /><span className="hidden sm:inline">应用市场</span></Button>
       </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
-        <AppCategoryTabs apps={apps} value={category} onChange={setCategory} panelId="installed-apps" />
-        {localProgress && <div className="mb-4"><AppInstallProgressView progress={localProgress} /></div>}
+        <AppCategoryTabs apps={filterApps(apps, '', 'all', { group: section })} value={category} onChange={setCategory} panelId="installed-apps" />
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-2">
         {visibleApps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{apps.length ? '没有匹配的 App' : '暂无 App'}</div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{apps.length ? '没有匹配的 App，可切换到全部或调整筛选' : '暂无 App，请从应用市场安装'}</div>
         ) : (
           <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
             {visibleApps.map((app) => {
@@ -380,6 +377,8 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
               const primaryEntry = getAppPrimaryEntry(app);
               const auxiliaryUi = app.hasUi && app.navigation?.location === 'none';
               const openReason = primaryEntry?.unavailableReason || appPageUnavailableReason(app);
+              const connector = app.connectorApp?.connection;
+              const directAuth = canAuthenticateConnector(connector) && !connector?.credentialSchema && !connector?.hasCli && !connector?.requiresCliSetup;
               const packageNotice = app.packageStatus === "incompatible"
                 ? `当前安装的 v${app.currentVersion || "-"}${app.requiredHostApi ? ` 需要 Host API ${app.requiredHostApi}` : ""}，与此版本 Moss 不兼容，请更新到兼容版本。`
                 : app.packageStatus === "invalid"
@@ -396,14 +395,24 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
-                    <AppCapabilityButton app={app} />
+                    <AppCapabilityButton app={app} compact />
                     {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : "未签名"}</span>}
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
                     {isExpanded && <span>{formatTimestamp(app.updatedAt)}</span>}
                   </div>
                   {packageUnavailable && <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{packageNotice}</div>}
                   {!packageUnavailable && app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
+                  {authNotice?.appId === appId && <p role="status" className="mt-2 text-xs text-muted-foreground">{authNotice.message}</p>}
                   <div className="mt-auto flex flex-wrap gap-1.5 pt-2.5">
+                    {app.connectorApp?.connection?.connected && app.grants?.includes('connector:use') && enabled && onUseApp && <Button size="sm" className="h-8" onClick={() => onUseApp(app)}>在会话中使用</Button>}
+                    {!packageUnavailable && directAuth && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId || !enabled || !app.grants?.includes('connector:use')} onClick={() => {
+                      setAuthNotice(null);
+                      void run(appId, async () => {
+                        const result = await window.agentDesktop.connectorApp({ appId, action: 'auth' });
+                        if (result.auth?.status === 'authorization_url_opened') setAuthNotice({ appId, message: '授权页面已打开，请在浏览器中完成登录。' });
+                      });
+                    }}><KeyRound className="h-4 w-4" />{app.connectorApp?.connection?.connected ? '重新授权' : '连接 / 授权'}</Button>}
+                    {!packageUnavailable && app.connectorApp && !directAuth && <Button size="sm" variant="outline" className="h-8" onClick={() => setExpanded(appId)}><KeyRound className="h-4 w-4" />认证 / 配置</Button>}
                     {(primaryEntry || auxiliaryUi) && <Button
                       size="sm"
                       className="h-8"
@@ -415,7 +424,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                     {!packageUnavailable && <AppSettingsButton app={app} onOpenSettings={route => onLaunch(app.name, { settings: true, route })} />}
                     {packageUnavailable && <Button size="sm" className="h-8" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />更新版本</Button>}
                     {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>}
-                    {(authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
+                    {!app.connectorApp && (authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
                     <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {
                       if (!window.confirm(`卸载“${app.displayName || app.name}”？`)) return;
@@ -426,6 +435,7 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
                   </div>
                   {isExpanded && (
                     <div className="mt-4 border-t border-border pt-3">
+                      {app.connectorApp && <AppConnectorSettings app={app} onChanged={onRefresh} />}
                       {app.hasBackend && (app.instances?.[0]
                         ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name, { settings: true })} />
                         : <div className="py-3 text-xs text-muted-foreground">后台服务尚未就绪</div>)}

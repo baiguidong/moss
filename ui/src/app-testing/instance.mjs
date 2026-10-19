@@ -44,7 +44,8 @@ export function targetEnvironment(source, run) {
   const env = Object.fromEntries(Object.entries(source).filter(([key]) => !/^(MOSS_|CLAUDE_|ANTHROPIC_|OPENAI_|AZURE_|AWS_|GOOGLE_|ELECTRON_RUN_AS_NODE|NODE_OPTIONS|NODE_PATH|VITE_DEV_SERVER_URL)/.test(key)));
   return { ...env, MOSS_HOME: run.home, MOSS_CONFIG_DIR: run.home, MOSS_SELF_TEST_RUN_ID: run.id,
     MOSS_SELF_TEST_PARENT_PID: String(process.pid), MOSS_OPEN_DEVTOOLS: 'false',
-    ...(run.runtimeHome ? { MOSS_RUNTIME_HOME: run.runtimeHome } : {}) };
+    ...(run.runtimeHome ? { MOSS_RUNTIME_HOME: run.runtimeHome } : {}),
+    ...(run.pythonRuntimeHome ? { MOSS_MCP_PYTHON_HOME: run.pythonRuntimeHome } : {}) };
 }
 
 async function freePort() {
@@ -85,8 +86,12 @@ export async function launchTestInstance({ run, executable, args = [], cwd, sett
     signal.throwIfAborted();
     const endpoint = `http://127.0.0.1:${port}`;
     const log = fs.createWriteStream(path.join(run.directory, 'instance.log'), { flags: 'a', mode: 0o600 });
+    // Dependency environments are keyed by interpreter + fixed requirements and
+    // protected by the SDK's install lock. Reuse code, like Node/Python itself;
+    // App configuration, credentials, conversations and business data stay local.
+    const pythonRuntimeHome = env.MOSS_MCP_PYTHON_HOME || (appRuntime?.rootDir ? path.join(appRuntime.rootDir, 'mcp', 'python') : undefined);
     const child = spawn(executable, [...args, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], {
-      cwd, env: targetEnvironment(env, { ...run, home, runtimeHome }), stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      cwd, env: targetEnvironment(env, { ...run, home, runtimeHome, pythonRuntimeHome }), stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     child.stdout.pipe(log, { end: false });
     child.stderr.pipe(log, { end: false });

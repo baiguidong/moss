@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppAgentTools, AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
+import { AppConnectorSettings } from '../src/renderer-react/components/app-connector-settings';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
@@ -54,6 +55,38 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 }
 
 describe('Apps management', () => {
+  test('shows browser authorization and reauthorization for a connected connector App', () => {
+    const app = {
+      ...settingsApp(false),
+      id: 'moss.baidu-netdisk',
+      name: 'moss.baidu-netdisk',
+      displayName: '百度网盘',
+      enabled: true,
+      grants: ['connector:use'],
+      connectorApp: {
+        id: 'baidu-netdisk',
+        capabilities: ['mcp', 'skills'],
+        connection: { id: 'baidu-netdisk', hasMcp: true, hasRemoteMcp: true, authMode: 'server-side', connected: true },
+      },
+    } as StoredApp;
+    const renderPanel = (value: StoredApp) => renderToStaticMarkup(<AppsPanel apps={[value]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+
+    expect(renderPanel(app)).toContain('重新授权');
+    expect(renderToStaticMarkup(<AppConnectorSettings app={app} onChanged={async () => {}} />)).toContain('重新授权');
+
+    const disconnected = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, connected: false } } } as StoredApp;
+    expect(renderPanel(disconnected)).toContain('连接 / 授权');
+    expect(renderToStaticMarkup(<AppConnectorSettings app={disconnected} onChanged={async () => {}} />)).toContain('连接 / 授权');
+
+    const cliApp = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, hasMcp: false, hasCli: true } } } as StoredApp;
+    expect(renderPanel(cliApp)).toContain('认证 / 配置');
+    expect(renderToStaticMarkup(<AppConnectorSettings app={cliApp} onChanged={async () => {}} />)).toContain('安装 / 登录 CLI');
+
+    const credentialApp = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, credentialSchema: { fields: [{ key: 'apiKey', label: 'API Key', type: 'password' }] } } } } as StoredApp;
+    expect(renderPanel(credentialApp)).toContain('认证 / 配置');
+    expect(renderToStaticMarkup(<AppConnectorSettings app={credentialApp} onChanged={async () => {}} />)).toContain('保存配置');
+  });
+
   test('renders category tabs and one card per App, including disabled and legacy Apps', () => {
     const apps = [
       { ...settingsApp(), id: 'automation.app', name: 'automation.app', displayName: '网页操控', category: 'automation', enabled: false },
@@ -113,7 +146,7 @@ describe('Apps management', () => {
     expect(markup).toContain('应用市场');
     expect(markup).not.toContain('placeholder="搜索 App"');
     expect(markup).toContain('role="tablist"');
-    expect(markup).toContain('title="返回已安装 App"');
+    expect(markup).not.toContain('title="返回已安装 App"');
     expect(markup).toContain('正在加载应用市场');
   });
 

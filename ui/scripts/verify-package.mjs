@@ -8,7 +8,6 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extractFile, listPackage } from '@electron/asar';
-import JSZip from 'jszip';
 import { load as parseYaml } from 'js-yaml';
 import {
   MANAGED_RUNTIME_VERSIONS,
@@ -117,25 +116,6 @@ function packagePaths(platform, arch) {
     };
   }
   throw new Error(`Unsupported package platform: ${platform}`);
-}
-
-async function verifyConnectorCatalog(catalogPath) {
-  const zip = await JSZip.loadAsync(await fsp.readFile(catalogPath));
-  const manifestEntry = zip.file('.codebuddy-connector/connectors.json');
-  if (!manifestEntry) throw new Error('Connector manifest is missing from the catalog.');
-  const manifest = JSON.parse(await manifestEntry.async('text'));
-  const connectors = Array.isArray(manifest.connectors) ? manifest.connectors : [];
-  if (connectors.length === 0) throw new Error('Connector catalog is empty.');
-  const missingPackages = connectors.filter((connector) => {
-    const source = String(connector.source || connector.id || '').trim();
-    return !source || !Object.values(zip.files).some((entry) => (
-      !entry.dir && entry.name.startsWith(`connectors/${source}/`)
-    ));
-  });
-  if (missingPackages.length > 0) {
-    throw new Error(`Connector packages are missing: ${missingPackages.map((entry) => entry.id).join(', ')}`);
-  }
-  return connectors.length;
 }
 
 async function extractAndVerifyRuntimes(resourcesDir, platform, arch) {
@@ -409,6 +389,7 @@ async function main() {
   requireFile(path.join(paths.resourcesDir, 'app-market', 'trusted-publishers.json'), 'App publisher trust configuration');
   for (const bundledPath of [
     path.join(paths.resourcesDir, 'apps'),
+    path.join(paths.resourcesDir, 'connectors'),
     path.join(paths.resourcesDir, 'app-market', 'bundled-apps.lock.json'),
   ]) {
     if (fs.existsSync(bundledPath)) {
@@ -439,16 +420,8 @@ async function main() {
     await fsp.rm(cronTestRoot, { recursive: true, force: true });
   }
   requireFile(path.join(paths.resourcesDir, 'licenses', 'open-file-viewer.LICENSE'), 'Open File Viewer license');
-  requireFile(path.join(paths.resourcesDir, 'connectors', 'cloud-auth-providers.json'), 'connector cloud auth configuration');
-  requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-mcp-overrides.json'), 'connector MCP overrides');
-  requireFile(path.join(paths.resourcesDir, 'connectors', 'connector-cli-overrides.json'), 'connector CLI overrides');
   requireFile(path.join(paths.resourcesDir, 'cli', 'cli.js'), 'Moss terminal CLI');
 
-  const catalogPath = requireFile(
-    path.join(paths.resourcesDir, 'connectors', 'workbuddy-connectors-config.zip'),
-    'connector catalog',
-  );
-  const connectorCount = await verifyConnectorCatalog(catalogPath);
   const ripgrepPath = requireFile(
     path.join(paths.resourcesDir, 'ripgrep', `${arch}-${platform}`, platform === 'win32' ? 'rg.exe' : 'rg'),
     'ripgrep',
@@ -493,7 +466,6 @@ async function main() {
     ok: true,
     target,
     appVersion: appPackage.version,
-    connectorCount,
     ripgrepVersion,
     sharp: sharpOutput,
     ...runtimeVersions,

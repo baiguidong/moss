@@ -1,0 +1,30 @@
+# New standalone installs: no Server required. Keep compose.yaml for legacy
+# single-container deployments; adoption is always an explicit admin command.
+services:
+  gateway:
+    image: ${MOSS_WEB_IMAGE:-moss-webui:local}
+    user: '0:0'
+    entrypoint: [node, /opt/moss/cloud/gateway.mjs]
+    ports:
+      - '${MOSS_WEB_BIND:-127.0.0.1}:${MOSS_WEB_PUBLISHED_PORT:-43128}:43128'
+    environment:
+      MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-http://localhost:43128}
+      MOSS_WEB_IMAGE: ${MOSS_WEB_IMAGE:-moss-webui:local}
+      MOSS_WEB_AUTH_SERVER: ${MOSS_WEB_AUTH_SERVER:-}
+      MOSS_CLOUD_STATE: /state
+      MOSS_CLOUD_SNAPSHOTS: /snapshots
+      MOSS_CLOUD_MAX_USERS: 1
+    volumes:
+      - moss-controller:/state
+      - moss-snapshots:/snapshots
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    cap_drop: [ALL]
+    sysctls:
+      net.ipv4.ip_forward: '0'
+      net.ipv6.conf.all.forwarding: '0'
+    stop_grace_period: 60s
+    restart: unless-stopped
+volumes:
+  moss-controller:
+  moss-snapshots:

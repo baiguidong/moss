@@ -233,7 +233,7 @@ describe('session deletion', () => {
       '.filter(s => !s.deleted)',
     );
 
-    const runSource = functionSource('runSessionPromptNow', 'runSessionPrompt');
+    const runSource = functionSource('runSessionPromptObserved', 'runSessionPrompt');
     expect(runSource).toContain('if (!sessionRecord.deleted) {');
     expect(runSource).toContain("emitToRenderer('agent:state'");
   });

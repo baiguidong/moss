@@ -27,6 +27,19 @@ app.on('browser-window-created', (_event, window) => {
     try {
       const invoke = (name, payload) => handlers.get(name)({ sender: window.webContents }, payload);
       const statePath = path.join(root, '.smoke-state.json');
+      if (process.env.MOSS_CONNECTOR_APP_SMOKE === '1') {
+        const installed = await invoke('app:list');
+        assert.deepEqual(installed, [], 'Startup must not install or migrate legacy Apps');
+        assert.deepEqual((await invoke('connector-hub:get-installed')).data, [], 'Old connectors stay outside the App inventory');
+        const legacy = JSON.parse(await readFile(path.join(root, 'connectors/installed/tencent-map/connector.json'), 'utf8'));
+        assert.equal(legacy.appId, undefined, 'Old connector metadata must remain untouched');
+        const { getConnectorMcpServers } = await import('../../src/connector-hub-ipc.mjs');
+        assert.deepEqual(getConnectorMcpServers(['tencent-map']), {}, 'Uninstalled legacy tools must not execute');
+        const source = await readFile(new URL('../../src/main.mjs', import.meta.url), 'utf8');
+        assert.ok(!source.includes('combineAppMarketplaces('), 'Only the moss-apps marketplace supplies installs');
+        console.log(`CONNECTOR_APP_SMOKE: ${phase} — empty inventory, no legacy migration, no old tools`);
+      }
+
       if (phase === 'prepare') {
         const workspace = path.join(root, 'smoke-workspace');
         await mkdir(workspace, { recursive: true });
@@ -80,4 +93,11 @@ app.on('browser-window-created', (_event, window) => {
     } catch (error) { fail(error); }
   });
 });
-try { await import('../../src/main.mjs'); } catch (error) { fail(error); }
+try {
+  if (process.env.MOSS_CONNECTOR_APP_SMOKE === '1' && phase === 'prepare') {
+    const hub = await import('../../src/connector-hub-ipc.mjs');
+    await hub.initializeBundledConnectorCatalog({ bundledCatalogPath: new URL('../../resources/connectors/workbuddy-connectors-config.zip', import.meta.url).pathname });
+    await hub.installConnector('tencent-map');
+  }
+  await import('../../src/main.mjs');
+} catch (error) { fail(error); }

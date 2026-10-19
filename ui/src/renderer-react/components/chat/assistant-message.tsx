@@ -76,6 +76,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           <div data-message-body="assistant" className="assistant-message-body w-full min-w-0 max-w-full text-foreground select-text">
             {hasText && (
               <MarkdownRenderer
+                sessionId={sessionId}
                 content={message.content}
                 variant={documentLayout ? "document" : "default"}
                 sourceId={message.id}

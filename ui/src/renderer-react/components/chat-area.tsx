@@ -1,3 +1,4 @@
+import { getAppDiscovery } from '@/lib/app-discovery';
 import { AppToolSelectionContext, canSelectToolApp, getToolPickerItems, getAppToolServices, parseAppServiceKey, type ToolPickerItem, toolAppId, toolAppTitle, toolAppDescription } from '@/lib/app-tool-selection';
 import { getAppCategory } from '@/lib/app-categories';
 import { AppIcon } from '@/components/app-icon';
@@ -57,6 +58,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { ForkSessionButton } from "@/components/chat/fork-session-button";
+import { SessionInteractions, SideQuestionPanel } from '@/components/chat/session-interactions';
+import { composerDelivery, type SendInteraction, type SessionInteraction } from '@/lib/session-interactions';
 import {
   ToolDisplaySettingsProvider,
   type ToolDisplayMode,
@@ -73,6 +76,8 @@ import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { SessionEffortSelector } from "@/components/session-effort-selector";
 import { collectFileAttachments, mergeFileAttachments } from "@/lib/file-attachments";
+import type { ComposerChoices, QueuedMessage } from '@/lib/composer-queue';
+import { QueuedMessages } from '@/components/chat/queued-messages';
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
@@ -503,6 +508,8 @@ export function ComposerPanel({
   sessionId,
   attachments: externalAttachments,
   onAttachmentsChange,
+  choices: externalChoices,
+  onChoicesChange,
   workspace,
   onWorkspaceChange,
   onChange,
@@ -513,6 +520,10 @@ export function ComposerPanel({
   onSend,
   onStop,
   installedAssistants,
+  onInteraction,
+  onAskSideQuestion,
+  onOpenSideQuestion,
+  sideQuestionRunning = false,
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
@@ -539,6 +550,8 @@ export function ComposerPanel({
   sessionId?: string;
   attachments?: Array<{ name: string; path: string }>;
   onAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
+  choices?: ComposerChoices;
+  onChoicesChange?: (choices: ComposerChoices) => void;
   workspace?: string;
   onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
@@ -560,6 +573,10 @@ export function ComposerPanel({
   onOpenConnectorHub?: () => void;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop?: () => void;
+  onInteraction?: SendInteraction;
+  onAskSideQuestion?: (prompt: string) => Promise<void>;
+  onOpenSideQuestion?: () => void;
+  sideQuestionRunning?: boolean;
   className?: string;
   contextUsage?: ContextUsageInfo | null;
 }) {
@@ -591,10 +608,14 @@ export function ComposerPanel({
   const { selection: appSelection, select: selectAppResource } = React.useContext(AppComposerContext);
   const appResources = useAppComposerResources(sessionId, workspace, (hasActiveSession ? sessionAgentMode : newSessionMode) === 'local');
   const isHomeComposer = !hasActiveSession;
-  // Sending while loading is allowed: the message is queued and dispatched
-  // when the current turn ends (REPL type-while-busy behavior).
+  const latestValue = React.useRef(value); latestValue.current = value;
+  const latestSelection = React.useRef(appSelection); latestSelection.current = appSelection;
+  const [interactionPending, setInteractionPending] = React.useState(false);
+  const interactionLock = React.useRef(false);
+  React.useEffect(() => { setInteractionPending(false); interactionLock.current = false; }, [sessionId]);
+  // The main composer always sends to the current conversation; scheduling is automatic.
   const submitDisabled =
-    (!value.trim() && attachments.length === 0) || Boolean(readOnlyReason) || importingFiles || toolApps.pending;
+    (!value.trim() && attachments.length === 0) || Boolean(readOnlyReason) || importingFiles || toolApps.pending || interactionPending;
   const [appCommands, setAppCommands] = React.useState<Array<{name:string;description:string}>>([]);
   const slashCommands = React.useMemo(() => [...SLASH_COMMANDS, ...appCommands.filter(item => !SLASH_COMMANDS.some(command => command.name === item.name))], [appCommands]);
   React.useEffect(() => {
@@ -614,13 +635,22 @@ export function ComposerPanel({
     hasActiveSession ? "files" : "skills",
   );
   const [skillItems, setSkillItems] = React.useState<SkillMentionItem[]>([]);
-  const [selectedSkills, setSelectedSkills] = React.useState<SkillMentionItem[]>([]);
+  const [internalChoices, setInternalChoices] = React.useState<ComposerChoices>({ skills: [], agent: null });
+  const choices = externalChoices ?? internalChoices;
+  const choicesRef = React.useRef(choices); choicesRef.current = choices;
+  const setChoices = (next: ComposerChoices) => { choicesRef.current = next; (onChoicesChange ?? setInternalChoices)(next); };
+  const selectedSkills = choices.skills;
+  const setSelectedSkills = (value: React.SetStateAction<SkillMentionItem[]>) => setChoices({ ...choicesRef.current,
+    skills: typeof value === 'function' ? value(choicesRef.current.skills) : value });
   const [agentItems, setAgentItems] = React.useState<DesktopAgentDefinition[]>([]);
-  const [selectedAgent, setSelectedAgent] = React.useState<DesktopAgentDefinition | null>(null);
+  const selectedAgent = choices.agent;
+  const setSelectedAgent = (value: React.SetStateAction<DesktopAgentDefinition | null>) => setChoices({ ...choicesRef.current,
+    agent: typeof value === 'function' ? value(choicesRef.current.agent) : value });
   const [skillsLoading, setSkillsLoading] = React.useState(false);
   const [addMenuOpen, setAddMenuOpen] = React.useState(false);
   const [resourcePickerTab, setResourcePickerTab] = React.useState<ComposerResourceTab | null>(null);
   const skillsLoadedRef = React.useRef(false);
+  const agentLoadGeneration = React.useRef(0);
   const workspaceRootRef = React.useRef<string | null>(null);
   const canSelectAgents = composerIntent === 'boss'
     && (hasActiveSession ? sessionAgentMode === 'local' : newSessionMode === 'local');
@@ -673,6 +703,7 @@ export function ComposerPanel({
   }, [allowSkillSelection]);
 
   const loadAgents = React.useCallback(async () => {
+    const generation = ++agentLoadGeneration.current;
     if (!canSelectAgents) {
       setAgentItems([]);
       setSelectedAgent(null);
@@ -685,20 +716,23 @@ export function ComposerPanel({
         sessionId,
         workspace,
       });
+      if (generation !== agentLoadGeneration.current) return;
       const activeAgents = catalog.agents.filter((agent) => agent.active);
       setAgentItems(activeAgents);
       setSelectedAgent((current) => current
-        ? activeAgents.find((agent) => agent.agentType === current.agentType) || null
+        ? activeAgents.find((agent) => agent.agentType === current.agentType) || { ...current, active: false }
         : null);
     } catch {
+      if (generation !== agentLoadGeneration.current) return;
       setAgentItems([]);
-      setSelectedAgent(null);
+      setSelectedAgent(current => current ? { ...current, active: false } : null);
     }
   }, [canSelectAgents, sessionId, workspace]);
 
   React.useEffect(() => {
     void loadAgents();
-    return window.agentDesktop.agents?.onChanged?.(() => { void loadAgents(); });
+    const unsubscribe = window.agentDesktop.agents?.onChanged?.(() => { void loadAgents(); });
+    return () => { agentLoadGeneration.current++; unsubscribe?.(); };
   }, [loadAgents]);
 
   const mentionDirPart = React.useMemo(() => {
@@ -816,7 +850,10 @@ export function ComposerPanel({
   const [mentionServiceAppId, setMentionServiceAppId] = React.useState<string | null>(null);
   const mentionServiceApp = toolApps.apps.find(app => toolAppId(app) === mentionServiceAppId);
   React.useEffect(() => { if (mentionFilter === null || mentionTab !== 'apps' || !mentionServiceApp) setMentionServiceAppId(null) }, [mentionFilter, mentionTab, mentionServiceApp]);
-  const visibleToolApps = getToolPickerItems(toolApps.apps, mentionFilter || '', toolApps.selectedIds, toolApps.selectedServiceIds || [], mentionServiceAppId).filter(item => item.available);
+  const pickerGroups = ['本地应用', '在线服务', '其他应用'];
+  const visibleToolApps = getToolPickerItems(toolApps.apps, mentionFilter || '', toolApps.selectedIds, toolApps.selectedServiceIds || [], mentionServiceAppId)
+    .filter(item => item.available).map(item => ({ ...item, discoveryGroup: getAppDiscovery(item.app).group === 'local' ? '本地应用' : getAppDiscovery(item.app).group === 'online' ? '在线服务' : '其他应用' }))
+    .sort((a, b) => pickerGroups.indexOf(a.discoveryGroup) - pickerGroups.indexOf(b.discoveryGroup));
   const leaveServiceMenu = () => { setMentionServiceAppId(null); setMentionIndex(0); textareaRef.current?.focus() };
   const visibleConnectorItems = React.useMemo(() => {
     if (mentionFilter === null) return [];
@@ -971,8 +1008,39 @@ export function ComposerPanel({
     }
   };
 
+  const hasDeliveryExtras = Boolean(attachments.length || selectedSkills.length || selectedAgent || appSelection);
+  const delivery = onInteraction ? composerDelivery({ loading, value }) : 'send';
+  const sendLabel = '发送';
   const handleSendClick = () => {
     if (submitDisabled || pendingImports.current > 0) return;
+    if (delivery !== 'send' && onInteraction) {
+      if (interactionLock.current) return;
+      if (delivery === 'side_question' && hasDeliveryExtras) { setAttachmentError('侧问不携带附件。请点击下方“侧问”，当前输入会保留。'); return; }
+      const prompt = delivery === 'side_question' ? value.trim().replace(/^\/btw(?:\s|$)/i, '').trim() : value.trim();
+      if (!prompt && !attachments.length) { setAttachmentError('请输入内容。'); return; }
+      interactionLock.current = true; setInteractionPending(true); setAttachmentError('');
+      const generation = importGeneration.current;
+      const sentAttachments = attachments, sentChoices = choices, sentSelection = appSelection;
+      const request = delivery === 'side_question' && onAskSideQuestion ? onAskSideQuestion(prompt)
+        : onInteraction(delivery, prompt, delivery === 'steer' ? { intent: composerIntent, files: attachments,
+          skills: selectedSkills, agent: selectedAgent, agentType: selectedAgent?.agentType, appSelection, workspace } : undefined);
+      void request.then(() => {
+        if (generation !== importGeneration.current) return;
+        if (delivery === 'side_question') { if (latestValue.current === value) onChange(''); return; }
+        if (attachmentsRef.current === sentAttachments) setAttachments([]);
+        if (choicesRef.current === sentChoices) setChoices({ skills: [], agent: null });
+        if (latestSelection.current === sentSelection) selectAppResource(null);
+      }).catch(error => {
+        if (generation === importGeneration.current) setAttachmentError(`发送未完成，内容已保留。${String(error.message || error)}`);
+      }).finally(() => {
+        if (generation === importGeneration.current) { interactionLock.current = false; setInteractionPending(false); }
+      });
+      return;
+    }
+    if (canSelectAgents && selectedAgent?.active === false) {
+      setAttachmentError('所选 Agent 已不可用，请移除或重新选择。');
+      return;
+    }
     const files = attachments.length > 0 ? attachments : undefined;
     onSend(
       files,
@@ -1011,7 +1079,7 @@ export function ComposerPanel({
           <AppIcon icon={app?.icon} className="h-4 w-4 shrink-0" /><span className="truncate">{title}{!service?.available && '（不可用）'}</span><X className="h-3 w-3 shrink-0" />
         </button>;
       })}
-      {toolApps.enabled && toolApps.nextTurn && <span className="self-center text-xs text-muted-foreground">资源变更下一轮生效</span>}
+      {toolApps.enabled && toolApps.nextTurn && <span className="self-center text-xs text-muted-foreground">资源变更等待应用</span>}
       {appSelection && <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除工作流：${appSelection.title}`} onClick={() => selectAppResource(null)}><GitFork className="h-3.5 w-3.5"/>{appSelection.title}<X className="h-3 w-3"/></button>}
       {canSelectAgents && selectedAgent ? (
         <button
@@ -1253,7 +1321,7 @@ export function ComposerPanel({
               ? composerIntent === "boss"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : defaultPlaceholder
-              : defaultPlaceholder
+              : loading ? '继续补充要求…' : defaultPlaceholder
               )
           }
           value={value}
@@ -1487,7 +1555,7 @@ export function ComposerPanel({
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {attachments.map((file, index) => (
-                <FilePreview
+                <FilePreview sessionId={sessionId}
                   key={`${file.path}-${index}`}
                   path={file.path}
                   name={file.name}
@@ -1534,15 +1602,17 @@ export function ComposerPanel({
               />
 
               <PermissionModeSelector
+                key={sessionId || 'new-session'}
                 value={permissionMode}
                 onChange={onPermissionModeChange}
                 disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
               />
-              {sessionId && <SessionEffortSelector key={sessionId} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} />}
+              {sessionId && <SessionEffortSelector key={`effort:${sessionId}`} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} />}
 
             </div>
 
             <div className="flex items-center justify-end gap-2">
+              {onOpenSideQuestion && <button type="button" aria-label="打开侧问" onClick={onOpenSideQuestion} className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground hover:bg-muted"><MessageSquareText className="h-4 w-4" />侧问{sideQuestionRunning && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}</button>}
               {contextUsage && <ContextUsageRing usage={contextUsage} />}
               {loading && (
                 <Button
@@ -1561,7 +1631,7 @@ export function ComposerPanel({
                 onClick={handleSendClick}
               >
                 <Send className="h-4 w-4" />
-                {loading ? "排队" : "发送"}
+                {sendLabel}
               </Button>
             </div>
           </div>
@@ -1662,6 +1732,7 @@ export function ComposerPanel({
               />
 
               <PermissionModeSelector
+                key={sessionId || 'new-session'}
                 value={permissionMode}
                 onChange={onPermissionModeChange}
               />
@@ -1685,7 +1756,7 @@ export function ComposerPanel({
             <div className="mt-3 pt-1">
               <div className="flex flex-wrap items-center gap-2">
                 {attachments.map((file, index) => (
-                  <FilePreview key={`${file.path}-${index}`} path={file.path} name={file.name}
+                  <FilePreview sessionId={sessionId} key={`${file.path}-${index}`} path={file.path} name={file.name}
                     onRemove={() => handleRemoveAttachment(index)} />
                 ))}
 
@@ -1706,6 +1777,8 @@ function HomeLanding({
   sessionId,
   attachments,
   onAttachmentsChange,
+  choices,
+  onChoicesChange,
   workspace,
   onWorkspaceChange,
   onChange,
@@ -1735,6 +1808,8 @@ function HomeLanding({
   sessionId?: string;
   attachments: Array<{ name: string; path: string }>;
   onAttachmentsChange: (attachments: Array<{ name: string; path: string }>) => void;
+  choices?: ComposerChoices;
+  onChoicesChange?: (choices: ComposerChoices) => void;
   workspace?: string;
   onWorkspaceChange: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
@@ -1781,6 +1856,8 @@ function HomeLanding({
         sessionId={sessionId}
         attachments={attachments}
         onAttachmentsChange={onAttachmentsChange}
+        choices={choices}
+        onChoicesChange={onChoicesChange}
         workspace={workspace}
         onWorkspaceChange={onWorkspaceChange}
         onChange={onChange}
@@ -2079,8 +2156,8 @@ function MentionMenu({
         ) : tab === 'apps' ? (
           toolAppItems.length === 0 ? <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的可用 App 或服务</div> : toolAppItems.map((item, i) => (
             <React.Fragment key={item.id}>
-            {!toolAppParent && (i === 0 || getAppCategory(toolAppItems[i - 1].app.category).id !== getAppCategory(item.app.category).id) &&
-              <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{getAppCategory(item.app.category).label}</div>}
+            {!toolAppParent && (i === 0 || toolAppItems[i - 1].discoveryGroup !== item.discoveryGroup) &&
+              <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{item.discoveryGroup || getAppCategory(item.app.category).label}</div>}
             <MentionResourceRow active={i === selectedIndex} selected={item.selected}
               icon={<AppIcon icon={item.app.icon} className="h-4 w-4" />} title={item.title} description={item.description}
               selectionStyle={item.expandable ? 'expand' : 'checkbox'} onSelect={() => onSelectToolApp(item)} />
@@ -2399,6 +2476,9 @@ export function ChatArea({
   onSend,
   onStop,
   onOpenChildSession,
+  onInteraction,
+  onRestoreInteraction,
+  interactions = [],
   installedAssistants,
   selectedAssistant,
   onSelectAssistant,
@@ -2415,6 +2495,9 @@ export function ChatArea({
   onNewSessionModeChange,
   queuedMessages,
   onRemoveQueuedMessage,
+  onEditQueuedMessage,
+  composerChoices,
+  onComposerChoicesChange,
   backgroundTasks,
   composerAttachments,
   onComposerAttachmentsChange,
@@ -2475,6 +2558,9 @@ export function ChatArea({
   onRejectPlan: () => void;
   onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop: () => void;
+  onInteraction?: SendInteraction;
+  onRestoreInteraction?: (item: SessionInteraction) => void;
+  interactions?: SessionInteraction[];
   onOpenChildSession?: (sessionId: string) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
@@ -2490,8 +2576,11 @@ export function ChatArea({
   remoteEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
-  queuedMessages?: Array<{ id: string; prompt: string; agentType?: string; files?: Array<{ name: string; path: string }> }>;
+  queuedMessages?: QueuedMessage[];
   onRemoveQueuedMessage?: (id: string) => void;
+  onEditQueuedMessage?: (id: string) => void;
+  composerChoices?: ComposerChoices;
+  onComposerChoicesChange?: (choices: ComposerChoices) => void;
   backgroundTasks?: BackgroundTaskInfo[];
   composerAttachments?: Array<{ name: string; path: string }>;
   onComposerAttachmentsChange?: (attachments: Array<{ name: string; path: string }>) => void;
@@ -2520,6 +2609,9 @@ export function ChatArea({
   onSubmitQuestion?: AskUserQuestionCardProps["onSubmit"];
   onDiscussQuestion?: AskUserQuestionCardProps["onDiscuss"];
 }) {
+  const composerDock = React.useRef<HTMLDivElement>(null);
+  const [sideOpen, setSideOpen] = React.useState(false);
+  React.useEffect(() => setSideOpen(false), [sessionId]);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
@@ -2647,13 +2739,16 @@ export function ChatArea({
   if (!hasActiveSession) {
     return (
       <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
+        <div className="mx-auto w-full max-w-3xl px-4 pt-4"><QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} /></div>
         <HomeLanding
           value={value}
           loading={loading}
           composerIntent={composerIntent}
           sessionId={sessionId}
-          attachments={attachments}
-          onAttachmentsChange={setAttachments}
+          attachments={composerAttachments ?? attachments}
+          onAttachmentsChange={onComposerAttachmentsChange ?? setAttachments}
+          choices={composerChoices}
+          onChoicesChange={onComposerChoicesChange}
           workspace={workspace}
           onWorkspaceChange={(nextWorkspace) => {
             setWorkspace(nextWorkspace);
@@ -2753,7 +2848,7 @@ export function ChatArea({
       ) : (
         <div className="relative min-h-0 flex-1">
         <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? 'invisible pointer-events-none' : ''}`} inert={appWorkbench.open} aria-hidden={appWorkbench.open}>
-        <ToolDisplaySettingsProvider toolDisplayMode={toolDisplayMode}>
+        <ToolDisplaySettingsProvider key={sessionId} sessionId={sessionId} toolDisplayMode={toolDisplayMode}>
           <MessageListPane
             key={sessionId || "default"}
             ref={virtualListRef}
@@ -2782,7 +2877,7 @@ export function ChatArea({
       {appWorkbench.open && conversationRequest && <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 py-2" aria-label="会话待处理请求">{conversationRequest}</div>}
 
       {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
-        <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
+        <div ref={composerDock} className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
           <div className={cn(
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
@@ -2793,36 +2888,8 @@ export function ChatArea({
           {loading && composerActivity && loadingStartTime != null && (
             <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />
           )}
-          {queuedMessages && queuedMessages.length > 0 && (
-            <div className="mb-2 space-y-1">
-              {queuedMessages.map((q, index) => (
-                <div
-                  key={q.id}
-                  className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground"
-                >
-                  <Clock className="h-3 w-3 shrink-0" />
-                  <span className="shrink-0 text-muted-foreground/70">#{index + 1} 排队中</span>
-                  {q.agentType ? (
-                    <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 font-medium text-violet-700 dark:text-violet-300">
-                      Agent · {q.agentType}
-                    </span>
-                  ) : null}
-                  <span className="min-w-0 flex-1 truncate">
-                    {q.prompt || `[${q.files?.length ?? 0} 个附件]`}
-                    {q.prompt && q.files && q.files.length > 0 ? `（含 ${q.files.length} 个附件）` : ''}
-                  </span>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded p-0.5 transition-colors hover:text-foreground"
-                    onClick={() => onRemoveQueuedMessage?.(q.id)}
-                    title="移除排队消息"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} />
+          {sessionId && <SessionInteractions key={sessionId} sessionId={sessionId} items={interactions} busy={loading} onRestore={item => onRestoreInteraction ? onRestoreInteraction(item) : onChange(value ? `${value}\n\n${item.prompt}` : item.prompt)} />}
           <ComposerPanel
             value={value}
             loading={loading}
@@ -2834,6 +2901,8 @@ export function ChatArea({
             sessionAgentMode={sessionAgentMode}
             attachments={composerAttachments}
             onAttachmentsChange={onComposerAttachmentsChange}
+            choices={composerChoices}
+            onChoicesChange={onComposerChoicesChange}
             contextUsage={contextUsage}
             onChange={onChange}
             onComposerIntentChange={onComposerIntentChange}
@@ -2841,6 +2910,10 @@ export function ChatArea({
             onPermissionModeChange={onPermissionModeChange}
             permissionModeChanging={permissionModeChanging}
             onSend={(files, skills, agent) => { appWorkbench.close(); onSend(files, undefined, skills, agent); }}
+            onInteraction={onInteraction}
+            onOpenSideQuestion={onInteraction ? () => setSideOpen(true) : undefined}
+            sideQuestionRunning={interactions.some(item => item.kind === 'side_question' && item.status === 'running')}
+            onAskSideQuestion={onInteraction ? async prompt => { setSideOpen(true); await onInteraction('side_question', prompt); } : undefined}
             onStop={onStop}
             installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
@@ -2859,6 +2932,7 @@ export function ChatArea({
         </div>
       ) : null}
       </AppConversationFlow>
+      {sessionId && onInteraction && <SideQuestionPanel anchorRef={composerDock} key={sessionId} sessionId={sessionId} items={interactions} open={sideOpen} onClose={() => setSideOpen(false)} onSend={prompt => onInteraction('side_question', prompt)} readOnlyReason={readOnlyReason} />}
     </div>
   );
 }

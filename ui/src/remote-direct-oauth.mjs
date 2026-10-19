@@ -172,12 +172,13 @@ export async function performRemoteDirectOAuth({
   fetchImpl = fetch,
   timeoutMs = LOGIN_TIMEOUT_MS,
   signal,
+  callbackListener = createCallbackListener,
 }) {
   const normalizedServerUrl = normalizeServerUrl(serverUrl);
   const state = randomBase64Url();
   const codeVerifier = randomBase64Url(48);
   const codeChallenge = createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
-  const listener = await createCallbackListener(state);
+  const listener = await callbackListener(state);
   const abortController = new AbortController();
   let timeout;
   let rejectStopped;
@@ -236,6 +237,7 @@ export async function performRemoteDirectOAuth({
     const closeOpenedAuthorization = await Promise.race([
       Promise.resolve(openAuthorization(authorizationUrl.toString(), {
         redirectUri: listener.redirectUri,
+        state,
         signal: abortController.signal,
       })),
       stoppedPromise,

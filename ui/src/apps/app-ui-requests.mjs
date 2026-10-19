@@ -91,3 +91,49 @@ export function registerAppUiRequests({ ipc, cancelIpc = ipc, getState, invocati
   })
   return { dispose }
 }
+
+// Transport-neutral page lifetime. Web supplies a Host-owned App binding, never
+// a fabricated Electron sender or an App-provided identity.
+export function createAppUiRequestScope({ getState, sourceId, send, invocation = () => ({ surface: 'app', origin: 'ui' }) }) {
+  const requests = new Map();
+  let closed = false;
+  const cancel = key => requests.get(key)?.abort(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Page closed or request cancelled'));
+  return {
+    close() { closed = true; for (const key of requests.keys()) cancel(key); requests.clear(); },
+    async request(method, input = {}) {
+      try {
+        if (closed) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Page closed');
+        const state = getState();
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.hasOwn(input, 'instanceId')) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Expected a bound App request');
+        const subscription = method === 'app-ui:host:subscribe' || method === 'app-ui:host:unsubscribe';
+        const id = subscription ? input.subscriptionId : input.requestId;
+        if (typeof id !== 'string' || !id || id.length > 128) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid request id');
+        const kind = subscription ? 'subscription' : method.includes(':actions:') ? 'actions' : 'host';
+        const key = `${kind}:${id}`;
+        if (method.endsWith(':cancel') || method.endsWith(':unsubscribe')) { cancel(key); return { ok: true, cancelled: requests.has(key) }; }
+        if (requests.has(key) || requests.size >= 64) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many or duplicate requests');
+        const controller = new AbortController(); requests.set(key, controller);
+        const options = { requestId: randomUUID(), timeoutMs: input.timeoutMs, signal: controller.signal, sourceId, invocation: invocation(state) };
+        let subscribed = false;
+        try {
+          const instanceId = defaultInstanceId(state.id);
+          let result;
+          if (method === 'app-ui:actions:invoke') result = await state.runtime.invoke(state.id, instanceId, input.name, input.input, options);
+          else if (method === 'app-ui:host:request') result = await state.runtime.requestHostCapability(state.id, instanceId, input.protocol, input.method, input.input ?? {}, options);
+          else if (method === 'app-ui:host:subscribe') {
+            let off = () => {};
+            const close = () => { controller.abort(); off(); requests.delete(key); };
+            controller.signal.addEventListener('abort', () => { off(); requests.delete(key); }, { once: true });
+            off = await state.runtime.subscribeHostEvent(state.id, instanceId, input.protocol, input.name,
+              (data, context) => { if (!controller.signal.aborted) send('app-ui:host:event', { subscriptionId: id, data, context }); },
+              { ...options, onClosed: error => { send('app-ui:host:event', { subscriptionId: id, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) }); close(); } });
+            if (controller.signal.aborted) { off(); throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled'); }
+            subscribed = true; result = { subscriptionId: id };
+          } else throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Unsupported App request');
+          if (controller.signal.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Request cancelled');
+          return { ok: true, result };
+        } finally { if (!subscribed || controller.signal.aborted) requests.delete(key); }
+      } catch (error) { return { ok: false, error: serializeError(error, APP_ERROR_CODES.hostUnavailable) }; }
+    },
+  };
+}

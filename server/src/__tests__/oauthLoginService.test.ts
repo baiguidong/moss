@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { OAuthLoginError, OAuthLoginService } from '../auth/oauth.js'
+import { OAuthLoginError, OAuthLoginService, requireOAuthRedirectUri } from '../auth/oauth.js'
 import type { AuthService } from '../auth/service.js'
 import { buildNodeFixture } from './buildNodeFixture.js'
 
@@ -505,4 +505,13 @@ describe('OAuth browser login service', () => {
       await rm(outdir, { recursive: true, force: true })
     }
   }, 15_000)
+})
+
+ test('Web callbacks require exact configured HTTPS URLs without query, fragments or alternate paths', () => {
+  const allowed = ['https://portal.example/api/oauth/callback']
+  expect(requireOAuthRedirectUri(allowed[0], allowed)).toBe(allowed[0])
+  for (const uri of ['https://evil.example/api/oauth/callback', 'https://portal.example/api/oauth/callback/extra', 'https://portal.example/api/oauth/callback?next=evil', 'http://portal.example/api/oauth/callback', 'https://portal.example/api/oauth/callback#code']) {
+    expect(() => requireOAuthRedirectUri(uri, allowed)).toThrow('redirect_uri')
+  }
+  expect(requireOAuthRedirectUri(REDIRECT_URI, allowed)).toBe(REDIRECT_URI)
 })

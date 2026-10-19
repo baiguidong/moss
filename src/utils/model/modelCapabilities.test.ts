@@ -37,6 +37,34 @@ function withCatalog<T>(
 }
 
 describe('provider model capabilities', () => {
+  test('honors small provider windows in the UI and compaction, including tagged names', async () => {
+    const windows = [32_768, 65_536, 131_072, 200_000, 1_000_000]
+    await withCatalog(() => Response.json({ data: [
+      ...windows.map(size => ({ id: `model-${size}`, context_window: size, max_output_tokens: 4096 })),
+      { id: 'claude-sonnet-4', context_window: 65_536 },
+      { id: 'small-output', context_window: 32_768, max_output_tokens: 2048 },
+    ] }), async url => {
+      for (const size of windows) {
+        const model = `model-${size}`
+        expect(await resolveDesktopModelContext({ model, url, apiKey: 'small-window' }))
+          .toEqual({ model, contextWindow: size, isDefault: false })
+        await runWithSessionApiOverrides({ mossBaseUrl: url, mossAuthToken: 'small-window' }, async () => {
+          expect(getContextWindowForModel(model)).toBe(size)
+          expect(getContextWindowForModel(`${model}[1m]`)).toBe(size)
+          expect(getAutoCompactThreshold(model)).toBeLessThan(size)
+          expect(getAutoCompactThreshold(model)).toBeGreaterThan(0)
+        })
+      }
+      expect(await resolveDesktopModelContext({ model: 'claude-sonnet-4[1m]', url, apiKey: 'small-window' }))
+        .toMatchObject({ contextWindow: 65_536, isDefault: false })
+      expect(await resolveDesktopModelContext({ model: 'unknown[1m]', url, apiKey: 'small-window' }))
+        .toMatchObject({ contextWindow: 200_000, isDefault: true })
+      await runWithSessionApiOverrides({ mossBaseUrl: url, mossAuthToken: 'small-window' }, async () => {
+        expect(getModelMaxOutputTokens('small-output')).toEqual({ default: 2048, upperLimit: 2048 })
+      })
+    })
+  })
+
   test('desktop lookup loads the same limits on reopen and follows model changes', async () => {
     let requests = 0
     await withCatalog(request => {

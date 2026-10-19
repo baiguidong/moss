@@ -1,5 +1,4 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
-import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
 import * as React from 'react';
 import type { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
 import type { AppState } from 'src/state/AppState.js';
@@ -28,7 +27,7 @@ import { EndTruncatingAccumulator } from '../../utils/stringUtils.js';
 import { getTaskOutputPath } from '../../utils/task/diskOutput.js';
 import { TaskOutput } from '../../utils/task/TaskOutput.js';
 import { isOutputLineTruncated } from '../../utils/terminal.js';
-import { buildLargeToolResultMessage, ensureToolResultsDir, generatePreview, getToolResultPath, PREVIEW_SIZE_BYTES } from '../../utils/toolResultStorage.js';
+import { buildLargeToolResultMessage, persistShellOutput, generatePreview, PREVIEW_SIZE_BYTES } from '../../utils/toolResultStorage.js';
 import { shouldUseSandbox } from '../BashTool/shouldUseSandbox.js';
 import { BackgroundHint } from '../BashTool/UI.js';
 import { buildImageToolResult, isImageOutput, resetCwdIfOutsideProject, resizeShellImageOutput, stdErrAppendShellResetMessage, stripEmptyLines } from '../BashTool/utils.js';
@@ -217,8 +216,10 @@ const outputSchema = lazySchema(() => z.object({
   interrupted: z.boolean().describe('Whether the command was interrupted'),
   returnCodeInterpretation: z.string().optional().describe('Semantic interpretation for non-error exit codes with special meaning'),
   isImage: z.boolean().optional().describe('Flag to indicate if stdout contains image data'),
-  persistedOutputPath: z.string().optional().describe('Path to persisted full output when too large for inline'),
+  persistedOutputPath: z.string().optional().describe('Path to persisted output snapshot when too large for inline'),
   persistedOutputSize: z.number().optional().describe('Total output size in bytes when persisted'),
+  persistedOutputStoredBytes: z.number().optional().describe('Actual bytes stored in the snapshot'),
+  persistedOutputTruncated: z.boolean().optional().describe('Whether the saved snapshot is incomplete'),
   backgroundTaskId: z.string().optional().describe('ID of the background task if command is running in background'),
   backgroundedByUser: z.boolean().optional().describe('True if the user manually backgrounded the command with Ctrl+B')
 }));
@@ -342,6 +343,8 @@ export const PowerShellTool = buildTool({
     isImage,
     persistedOutputPath,
     persistedOutputSize,
+    persistedOutputStoredBytes,
+    persistedOutputTruncated,
     backgroundTaskId,
     backgroundedByUser
   }: Out, toolUseID: string): ToolResultBlockParam {
@@ -357,6 +360,9 @@ export const PowerShellTool = buildTool({
       processedStdout = buildLargeToolResultMessage({
         filepath: persistedOutputPath,
         originalSize: persistedOutputSize ?? 0,
+        originalBytes: persistedOutputSize,
+        storedBytes: persistedOutputStoredBytes,
+        storageComplete: persistedOutputTruncated === undefined ? undefined : !persistedOutputTruncated,
         isJson: false,
         preview: preview.preview,
         hasMore: preview.hasMore
@@ -518,33 +524,23 @@ export const PowerShellTool = buildTool({
 
       // Large output: file on disk has more than getMaxOutputLength() bytes.
       // stdout already contains the first chunk. Copy the output file to the
-      // tool-results dir so the model can read it via FileRead. If > 64 MB,
-      // truncate after copying. Matches BashTool.tsx:983-1005.
+      // tool-results dir as an independent bounded snapshot. Preserve the raw
+      // task log and explicitly describe any truncated snapshot.
       //
       // Placed AFTER the preSpawnError/ShellError throws (matches BashTool's
       // ordering, where persistence is post-try/finally): a failing command
       // that also produced >maxOutputLength bytes would otherwise do 3-4 disk
       // syscalls, store to tool-results/, then throw — orphaning the file.
-      const MAX_PERSISTED_SIZE = 64 * 1024 * 1024;
       let persistedOutputPath: string | undefined;
       let persistedOutputSize: number | undefined;
+      let persistedOutputStoredBytes: number | undefined;
+      let persistedOutputTruncated: boolean | undefined;
       if (result.outputFilePath && result.outputTaskId) {
         try {
-          const fileStat = await fsStat(result.outputFilePath);
-          persistedOutputSize = fileStat.size;
-          await ensureToolResultsDir();
-          const dest = getToolResultPath(result.outputTaskId, false);
-          if (fileStat.size > MAX_PERSISTED_SIZE) {
-            await fsTruncate(result.outputFilePath, MAX_PERSISTED_SIZE);
-          }
-          try {
-            await link(result.outputFilePath, dest);
-          } catch {
-            await copyFile(result.outputFilePath, dest);
-          }
-          persistedOutputPath = dest;
+          ({ persistedOutputPath, persistedOutputSize, persistedOutputStoredBytes, persistedOutputTruncated } =
+            await persistShellOutput(result.outputFilePath, result.outputTaskId, toolUseContext.abortController.signal));
         } catch {
-          // File may already be gone — stdout preview is sufficient
+          // No saved-file claim when copying fails; retain the existing stdout preview.
         }
       }
 
@@ -581,7 +577,9 @@ export const PowerShellTool = buildTool({
           returnCodeInterpretation: interpretation.message,
           isImage,
           persistedOutputPath,
-          persistedOutputSize
+          persistedOutputSize,
+          persistedOutputStoredBytes,
+          persistedOutputTruncated
         }
       };
     } finally {
