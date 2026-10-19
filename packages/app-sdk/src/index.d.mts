@@ -418,7 +418,12 @@ export interface AppSettingsContribution { id: string; title: string; viewId: st
 export const APP_CATEGORIES: readonly AppCategoryDefinition[]
 export function getAppCategory(value?: unknown): AppCategoryDefinition
 
+export interface AppDiscovery { group: 'local' | 'online'; authMethods?: Array<'none' | 'browser' | 'api-key' | 'credentials' | 'moss-session'> }
+
 export interface AppManifestV2 {
+  discovery?: AppDiscovery
+  /** Core-managed MCP/CLI/skill package. Requires Host API 3.15. */
+  connectorApp?: { id: string; capabilities: Array<'mcp' | 'cli' | 'skills'> }
   /** Core-managed, configuration-only MCP App. Requires Host API 3.9. */
   mcpApp?: { config: string; runtime?: { state: 'session' | 'stateless'; idleTimeoutMs?: number }; presentation?: { headline?: string; examples?: string[]; usage?: string } }
   /** Primary discovery category; legacy Apps without one appear in other. */

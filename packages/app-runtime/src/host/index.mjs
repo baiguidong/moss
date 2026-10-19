@@ -82,6 +82,7 @@ function ownerStorageSegment(owner) {
 
 export class AppRuntimeHost {
   constructor(options) {
+    this.automaticStartAllowed = options.automaticStartAllowed || (() => true)
     this.nativeAdapterHost = options.nativeAdapterHost
     this.nativePublishers = new Set(options.nativePublishers || [])
     this.hostRequests = new HostRequests(options.hostRequestOptions)
@@ -1126,7 +1127,7 @@ export class AppRuntimeHost {
       }
     }
     const shouldRun = Boolean(
-      installation.enabled && instance.enabled && configurationReady && backend.lifecycle === 'persistent',
+      this.automaticStartAllowed() && installation.enabled && instance.enabled && configurationReady && backend.lifecycle === 'persistent',
     )
     let runtimeRecord = runtimeRecords[0]
     if (!runtimeRecord) {
@@ -1138,6 +1139,7 @@ export class AppRuntimeHost {
       await this.supervisor.stop(runtimeRecord.key)
       return
     }
+    if (!this.automaticStartAllowed()) return
     await this.prepareRuntime(runtimeRecord)
     if (shouldRun) await this.supervisor.start(runtimeRecord.key)
   }

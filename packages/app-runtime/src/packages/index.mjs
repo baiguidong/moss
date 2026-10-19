@@ -5,6 +5,7 @@ import { createHash, randomUUID, verify as verifySignature } from 'node:crypto'
 import semver from 'semver'
 import { validateSourcePackage } from './source.mjs'
 import { readMcpAppConfig } from './mcp-app.mjs'
+import { readConnectorAppPackage } from './connector-app.mjs'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -252,6 +253,7 @@ export async function validateAppPackage(packageRoot, options = {}) {
     }
   }
   await ensureDeclaredFile(root, manifest.backend?.entry, 'backend.entry')
+  if (manifest.connectorApp) await readConnectorAppPackage(root, manifest)
   await ensureDeclaredFile(root, manifest.nativeAdapter?.entry, 'nativeAdapter.entry')
   for (const action of manifest.backend?.actions || []) {
     if (action.inputSchema) loadJsonSchema(root, action.inputSchema, `action ${action.name} inputSchema`)

@@ -22,6 +22,11 @@
       "required": [
         "backend"
       ]
+    },
+    {
+      "required": [
+        "connectorApp"
+      ]
     }
   ],
   "properties": {
@@ -785,6 +790,61 @@
         "services"
       ],
       "description": "App or independently selectable subservices. Requires Host API >=3.8.0; defaults to app."
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group"
+      ],
+      "properties": {
+        "group": {
+          "enum": [
+            "local",
+            "online"
+          ]
+        },
+        "authMethods": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 6,
+          "items": {
+            "enum": [
+              "none",
+              "browser",
+              "api-key",
+              "credentials",
+              "moss-session"
+            ]
+          }
+        }
+      }
+    },
+    "connectorApp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "capabilities"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,64}$"
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "mcp",
+              "cli",
+              "skills"
+            ]
+          }
+        }
+      }
     }
   }
 }
