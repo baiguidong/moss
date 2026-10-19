@@ -55,6 +55,15 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 }
 
 describe('Apps management', () => {
+  test('keeps the Apps page in a loading state before the first list completes', () => {
+    const props = { apps: [], versionsByApp: {}, onLaunch: () => {}, onDelete: () => {}, onIterate: () => {}, onLoadVersions: () => {}, onRollback: () => {}, onRefresh: async () => {} };
+    const loading = renderToStaticMarkup(<AppsPanel {...props} loading />);
+    expect(loading).toContain('正在加载 Apps');
+    expect(loading).not.toContain('应用市场');
+    const empty = renderToStaticMarkup(<AppsPanel {...props} />);
+    expect(empty).not.toContain('正在加载 Apps');
+  });
+
   test('shows browser authorization and reauthorization for a connected connector App', () => {
     const app = {
       ...settingsApp(false),

@@ -305,9 +305,10 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
 }
 
 
-export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp }: {
+export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp }: {
   onUseApp?: (app: StoredApp) => void;
   apps: StoredApp[];
+  loading?: boolean;
   versionsByApp: Record<string, AppVersion[]>;
   onLaunch: (name: string, options?: { settings?: boolean; route?: string }) => void;
   initialExpandedApp?: string | null;
@@ -342,6 +343,10 @@ export function AppsPanel({ apps, versionsByApp, onLaunch, onDelete, onIterate, 
     catch (operationError) { setError(errorMessage(operationError)); }
     finally { setBusy(null); }
   };
+
+  if (loading && apps.length === 0) {
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground" role="status">正在加载 Apps…</div>;
+  }
 
   if (marketOpen || apps.length === 0) {
     return <AppMarketplacePanel installedApps={apps} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;

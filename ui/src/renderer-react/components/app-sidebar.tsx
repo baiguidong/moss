@@ -120,7 +120,7 @@ interface AppSidebarProps {
   apps: StoredApp[];
   activeSessionId: string | null;
   activeView: MainView;
-  appsCount: number;
+  appsCount: number | null;
   projectsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
@@ -671,7 +671,7 @@ export function AppSidebar({
             {!collapsed && (
               <>
                 Apps
-                <span className="ml-auto text-[11px] text-muted-foreground">{appsCount}</span>
+                <span className="ml-auto text-[11px] text-muted-foreground">{appsCount ?? '…'}</span>
               </>
             )}
           </Button>

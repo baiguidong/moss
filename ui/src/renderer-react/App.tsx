@@ -60,6 +60,7 @@ import {
   type NewAppNotification,
 } from '@/lib/app-notifications';
 import { isAuthorizedConnector } from '@/lib/connector-selection';
+import { readInstalledAppCount, writeInstalledAppCount } from '@/lib/installed-app-count';
 import {
   excludeRemovedSessions,
   isSessionAlreadyRemovedError,
@@ -430,6 +431,8 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
+  const [appsLoaded, setAppsLoaded] = React.useState(false);
+  const [cachedAppsCount, setCachedAppsCount] = React.useState<number | null>(() => readInstalledAppCount(window.localStorage));
   const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
   const [appSelection, setAppSelection] = React.useState<AppComposerResource | null>(null);
   const [appDraftWorkspace, setAppDraftWorkspace] = React.useState<string>();
@@ -591,6 +594,9 @@ export default function App() {
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
+    setCachedAppsCount(nextApps.length);
+    setAppsLoaded(true);
+    writeInstalledAppCount(window.localStorage, nextApps.length);
     return nextApps;
   }, []);
 
@@ -2602,7 +2608,7 @@ export default function App() {
             apps={apps}
             activeSessionId={activeSessionId}
             activeView={activeView}
-            appsCount={apps.length}
+            appsCount={appsLoaded ? apps.length : cachedAppsCount}
             projectsCount={projects.length}
             themeMode={themeMode}
             collapsed={effectiveLeftCollapsed}
@@ -2841,6 +2847,7 @@ export default function App() {
           ) : activeView === 'apps' || activeView === 'connectors' ? (
             <AppsPanel
               apps={apps}
+              loading={!appsLoaded}
               onUseApp={app => { if (navigateToHome({ resetInput: true })) setDraftAppIds([app.id || app.name]); }}
               versionsByApp={versionsByApp}
               initialExpandedApp={appManagementName}

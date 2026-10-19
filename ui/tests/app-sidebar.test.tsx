@@ -14,6 +14,7 @@ function renderSidebar({
   collapsed = false,
   searchQuery = '',
   activeSessionId = null,
+  appsCount = 0,
 }: {
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
@@ -23,6 +24,7 @@ function renderSidebar({
   collapsed?: boolean;
   searchQuery?: string;
   activeSessionId?: string | null;
+  appsCount?: number | null;
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
@@ -30,7 +32,7 @@ function renderSidebar({
       apps={apps}
       activeSessionId={activeSessionId}
       activeView={activeView}
-      appsCount={0}
+      appsCount={appsCount}
       projectsCount={0}
       themeMode="system"
       collapsed={collapsed}
@@ -51,6 +53,11 @@ function renderSidebar({
 }
 
 describe('app sidebar more menu', () => {
+  test('shows the cached App count and a placeholder when no count is cached', () => {
+    expect(renderSidebar({ appsCount: 142 })).toMatch(/Apps<span[^>]*>142<\/span>/);
+    expect(renderSidebar({ appsCount: null })).toMatch(/Apps<span[^>]*>…<\/span>/);
+  });
+
   test('keeps secondary destinations behind one compact trigger', () => {
     const html = renderSidebar({ remoteEnabled: true, agentMailEnabled: true });
     expect(html).toContain('title="更多"');
