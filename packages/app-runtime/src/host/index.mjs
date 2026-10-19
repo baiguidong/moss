@@ -162,7 +162,7 @@ export class AppRuntimeHost {
     this.initialized = false
   }
 
-  async initialize() {
+  async initialize({ restore = true } = {}) {
     if (this.initialized) return this
     await this.state.initialize()
     const retiredDir = path.join(this.runtimeDir, 'retired-native-packages')
@@ -176,9 +176,17 @@ export class AppRuntimeHost {
       this.publishRuntimeEvent({ type: 'restore-error', error: error.message })
     }
     this.initialized = true
+    if (restore) await this.restoreAllOwners()
+    return this
+  }
+
+  async restoreAllOwners({ signal } = {}) {
     const owners = this.installations.listOwners()
     if (!owners.length) owners.push(this.defaultOwner)
-    for (const owner of owners) await this.withOwner(owner, () => this.restore())
+    for (const owner of owners) {
+      if (signal?.aborted) break
+      await this.withOwner(owner, () => this.restore({ signal }))
+    }
     return this
   }
 
@@ -1144,8 +1152,9 @@ export class AppRuntimeHost {
     if (shouldRun) await this.supervisor.start(runtimeRecord.key)
   }
 
-  async restore() {
+  async restore({ signal } = {}) {
     for (const installation of this.installations.list()) {
+      if (signal?.aborted) break
       try { await this.reconcileApp(installation.appId) } catch (error) {
         this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
       }

@@ -179,6 +179,7 @@ import {
   CLOUD_STORAGE_HOST_METHODS,
   MOSS_CLOUD_STORAGE_PROTOCOL,
 } from '../../packages/app-sdk/src/index.mjs';
+import { loadJsonSchema } from '../../packages/app-sdk/src/schemas/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
 import { confirmAppInstallation, describeAppTools } from './apps/app-tool-disclosure.mjs';
 import { createHostConfirmations } from './host/confirmations.mjs';
@@ -550,6 +551,9 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+let appRuntimeRestorePending = false;
+let appRuntimeRestoreController = null;
+let appRuntimeRestorePromise = null;
 let connectorAppHost = null;
 let appAuthoring = null;
 let appMcpHost = null;
@@ -7896,6 +7900,7 @@ const {
 });
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  appRuntimeRestorePending = !isWebHost;
   await initializeRemoteDirectTlsTrust();
   void startManagedRuntimeInstall();
 
@@ -8204,6 +8209,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
   appRuntime = await createAppRuntime({
+    deferRestore: !isWebHost,
     automaticStartAllowed: () => !webAutomationsPaused,
     onCreated: (runtime) => { appRuntime = runtime; },
     mossHome: MOSS_HOME,
@@ -8294,22 +8300,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (event.type === 'status' && ['stopping', 'stopped', 'failed', 'crashed', 'crash_loop'].includes(event.state)) appExecutionHost?.deactivate(event.appId, 'App Backend 已停止', event.instanceId);
       webApps?.publishRuntime(event);
       emitToRenderer('app:runtime-event', event);
-      void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      if (!appRuntimeRestorePending) void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
       if (event.appId === 'moss.audit' && (appLifecycleChanged || event.type === 'instance-changed')) appAuditHost?.refresh();
-      if (event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
+      if (!appRuntimeRestorePending && event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
       }
-      if (appLifecycleChanged && getStoredConnectorId(event.appId)) {
+      if (!appRuntimeRestorePending && appLifecycleChanged && getStoredConnectorId(event.appId)) {
         void connectorAppHost?.refresh(event.appId).then(() => resetLocalRuntimesForMcpReload()).catch(error => mossLog('error', 'connector-app', error.message));
       }
       if (appLifecycleChanged) {
         void cloudStorageHost?.watch();
       }
-      if (appLifecycleChanged || event.type === 'tool-scope-changed' || (event.type === 'instance-changed' && appMcpHost?.hasApp(event.appId))) {
+      if (!appRuntimeRestorePending && (appLifecycleChanged || event.type === 'tool-scope-changed' || (event.type === 'instance-changed' && appMcpHost?.hasApp(event.appId)))) {
         void appMcpHost?.refresh().then(async () => {
           const contributions = await appRuntime.listContributions({ kinds: ['tools'], selectedAppIds: [], selectedAppServiceIds: [] });
           const globalTools = (contributions.tools || []).some(tool => (tool.appId || tool.id.split('/')[0]) === event.appId);
@@ -8418,19 +8424,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
   setAppInstallationActivation(app => emitAppsChanged({ action: 'install', app }));
-  for (const installed of listAllStoredApps()) {
-    if (!installed.currentVersion) continue;
-    await appRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
-      mossLog('error', 'app-runtime', 'Unable to register installed App', {
-        appId: installed.id,
-        error: error.message || String(error),
+  const registerStoredApps = async (signal) => {
+    for (const installed of listAllStoredApps()) {
+      if (signal?.aborted) break;
+      if (!installed.currentVersion) continue;
+      // Restore has already verified current installations. Registering them
+      // again queues one full MCP catalog refresh per App.
+      if (appRuntime.getInstallation(installed.id)?.activeVersion === installed.currentVersion) continue;
+      await appRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
+        mossLog('error', 'app-runtime', 'Unable to register installed App', {
+          appId: installed.id,
+          error: error.message || String(error),
+        });
       });
-    });
-  }
-  await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
-  for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused)) {
-    for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
-      agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
+    }
+  };
+  const refreshRestoredAppServices = async () => {
+    await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
+    for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused)) {
+      for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
+        agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
+      }
+    }
+    await connectorAppHost.refresh();
+    await appTraceHost.refresh();
+  };
+  if (isWebHost) {
+    await registerStoredApps();
+    await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
+    for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused)) {
+      for (const instance of appRuntime.instances.list(installation.appId).filter((entry) => entry.enabled)) {
+        agentChannelController.onReady({ appId: installation.appId, instanceId: instance.id });
+      }
     }
   }
   const installAppPackage = (packageRoot, options = {}) => publishAppFromBuild(packageRoot, {
@@ -8475,7 +8500,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   // Installations come exclusively from the App marketplace or an explicit
   // archive import. Never adopt old connectors during Host startup.
-  await connectorAppHost.refresh();
+  if (isWebHost) await connectorAppHost.refresh();
   registerAppMarketplaceIpc({
     ipcMain: updateGuardedAppIpc,
     service: createAppMarketplaceService({
@@ -8524,7 +8549,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const connector = (await listInstalledConnectors()).find(item => item.id === id);
     return { connector, ...(result?.auth ? { auth: result.auth } : {}) };
   });
-  await appTraceHost.refresh();
+  if (isWebHost) await appTraceHost.refresh();
 
   // Register app IPC handlers
   registerLogIpcHandlers({ getDesktopSettings: () => desktopSettings });
@@ -8715,6 +8740,31 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   } else {
     createWindow();
     if (!selfTestTarget) initializeAutoUpdater();
+    appRuntimeRestoreController = new AbortController();
+    const restoreSignal = appRuntimeRestoreController.signal;
+    // Let the renderer paint and load its sessions before validating and
+    // starting every installed App. App state is already available to IPC.
+    setTimeout(() => {
+      if (restoreSignal.aborted) return;
+      appRuntimeRestorePromise = (async () => {
+        const startedAt = Date.now();
+        await appRuntime.restoreAllOwners({ signal: restoreSignal });
+        if (restoreSignal.aborted) return;
+        await registerStoredApps(restoreSignal);
+        if (restoreSignal.aborted) return;
+        await refreshRestoredAppServices();
+        mossLog('info', 'app-runtime', 'Installed Apps restored after window startup', {
+          count: appRuntime.installations.list().length,
+          durationMs: Date.now() - startedAt,
+        });
+      })().catch(error => mossLog('error', 'app-runtime', 'Unable to finish App startup restoration', {
+        error: error?.message || String(error),
+      })).finally(() => {
+        appRuntimeRestorePending = false;
+        appRuntimeRestorePromise = null;
+        if (!restoreSignal.aborted) void emitAppsChanged({ action: 'restored' });
+      });
+    }, 1000);
   }
   if (!webRestoreState.get().automationsPaused) void recoverInterruptedProjectCoordinatorTasks().catch((error) => {
     mossLog('error', 'project-task', 'Unable to recover interrupted Project Coordinator tasks', {
@@ -8765,6 +8815,7 @@ function shutdownDesktop() {
   if (appShutdownComplete) return Promise.resolve();
   if (desktopShutdownPromise) return desktopShutdownPromise;
   sessionRuntimePool.stop();
+  appRuntimeRestoreController?.abort();
   stopMossCronScheduler();
   localTranscriptSync.dispose();
   desktopShutdownPromise = (async () => {
@@ -8800,7 +8851,7 @@ function shutdownDesktop() {
     ));
     await attempt(() => Promise.all([...pendingRuntimeDisposals]));
     await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
-    await attempt(async () => { await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
+    await attempt(async () => { await appRuntimeRestorePromise; await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
     void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
     await attempt(() => webServer?.close());
     if (errors.length) throw new Error(`退出准备未完成：${errors.map(error => error?.message || String(error)).join('；')}`);
@@ -10506,7 +10557,31 @@ ipcMain.handle('app:list', async () => {
   for (const stored of storedApps) {
     const { filePath, entryPath, versionDir, manifest, ...appEntry } = stored;
     let runtimeState = null;
-    try { runtimeState = await appRuntime?.getApp(stored.id); } catch (error) {
+    try {
+      if (appRuntimeRestorePending) {
+        // The initial desktop list needs only persisted state and registry
+        // metadata. Full package validation continues after the window paints.
+        const instances = manifest?.backend ? await Promise.all(
+          (appRuntime?.instances.list(stored.id) || []).map(async instance => {
+            const secrets = await appRuntime.credentials.get(stored.id, instance.id);
+            return {
+              ...instance,
+              secretRefs: Object.fromEntries(Object.keys(secrets || {}).map(key => [key, { configured: true, masked: '********' }])),
+              status: await appRuntime.getInstanceStatus(stored.id, instance.id),
+            };
+          }),
+        ) : [];
+        const configuration = manifest?.backend?.configuration;
+        runtimeState = {
+          installation: appRuntime?.getInstallation(stored.id) || null,
+          instances, manifest,
+          configuration: configuration ? {
+            schema: configuration.schema ? loadJsonSchema(versionDir, configuration.schema, 'App configuration') : null,
+            secrets: configuration.secrets ? loadJsonSchema(versionDir, configuration.secrets, 'App secrets') : null,
+          } : null,
+        };
+      } else runtimeState = await appRuntime?.getApp(stored.id);
+    } catch (error) {
       runtimeState = {
         error: error.message || String(error),
         installation: appRuntime?.getInstallation(stored.id) || null,

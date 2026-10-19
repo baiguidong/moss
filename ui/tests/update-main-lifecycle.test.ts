@@ -8,6 +8,7 @@ function fixture(extra: Record<string, any> = {}) {
   const calls: string[] = [];
   const context = {
     Promise, Error, appShutdownComplete: false, desktopShutdownPromise: null,
+    appRuntimeRestoreController: null, appRuntimeRestorePromise: null,
     sessionRuntimePool: { stop: () => calls.push('runtime-pool-stop') },
     pendingRuntimeDisposals: new Set(),
     stopMossCronScheduler: () => calls.push('cron-stop'),
@@ -62,6 +63,22 @@ test('a failing component does not skip other cleanup or authorize installation'
   expect(context.appShutdownComplete).toBe(false);
   expect(calls).toContain('apps-close'); expect(calls).toContain('persist-child');
   failed = false; await shutdown(); expect(context.appShutdownComplete).toBe(true);
+});
+test('shutdown cancels App restoration before closing the runtime', async () => {
+  let finish!: () => void;
+  const restoration = new Promise<void>(resolve => { finish = resolve; });
+  const calls: string[] = [];
+  const { shutdown, context } = fixture({
+    appRuntimeRestoreController: { abort: () => calls.push('abort-restore') },
+    appRuntimeRestorePromise: restoration,
+    appRuntime: { shutdown: () => { calls.push('runtime-close'); } },
+  });
+  const pending = shutdown();
+  expect(calls).toEqual(['abort-restore']);
+  expect(context.appShutdownComplete).toBe(false);
+  finish();
+  await pending;
+  expect(calls).toEqual(['abort-restore', 'runtime-close']);
 });
 test('Windows installation blockers include queued work, teams, terminals, App requests and runtime setup', () => {
   const getBlockers = runInNewContext(source.slice(source.indexOf('function getInstallBlockers()'), source.indexOf('const updateInstallPreparation')) + '\ngetInstallBlockers', {

@@ -18,11 +18,11 @@ test('restored Backends can register and inspect MCP before desktop initializati
     getRuntime: () => runtime,
     inspect: async () => ({ state: 'connected', tools: [], checkedAt: Date.now() }),
   })
-  const start = async () => {
+  const start = async (deferRestore = false) => {
     initializing = true
     try {
       runtime = await createAppRuntime({
-        mossHome: root, appsDir: path.join(root, 'apps'), nodeExecutable,
+        mossHome: root, appsDir: path.join(root, 'apps'), nodeExecutable, deferRestore,
         onCreated: (created: NonNullable<typeof runtime>) => { runtime = created },
         hostProtocols: [createMcpProtocolDefinition()],
         hostHandlers: { [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input: unknown, context: unknown) => {
@@ -73,6 +73,19 @@ backend.start()
       ok: true, catalog: { servers: [{ enabled: true, check: { state: 'connected' } }] },
     })
     expect(host.enabledServers()).toHaveProperty('fixture_startup_memory__memory')
+
+    await restored.shutdown()
+    runtime = null
+    requests.length = 0
+    const deferred = await start(true)
+    expect(deferred.installations.get(appId)?.enabled).toBe(true)
+    expect(requests).toEqual([])
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await deferred.restoreAllOwners({ signal: cancelled.signal })
+    expect(requests).toEqual([])
+    await deferred.restoreAllOwners()
+    expect(requests.map(request => request.method)).toEqual(['servers.list', 'servers.inspect'])
   } finally {
     await runtime?.shutdown()
     await fs.rm(root, { recursive: true, force: true })

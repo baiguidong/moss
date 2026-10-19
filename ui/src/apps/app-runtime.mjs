@@ -197,6 +197,6 @@ export async function createAppRuntime(options) {
   runtime.events.on('event', (event) => options.onEvent?.(event))
   // Host handlers need this runtime before initialize restores persistent Backends.
   await options.onCreated?.(runtime)
-  await runtime.initialize()
+  await runtime.initialize({ restore: !options.deferRestore })
   return runtime
 }
