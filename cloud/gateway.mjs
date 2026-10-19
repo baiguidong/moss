@@ -203,10 +203,14 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         if (!token.access_token) throw new Error('认证中心未返回凭据');
         const identity = await authRequest(authBase, '/api/v1/auth/me', null, token.access_token);
         let row = store.ensure(identity);
-        try { row = await computers.ensure(identity); } catch (error) { row = store.get(row.id); store.update(row.id, { state: row.operation ? row.state : 'error', error: error.message }); }
+        // The recovery page must authenticate independently of a damaged Host.
+        // Only first-time users need provisioning; existing environments stay put.
+        if (input.management !== true || !row.containerId) {
+          try { row = await computers.ensure(identity); } catch (error) { row = store.get(row.id); store.update(row.id, { state: row.operation ? row.state : 'error', error: error.message }); }
+        }
         const id = randomBytes(32).toString('base64url');
         const session = { environmentId: row.id, accessToken: token.access_token, checkedAt: Date.now(), expiresAt: Date.now() + Math.min(Number(token.expires_in) || 3600, 43200) * 1000 };
-        if (!row.operation && row.state === 'ready') await grant(session, row).catch(() => {});
+        if (input.management !== true && !row.operation && row.state === 'ready') await grant(session, row).catch(() => {});
         if (sessions.size >= 1000) removeSession(sessions.keys().next().value);
         sessions.set(id, session);
         res.setHeader('Set-Cookie', `moss_cloud=${id}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith('https:') ? '; Secure' : ''}`);
@@ -215,7 +219,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       const auth = await authenticated(req);
       if (url.pathname === '/api/auth') {
         let hostUnavailable = false;
-        if (auth && !auth.row.operation && auth.row.desiredState === 'running') {
+        if (url.searchParams.get('management') !== '1' && auth && !auth.row.operation && auth.row.desiredState === 'running') {
           try {
             const response = auth.session.hostCookie ? await fetch(`${await computers.target(auth.row)}/api/auth`, { headers: { cookie: auth.session.hostCookie }, signal: AbortSignal.timeout(3000) }) : null;
             if (!response || !(await response.json()).authenticated || auth.session.hostGeneration !== (auth.row.generation || 0)) await grant(auth.session, auth.row);

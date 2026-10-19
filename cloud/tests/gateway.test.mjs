@@ -56,6 +56,17 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
 
   const loginB = await post('/api/login', { username: 'bob', password: 'test' }); const cb = loginB.headers.get('set-cookie').split(';')[0];
   assert.equal(gateway.store.all().length, 2);
+  const savedEnsure = gateway.computers.ensure, savedControl = gateway.computers.control;
+  gateway.computers.ensure = async () => { throw new Error('Management login must not start the Host'); };
+  let controls = 0;
+  gateway.computers.control = async () => { controls++; throw new TypeError('Host unavailable'); };
+  const recoveryLogin = await post('/api/login', { username: 'alice', password: 'test', management: true });
+  assert.equal(recoveryLogin.status, 200);
+  const recoveryCookie = recoveryLogin.headers.get('set-cookie').split(';')[0];
+  assert.equal((await (await fetch(base() + '/api/auth?management=1', { headers: { Cookie: recoveryCookie } })).json()).authenticated, true);
+  assert.equal((await fetch(base() + '/api/cloud/snapshots', { headers: { Cookie: recoveryCookie } })).status, 200);
+  assert.equal(controls, 0);
+  gateway.computers.ensure = savedEnsure; gateway.computers.control = savedControl;
   const response = await fetch(base() + '/api/private?environmentId=bob', { headers: { Cookie: ca, 'X-Moss-Control': 'spoof', Authorization: 'Bearer spoof' } });
   assert.deepEqual(await response.json(), { cookie: 'moss_web=alice', control: null, authorization: null });
   assert.equal(response.headers.get('set-cookie'), null);

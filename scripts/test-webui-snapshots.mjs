@@ -20,8 +20,8 @@ const api = async (route, body, method = body === undefined ? 'GET' : 'POST', ex
   const text = await response.text(); assert.equal(response.status, expected, `${route}: ${text}`);
   return text ? JSON.parse(text) : null;
 };
-async function login() {
-  const response = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+async function login(management = false) {
+  const response = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, management }) });
   assert.equal(response.status, 200, await response.clone().text()); cookie = response.headers.get('set-cookie').split(';')[0];
 }
 async function ready() {
@@ -98,6 +98,9 @@ try {
   const brokenId = row.containerId, brokenHome = (await docker.inspect(brokenId)).Mounts[0].Name;
   await docker.exec(brokenId, ['node', '-e', 'require("fs").renameSync("/opt/moss/ui/src/main.mjs","/opt/moss/ui/src/main.mjs.validation-disabled")']);
   await docker.restart(brokenId);
+  const loginStarted = Date.now(); await login(true);
+  assert.equal((await api('/api/auth?management=1')).authenticated, true);
+  assert.ok(Date.now() - loginStarted < 5000, 'Management login waited for the broken Host');
   const degraded = await api('/api/cloud/snapshots/preflight', { action: 'restore', snapshotId: combined.snapshotId });
   assert.equal(degraded.hostUnavailable, true); assert.equal(degraded.protection, false); assert.match(degraded.impact, /可能中断未完成/);
   await operation({ action: 'restore', snapshotId: combined.snapshotId }); row = await current();
