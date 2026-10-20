@@ -397,6 +397,7 @@ jobs:
             "Moss-Portable-$VERSION-x64.exe" latest-mac.yml latest.yml SHA512SUMS
             "moss-server-compose-$VERSION.tar.gz" "moss-server-compose-$VERSION.tar.gz.sha256"
             "install-moss-server.sh"
+            "docker.tar.gz" "docker.tar.gz.sha256"
             "moss-webui-$VERSION-linux-amd64.tar.gz" "moss-webui-$VERSION-linux-amd64.tar.gz.sha256"
           )
           [[ $(wc -l <<<"$assets" | tr -d ' ') -eq ${#required[@]} ]]
