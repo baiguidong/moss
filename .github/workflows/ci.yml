@@ -50,6 +50,8 @@ jobs:
           bun run --cwd ui check
 
       - name: Tests
+        env:
+          MOSS_RIPGREP_PATH: /usr/bin/rg
         run: |
           bun run test
           bun run --cwd server test

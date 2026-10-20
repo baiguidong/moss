@@ -83,6 +83,8 @@ jobs:
           bun install --frozen-lockfile --cwd ui
 
       - name: Run release quality gate
+        env:
+          MOSS_RIPGREP_PATH: /usr/bin/rg
         run: |
           bun run --cwd admin check
           bun run --cwd server check
