@@ -8,7 +8,7 @@ dependencies can use stable container DNS names instead of host IP addresses.
 ## Requirements
 
 - Linux x86_64 for published releases; source builds also support ARM64 with compatible dependency images
-- Docker Engine and Docker Compose v2 (cloud portal requires Engine 28+ / API 1.48+)
+- Docker Engine 28+ and Docker Compose v2; the Release installer installs them on Ubuntu when missing
 - `curl`, `jq`, and `openssl`
 - Ports 443 and 8444 available (or set `MOSS_HTTPS_PORT` and `MOSS_WEB_HTTPS_PORT`)
 
@@ -32,8 +32,7 @@ sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install-moss-server.sh
 不是 Linux Docker 镜像。默认自签名证书需要在客户端信任，初始管理员账号
 `admin / password` 需在首次登录后修改。
 
-主机需预先安装 Docker Engine 28+、Compose v2、`curl`、`jq`、`openssl`、
-`tar` 和 `sha256sum`，并开放 443 与 8444 端口。镜像从 GHCR 拉取；部署脚本不
+Ubuntu 主机缺少 Docker Engine 或 Compose 时，脚本会从同一 Release 下载并校验离线包后安装。已有 Docker 的主机沿用现有数据目录。主机仍需 `curl`、`tar` 和 `sha256sum`，缺少 `jq` 或 `openssl` 时通过 apt 安装；开放 443 与 8444 端口。镜像从 GHCR 拉取；部署脚本不
 把桌面安装包复制到服务器。Linux 原生 Docker/Compose 安装可使用
 [Docker 安装包](../docker/README.md)。
 

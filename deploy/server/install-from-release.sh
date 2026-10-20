@@ -13,19 +13,61 @@ REPOSITORY="${MOSS_RELEASE_REPOSITORY:-baiguidong/moss}"
   exit 1
 }
 [[ "$EUID" -eq 0 ]] || { echo 'ERROR: run this script with sudo.' >&2; exit 1; }
-for command_name in curl tar sha256sum docker jq openssl; do
+for command_name in curl tar sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "ERROR: $command_name is required." >&2
     exit 1
   }
 done
-docker compose version >/dev/null 2>&1 || { echo 'ERROR: Docker Compose v2 is required.' >&2; exit 1; }
-docker info >/dev/null 2>&1 || { echo 'ERROR: Docker Engine is not running.' >&2; exit 1; }
 
 archive="moss-server-compose-$VERSION.tar.gz"
 release_url="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 stage_dir="$(mktemp -d)"
 trap 'rm -rf "$stage_dir"' EXIT
+
+docker_missing=0
+compose_missing=0
+command -v docker >/dev/null 2>&1 || docker_missing=1
+if [[ "$docker_missing" == 0 ]]; then
+  docker compose version >/dev/null 2>&1 || compose_missing=1
+fi
+if [[ "$docker_missing" == 1 || "$compose_missing" == 1 ]]; then
+  echo 'Installing the missing Docker Engine or Compose component from the Release bundle.'
+  docker_archive=docker.tar.gz
+  curl --fail --location --retry 3 --output "$stage_dir/$docker_archive" "$release_url/$docker_archive"
+  curl --fail --location --retry 3 --output "$stage_dir/$docker_archive.sha256" "$release_url/$docker_archive.sha256"
+  (cd "$stage_dir" && sha256sum --check "$docker_archive.sha256")
+  tar -tzf "$stage_dir/$docker_archive" | awk '
+    /^docker-offline\/$/ { next }
+    /^docker-offline\/(docker-[0-9.]+\.tgz|docker-compose-linux-x86_64|install\.sh|README\.md)$/ { next }
+    { print "ERROR: unexpected path in Docker archive: " $0 > "/dev/stderr"; exit 1 }
+  '
+  tar -xzf "$stage_dir/$docker_archive" -C "$stage_dir"
+  if [[ "$docker_missing" == 1 ]]; then
+    bash "$stage_dir/docker-offline/install.sh"
+  else
+    install -d -m 0755 /usr/local/lib/docker/cli-plugins
+    install -m 0755 "$stage_dir/docker-offline/docker-compose-linux-x86_64" /usr/local/lib/docker/cli-plugins/docker-compose
+  fi
+  export PATH="/usr/local/bin:$PATH"
+fi
+
+docker compose version >/dev/null 2>&1 || { echo 'ERROR: Docker Compose v2 is required.' >&2; exit 1; }
+if ! docker info >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1; then systemctl start docker.service || true; fi
+  docker info >/dev/null 2>&1 || { echo 'ERROR: Docker Engine is not running.' >&2; exit 1; }
+fi
+
+for command_name in jq openssl; do
+  if command -v "$command_name" >/dev/null 2>&1; then continue; fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "ERROR: $command_name is required; install it before running this script." >&2
+    exit 1
+  fi
+  apt-get update
+  apt-get install -y "$command_name"
+done
+
 curl --fail --location --retry 3 --output "$stage_dir/$archive" "$release_url/$archive"
 curl --fail --location --retry 3 --output "$stage_dir/$archive.sha256" "$release_url/$archive.sha256"
 (cd "$stage_dir" && sha256sum --check "$archive.sha256")

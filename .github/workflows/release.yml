@@ -324,6 +324,9 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           OUTPUT_DIR=dist/server-compose
+          mkdir -p "$OUTPUT_DIR"
+          deploy/docker/package.sh
+          (cd deploy/docker/dist && sha256sum docker.tar.gz) > "$OUTPUT_DIR/docker.tar.gz.sha256"
           MOSS_RELEASE_IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" \
             deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
           packaged_env="$(tar -xOzf "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" moss-server/.env.example)"
@@ -342,6 +345,8 @@ jobs:
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz.sha256" \
             "$OUTPUT_DIR/install-moss-server.sh" \
+            deploy/docker/dist/docker.tar.gz \
+            "$OUTPUT_DIR/docker.tar.gz.sha256" \
             --clobber --repo "$GITHUB_REPOSITORY"
 
   build-webui-linux-amd64:
@@ -406,5 +411,5 @@ jobs:
         shell: bash
         run: |
           VERSION="${RELEASE_TAG#v}"
-          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server + WebUI + runtime：下载下方 install-moss-server.sh，在已安装 Docker Engine、Compose v2、curl、jq 和 openssl 的服务器执行：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP:8444/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
+          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server + WebUI + runtime：下载下方 install-moss-server.sh，在 Ubuntu 主机执行；缺少 Docker 时自动安装随 Release 附带的 Docker Engine 与 Compose：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP:8444/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
           gh release edit "$RELEASE_TAG" --notes "$notes" --draft=false --repo "$GITHUB_REPOSITORY"

@@ -29,8 +29,8 @@ sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install-moss-server.sh
 Release 下载链接。详细要求见 [部署说明](deploy/server/README.md#正式版一键安装)。
 独立单用户部署继续支持，见 [WebUI 部署说明](deploy/webui/README.md)。
 
-目标机需要 Linux x86_64、Docker Engine、Docker Compose v2、`curl`、`jq`
-和 `openssl`。Server、Nginx HTTPS 代理和 session runtime 均通过 Docker
+目标机需要 Linux x86_64、`curl`、`tar` 和 `sha256sum`。Ubuntu 主机缺少 Docker Engine
+或 Compose 时，一键脚本会从同一 Release 自动安装；缺少 `jq` 或 `openssl` 时通过 apt 安装。Server、Nginx HTTPS 代理和 session runtime 均通过 Docker
 运行。部署脚本、配置和持久化数据统一安装到 `/data/moss-server`：
 
 ```bash
