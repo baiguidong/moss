@@ -334,7 +334,7 @@ jobs:
             esac
             grep -Fxq "$key=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-$name:$VERSION" <<<"$packaged_env"
           done
-          grep -Fxq 'MOSS_WEB_ENABLED=1' <<<"$packaged_env"
+          ! grep -q '^MOSS_WEB_DEPLOY_MODE=' <<<"$packaged_env"
           sed "s/@VERSION@/$VERSION/g" deploy/server/install-from-release.sh \
             > "$OUTPUT_DIR/install-moss-server.sh"
           bash -n "$OUTPUT_DIR/install-moss-server.sh"

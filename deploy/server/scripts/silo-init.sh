@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
-# Only the deployment container sees administrator credentials.
-{ IFS= read -r service_user; IFS= read -r service_secret; } < /run/cloud-init/credentials
+# The short-lived exec process receives the service credentials on stdin.
+IFS= read -r service_user
+IFS= read -r service_secret
 mc alias set moss http://silo:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 mc mb --ignore-existing "moss/$CLOUD_BUCKET" >/dev/null
 mc anonymous set none "moss/$CLOUD_BUCKET" >/dev/null

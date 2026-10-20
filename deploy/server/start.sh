@@ -45,17 +45,13 @@ if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
   docker pull "$(env_value MOSS_RUNTIME_IMAGE)"
 fi
 
-log 'Starting Moss Server with HTTPS'
-if ! compose up -d mysql server nginx; then
+"$SCRIPT_DIR/scripts/cleanup-legacy.sh"
+log 'Starting Moss Server and cloud WebUI with HTTPS'
+if ! compose up -d mysql server web-gateway nginx; then
   show_failure_logs
   die 'failed to start Moss Server'
 fi
 wait_for_server
-if [[ "$(env_value MOSS_WEB_ENABLED)" == 1 ]]; then
-  "$SCRIPT_DIR/scripts/webui-start.sh"
-else
-  compose --profile webui --profile web-cloud stop webui-proxy webui web-cloud-proxy web-gateway
-fi
 if ! "$SCRIPT_DIR/scripts/cloud-storage-init.sh"; then
   echo 'Cloud storage initialization failed. Moss Server remains available; rerun scripts/cloud-storage-init.sh to retry.' >&2
 fi
@@ -70,6 +66,7 @@ mv "$config_path.new" "$config_path"
 chmod 0600 "$config_path"
 
 compose ps
+printf '\nMoss WebUI is ready at %s/\n' "$(env_value MOSS_WEB_ORIGIN)"
 printf '\nMoss Server is ready at https://%s' "$(env_value MOSS_PUBLIC_HOST)"
 [[ "$(env_value MOSS_HTTPS_PORT)" == 443 ]] || printf ':%s' "$(env_value MOSS_HTTPS_PORT)"
 printf '/admin/\n'

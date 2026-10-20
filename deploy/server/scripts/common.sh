@@ -22,15 +22,12 @@ ensure_integration_network() {
 
 compose() {
   local command=(docker compose --project-directory "$SERVER_ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-  if [[ "$(env_value MOSS_WEB_ENABLED)" == 1 ]]; then
-    if [[ "$(env_value MOSS_WEB_DEPLOY_MODE)" == cloud ]]; then command+=(--profile web-cloud); else command+=(--profile webui); fi
-  fi
   "${command[@]}" "$@"
 }
 
 show_failure_logs() {
   compose ps || true
-  compose logs --tail=160 mysql server nginx || true
+  compose logs --tail=160 mysql server web-gateway nginx || true
 }
 
 wait_for_server() {

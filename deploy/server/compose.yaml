@@ -14,7 +14,8 @@ networks:
 services:
   web-gateway:
     image: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
-    profiles: [web-cloud]
+    depends_on:
+      server: { condition: service_healthy }
     user: "0:0"
     entrypoint: [node, /opt/moss/cloud/gateway.mjs]
     environment:
@@ -39,48 +40,6 @@ services:
       net.ipv6.conf.all.forwarding: "0"
     mem_limit: 256m
     stop_grace_period: 60s
-    restart: unless-stopped
-    networks: [moss-server]
-
-  web-cloud-proxy:
-    image: ${NGINX_IMAGE}
-    profiles: [web-cloud]
-    depends_on:
-      web-gateway: { condition: service_healthy }
-    ports:
-      - "${MOSS_WEB_HTTPS_PORT:-8444}:443"
-    volumes:
-      - ./nginx-web-cloud.conf:/etc/nginx/nginx.conf:ro
-      - ./tls:/etc/nginx/tls:ro
-    restart: unless-stopped
-    networks: [moss-server]
-
-  webui:
-    image: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
-    profiles: [webui]
-    environment:
-      MOSS_WEB_AUTH_SERVER: http://server:43127
-      MOSS_WEB_OWNER_ID: ${MOSS_WEB_OWNER_ID:-}
-      MOSS_WEB_OWNER_ORG_ID: ${MOSS_WEB_OWNER_ORG_ID:-}
-      MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-}
-    volumes:
-      - moss-web-home:/home/moss
-    expose: ["43128"]
-    shm_size: 256mb
-    stop_grace_period: 60s
-    restart: unless-stopped
-    networks: [moss-server]
-
-  webui-proxy:
-    image: ${NGINX_IMAGE}
-    profiles: [webui]
-    depends_on:
-      webui: { condition: service_healthy }
-    ports:
-      - "${MOSS_WEB_HTTPS_PORT:-8444}:443"
-    volumes:
-      - ./nginx-webui.conf:/etc/nginx/nginx.conf:ro
-      - ./tls:/etc/nginx/tls:ro
     restart: unless-stopped
     networks: [moss-server]
 
@@ -112,25 +71,13 @@ services:
       MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:-not-configured}
     volumes:
       - ${MOSS_SERVER_HOME}/silo-data:/data
+      - ./scripts/silo-init.sh:/scripts/silo-init.sh:ro
     healthcheck:
       test: [CMD, silo, healthcheck, ready]
       interval: 5s
       timeout: 5s
       retries: 30
     restart: unless-stopped
-    networks: [moss-storage]
-
-  silo-init:
-    image: ${SILO_MC_IMAGE}
-    profiles: [cloud-init]
-    entrypoint: [/bin/sh, /scripts/silo-init.sh]
-    environment:
-      MINIO_ROOT_USER: ${SILO_ROOT_USER:-moss-admin}
-      MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD:-not-configured}
-      CLOUD_BUCKET: ${CLOUD_BUCKET:-moss-cloud-storage}
-    volumes:
-      - ./scripts/silo-init.sh:/scripts/silo-init.sh:ro
-      - ${MOSS_SERVER_HOME}/var/run/cloud-init:/run/cloud-init:ro
     networks: [moss-storage]
 
   server:
@@ -173,8 +120,10 @@ services:
     image: ${NGINX_IMAGE}
     depends_on:
       server: { condition: service_healthy }
+      web-gateway: { condition: service_healthy }
     ports:
       - ${MOSS_HTTPS_PORT}:443
+      - "${MOSS_WEB_HTTPS_PORT:-8444}:8444"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./tls:/etc/nginx/tls:ro
@@ -184,4 +133,3 @@ services:
 volumes:
   moss-cloud-snapshots:
   moss-cloud-state:
-  moss-web-home:

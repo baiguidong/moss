@@ -142,7 +142,7 @@ jobs:
         env:
           IMAGE: ${{ steps.release.outputs.image }}
         run: |
-          printf '### Linux AMD64 WebUI\n\nImage: `%s`\n\nEnable with `MOSS_WEB_ENABLED=1 MOSS_WEB_IMAGE=%s ./install.sh`.\n' "$IMAGE" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          printf '### Linux AMD64 WebUI\n\nImage: `%s`\n\nInstall with `MOSS_WEB_IMAGE=%s ./install.sh`.\n' "$IMAGE" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
 
   server-linux-amd64:
     if: ${{ inputs.include_server }}

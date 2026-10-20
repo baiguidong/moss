@@ -12,7 +12,7 @@
 | 隔离与限制 | 用户独立桥接网络及 HOME 卷，CPU/内存/PID 限制与用户数上限；用户容器无宿主 Docker socket |
 | 程序升级 | 先检查 Agent、确认请求、终端和正在处理的请求；独立发布目录切换，重启同一容器；失败/中断回退旧程序 |
 | 部署交付 | `gh` 触发 GitHub Linux AMD64 构建；真实浏览器、两个用户、同容器停启与升级回滚验收；通过后发布 GHCR 和离线包 |
-| Server 安装 | `MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud` 启用统一门户；保留原 `single` 模式和个人容器 |
+| Server 安装 | 默认启用统一门户；旧固定用户容器归档成镜像并保留 HOME 卷 |
 
 自动验收入口：`cloud/tests/*.test.mjs`、`ui/tests/web-host.test.mjs`、`scripts/test-cloud-image.mjs`、`deploy/server/scripts/validate.sh`。真实镜像测试安装 apt 包并验证 `/etc`、HOME、container ID 在停启和程序升级后保留。测试中的账号、模型和容器均为隔离夹具，不调用付费模型。
 

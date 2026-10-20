@@ -82,45 +82,36 @@ test('wrong image architecture and interrupted exports never produce a release',
   assert.deepEqual(await fs.readdir(path.join(fx.root, 'deploy/webui/dist')), []);
 });
 
-test('Server WebUI startup pins owner once and retains containers; changed owner fails before startup', async t => {
+test('Server upgrade archives legacy WebUI before removing obsolete Compose containers', async t => {
   const fx = await fixture(t);
   const target = path.join(fx.root, 'server');
   const bin = path.join(fx.root, 'mock-bin');
   await fs.mkdir(path.join(target, 'scripts'), { recursive: true });
   await fs.mkdir(bin);
-  for (const name of ['common.sh', 'webui-start.sh']) await fs.copyFile(path.join(repo, 'deploy/server/scripts', name), path.join(target, 'scripts', name));
-  await fs.copyFile(path.join(repo, 'deploy/server/stop.sh'), path.join(target, 'stop.sh'));
+  for (const name of ['common.sh', 'cleanup-legacy.sh']) await fs.copyFile(path.join(repo, 'deploy/server/scripts', name), path.join(target, 'scripts', name));
   const envFile = path.join(target, '.env');
-  await fs.writeFile(envFile, 'MOSS_WEB_ENABLED=1\nMOSS_WEB_OWNER_ID=\nMOSS_WEB_OWNER_ORG_ID=\nMOSS_WEB_ORIGIN=https://example.com:8444\nMOSS_ADMIN_USERNAME=admin\nMOSS_ADMIN_PASSWORD=test-secret\n');
+  await fs.writeFile(envFile, `COMPOSE_PROJECT_NAME=moss-server\nMOSS_SERVER_HOME=${target}\n`);
   const log = path.join(fx.root, 'commands.jsonl');
   await fs.writeFile(path.join(bin, 'docker'), `#!/usr/bin/env node
 const fs = require('fs'); const args = process.argv.slice(2);
 fs.appendFileSync(process.env.MOCK_LOG, JSON.stringify(args) + '\\n');
-if (args.includes('exec')) { process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({userId:'user-1',orgId:'org-1'}))); }
-else if (args.includes('ps') && !args.includes('--status') && process.env.MOCK_EXISTING) console.log('existing-container');
-else if (args[0] === 'inspect') console.log(JSON.stringify(['MOSS_WEB_OWNER_ID=old-owner']));
+if (args[0] === 'ps' && args.includes('label=com.docker.compose.service=webui')) console.log('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+if (args[0] === 'ps' && args.includes('label=com.docker.compose.service=webui-proxy')) console.log('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+if (args[0] === 'ps' && args.includes('label=com.docker.compose.service=web-cloud-proxy')) console.log('cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
+if (args[0] === 'inspect') console.log('moss-server_moss-web-home');
+if (args[0] === 'commit' && process.env.MOCK_FAIL_COMMIT) process.exit(1);
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MOCK_LOG: log };
-  const run = (extra = {}) => spawnSync('bash', [path.join(target, 'scripts/webui-start.sh')], { env: { ...env, ...extra }, encoding: 'utf8' });
-  let result = run();
+  const result = spawnSync('bash', [path.join(target, 'scripts/cleanup-legacy.sh')], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await fs.readFile(envFile, 'utf8'), /MOSS_WEB_OWNER_ID=user-1/);
-  let calls = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(calls.filter(args => args.includes('exec')).length, 1);
-  assert.ok(calls.find(args => args.includes('up') && args.at(-1) === 'webui').includes('--no-recreate'));
-  assert.ok(!readFileSync(log, 'utf8').includes('test-secret'));
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+  const commit = calls.findIndex(args => args[0] === 'commit');
+  const remove = calls.findIndex(args => args[0] === 'rm' && args.at(-1).startsWith('a'));
+  assert.ok(commit >= 0 && remove > commit);
+  assert.equal(calls.filter(args => args[0] === 'rm').length, 3);
+  assert.match(await fs.readFile(path.join(target, 'legacy-webui-backups.tsv'), 'utf8'), /moss-legacy-webui:aaaaaaaaaaaa\tmoss-server_moss-web-home/);
   await fs.writeFile(log, '');
-  result = run();
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(!readFileSync(log, 'utf8').includes('"exec"'));
-  await fs.writeFile(log, '');
-  result = run({ MOCK_EXISTING: '1' });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /owner\/origin differs/);
-  assert.ok(!readFileSync(log, 'utf8').includes('"up"'));
-  execFileSync('bash', [path.join(target, 'stop.sh')], { env });
-  calls = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(calls.at(-1).at(-1), 'stop');
-  await fs.writeFile(envFile, (await fs.readFile(envFile, 'utf8')).replace('MOSS_WEB_ENABLED=1', 'MOSS_WEB_ENABLED=0'));
-  execFileSync('bash', [path.join(target, 'stop.sh')], { env });
+  const failed = spawnSync('bash', [path.join(target, 'scripts/cleanup-legacy.sh')], { env: { ...env, MOCK_FAIL_COMMIT: '1' }, encoding: 'utf8' });
+  assert.notEqual(failed.status, 0);
+  assert.ok(!readFileSync(log, 'utf8').includes('"rm"'));
 });

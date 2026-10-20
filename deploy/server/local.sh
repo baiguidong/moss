@@ -47,7 +47,7 @@ export MOSS_SERVER_HOME="$DEPLOY_DIR" MOSS_SERVER_IMAGE="$IMAGE"
 "$DEPLOY_DIR/configure.sh" >/dev/null
 
 # Pull missing dependencies only. The Server image always comes from this build.
-for key in MOSS_RUNTIME_IMAGE MYSQL_IMAGE NGINX_IMAGE MINIO_IMAGE SILO_MC_IMAGE; do
+for key in MOSS_RUNTIME_IMAGE MOSS_WEB_IMAGE MYSQL_IMAGE NGINX_IMAGE MINIO_IMAGE; do
   reference="$(sed -n -E "s/^${key}=//p" "$DEPLOY_DIR/.env" | tail -n 1)"
   if ! docker image inspect "$reference" >/dev/null 2>&1; then docker pull "$reference"; fi
 done

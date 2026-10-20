@@ -38,14 +38,14 @@ gh run download <run-id> --dir artifacts
 
 ```sh
 cd moss-server
-sudo env MOSS_PUBLIC_HOST=你的服务器IP MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud bash install.sh
+sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install.sh
 ```
 
 Server 管理界面仍为 `https://服务器IP/admin/`；WebUI 为 `https://服务器IP:8444/`。cloud 模式复用 Server 账号认证，每名用户首次登录创建专属 Linux 容器，后续回到同一容器，项目和聊天不会创建新电脑。
 
-使用 `./webui.sh list` 查看环境，`./webui.sh stop <environment-id>` 停止空闲环境，`./webui.sh upgrade <environment-id> <image>` 在保留原容器与 apt 安装的前提下更新 Moss 程序。统一入口的网关持有 Docker socket，个人容器没有该权限。原固定用户部署继续使用 `MOSS_WEB_DEPLOY_MODE=single` 和 `MOSS_WEB_OWNER_ID`；不会自动迁移或删除其容器。
+使用 `./webui.sh list` 查看环境，`./webui.sh stop <environment-id>` 停止空闲环境，`./webui.sh upgrade <environment-id> <image>` 在保留原容器与 apt 安装的前提下更新 Moss 程序。统一入口的网关持有 Docker socket，个人容器没有该权限。旧 Server 固定用户容器在升级时归档为本地镜像，HOME 卷保留；数据不会自动导入新环境。
 
-可用 `MOSS_WEB_HTTPS_PORT`、`MOSS_WEB_ORIGIN` 和 `MOSS_WEB_IMAGE` 覆盖 WebUI 端口、外部 origin 和镜像。私有 GHCR 镜像使用 Server 原有的 registry 登录配置，详见 [Server 部署说明](../server/README.md)。默认关闭 WebUI，保持已有 Server 部署行为。
+可用 `MOSS_WEB_HTTPS_PORT`、`MOSS_WEB_ORIGIN` 和 `MOSS_WEB_IMAGE` 覆盖 WebUI 端口、外部 origin 和镜像。私有 GHCR 镜像使用 Server 原有的 registry 登录配置，详见 [Server 部署说明](../server/README.md)。
 
 ## 独立离线部署
 

@@ -23,11 +23,9 @@ files=(
   start.sh
   stop.sh
   nginx.conf
-  nginx-webui.conf
-  nginx-web-cloud.conf
   webui.sh
   scripts/common.sh
-  scripts/webui-start.sh
+  scripts/cleanup-legacy.sh
   scripts/cloud-storage-init.sh
   scripts/silo-init.sh
   scripts/validate.sh
@@ -61,8 +59,6 @@ if [[ -n "${MOSS_RELEASE_IMAGE_PREFIX:-}" ]]; then
     sed -i.bak "s|^${key}=.*|${key}=${MOSS_RELEASE_IMAGE_PREFIX}/moss-${name}:${VERSION}|" "$tmp_dir/$PACKAGE_ROOT/.env.example"
     rm -f "$tmp_dir/$PACKAGE_ROOT/.env.example.bak"
   done
-  sed -i.bak 's/^MOSS_WEB_ENABLED=.*/MOSS_WEB_ENABLED=1/' "$tmp_dir/$PACKAGE_ROOT/.env.example"
-  rm -f "$tmp_dir/$PACKAGE_ROOT/.env.example.bak"
 fi
 if [[ -n "${MOSS_WEB_PACKAGE_IMAGE:-}" ]]; then
   [[ "$MOSS_WEB_PACKAGE_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]*$ ]] \

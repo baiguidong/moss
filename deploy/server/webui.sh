@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/scripts/common.sh"
-[[ "$(env_value MOSS_WEB_DEPLOY_MODE)" == cloud ]] || die 'This command requires MOSS_WEB_DEPLOY_MODE=cloud'
 case "${1:-list}" in
   list) compose exec -T web-gateway node /opt/moss/cloud/cli.mjs list ;;
   stop) [[ $# == 2 ]] || die 'Usage: webui.sh stop <environment-id>'; compose exec -T web-gateway node /opt/moss/cloud/cli.mjs stop "$2" ;;

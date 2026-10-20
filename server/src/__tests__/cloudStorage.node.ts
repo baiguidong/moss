@@ -128,6 +128,7 @@ try {
   }
   let store: ObjectStore = new MemoryStore()
   if (real) {
+    const initScript = join(process.cwd(), 'deploy/server/scripts/silo-init.sh')
     network = `moss-cloud-test-${randomUUID()}`
     container = network
     docker('network', 'create', network)
@@ -146,6 +147,8 @@ try {
       'MINIO_ROOT_USER=test-admin',
       '-e',
       'MINIO_ROOT_PASSWORD=test-admin-secret-only',
+      '-v',
+      `${initScript}:/scripts/init.sh:ro`,
       image,
       'server',
       '/data',
@@ -159,34 +162,10 @@ try {
         await new Promise(r => setTimeout(r, 1000))
       }
     }
-    await mkdir(join(root, 'init'))
-    await writeFile(
-      join(root, 'init', 'credentials'),
-      'test-moss-service\ntest-moss-service-secret-only\n',
-      { mode: 0o600 },
-    )
-    const initScript = join(process.cwd(), 'deploy/server/scripts/silo-init.sh')
-    const runInit = () =>
-      docker(
-        'run',
-        '--rm',
-        '--network',
-        network,
-        '-e',
-        'MINIO_ROOT_USER=test-admin',
-        '-e',
-        'MINIO_ROOT_PASSWORD=test-admin-secret-only',
-        '-e',
-        'CLOUD_BUCKET=moss-cloud-storage',
-        '-v',
-        `${initScript}:/scripts/init.sh:ro`,
-        '-v',
-        `${join(root, 'init')}:/run/cloud-init:ro`,
-        '--entrypoint',
-        '/bin/sh',
-        image,
-        '/scripts/init.sh',
-      )
+    const runInit = () => execFileSync('docker', [
+      'exec', '-i', '-e', 'CLOUD_BUCKET=moss-cloud-storage', container,
+      '/bin/sh', '/scripts/init.sh',
+    ], { input: 'test-moss-service\ntest-moss-service-secret-only\n', encoding: 'utf8' })
     runInit()
     runInit() // Provisioning must be repeatable with the same credentials.
     const port = docker('port', container, '9000/tcp').split(':').at(-1)

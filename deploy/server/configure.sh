@@ -49,11 +49,6 @@ apply_setting() {
   set_env "$key" "$value"
 }
 
-# Older deployments used a fixed owner. Preserve that mode unless explicitly changed.
-if [[ -z "${MOSS_WEB_DEPLOY_MODE:-}" && -f "$SOURCE_ENV" && -z "$(read_file_value "$SOURCE_ENV" MOSS_WEB_DEPLOY_MODE)" && -n "$(read_file_value "$SOURCE_ENV" MOSS_WEB_OWNER_ID)" ]]; then
-  MOSS_WEB_DEPLOY_MODE=single
-fi
-
 if [[ ! -f "$ENV_FILE" ]]; then
   install -m 0600 "$ENV_EXAMPLE" "$ENV_FILE"
 fi
@@ -63,22 +58,15 @@ apply_setting MOSS_REGISTRY ghcr.io
 apply_setting MOSS_REGISTRY_USERNAME ''
 apply_setting MOSS_SERVER_IMAGE ''
 apply_setting MOSS_RUNTIME_IMAGE ''
-apply_setting MOSS_WEB_ENABLED 0
-apply_setting MOSS_WEB_DEPLOY_MODE cloud
 apply_setting MOSS_CLOUD_MAX_USERS 20
 apply_setting MOSS_CLOUD_CPUS 1
 apply_setting MOSS_CLOUD_MEMORY_MB 1024
 apply_setting MOSS_CLOUD_PIDS 512
 apply_setting MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS 300
-[[ "$(read_value MOSS_WEB_DEPLOY_MODE)" == single || "$(read_value MOSS_WEB_DEPLOY_MODE)" == cloud ]] || die 'MOSS_WEB_DEPLOY_MODE must be single or cloud'
-
 apply_setting MOSS_WEB_IMAGE ghcr.io/baiguidong/moss-webui:latest
 apply_setting MOSS_WEB_HTTPS_PORT 8444
-apply_setting MOSS_WEB_OWNER_ID ''
-apply_setting MOSS_WEB_OWNER_ORG_ID ''
 apply_setting NGINX_IMAGE docker.m.daocloud.io/library/nginx:alpine
 apply_setting MINIO_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
-apply_setting SILO_MC_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
 apply_setting SILO_ROOT_USER moss-admin
 apply_setting SILO_ROOT_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
@@ -134,12 +122,10 @@ fi
 public_url="https://${public_authority}"
 [[ "$https_port" == 443 ]] || public_url="${public_url}:${https_port}"
 
-web_enabled="$(read_value MOSS_WEB_ENABLED)"
-[[ "$web_enabled" == 0 || "$web_enabled" == 1 ]] || die 'MOSS_WEB_ENABLED must be 0 or 1'
 web_port="$(read_value MOSS_WEB_HTTPS_PORT)"
 [[ "$web_port" =~ ^[0-9]+$ ]] && ((web_port >= 1 && web_port <= 65535)) \
   || die 'MOSS_WEB_HTTPS_PORT must be between 1 and 65535'
-if [[ "$web_enabled" == 1 && "$web_port" == "$https_port" ]]; then
+if [[ "$web_port" == "$https_port" ]]; then
   die 'MOSS_WEB_HTTPS_PORT must differ from MOSS_HTTPS_PORT'
 fi
 web_origin="$(read_value MOSS_WEB_ORIGIN)"
@@ -234,6 +220,8 @@ fi
 
 chmod 0600 "$ENV_FILE" "$config_path" "$settings_path" "$key_path" "$cert_host_path"
 chmod 0644 "$cert_path"
+sed -i.bak '/^\(MOSS_WEB_ENABLED\|MOSS_WEB_DEPLOY_MODE\|MOSS_WEB_OWNER_ID\|MOSS_WEB_OWNER_ORG_ID\|SILO_MC_IMAGE\)=/d' "$ENV_FILE"
+rm -f "$ENV_FILE.bak"
 printf 'Moss Server configuration: %s\n' "$config_path"
 printf 'Moss Server URL: %s\n' "$public_url"
 printf 'Self-signed certificate: %s\n' "$cert_path"

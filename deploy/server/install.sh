@@ -31,11 +31,9 @@ required=(
   start.sh
   stop.sh
   nginx.conf
-  nginx-webui.conf
-  nginx-web-cloud.conf
   webui.sh
   scripts/common.sh
-  scripts/webui-start.sh
+  scripts/cleanup-legacy.sh
   scripts/cloud-storage-init.sh
   scripts/silo-init.sh
   scripts/validate.sh
@@ -49,13 +47,13 @@ install -d -m 0700 "$INSTALL_DIR" "$INSTALL_DIR/scripts"
 stage_real="$(cd "$STAGE_DIR" && pwd -P)"
 install_real="$(cd "$INSTALL_DIR" && pwd -P)"
 if [[ "$stage_real" != "$install_real" ]]; then
-  for file in README.md .env.example compose.yaml nginx.conf nginx-webui.conf nginx-web-cloud.conf; do
+  for file in README.md .env.example compose.yaml nginx.conf; do
     install -m 0644 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
   done
   for file in configure.sh install.sh upgrade.sh package.sh start.sh stop.sh webui.sh; do
     install -m 0755 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
   done
-  for script in cloud-storage-init.sh silo-init.sh webui-start.sh; do
+  for script in cloud-storage-init.sh silo-init.sh cleanup-legacy.sh; do
     install -m 0755 "$STAGE_DIR/scripts/$script" "$INSTALL_DIR/scripts/$script"
   done
   install -m 0755 "$STAGE_DIR/scripts/common.sh" "$INSTALL_DIR/scripts/common.sh"
@@ -70,6 +68,10 @@ fi
 
 log "Starting Moss Server"
 PULL_IMAGES="$PULL_IMAGES" "$INSTALL_DIR/start.sh"
+
+# Remove obsolete files only after the upgraded services are healthy.
+rm -f "$INSTALL_DIR/nginx-webui.conf" "$INSTALL_DIR/nginx-web-cloud.conf" \
+  "$INSTALL_DIR/scripts/webui-start.sh"
 
 printf '\nMoss Server deployment installed.\n'
 printf 'Install and data directory: %s\n' "$INSTALL_DIR"

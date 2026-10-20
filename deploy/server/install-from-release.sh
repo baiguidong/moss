@@ -46,13 +46,8 @@ for name in server runtime webui; do
     exit 1
   }
 done
-grep -Fxq 'MOSS_WEB_ENABLED=1' "$stage_dir/moss-server/.env.example" || {
-  echo 'ERROR: deployment package does not enable WebUI.' >&2
-  exit 1
-}
 image_prefix="ghcr.io/${REPOSITORY%%/*}"
 export MOSS_SERVER_IMAGE="$image_prefix/moss-server:$VERSION"
 export MOSS_RUNTIME_IMAGE="$image_prefix/moss-runtime:$VERSION"
 export MOSS_WEB_IMAGE="$image_prefix/moss-webui:$VERSION"
-export MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud
 bash "$stage_dir/moss-server/install.sh"

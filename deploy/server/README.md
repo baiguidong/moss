@@ -10,7 +10,7 @@ dependencies can use stable container DNS names instead of host IP addresses.
 - Linux x86_64 for published releases; source builds also support ARM64 with compatible dependency images
 - Docker Engine and Docker Compose v2 (cloud portal requires Engine 28+ / API 1.48+)
 - `curl`, `jq`, and `openssl`
-- Port 443 available (or set `MOSS_HTTPS_PORT`)
+- Ports 443 and 8444 available (or set `MOSS_HTTPS_PORT` and `MOSS_WEB_HTTPS_PORT`)
 
 ## Linux 部署入口
 
@@ -45,12 +45,12 @@ GitHub CLI 在 GitHub Linux AMD64 上构建镜像及部署包，本机无需 Doc
 gh workflow run build-release.yml --ref main -f publish=true
 gh run list --workflow build-release.yml
 # 验收通过后，下载对应 moss-webui-linux-amd64-* artifact，解压 Server 部署包
-MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
+./install.sh
 ```
 
 默认地址 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。用户以现有 Server 账号登录，首次创建个人 Linux 容器，后续复用同一容器。一个用户的全部聊天、项目和终端共享环境，退出浏览器不会停止它。Server 的现有会话能力保持不变。
 
-正式版一键安装默认启用 cloud；直接从源码安装时 WebUI 默认关闭。原固定用户 WebUI 可继续设置 `MOSS_WEB_DEPLOY_MODE=single`，老配置有 owner ID 时自动保持 single。两种模式不能同时占用同一门户端口，切换需先显式停止旧入口；脚本不迁移/删除旧个人容器。
+Server 安装始终启用多用户 cloud WebUI。升级旧版时，脚本会将旧固定用户 `webui` 容器提交为本地 `moss-legacy-webui:<container-id>` 镜像，记录原 HOME 卷名到 `legacy-webui-backups.tsv`，随后移除旧容器及两个旧代理容器。旧 HOME 卷不会删除。新的多用户环境独立创建，旧数据不会自动导入；需要迁移时先保留备份镜像和 HOME 卷。
 
 网关单独保存环境映射卷并持有 Docker socket。**个人容器没有 Docker socket**，使用独立 HOME 卷和私有网络。网关关闭 IP 转发并移除 Linux capabilities，用户网络之间仅通过经过身份验证的应用代理访问各自 Host。`MOSS_CLOUD_MAX_USERS`、`MOSS_CLOUD_CPUS`、`MOSS_CLOUD_MEMORY_MB`、`MOSS_CLOUD_PIDS` 设置数量和单容器资源上限；磁盘目前没有硬配额，按宿主容量设置用户上限并监控增长。`MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS` 默认 300 秒，适应有磁盘负载的主机冷启动；可在 30–900 秒之间调整。
 
@@ -296,9 +296,9 @@ cd /data/moss-server && docker compose --env-file .env -f compose.yaml logs -f
 
 New Compose installations also start a private Silo service, initialize its bucket
 and restricted service account, and verify S3 access. Silo publishes no host ports.
-The pinned `MINIO_IMAGE` and `SILO_MC_IMAGE` use
-`docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z`; its included `mc` is used
-only by the initialization container. These image versions do not track Moss upgrades.
+The pinned `MINIO_IMAGE` uses
+`docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z`; its included `mc` runs
+inside Silo during initialization. This image version does not track Moss upgrades.
 
 Connection settings live in `server.json.cloudStorage`; service credentials use the
 server's encrypted credential store. An existing cloud configuration, including an

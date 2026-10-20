@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 
 for required in .env.example compose.yaml nginx.conf configure.sh install.sh upgrade.sh \
-  package.sh start.sh stop.sh webui.sh nginx-web-cloud.conf nginx-webui.conf scripts/webui-start.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
+  package.sh start.sh stop.sh webui.sh scripts/cleanup-legacy.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
   [[ -f "$ROOT/$required" ]] || { echo "ERROR: missing $required" >&2; exit 1; }
 done
 
@@ -18,7 +18,7 @@ done
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   rendered_config="$(docker compose --project-directory "$ROOT" --env-file "$ROOT/.env.example" \
-    -f "$ROOT/compose.yaml" --profile cloud --profile cloud-init --profile webui --profile web-cloud config --format json)"
+    -f "$ROOT/compose.yaml" --profile cloud config --format json)"
   jq -e '
     .networks["moss-integration"].name == "moss-integrations"
     and .networks["moss-db"].internal == true
@@ -30,23 +30,22 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services.mysql.volumes | any(.target == "/var/lib/mysql"))
     and .networks["moss-storage"].internal == true
     and (.services.silo.ports // [] | length) == 0
-    and (.services["silo-init"].ports // [] | length) == 0
+    and (.services | keys | sort) == ["mysql", "nginx", "server", "silo", "web-gateway"]
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
-    and (.services.webui.ports // [] | length) == 0
     and (.services["web-gateway"].volumes | any(.target == "/state"))
     and .services["web-gateway"].sysctls["net.ipv4.ip_forward"] == "0"
     and (.services["web-gateway"].cap_drop | index("ALL")) != null
     and (.services["web-gateway"].volumes | any(.target == "/var/run/docker.sock"))
-    and .services.webui.environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
-    and (.services.webui.volumes | all(.type == "volume" and .target == "/home/moss"))
-    and .services["webui-proxy"].ports[0].published == "8444"
+    and .services["web-gateway"].environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
+    and .services.nginx.depends_on["web-gateway"].condition == "service_healthy"
+    and (.services.nginx.ports | map(.published) | sort) == ["443", "8444"]
   ' <<<"$rendered_config" >/dev/null
 fi
 
 grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx.conf"
 grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
-grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx-webui.conf"
+grep -Fq 'proxy_pass http://web-gateway:43128;' "$ROOT/nginx.conf"
 grep -Fq 'docker pull "$(env_value MOSS_RUNTIME_IMAGE)"' "$ROOT/start.sh"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
@@ -82,17 +81,10 @@ jq -e \
   "$test_root/home/settings.json" >/dev/null
 openssl x509 -in "$test_root/deployment/tls/server.crt" -noout -text \
   | grep -Fq 'IP Address:10.0.1.181'
-grep -Fxq 'MOSS_WEB_ENABLED=0' "$test_root/deployment/.env"
 grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181:8444' "$test_root/deployment/.env"
-MOSS_WEB_ENABLED=1 MOSS_WEB_OWNER_ID=test-owner \
-  "$test_root/deployment/configure.sh" >/dev/null
-grep -Fxq 'MOSS_WEB_OWNER_ID=test-owner' "$test_root/deployment/.env"
-grep -Fxq 'MOSS_WEB_DEPLOY_MODE=cloud' "$test_root/deployment/.env"
-# An old, owner-bound installation must not silently switch to a fresh cloud computer.
-sed '/^MOSS_WEB_DEPLOY_MODE=/d' "$test_root/deployment/.env" > "$test_root/deployment/legacy.env"
-"$test_root/deployment/configure.sh" "$test_root/deployment/legacy.env" >/dev/null
-grep -Fxq 'MOSS_WEB_DEPLOY_MODE=single' "$test_root/deployment/.env"
-MOSS_WEB_DEPLOY_MODE=cloud "$test_root/deployment/configure.sh" >/dev/null
+printf '%s\n' 'MOSS_WEB_DEPLOY_MODE=single' 'MOSS_WEB_ENABLED=1' 'MOSS_WEB_OWNER_ID=old-owner' 'SILO_MC_IMAGE=old-image' >> "$test_root/deployment/.env"
+"$test_root/deployment/configure.sh" >/dev/null
+! grep -Eq '^(MOSS_WEB_DEPLOY_MODE|MOSS_WEB_ENABLED|MOSS_WEB_OWNER_ID|SILO_MC_IMAGE)=' "$test_root/deployment/.env"
 
 if MOSS_WEB_HTTPS_PORT=443 "$test_root/deployment/configure.sh" >/dev/null 2>&1; then
   echo 'ERROR: conflicting HTTPS ports were accepted' >&2; exit 1
