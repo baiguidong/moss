@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
+import { describeAppPermission, describeBackendAction } from '../../shared/app-capability-descriptions.mjs';
 import { useAppAuthoring } from '@/lib/app-authoring';
 import type { AppInstance, AppVersion, StoredApp } from "../types";
 
@@ -451,7 +452,11 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                           <div className="grid gap-1.5">
                             {permissions.map((permission) => {
                               const checked = (app.grants || []).includes(permission);
-                              return <label key={permission} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={checked} disabled={busy === appId} onChange={() => void run(appId, () => window.agentDesktop.setAppGrants({ appId, grants: checked ? (app.grants || []).filter((item) => item !== permission) : [...(app.grants || []), permission] }))} /><code>{permission}</code></label>;
+                              const detail = describeAppPermission(permission);
+                              return <label key={permission} className="flex items-start gap-2.5 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs">
+                                <input type="checkbox" className="mt-0.5 shrink-0" checked={checked} disabled={busy === appId} onChange={() => void run(appId, () => window.agentDesktop.setAppGrants({ appId, grants: checked ? (app.grants || []).filter((item) => item !== permission) : [...(app.grants || []), permission] }))} />
+                                <span className="min-w-0"><span className="block font-medium text-foreground">{detail.label}</span><span className="mt-0.5 block leading-5 text-muted-foreground">{detail.description}</span><code className="mt-1 block break-all text-[10px] text-muted-foreground/80">{permission}</code></span>
+                              </label>;
                             })}
                           </div>
                         </div>
@@ -460,7 +465,10 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                       {displayedBackend?.actions?.length ? (
                         <div className="mt-3 border-t border-border pt-3">
                           <div className="mb-2 text-xs font-medium">应用能力</div>
-                          <div className="flex flex-wrap gap-2">{displayedBackend.actions.map((action) => <code key={action.name} className="rounded bg-muted px-2 py-1 text-[11px]">{action.name}</code>)}</div>
+                          <div className="grid gap-2 sm:grid-cols-2">{displayedBackend.actions.map((action) => {
+                            const detail = describeBackendAction(action.name);
+                            return <div key={action.name} className="min-w-0 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs"><div className="font-medium text-foreground">{detail.label}</div><p className="mt-0.5 leading-5 text-muted-foreground">{detail.description}</p><code className="mt-1 block break-all text-[10px] text-muted-foreground/80">{action.name}</code></div>;
+                          })}</div>
                         </div>
                       ) : null}
                       {!permissions.length && <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" />无额外权限</div>}

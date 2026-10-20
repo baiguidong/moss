@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AppAgentTools, AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
 import { AppConnectorSettings } from '../src/renderer-react/components/app-connector-settings';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
+import { AppMcpToolRows } from '../src/renderer-react/components/app-mcp-tool-rows';
+import { confirmAppInstallation } from '../src/apps/app-tool-disclosure.mjs';
 import type { AppInstance, StoredApp } from '../src/renderer-react/types';
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -116,6 +118,41 @@ describe('Apps management', () => {
     expect(html).toContain('role="tablist"');
     expect(html).toContain('role="tabpanel"');
     expect(html).not.toContain('aria-label="搜索 App"');
+  });
+
+  test('explains grants and backend actions in App management', () => {
+    const app = {
+      ...settingsApp(false), id: 'moss.knowledge-rag', name: 'moss.knowledge-rag', displayName: '语义知识库',
+      permissions: ['mcp:read', 'mcp:manage', 'mcp:connect', 'local-files:pick'],
+      grants: ['mcp:read'],
+      backend: { lifecycle: 'persistent', actions: [{ name: 'engine.status' }, { name: 'engine.prepare' }, { name: 'files.pick' }] },
+    } as StoredApp;
+    const html = renderToStaticMarkup(<AppsPanel apps={[app]} initialExpandedApp={app.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    expect(html).toContain('管理 MCP 服务');
+    expect(html).toContain('新增、修改、启停或删除 MCP 服务配置');
+    expect(html).toContain('选择本机文件');
+    expect(html).toContain('准备运行环境');
+    expect(html).toContain('选择文件');
+    expect(html).toContain('mcp:manage');
+    expect(html).toContain('engine.prepare');
+  });
+
+  test('explains permissions in the install confirmation', async () => {
+    let prompt: any;
+    await confirmAppInstallation({ showMessageBox: async (value: any) => { prompt = value; return { response: 0 }; } },
+      { id: 'moss.knowledge-rag', displayName: '语义知识库' }, ['mcp:manage', 'local-files:pick']);
+    expect(prompt.detail).toContain('管理 MCP 服务（mcp:manage）');
+    expect(prompt.detail).toContain('选择本机文件（local-files:pick）');
+    expect(prompt.detail).toContain('新增、修改、启停或删除 MCP 服务配置');
+  });
+
+  test('centers the MCP service cell across long tool rows', () => {
+    const html = renderToStaticMarkup(<table><AppMcpToolRows app={settingsApp()} service={{
+      appId: 'moss.knowledge-rag', instanceId: 'instance', name: 'knowledge', revision: '1', status: 'connected',
+      tools: [{ name: 'search_knowledge', description: 'Search documents', disabled: false }, { name: 'get_document', description: 'Read a document', disabled: false }],
+    } as any} /></table>);
+    expect(html).toContain('rowSpan="2"');
+    expect(html).toContain('align-middle');
   });
 
   test('shows tool names, purpose, effects and authorization independently of Backend actions', () => {

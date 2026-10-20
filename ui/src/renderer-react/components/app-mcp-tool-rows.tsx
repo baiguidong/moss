@@ -36,7 +36,7 @@ export function AppMcpToolRows({ app, service, onDiscovered }: { app: StoredApp;
   const available = ['unchecked', 'authorized', 'connected', 'failed', 'needs-auth'].includes(current.status);
   const label = !app.enabled ? 'App 已停用' : !available ? statusLabels[current.status] : loading ? '正在加载工具…' : error ? '加载失败' : current.catalogStale ? '目录待刷新' : statusLabels[current.status];
   const tools = current.tools;
-  const serviceHeader = <th scope="rowgroup" rowSpan={Math.max(tools.length, 1)} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-top text-xs font-normal">
+  const serviceHeader = <th scope="rowgroup" rowSpan={Math.max(tools.length, 1)} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-middle text-xs font-normal">
     <span className="block break-words font-semibold text-foreground">{app.displayName || app.title || app.name}</span>
     <code className="mt-1 block break-all text-[11px] text-muted-foreground">{app.id || app.name}.{name}</code>
     <div className="mt-2 text-muted-foreground">

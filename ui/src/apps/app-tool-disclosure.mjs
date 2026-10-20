@@ -1,3 +1,5 @@
+import { formatAppPermission } from '../shared/app-capability-descriptions.mjs'
+
 export function describeAppTools(manifest) {
   return (manifest?.contributes?.tools || []).map(tool => ({
     id: tool.id,
@@ -17,7 +19,7 @@ export async function confirmAppInstallation(dialog, manifest, permissions = [],
   if (!permissions.length && !tools.length && !skills.length && !details && !manifest.nativeAdapter) return true
   const sections = details ? [details] : []
   if (manifest.nativeAdapter) sections.push('原生控制适配器将在 Moss 主进程运行，需要可信签名及宿主允许的发布者。系统权限归属于 Moss，目标应用和前台控制仍由 Moss 单独询问；更换已加载的驱动需重启 Moss。')
-  if (permissions.length) sections.push(['新增权限', ...permissions.map(permission => `• ${permission}`)].join('\n'))
+  if (permissions.length) sections.push(['新增权限', ...permissions.map(permission => `• ${formatAppPermission(permission)}`)].join('\n'))
   if (tools.length) sections.push([
     `AI 工具（${tools.length} 个）`,
     manifest.toolSelection === 'services'

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
+import { describeAppPermission, formatAppPermission } from '../../shared/app-capability-descriptions.mjs';
 import { AppInstallProgressView } from "@/components/app-install-progress";
 import { isAppInstallActive, useAppInstallProgress } from "@/lib/app-install-progress";
 import type {
@@ -132,7 +133,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
         const accepted = window.confirm([
           `“${entry.displayName}”需要以下权限：`,
           "",
-          ...permissions.map((permission) => `• ${permission}`),
+          ...permissions.map((permission) => `• ${formatAppPermission(permission)}`),
           "",
           "是否继续安装并授权？",
         ].join("\n"));
@@ -273,7 +274,10 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                             <span>{selectedRelease.artifact?.signed ? "已签名" : "未签名"}</span>
                           </div>
                           {selectedRelease.permissions.length > 0 && (
-                            <div><div className="mb-1 flex items-center gap-1 font-medium"><ShieldCheck className="h-3.5 w-3.5" />所需权限</div><div className="flex flex-wrap gap-1">{selectedRelease.permissions.map((permission) => <code key={permission} className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{permission}</code>)}</div></div>
+                            <div><div className="mb-1 flex items-center gap-1 font-medium"><ShieldCheck className="h-3.5 w-3.5" />所需权限</div><div className="grid gap-1.5 sm:grid-cols-2">{selectedRelease.permissions.map((permission) => {
+                              const detail = describeAppPermission(permission);
+                              return <div key={permission} className="rounded-lg border border-border/70 bg-muted/20 px-2.5 py-2"><div className="font-medium text-foreground">{detail.label}</div><p className="mt-0.5 leading-5 text-muted-foreground">{detail.description}</p><code className="mt-1 block break-all text-[10px] text-muted-foreground/80">{permission}</code></div>;
+                            })}</div></div>
                           )}
                         </div>
                       )}
