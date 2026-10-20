@@ -139,6 +139,27 @@ async function run() {
     assert.equal(await evaluate(() => document.activeElement.id), 'installed-apps-all');
     console.log('PASS compact header, category tabs and keyboard navigation with App search');
 
+    const search = async value => {
+      await evaluate(value => {
+        const input = document.querySelector('main input[aria-label="搜索应用"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+      await delay();
+    };
+    const categoryLabels = () => evaluate(() => [...document.querySelectorAll('[aria-label="App 分类"] [role="tab"]')].map(tab => tab.textContent));
+    await search('Chrome');
+    assert.deepEqual(await categoryLabels(), ['全部1', '自动化1']);
+    assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 1);
+    await evaluate(() => document.getElementById('installed-apps-automation').click());
+    await search('scroll.app-0');
+    assert.deepEqual(await categoryLabels(), ['全部1', '沟通协作1']);
+    assert.equal(await evaluate(() => document.querySelector('[aria-label="App 分类"] [aria-selected="true"]')?.id), 'installed-apps-all');
+    assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 1);
+    await search('');
+    assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 24);
+    console.log('PASS installed App search updates category counts and resets an absent category');
+
     const moreTrigger = await evaluate(() => {
       const rect = document.querySelector('[aria-label="更多功能"]').getBoundingClientRect();
       return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
@@ -159,6 +180,10 @@ async function run() {
     assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 24);
     assert(await evaluate(() => document.querySelector('[data-app-header]').getBoundingClientRect().height <= 49), 'Marketplace header is too tall');
     assert.equal(await evaluate(() => document.querySelectorAll('main input[aria-label="搜索应用"]').length), 1);
+    await search('Chrome');
+    assert.deepEqual(await categoryLabels(), ['全部1', '自动化1']);
+    assert.equal(await evaluate(() => document.querySelectorAll('main [data-app-category]').length), 1);
+    await search('');
     await evaluate(() => document.getElementById('marketplace-apps-development').click());
     await delay();
     assert.deepEqual(await evaluate(() => [...new Set([...document.querySelectorAll('main [data-app-category]')].map(card => card.dataset.appCategory))]), ['development']);
