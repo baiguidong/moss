@@ -36,7 +36,11 @@ tar -tzf "$stage_dir/$archive" | awk '
 '
 tar -xzf "$stage_dir/$archive" -C "$stage_dir"
 for name in server runtime webui; do
-  image="$(sed -n "s/^MOSS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_IMAGE=//p" "$stage_dir/moss-server/.env.example")"
+  case "$name" in
+    webui) key=MOSS_WEB_IMAGE ;;
+    *) key="MOSS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_IMAGE" ;;
+  esac
+  image="$(sed -n "s/^${key}=//p" "$stage_dir/moss-server/.env.example")"
   [[ "$image" == "ghcr.io/${REPOSITORY%%/*}/moss-$name:$VERSION" ]] || {
     echo "ERROR: deployment package does not pin moss-$name to $VERSION." >&2
     exit 1

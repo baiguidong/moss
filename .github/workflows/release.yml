@@ -328,7 +328,10 @@ jobs:
             deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
           packaged_env="$(tar -xOzf "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" moss-server/.env.example)"
           for name in server runtime webui; do
-            key="MOSS_${name^^}_IMAGE"
+            case "$name" in
+              webui) key=MOSS_WEB_IMAGE ;;
+              *) key="MOSS_${name^^}_IMAGE" ;;
+            esac
             grep -Fxq "$key=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-$name:$VERSION" <<<"$packaged_env"
           done
           grep -Fxq 'MOSS_WEB_ENABLED=1' <<<"$packaged_env"
