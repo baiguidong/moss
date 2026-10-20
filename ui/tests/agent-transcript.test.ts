@@ -169,6 +169,43 @@ describe("agent transcript tool rendering", () => {
     }));
   });
 
+  it("restores file cards from a reloaded local transcript for every file type", () => {
+    const files = [
+      "/tmp/5 ISO 9001证书_中润兴.pdf",
+      "/tmp/7 ISO45001证书_世标.pdf",
+      "/tmp/资质证书汇总表.csv",
+      "/tmp/证书扫描.png",
+      "/tmp/附件.unknown",
+    ];
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: "user",
+      uuid: "reloaded-user",
+      message: { role: "user", content: [
+        "帮我把这几个证书资质整理成一个资质表格",
+        "",
+        "[Attached files]",
+        ...files.map(file => `- ${file}`),
+        "Use the Read tool to view the attached files.",
+      ].join("\n") },
+    }]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: "user_text",
+      content: "帮我把这几个证书资质整理成一个资质表格",
+      attachments: files.map(path => ({ kind: path.endsWith(".png") ? "image" : "file", path })),
+    });
+  });
+
+  it("keeps ordinary user text containing an attachment heading as text", () => {
+    const content = "文档示例：\n\n[Attached files]\n- example.pdf";
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: "user", message: { role: "user", content },
+    }]);
+    expect(messages[0]).toMatchObject({ type: "user_text", content });
+    expect(messages[0].attachments).toBeUndefined();
+  });
+
   it("hides SDK synthetic skill context from the user transcript", () => {
     const messages = buildMainChatRenderMessagesFromHistory([
       {

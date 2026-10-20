@@ -985,6 +985,22 @@ function extractRawUserText(event: AgentEvent): string {
   return '';
 }
 
+// Local transcripts keep the model-facing prompt, while the live Host event
+// keeps the original text and file references. Recover the exact footer added
+// by buildFileAttachmentPrompt when the live event has been replaced on reload.
+function extractGeneratedFileAttachments(text: string): { content: string; files: string[] } | null {
+  const marker = '\n\n[Attached files]\n';
+  const instruction = 'Use the Read tool to view the attached files.';
+  const normalized = text.replace(/\r\n/g, '\n').trimEnd();
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex < 0 || !normalized.endsWith(instruction)) return null;
+  const lines = normalized.slice(markerIndex + marker.length, -instruction.length).trimEnd().split('\n');
+  if (lines.length === 0) return null;
+  const files = lines.map((line) => line.startsWith('- ') ? line.slice(2) : '');
+  if (files.some((file) => !file || !/^(?:\/|[a-zA-Z]:[\\/]|\\\\|moss-remote-workspace:\/\/)/.test(file))) return null;
+  return { content: normalized.slice(0, markerIndex).trim(), files };
+}
+
 function getEventOriginKind(event: AgentEvent): string | undefined {
   const kind = event?.origin?.kind;
   return typeof kind === 'string' && kind.trim() ? kind : undefined;
@@ -1188,13 +1204,15 @@ export function buildTranscriptRenderMessages(
     if (isHiddenUserMetaEvent(event)) continue;
     const timestamp = safeDate(event?.timestamp, previousTimestamp);
     previousTimestamp = timestamp;
-    const userText = event?.type === 'user' ? extractUserText(event) : '';
+    const rawUserText = event?.type === 'user' ? extractUserText(event) : '';
+    const recoveredFiles = event?.type === 'user' ? extractGeneratedFileAttachments(rawUserText) : null;
+    const userText = recoveredFiles?.content ?? rawUserText;
     const sourceMessageId = getSearchMessageId(event);
 
     const userAttachments = mergeAttachments(
       attachmentsFromPaths(
         Array.isArray(event?.images) ? event.images : undefined,
-        Array.isArray(event?.files) ? event.files : undefined,
+        Array.isArray(event?.files) && event.files.length > 0 ? event.files : recoveredFiles?.files,
       ),
       attachmentsFromResources(Array.isArray(event?.resources) ? event.resources : undefined),
     );

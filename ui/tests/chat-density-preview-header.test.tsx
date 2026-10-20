@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { AssistantMessage } from '../src/renderer-react/components/chat/assistant-message';
+import { AssistantOutputFileCard } from '../src/renderer-react/components/chat/assistant-output-file-card';
 import { UserMessage } from '../src/renderer-react/components/chat/user-message';
 import { UserAvatarContext } from '../src/renderer-react/components/user-avatar';
 import { PreviewDrawer } from '../src/renderer-react/components/preview-drawer';
@@ -61,6 +62,35 @@ test('user messages display the configured avatar', () => {
   expect(markup).toContain(`src="${avatar}"`);
   expect(markup).not.toContain('默认用户头像');
   expect(markup).not.toContain('./build/icon.png');
+});
+
+test('user file attachments render as Moss cards across file formats', () => {
+  const html = renderToStaticMarkup(
+    <UserMessage message={{
+      id: 'user-files', type: 'user_text', role: 'user', content: '整理这些资料',
+      attachments: [
+        { kind: 'file', path: '/tmp/ISO 9001证书.pdf' },
+        { kind: 'file', path: '/tmp/资质汇总.csv' },
+        { kind: 'file', path: '/tmp/原始附件.xyz' },
+      ],
+    }} />,
+  );
+  expect(html.match(/data-file-attachment=/g)).toHaveLength(3);
+  expect(html).toContain('>PDF</span>');
+  expect(html.match(/data-pdf-icon="true"/g)).toHaveLength(1);
+  expect(html).toContain('>CSV</span>');
+  expect(html).toContain('>XYZ</span>');
+  expect(html).toContain('rounded-xl border border-border/70 bg-card shadow-sm');
+  expect(html).toContain('整理这些资料');
+});
+
+test('generated PDF files use the same recognizable PDF icon', () => {
+  const html = renderToStaticMarkup(<AssistantOutputFileCard
+    file={{ path: '/tmp/report.pdf', name: 'report.pdf', subtitle: 'report.pdf', type: 'PDF', operation: 'create', toolUseId: 'write-1', sourcePaths: [] }}
+    sessionId="session-1" workspace="/tmp"
+  />);
+  expect(html).toContain('data-pdf-icon="true"');
+  expect(html).toContain('>PDF</text>');
 });
 
 test('conversation edge navigation uses icon-only directional controls', () => {

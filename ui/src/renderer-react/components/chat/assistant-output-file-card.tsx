@@ -5,6 +5,7 @@ import { ChevronDown, Copy, ExternalLink, Eye, FileText, FolderOpen, Image, File
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
+import { PdfFileIcon } from "@/components/pdf-file-icon";
 import type { AssistantOutputFile } from "@/lib/assistant-output-files";
 
 type FileAction = "preview" | "system" | "reveal";
@@ -33,6 +34,7 @@ export async function openAssistantOutputFile(file: AssistantOutputFile, action:
 }
 
 function FileIcon({ type }: { type: string }) {
+  if (type === "PDF") return <PdfFileIcon className="h-7 w-7 text-red-500" />;
   const Icon = /^(PNG|JPE?G|GIF|WEBP|AVIF|SVG|BMP)$/.test(type) ? Image
     : /^(XLSX?|CSV|TSV|ODS|NUMBERS)$/.test(type) ? FileSpreadsheet
     : /^(PPTX?|ODP|KEY)$/.test(type) ? Presentation

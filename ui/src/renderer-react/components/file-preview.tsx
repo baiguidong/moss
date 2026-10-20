@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { X, FileText, Image as ImageIcon, MoreHorizontal, Eye, Copy, FolderOpen, ExternalLink } from 'lucide-react';
+import { X, FileText, FileSpreadsheet, FileArchive, FileCode2, Image as ImageIcon, Presentation, Film, Music, MoreHorizontal, Eye, Copy, FolderOpen, ExternalLink } from 'lucide-react';
+import { PdfFileIcon } from '@/components/pdf-file-icon';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { fileActionCapabilities, performFileAction } from '@/lib/file-actions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -13,6 +14,19 @@ export function FilePreview({ path, name, onRemove, readonly = false, sessionId 
   if (resource) { try { resourceName = new URL(path).searchParams.get('name') || ''; } catch {} }
   const fileName = name || resourceName || path.split(/[\\/]/).pop() || '文件';
   const isImage = /\.(jpe?g|png|gif|bmp|webp|svg|avif|ico)$/i.test(fileName);
+  const extension = fileName.match(/\.([^.]+)$/)?.[1]?.toUpperCase() || '';
+  const typeLabel = extension.length > 8 ? '文件' : extension || '文件';
+  const fileIcon = /^(PNG|JPE?G|GIF|BMP|WEBP|SVG|AVIF|ICO|TIFF?)$/.test(extension)
+    ? { Icon: ImageIcon, color: 'bg-violet-500/10 text-violet-500' }
+    : extension === 'PDF' ? { Icon: PdfFileIcon, color: 'bg-red-500/10 text-red-500' }
+    : /^(XLSX?|CSV|TSV|ODS|NUMBERS)$/.test(extension) ? { Icon: FileSpreadsheet, color: 'bg-green-500/10 text-green-600' }
+    : /^(PPTX?|PPSX?|ODP|KEY)$/.test(extension) ? { Icon: Presentation, color: 'bg-orange-500/10 text-orange-500' }
+    : /^(ZIP|RAR|7Z|TAR|GZ|BZ2)$/.test(extension) ? { Icon: FileArchive, color: 'bg-purple-500/10 text-purple-500' }
+    : /^(MP3|WAV|M4A|FLAC|AAC|OGG)$/.test(extension) ? { Icon: Music, color: 'bg-emerald-500/10 text-emerald-500' }
+    : /^(MP4|MOV|AVI|MKV|WEBM)$/.test(extension) ? { Icon: Film, color: 'bg-rose-500/10 text-rose-500' }
+    : /^(JS|JSX|TS|TSX|PY|GO|RS|JAVA|HTML|CSS|SCSS|JSON|XML|YAML|YML|SQL|SH)$/.test(extension)
+      ? { Icon: FileCode2, color: 'bg-sky-500/10 text-sky-500' }
+      : { Icon: FileText, color: 'bg-muted text-muted-foreground' };
   const [imageUrl, setImageUrl] = React.useState('');
   const [size, setSize] = React.useState<number>();
   const [error, setError] = React.useState('');
@@ -39,21 +53,24 @@ export function FilePreview({ path, name, onRemove, readonly = false, sessionId 
   }
   const sizeLabel = size === undefined ? '' : size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.round(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return (
-    <div className="max-w-full" data-file-attachment={path}>
-      <div className="flex max-w-full items-center rounded-lg border border-border/70 bg-card">
+    <div className="w-[250px] max-w-full" data-file-attachment={path}>
+      <div className="flex min-w-0 items-center overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20">
         <button type="button" disabled={busy} onClick={() => void act('preview')} title={path} aria-label={`预览 ${fileName}`}
-          className="flex min-w-0 items-center gap-2 rounded-lg p-2 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+          className="flex min-w-0 flex-1 items-center gap-2.5 p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg ${fileIcon.color}`}>
             {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setImageUrl('')} />
-              : isImage ? <ImageIcon className="h-5 w-5 text-muted-foreground" /> : <FileText className="h-5 w-5 text-muted-foreground" />}
+              : <fileIcon.Icon className={extension === 'PDF' ? 'h-7 w-7' : 'h-5 w-5'} aria-hidden="true" />}
           </span>
-          <span className="flex min-w-0 flex-col">
-            <span className="max-w-[180px] truncate text-xs font-medium">{fileName}</span>
-            <span className="text-[10px] text-muted-foreground">{sizeLabel || '文件'} · 点击预览</span>
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="truncate text-xs font-semibold" title={fileName}>{fileName}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 font-medium tracking-wide">{typeLabel}</span>
+              <span className="truncate">{sizeLabel || '点击预览'}</span>
+            </span>
           </span>
         </button>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild><button type="button" disabled={busy} aria-label={`${fileName} 操作`} className="p-1.5 text-muted-foreground hover:text-foreground"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
+          <DropdownMenuTrigger asChild><button type="button" disabled={busy} aria-label={`${fileName} 操作`} className="mr-1.5 rounded-md p-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => void act('preview')}><Eye />预览</DropdownMenuItem>
             {capabilities.system && <DropdownMenuItem onSelect={() => void act('system')}><ExternalLink />{typeof window !== 'undefined' && window.mossWeb ? '打开或下载文件' : '用系统应用打开'}</DropdownMenuItem>}

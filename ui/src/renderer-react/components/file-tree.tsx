@@ -9,7 +9,6 @@ import {
   FileJson,
   FileSpreadsheet,
   FileText,
-  FileType2,
   Film,
   Folder,
   FolderOpen,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { PdfFileIcon } from "@/components/pdf-file-icon";
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,7 +50,7 @@ const FILE_ICONS: Record<string, FileIconStyle> = {
   svg: { Icon: FileImage, className: "text-violet-400" },
   bmp: { Icon: FileImage, className: "text-violet-400" },
   ico: { Icon: FileImage, className: "text-violet-400" },
-  pdf: { Icon: FileType2, className: "text-red-500" },
+  pdf: { Icon: PdfFileIcon, className: "text-red-500" },
   doc: { Icon: FileText, className: "text-blue-500" },
   docx: { Icon: FileText, className: "text-blue-500" },
   rtf: { Icon: FileText, className: "text-blue-500" },
