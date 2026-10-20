@@ -7,7 +7,7 @@ import path from 'node:path'
 fs.mkdirSync(path.dirname(workerData.file), { recursive: true, mode: 0o700 })
 const sqlite = await import(process.versions.bun ? 'bun:sqlite' : 'node:sqlite')
 const db = new (sqlite.DatabaseSync || sqlite.Database)(workerData.file)
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
+db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
   CREATE TABLE IF NOT EXISTS tasks (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, updated INTEGER NOT NULL, state TEXT NOT NULL, summary TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS tasks_owner_updated ON tasks(owner, sequence DESC);
   CREATE TABLE IF NOT EXISTS executions (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, state TEXT NOT NULL, input TEXT NOT NULL);
