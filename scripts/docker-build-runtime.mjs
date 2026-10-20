@@ -17,7 +17,7 @@ Options:
   --push                 Push the built image or multi-platform manifest.
   --node-version <ver>   Node.js version. Default: 22.23.1
   --sharp-version <ver>  sharp version. Default: 0.34.5
-  --base-image <image>   Ubuntu base image. Default: public.ecr.aws/ubuntu/ubuntu:24.04
+  --base-image <image>   Ubuntu base image. Default: ubuntu:24.04
   --no-cache             Pass --no-cache to docker buildx build.
   --progress <mode>      Docker progress mode, e.g. auto, plain.
   -h, --help             Show this help.
@@ -32,7 +32,7 @@ function parseArgs(argv) {
     push: false,
     nodeVersion: '22.23.1',
     sharpVersion: '0.34.5',
-    baseImage: 'public.ecr.aws/ubuntu/ubuntu:24.04',
+    baseImage: 'ubuntu:24.04',
     noCache: false,
     progress: undefined,
   }
