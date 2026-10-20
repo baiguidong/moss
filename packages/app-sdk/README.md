@@ -12,7 +12,7 @@ Moss 容器负责显示 App 名称、简介、迭代、AI 能力入口与整页�
 
 App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
 
-当前 SDK 对应 Host API `3.11.0`；使用 MCP 目录绑定的 App 声明 `hostApi: "^3.11.0"`。不提供旧 UI 调用签名兼容层。
+当前 SDK 对应 Host API `3.16.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
 
 配置型 MCP App 声明 `ui: { builtin: "mcp" }` 和 `mcpApp: { config: "mcp.json" }`。Core 生成 Manifest、提供公共设置页并直接注册 MCP，无需额外基础 App、包内 UI 文件或 Backend。要求 Host API 3.9，格式和 Draw.io 实测见 [配置型 MCP App 验证](../../ui/docs/mcp-configuration-app-proof.md)。
 
@@ -67,6 +67,8 @@ app.dispose()
 普通请求不传 `instanceId`。实例配置管理保留 `instances` API，运行状态使用 `app.getStatus()`。UI 与 Backend Host 调用共用权限复查、载荷限额、受限超时和取消机制；窗口关闭及 App 生命周期变化会取消所属 UI 请求。取消等待原请求结算，不自动重试有副作用的请求。
 
 Tasks/Execution 与 MCP 的元数据、JSON Schema、权限、限额来自 [host-contracts](../host-contracts/README.md)，生成类型、校验器及文档。App Service v1、领域协议名称保持不变；Host API/SDK/Runtime 3.0 要求 App 重新构建。
+
+Host API 3.16 提供通用 `moss.session-source/v1`。获 `session-source:read` 授权的 App 先调用 `session.list({})` 比对每个会话的 revision，仅对变化的会话调用 `session.export({sessionId})`，读取实例数据目录中的 `session-source/<fileName>`。定位会话需 `session-source:open`；发布通知使用 `moss.notifications/v1.publish` 与 `notifications:publish`。详见 [Host Capability API](../../ui/docs/app-host-capability-api.md)。
 
 `@moss/app-sdk/execution` 提供 `createTasksClient(host)`、`createExecutionClient(host)`、`ExecutionWatcher` 和 `validateExecutionHostInput`。`ExecutionWatcher` 复用一次底层订阅，支持并发等待、序号过滤、初始查询、5 秒兜底及关闭清理。`@moss/app-sdk/mcp` 提供 `createMcpClient(host)` 和方法输入/结果类型。
 

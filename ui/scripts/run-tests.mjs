@@ -22,7 +22,7 @@ collect('tests');
 collect('src');
 bunTests.sort();
 nodeTests.sort();
-nodeTests.push('tests/app-audit-host.node.mjs', 'tests/session-persistence.node.mjs', 'tests/desktop-control.node.mjs');
+nodeTests.push('tests/app-session-source-host.node.mjs', 'tests/session-persistence.node.mjs', 'tests/desktop-control.node.mjs');
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', env: process.env });

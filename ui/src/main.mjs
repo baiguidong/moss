@@ -199,7 +199,8 @@ import {
 import { registerCronIpcHandlers } from './cron-tasks-ipc.mjs';
 import { registerLogIpcHandlers, mossLog } from './log-ipc.mjs';
 import { registerResourceMonitorIpc } from './resource-monitor/resource-monitor-ipc.mjs';
-import { AppAuditHost, createAuditProtocolDefinition, AUDIT_PROTOCOL } from './apps/app-audit-host.mjs';
+import { AppSessionSourceHost, createSessionSourceProtocolDefinition, SESSION_SOURCE_PROTOCOL } from './apps/app-session-source-host.mjs';
+import { shouldRefreshAppCatalogForRuntimeEvent } from './apps/app-runtime-refresh-policy.mjs';
 import {
   truncateHistoryBeforeUserMessage,
 } from './shared/turn-changes.mjs';
@@ -575,7 +576,7 @@ const updateGuardedAppIpc = {
   },
 };
 let appTraceHost = null;
-let appAuditHost = null;
+let appSessionSourceHost = null;
 let appExecutionHost = null;
 let agentChannelController = null;
 let appDecisionBroker = null;
@@ -6277,40 +6278,65 @@ function getSessionRecord(sessionId) {
   return sessionRecord;
 }
 
-function getLocalAuditSessionSnapshots() {
+function getLocalSessionSourceRecords() {
   return [...sessions.values(), ...subAgentSessions.values()]
-    .filter((sessionRecord) => sessionRecord?.agentMode !== 'remote-direct')
-    .map((sessionRecord) => {
-      const parentSession = sessionRecord.parentSessionId
-        ? sessions.get(sessionRecord.parentSessionId) || subAgentSessions.get(sessionRecord.parentSessionId)
-        : null;
-      const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
-      const engineSessionDir = transcriptPath
-        ? path.join(path.dirname(transcriptPath), path.basename(transcriptPath, path.extname(transcriptPath)))
-        : null;
-      return {
-        id: sessionRecord.id,
-        title: sessionRecord.title,
-        workspace: sessionRecord.workspace,
-        projectId: sessionRecord.projectId || null,
-        assistantName: sessionRecord.assistantName || null,
-        sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
-        isSubAgent: Boolean(sessionRecord.isSubAgent),
-        parentSessionId: sessionRecord.parentSessionId || null,
-        allowedWritePaths: normalizeStringList([
-          ...getSessionWorkspaceDirectories(sessionRecord),
-          parentSession?.workspace,
-          getClaudeTempDirForLookup(),
-          engineSessionDir ? path.join(engineSessionDir, 'session-memory') : null,
-          engineSessionDir ? path.join(engineSessionDir, 'plans') : null,
-        ]),
-        createdAt: sessionRecord.createdAt,
-        updatedAt: sessionRecord.updatedAt,
-        agentMode: 'local',
-        busy: Boolean(sessionRecord.busy),
-        history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
-      };
-    });
+    .filter((sessionRecord) => sessionRecord?.agentMode !== 'remote-direct');
+}
+
+const sessionSourceReferences = new WeakMap();
+let nextSessionSourceReference = 1;
+function sessionSourceReference(value) {
+  if (!value || typeof value !== 'object') return 0;
+  if (!sessionSourceReferences.has(value)) sessionSourceReferences.set(value, nextSessionSourceReference++);
+  return sessionSourceReferences.get(value);
+}
+
+function getLocalSessionSourceRevision(sessionRecord) {
+  const history = Array.isArray(sessionRecord.history) ? sessionRecord.history : [];
+  const last = history.at(-1);
+  const parent = sessionRecord.parentSessionId
+    ? sessions.get(sessionRecord.parentSessionId) || subAgentSessions.get(sessionRecord.parentSessionId)
+    : null;
+  return createHash('sha256').update(JSON.stringify([
+    sessionRecord.updatedAt || 0, history.length, Boolean(sessionRecord.busy),
+    sessionRecord.title, sessionRecord.workspace, sessionRecord.projectId,
+    sessionRecord.assistantName, sessionRecord.sessionKind, sessionRecord.isSubAgent,
+    sessionRecord.parentSessionId, parent?.workspace, sessionRecord.underlyingSessionId,
+    last?.uuid, last?.timestamp,
+    sessionSourceReference(Array.isArray(sessionRecord.history) ? history : null), sessionSourceReference(last),
+  ])).digest('hex');
+}
+
+function getLocalSessionSourceSnapshot(sessionRecord) {
+  const parentSession = sessionRecord.parentSessionId
+    ? sessions.get(sessionRecord.parentSessionId) || subAgentSessions.get(sessionRecord.parentSessionId)
+    : null;
+  const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
+  const engineSessionDir = transcriptPath
+    ? path.join(path.dirname(transcriptPath), path.basename(transcriptPath, path.extname(transcriptPath)))
+    : null;
+  return {
+    id: sessionRecord.id,
+    title: sessionRecord.title,
+    workspace: sessionRecord.workspace,
+    projectId: sessionRecord.projectId || null,
+    assistantName: sessionRecord.assistantName || null,
+    sessionKind: normalizeSessionKind(sessionRecord.sessionKind),
+    isSubAgent: Boolean(sessionRecord.isSubAgent),
+    parentSessionId: sessionRecord.parentSessionId || null,
+    allowedWritePaths: normalizeStringList([
+      ...getSessionWorkspaceDirectories(sessionRecord),
+      parentSession?.workspace,
+      getClaudeTempDirForLookup(),
+      engineSessionDir ? path.join(engineSessionDir, 'session-memory') : null,
+      engineSessionDir ? path.join(engineSessionDir, 'plans') : null,
+    ]),
+    createdAt: sessionRecord.createdAt,
+    updatedAt: sessionRecord.updatedAt,
+    agentMode: 'local',
+    busy: Boolean(sessionRecord.busy),
+    history: Array.isArray(sessionRecord.history) ? sessionRecord.history : [],
+  };
 }
 
 function getSessionDetailPayload(sessionRecord, history = sessionRecord.history) {
@@ -8055,10 +8081,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
     getSessions: () => [...sessions.values(), ...subAgentSessions.values()], log: error => mossLog('warn', 'trace', error.message) });
-  appAuditHost = new AppAuditHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime,
-    getSessions: getLocalAuditSessionSnapshots,
+  appSessionSourceHost = new AppSessionSourceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime,
+    getSessions: getLocalSessionSourceRecords,
+    getSessionSnapshot: getLocalSessionSourceSnapshot,
+    getSessionRevision: getLocalSessionSourceRevision,
     openSession: input => emitToRenderer('app:open-session', input),
-    notify: (input, options) => appNotificationBroker.create(input, options),
+    log: error => mossLog('warn', 'session-source', error instanceof Error ? error.message : String(error)),
   });
   appExecutionHost = new AppExecutionHost({
     directory: path.join(MOSS_HOME, 'app-tasks'),
@@ -8225,7 +8253,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       await appAuthoring?.deactivate(appId);
       appExecutionHost?.deactivate(appId);
       await appTraceHost.beforeDeactivation(appId);
-      await appAuditHost.beforeDeactivation(appId);
+      await appSessionSourceHost.beforeDeactivation(appId);
     },
     capabilityAvailability: async (protocol, method, context) => {
       if (protocol === MOSS_CLOUD_STORAGE_PROTOCOL && method !== 'status.get') {
@@ -8243,7 +8271,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       contractDefinition('moss.apps/v1'),
       ...createExecutionProtocolDefinitions(),
       createTraceProtocolDefinition(),
-      createAuditProtocolDefinition(),
+      createSessionSourceProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
       createRuntimesProtocolDefinition(),
       createMcpProtocolDefinition(),
@@ -8259,6 +8287,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       'moss.notifications/v1': {
         list: () => ({notifications:appNotificationBroker.list()}),
         'mark-read': input => ({notifications:appNotificationBroker.markRead(input.id)}),
+        publish: (input, context) => { appNotificationBroker.create({ severity: input.severity, source: context.appId,
+          title: input.title, message: input.message, details: input.details }, { id: `${context.appId}:${input.id}` }); return { delivered: true }; },
       },
       'moss.host/v1': {
         'info.get': () => developerCatalog.info,
@@ -8268,8 +8298,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
       'moss.apps/v1': Object.fromEntries(Object.keys(publicHostContracts['moss.apps/v1'].methods).map(method => [method, (input, context) => appAuthoring.handle(method, input, context)])),
       ...Object.fromEntries(createExecutionProtocolDefinitions().map(def => [def.protocol, Object.fromEntries(Object.keys(def.methods).map(method => [method, (input, context) => appExecutionHost.handle(def.protocol, method, input, context)]))])),
-      [AUDIT_PROTOCOL]: Object.fromEntries(Object.keys(createAuditProtocolDefinition().methods).map(method => [
-        method, (input, context) => appAuditHost.handle(method, input, context),
+      [SESSION_SOURCE_PROTOCOL]: Object.fromEntries(Object.keys(createSessionSourceProtocolDefinition().methods).map(method => [
+        method, (input, context) => appSessionSourceHost.handle(method, input, context),
       ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog: appDialog, shell: appShell, BrowserWindow, getManagedRuntimeStatus, ...(isWebHost ? { preview: async file => { const handle = await webResources.create({ root: path.dirname(file), entryPath: file, ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner' }); if (!await webInteractions.request('link', { title: '打开 App 文件预览', url: (process.env.MOSS_WEB_ORIGIN ? new URL(handle.url, process.env.MOSS_WEB_ORIGIN).href : handle.url) })) throw new Error('文件预览已取消。'); } } : {}) }),
@@ -8302,12 +8332,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (event.type === 'status' && ['stopping', 'stopped', 'failed', 'crashed', 'crash_loop'].includes(event.state)) appExecutionHost?.deactivate(event.appId, 'App Backend 已停止', event.instanceId);
       webApps?.publishRuntime(event);
       emitToRenderer('app:runtime-event', event);
-      if (!appRuntimeRestorePending) void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      if (!appRuntimeRestorePending && shouldRefreshAppCatalogForRuntimeEvent(event)) {
+        void emitAppsChanged({ action: 'runtime', appId: event.appId, instanceId: event.instanceId });
+      }
       if (event.type === 'status' && event.state === 'running' && event.appId && event.instanceId) {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
-      if (event.appId === 'moss.audit' && (appLifecycleChanged || event.type === 'instance-changed')) appAuditHost?.refresh();
       if (!appRuntimeRestorePending && event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
       }
@@ -8867,7 +8898,7 @@ function shutdownDesktop() {
     await attempt(() => { agentTeamsService?.stop(); agentTeamsService = null; });
     await attempt(async () => { await appTraceHost?.close(); });
     await attempt(async () => { await agentMailPoller?.stop(); agentMailPoller = null; });
-    await attempt(async () => { await appAuditHost?.close(); });
+    await attempt(async () => { await appSessionSourceHost?.close(); });
     await attempt(() => appExecutionHost?.close());
     await Promise.all([...sessions.values(), ...subAgentSessions.values()].map(record =>
       attempt(() => {
@@ -10100,7 +10131,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
       }
 
       const revertedHistory = sessionRecord.history.slice(nextHistory.length);
-      const auditEvent = await appAuditHost?.recordEvent({
+      const sessionEvent = await appSessionSourceHost?.recordEvent({
         sessionId: sessionRecord.id,
         eventType: 'turn_reverted',
         userMessageId: targetId,
@@ -10124,7 +10155,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
         removedRuntimeMessages = await runtime.rewindConversation(targetId);
       } catch (error) {
         try {
-          await appAuditHost?.updateEvent(auditEvent, {
+          await appSessionSourceHost?.updateEvent(sessionEvent, {
             status: 'failed',
             expectedFiles: preview.filesChanged || [],
             error: error instanceof Error ? error.message : String(error),
@@ -10141,9 +10172,9 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
       sessionRecord.preview = deriveSessionPreview(nextHistory);
       schedulePersistSession(sessionRecord, true);
 
-      let auditRecorded = false;
+      let sessionEventRecorded = false;
       try {
-        auditRecorded = await appAuditHost?.updateEvent(auditEvent, {
+        sessionEventRecorded = await appSessionSourceHost?.updateEvent(sessionEvent, {
             status: 'completed',
             restoredFiles,
             removedHistoryEvents,
@@ -10152,7 +10183,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
             checkpointDeletions: preview.deletions || 0,
         }) === true;
       } catch (error) {
-        mossLog('error', 'audit', 'Unable to persist turn rewind audit event', {
+        mossLog('error', 'session-source', 'Unable to persist turn rewind event', {
           sessionId: sessionRecord.id,
           userMessageId: targetId,
           error: error instanceof Error ? error.message : String(error),
@@ -10172,7 +10203,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
         userMessageId: targetId,
         restoredFiles,
         removedHistoryEvents,
-        auditRecorded,
+        sessionEventRecorded,
       };
     });
   })

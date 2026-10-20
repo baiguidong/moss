@@ -126,17 +126,17 @@ export interface PlatformHostOutputMap {
 }
 export interface PlatformHostEventMap {
 }
-export interface AuditHostInputMap {
-  "source.capture": Record<string, never>
+export interface SessionSourceHostInputMap {
+  "session.list": Record<string, never>
+  "session.export": { "sessionId": string }
   "session.open": { "sessionId": string; "toolUseId"?: string }
-  "notification.publish": { "id": string; "severity": "info" | "warning" | "error"; "title": string; "message": string; "details"?: string }
 }
-export interface AuditHostOutputMap {
-  "source.capture": { "schemaVersion": 1; "capturedAt": number; "sessionCount": number }
+export interface SessionSourceHostOutputMap {
+  "session.list": { "sessions": Array<{ "id": string; "revision": string; "updatedAt": number; "historyLength": number; "busy": boolean }> }
+  "session.export": { "sessionId": string; "revision": string; "fileName": string }
   "session.open": { "opened": true }
-  "notification.publish": { "delivered": true }
 }
-export interface AuditHostEventMap {
+export interface SessionSourceHostEventMap {
 }
 export interface TraceHostInputMap {
   "status": Record<string, never>
@@ -276,10 +276,12 @@ export interface SettingsHostEventMap {
 export interface NotificationsHostInputMap {
   "list": Record<string, never>
   "mark-read": { "id": string }
+  "publish": { "id": string; "severity": "info" | "warning" | "error"; "title": string; "message": string; "details"?: string }
 }
 export interface NotificationsHostOutputMap {
   "list": { [key: string]: unknown }
   "mark-read": { [key: string]: unknown }
+  "publish": { "delivered": true }
 }
 export interface NotificationsHostEventMap {
 }
@@ -327,7 +329,7 @@ export interface HostInputMap {
   "moss.local-files/v1": LocalFilesHostInputMap
   "moss.runtimes/v1": RuntimesHostInputMap
   "moss.platform/v1": PlatformHostInputMap
-  "moss.audit/v1": AuditHostInputMap
+  "moss.session-source/v1": SessionSourceHostInputMap
   "moss.trace/v1": TraceHostInputMap
   "moss.cloud-storage/v1": CloudStorageHostInputMap
   "moss.host/v1": HostHostInputMap
@@ -343,7 +345,7 @@ export interface HostOutputMap {
   "moss.local-files/v1": LocalFilesHostOutputMap
   "moss.runtimes/v1": RuntimesHostOutputMap
   "moss.platform/v1": PlatformHostOutputMap
-  "moss.audit/v1": AuditHostOutputMap
+  "moss.session-source/v1": SessionSourceHostOutputMap
   "moss.trace/v1": TraceHostOutputMap
   "moss.cloud-storage/v1": CloudStorageHostOutputMap
   "moss.host/v1": HostHostOutputMap
@@ -359,7 +361,7 @@ export interface HostEventMap {
   "moss.local-files/v1": LocalFilesHostEventMap
   "moss.runtimes/v1": RuntimesHostEventMap
   "moss.platform/v1": PlatformHostEventMap
-  "moss.audit/v1": AuditHostEventMap
+  "moss.session-source/v1": SessionSourceHostEventMap
   "moss.trace/v1": TraceHostEventMap
   "moss.cloud-storage/v1": CloudStorageHostEventMap
   "moss.host/v1": HostHostEventMap

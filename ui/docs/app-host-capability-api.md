@@ -133,19 +133,17 @@ Desktop 额外注册两个通用协议，使用现有 `context.host.request` 调
 
 `moss.trace/v1` 仅支持 `status({})`，要求 `trace:capture` 授权，返回 enabled、queuedBytes、droppedRecords 和 error。Core 写入应用实例数据目录，App 独立管理读取与索引。采集由已安装 App 及其默认实例的启用状态决定，无第二个采集开关，不支持任意输出目录或采集结果查询。参见 [Trace App 架构](../../docs/trace-migration-plan.md)。
 
-## 审计 App（Host API 2.6）
+## 本地会话来源（Host API 3.16）
 
-`moss.audit/v1` 供 `moss.audit` 读取本地会话并接入桌面导航与通知：
+`moss.session-source/v1` 可供获授权的 App 按会话读取本地历史：
 
 | 方法 | 权限 | 契约 |
 | --- | --- | --- |
-| `source.capture` | `audit:read` | 空对象输入；Host 原子写入实例私有 `source/snapshot.json`，返回 `{schemaVersion:1,capturedAt,sessionCount}` |
-| `session.open` | `audit:navigate` | `{sessionId,toolUseId?}`；只接受仍存在的本地会话 |
-| `notification.publish` | `audit:notify` | `{id,severity,title,message,details?}`；按 App 固定来源及 ID 前缀幂等投递 |
+| `session.list` | `session-source:read` | 空对象输入；返回 ID、revision、updatedAt、历史长度与忙碌状态，不读取历史正文 |
+| `session.export` | `session-source:read` | `{sessionId}`；仅将该会话脱敏后原子写入实例私有 `session-source/<fileName>`，返回实际 revision |
+| `session.open` | `session-source:open` | `{sessionId,toolUseId?}`；只接受仍存在的本地会话 |
 
-会话正文在 Host 侧脱敏后写文件，避免超出 IPC 消息大小。Host 保留撤销前后事件文件写入，App 自己导入、索引和分析；不公开任意目录、数据库查询或规则执行接口。首次读取前通过 SQLite 在线备份复制旧审计数据库，保留原件。
-
-停用、撤权、卸载先使在途导出与事件票据失效并等待写入结束。未安装或停用 App 不会阻止会话撤销。详见 [审计迁移记录](audit-app-migration.md)。
+App 比对 revision，仅导出新增或变化的会话。会话正文不经过 IPC；会话操作事件写入已授权 App 的 `session-source/events/`。停用、撤权和卸载会使在途写入失效。通知使用通用 `moss.notifications/v1` 的 `publish` 方法与 `notifications:publish` 授权。扫描、规则和数据库由消费 App 自行实现。
 
 ## Host API 3 调用约定
 

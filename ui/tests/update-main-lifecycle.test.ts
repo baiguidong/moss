@@ -23,7 +23,7 @@ function fixture(extra: Record<string, any> = {}) {
     appAuthoring: { shutdown: async () => {} },
     appTraceHost: { close: async () => { calls.push('trace-close'); } },
     agentMailPoller: { stop: async () => { calls.push('mail-stop'); } },
-    appAuditHost: { close: () => calls.push('audit-close') },
+    appSessionSourceHost: { close: () => calls.push('session-source-close') },
     schedulePersistSession: (record: { id: string }, immediate: boolean) => { expect(immediate).toBe(true); calls.push(`persist-${record.id}`); },
     closeWorkspaceWatcher: () => {}, disposeRuntime: (record: { id: string }) => calls.push(`dispose-${record.id}`),
     cloudStorageHost: { close: async () => { calls.push('cloud-close'); } },
@@ -58,8 +58,8 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
 });
 test('a failing component does not skip other cleanup or authorize installation', async () => {
   let failed = true;
-  const { shutdown, context, calls } = fixture({ appAuditHost: { close: () => { if (failed) throw new Error('audit close failed'); } } });
-  await expect(shutdown()).rejects.toThrow('audit close failed');
+  const { shutdown, context, calls } = fixture({ appSessionSourceHost: { close: () => { if (failed) throw new Error('session source close failed'); } } });
+  await expect(shutdown()).rejects.toThrow('session source close failed');
   expect(context.appShutdownComplete).toBe(false);
   expect(calls).toContain('apps-close'); expect(calls).toContain('persist-child');
   failed = false; await shutdown(); expect(context.appShutdownComplete).toBe(true);

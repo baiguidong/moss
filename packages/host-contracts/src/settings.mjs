@@ -13,5 +13,6 @@ export const settingsContracts = {
   'moss.notifications/v1': { types: 'Notifications', methods: {
     'list': method('notifications:read', record({}), object),
     'mark-read': method('notifications:read', record({ id: text(128) }), object),
+    'publish': method('notifications:publish', record({ id: text(128), severity: { enum: ['info','warning','error'] }, title: text(4000), message: text(4000), details: text(16000) }, ['id','severity','title','message']), record({ delivered: { const: true } })),
   }, events: {} },
 }

@@ -24,14 +24,14 @@ export const localContracts = {
     'screen.capture': method('platform:screen-capture', empty, file),
     'shell.open-external': method('platform:external-links', record({ url: http }), record({ opened: { const: true } })),
   }, events: {} },
-  'moss.audit/v1': { types: 'Audit', methods: {
-    'source.capture': method('audit:read', empty, record({ schemaVersion: { const: 1 }, capturedAt: count, sessionCount: count })),
-    'session.open': method('audit:navigate', record({ sessionId: text(4000), toolUseId: text(4000) }, ['sessionId']), record({ opened: { const: true } })),
-    'notification.publish': method('audit:notify', record({ id: text(4000), severity: { enum: ['info','warning','error'] }, title: text(4000), message: text(4000), details: text(16000) }, ['id','severity','title','message']), record({ delivered: { const: true } })),
+  'moss.session-source/v1': { types: 'SessionSource', methods: {
+    'session.list': method('session-source:read', empty, record({ sessions: array(record({ id: text(4000), revision: text(1024), updatedAt: count, historyLength: count, busy: boolean }), 10000) })),
+    'session.export': method('session-source:read', record({ sessionId: text(4000) }), record({ sessionId: text(4000), revision: text(1024), fileName: text(100) })),
+    'session.open': method('session-source:open', record({ sessionId: text(4000), toolUseId: text(4000) }, ['sessionId']), record({ opened: { const: true } })),
   }, events: {} },
   'moss.trace/v1': { types: 'Trace', methods: {
     status: method('trace:capture', empty, record({ enabled: boolean, queuedBytes: count, droppedRecords: count, error: nullable(string) })),
   }, events: {} },
 }
 
-for (const protocol of ['moss.audit/v1','moss.trace/v1']) for (const entry of Object.values(localContracts[protocol].methods)) entry.apps = [protocol.split('/')[0]]
+for (const protocol of ['moss.trace/v1']) for (const entry of Object.values(localContracts[protocol].methods)) entry.apps = [protocol.split('/')[0]]

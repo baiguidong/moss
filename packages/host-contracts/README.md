@@ -37,9 +37,9 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.platform/v1 / file.download | platform:files | url*, fileName* | ui, backend | {"fileBytes":104857600} |
 | moss.platform/v1 / screen.capture | platform:screen-capture | {} | ui, backend |  |
 | moss.platform/v1 / shell.open-external | platform:external-links | url* | ui, backend |  |
-| moss.audit/v1 / source.capture | audit:read | {} | ui, backend |  |
-| moss.audit/v1 / session.open | audit:navigate | sessionId*, toolUseId | ui, backend |  |
-| moss.audit/v1 / notification.publish | audit:notify | id*, severity*, title*, message*, details | ui, backend |  |
+| moss.session-source/v1 / session.list | session-source:read | {} | ui, backend |  |
+| moss.session-source/v1 / session.export | session-source:read | sessionId* | ui, backend |  |
+| moss.session-source/v1 / session.open | session-source:open | sessionId*, toolUseId | ui, backend |  |
 | moss.trace/v1 / status | trace:capture | {} | ui, backend |  |
 | moss.cloud-storage/v1 / status.get | cloud-storage:read | {} | ui, backend |  |
 | moss.cloud-storage/v1 / quota.get | cloud-storage:read | {} | ui, backend |  |
@@ -92,6 +92,7 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.settings/v1 / undo | settings:write | receiptId*, requestId*, approvalMode | ui, backend |  |
 | moss.notifications/v1 / list | notifications:read | {} | ui, backend |  |
 | moss.notifications/v1 / mark-read | notifications:read | id* | ui, backend |  |
+| moss.notifications/v1 / publish | notifications:publish | id*, severity*, title*, message*, details | ui, backend |  |
 | moss.testing/v1 / environment | testing:control | {} | backend |  |
 | moss.testing/v1 / target.status | testing:control | {} | backend |  |
 | moss.testing/v1 / target.open | testing:control | fixtures, title | backend |  |

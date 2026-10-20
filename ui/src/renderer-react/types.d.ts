@@ -1451,7 +1451,7 @@ declare global {
         userMessageId: string;
         restoredFiles: string[];
         removedHistoryEvents: number;
-        auditRecorded: boolean;
+        sessionEventRecorded: boolean;
       }>;
       updateSession: (payload: { sessionId: string; title: string }) => Promise<SessionDetail>;
       setSessionToolDisplayMode: (payload: {
