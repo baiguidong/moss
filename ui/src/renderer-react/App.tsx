@@ -20,6 +20,7 @@ import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
+import { firstMessageTitle, historyWithPendingFirstMessage, type PendingFirstMessage } from '@/lib/pending-first-message';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { SessionInfoButton } from '@/components/session-info';
 import { GlobalSessionSearch } from '@/components/global-session-search';
@@ -458,6 +459,7 @@ export default function App() {
   const toolDisplaySettingRequestRef = React.useRef<string | null>(null);
   const [activeDetail, setActiveDetail] = React.useState<SessionDetail | null>(null);
   const [pendingSendRequests, setPendingSendRequests] = React.useState<Map<string, symbol>>(() => new Map());
+  const [pendingFirstMessage, setPendingFirstMessage] = React.useState<PendingFirstMessage | null>(null);
   const [preparingNewSession, setPreparingNewSession] = React.useState(false);
   const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
   const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
@@ -850,6 +852,7 @@ export default function App() {
     agentMode: 'local' | 'remote-direct' = 'local',
     appIds: string[] = [],
     appServiceIds: string[] = [],
+    onCreated?: (sessionId: string) => void,
   ) => {
     const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
     if (workspace) payload.workspace = workspace;
@@ -866,6 +869,7 @@ export default function App() {
     setActiveSessionId(created.summary.id);
     setComposerIntent(restoreComposerIntent(created.detail));
     setActiveDetail(created.detail);
+    onCreated?.(created.summary.id);
     clearSessionWorkspaceState();
     // Record the mode selected for this new session.
     const mode = created.summary.agentMode ?? agentMode;
@@ -1391,12 +1395,15 @@ export default function App() {
       : [],
     [activeSessionId, summaries],
   );
-  // chatMessages is built exclusively from session history.
+  // Show the first submitted message while the Host prepares its receipt.
+  // Once that receipt arrives, session history is authoritative.
   // The coordinator agent produces its own formatted summary in the history;
   // the UI must not generate its own summary on top of it.
   // Subagent status is rendered from persisted child session summaries.
   const chatMessages = React.useMemo(() => {
-    const messages = buildMainChatRenderMessagesFromHistory(activeDetail?.history || []);
+    const messages = buildMainChatRenderMessagesFromHistory(
+      historyWithPendingFirstMessage(activeDetail?.history || [], pendingFirstMessage, activeSessionId),
+    );
     // Orphaned tool calls: an aborted turn may end without a result event, so
     // running/pending tools would spin forever. Once the session is idle,
     // mark them as interrupted.
@@ -1412,7 +1419,7 @@ export default function App() {
       }
     }
     return messages;
-  }, [activeDetail?.history, activeDetail?.busy]);
+  }, [activeDetail?.history, activeDetail?.busy, activeSessionId, pendingFirstMessage]);
 
   const globalToolDisplayMode = desktopSettings?.appearance.toolDisplayMode ?? 'expanded';
   const activeToolDisplayMode = resolveToolDisplayMode(
@@ -1892,6 +1899,7 @@ export default function App() {
     let sessionId = activeSessionId;
     let filesToSend = files;
     let sendAttempted = false;
+    let pendingFirstMessageId: string | null = null;
     const submitEpoch = activeSessionId ? queueEpochs.current.get(activeSessionId) ?? 0 : 0;
     setInput('');
     setAppSelection(current => current === selection ? null : current);
@@ -1906,7 +1914,7 @@ export default function App() {
         if (!creatingSessionRef.current) {
           setPreparingNewSession(true);
           creatingSessionRef.current = createAndOpenSession(
-            undefined,
+            firstMessageTitle(prompt),
             workspace || appDraftWorkspace,
             selectedAssistant?.name,
             draftConnectorIds,
@@ -1914,6 +1922,16 @@ export default function App() {
             newSessionAgentMode,
             draftAppIds,
             draftAppServiceIds,
+            (createdId) => {
+              pendingFirstMessageId = crypto.randomUUID();
+              setPendingFirstMessage({
+                id: pendingFirstMessageId,
+                sessionId: createdId,
+                prompt,
+                files: [...(files ?? [])],
+                submittedAt: Date.now(),
+              });
+            },
           ).finally(() => {
             creatingSessionRef.current = null;
             setPreparingNewSession(false);
@@ -1945,6 +1963,10 @@ export default function App() {
           }
         }
         filesToSend = newFiles;
+        if (pendingFirstMessageId) {
+          setPendingFirstMessage(current => current?.id === pendingFirstMessageId
+            ? { ...current, files: newFiles } : current);
+        }
       }
 
       if (submitEpoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，草稿已保留。');
@@ -1965,6 +1987,10 @@ export default function App() {
           status: 'draft', notice: sendAttempted ? '发送未确认，请先核对会话记录。' : `发送准备失败，内容已保留。${cleanIpcErrorMessage(error)}` }]);
       }
       throw error;
+    } finally {
+      if (pendingFirstMessageId) {
+        setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
+      }
     }
   }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
@@ -2686,7 +2712,7 @@ export default function App() {
                 onRestoreInteraction={handleRestoreInteraction}
                 onInteraction={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionInteraction : undefined}
                 value={input}
-                loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId))}
+                loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
                 busyStartedAt={activeDetail?.busyStartedAt ?? null}
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}

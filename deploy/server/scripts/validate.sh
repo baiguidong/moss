@@ -110,7 +110,6 @@ jq -e '.cloudStorage.enabled == false and .cloudStorage.endpoint == "https://ext
 
 mkdir -p "$test_root/upgrade"
 cp "$ROOT/.env.example" "$test_root/upgrade/.env"
-original_web_image="$(sed -n 's/^MOSS_WEB_IMAGE=//p' "$test_root/upgrade/.env")"
 cp "$ROOT/upgrade.sh" "$test_root/upgrade/upgrade.sh"
 printf '%s\n' '#!/usr/bin/env bash' '[[ "${PULL_IMAGES:-}" == 1 ]]' \
   > "$test_root/upgrade/start.sh"
@@ -121,8 +120,8 @@ grep -Fxq 'MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:1.2.3' \
   "$test_root/upgrade/.env"
 grep -Fxq 'MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:1.2.3' \
   "$test_root/upgrade/.env"
-# Server upgrades must not implicitly replace/update the personal Linux image.
-grep -Fxq "MOSS_WEB_IMAGE=$original_web_image" "$test_root/upgrade/.env"
+grep -Fxq 'MOSS_WEB_IMAGE=ghcr.io/baiguidong/moss-webui:1.2.3' \
+  "$test_root/upgrade/.env"
 
 if grep -RInE --exclude='README.md' --exclude='validate.sh' \
   --exclude-dir='tls' '/Users/|git clone|curl.+github.com' "$ROOT"; then

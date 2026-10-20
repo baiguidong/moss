@@ -1,6 +1,6 @@
 {
   "name": "moss-desktop",
-  "version": "0.0.1",
+  "version": "0.0.16",
   "description": "Moss - AI coding agent desktop client",
   "author": "Moss AI Team",
   "private": true,
@@ -14,7 +14,7 @@
     "start": "node scripts/build-direct.mjs && node scripts/build-renderer.mjs && electron .",
     "dev": "node scripts/dev.mjs start",
     "dev:renderer": "vite",
-    "test": "bun test tests src && node --test tests/app-audit-host.node.mjs tests/session-persistence.node.mjs tests/desktop-control.node.mjs",
+    "test": "node scripts/run-tests.mjs",
     "test:presentation": "node scripts/test-presentation.mjs",
     "test:presentation-ui": "node scripts/test-presentation-ui.mjs",
     "test:main-services": "node scripts/test-main-services.mjs",

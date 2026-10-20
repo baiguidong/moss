@@ -70,6 +70,9 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Install ripgrep for source tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
       - name: Sync release version
         run: node scripts/sync-ui-version.mjs "${{ needs.prepare.outputs.tag }}"
 
@@ -319,11 +322,21 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           OUTPUT_DIR=dist/server-compose
-          MOSS_WEB_PACKAGE_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-webui:$VERSION" \
+          MOSS_RELEASE_IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" \
             deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
+          packaged_env="$(tar -xOzf "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" moss-server/.env.example)"
+          for name in server runtime webui; do
+            key="MOSS_${name^^}_IMAGE"
+            grep -Fxq "$key=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/moss-$name:$VERSION" <<<"$packaged_env"
+          done
+          grep -Fxq 'MOSS_WEB_ENABLED=1' <<<"$packaged_env"
+          sed "s/@VERSION@/$VERSION/g" deploy/server/install-from-release.sh \
+            > "$OUTPUT_DIR/install-moss-server.sh"
+          bash -n "$OUTPUT_DIR/install-moss-server.sh"
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" \
             "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz.sha256" \
+            "$OUTPUT_DIR/install-moss-server.sh" \
             --clobber --repo "$GITHUB_REPOSITORY"
 
   build-webui-linux-amd64:
@@ -373,6 +386,7 @@ jobs:
             "Moss-Setup-$VERSION-x64.exe" "Moss-Setup-$VERSION-x64.exe.blockmap"
             "Moss-Portable-$VERSION-x64.exe" latest-mac.yml latest.yml SHA512SUMS
             "moss-server-compose-$VERSION.tar.gz" "moss-server-compose-$VERSION.tar.gz.sha256"
+            "install-moss-server.sh"
             "moss-webui-$VERSION-linux-amd64.tar.gz" "moss-webui-$VERSION-linux-amd64.tar.gz.sha256"
           )
           [[ $(wc -l <<<"$assets" | tr -d ' ') -eq ${#required[@]} ]]
@@ -384,4 +398,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server + WebUI + runtime：下载下方 install-moss-server.sh，在已安装 Docker Engine、Compose v2、curl、jq 和 openssl 的服务器执行：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP:8444/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
+          gh release edit "$RELEASE_TAG" --notes "$notes" --draft=false --repo "$GITHUB_REPOSITORY"

@@ -16,10 +16,17 @@ Moss 是一个基于 Electron 的桌面客户端，它直接嵌入了 Anthropic 
 
 ## Server Docker Compose 部署
 
-WebUI 镜像由 GitHub Actions 构建为 Linux AMD64，本机通过 `gh workflow run build-release.yml`
-触发并下载产物。Server 一键安装设置 `MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud`
-可启用统一浏览器入口，复用 Server 认证，为每个用户分配并保留一个 Linux 容器；
-具体命令见 [个人云电脑部署说明](deploy/server/README.md#同时启用个人云电脑-webui)。
+正式版 Release 的 `install-moss-server.sh` 可在 Linux x86_64 上安装同一版本的
+Server、WebUI 和会话 runtime。它会下载校验 Compose 部署包，拉取三个镜像，
+启动浏览器入口，并复用 Server 认证为每个用户保留一个 Linux 容器：
+
+```bash
+curl -fLO https://github.com/baiguidong/moss/releases/download/v0.0.16/install-moss-server.sh
+sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install-moss-server.sh
+```
+
+登录 `https://服务器IP:8444/` 后，页面提供同版本 macOS 和 Windows 桌面安装包的
+Release 下载链接。详细要求见 [部署说明](deploy/server/README.md#正式版一键安装)。
 独立单用户部署继续支持，见 [WebUI 部署说明](deploy/webui/README.md)。
 
 目标机需要 Linux x86_64、Docker Engine、Docker Compose v2、`curl`、`jq`
@@ -39,8 +46,8 @@ sudo env \
 匹配内网 IP 的自签证书；客户端需要信任 `/data/moss-server/tls/server.crt`。详细配置见
 [部署文档](deploy/server/README.md)。
 
-更新镜像时执行 `sudo /data/moss-server/upgrade.sh latest`；指定版本可将
-`latest` 换成发布标签（例如 `1.2.3`）。
+更新三个镜像的配置标签时执行 `sudo /data/moss-server/upgrade.sh 0.0.16`。
+已有个人云电脑需要再逐个运行 `webui.sh upgrade`，以保留原容器和已安装软件。
 
 ## App 市场
 

@@ -49,6 +49,11 @@
 .moss-login button:disabled { cursor: wait; opacity: .7; }
 .moss-login-hint { min-height: 20px; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 11px; color: var(--login-muted); text-align: center; margin-top: 17px; line-height: 1.6; }
 .moss-login-hint svg { width: 13px; height: 13px; }
+.moss-desktop-downloads { margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--login-line); color: var(--login-muted); font-size: 11px; text-align: center; }
+.moss-desktop-downloads > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 8px; }
+.moss-desktop-downloads a { color: var(--login-accent); text-decoration: underline; text-underline-offset: 3px; }
+.moss-desktop-downloads a:hover { opacity: .8; }
+.moss-desktop-downloads a:focus-visible { outline: 2px solid var(--login-accent); outline-offset: 3px; }
 .moss-login-error { color: #a53939; background: #fff2f0; border-radius: 8px; padding: 10px 12px; margin-top: 14px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .moss-login-footer { color: var(--login-muted); text-align: center; font-size: 11px; letter-spacing: .05em; }
 .moss-web-session { position: fixed; bottom: 10px; right: 14px; z-index: 45; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 28px); padding: 4px 5px 4px 12px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in oklab, var(--card) 94%, transparent); color: var(--muted-foreground); box-shadow: 0 2px 10px #00000005; backdrop-filter: blur(10px); font: 11px/1.5 ui-sans-serif, system-ui, sans-serif; }
@@ -58,6 +63,9 @@
 .moss-web-dot.is-connected { background: var(--primary); }
 .moss-web-session button { display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; padding: 5px 7px; cursor: pointer; color: var(--muted-foreground); }
 .moss-web-session button:hover { background: var(--muted); color: var(--foreground); }
+.moss-web-session a { color: var(--foreground); text-decoration: none; white-space: nowrap; }
+.moss-web-session a:hover { text-decoration: underline; }
+.moss-web-session a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .moss-web-session button:focus-visible, .moss-web-confirm button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .moss-web-session .moss-web-logout { border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; padding-left: 10px; }
 .moss-web-logout svg { width: 13px; height: 13px; }
@@ -87,6 +95,7 @@
   .moss-login-card { padding: 26px 22px; border-radius: 20px; }
   .moss-login-input input { font-size: 16px; }
   .moss-web-connection-detail { display: none; }
+  .moss-web-session { flex-wrap: wrap; justify-content: flex-end; }
 }
 @media (prefers-color-scheme: dark) {
   .moss-login { --login-bg: #14221b; --login-card: #1d2d24; --login-text: #e1e9e0; --login-muted: #a0b3a6; --login-line: #354a3b; --login-accent: #7cb98a; --login-soft: #293f30; background: radial-gradient(ellipse at 16% 50%, #29412c66, transparent 54%), var(--login-bg); color-scheme: dark; }

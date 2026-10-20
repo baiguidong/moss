@@ -20,6 +20,8 @@ export function syncReleaseVersion(rawVersion, rootDir = resolve(dirname(fileURL
     resolve(rootDir, 'package.json'),
     resolve(rootDir, 'ui', 'package.json'),
     resolve(rootDir, 'ui', 'package-lock.json'),
+    resolve(rootDir, 'server', 'package.json'),
+    resolve(rootDir, 'admin', 'package.json'),
   ];
   for (const target of targets) {
     if (!existsSync(target)) continue;

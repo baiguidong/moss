@@ -45,12 +45,12 @@ if [[ -n "$image_tag" ]]; then
     echo "ERROR: invalid image tag: $image_tag" >&2
     exit 2
   }
-  for key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE; do
+  for key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE MOSS_WEB_IMAGE; do
     current="$(env_value "$key")"
     [[ -n "$current" ]] || { echo "ERROR: $key is missing from $ENV_FILE" >&2; exit 1; }
     set_env "$key" "$(with_tag "$current" "$image_tag")"
   done
-  printf 'Moss Server and runtime image tag: %s\n' "$image_tag"
+  printf 'Moss Server, runtime, and WebUI image tag: %s\n' "$image_tag"
 fi
 
 export PULL_IMAGES=1

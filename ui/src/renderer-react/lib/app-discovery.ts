@@ -2,7 +2,7 @@ import * as React from 'react';
 import { getAppDiscovery, APP_DISCOVERY_GROUPS } from '../../../../packages/app-sdk/src/discovery.mjs';
 import type { AppDiscoveryPreferences, AppDiscoveryPreferenceUpdate } from '@/types';
 export { getAppDiscovery, APP_DISCOVERY_GROUPS };
-export const EMPTY_APP_PREFERENCES: AppDiscoveryPreferences = { sections: { installed: 'all', marketplace: 'local' } };
+export const EMPTY_APP_PREFERENCES: AppDiscoveryPreferences = { sections: { installed: 'all', marketplace: 'all' } };
 
 const PREFERENCE_EVENT = 'moss:app-discovery';
 

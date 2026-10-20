@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { composerIsEmpty, mergeRecoveredDraft, preserveQueuedMessages, recoverQueuedMessages, withdrawMessage,
   type ComposerDraft, type QueuedMessage } from '../src/renderer-react/lib/composer-queue';
+import { firstMessageTitle } from '../src/renderer-react/lib/pending-first-message';
 
 const empty: ComposerDraft = { text: '', files: [] };
 const queued: QueuedMessage = { id: 'one', prompt: 'review', intent: 'boss', workspace: '/work',
@@ -121,6 +122,7 @@ function submitHarness() {
   const pending = new Promise<void>((_resolve, fail) => { reject = fail; });
   const state: any = {
     React: { useCallback: (fn: any) => fn }, crypto,
+    firstMessageTitle, setPendingFirstMessage: () => {},
     queueEpochs: { current: new Map() }, creatingSessionRef: { current: null },
     cleanIpcErrorMessage: (error: Error) => error.message,
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},

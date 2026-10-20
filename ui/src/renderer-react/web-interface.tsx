@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, Check, Cloud, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, LogOut, Monitor, UserRound } from 'lucide-react';
+import appPackage from '../../package.json';
 import './globals.css';
 import './web-interface.css';
+
+const desktopVersion = appPackage.version;
+const releaseAssets = `https://github.com/baiguidong/moss/releases/download/v${desktopVersion}`;
+const desktopDownloads = [
+  { label: 'macOS（Apple 芯片）', href: `${releaseAssets}/Moss-${desktopVersion}-arm64.dmg` },
+  { label: 'Windows 64 位', href: `${releaseAssets}/Moss-Setup-${desktopVersion}-x64.exe` },
+];
 
 function LoginScreen({ mode, onLogin }: { mode: string; onLogin: (values: Record<string, FormDataEntryValue>) => Promise<void> }) {
   const [pending, setPending] = useState(false);
@@ -51,6 +59,10 @@ function LoginScreen({ mode, onLogin }: { mode: string; onLogin: (values: Record
             </fieldset>
             <p className="moss-login-hint" role="status">{pending ? '正在准备你的工作空间，请保持页面打开。' : <><Check aria-hidden="true" />下次登录，继续上次的工作</>}</p>
           </form>
+          <div className="moss-desktop-downloads" aria-label="下载 Moss 桌面客户端">
+            <span>桌面客户端 · v{desktopVersion}</span>
+            <div>{desktopDownloads.map(item => <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a>)}</div>
+          </div>
         </section>
       </div>
       <footer className="moss-login-footer">一个属于你的空间，随时回来。</footer>
@@ -99,6 +111,7 @@ function WebSessionControls({ status, onLogout }: { status: string; onLogout: ()
       <span className="moss-web-connection" role="status"><span className={`moss-web-dot ${status === 'connected' ? 'is-connected' : ''}`} /><span>我的云电脑</span><span className="moss-web-connection-detail">{connectionLabels[status] || status}</span></span>
       {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <button type="button" onClick={() => location.reload()}>刷新</button>}
       {window.mossWeb?.managed && <a href="/?window=cloud-environment">环境快照</a>}
+      <a href={`https://github.com/baiguidong/moss/releases/tag/v${desktopVersion}`} target="_blank" rel="noopener noreferrer">下载桌面版 v{desktopVersion}</a>
       <button ref={trigger} type="button" className="moss-web-logout" onClick={() => { setError(''); setOpen(true); }}><LogOut aria-hidden="true" />退出登录</button>
     </div>
     <dialog ref={dialog} className="moss-web-confirm" aria-labelledby="moss-logout-title" aria-describedby="moss-logout-description" aria-busy={pending}

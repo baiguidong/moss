@@ -3,14 +3,20 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { writeJsonFileAtomicAsync } from '../shared/json-files.mjs'
 
+const PREFERENCES_VERSION = 2
+
 export function normalizeAppPreferences(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
   return {
     sections: {
       installed: ['local', 'online', 'all'].includes(value.sections?.installed) ? value.sections.installed : 'all',
-      marketplace: ['local', 'online', 'all'].includes(value.sections?.marketplace) ? value.sections.marketplace : 'local',
+      marketplace: ['local', 'online', 'all'].includes(value.sections?.marketplace) ? value.sections.marketplace : 'all',
     },
   }
+}
+
+function storedAppPreferences(value) {
+  return { schemaVersion: PREFERENCES_VERSION, ...value }
 }
 
 export function createAppDiscoveryPreferences({ rootDir }) {
@@ -20,7 +26,13 @@ export function createAppDiscoveryPreferences({ rootDir }) {
     try {
       const stored = JSON.parse(await fs.readFile(file(owner), 'utf8'))
       const value = normalizeAppPreferences(stored)
-      return { value, needsMigration: JSON.stringify(stored) !== JSON.stringify(value) }
+      // Older profiles persisted the former default of "local" even when the
+      // user only changed the installed Apps filter. Show the full market once
+      // on upgrade; explicit choices made after this version remain persistent.
+      if (stored.schemaVersion !== PREFERENCES_VERSION && value.sections.marketplace === 'local') {
+        value.sections.marketplace = 'all'
+      }
+      return { value, needsMigration: JSON.stringify(stored) !== JSON.stringify(storedAppPreferences(value)) }
     } catch (error) {
       if (error.code === 'ENOENT') return { value: normalizeAppPreferences(), needsMigration: false }
       throw error
@@ -36,7 +48,7 @@ export function createAppDiscoveryPreferences({ rootDir }) {
   function read(owner) {
     return enqueue(owner, async () => {
       const { value, needsMigration } = await readFile(owner)
-      if (needsMigration) await writeJsonFileAtomicAsync(file(owner), value)
+      if (needsMigration) await writeJsonFileAtomicAsync(file(owner), storedAppPreferences(value))
       return value
     })
   }
@@ -48,7 +60,7 @@ export function createAppDiscoveryPreferences({ rootDir }) {
       current.sections[input.surface] = input.section
       const next = normalizeAppPreferences(current)
       await fs.mkdir(rootDir, { recursive: true, mode: 0o700 })
-      await writeJsonFileAtomicAsync(file(owner), next)
+      await writeJsonFileAtomicAsync(file(owner), storedAppPreferences(next))
       return next
     })
   }

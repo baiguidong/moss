@@ -14,6 +14,29 @@ dependencies can use stable container DNS names instead of host IP addresses.
 
 ## Linux 部署入口
 
+### 正式版一键安装
+
+在 [GitHub Release](https://github.com/baiguidong/moss/releases) 中下载
+`install-moss-server.sh`，在 Linux x86_64 主机执行：
+
+```bash
+curl -fLO https://github.com/baiguidong/moss/releases/download/v0.0.16/install-moss-server.sh
+sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install-moss-server.sh
+```
+
+脚本下载并校验同一 Release 的 `moss-server-compose-0.0.16.tar.gz`，安装到
+`/data/moss-server`。发布包把 Server、WebUI、runtime 三个镜像固定为 `0.0.16`，
+默认启用 cloud WebUI。首次部署完成后访问 `https://服务器IP:8444/` 登录，
+在登录页下载同版本 macOS 或 Windows 桌面客户端；管理页位于
+`https://服务器IP/admin/`。Desktop 是 Release 中的 `.dmg` 和 `.exe` 安装包，
+不是 Linux Docker 镜像。默认自签名证书需要在客户端信任，初始管理员账号
+`admin / password` 需在首次登录后修改。
+
+主机需预先安装 Docker Engine 28+、Compose v2、`curl`、`jq`、`openssl`、
+`tar` 和 `sha256sum`，并开放 443 与 8444 端口。镜像从 GHCR 拉取；部署脚本不
+把桌面安装包复制到服务器。Linux 原生 Docker/Compose 安装可使用
+[Docker 安装包](../docker/README.md)。
+
 ### 同时启用个人云电脑 WebUI
 
 GitHub CLI 在 GitHub Linux AMD64 上构建镜像及部署包，本机无需 Docker：
@@ -27,7 +50,7 @@ MOSS_WEB_ENABLED=1 MOSS_WEB_DEPLOY_MODE=cloud ./install.sh
 
 默认地址 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。用户以现有 Server 账号登录，首次创建个人 Linux 容器，后续复用同一容器。一个用户的全部聊天、项目和终端共享环境，退出浏览器不会停止它。Server 的现有会话能力保持不变。
 
-新部署默认 cloud；原固定用户 WebUI 可继续设置 `MOSS_WEB_DEPLOY_MODE=single`，老配置有 owner ID 时自动保持 single。两种模式不能同时占用同一门户端口，切换需先显式停止旧入口；脚本不迁移/删除旧个人容器。WebUI 默认关闭。
+正式版一键安装默认启用 cloud；直接从源码安装时 WebUI 默认关闭。原固定用户 WebUI 可继续设置 `MOSS_WEB_DEPLOY_MODE=single`，老配置有 owner ID 时自动保持 single。两种模式不能同时占用同一门户端口，切换需先显式停止旧入口；脚本不迁移/删除旧个人容器。
 
 网关单独保存环境映射卷并持有 Docker socket。**个人容器没有 Docker socket**，使用独立 HOME 卷和私有网络。网关关闭 IP 转发并移除 Linux capabilities，用户网络之间仅通过经过身份验证的应用代理访问各自 Host。`MOSS_CLOUD_MAX_USERS`、`MOSS_CLOUD_CPUS`、`MOSS_CLOUD_MEMORY_MB`、`MOSS_CLOUD_PIDS` 设置数量和单容器资源上限；磁盘目前没有硬配额，按宿主容量设置用户上限并监控增长。`MOSS_CLOUD_STARTUP_TIMEOUT_SECONDS` 默认 300 秒，适应有磁盘负载的主机冷启动；可在 30–900 秒之间调整。
 
@@ -212,10 +235,12 @@ source for Moss image versions:
 ```text
 MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:latest
 MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:latest
+MOSS_WEB_IMAGE=ghcr.io/baiguidong/moss-webui:latest
 ```
 
-Both images are published with the same release tag. Use one of these commands
-to update both entries in `.env`, pull them, and apply the upgrade:
+All three Moss images are published with the same release tag. The official
+one-click package pins all three images to its version. Use one of these commands
+to update the image references in `.env`, pull them, and apply the upgrade:
 
 ```bash
 sudo /data/moss-server/upgrade.sh latest
@@ -225,12 +250,14 @@ sudo /data/moss-server/upgrade.sh 1.2.3
 Running `upgrade.sh` without an argument keeps the configured references and
 pulls them again, which is useful when both already use `latest`.
 
-The start script pulls both images, recreates the Server container when its image
+The start script pulls the configured images, recreates the Server container when its image
 changes, and copies `MOSS_RUNTIME_IMAGE` into
 `/data/moss-server/settings.json` for newly created session containers. Do not
 edit `serverRuntime.dockerImage` by hand; it is derived from `.env` on every
 start. Existing running session containers retain the image with which they were
 created.
+Existing personal WebUI computers keep their installed program until an
+administrator upgrades each idle environment with `webui.sh upgrade`.
 
 Clients must trust `/data/moss-server/tls/server.crt` before connecting to the HTTPS
 endpoint. To use another port or image, edit `.env` or pass an environment value

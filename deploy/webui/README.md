@@ -4,6 +4,11 @@
 
 本目录提供独立单用户部署；同一镜像也提供统一云电脑门户，通过 [Server 部署](../server/README.md) 为每个账号自动创建并长期保留一个容器。系统盘灾难恢复与跨节点调度另行安排。
 
+正式版优先使用 GitHub Release 的 `install-moss-server.sh`。它固定 Server、
+WebUI 和 runtime 到同一个版本并默认启动云电脑门户。登录页提供同版本 Mac 和
+Windows 桌面安装包的下载链接。下面的独立构建用于单独测试 WebUI；它不会生成
+配套的 runtime 镜像。
+
 ## GitHub CLI 构建与发布（Linux AMD64）
 
 正式构建运行在 GitHub 的 Linux AMD64 runner。本机只需要 GitHub CLI，不需要 Docker、Node 或 Bun。

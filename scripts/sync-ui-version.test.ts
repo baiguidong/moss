@@ -18,16 +18,21 @@ describe('release version sync', () => {
     expect(normalizeVersion('v2.3.4-beta.1')).toBe('2.3.4-beta.1');
   });
 
-  test('updates root and desktop package versions together', () => {
+  test('updates all release component package versions together', () => {
     const root = mkdtempSync(join(tmpdir(), 'moss-version-sync-'));
     temporaryDirectories.push(root);
     mkdirSync(join(root, 'ui'));
+    mkdirSync(join(root, 'server'));
+    mkdirSync(join(root, 'admin'));
     writeFileSync(join(root, 'package.json'), '{"name":"moss","version":"1.0.0"}\n');
     writeFileSync(join(root, 'ui', 'package.json'), '{"name":"desktop","version":"0.0.1"}\n');
+    writeFileSync(join(root, 'server', 'package.json'), '{"name":"server","version":"0.1.0"}\n');
+    writeFileSync(join(root, 'admin', 'package.json'), '{"name":"admin","version":"0.1.0"}\n');
 
     expect(syncReleaseVersion('v2.3.4', root)).toBe('2.3.4');
-    expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('2.3.4');
-    expect(JSON.parse(readFileSync(join(root, 'ui', 'package.json'), 'utf8')).version).toBe('2.3.4');
+    for (const component of ['', 'ui', 'server', 'admin']) {
+      expect(JSON.parse(readFileSync(join(root, component, 'package.json'), 'utf8')).version).toBe('2.3.4');
+    }
   });
 
   test('rejects branch names', () => {
