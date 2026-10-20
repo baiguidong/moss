@@ -151,7 +151,8 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   };
 
   const installedById = React.useMemo(() => new Map(installedApps.map((app) => [app.id || app.name, app])), [installedApps]);
-  const sectionApps = filterApps(catalog?.apps || [], query, category, { group: section });
+  const searchedApps = filterApps(catalog?.apps || [], query, 'all', { group: section });
+  const sectionApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(sectionApps).flatMap(group => group.apps);
   const changeSection = (value: string) => { setCategory('all'); void updatePreference({ action: 'section', surface: 'marketplace', section: value }).catch(reason => setError(reason.message)); };
 
@@ -184,7 +185,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
         {archiveProgress.local && <div className="mb-3"><AppInstallProgressView progress={archiveProgress.local} /></div>}
-        <AppCategoryTabs apps={filterApps(catalog?.apps || [], '', 'all', { group: section })} value={category} onChange={setCategory} panelId="marketplace-apps" />
+        <AppCategoryTabs apps={searchedApps} value={category} onChange={setCategory} panelId="marketplace-apps" />
         <div role="tabpanel" id="marketplace-apps" aria-labelledby={`marketplace-apps-${category}`} className="mt-2">
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         {loading && !catalog ? (

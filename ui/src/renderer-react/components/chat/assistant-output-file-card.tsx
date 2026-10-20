@@ -34,7 +34,7 @@ export async function openAssistantOutputFile(file: AssistantOutputFile, action:
 }
 
 function FileIcon({ type }: { type: string }) {
-  if (type === "PDF") return <PdfFileIcon className="h-7 w-7 text-red-500" />;
+  if (type === "PDF") return <PdfFileIcon className="h-9 w-9 text-red-500" />;
   const Icon = /^(PNG|JPE?G|GIF|WEBP|AVIF|SVG|BMP)$/.test(type) ? Image
     : /^(XLSX?|CSV|TSV|ODS|NUMBERS)$/.test(type) ? FileSpreadsheet
     : /^(PPTX?|ODP|KEY)$/.test(type) ? Presentation

@@ -59,7 +59,7 @@ export function FilePreview({ path, name, onRemove, readonly = false, sessionId 
           className="flex min-w-0 flex-1 items-center gap-2.5 p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg ${fileIcon.color}`}>
             {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setImageUrl('')} />
-              : <fileIcon.Icon className={extension === 'PDF' ? 'h-7 w-7' : 'h-5 w-5'} aria-hidden="true" />}
+              : <fileIcon.Icon className={extension === 'PDF' ? 'h-9 w-9' : 'h-5 w-5'} aria-hidden="true" />}
           </span>
           <span className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="truncate text-xs font-semibold" title={fileName}>{fileName}</span>
