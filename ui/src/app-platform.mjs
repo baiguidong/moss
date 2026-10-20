@@ -8,7 +8,6 @@ import { promisify } from 'node:util'
 import semver from 'semver'
 import {
   AppPackageStore,
-  validateAppPackage,
 } from '../../packages/app-runtime/src/index.mjs'
 import { APP_ERROR_CODES, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
 import { MOSS_HOME } from './moss-home.mjs'
@@ -18,6 +17,7 @@ export const APPS_DIR = path.join(MOSS_HOME, 'apps')
 export const APP_REGISTRY_PATH = path.join(MOSS_HOME, 'app-registry.json')
 const revisionsPath = path.join(MOSS_HOME, 'app-installation-revisions.json')
 const installationQueues = new Map()
+let listedRegistryCache = null
 let activateInstallation = null
 export function setAppInstallationActivation(handler) { activateInstallation = handler }
 export function getAppInstallationRevision(appId) { return Number(readJsonFile(revisionsPath, {})[appId]) || 0 }
@@ -76,6 +76,7 @@ export function readAppRegistry() {
 }
 export function writeAppRegistry(registry) {
   writeJsonFile(APP_REGISTRY_PATH, { version: 2, apps: Array.isArray(registry?.apps) ? registry.apps : [] })
+  listedRegistryCache = null
 }
 export function upsertAppRegistryEntry(entry) {
   const registry = readAppRegistry()
@@ -205,7 +206,7 @@ async function publishAppFromBuildNow(buildDir, options = {}) {
     trustedPublishers: options.trustedPublishers,
     requireTrustedPublisher: options.requireTrustedPublisher,
   }
-  const source = await validateAppPackage(resolvedBuildDir, validationOptions)
+  const source = { root: resolvedBuildDir, manifest: readAppManifestFromDir(resolvedBuildDir) }
   const store = new AppPackageStore({ appsDir: APPS_DIR, ...validationOptions })
   const installedPackage = await store.installFromDirectory(source.root, validationOptions)
   if (options.expectedPackageChecksums && JSON.stringify(Object.entries(installedPackage.checksums).sort()) !== JSON.stringify(Object.entries(options.expectedPackageChecksums).sort())) throw new Error('Reviewed App package changed before commit')
@@ -285,10 +286,11 @@ export function getPublishedApp(appId, version = null) {
 }
 
 export function listAppsFromRegistry() {
-  return readAppRegistry().apps.flatMap((app) => {
-    const versions = listAppVersions(app.id)
-    const current = versions.find((item) => item.isCurrent) || null
-    const currentVersion = current?.version || app.currentVersion || null
+  const stat = fs.statSync(APP_REGISTRY_PATH, { throwIfNoEntry: false })
+  const revision = `${stat?.mtimeMs || 0}:${stat?.size || 0}`
+  if (listedRegistryCache?.revision === revision) return listedRegistryCache.apps.map(app => ({ ...app }))
+  const apps = readAppRegistry().apps.flatMap((app) => {
+    const currentVersion = readJsonFile(getAppCurrentPath(app.id), {})?.version || app.currentVersion || null
     if (!currentVersion) return []
     let published
     try {
@@ -319,10 +321,10 @@ export function listAppsFromRegistry() {
         filePath: null,
         entryPath: null,
         currentVersion,
-        currentVersionId: current?.id || currentVersion,
-        latestVersion: versions[0]?.version || app.latestVersion || currentVersion,
-        latestVersionId: versions[0]?.id || app.latestVersionId || currentVersion,
-        versionCount: versions.length || app.versionCount || 1,
+        currentVersionId: currentVersion,
+        latestVersion: app.latestVersion || currentVersion,
+        latestVersionId: app.latestVersionId || currentVersion,
+        versionCount: app.versionCount || 1,
         packageStatus: error?.code === APP_ERROR_CODES.incompatibleHost ? 'incompatible' : 'invalid',
         packageError,
         requiredHostApi,
@@ -334,10 +336,10 @@ export function listAppsFromRegistry() {
       kind: 'app',
       name: app.id,
       currentVersion,
-      currentVersionId: current?.id || currentVersion,
-      latestVersion: versions[0]?.version || app.latestVersion || null,
-      latestVersionId: versions[0]?.id || app.latestVersionId || null,
-      versionCount: versions.length,
+      currentVersionId: currentVersion,
+      latestVersion: app.latestVersion || currentVersion,
+      latestVersionId: app.latestVersionId || currentVersion,
+      versionCount: app.versionCount || 1,
       createdAt: app.createdAt,
       updatedAt: app.updatedAt,
       packageStatus: 'ready',
@@ -345,6 +347,8 @@ export function listAppsFromRegistry() {
       requiredHostApi: published.manifest.hostApi,
     }]
   })
+  listedRegistryCache = { revision, apps }
+  return apps.map(app => ({ ...app }))
 }
 
 export function getAppRuntimeStatus(appId) {

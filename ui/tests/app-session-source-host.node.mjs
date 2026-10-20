@@ -56,6 +56,18 @@ test('lists cheap revisions and exports only requested local sessions', async t 
   assert.deepEqual((await fs.readdir(f.root)).filter(name => name.endsWith('.json')), [exported.fileName])
 })
 
+test('normalizes persisted ISO session times before protocol validation and export', async t => {
+  const f = await fixture(t)
+  f.sessions[0].createdAt = '2026-10-19T09:00:00.000Z'
+  f.sessions[0].updatedAt = '2026-10-20T03:00:00.000Z'
+  const listed = f.host.handle('session.list', {}, f.context)
+  assert.equal(listed.sessions[0].updatedAt, Date.parse(f.sessions[0].updatedAt))
+  const exported = await f.host.handle('session.export', { sessionId: 'one' }, f.context)
+  const snapshot = JSON.parse(await fs.readFile(path.join(f.root, exported.fileName), 'utf8'))
+  assert.equal(snapshot.createdAt, Date.parse(f.sessions[0].createdAt))
+  assert.equal(snapshot.updatedAt, Date.parse(f.sessions[0].updatedAt))
+})
+
 test('session events survive history truncation and revoked Apps cannot export', async t => {
   const f = await fixture(t)
   const ticket = await f.host.recordEvent({ sessionId: 'one', eventType: 'turn_reverted', details: { status: 'started' }, sourceSession: { history: [{ token: 'PRIVATE' }] } })

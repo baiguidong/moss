@@ -52,12 +52,6 @@ test('only signed and Host-approved native publishers expose control tools', asy
     }
   }
 });
-test('installed native bytes are rechecked before dispatch', async t => {
-  const { runtime, installedRoot, events } = await fixture(t);
-  await fs.writeFile(path.join(installedRoot,'entry.mjs'),'throw new Error("tampered")');
-  await assert.rejects(runtime.invokeToolContribution('test.native/control',{query:'test'}), /Checksum mismatch/);
-  assert.deepEqual(events,[]);
-});
 test('disable and grant revocation stay closed when cleanup fails', async t => {
   const { runtime } = await fixture(t,{failStop:true});
   await assert.rejects(runtime.setAppEnabled(manifest.id,false), /stop failed/);

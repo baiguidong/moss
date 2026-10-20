@@ -133,6 +133,7 @@ import {
   listAppVersions,
   publishAppFromBuild,
   readAppManifestFromDir,
+  readAppRegistry,
   rollbackAppToVersion,
   refreshAppRegistryFromCurrent,
 } from './app-platform.mjs';
@@ -8595,7 +8596,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerResourceMonitorIpc({
     ipcMain, app, webContents, getWindow: () => mainWindow,
     getRuntime: () => appRuntime, getAppStates: () => appWindowStates.values(),
-    getApps: listAllStoredApps, log: mossLog,
+    getApps: () => readAppRegistry().apps, log: mossLog,
   });
   registerSkillStoreIpcHandlers();
   registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings });
@@ -8781,7 +8782,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (!selfTestTarget) initializeAutoUpdater();
     appRuntimeRestoreController = new AbortController();
     const restoreSignal = appRuntimeRestoreController.signal;
-    // Let the renderer paint and load its sessions before validating and
+    // Let the renderer paint and load its sessions before restoring and
     // starting background Apps. App state is already available to IPC.
     setTimeout(() => {
       if (restoreSignal.aborted) return;
@@ -8791,7 +8792,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         deferredUiVersions = new Map(startupApps
           .filter(stored => stored.manifest && !stored.manifest.backend && stored.currentVersion)
           .map(stored => [stored.id, stored.currentVersion]));
-        // A bounded number of independent Apps can validate and start together.
+        // A bounded number of independent Apps can restore and start together.
         await appRuntime.restoreAllOwners({
           signal: restoreSignal,
           concurrency: 3,
@@ -8805,11 +8806,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         const registeredAt = Date.now();
         await refreshRestoredAppServices(startupApps);
         const installations = appRuntime.installations.list();
-        const validatedApps = installations.filter(entry => appRuntime.packageCache.has(`${entry.appId}@${entry.activeVersion}`)).length;
+        const loadedApps = installations.filter(entry => appRuntime.packageCache.has(`${entry.appId}@${entry.activeVersion}`)).length;
         mossLog('info', 'app-runtime', 'Installed Apps restored after window startup', {
           count: installations.length,
-          validatedApps,
-          deferredApps: installations.length - validatedApps,
+          loadedApps,
+          deferredApps: installations.length - loadedApps,
           durationMs: Date.now() - startedAt,
           reconcileMs: reconciledAt - startedAt,
           registrationMs: registeredAt - reconciledAt,
@@ -10608,7 +10609,15 @@ function enabledAppContributions(manifest, installation) {
   ]));
 }
 
-ipcMain.handle('app:list', async () => {
+let appListPending = null;
+ipcMain.handle('app:list', () => {
+  if (!appListPending) {
+    appListPending = listAppsForRenderer().finally(() => { appListPending = null; });
+  }
+  return appListPending;
+});
+
+async function listAppsForRenderer() {
   const results = [];
   const storedApps = listAllStoredApps();
   const connectorRecords = new Map((await listInstalledConnectors()).map(item => [item.id, item]));
@@ -10686,7 +10695,7 @@ ipcMain.handle('app:list', async () => {
     });
   }
   return results;
-});
+}
 
 ipcMain.handle('app:list-versions', async (_event, { name }) => {
   try {

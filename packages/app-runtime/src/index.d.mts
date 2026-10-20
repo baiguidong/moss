@@ -36,6 +36,8 @@ export interface AppPackageInfo {
 export interface AppStateStore {
   initialize(): Promise<this>
   snapshot(): Record<string, any>
+  records(section: string, predicate?: (record: any) => boolean): any[]
+  record(section: string, key: string): any | null
   transaction<T>(mutator: (state: Record<string, any>) => T | Promise<T>): Promise<T>
 }
 
@@ -246,6 +248,7 @@ export function listPackageFiles(packageRoot: string, options?: Record<string, n
 export function createPackageChecksums(packageRoot: string): Promise<Record<string, string>>
 export function writePackageChecksums(packageRoot: string): Promise<Record<string, string>>
 export function validateAppPackage(root: string, options?: Record<string, any>): Promise<AppPackageInfo>
+export function readAppPackageManifest(root: string, options?: { hostApiVersion?: string }): Promise<Record<string, any>>
 export function createAppSignaturePayload(manifest: Record<string, any>, checksums: Record<string, string>, metadata: { publisherId: string; keyId: string }): Buffer
 export function defaultInstanceId(appId: string): string
 export const DEFAULT_APP_OWNER: AppOwner

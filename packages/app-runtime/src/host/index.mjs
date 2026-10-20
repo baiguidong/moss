@@ -24,7 +24,7 @@ import {
 } from '../contributions/index.mjs'
 import { AppEventBroker } from '../events/index.mjs'
 import { AppLogStore } from '../logging/index.mjs'
-import { AppPackageStore, validateAppPackage } from '../packages/index.mjs'
+import { AppPackageStore, readAppPackageManifest } from '../packages/index.mjs'
 import { AppProcessSupervisor } from '../process/index.mjs'
 import {
   RuntimeStore,
@@ -115,6 +115,7 @@ export class AppRuntimeHost {
       requireTrustedPublisher: options.requireTrustedPublisher,
     })
     this.packageCache = new Map()
+    this.configurationSchemaCache = new WeakMap()
     const ownerResolver = () => this.currentOwner()
     this.installations = new InstallationStore(this.state, { ownerResolver })
     this.instances = new InstanceStore(this.state, { ownerResolver })
@@ -243,13 +244,9 @@ export class AppRuntimeHost {
   }
 
   async installFromDirectory(sourceDir, options = {}) {
-    const source = await validateAppPackage(sourceDir, {
-      hostApiVersion: this.packages.hostApiVersion,
-      trustedPublishers: options.trustedPublishers,
-      requireTrustedPublisher: options.requireTrustedPublisher,
-    })
-    return this.transitionApp(source.manifest.id, async () => {
-      const installed = await this.packages.installFromDirectory(source.root, options)
+    const manifest = await readAppPackageManifest(sourceDir, { hostApiVersion: this.packages.hostApiVersion })
+    return this.transitionApp(manifest.id, async () => {
+      const installed = await this.packages.installFromDirectory(sourceDir, options)
       return this.registerPackageInstallation(installed, options)
     })
   }
@@ -370,7 +367,6 @@ export class AppRuntimeHost {
   }
 
   async requireNativePackage(appId) {
-    // Revalidate the installed bytes and signature before loading native code.
     const installation = this.installations.get(appId)
     if (!installation?.enabled || !installation.grants?.includes('desktop:control')) throw new Error('Native App is disabled or desktop:control was revoked')
     const pkg = await this.packages.get(appId, installation.activeVersion)
@@ -408,19 +404,25 @@ export class AppRuntimeHost {
       secretRefs: maskedSecrets(await this.credentials.get(appId, instance.id)),
       status: await this.getInstanceStatus(appId, instance.id),
     })))
+    let configuration = null
+    if (backend?.configuration) {
+      configuration = this.configurationSchemaCache.get(packageInfo)
+      if (!configuration) {
+        configuration = {
+          schema: backend.configuration.schema
+            ? loadJsonSchema(packageInfo.root, backend.configuration.schema, 'App configuration') : null,
+          secrets: backend.configuration.secrets
+            ? loadJsonSchema(packageInfo.root, backend.configuration.secrets, 'App secrets') : null,
+        }
+        this.configurationSchemaCache.set(packageInfo, configuration)
+      }
+    }
     return {
       installation,
       manifest: packageInfo.manifest,
       toolScope: this.getToolScope(appId, packageInfo.manifest.toolScope),
       trust: packageInfo.trust,
-      configuration: packageInfo.manifest.backend?.configuration ? {
-        schema: packageInfo.manifest.backend.configuration.schema
-          ? loadJsonSchema(packageInfo.root, packageInfo.manifest.backend.configuration.schema, 'App configuration')
-          : null,
-        secrets: packageInfo.manifest.backend.configuration.secrets
-          ? loadJsonSchema(packageInfo.root, packageInfo.manifest.backend.configuration.secrets, 'App secrets')
-          : null,
-      } : null,
+      configuration: configuration ? structuredClone(configuration) : null,
       instances: publicInstances,
     }
   }

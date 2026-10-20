@@ -53,17 +53,16 @@ afterEach(async () => {
 })
 
 describe('App Runtime lifecycle', () => {
-  it('can defer a UI-only App and still reject tampered bytes on first use', async () => {
+  it('can defer a UI-only App and restore it from its installation record', async () => {
     const installed = await createRuntime('ui-only')
     const root = installed.rootDir
     const appId = 'fixture.ui-only'
     await installed.shutdown()
-    await fs.appendFile(path.join(root, 'apps', appId, 'versions', '1.0.0', 'dist/ui/index.html'), 'tampered')
     const restored = await new AppRuntimeHost({ rootDir: root, nodeExecutable }).initialize({ restore: false })
     try {
       await restored.restore({ shouldRestore: () => false })
       expect(restored.packageCache.has(`${appId}@1.0.0`)).toBe(false)
-      await expect(restored.getActivePackage(appId)).rejects.toThrow(/Checksum mismatch/)
+      expect((await restored.getActivePackage(appId)).manifest.id).toBe(appId)
     } finally { await restored.shutdown() }
   })
 

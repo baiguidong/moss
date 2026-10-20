@@ -321,6 +321,86 @@ export async function validateAppPackage(packageRoot, options = {}) {
   return deepFreeze({ root, manifest, checksums: actualChecksums, files, trust })
 }
 
+export async function readAppPackageManifest(packageRoot, options = {}) {
+  const root = path.resolve(packageRoot)
+  const stat = await fsp.lstat(root)
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'App package root must be a real directory')
+  }
+  const manifest = validateAppManifest(JSON.parse(await fsp.readFile(path.join(root, 'app.moss.json'), 'utf8')), {
+    hostApiVersion: options.hostApiVersion,
+  })
+  const platform = `${process.platform}-${process.arch}`
+  if (manifest.platforms && !manifest.platforms.includes(platform)) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `App ${manifest.id}@${manifest.version} does not support ${platform}; package supports ${manifest.platforms.join(', ')}`)
+  }
+  return manifest
+}
+
+// Full content verification belongs to installation. A verified version is
+// restored from its installation receipt without rereading every bundled file.
+async function readInstalledAppPackage(packageRoot, receiptPath, options = {}) {
+  const root = path.resolve(packageRoot)
+  const rootStat = await fsp.lstat(root)
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'App package root must be a real directory')
+  }
+  const manifestBytes = await fsp.readFile(path.join(root, 'app.moss.json'))
+  const manifest = validateAppManifest(JSON.parse(manifestBytes.toString('utf8')), {
+    hostApiVersion: options.hostApiVersion,
+  })
+  const platform = `${process.platform}-${process.arch}`
+  if (manifest.platforms && !manifest.platforms.includes(platform)) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `App ${manifest.id}@${manifest.version} does not support ${platform}; package supports ${manifest.platforms.join(', ')}`)
+  }
+  // Keep the declared entry checks cheap so a missing entry fails during
+  // restore rather than appearing later as a failed Backend launch.
+  await ensureDeclaredFile(root, manifest.backend?.entry, 'backend.entry')
+  await ensureDeclaredFile(root, manifest.nativeAdapter?.entry, 'nativeAdapter.entry')
+  const checksumBytes = await fsp.readFile(path.join(root, 'checksums.json'))
+  const checksums = JSON.parse(checksumBytes.toString('utf8'))
+  if (!checksums || typeof checksums !== 'object' || Array.isArray(checksums)) {
+    throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'checksums.json must be an object')
+  }
+  const manifestDigest = sha256(manifestBytes)
+  const checksumsDigest = sha256(checksumBytes)
+  let receipt
+  try { receipt = JSON.parse(await fsp.readFile(receiptPath, 'utf8')) } catch {}
+  let trust
+  if (receipt?.schemaVersion === 1 && receipt.appId === manifest.id && receipt.version === manifest.version
+    && receipt.manifestDigest === manifestDigest && receipt.checksumsDigest === checksumsDigest
+    && receipt.trust && typeof receipt.trust === 'object') {
+    trust = receipt.trust
+  } else {
+    // Migrate versions installed before receipts existed. This checks only the
+    // signed declaration, not package contents, which installation checked.
+    trust = await validatePackageSignature(root, manifest, checksums, options)
+    await writeInstallationReceipt(receiptPath, manifest, trust, manifestDigest, checksumsDigest)
+  }
+  if (trust.status === 'untrusted' && trustedPublisherKey(options.trustedPublishers, trust.publisherId, trust.keyId)) {
+    trust = await validatePackageSignature(root, manifest, checksums, options)
+    await writeInstallationReceipt(receiptPath, manifest, trust, manifestDigest, checksumsDigest)
+  }
+  if (trust.status === 'trusted' && !trustedPublisherKey(options.trustedPublishers, trust.publisherId, trust.keyId)) {
+    trust = { ...trust, status: 'untrusted' }
+  }
+  if (options.requireTrustedPublisher && trust.status !== 'trusted') {
+    throw new AppServiceError(APP_ERROR_CODES.permissionDenied, `App publisher is not trusted: ${trust.publisherId || manifest.id}`)
+  }
+  return deepFreeze({ root, manifest, checksums, files: [], trust })
+}
+
+async function writeInstallationReceipt(receiptPath, manifest, trust, manifestDigest, checksumsDigest) {
+  const receipt = { schemaVersion: 1, appId: manifest.id, version: manifest.version,
+    manifestDigest, checksumsDigest, trust }
+  await fsp.mkdir(path.dirname(receiptPath), { recursive: true })
+  const temporary = `${receiptPath}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await fsp.writeFile(temporary, `${JSON.stringify(receipt)}\n`, { mode: 0o600, flag: 'wx' })
+    await fsp.rename(temporary, receiptPath)
+  } finally { await fsp.rm(temporary, { force: true }) }
+}
+
 export class AppPackageStore {
   constructor(options) {
     this.appsDir = path.resolve(options.appsDir)
@@ -352,7 +432,8 @@ export class AppPackageStore {
   }
 
   async get(appId, version) {
-    const packageInfo = await validateAppPackage(this.versionRoot(appId, version), {
+    const packageInfo = await readInstalledAppPackage(this.versionRoot(appId, version),
+      path.join(this.appRoot(appId), 'verification', `${version}.json`), {
       hostApiVersion: this.hostApiVersion,
       trustedPublishers: this.trustedPublishers,
       requireTrustedPublisher: this.requireTrustedPublisher,
@@ -367,60 +448,55 @@ export class AppPackageStore {
   }
 
   async installFromDirectory(sourceDir, options = {}) {
-    const source = await validateAppPackage(sourceDir, {
+    const manifest = await readAppPackageManifest(sourceDir, { hostApiVersion: this.hostApiVersion })
+    const destination = this.versionRoot(manifest.id, manifest.version)
+    const validationOptions = {
       hostApiVersion: this.hostApiVersion,
       limits: options.limits,
       trustedPublishers: options.trustedPublishers || this.trustedPublishers,
       requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
-    })
-    const destination = this.versionRoot(source.manifest.id, source.manifest.version)
-    try {
-      const current = await validateAppPackage(destination, {
-        hostApiVersion: this.hostApiVersion,
-        trustedPublishers: options.trustedPublishers || this.trustedPublishers,
-        requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
-      })
+    }
+    if (fs.existsSync(destination)) {
+      const source = await validateAppPackage(sourceDir, validationOptions)
+      const current = await this.get(manifest.id, manifest.version)
       if (JSON.stringify(current.checksums) !== JSON.stringify(source.checksums)) {
         throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'An immutable App version already exists with different contents')
       }
       return { ...current, installed: false }
-    } catch (error) {
-      if (fs.existsSync(destination) || error?.code === APP_ERROR_CODES.integrityFailed) throw error
     }
-    const stagingRoot = path.join(this.appRoot(source.manifest.id), '.staging')
+    const stagingRoot = path.join(this.appRoot(manifest.id), '.staging')
     const stagingDir = path.join(stagingRoot, randomUUID())
     await fsp.mkdir(stagingRoot, { recursive: true })
     try {
-      await fsp.cp(source.root, stagingDir, { recursive: true, errorOnExist: true, force: false })
-      await validateAppPackage(stagingDir, {
-        hostApiVersion: this.hostApiVersion,
-        limits: options.limits,
-        trustedPublishers: options.trustedPublishers || this.trustedPublishers,
-        requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
-      })
+      await fsp.cp(sourceDir, stagingDir, { recursive: true, errorOnExist: true, force: false })
+      const staged = await validateAppPackage(stagingDir, validationOptions)
+      if (staged.manifest.id !== manifest.id || staged.manifest.version !== manifest.version) {
+        throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App package identity changed during installation')
+      }
       await fsp.mkdir(path.dirname(destination), { recursive: true })
       try {
         await fsp.rename(stagingDir, destination)
       } catch (error) {
         if (!fs.existsSync(destination)) throw error
-        const current = await validateAppPackage(destination, {
-          hostApiVersion: this.hostApiVersion,
-          trustedPublishers: options.trustedPublishers || this.trustedPublishers,
-          requireTrustedPublisher: options.requireTrustedPublisher ?? this.requireTrustedPublisher,
-        })
-        if (JSON.stringify(current.checksums) !== JSON.stringify(source.checksums)) {
+        const current = await this.get(manifest.id, manifest.version)
+        if (JSON.stringify(current.checksums) !== JSON.stringify(staged.checksums)) {
           throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'An immutable App version was installed concurrently with different contents')
         }
         return { ...current, installed: false }
       }
+      const manifestDigest = sha256(await fsp.readFile(path.join(destination, 'app.moss.json')))
+      const checksumsDigest = sha256(await fsp.readFile(path.join(destination, 'checksums.json')))
+      await writeInstallationReceipt(path.join(this.appRoot(manifest.id), 'verification', `${manifest.version}.json`),
+        staged.manifest, staged.trust, manifestDigest, checksumsDigest)
     } finally {
       await fsp.rm(stagingDir, { recursive: true, force: true })
     }
-    return { ...(await this.get(source.manifest.id, source.manifest.version)), installed: true }
+    return { ...(await this.get(manifest.id, manifest.version)), installed: true }
   }
 
   async removeVersion(appId, version) {
     await fsp.rm(this.versionRoot(appId, version), { recursive: true, force: true })
+    await fsp.rm(path.join(this.appRoot(appId), 'verification', `${version}.json`), { force: true })
   }
 
   async removeApp(appId) {

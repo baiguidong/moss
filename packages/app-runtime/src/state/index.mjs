@@ -132,6 +132,14 @@ export class JsonAppStateStore {
 
   snapshot() { return clone(this.state) }
 
+  records(section, predicate = () => true) {
+    return Object.values(this.state[section]).filter(predicate).map(clone)
+  }
+
+  record(section, key) {
+    return clone(this.state[section][key] || null)
+  }
+
   async transaction(mutator) {
     const operation = this.queue.then(async () => {
       const next = clone(this.state)
@@ -274,6 +282,14 @@ export class SqliteAppStateStore {
 
   snapshot() { return clone(this.readState()) }
 
+  records(section, predicate = () => true) {
+    return Object.values(this.readState()[section]).filter(predicate).map(clone)
+  }
+
+  record(section, key) {
+    return clone(this.readState()[section][key] || null)
+  }
+
   async transaction(mutator) {
     const operation = this.queue.then(async () => {
       this.db.exec('BEGIN IMMEDIATE')
@@ -353,9 +369,9 @@ export class InstallationStore {
   owner() { return normalizeAppOwner(this.ownerResolver()) }
   list() {
     const owner = this.owner()
-    return Object.values(this.state.snapshot().installations).filter((item) => ownerMatches(item, owner))
+    return this.state.records('installations', (item) => ownerMatches(item, owner))
   }
-  listAll() { return Object.values(this.state.snapshot().installations) }
+  listAll() { return this.state.records('installations') }
   listOwners() {
     const owners = new Map(this.listAll().map((item) => {
       const owner = recordOwner(item)
@@ -365,7 +381,7 @@ export class InstallationStore {
   }
   get(appId) {
     const owner = this.owner()
-    return this.state.snapshot().installations[scopedRecordKey(owner, appId)] || null
+    return this.state.record('installations', scopedRecordKey(owner, appId))
   }
   async upsert(appId, patch) {
     const owner = this.owner()
@@ -399,13 +415,12 @@ export class InstanceStore {
   owner() { return normalizeAppOwner(this.ownerResolver()) }
   list(appId) {
     const owner = this.owner()
-    return Object.values(this.state.snapshot().instances).filter((item) =>
-      item.appId === appId && ownerMatches(item, owner))
+    return this.state.records('instances', (item) => item.appId === appId && ownerMatches(item, owner))
   }
-  listAll() { return Object.values(this.state.snapshot().instances) }
+  listAll() { return this.state.records('instances') }
   get(instanceId) {
     const owner = this.owner()
-    return this.state.snapshot().instances[scopedRecordKey(owner, instanceId)] || null
+    return this.state.record('instances', scopedRecordKey(owner, instanceId))
   }
   async create(appId, input = {}) {
     const id = normalizeInstanceId(appId, input.id)
@@ -473,12 +488,12 @@ export class RuntimeStore {
   owner() { return normalizeAppOwner(this.ownerResolver()) }
   list(appId) {
     const owner = this.owner()
-    return Object.values(this.state.snapshot().runtimes).filter((item) =>
+    return this.state.records('runtimes', (item) =>
       (!appId || item.appId === appId) && ownerMatches(item, owner))
   }
-  listAll() { return Object.values(this.state.snapshot().runtimes) }
+  listAll() { return this.state.records('runtimes') }
   get(key) {
-    const item = this.state.snapshot().runtimes[key] || null
+    const item = this.state.record('runtimes', key)
     return item && ownerMatches(item, this.owner()) ? item : null
   }
   async upsert(input) {

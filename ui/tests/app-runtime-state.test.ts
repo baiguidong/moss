@@ -40,6 +40,19 @@ describe('App package and state stores', () => {
     await expect(store.installFromDirectory(source)).rejects.toThrow(/Checksum mismatch/)
   })
 
+  it('uses the install receipt when restoring an existing version', async () => {
+    const root = await tempRoot()
+    const source = path.join(root, 'source')
+    await fs.cp(path.join(fixtureRoot, 'ui-only'), source, { recursive: true })
+    await writePackageChecksums(source)
+    const store = new AppPackageStore({ appsDir: path.join(root, 'apps') })
+    const installed = await store.installFromDirectory(source)
+    const content = path.join(installed.root, 'dist/ui/index.html')
+    await fs.writeFile(content, 'changed after installation')
+    expect((await store.get(installed.manifest.id, installed.manifest.version)).manifest.id).toBe(installed.manifest.id)
+    await fs.access(path.join(root, 'apps', installed.manifest.id, 'verification', `${installed.manifest.version}.json`))
+  })
+
   it('coalesces concurrent installs of the same immutable version', async () => {
     const root = await tempRoot()
     const source = path.join(root, 'source')

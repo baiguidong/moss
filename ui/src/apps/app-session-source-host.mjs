@@ -8,6 +8,15 @@ export const SESSION_SOURCE_PROTOCOL = 'moss.session-source/v1'
 export const SESSION_SOURCE_PERMISSION = 'session-source:read'
 export const createSessionSourceProtocolDefinition = () => contractDefinition(SESSION_SOURCE_PROTOCOL)
 
+export function sessionSourceTimestamp(value) {
+  const numeric = typeof value === 'number' ? value
+    : typeof value === 'string' && value.trim() ? Number(value) : NaN
+  if (Number.isFinite(numeric) && numeric >= 0 && Number.isSafeInteger(Math.trunc(numeric))) return Math.trunc(numeric)
+  const parsed = value instanceof Date ? value.getTime()
+    : typeof value === 'string' ? Date.parse(value) : NaN
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
 export function sessionSourceFileName(sessionId) {
   return `session-${createHash('sha256').update(sessionId).digest('hex')}.json`
 }
@@ -36,7 +45,7 @@ export class AppSessionSourceHost {
     return {
       id: session.id,
       revision: this.getSessionRevision(session),
-      updatedAt: Number(session.updatedAt) || 0,
+      updatedAt: sessionSourceTimestamp(session.updatedAt),
       historyLength: Array.isArray(session.history) ? session.history.length : 0,
       busy: Boolean(session.busy),
     }
@@ -77,7 +86,11 @@ export class AppSessionSourceHost {
       const file = path.join(directory, fileName)
       const cacheKey = `${context.appId}:${context.instanceId}:${session.id}`
       if (this.exports.get(cacheKey) !== descriptor.revision || !await fs.stat(file).catch(() => null)) {
-        const snapshot = redactSessionSource({ ...this.getSessionSnapshot(session), mossHome: this.mossHome })
+        const source = this.getSessionSnapshot(session)
+        const snapshot = redactSessionSource({ ...source,
+          createdAt: sessionSourceTimestamp(source.createdAt),
+          updatedAt: sessionSourceTimestamp(source.updatedAt),
+          mossHome: this.mossHome })
         const temporary = `${file}.${randomUUID()}.tmp`
         try {
           await fs.writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600, flag: 'wx' })
