@@ -11,6 +11,9 @@ describe('App discovery and compatibility', () => {
   test('classifies purpose independently of CLI/MCP transport and keeps unknown visible', () => {
     expect(getAppDiscovery({ id: 'moss.filesystem' }).group).toBe('local')
     expect(getAppDiscovery({ id: 'moss.database' }).group).toBe('local')
+    for (const id of ['moss.backup', 'moss.data-workbench', 'moss.media-tools']) {
+      expect(getAppDiscovery({ id }).group).toBe('local')
+    }
     expect(getAppDiscovery({ id: 'moss.feishu' }).group).toBe('online')
     expect(getAppDiscovery({ id: 'external.cli', discovery: { group: 'online', authMethods: ['browser'] } })).toEqual({ group: 'online', authMethods: ['browser'] })
     expect(getAppDiscovery({ id: 'external.unknown' }).group).toBe('unknown')

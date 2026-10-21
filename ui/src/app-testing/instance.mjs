@@ -114,7 +114,7 @@ export async function launchTestInstance({ run, executable, args = [], cwd, sett
         signal.throwIfAborted();
         if (exited) throw failure;
         const page = await probeTarget(endpoint, run.id, signal).catch(() => null);
-        if (page) return { endpoint, page, pid: child.pid, close, exited: exit, isAlive: () => !exited,
+        if (page) return { id: run.id, endpoint, page, pid: child.pid, close, exited: exit, isAlive: () => !exited,
           focus: () => { if (child.connected) child.send({ type: 'moss-self-test-focus', id: run.id }, () => {}); },
         };
         await delay(200, undefined, { signal });

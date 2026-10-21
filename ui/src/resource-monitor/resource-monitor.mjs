@@ -157,8 +157,13 @@ export function createResourceMonitor({
       for (const id of heartbeatBaseline.keys()) if (!heartbeatIds.has(id)) heartbeatBaseline.delete(id);
       reconcileAlerts(conditions, time, !continuous);
       const live = processes.filter(row => row.pid);
-      const sum = key => live.length && live.every(row => row[key] !== null)
-        ? live.reduce((total, row) => total + row[key], 0) : null;
+      // New or short-lived child processes lack a CPU baseline for one sample.
+      // Keep the total for processes with valid measurements instead of hiding
+      // it whenever one child enters or exits.
+      const sum = key => {
+        const measured = live.filter(row => validMetric(row[key]));
+        return measured.length ? measured.reduce((total, row) => total + row[key], 0) : null;
+      };
       snapshot = {
         ...snapshot, sampledAt: time, lastSuccessAt: time, processes, processCount: live.length,
         cpuPercent: sum('cpuPercent'), memoryBytes: sum('memoryBytes'),

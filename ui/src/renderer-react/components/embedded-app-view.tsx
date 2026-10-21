@@ -3,7 +3,7 @@ import { WebAppFrame } from './web-app-frame';
 import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 
 import * as React from "react";
-import { ArrowLeft, MonitorPlay } from "lucide-react";
+import { ArrowLeft, CircleAlert, Loader2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppToolbarActions } from '@/components/app-settings';
 import { useAppAuthoring } from '@/lib/app-authoring';
@@ -21,7 +21,7 @@ export function EmbeddedAppView({
   appName,
   app,
   route = '',
-  sessionId, workspace, previewRef, compact = false, widget = false,
+  sessionId, workspace, previewRef, compact = false, widget = false, miniWidget = false,
 }: {
   appName: string;
   app?: StoredApp;
@@ -31,6 +31,7 @@ export function EmbeddedAppView({
   previewRef?: string;
   compact?: boolean;
   widget?: boolean;
+  miniWidget?: boolean;
 }) {
   const webviewRef = React.useRef<any>(null);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
@@ -78,7 +79,7 @@ export function EmbeddedAppView({
       }
       embedIdToClose = result.embedId;
       if (cancelled) {
-        void window.agentDesktop.closeEmbeddedApp({ embedId: result.embedId });
+        void window.agentDesktop.closeEmbeddedApp({ embedId: result.embedId }).catch(() => {});
         return;
       }
       setSession({
@@ -97,7 +98,7 @@ export function EmbeddedAppView({
     return () => {
       cancelled = true;
       if (embedIdToClose) {
-        void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose });
+        void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose }).catch(() => {});
       }
     };
   }, [appName, reloadKey, sessionId, workspace, previewRef]);
@@ -165,7 +166,11 @@ export function EmbeddedAppView({
             className="h-full w-full"
           />
         )}
-        {(loading || error) && (
+        {miniWidget && (loading || error) ? (
+          <div className="absolute inset-0 flex items-center justify-center rounded-full border border-border bg-card text-muted-foreground" role="status" title={error || '正在打开 App'} aria-label={error || '正在打开 App'}>
+            {error ? <CircleAlert className="h-5 w-5 text-destructive" /> : <Loader2 className="h-5 w-5 animate-spin" />}
+          </div>
+        ) : (loading || error) && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/92 px-6 text-center backdrop-blur-sm">
             <div className="max-w-md rounded-2xl border border-border/80 bg-card/95 px-5 py-4 shadow-lg">
               <div className="text-sm font-medium text-foreground">

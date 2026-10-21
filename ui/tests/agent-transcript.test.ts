@@ -197,6 +197,21 @@ describe("agent transcript tool rendering", () => {
     });
   });
 
+  it("shows screenshot attachments as cards without repeating their model captions", () => {
+    const files = ["/tmp/evidence/runtime-settings-saved-0.png", "/tmp/evidence/runtime-settings-saved-1.png"];
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: "user",
+      prompt: "核对本批新截图。\n截图：runtime-settings-saved-0.png\n截图：runtime-settings-saved-1.png",
+      files,
+      images: files,
+    }]);
+    expect(messages[0]).toMatchObject({
+      type: "user_text",
+      content: "核对本批新截图。",
+      attachments: files.map(path => ({ kind: "image", path })),
+    });
+  });
+
   it("keeps ordinary user text containing an attachment heading as text", () => {
     const content = "文档示例：\n\n[Attached files]\n- example.pdf";
     const messages = buildMainChatRenderMessagesFromHistory([{

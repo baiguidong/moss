@@ -45,6 +45,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
   const [tasks, setTasks] = React.useState<CronTaskInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState("");
+  const [connectionNotice, setConnectionNotice] = React.useState("");
   const [notice, setNotice] = React.useState("");
   const [pendingRuns, setPendingRuns] = React.useState<Set<string>>(new Set());
 
@@ -55,8 +56,17 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
       const res = await window.agentDesktop.sessionCron.list(source);
       setTasks(Array.isArray(res?.tasks) ? res.tasks : []);
       setLoadError("");
+      setConnectionNotice("");
     } catch (error) {
-      setLoadError(`加载失败：${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (source === 'cloud' && /Remote Direct server URL is required|请先在设置中启用云端连接/.test(message)) {
+        setTasks([]);
+        setLoadError("");
+        setConnectionNotice('尚未连接 Moss Server，请先在设置中配置云端连接。');
+      } else {
+        setConnectionNotice("");
+        setLoadError(`加载失败：${message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -142,7 +152,8 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
         <div className="mx-auto w-full max-w-[980px] px-4 py-4 sm:px-6">
           <div className="mb-3 text-xs text-muted-foreground">{source === 'cloud' ? '由 Moss Server 执行，关闭桌面不影响运行。' : '由本机执行，需要保持桌面应用运行。'}</div>
           {loadError && <div role="alert" className="mb-3 text-sm text-destructive">{loadError}</div>}
-          {tasks.length === 0 && !loadError ? (
+          {connectionNotice && <div role="status" className="mb-3 rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">{connectionNotice}</div>}
+          {tasks.length === 0 && !loadError && !connectionNotice ? (
             <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-5 py-10 text-center text-sm text-muted-foreground">
               {loading ? "加载中…" : (
                 <>

@@ -12,8 +12,9 @@ import { AppSettingsButton } from '@/components/app-settings';
 import { AppCategoryTabs } from '@/components/app-category-tabs';
 import { filterApps, groupApps } from '@/lib/app-categories';
 import { appPageUnavailableReason, getAppPrimaryEntry } from '@/lib/app-navigation';
+import { supportsHostFeature } from '@/lib/host-environment';
 import {
-  AlertCircle, ExternalLink, History,
+  AlertCircle, Download, ExternalLink, History,
   KeyRound, Pencil, RefreshCw, RotateCcw,
   Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2,
 } from "lucide-react";
@@ -22,6 +23,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
+import { AppInstallProgressView } from '@/components/app-install-progress';
+import { isAppInstallActive, useAppInstallProgress } from '@/lib/app-install-progress';
 import { describeAppPermission, describeBackendAction } from '../../shared/app-capability-descriptions.mjs';
 import { useAppAuthoring } from '@/lib/app-authoring';
 import type { AppInstance, AppVersion, StoredApp } from "../types";
@@ -332,6 +335,7 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
   const section = sectionOverride || preferences.sections.installed;
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
+  const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
   const [authNotice, setAuthNotice] = React.useState<{ appId: string; message: string } | null>(null);
   const searchedApps = filterApps(apps, query, 'all', { group: section });
   const matchedApps = filterApps(searchedApps, '', category);
@@ -344,6 +348,14 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
     try { await operation(); await onRefresh(); }
     catch (operationError) { setError(errorMessage(operationError)); }
     finally { setBusy(null); }
+  };
+
+  const installArchive = async () => {
+    clearArchiveProgress('local');
+    await run('install', async () => {
+      const result = await window.agentDesktop.installAppArchive();
+      if (!result.ok && !result.canceled) throw new Error(result.error || 'App 安装失败');
+    });
   };
 
   if (loading && apps.length === 0) {
@@ -361,10 +373,12 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
         <div className="order-1 flex shrink-0 items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="hidden text-xs text-muted-foreground sm:inline">{apps.length} 个已安装</span></div>
         <div className="order-3 w-full min-[480px]:order-2 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
         <Button size="sm" variant="ghost" className="order-2 h-8 shrink-0 px-2.5 text-xs sm:order-3" title="应用市场" aria-label="应用市场" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" /><span className="hidden sm:inline">应用市场</span></Button>
+        <Button size="sm" variant="ghost" className="order-4 h-8 shrink-0 px-2.5 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={busy === 'install' || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void installArchive()}><Download className="h-3.5 w-3.5" />{busy === 'install' ? '安装中…' : '本地安装 ZIP'}</Button>
       </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
+        {archiveProgress.local && <div className="mb-3"><AppInstallProgressView progress={archiveProgress.local} /></div>}
         <AppCategoryTabs apps={searchedApps} value={category} onChange={setCategory} panelId="installed-apps" />
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-2">

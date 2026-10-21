@@ -28,6 +28,7 @@ function fixture(extra: Record<string, any> = {}) {
     closeWorkspaceWatcher: () => {}, disposeRuntime: (record: { id: string }) => calls.push(`dispose-${record.id}`),
     cloudStorageHost: { close: async () => { calls.push('cloud-close'); } },
     appRuntime: { shutdown: async () => { calls.push('apps-close'); } },
+    appArtifacts: { close: async () => { calls.push('artifacts-close'); } },
     fsp: { rm: async () => {} }, REMOTE_PREVIEW_CACHE_DIR: '/test-only',
     webTerminals: null, webInteractions: null, webApps: null, webOAuth: null,
     hostConfirmations: null, webServer: null, ...extra,
@@ -50,6 +51,7 @@ test('desktop shutdown waits for asynchronous services and persists every sessio
   expect(calls.indexOf('persist-chat')).toBeLessThan(calls.indexOf('dispose-chat'));
   expect(calls.indexOf('persist-child')).toBeLessThan(calls.indexOf('dispose-child'));
   expect(calls).toContain('apps-close');
+  expect(calls.indexOf('artifacts-close')).toBeGreaterThan(calls.indexOf('apps-close'));
   expect(calls).toContain('transcript-sync-stop');
   expect(calls.indexOf('runtime-pool-stop')).toBeLessThan(calls.indexOf('dispose-chat'));
   expect(calls.indexOf('computer-use-stop')).toBeLessThan(calls.indexOf('apps-close'));
@@ -80,7 +82,7 @@ test('shutdown cancels App restoration before closing the runtime', async () => 
   await pending;
   expect(calls).toEqual(['abort-restore', 'runtime-close']);
 });
-test('Windows installation blockers include queued work, teams, terminals, App requests and runtime setup', () => {
+test('Windows installation blockers include queued work, teams, terminals, App background work and runtime setup', () => {
   const getBlockers = runInNewContext(source.slice(source.indexOf('function getInstallBlockers()'), source.indexOf('const updateInstallPreparation')) + '\ngetInstallBlockers', {
     sessions: new Map([['session', { busy: true }]]), subAgentSessions: new Map(),
     sessionPromptQueues: new Map(), sessionSendQueues: new Map(), projectCoordinatorTaskRuns: new Map(),
@@ -88,7 +90,7 @@ test('Windows installation blockers include queued work, teams, terminals, App r
     terminalManager: { hasOpenTerminals: () => true }, activeAppUpdateOperations: 0,
     appTestingHost: { isRunning: () => false },
     computerUseService: { owner: null, inFlight: false },
-    appRuntime: { supervisor: { listStatuses: () => [{ pendingActions: 1 }] } }, managedRuntimeInstallPromise: Promise.resolve(),
+    appRuntime: { supervisor: { listStatuses: () => [{ activeWork: 1 }] } }, managedRuntimeInstallPromise: Promise.resolve(),
     memoryDreamService: { getStatus: () => ({ phase: 'idle' }) },
   });
   expect(getBlockers()).toEqual(['会话或后台任务', 'Agent Team', '终端窗口', 'App 操作', '运行时安装']);

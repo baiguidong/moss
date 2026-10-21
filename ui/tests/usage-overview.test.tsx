@@ -29,6 +29,15 @@ const cloud: CloudUsageOverview = {
 const loaded = <T,>(data: T) => ({ data, loading: false, error: '' });
 
 describe('local and cloud usage overview', () => {
+  test('hides cloud usage and excludes its activity until a cloud server is configured', () => {
+    const html = renderToStaticMarkup(<UsageOverviewContent local={loaded(local)} cloud={loaded(cloud)} cloudEnabled={false} onRefresh={() => {}} />);
+    expect(html).toContain('本机累计 Token');
+    expect(html).not.toContain('云端累计 Token');
+    expect(html).not.toContain('连接 Moss Server 后查看');
+    expect(html).toContain('2026年9月24日 · 175 Token · 1 次请求');
+    expect(html).not.toContain('247 Token');
+  });
+
   test('adds every counter on overlapping dates and retains dates present on only one side', () => {
     const earlier = { ...localDay, day: '2026-09-22' };
     const later = { ...cloudDay, day: '2026-09-25' };

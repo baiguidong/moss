@@ -1,5 +1,0 @@
-{
-  "passed": true,
-  "check": "CLI-generated archive equals verified package byte for byte",
-  "sha256": "8cd4c8ec8d759d4d38ca0ce546bc4e8dfd18d9ec9c5a08c332f8773c72019211"
-}

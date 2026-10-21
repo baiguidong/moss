@@ -2,7 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createReusableTestInstance } from './reusable-instance.mjs'
 import { TEST_APP_ID, TEST_BROWSER_SERVER } from './browser.mjs'
-import { attachReviewEvidence } from './review-evidence.mjs'
+import { resolveReviewEvidence } from './review-evidence.mjs'
+import { captureTargetFrame, sendTargetInput } from './target-view.mjs'
 
 export const TESTING_PROTOCOL = 'moss.testing/v1'
 const message = error => error instanceof Error ? error.message : String(error)
@@ -115,12 +116,18 @@ export function createAppTestingHost(options) {
       if (method === 'environment') {
         context.assertCurrent?.()
         const settings = getSettings()
-        return { appVersion: options.appVersion, model: settings.model || '', appearance: settings.appearance || {}, disabled: Boolean(isTarget),
+        return { appVersion: options.appVersion, model: settings.model || '', appearance: settings.appearance || {}, disabled: Boolean(isTarget), web: options.web === true,
           ...(options.hostBuildId ? { hostBuildId: options.hostBuildId } : {}) }
       }
       const entry = await entryFor(context)
       if (method === 'controller.caller') return { sessionId: context.invocation?.surface === 'tool' ? context.invocation.sessionId || null : null }
       if (method === 'target.status') return targetStatus(entry)
+      if (method === 'target.frame' || method === 'target.input') {
+        if (!options.web) throw new Error('测试实例画面仅供 Web 页面使用。')
+        const target = entry.targetProcess?.isAlive() ? entry.targetProcess : entry.target.current()
+        if (method === 'target.frame') return captureTargetFrame(target)
+        return sendTargetInput(target, input)
+      }
       if (['target.open', 'target.close', 'target.sync', 'target.reset'].includes(method)) {
         options.assertWorkAllowed?.()
         return manageTarget(entry, method.slice(7), input)
@@ -181,9 +188,11 @@ export function createAppTestingHost(options) {
         const signal = AbortSignal.any([controller.abort.signal, entry.lifecycle.signal])
         controller.pending = Promise.resolve().then(async () => {
           assertLive(entry); signal.throwIfAborted()
-          const prompt = controller.evidenceReview || input.evidence?.length ? await attachReviewEvidence(input.prompt, input.evidence, controller.evidenceDir) : input.prompt
+          const evidence = controller.evidenceReview || input.evidence?.length
+            ? await resolveReviewEvidence(input.prompt, input.evidence, controller.evidenceDir)
+            : { content: input.prompt, attachments: [] }
           assertLive(entry); signal.throwIfAborted()
-          return executeController(controller.sessionId, prompt, signal)
+          return executeController(controller.sessionId, evidence.content, signal, evidence.attachments)
         }).then(() => { controller.state = signal.aborted ? 'canceled' : 'completed' }, error => {
           controller.state = signal.aborted ? 'canceled' : 'failed'; controller.error = message(error)
         })
@@ -200,6 +209,7 @@ export function createAppTestingHost(options) {
       if (method === 'controller.turn.abort') {
         controller.abort?.abort(new Error('控制回合已停止。'))
         await interruptController(controller.sessionId)
+        await controller.pending?.catch(() => {})
         return turnStatus(controller)
       }
       if (method === 'controller.turn.finish') {

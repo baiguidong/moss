@@ -16,6 +16,7 @@ import {
   Settings,
   SunMedium,
   Trash2,
+  UserRound,
   X,
   AlarmClock,
   Bot,
@@ -139,6 +140,7 @@ interface AppSidebarProps {
   onSearchChange: (query: string) => void;
   onOpenGlobalSearch?: () => void;
   headerActions?: React.ReactNode;
+  serverAccount?: { userName: string; userEmail: string } | null;
 }
 
 function SessionItem({
@@ -314,6 +316,7 @@ export function AppSidebar({
   onSearchChange,
   onOpenGlobalSearch,
   headerActions,
+  serverAccount,
 }: AppSidebarProps) {
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
@@ -328,6 +331,15 @@ export function AppSidebar({
   React.useEffect(() => {
     if (isSearchOpen) searchInputRef.current?.focus();
   }, [isSearchOpen]);
+
+  React.useEffect(() => {
+    const navigate = (event: Event) => {
+      const view = (event as CustomEvent).detail;
+      if (view === 'apps' || view === 'settings') onChangeView(view);
+    };
+    window.addEventListener('moss:account-navigate', navigate);
+    return () => window.removeEventListener('moss:account-navigate', navigate);
+  }, [onChangeView]);
 
   const historySessions = sessions.filter((session) => !session.isSubAgent);
   const activeHistorySessionId = getSidebarActiveSessionId(sessions, activeSessionId);
@@ -396,20 +408,20 @@ export function AppSidebar({
   return (
     <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
-        <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between gap-3")}>
-          {!collapsed && (
-            <div className="min-w-0">
+        <div className={cn("flex items-center", collapsed ? "flex-col gap-2" : "justify-between gap-3")}>
+            <div className={cn("min-w-0", !collapsed && "ml-1.5")}>
               <div className="flex items-center gap-2">
                 <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
+                {!collapsed && <>
                 <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
                   moss
                 </div>
                 {typeof window !== 'undefined' && new URLSearchParams(window.location?.search || '').has('moss-self-test') && (
                   <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">测试实例</span>
                 )}
+                </>}
               </div>
             </div>
-          )}
           <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
             {headerActions}
             <Button
@@ -443,7 +455,7 @@ export function AppSidebar({
           </div>
         ) : null}
 
-        <div className="mt-3 grid grid-cols-1 gap-0.5">
+        <div className={cn("mt-3 grid grid-cols-1 gap-0.5", collapsed && "justify-items-center")}>
           <Button
             variant="ghost"
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
@@ -527,7 +539,7 @@ export function AppSidebar({
 
       {collapsed ? (
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col items-start gap-1.5 p-2">
+          <div className="flex flex-col items-center gap-1.5 p-2">
             {orderedSessions.map((session) => (
               <button
                 key={session.id}
@@ -660,10 +672,31 @@ export function AppSidebar({
       )}
 
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
-        {/* Apps 和 设置 */}
-        <div className={cn("grid gap-2", collapsed ? "grid-cols-1" : "grid-cols-2")}>
+        {typeof window !== 'undefined' && window.mossWeb ? (
+          <div id="moss-web-account-slot" data-collapsed={collapsed} />
+        ) : (serverAccount?.userName || serverAccount?.userEmail) ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className={cn("flex h-10 w-full items-center gap-2 rounded-xl px-1.5 text-left text-xs hover:bg-sidebar-accent", collapsed && "h-8 w-8 justify-center p-0 mx-auto")} aria-label="个人中心" title="个人中心">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent"><UserRound className="h-4 w-4" /></span>
+                {!collapsed && <><span className="min-w-0 flex-1 truncate" title={serverAccount.userName || serverAccount.userEmail}>{serverAccount.userName || serverAccount.userEmail}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></>}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
+              <DropdownMenuLabel className="space-y-1 text-xs">
+                <span className="block truncate text-sm font-medium" title={serverAccount.userName || serverAccount.userEmail}>{serverAccount.userName || serverAccount.userEmail}</span>
+                {serverAccount.userEmail && serverAccount.userEmail !== serverAccount.userName && <span className="block truncate font-normal text-muted-foreground" title={serverAccount.userEmail}>{serverAccount.userEmail}</span>}
+                <span className="block font-normal text-muted-foreground">已连接 Moss Server</span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => onChangeView('apps')}><LayoutGrid className="h-4 w-4" />Apps</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onChangeView('settings')}><Settings className="h-4 w-4" />设置</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (<div className={cn("grid gap-2", collapsed ? "grid-cols-1 justify-items-center" : "grid-cols-2")}>
           <Button
             variant={activeView === "apps" || activeView === "connectors" ? "secondary" : "ghost"}
+            aria-label={collapsed ? `Apps ${appsCount ?? '…'}` : undefined}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("apps")}
           >
@@ -677,13 +710,14 @@ export function AppSidebar({
           </Button>
           <Button
             variant={activeView === "settings" ? "secondary" : "ghost"}
+            aria-label={collapsed ? "设置" : undefined}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("settings")}
           >
             <Settings className="h-4 w-4" />
             {!collapsed && "设置"}
           </Button>
-        </div>
+        </div>)}
       </div>
     </div>
   );

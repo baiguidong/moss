@@ -495,6 +495,19 @@ function attachmentsFromPaths(
   return attachments.length > 0 ? mergeAttachments(undefined, attachments) : undefined;
 }
 
+function stripRepeatedScreenshotLabels(content: string, attachments?: TranscriptAttachment[]): string {
+  if (!attachments?.length || !content.includes('\n截图：')) return content;
+  const names = new Set(attachments.map(item => item.name || item.path.split(/[\\/]/).pop() || ''));
+  const lines = content.trimEnd().split('\n');
+  let end = lines.length;
+  while (end > 0) {
+    const match = /^截图：([^\n]+\.(?:png|jpe?g|webp))$/i.exec(lines[end - 1]);
+    if (!match || !names.has(match[1])) break;
+    end -= 1;
+  }
+  return end === lines.length ? content : lines.slice(0, end).join('\n').trimEnd();
+}
+
 function attachmentsFromResources(resources?: Array<Record<string, unknown>> | null) {
   if (!Array.isArray(resources)) return undefined;
   const attachments = resources.flatMap((resource) => {
@@ -1206,7 +1219,7 @@ export function buildTranscriptRenderMessages(
     previousTimestamp = timestamp;
     const rawUserText = event?.type === 'user' ? extractUserText(event) : '';
     const recoveredFiles = event?.type === 'user' ? extractGeneratedFileAttachments(rawUserText) : null;
-    const userText = recoveredFiles?.content ?? rawUserText;
+    const recoveredUserText = recoveredFiles?.content ?? rawUserText;
     const sourceMessageId = getSearchMessageId(event);
 
     const userAttachments = mergeAttachments(
@@ -1216,6 +1229,7 @@ export function buildTranscriptRenderMessages(
       ),
       attachmentsFromResources(Array.isArray(event?.resources) ? event.resources : undefined),
     );
+    const userText = stripRepeatedScreenshotLabels(recoveredUserText, userAttachments);
 
     if (
       event?.type === 'user' &&

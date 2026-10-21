@@ -12,11 +12,12 @@ async function jsonFetch(url: string, init?: RequestInit) {
 export async function initializeHostClient() {
   if (window.agentDesktop) return;
   const { showWebLogin, mountWebSessionControls } = await import('./web-interface');
-  const auth = await jsonFetch('/api/auth');
+  let auth = await jsonFetch('/api/auth');
   if (!auth.authenticated) {
     await showWebLogin(auth.mode, values => jsonFetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
     }));
+    auth = await jsonFetch('/api/auth');
   }
   environmentGeneration = auth.managed ? auth.environment?.generation || 0 : undefined;
   if (auth.managed && (auth.environment?.operation || auth.hostUnavailable || auth.environment?.state !== 'ready')) { location.replace('/?window=cloud-environment'); await new Promise(() => {}); }
@@ -25,7 +26,7 @@ export async function initializeHostClient() {
     const { clearUserDrafts } = await import('./lib/web-drafts');
     await clearUserDrafts().catch(() => {});
     localStorage.clear(); sessionStorage.clear(); location.reload();
-  });
+  }, auth.account);
   const fileUrl = (filePath: string) => `/api/files?path=${encodeURIComponent(filePath)}`;
   const uploadFile = (file: File) => jsonFetch(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
   window.mossWeb = { fileUrl, uploadFile, snapshot: null, managed: !!auth.managed, generation: environmentGeneration };
@@ -36,9 +37,16 @@ export async function initializeHostClient() {
     url: `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/ws${environmentGeneration === undefined ? '' : `?generation=${environmentGeneration}`}`,
     isAuthenticated: async () => { const current = await jsonFetch('/api/auth'); return current.authenticated && auth.managed && current.environment?.generation !== environmentGeneration ? 'changed' : current.authenticated; },
     onStatus(status: string) {
-      if (status === 'unauthenticated') void import('./lib/web-drafts').then(module => module.clearUserDrafts()).catch(() => {});
       updateStatus(status);
       window.dispatchEvent(new CustomEvent('moss:connection', { detail: status }));
+      if (['unauthenticated', 'incompatible', 'environment-changed'].includes(status)) {
+        // A terminal transport cannot recover in place. Reload into the login
+        // or refreshed Host instead of leaving every App action stuck on it.
+        const key = `moss-web-terminal-reload:${status}`;
+        let previous = 0;
+        try { previous = Number(sessionStorage.getItem(key) || 0); sessionStorage.setItem(key, String(Date.now())); } catch {}
+        if (Date.now() - previous > 30_000) window.setTimeout(() => location.reload(), 600);
+      }
     },
     onSnapshot(snapshot: any) {
       window.mossWeb!.snapshot = snapshot;

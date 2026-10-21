@@ -3,6 +3,7 @@ import { EmbeddedAppView } from './embedded-app-view';
 import type { StoredApp } from '../types';
 import { appPageUnavailableReason } from '../lib/app-navigation';
 import { getCompanion, getUserId } from './buddy/buddy-companion';
+import { isWebUI } from '../lib/host-environment';
 
 export function availableAppWidgets(apps: StoredApp[]) {
   return apps.flatMap(app => (app.contributes?.widgets || []).flatMap((widget: any) => {
@@ -48,7 +49,7 @@ function AppWidget({ widget, index }: { widget: ReturnType<typeof availableAppWi
       onPointerDown={event=>{if(!(event.target as HTMLElement).closest('button'))pointerDown(event)}} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{drag.current=null}}>
       <span className="flex-1 truncate">{widget.title}</span><button type="button" className="rounded px-2 py-1 hover:bg-muted" aria-expanded={expanded} onClick={() => setExpanded(false)}>收起</button>
     </div>}
-    <div className={`min-h-0 flex-1 ${expanded ? '' : 'pointer-events-none'}`}><EmbeddedAppView appName={widget.name} route={`${widget.route}${widget.route.includes('?') ? '&' : '?'}expanded=${expanded ? 1 : 0}`} widget compact /></div>
+    <div className={`min-h-0 flex-1 ${expanded ? '' : 'pointer-events-none'}`}><EmbeddedAppView key={isWebUI() ? String(expanded) : 'desktop'} appName={widget.name} route={`${widget.route}${widget.route.includes('?') ? '&' : '?'}expanded=${expanded ? 1 : 0}`} widget compact miniWidget={!expanded} /></div>
     {!expanded && <button type="button" aria-label={`打开 ${widget.title}`} title={`打开 ${widget.title} · 拖动可移动`} aria-expanded={false} className="absolute inset-0 touch-none rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" style={{cursor:'grab'}}
       onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{drag.current=null;dragged.current=true}}
       onClick={event=>{if(event.detail===0||!dragged.current)setExpanded(true);dragged.current=false}} />}

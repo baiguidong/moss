@@ -15,6 +15,7 @@ function renderSidebar({
   searchQuery = '',
   activeSessionId = null,
   appsCount = 0,
+  serverAccount = null,
 }: {
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
@@ -25,6 +26,7 @@ function renderSidebar({
   searchQuery?: string;
   activeSessionId?: string | null;
   appsCount?: number | null;
+  serverAccount?: { userName: string; userEmail: string } | null;
 } = {}) {
   return renderToStaticMarkup(
     <AppSidebar
@@ -33,6 +35,7 @@ function renderSidebar({
       activeSessionId={activeSessionId}
       activeView={activeView}
       appsCount={appsCount}
+      serverAccount={serverAccount}
       projectsCount={0}
       themeMode="system"
       collapsed={collapsed}
@@ -53,6 +56,17 @@ function renderSidebar({
 }
 
 describe('app sidebar more menu', () => {
+  test('shows a server account entry and moves Apps and settings into it after connection', () => {
+    const account = { userName: 'Server Alice', userEmail: 'alice@example.test' };
+    const expanded = renderSidebar({ serverAccount: account });
+    const collapsed = renderSidebar({ serverAccount: account, collapsed: true });
+    expect(expanded).toContain('aria-label="个人中心"');
+    expect(expanded).toContain('Server Alice');
+    expect(expanded).not.toContain('Apps<span');
+    expect(collapsed).toContain('aria-label="个人中心"');
+    expect(collapsed).toContain('alt="Moss"');
+    expect(collapsed).not.toContain('Apps<span');
+  });
   test('shows the cached App count and a placeholder when no count is cached', () => {
     expect(renderSidebar({ appsCount: 142 })).toMatch(/Apps<span[^>]*>142<\/span>/);
     expect(renderSidebar({ appsCount: null })).toMatch(/Apps<span[^>]*>…<\/span>/);

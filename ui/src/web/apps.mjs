@@ -70,7 +70,12 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
     ['web:app-preview-list', context => [...offers].filter(([, item]) => item.ownerId === context.principal.userId).map(([id, item]) => ({ id, title: item.state.manifest.displayName || item.state.id }))],
     ['web:app-preview-close', (context, { id }) => { const offer = offers.get(id); if (!offer || offer.ownerId !== context.principal.userId) throw new Error('创作预览已关闭。'); offer.handle.close(); return { ok: true }; }],
     ['app:embedded-open', (context, input) => open(context, input)],
-    ['app:embedded-close', (context, { embedId }) => { entry(context, embedId); dispose(embedId); return { ok: true }; }],
+    ['app:embedded-close', (context, { embedId }) => {
+      const page = pages.get(embedId);
+      // A reconnect may have already disposed the page. Closing it again is cleanup.
+      if (!page) return { ok: true };
+      entry(context, embedId); dispose(embedId); return { ok: true };
+    }],
     ['web:app-request', async (context, { embedId, method, input = {} }) => {
       assertWorkAllowed();
       const page = entry(context, embedId), state = page.state, runtime = state.runtime;

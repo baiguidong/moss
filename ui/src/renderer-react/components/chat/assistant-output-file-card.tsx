@@ -13,6 +13,13 @@ type FileAction = "preview" | "system" | "reveal";
 export async function openAssistantOutputFile(file: AssistantOutputFile, action: FileAction, sessionId: string | undefined, workspace: string, remote: boolean, host = window.agentDesktop) {
   if (remote) throw new Error("暂不支持远程文件卡片。");
   if (!sessionId) throw new Error("请先打开此文件所属的会话。");
+  // Browser downloads must start inside the original click event. Waiting for
+  // an IPC round trip first loses user activation in Chrome on the first try.
+  if (action === 'system' && typeof window !== 'undefined' && window.mossWeb) {
+    const error = await host.shell.openFile(file.path);
+    if (error) throw new Error(error);
+    return;
+  }
   const [resolution] = await host.preview.resolveFiles({ sessionId, paths: [file.path] });
   if (!resolution || !("file" in resolution)) throw new Error("文件已不存在或无法读取。");
   if (resolution.file.path !== file.path) throw new Error("文件位置已变化，请重新打开会话后重试。");

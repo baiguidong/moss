@@ -18,6 +18,12 @@ import { normalizeSnapshotPolicy } from '../shared/webui-snapshot-policy.mjs';
 const publicOperation = op => op ? Object.fromEntries(['id', 'environmentId', 'input', 'snapshotId', 'protectionId', 'status', 'phase', 'createdAt', 'updatedAt', 'transferredBytes', 'error', 'resumeError', 'cleanupError'].map(key => [key, op[key]])) : null;
 const hash = value => createHash('sha256').update(String(value || '')).digest();
 const sameIdentity = (identity, row) => identity.user?.id === row.userId && (identity.organization?.id || '') === row.orgId;
+const publicAccount = identity => {
+  const user = identity?.user;
+  if (!user) return null;
+  const userName = [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '';
+  return { userName, userEmail: typeof user.email === 'string' ? user.email.trim() : '' };
+};
 const publicEnvironment = row => ({ id: row.id, userId: row.userId, orgId: row.orgId, containerId: row.containerId, state: row.state, desiredState: row.desiredState, version: row.version, generation: row.generation || 0, operation: row.operation, automationsPaused: row.automationsPaused, error: row.error, createdAt: row.createdAt });
 const number = (value, fallback, min, max) => { const n = Number(value ?? fallback); if (!Number.isFinite(n) || n < min || n > max) throw new Error('Invalid cloud resource limit'); return n; };
 
@@ -92,7 +98,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     const row = store.get(session.environmentId);
     if (!row) { removeSession(id); return null; }
     if (session.checkedAt + 30000 < Date.now()) {
-      try { const identity = await authRequest(authBase, '/api/v1/auth/me', null, session.accessToken); if (!sameIdentity(identity, row)) throw new Error('Identity changed'); session.checkedAt = Date.now(); }
+      try { const identity = await authRequest(authBase, '/api/v1/auth/me', null, session.accessToken); if (!sameIdentity(identity, row)) throw new Error('Identity changed'); session.account = publicAccount(identity); session.checkedAt = Date.now(); }
       catch (error) { if (error.status === 401 || error.status === 403) { removeSession(id); return null; } }
     }
     return { id, session, row };
@@ -171,10 +177,11 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       }
       if (url.pathname.startsWith('/_moss/resource/')) {
         const token = /^\/_moss\/resource\/([\w-]{43})\//.exec(url.pathname)?.[1], entry = resourceRoutes.get(token);
-        if (!['GET', 'HEAD'].includes(req.method) || !entry || entry.expiresAt < Date.now()) return json(res, 404, { error: 'Resource expired' });
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !entry || entry.expiresAt < Date.now()) return json(res, 404, { error: 'Resource expired' });
         const row = store.get(entry.environmentId);
         if (!row || row.operation || row.desiredState !== 'running') return json(res, 410, { error: 'Host stopped' });
-        const upstream = http.request(new URL(url.pathname + url.search, await computers.target(row)), { method: req.method }, response => {
+        const headers = req.headers.range && ['GET', 'HEAD'].includes(req.method) ? { range: req.headers.range } : {};
+        const upstream = http.request(new URL(url.pathname + url.search, await computers.target(row)), { method: req.method, headers }, response => {
           res.writeHead(response.statusCode, response.headers); response.on('error', () => res.destroy()); response.pipe(res);
         });
         upstream.setTimeout(30000, () => upstream.destroy()); upstream.on('error', () => { if (!res.headersSent) json(res, 502, { error: 'Resource unavailable' }); else res.destroy(); });
@@ -209,7 +216,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
           try { row = await computers.ensure(identity); } catch (error) { row = store.get(row.id); store.update(row.id, { state: row.operation ? row.state : 'error', error: error.message }); }
         }
         const id = randomBytes(32).toString('base64url');
-        const session = { environmentId: row.id, accessToken: token.access_token, checkedAt: Date.now(), expiresAt: Date.now() + Math.min(Number(token.expires_in) || 3600, 43200) * 1000 };
+        const session = { environmentId: row.id, accessToken: token.access_token, account: publicAccount(identity), checkedAt: Date.now(), expiresAt: Date.now() + Math.min(Number(token.expires_in) || 3600, 43200) * 1000 };
         if (input.management !== true && !row.operation && row.state === 'ready') await grant(session, row).catch(() => {});
         if (sessions.size >= 1000) removeSession(sessions.keys().next().value);
         sessions.set(id, session);
@@ -227,6 +234,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
           catch { hostUnavailable = true; }
         }
         return json(res, 200, { authenticated: !!auth, mode: identityProvider.mode, managed: true, hostUnavailable,
+          account: auth?.session.account || null,
           environment: auth ? publicEnvironment(auth.row) : null });
       }
 

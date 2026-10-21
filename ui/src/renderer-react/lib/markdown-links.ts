@@ -11,6 +11,16 @@ export function markdownUrlTransform(url: string, key: string) {
   return defaultUrlTransform(url);
 }
 
+export function appRouteLink(href: string) {
+  if (/^#\/(?:flows|runs)\/[a-zA-Z0-9_-]+(?:\?[^#]*)?$/.test(href)) return { appName: '', route: href };
+  try {
+    const url = new URL(href);
+    if (url.protocol !== 'moss-app:' || !/^[a-z0-9][a-z0-9._-]*$/.test(url.hostname)
+      || !/^\/(?:flows|runs)\/[a-zA-Z0-9_-]+$/.test(url.pathname)) return null;
+    return { appName: url.hostname, route: `#${url.pathname}${url.search}` };
+  } catch { return null; }
+}
+
 type LinkHost = {
   openAppResource: Window['agentDesktop']['openAppResource'];
   shell: Pick<Window['agentDesktop']['shell'], 'openExternal'>;
@@ -31,7 +41,14 @@ export async function handleMarkdownLinkClick(
   host: LinkHost,
   sessionId?: string,
 ): Promise<void> {
-  if (href && isAppResourceUri(href)) {
+  const appRoute = href && appRouteLink(href);
+  if (appRoute) {
+    event.preventDefault();
+    if (typeof window === 'undefined') throw new Error('此链接只能在 Moss 中打开');
+    const detail = { ...appRoute, sessionId, handled: false };
+    window.dispatchEvent(new CustomEvent('moss:open-app-route', { detail }));
+    if (!detail.handled) throw new Error('此会话中的 App 页面不可用');
+  } else if (href && isAppResourceUri(href)) {
     event.preventDefault();
     if (typeof window !== 'undefined' && window.mossWeb && sessionId && host.presentation) {
       const result = await host.presentation.open({ sessionId, input: { items: [{ resource_uri: href }] } });

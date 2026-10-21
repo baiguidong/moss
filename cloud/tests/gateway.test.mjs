@@ -10,7 +10,7 @@ const respond = (res, data) => { res.setHeader('Content-Type', 'application/json
 test('gateway authenticates routing, strips client credentials, closes WS on logout, persists mapping', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-gateway-'));
   await fs.mkdir(path.join(dir, 'renderer')); await fs.writeFile(path.join(dir, 'renderer/index.html'), '<h1>Login</h1>');
-  const identity = user => ({ user: { id: user }, organization: { id: 'org' } });
+  const identity = user => ({ user: { id: user, name: `Server ${user}`, email: `${user}@example.test` }, organization: { id: 'org' } });
   const auth = http.createServer(async (req, res) => {
     if (req.url.endsWith('/login')) {
       let body = ''; for await (const chunk of req) body += chunk;
@@ -46,6 +46,8 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   const loginA = await post('/api/login', { username: 'alice', password: 'test' });
   assert.equal(loginA.status, 200); assert.match(loginA.headers.get('set-cookie'), /HttpOnly; SameSite=Strict; Secure/);
   const ca = loginA.headers.get('set-cookie').split(';')[0];
+  const account = await (await fetch(base() + '/api/auth', { headers: { Cookie: ca } })).json();
+  assert.deepEqual(account.account, { userName: 'Server alice', userEmail: 'alice@example.test' });
   for (const requestPath of ['//attacker.invalid/path', '/\\attacker.invalid/path', '/a/..//attacker.invalid/path']) {
     const status = await new Promise((resolve, reject) => {
       const req = http.request(base(), { path: requestPath, headers: { Cookie: ca } }, res => { res.resume(); resolve(res.statusCode); });
@@ -108,7 +110,12 @@ test('gateway executable starts through the versioned image symlink', async t =>
 test('opaque OAuth and resource routes select the registered Host without login cookies; port origins cannot route root APIs', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-gateway-callback-'));
   const received = [];
-  const host = http.createServer((req, res) => { received.push({ path: req.url, cookie: req.headers.cookie, host: req.headers.host }); res.end('bound-host'); });
+  const host = http.createServer((req, res) => {
+    received.push({ path: req.url, cookie: req.headers.cookie, host: req.headers.host, method: req.method, range: req.headers.range });
+    if (req.method === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Range' }); res.end(); return; }
+    if (req.headers.range === 'bytes=2-5') { res.writeHead(206, { 'Content-Range': 'bytes 2-5/10' }); res.end('2345'); return; }
+    res.end('bound-host');
+  });
   const hostBase = await listen(host);
   const env = { MOSS_CLOUD_STATE: dir, MOSS_WEB_ORIGIN: 'https://portal.example', MOSS_WEB_PREVIEW_DOMAIN: 'preview.example', MOSS_WEB_AUTH_SERVER: 'https://auth.example', MOSS_WEB_IMAGE: 'test', MOSS_WEB_HOST: '127.0.0.1', MOSS_WEB_PORT: '0' };
   const gateway = await startGateway({ env, docker: {}, rendererRoot: dir });
@@ -127,6 +134,11 @@ test('opaque OAuth and resource routes select the registered Host without login 
   const resource = 'r'.repeat(43);
   assert.equal((await register('resources', { token: resource, expiresAt: Date.now() + 60000 })).status, 200);
   assert.equal(await (await fetch(base + `/_moss/resource/${resource}/assets/a.js`)).text(), 'bound-host');
+  const ranged = await fetch(base + `/_moss/resource/${resource}/assets/a.js`, { headers: { Range: 'bytes=2-5' } });
+  assert.equal(ranged.status, 206); assert.equal(ranged.headers.get('content-range'), 'bytes 2-5/10'); assert.equal(await ranged.text(), '2345');
+  assert.equal(received.at(-1).range, 'bytes=2-5');
+  const preflight = await fetch(base + `/_moss/resource/${resource}/assets/a.js`, { method: 'OPTIONS' });
+  assert.equal(preflight.status, 204); assert.equal(received.at(-1).method, 'OPTIONS');
   assert.equal((await fetch(base + `/_moss/resource/${'x'.repeat(43)}/assets/a.js`)).status, 404);
   const port = 'a'.repeat(48);
   assert.equal((await register('ports', { token: port, expiresAt: Date.now() + 60000 })).status, 200);

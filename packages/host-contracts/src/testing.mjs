@@ -9,6 +9,13 @@ export const testingContracts = {
   'moss.testing/v1': { types: 'Testing', methods: {
     environment: operation(empty),
     'target.status': operation(empty),
+    'target.frame': operation(empty),
+    'target.input': operation(record({ type: { type: 'string', enum: ['click', 'scroll', 'text', 'key'] },
+      x: { type: 'number', minimum: 0, maximum: 10000 }, y: { type: 'number', minimum: 0, maximum: 10000 },
+      count: { type: 'integer', enum: [1, 2] }, deltaX: { type: 'number', minimum: -2000, maximum: 2000 },
+      deltaY: { type: 'number', minimum: -2000, maximum: 2000 }, text: text(1000), key: text(40),
+      code: text(40), keyCode: { type: 'integer', minimum: 0, maximum: 255 },
+      modifiers: { type: 'integer', minimum: 0, maximum: 15 } }, ['type'])),
     'target.open': operation(record({ fixtures, title: text(200) }, [])),
     'target.sync': operation(record({ fixtures, title: text(200) }, [])),
     'target.reset': operation(record({ fixtures, title: text(200) }, [])),

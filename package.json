@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check:runtime-names": "node scripts/check-runtime-names.mjs",
-    "test": "bun test src scripts packages/direct-connect-protocol/src",
+    "test": "bun test ./src ./scripts ./packages/direct-connect-protocol/src",
     "build": "bun run scripts/build.js",
     "build:node": "bun run scripts/build.js --target=node",
     "build:electron-direct": "bun run scripts/build.js --target=electron-direct",

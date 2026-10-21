@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Check, Cloud, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, LogOut, Monitor, UserRound } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, Cloud, Eye, EyeOff, KeyRound, LayoutGrid, LoaderCircle, LockKeyhole, LogOut, Monitor, Settings, UserRound } from 'lucide-react';
 import appPackage from '../../package.json';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import './globals.css';
 import './web-interface.css';
 
@@ -86,7 +87,9 @@ const connectionLabels: Record<string, string> = {
   unauthenticated: '登录已失效', incompatible: '版本已更新', 'environment-changed': '环境已恢复，请刷新',
 };
 
-function WebSessionControls({ status, onLogout }: { status: string; onLogout: () => Promise<void> }) {
+type Account = { userName: string; userEmail: string } | null;
+
+function WebSessionControls({ status, account, onLogout }: { status: string; account: Account; onLogout: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -106,14 +109,35 @@ function WebSessionControls({ status, onLogout }: { status: string; onLogout: ()
       setPending(false);
     }
   };
+  const navigate = (view: 'apps' | 'settings') => window.dispatchEvent(new CustomEvent('moss:account-navigate', { detail: view }));
+  const accountName = account?.userName || account?.userEmail || '个人中心';
   return <>
-    <div className="moss-web-session" aria-label="云电脑连接">
-      <span className="moss-web-connection" role="status"><span className={`moss-web-dot ${status === 'connected' ? 'is-connected' : ''}`} /><span>我的云电脑</span><span className="moss-web-connection-detail">{connectionLabels[status] || status}</span></span>
-      {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <button type="button" onClick={() => location.reload()}>刷新</button>}
-      {window.mossWeb?.managed && <a href="/?window=cloud-environment">环境快照</a>}
-      <a href={`https://github.com/baiguidong/moss/releases/tag/v${desktopVersion}`} target="_blank" rel="noopener noreferrer">下载桌面版 v{desktopVersion}</a>
-      <button ref={trigger} type="button" className="moss-web-logout" onClick={() => { setError(''); setOpen(true); }}><LogOut aria-hidden="true" />退出登录</button>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button ref={trigger} type="button" className="moss-web-account-trigger" aria-label="个人中心" title="个人中心">
+          <span className="moss-web-account-avatar"><UserRound aria-hidden="true" /></span>
+          <span className="moss-web-account-title" title={accountName}>{accountName}</span>
+          <ChevronRight className="moss-web-account-chevron" aria-hidden="true" />
+          <span className={`moss-web-dot ${status === 'connected' ? 'is-connected' : ''}`} aria-hidden="true" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
+        <DropdownMenuLabel className="space-y-1 text-xs">
+          <span className="block truncate text-sm font-medium" title={accountName}>{accountName}</span>
+          {account?.userEmail && account.userEmail !== accountName && <span className="block truncate font-normal text-muted-foreground" title={account.userEmail}>{account.userEmail}</span>}
+          <span role="status" className="block font-normal text-muted-foreground">我的云电脑 · {connectionLabels[status] || status}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate('apps')}><LayoutGrid aria-hidden="true" />Apps</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate('settings')}><Settings aria-hidden="true" />设置</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <DropdownMenuItem onSelect={() => location.reload()}>刷新连接</DropdownMenuItem>}
+        {window.mossWeb?.managed && <DropdownMenuItem asChild><a href="/?window=cloud-environment">环境快照</a></DropdownMenuItem>}
+        <DropdownMenuItem asChild><a href={`https://github.com/baiguidong/moss/releases/tag/v${desktopVersion}`} target="_blank" rel="noopener noreferrer">下载桌面版 v{desktopVersion}</a></DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => { setError(''); setOpen(true); }}><LogOut aria-hidden="true" />退出登录</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
     <dialog ref={dialog} className="moss-web-confirm" aria-labelledby="moss-logout-title" aria-describedby="moss-logout-description" aria-busy={pending}
       onCancel={event => { if (pending) event.preventDefault(); else setOpen(false); }}
       onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}>
@@ -129,11 +153,20 @@ function WebSessionControls({ status, onLogout }: { status: string; onLogout: ()
   </>;
 }
 
-export function mountWebSessionControls(onLogout: () => Promise<void>) {
+export function mountWebSessionControls(onLogout: () => Promise<void>, account: Account = null) {
   const container = document.createElement('div');
+  container.hidden = true;
   document.body.append(container);
   const root = createRoot(container);
-  const updateStatus = (status: string) => root.render(<WebSessionControls status={status} onLogout={onLogout} />);
+  const mountInSidebar = () => {
+    const slot = document.getElementById('moss-web-account-slot');
+    if (slot && container.parentElement !== slot) slot.append(container);
+    if (slot) container.hidden = false;
+  };
+  const observer = new MutationObserver(mountInSidebar);
+  observer.observe(document.getElementById('root')!, { childList: true, subtree: true });
+  mountInSidebar();
+  const updateStatus = (status: string) => root.render(<WebSessionControls status={status} account={account} onLogout={onLogout} />);
   updateStatus('connecting');
   return updateStatus;
 }

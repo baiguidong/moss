@@ -1,8 +1,15 @@
 import { createRoot } from 'react-dom/client';
 import { CloudSnapshots } from './components/cloud-snapshots';
 import { showWebLogin } from './web-interface';
+import { PRESET_THEMES } from './theme/presets';
+import { applyCssTheme, getStoredThemeId } from './theme/cssTheme';
 import './globals.css';
 export async function mountCloudEnvironment() {
+  const themeMode = localStorage.getItem('ui.themeMode');
+  const theme = themeMode === 'dark' || (themeMode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.style.colorScheme = theme;
+  applyCssTheme(PRESET_THEMES.find(item => item.id === getStoredThemeId())?.css || null);
   const response = await fetch('/api/auth?management=1', { credentials: 'same-origin' }), auth = await response.json();
   if (!auth.authenticated) await showWebLogin(auth.mode, async values => {
     const result = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...values, management: true }) });

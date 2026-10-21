@@ -95,6 +95,8 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.notifications/v1 / publish | notifications:publish | id*, severity*, title*, message*, details | ui, backend |  |
 | moss.testing/v1 / environment | testing:control | {} | backend |  |
 | moss.testing/v1 / target.status | testing:control | {} | backend |  |
+| moss.testing/v1 / target.frame | testing:control | {} | backend |  |
+| moss.testing/v1 / target.input | testing:control | type*, x, y, count, deltaX, deltaY, text, key, code, keyCode, modifiers | backend |  |
 | moss.testing/v1 / target.open | testing:control | fixtures, title | backend |  |
 | moss.testing/v1 / target.sync | testing:control | fixtures, title | backend |  |
 | moss.testing/v1 / target.reset | testing:control | fixtures, title | backend |  |

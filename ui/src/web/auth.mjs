@@ -37,6 +37,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
     async login(input, { trustedToken = false } = {}) {
       let accessToken;
       let expiresAt = Date.now() + 12 * 3600_000;
+      let account = null;
       if (serverUrl) {
         const result = trustedToken && input.accessToken ? { access_token: input.accessToken } : await upstream('/api/v1/auth/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -44,7 +45,10 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
         });
         if (!result.access_token) throw new Error('认证中心未返回访问凭据。');
         accessToken = result.access_token;
-        checkOwner(await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } }));
+        const identity = await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
+        checkOwner(identity);
+        const user = identity.user || {};
+        account = { userName: [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '', userEmail: typeof user.email === 'string' ? user.email.trim() : '' };
         expiresAt = Math.min(expiresAt, Date.now() + (Number(result.expires_in) || 3600) * 1000);
       } else if (!timingSafeEqual(hash(input.token || ''), hash(token))) {
         throw new Error('访问密钥不正确。');
@@ -52,7 +56,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
       for (const [id, entry] of sessions) if (entry.expiresAt <= Date.now()) sessions.delete(id);
       if (sessions.size >= 32) sessions.delete(sessions.keys().next().value);
       const id = randomBytes(32).toString('base64url');
-      sessions.set(id, { id, userId: ownerId || 'owner', accessToken, expiresAt, checkedAt: Date.now() });
+      sessions.set(id, { id, userId: ownerId || 'owner', accessToken, account, expiresAt, checkedAt: Date.now() });
       return id;
     },
     async authenticate(req) {
@@ -60,11 +64,14 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
       if (!entry || entry.expiresAt <= Date.now()) return null;
       if (serverUrl && Date.now() - entry.checkedAt > 30_000) {
         try {
-          checkOwner(await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${entry.accessToken}` } }));
+          const identity = await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${entry.accessToken}` } });
+          checkOwner(identity);
+          const user = identity.user || {};
+          entry.account = { userName: [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '', userEmail: typeof user.email === 'string' ? user.email.trim() : '' };
           entry.checkedAt = Date.now();
         } catch { sessions.delete(entry.id); return null; }
       }
-      return Object.freeze({ userId: entry.userId, loginId: entry.id });
+      return Object.freeze({ userId: entry.userId, loginId: entry.id, account: entry.account });
     },
     logout(req) { sessions.delete(cookieId(req)); },
   };

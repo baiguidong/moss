@@ -34,7 +34,7 @@ describe('cross-App manifest contract', () => {
   })
 
   it('requires an exclusively 3.18+ Host range', () => {
-    expect(() => validateAppManifest({ ...manifest, hostApi: '>=3.17.0 <3.20.0' })).toThrow(/hostApi >=3\.18\.0/)
+    expect(() => validateAppManifest({ ...manifest, hostApi: '>=3.17.0 <4.0.0' })).toThrow(/hostApi >=3\.18\.0/)
     expect(validateAppManifest(manifest).appCapabilities?.provides?.[0].protocol).toBe(protocol)
   })
 

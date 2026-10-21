@@ -29,12 +29,14 @@ export function TurnChangeCard({
   rewindSupported,
   rewindDisabledReason,
   initiallyExpanded = false,
+  inset = true,
 }: {
   sessionId: string;
   change: TurnChangeSummary;
   rewindSupported: boolean;
   rewindDisabledReason?: string | null;
   initiallyExpanded?: boolean;
+  inset?: boolean;
 }) {
   const [reviewOpen, setReviewOpen] = React.useState(initiallyExpanded);
   const [selectedPath, setSelectedPath] = React.useState(change.files[0]?.filePath || "");
@@ -92,7 +94,7 @@ export function TurnChangeCard({
   };
 
   return (
-    <div className="mb-3 ml-[var(--assistant-content-inset,36px)] min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card/75 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.72)]">
+    <div className={cn("mb-3 min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card/75 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.72)]", inset && "ml-[var(--assistant-content-inset,36px)]")}>
       <div className="flex min-h-10 items-center gap-3 px-3 py-2">
         <FileDiff className="h-4 w-4 shrink-0 text-muted-foreground" />
         <button

@@ -41,6 +41,7 @@ import { canInvokeSessionAppTool, createSessionApps } from './apps/session-apps.
 import { createAppComposer } from './apps/app-composer.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
 import { createLocalFilesProtocolDefinition, createRuntimesProtocolDefinition, createLocalAppHostHandlers } from './apps/app-local-host.mjs';
+import { createAppArtifactProtocolDefinition, createAppArtifactUrls } from './apps/app-artifacts.mjs';
 import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } from './apps/app-mcp-host.mjs';
 import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
 import { requestRemoteCron } from './remote-direct-client.mjs';
@@ -526,8 +527,7 @@ process.env.CLAUDE_CODE_LOCAL_SETTINGS_AUTH_ONLY = 'true';
 process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '1';
 // Desktop builds must not depend on the user's shell PATH for ripgrep. The
 // agent bundle falls back to vendor/ripgrep when this is truthy.
-process.env.USE_BUILTIN_RIPGREP = '1';
-process.env.MOSS_RIPGREP_PATH = app.isPackaged
+const bundledRipgrepPath = app.isPackaged
   ? path.join(
       process.resourcesPath,
       'ripgrep',
@@ -541,6 +541,15 @@ process.env.MOSS_RIPGREP_PATH = app.isPackaged
       `${process.arch}-${process.platform}`,
       process.platform === 'win32' ? 'rg.exe' : 'rg',
     );
+if (process.env.MOSS_WEB_MODE === '1' || !fs.existsSync(bundledRipgrepPath)) {
+  // Linux Web and self-test images ship system rg without a vendor binary.
+  process.env.USE_BUILTIN_RIPGREP = '0';
+  process.env.MOSS_RIPGREP_PATH = '/usr/bin/rg';
+  process.env.CLAUDE_CODE_USE_NATIVE_FILE_SEARCH = '1';
+} else {
+  process.env.USE_BUILTIN_RIPGREP = '1';
+  process.env.MOSS_RIPGREP_PATH = bundledRipgrepPath;
+}
 
 let mainWindow = null;
 let previewWindow = null;
@@ -554,6 +563,8 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+const appArtifacts = createAppArtifactUrls({ web: isWebHost, webOwnerId: process.env.MOSS_WEB_OWNER_ID || 'owner',
+  getWebResources: () => webResources });
 let appRuntimeRestorePending = false;
 let deferredUiVersions = new Map();
 let appRuntimeRestoreController = null;
@@ -3772,6 +3783,7 @@ async function runSessionPromptObserved({
   failOnApiError = false,
   controllerSignal,
   retryEncryptedContentOnce = false,
+  suppressInitialPromptEcho = false,
   agentMailTurn = null,
   turnContext,
 }) {
@@ -3893,6 +3905,7 @@ async function runSessionPromptObserved({
           isTopLevelUserPromptEcho(message) &&
           replayUserText &&
           (
+            suppressInitialPromptEcho ||
             replayUserText === expectedRuntimeUserPrompt ||
             replayUserText === expectedVisibleUserPrompt
           )
@@ -7743,7 +7756,9 @@ function createWindow() {
       sandbox: false,
     },
   });
-  mainWindow.maximize();
+  // Ozone headless exposes a 1×1 virtual display. Maximizing the isolated
+  // self-test window shrinks every screenshot and makes controls unclickable.
+  if (!(selfTestTarget && process.argv.includes('--ozone-platform=headless'))) mainWindow.maximize();
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const token = getAppTokenFromUrl(params?.src || '');
     if (!token) {
@@ -8254,7 +8269,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }),
   });
   appRuntime = await createAppRuntime({
-    deferRestore: !isWebHost,
+    deferRestore: true,
     automaticStartAllowed: () => !webAutomationsPaused,
     onCreated: (runtime) => { appRuntime = runtime; },
     mossHome: MOSS_HOME,
@@ -8288,6 +8303,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createTraceProtocolDefinition(),
       createSessionSourceProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
+      createAppArtifactProtocolDefinition(),
       createRuntimesProtocolDefinition(),
       createMcpProtocolDefinition(),
       createAccountProtocolDefinition(),
@@ -8318,6 +8334,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog: appDialog, shell: appShell, BrowserWindow, getManagedRuntimeStatus, ...(isWebHost ? { preview: async file => { const handle = await webResources.create({ root: path.dirname(file), entryPath: file, ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner' }); if (!await webInteractions.request('link', { title: '打开 App 文件预览', url: (process.env.MOSS_WEB_ORIGIN ? new URL(handle.url, process.env.MOSS_WEB_ORIGIN).href : handle.url) })) throw new Error('文件预览已取消。'); } } : {}) }),
+      'moss.artifacts/v1': { 'url.get': (input, context) => appArtifacts.url(input, context) },
       [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
       [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
         method, (input, context) => cloudStorageHost.handle(method, input, context),
@@ -8387,7 +8404,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appRuntime.setAppToolBridge(appMcpHost);
   if (isWebHost) {
-    webResources = createWebResources();
+    webResources = createWebResources({ maxEntries: 2048 });
     webApps = createWebApps({ registry: ipcMain, resources: webResources, assertWorkAllowed: assertUpdateWorkAllowed,
       appearance: () => desktopSettings.appearance, listVersions: listAppVersions,
       resolveApp: ({ name, sessionId, workspace }) => {
@@ -8829,6 +8846,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       restoreState: webRestoreState,
       onDrain: async () => {
         webAutomationsPaused = true;
+        appRuntimeRestoreController?.abort();
+        await appRuntimeRestorePromise?.catch(() => {});
         stopMossCronScheduler();
         await agentMailPoller?.stop(); agentMailPoller = null;
         agentTeamsService?.stop();
@@ -8838,9 +8857,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       onResume: async ({ skipMissed = false } = {}) => {
         if (skipMissed) await skipMissedMossCronTasks();
         webAutomationsPaused = false;
-        await appRuntime?.restore(); initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
+        appRuntimeRestoreController = new AbortController();
+        appRuntimeRestorePromise = appRuntime?.restore({ signal: appRuntimeRestoreController.signal, concurrency: 3 });
+        await appRuntimeRestorePromise; initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
       },
       registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides, oauth: webOAuth, resources: webResources, apps: webApps,
+      onDisconnect: connectionId => webTerminals?.disconnect(connectionId),
       resolvePreviewResource: async file => {
         if (file.metadata?.remote) {
           const reference = parseRemoteWorkspaceUrl(file.metadata.remoteContentUrl);
@@ -8858,6 +8880,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     });
     console.log(`[moss-web] Ready on ${webServer.address.address}:${webServer.address.port}`);
     if (webServer.auth.mode === 'token') console.log(`[moss-web] Access token file: ${webServer.auth.tokenPath}`);
+    appRuntimeRestoreController = new AbortController();
+    const webRestoreSignal = appRuntimeRestoreController.signal;
+    setTimeout(() => {
+      if (webRestoreSignal.aborted) return;
+      appRuntimeRestorePromise = appRuntime.restore({ signal: webRestoreSignal, concurrency: 3 })
+        .catch(error => mossLog('error', 'app-runtime', 'Web App restore failed', { error: error.message }));
+    }, 0);
   } else {
     createWindow();
     if (!selfTestTarget) initializeAutoUpdater();
@@ -8993,6 +9022,7 @@ function shutdownDesktop() {
     await attempt(() => Promise.all([...pendingRuntimeDisposals]));
     await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
     await attempt(async () => { await appRuntimeRestorePromise; await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
+    await attempt(() => appArtifacts.close());
     void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
     await attempt(() => webServer?.close());
     if (errors.length) throw new Error(`退出准备未完成：${errors.map(error => error?.message || String(error)).join('；')}`);
@@ -9054,16 +9084,14 @@ ipcMain.handle('agent:ensure-managed-runtimes', async (_event, payload = {}) => 
 ipcMain.handle('agent:get-auth-debug', async () => getAuthDebugSnapshot());
 ipcMain.handle('agent:get-remote-identity', async () => {
   try {
-    const connection = await resolveRemoteDirectConnection();
+    const identity = await requestAppAccount('/api/v1/auth/me');
+    const user = identity?.user || {};
     return {
-      userName: connection.userName || desktopSettings.remoteDirectUserName || '',
-      userEmail: connection.userEmail || desktopSettings.remoteDirectUserEmail || '',
+      userName: [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '',
+      userEmail: typeof user.email === 'string' ? user.email.trim() : '',
     };
   } catch {
-    return {
-      userName: desktopSettings.remoteDirectUserName || '',
-      userEmail: desktopSettings.remoteDirectUserEmail || '',
-    };
+    return { userName: '', userEmail: '' };
   }
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
@@ -9631,8 +9659,10 @@ registerMemoryDreamIpc(ipcMain, memoryDreamService);
 const appTestingHost = createAppTestingHost({
   hostBuildId: createHash('sha256').update(fs.readFileSync(__filename)).update(fs.existsSync(sdkPath) ? fs.readFileSync(sdkPath) : '').digest('hex'),
   getSettings: () => desktopSettings, getRuntime: () => appRuntime, getRuntimeHome: getManagedRuntimeHome,
-  executable: process.execPath, args: app.isPackaged ? [] : [uiRoot], cwd: uiRoot,
-  appVersion: app.getVersion(), isTarget: Boolean(selfTestTarget), assertWorkAllowed: assertUpdateWorkAllowed,
+  executable: process.execPath,
+  args: [...(isWebHost && process.platform === 'linux' ? ['--no-sandbox', '--ozone-platform=headless', '--disable-gpu'] : []),
+    ...(app.isPackaged ? [] : [uiRoot])], cwd: uiRoot,
+  appVersion: app.getVersion(), isTarget: Boolean(selfTestTarget), web: isWebHost, assertWorkAllowed: assertUpdateWorkAllowed,
   getNodeExecutable: async () => {
     await waitForManagedRuntimesBeforeLocalSession();
     const node = getManagedRuntimeStatus().node;
@@ -9648,12 +9678,13 @@ const appTestingHost = createAppTestingHost({
     await fsp.writeFile(path.join(record.sessionDir, 'app-test-controller.json'), JSON.stringify({ runId: run.id, instanceId: run.instanceId, evidenceReview: record.appTestEvidenceReview }));
     return record.id;
   },
-  executeController: async (sessionId, prompt, signal) => {
+  executeController: async (sessionId, prompt, signal, attachments = []) => {
     const record = getSessionRecord(sessionId);
     await ensureRuntime(record);
     if (signal.aborted) { await closeTestController(record.runtime); record.runtime = null; signal.throwIfAborted(); }
-    const visibleUserPrompt = typeof prompt === 'string' ? prompt : prompt.filter(block => block.type === 'text').map(block => block.text).join('\n');
-    return runSessionPrompt({ sessionRecord: record, runtimePrompt: prompt, visibleUserPrompt, failOnApiError: true, controllerSignal: signal });
+    const visibleUserPrompt = prompt === '/compact' ? '' : typeof prompt === 'string' ? prompt : prompt[0]?.text || '';
+    return runSessionPrompt({ sessionRecord: record, runtimePrompt: prompt, visibleUserPrompt,
+      attachments, failOnApiError: true, controllerSignal: signal, suppressInitialPromptEcho: true });
   },
   interruptController: sessionId => sessions.get(sessionId)?.runtime?.abort(),
   finishController: sessionId => {

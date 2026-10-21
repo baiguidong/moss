@@ -7,7 +7,7 @@ import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.19.0'
+export const APP_HOST_API_VERSION = '3.20.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)

@@ -11,6 +11,7 @@ package-lock.json
 skills-lock.json
 .moss/settings.local.json
 /memory/
+/output/
 tmp/
 .nexus/
 .nexus-data/

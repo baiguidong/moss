@@ -121,3 +121,20 @@ test("deleted files, redirected symlinks, missing sessions and remote cards cann
   expect(unavailable.calls).toEqual([]);
   expect(moved.calls).toEqual([]);
 });
+
+test("Web downloads start before asynchronous file resolution loses user activation", async () => {
+  const file = (await resolve()).get("final")![0];
+  const { host, calls } = openHost(async () => { throw new Error("Unexpected file resolution"); });
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { mossWeb: {} } });
+  try {
+    const download = openAssistantOutputFile(file, "system", "local", "/workspace", false, host);
+    expect(calls).toEqual([["system", file.path]]);
+    await download;
+    host.shell.openFile = async () => "Download unavailable";
+    await expect(openAssistantOutputFile(file, "system", "local", "/workspace", false, host)).rejects.toThrow("Download unavailable");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});

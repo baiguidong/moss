@@ -167,7 +167,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
           {catalog && <span className="hidden text-xs text-muted-foreground lg:inline">{catalog.apps.length} 个应用</span>}
         </div>
         <div className="order-5 w-full min-[480px]:order-3 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
-        <Button size="sm" variant="ghost" className="order-3 h-8 shrink-0 px-2.5 text-xs sm:order-4" title="导入安装包" aria-label="导入安装包" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Download className="h-3.5 w-3.5" /><span className="hidden lg:inline">{importing ? '安装中…' : '导入安装包'}</span></Button>
+        <Button size="sm" variant="ghost" className="order-3 h-8 shrink-0 px-2.5 text-xs sm:order-4" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Download className="h-3.5 w-3.5" />{importing ? '安装中…' : '本地安装 ZIP'}</Button>
         <Button size="sm" variant="outline" className="order-4 h-8 shrink-0 px-2.5 text-xs sm:order-5" title="刷新" aria-label="刷新" disabled={loading} aria-busy={loading} onClick={() => void loadCatalog(true)}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /><span className="hidden lg:inline">{loading ? "刷新中…" : "刷新"}</span>
         </Button>

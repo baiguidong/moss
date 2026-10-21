@@ -58,7 +58,9 @@ async function fixture(overrides = {}) {
 }
 test('only Host metadata leaves environment; sessions bind an isolated target and current App engine', async () => {
   const f = await fixture()
-  expect(await f.request('environment')).toEqual({ appVersion: 'host-test', model: 'test-model', appearance: {}, disabled: false })
+  expect(await f.request('environment')).toEqual({ appVersion: 'host-test', model: 'test-model', appearance: {}, disabled: false, web: false })
+  const web = await fixture({ web: true })
+  expect((await web.request('environment')).web).toBe(true)
   await f.ready(); const controller = await f.create()
   expect(f.calls[0].config.args).toContain(path.join(f.dataDir, 'runs', f.runId, 'evidence'))
   expect(f.host.isControllerActive(f.sessions.get(controller.sessionId))).toBe(true)
@@ -84,11 +86,11 @@ test('deactivation waits for the controller and closes its target; revoked grant
   f.installed.grants = ['testing:control']
   await expect(f.request('target.open')).rejects.toThrow('grant')
 })
-test('evidence controller forwards native images on first turn and rejects missing evidence before execution', async () => {
-  const prompts = [], modes = []
+test('evidence controller forwards native images and visible file attachments, rejecting missing evidence', async () => {
+  const prompts = [], modes = [], attachments = []
   const f = await fixture({
     createController: async run => { modes.push(run.evidenceReview); return 'visual-review' },
-    executeController: async (_sessionId, prompt) => { prompts.push(prompt) },
+    executeController: async (_sessionId, prompt, _signal, files) => { prompts.push(prompt); attachments.push(files) },
   })
   await f.ready()
   const { sessionId } = await f.request('controller.create', { runId: f.runId, engineEntry: 'engine.mjs', disabledTools: [], title: 'visual', evidenceReview: true })
@@ -96,6 +98,7 @@ test('evidence controller forwards native images on first turn and rejects missi
   await f.request('controller.turn.start', { sessionId, prompt: 'review', evidence: ['real.png'] })
   while ((await f.request('controller.turn.status', { sessionId })).state === 'running') await delay(1)
   expect(modes).toEqual([true]); expect(prompts[0][2].type).toBe('image')
+  expect(attachments[0]).toEqual([await fs.realpath(path.join(f.dataDir, 'runs', f.runId, 'evidence', 'real.png'))])
   await f.request('controller.turn.start', { sessionId, prompt: 'review', evidence: ['missing.png'] })
   while ((await f.request('controller.turn.status', { sessionId })).state === 'running') await delay(1)
   expect((await f.request('controller.turn.status', { sessionId })).state).toBe('failed')

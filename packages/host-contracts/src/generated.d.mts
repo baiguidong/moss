@@ -288,6 +288,8 @@ export interface NotificationsHostEventMap {
 export interface TestingHostInputMap {
   "environment": Record<string, never>
   "target.status": Record<string, never>
+  "target.frame": Record<string, never>
+  "target.input": { "type": "click" | "scroll" | "text" | "key"; "x"?: number; "y"?: number; "count"?: 1 | 2; "deltaX"?: number; "deltaY"?: number; "text"?: string; "key"?: string; "code"?: string; "keyCode"?: number; "modifiers"?: number }
   "target.open": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
   "target.sync": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
   "target.reset": { "fixtures"?: Array<{ "name": string; "content": string }>; "title"?: string }
@@ -305,6 +307,8 @@ export interface TestingHostInputMap {
 export interface TestingHostOutputMap {
   "environment": { [key: string]: unknown }
   "target.status": { [key: string]: unknown }
+  "target.frame": { [key: string]: unknown }
+  "target.input": { [key: string]: unknown }
   "target.open": { [key: string]: unknown }
   "target.sync": { [key: string]: unknown }
   "target.reset": { [key: string]: unknown }

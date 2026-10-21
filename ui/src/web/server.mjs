@@ -41,7 +41,7 @@ async function readJson(req) {
   return JSON.parse(body || '{}');
 }
 
-export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), oauth, apps, resources: providedResources, resolvePreviewResource, getBlockers = () => [], restoreState, onDrain, onResume }) {
+export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), oauth, apps, onDisconnect, resources: providedResources, resolvePreviewResource, getBlockers = () => [], restoreState, onDrain, onResume }) {
   restoreState ||= createRestoreState(env);
   const auth = createWebAuth({ home, env });
   await fsp.mkdir(path.join(home, 'web'), { recursive: true, mode: 0o700 });
@@ -162,7 +162,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
         } catch (error) { return json(res, 401, { error: error.message }); }
       }
       const principal = await auth.authenticate(req);
-      if (req.method === 'GET' && url.pathname === '/api/auth') return json(res, 200, { authenticated: Boolean(principal), mode: auth.mode, protocol: MOSS_PROTOCOL_VERSION, identity: identity(principal) });
+      if (req.method === 'GET' && url.pathname === '/api/auth') return json(res, 200, { authenticated: Boolean(principal), mode: auth.mode, protocol: MOSS_PROTOCOL_VERSION, identity: identity(principal), account: principal?.account || null });
       if (req.method === 'POST' && url.pathname === '/api/logout') {
         auth.logout(req); if (principal) { resources.revokeOwner(principal.userId); ports.revokeOwner(principal.userId); }
         for (const ws of connections) if (ws.principal?.loginId === principal?.loginId) ws.close(4401, 'Signed out');
@@ -275,7 +275,7 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
           else { ws.alive = false; ws.ping(); }
         }, 30_000);
         ws.once('close', () => {
-          clearInterval(check); apps?.disconnect(ws.connectionId);
+          clearInterval(check); apps?.disconnect(ws.connectionId); onDisconnect?.(ws.connectionId);
           if (registry.has?.('preview-document:disconnect')) void registry.invoke('preview-document:disconnect', { transport: 'web', principal, connectionId: ws.connectionId }).catch(() => {});
         });
       });

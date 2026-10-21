@@ -53,7 +53,7 @@ api.agentDesktop = {
   preview: { resolveFiles: async ({ paths }: any) => paths.map((inputPath: string) => ({ inputPath, file: { path: inputPath, name: inputPath.split('/').at(-1), size: 120, relativePath: inputPath.slice(11) } })) },
 };
 
-function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?: string; mode?: 'collapsed' | 'expanded' | 'merged' }) {
+function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?: string; mode?: 'collapsed' | 'expanded' | 'merged' | 'diff' }) {
   const [view, setView] = React.useState(initialView), files = useAssistantOutputFiles([user, tool, reply], 'session', 'local', '/workspace', false);
   const current = { ...snapshot, state: { ...snapshot.state, activeId: view } };
   const action = (action: any) => { if (action.type === 'select') setView(action.id); };
@@ -69,7 +69,7 @@ function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?
     </main>
     <aside style={{ width: 400, borderLeft: '1px solid var(--border)' }}><TaskPanel collapsed={false} searchQuery="" onSearchChange={noop} onRefresh={noop} onOpenWorkspace={noop} treeItems={names.map((name, index) => ({ name, path: paths[index], type: 'file' })) as any} expandedPaths={new Set()} selectedFilePath={null} onFocusFile={noop} onToggleFolder={noop} onSelectFile={noop}
       sessionTasks={[{ id: '1', subject: '生成三个笑话文件', status: 'completed', blockedBy: [] }, { id: '2', subject: '检查链接与预览', status: 'in_progress', blockedBy: [] }] as any}
-      navigation={<PresentationToolbar snapshot={current} action={action} />} showBrowser={false} content={view === 'results' ? <PresentationContent snapshot={current} action={action} /> : undefined}/></aside>
+      navigation={<PresentationToolbar snapshot={current} action={action} />} showBrowser={false} content={mode === 'diff' ? <div id="diff-review-test" className="p-2"><TurnChangeCard sessionId="session" change={observation} rewindSupported={false} initiallyExpanded inset={false}/></div> : view === 'results' ? <PresentationContent snapshot={current} action={action} /> : undefined}/></aside>
   </div>;
 }
 
@@ -139,7 +139,12 @@ api.runPresentationReview = async () => {
   assert((document.body.textContent?.match(/模型请求重试/g) || []).length === 1, 'Repeated retry records clutter the conversation');
   assert(!document.body.textContent?.includes('本轮改动'), 'Retry record produced an empty file-change card');
   passed.push('retry status shows attempts/wait allowance once and does not create a file-change card');
+  render(<Example mode="diff" />); await delay();
+  const diff = document.querySelector('#diff-review-test')!;
+  const diffCard = diff.firstElementChild!;
+  assert(diffCard.getBoundingClientRect().left - diff.getBoundingClientRect().left <= 20, 'Result panel adds a second inset to the change card');
+  passed.push('result panel change card has no duplicate inset');
   return passed;
 };
-api.showPresentationExample = async (mode: string) => { render(<Example key={mode} initialView={mode === 'workspace' ? 'workspace' : 'results'} mode={mode === 'expanded' ? 'expanded' : 'collapsed'} />); await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Example not ready'); await delay(200); };
+api.showPresentationExample = async (mode: string) => { render(<Example key={mode} initialView={mode === 'workspace' ? 'workspace' : 'results'} mode={mode === 'expanded' ? 'expanded' : mode === 'diff' ? 'diff' : 'collapsed'} />); await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Example not ready'); await delay(200); };
 api.showRetryExample = async () => { render(<RetryExample />); await delay(200); };

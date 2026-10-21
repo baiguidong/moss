@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarkdownRenderer } from '../src/renderer-react/components/markdown/markdown-renderer';
-import { fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from '../src/renderer-react/lib/markdown-links';
+import { appRouteLink, fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from '../src/renderer-react/lib/markdown-links';
 import { remarkFileReferences } from '../src/renderer-react/lib/remark-file-references';
 import { isAppResourceUri } from '../src/shared/app-resource-uri.mjs';
 const uri = 'example-notes://document/11112222?revision=abc&name=Notes';
@@ -17,6 +17,11 @@ function setup() {
   return { opened, external, event, host, prevented: () => prevented };
 }
 describe('Markdown App resource links', () => {
+  test('recognizes TAKT routes without treating them as Moss page navigation', () => {
+    expect(appRouteLink('#/flows/flow_123?revision=1')).toEqual({ appName: '', route: '#/flows/flow_123?revision=1' });
+    expect(appRouteLink('moss-app://moss.takt/runs/run_456')).toEqual({ appName: 'moss.takt', route: '#/runs/run_456' });
+    expect(appRouteLink('moss-app://moss.takt/../settings')).toBeNull();
+  });
   test('retains custom citations in rendered conversation text', () => {
     const html = renderToStaticMarkup(<MarkdownRenderer content={`来源：[笔记](${uri})`} />);
     expect(html).toContain(`href="${uri.replaceAll('&', '&amp;')}"`);

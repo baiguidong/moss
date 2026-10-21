@@ -519,6 +519,20 @@ export default function App() {
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null);
   const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
+  const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
+  React.useEffect(() => {
+    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl) {
+      setServerAccount(null);
+      return;
+    }
+    let cancelled = false;
+    void window.agentDesktop.getRemoteServerIdentity().then(identity => {
+      if (!cancelled) setServerAccount(identity.userName || identity.userEmail ? identity : null);
+    }).catch(() => {
+      if (!cancelled) setServerAccount(null);
+    });
+    return () => { cancelled = true; };
+  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
@@ -2256,6 +2270,20 @@ export default function App() {
     setActiveView('embedded-app');
   }, []);
 
+  React.useEffect(() => {
+    const openRoute = (event: Event) => {
+      const detail = (event as CustomEvent<{ appName: string; route: string; sessionId?: string; handled: boolean }>).detail;
+      if (!detail || (detail.sessionId && detail.sessionId !== activeDetail?.id)) return;
+      const name = detail.appName || (activeDetail?.appIds?.includes('moss.takt') ? 'moss.takt' : '');
+      const app = apps.find(item => item.id === name || item.name === name);
+      if (!app?.hasUi || appPageUnavailableReason(app)) return;
+      handleOpenEmbeddedApp(app.name, detail.route);
+      detail.handled = true;
+    };
+    window.addEventListener('moss:open-app-route', openRoute);
+    return () => window.removeEventListener('moss:open-app-route', openRoute);
+  }, [activeDetail, apps, handleOpenEmbeddedApp]);
+
   const handleSelectAssistant = React.useCallback((assistant: InstalledAssistant) => {
     setSelectedAssistant(assistant);
   }, []);
@@ -2635,6 +2663,7 @@ export default function App() {
             activeSessionId={activeSessionId}
             activeView={activeView}
             appsCount={appsLoaded ? apps.length : cachedAppsCount}
+            serverAccount={serverAccount}
             projectsCount={projects.length}
             themeMode={themeMode}
             collapsed={effectiveLeftCollapsed}
@@ -2848,7 +2877,8 @@ export default function App() {
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true} />
+            <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true}
+              cloudEnabled={desktopSettings?.remoteEnabled === true && Boolean(desktopSettings.remoteDirectServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
           ) : activeView === 'mail' && agentMailEnabled ? (
@@ -2945,7 +2975,7 @@ export default function App() {
           </>
         )}
 
-        <AppWidgetHost apps={apps} enabled={desktopSettings?.appWidgets?.enabled !== false} />
+        <AppWidgetHost apps={apps} enabled={activeView !== 'settings' && activeView !== 'projects' && desktopSettings?.appWidgets?.enabled !== false && !presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot?.state.activeId && resource.kind === 'file')} />
         <GlobalSessionSearch
           open={globalSearchOpen}
           onClose={() => setGlobalSearchOpen(false)}

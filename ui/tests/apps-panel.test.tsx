@@ -117,6 +117,7 @@ describe('Apps management', () => {
     expect(html).toContain('aria-label="App 分类"');
     expect(html).toContain('role="tablist"');
     expect(html).toContain('role="tabpanel"');
+    expect(html).toContain('本地安装 ZIP');
     expect(html).not.toContain('aria-label="搜索 App"');
   });
 
@@ -197,6 +198,7 @@ describe('Apps management', () => {
     );
 
     expect(markup).toContain('应用市场');
+    expect(markup).toContain('本地安装 ZIP');
     expect(markup).not.toContain('placeholder="搜索 App"');
     expect(markup).toContain('role="tablist"');
     expect(markup).not.toContain('title="返回已安装 App"');

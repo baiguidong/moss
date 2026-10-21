@@ -119,6 +119,7 @@ export function createReusableTestInstance({ directory, getSettings, getAppRunti
   }
 
   return { home, snapshot,
+    current: () => instance?.isAlive() ? instance : null,
     open: options => enqueue(() => open(options)),
     close: () => { preparing?.abort(new Error('已取消测试实例准备。')); return enqueue(close); },
     refresh: options => enqueue(() => refresh(options)),

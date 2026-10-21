@@ -16,7 +16,7 @@ export function MarkdownViewer({ content }: { content: string }) {
   return (
     <ScrollArea className="h-full">
       <div className="mx-auto max-w-4xl px-5 py-6 text-sm leading-7 text-foreground">
-        <div className="space-y-4 [&_a]:text-primary [&_code]:rounded-md [&_code]:bg-muted/80 [&_code]:px-1.5 [&_code]:py-0.5 [&_img]:rounded-xl [&_img]:border [&_img]:border-border/70 [&_img]:shadow-sm [&_li]:ml-5 [&_pre]:overflow-auto [&_pre]:rounded-2xl [&_pre]:border [&_pre]:border-border/70 [&_pre]:bg-card/80 [&_pre]:p-4">
+        <div className="space-y-4 [&_a]:text-primary [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:font-semibold [&_ul]:list-disc [&_ol]:list-decimal [&_li]:ml-5 [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_th]:border-b [&_th]:border-border [&_th]:px-3 [&_th]:py-1.5 [&_td]:border-b [&_td]:border-border/60 [&_td]:px-3 [&_td]:py-1.5 [&_code]:rounded-md [&_code]:bg-muted/80 [&_code]:px-1.5 [&_code]:py-0.5 [&_img]:rounded-xl [&_img]:border [&_img]:border-border/70 [&_img]:shadow-sm [&_pre]:overflow-auto [&_pre]:rounded-2xl [&_pre]:border [&_pre]:border-border/70 [&_pre]:bg-card/80 [&_pre]:p-4">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             urlTransform={localImageUrlTransform}

@@ -94,7 +94,7 @@ function TurnDiffResource({ resource, snapshot, onReady, onError }: RendererProp
     return () => { active = false; };
   }, [snapshot.sessionId, resource.id, resource.revision, onReady, onError]);
   const change = payload?.turns.find(turn => turn.observationId === resource.source.observationId);
-  return <div className="h-full overflow-auto p-2">{change ? <TurnChangeCard sessionId={snapshot.sessionId} change={change} rewindSupported={payload.rewind.supported} rewindDisabledReason={payload.rewind.reason} initiallyExpanded/> : <p className="p-3 text-xs text-muted-foreground">{payload ? '这份历史变更已不可用。' : '正在读取变更…'}</p>}</div>;
+  return <div className="h-full overflow-auto p-2">{change ? <TurnChangeCard sessionId={snapshot.sessionId} change={change} rewindSupported={payload.rewind.supported} rewindDisabledReason={payload.rewind.reason} initiallyExpanded inset={false}/> : <p className="p-3 text-xs text-muted-foreground">{payload ? '这份历史变更已不可用。' : '正在读取变更…'}</p>}</div>;
 }
 registerPresentationRenderer({ id: 'files', priority: 10, supports: r => r.kind === 'file', component: FileResource });
 registerPresentationRenderer({ id: 'directories', priority: 10, supports: r => r.kind === 'directory', component: DirectoryResource });

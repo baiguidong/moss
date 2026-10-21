@@ -16,6 +16,10 @@ function fixture() {
   });
   return {
     service, events,
+    async sampleRows(value: ReturnType<typeof raw>[], elapsed = 5000) {
+      clock += elapsed; rows = value;
+      await service.sample(); return service.getSnapshot({ active: false });
+    },
     async next(cpu: number, elapsed = 5000, started = 'boot:1') {
       clock += elapsed; rows = [raw(100, cpu, started)];
       await service.sample(); return service.getSnapshot({ active: false });
@@ -79,6 +83,14 @@ describe('resource history and alerts', () => {
     expect(snapshot.memoryBytes).toBe(1024);
     expect(snapshot.processCount).toBe(1);
     expect((await service.getSnapshot({ since: snapshot.sampledAt })).history).toEqual([]);
+  });
+  test('keeps the CPU total when a new child has no prior CPU sample', async () => {
+    const f = fixture();
+    await f.service.sample();
+    await f.next(5);
+    const snapshot = await f.sampleRows([raw(100, 10), raw(101, 1, 'child:1', 100)]);
+    expect(snapshot.processes.find(row => row.pid === 101)?.cpuPercent).toBeNull();
+    expect(snapshot.cpuPercent).not.toBeNull();
   });
   test('only flags sustained high CPU, records its peak once, and closes it after recovery', async () => {
     const { service, next, events } = fixture();

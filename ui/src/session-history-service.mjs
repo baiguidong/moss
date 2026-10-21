@@ -1,4 +1,5 @@
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { preserveAppTaskHistory } from './apps/app-task-session.mjs';
 import { createLocalTranscriptSync, readTranscriptHistory } from './local-transcript-sync.mjs';
 import { normalizeSessionDirName } from './session-paths.mjs';
@@ -13,6 +14,49 @@ function sleepMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+// The local model transcript stores screenshot captions, but not the Host's
+// visible file references. Rebuild those references for a test control session
+// so evidence remains a file card after a Host restart or transcript refresh.
+export async function restoreAppTestScreenshotAttachments(sessionRecord, history) {
+  if (!sessionRecord?.workspace || !Array.isArray(history)) return history;
+  const runDirectory = path.resolve(sessionRecord.workspace);
+  const savedControlSession = sessionRecord.appIds?.includes('moss.self-test')
+    && path.basename(path.dirname(runDirectory)) === 'runs'
+    && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(path.basename(runDirectory));
+  if (!sessionRecord.appTestRunId && !savedControlSession) return history;
+  let evidenceRoot;
+  try { evidenceRoot = await fsp.realpath(path.join(runDirectory, 'evidence')); }
+  catch { return history; }
+  for (const event of history) {
+    if (event?.type !== 'user') continue;
+    const content = event.prompt ?? event.message?.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content)
+      ? content.filter(block => block?.type === 'text').map(block => block.text).join('\n') : '';
+    const lines = text.trimEnd().split('\n');
+    const labels = [];
+    for (let index = lines.length - 1; index >= 0; index--) {
+      const match = /^截图：([^\n]+\.(?:png|jpe?g|webp))$/i.exec(lines[index]);
+      if (!match) break;
+      labels.unshift(match[1]);
+    }
+    if (!labels.length || labels.length > 60) continue;
+    const files = [];
+    for (const label of labels) {
+      try {
+        const file = await fsp.realpath(path.resolve(evidenceRoot, label));
+        if (!file.startsWith(evidenceRoot + path.sep)) continue;
+        const stat = await fsp.stat(file);
+        if (stat.isFile() && stat.size <= 8 * 1024 * 1024) files.push(file);
+      } catch { /* Evidence may have been removed with its run. */ }
+    }
+    if (files.length) {
+      event.files = [...new Set([...(event.files || []), ...files])];
+      event.images = [...new Set([...(event.images || []), ...files])];
+    }
+  }
+  return history;
 }
 
 /** JSONL recovery and synchronization; the returned watcher is disposed by Main. */
@@ -33,7 +77,8 @@ export function createSessionHistoryService({
   async function loadDisplayHistoryFromLocalTranscript(sessionRecord, { requireComplete = false } = {}) {
     const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
     if (!transcriptPath) return null;
-    return readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
+    const history = await readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
+    return restoreAppTestScreenshotAttachments(sessionRecord, history);
   }
 
   const localTranscriptSync = createLocalTranscriptSync({

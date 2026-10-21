@@ -119,6 +119,15 @@ test('Moss Server authentication only accepts the configured owner', async () =>
   assert.deepEqual(routes, ['https://auth.example/api/v1/auth/login', 'https://auth.example/api/v1/auth/me']);
 });
 
+test('Moss Server account name comes from the authenticated user profile', async () => {
+  const auth = createWebAuth({ home: '/unused', env: { MOSS_WEB_AUTH_SERVER: 'https://auth.example', MOSS_WEB_OWNER_ID: 'owner' }, fetchImpl: async url =>
+    Response.json(url.endsWith('/login') ? { access_token: 'token', expires_in: 100 } : { user: { id: 'owner', name: 'Server Owner', email: 'owner@example.test' } }),
+  });
+  const id = await auth.login({ username: 'owner', password: 'secret' });
+  const principal = await auth.authenticate({ headers: { cookie: `moss_web=${id}` } });
+  assert.deepEqual(principal.account, { userName: 'Server Owner', userEmail: 'owner@example.test' });
+});
+
 test('shared client preserves Electron subscriptions and binary document values', async () => {
   const listeners = new Map(); const calls = [];
   const client = createMossClient(createElectronTransport({

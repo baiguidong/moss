@@ -37,6 +37,29 @@ test('terminal serializes concurrent attach/restart, retains exit state, and rej
   terminals.close();
 });
 
+test('Web terminal stops after its browser connection closes and survives a prompt reconnect', async () => {
+  const ptys = [];
+  const terminals = createWebTerminals({ registry: { publish() {} }, disconnectGraceMs: 15,
+    resolveLaunch: async () => ({ title: 'test', shell: '/bin/sh', args: [], env: {}, cwd: '/tmp' }),
+    loadPty: async () => ({ spawn() {
+      const pty = { onData() {}, onExit(fn) { this.exit = fn; }, kill() { this.killed = true; this.exit({ exitCode: 0 }); } };
+      ptys.push(pty); return pty;
+    } }),
+  });
+  const { terminalId } = await terminals.handlers.get('terminal:open')(owner, {});
+  await terminals.handlers.get('terminal:start')(owner, { terminalId });
+  terminals.disconnect('one');
+  const reconnected = { ...owner, connectionId: 'two' };
+  await terminals.handlers.get('terminal:start')(reconnected, { terminalId });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(ptys[0].killed, undefined);
+  terminals.disconnect('two');
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(ptys[0].killed, true);
+  assert.equal(terminals.activeCount(), 0);
+  terminals.close();
+});
+
 test('Web OAuth exchanges with exact HTTPS callback/PKCE; invalid, duplicate and canceled states cannot exchange', async () => {
   const hub = createWebOAuth({ env: { MOSS_WEB_ORIGIN: 'https://portal.example' } });
   let state, exchanges = 0, verifier;
@@ -90,7 +113,9 @@ test('App bridge binds identity, cancels work on disconnect, rejects root APIs a
   const result = await request('app-ui:actions:invoke', { requestId: 'a', name: 'echo', input: { ok: 1 }, appId: 'evil' }); assert.deepEqual(result, { ok: true, result: { ok: 1 } });
   const waiting = request('app-ui:actions:invoke', { requestId: 'b', name: 'wait' });
   await new Promise(resolve => setTimeout(resolve, 0)); apps.disconnect(owner.connectionId); assert.equal((await waiting).ok, false); assert.equal(aborted, true);
+  assert.deepEqual(apps.handlers.get('app:embedded-close')(owner, { embedId: opened.embedId }), { ok: true });
   const reopened = await apps.handlers.get('app:embedded-open')(owner, { name: 'test.app' }); installation = { ...installation, activeVersion: '2' };
+  await assert.rejects(Promise.resolve().then(() => apps.handlers.get('app:embedded-close')({ ...owner, connectionId: 'other' }, { embedId: reopened.embedId })), /失效/);
   await assert.rejects(apps.handlers.get('web:app-request')(owner, { embedId: reopened.embedId, method: 'app-ui:get-info' }), /版本已变化/);
   const offer = apps.offer({ id: 'test.app', runtime, manifest: { ui: { entry: 'index.html' } }, entryPath: path.join(root, 'index.html') }, owner.principal.userId);
   let closed = 0; offer.on('closed', () => closed++);

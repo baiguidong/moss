@@ -10,11 +10,13 @@ async function copyTree(source, target, signal) {
   await fs.mkdir(path.dirname(target), { recursive: true });
   // Refresh replaces only the copied resource, never nesting a second package inside it.
   await fs.rm(target, { recursive: true, force: true });
-  // macOS cp performs recursive APFS clones in native code; per-file JS traversal
-  // is prohibitively slow for Python environments with tens of thousands of files.
-  if (process.platform === 'darwin') {
+  // Native cp handles large App dependency trees much faster than per-file JS
+  // traversal. Reflinks keep copies isolated where the filesystem supports them.
+  if (process.platform === 'darwin' || process.platform === 'linux') {
     const copied = await new Promise((resolve, reject) => {
-      const child = spawn('/bin/cp', ['-cR', source, target], { signal, stdio: 'ignore' });
+      const child = process.platform === 'darwin'
+        ? spawn('/bin/cp', ['-cR', source, target], { signal, stdio: 'ignore' })
+        : spawn('/bin/cp', ['-a', '--reflink=auto', '--', source, target], { signal, stdio: 'ignore' });
       let failure;
       child.on('error', error => { failure = error; });
       child.on('close', code => failure ? reject(failure) : resolve(code === 0));

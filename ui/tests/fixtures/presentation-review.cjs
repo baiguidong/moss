@@ -9,7 +9,7 @@ app.whenReady().then(async () => {
     const output = process.env.MOSS_PRESENTATION_SMOKE_OUTPUT;
     if (output) {
       await fs.mkdir(output, { recursive: true });
-      for (const mode of ['workspace', 'results', 'expanded']) {
+      for (const mode of ['workspace', 'results', 'expanded', 'diff']) {
         await win.webContents.executeJavaScript(`window.showPresentationExample(${JSON.stringify(mode)})`);
         await fs.writeFile(path.join(output, `conversation-${mode}.png`), (await win.webContents.capturePage()).toPNG());
       }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prepareTerminalShell } from '../terminal-shell.mjs';
 
 const dimension = (value, fallback) => Number.isFinite(value) ? Math.min(500, Math.max(2, Math.floor(value))) : fallback;
-export function createWebTerminals({ registry, resolveLaunch, loadPty = () => import('node-pty'), now = Date.now, retentionMs = 24 * 60 * 60_000 }) {
+export function createWebTerminals({ registry, resolveLaunch, loadPty = () => import('node-pty'), now = Date.now, retentionMs = 24 * 60 * 60_000, disconnectGraceMs = 15_000 }) {
   const terminals = new Map();
   let closed = false;
   function prune() {
@@ -26,23 +26,29 @@ export function createWebTerminals({ registry, resolveLaunch, loadPty = () => im
     finish(entry);
     try { pty.kill(); } catch {}
   }
+  function attach(entry, connectionId) {
+    if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+    entry.disconnectTimer = null;
+    entry.connectionId = connectionId;
+  }
   const snapshot = entry => ({ title: entry.launch.title, cwd: entry.launch.cwd, shell: entry.launch.shell, buffer: entry.buffer,
     status: entry.status, generation: entry.generation, sequence: entry.sequence, exitCode: entry.exitCode });
   const handlers = new Map([
-    ['terminal:open', async ({ principal }, payload) => {
+    ['terminal:open', async ({ principal, connectionId }, payload) => {
       prune();
       if (terminals.size >= 24) { const oldest = [...terminals.values()].filter(entry => !entry.pty && !entry.starting && entry.status === 'exited').sort((a, b) => a.touchedAt - b.touchedAt)[0]; if (oldest) terminals.delete(oldest.terminalId); }
       if (closed || terminals.size >= 24) throw new Error('终端数量已达上限，请终止不再使用的终端。');
       const terminalId = randomUUID();
-      const entry = { userId: principal.userId, terminalId, buffer: '', pty: null, status: 'reserved', generation: 0, sequence: 0, touchedAt: now(), starting: true };
+      const entry = { userId: principal.userId, connectionId, terminalId, buffer: '', pty: null, status: 'reserved', generation: 0, sequence: 0, touchedAt: now(), starting: true };
       terminals.set(terminalId, entry); // Reserve before awaiting to enforce the limit under concurrency.
       try { entry.launch = await resolveLaunch(payload); }
       catch (error) { terminals.delete(terminalId); throw error; }
       finally { entry.starting = null; }
       return { terminalId };
     }],
-    ['terminal:start', async ({ principal }, payload) => {
+    ['terminal:start', async ({ principal, connectionId }, payload) => {
       const entry = entryFor(principal, payload);
+      attach(entry, connectionId);
       if (entry.starting) { await entry.starting; return snapshot(entry); }
       if (entry.pty || (entry.status === 'exited' && !payload.restart)) return snapshot(entry);
       // Restart may only target the generation the user actually saw.
@@ -88,5 +94,17 @@ export function createWebTerminals({ registry, resolveLaunch, loadPty = () => im
     }],
   ]);
   return { handlers, activeCount: () => [...terminals.values()].filter(entry => entry.pty || entry.starting).length,
-    close() { closed = true; for (const entry of terminals.values()) stop(entry); terminals.clear(); } };
+    disconnect(connectionId) {
+      for (const entry of terminals.values()) {
+        if (entry.connectionId !== connectionId || entry.disconnectTimer) continue;
+        entry.disconnectTimer = setTimeout(async () => {
+          entry.disconnectTimer = null;
+          if (entry.connectionId !== connectionId) return;
+          await Promise.resolve(entry.starting).catch(() => {});
+          if (entry.connectionId === connectionId) stop(entry);
+        }, disconnectGraceMs);
+        entry.disconnectTimer.unref?.();
+      }
+    },
+    close() { closed = true; for (const entry of terminals.values()) { if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer); stop(entry); } terminals.clear(); } };
 }

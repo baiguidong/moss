@@ -383,38 +383,40 @@ function UsageStatsRow({
   );
 }
 
-export function UsageOverviewContent({ local, cloud, onRefresh }: {
+export function UsageOverviewContent({ local, cloud, cloudEnabled = true, onRefresh }: {
   local: UsageSource<UsageOverview>;
   cloud: UsageSource<CloudUsageOverview>;
+  cloudEnabled?: boolean;
   onRefresh: () => void;
 }) {
-  const daily = React.useMemo(() => mergeUsageDaily(local.data?.daily ?? [], cloud.data?.daily ?? []), [local.data, cloud.data]);
-  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloud.data?.generatedAt ?? 0);
+  const showCloud = cloudEnabled;
+  const daily = React.useMemo(() => mergeUsageDaily(local.data?.daily ?? [], showCloud ? cloud.data?.daily ?? [] : []), [local.data, cloud.data, showCloud]);
+  const generatedAt = Math.max(local.data?.generatedAt ?? 0, showCloud ? cloud.data?.generatedAt ?? 0 : 0);
   // Keep the cloud's current day visible even when its timezone is ahead of this computer.
-  const now = Math.max(generatedAt, cloud.data ? Date.parse(`${cloud.data.today}T12:00:00`) : 0);
-  const sources = [local.data && "本机", cloud.data && "云端"].filter(Boolean).join(" + ");
+  const now = Math.max(generatedAt, showCloud && cloud.data ? Date.parse(`${cloud.data.today}T12:00:00`) : 0);
+  const sources = [local.data && "本机", showCloud && cloud.data && "云端"].filter(Boolean).join(" + ");
   const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timezoneNote = local.data && cloud.data && localTimezone !== cloud.data.timezone
+  const timezoneNote = showCloud && local.data && cloud.data && localTimezone !== cloud.data.timezone
     ? ` · 按各自日期合并（本机 ${localTimezone}，云端 ${cloud.data.timezone}）`
     : "";
 
   return (
     <>
       <UsageStatsRow title="本地电脑" totalLabel="本机累计 Token" source={local} onRefresh={onRefresh} />
-      <UsageStatsRow
+      {showCloud && <UsageStatsRow
         title="云端"
         totalLabel="云端累计 Token"
         source={cloud}
         description={cloud.data ? `当前账号 · 按 ${cloud.data.timezone} 统计` : cloud.loading ? "正在获取当前账号的用量…" : "连接 Moss Server 后查看当前账号的用量"}
         onRefresh={onRefresh}
-      />
-      {cloud.data?.historyIncomplete && <p className="mt-2 text-xs text-muted-foreground" role="status">部分云端历史记录无法读取，累计值可能不完整。</p>}
-      {(local.data || cloud.data) && <ActivityChart data={daily} now={now} description={`${sources}${timezoneNote}`} />}
+      />}
+      {showCloud && cloud.data?.historyIncomplete && <p className="mt-2 text-xs text-muted-foreground" role="status">部分云端历史记录无法读取，累计值可能不完整。</p>}
+      {(local.data || showCloud && cloud.data) && <ActivityChart data={daily} now={now} description={`${sources}${timezoneNote}`} />}
     </>
   );
 }
 
-export function OverviewView({ sessionSummaryEnabled }: { sessionSummaryEnabled: boolean }) {
+export function OverviewView({ sessionSummaryEnabled, cloudEnabled = false }: { sessionSummaryEnabled: boolean; cloudEnabled?: boolean }) {
   const [selectedTab, setActiveTab] = React.useState<OverviewTab>("usage");
   const activeTab = selectedTab === "session" && !sessionSummaryEnabled ? "usage" : selectedTab;
   const [local, setLocal] = React.useState<UsageSource<UsageOverview>>({ data: null, loading: true, error: "" });
@@ -434,9 +436,9 @@ export function OverviewView({ sessionSummaryEnabled }: { sessionSummaryEnabled:
     };
     await Promise.all([
       load(() => window.agentDesktop.usage.getOverview(), setLocal),
-      load(() => window.agentDesktop.usage.getCloudOverview(), setCloud, resetCloud),
+      ...(cloudEnabled ? [load(() => window.agentDesktop.usage.getCloudOverview(), setCloud, resetCloud)] : []),
     ]);
-  }, []);
+  }, [cloudEnabled]);
 
   React.useEffect(() => {
     void loadOverview();
@@ -449,8 +451,8 @@ export function OverviewView({ sessionSummaryEnabled }: { sessionSummaryEnabled:
     };
   }, [loadOverview]);
 
-  const loading = local.loading || cloud.loading;
-  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloud.data?.generatedAt ?? 0);
+  const loading = local.loading || (cloudEnabled && cloud.loading);
+  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloudEnabled ? cloud.data?.generatedAt ?? 0 : 0);
 
   return (
     <main className="h-full min-h-0 overflow-y-auto bg-background">
@@ -488,7 +490,7 @@ export function OverviewView({ sessionSummaryEnabled }: { sessionSummaryEnabled:
 
         {activeTab === "resources" ? <ResourceMonitorView /> : activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />
-        ) : <UsageOverviewContent local={local} cloud={cloud} onRefresh={() => void loadOverview()} />}
+        ) : <UsageOverviewContent local={local} cloud={cloud} cloudEnabled={cloudEnabled} onRefresh={() => void loadOverview()} />}
       </div>
     </main>
   );

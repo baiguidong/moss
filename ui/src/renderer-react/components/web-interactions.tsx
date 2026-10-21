@@ -3,6 +3,7 @@ import { showWebFileBrowser } from './web-file-browser';
 export function WebInteractions() {
   const [items, setItems] = React.useState<any[]>([]), [error, setError] = React.useState(''), [busy, setBusy] = React.useState('');
   const capture = React.useRef<{ id: string; canceled: boolean; stream?: MediaStream } | null>(null);
+  const startedPicks = React.useRef(new Set<string>());
   React.useEffect(() => {
     const current = capture.current;
     if (current && !items.some(item => item.id === current.id)) { current.canceled = true; current.stream?.getTracks().forEach(track => track.stop()); }
@@ -49,9 +50,17 @@ export function WebInteractions() {
     } catch (error) { if (item.kind === 'screen') { capture.current = null; await respond(item.id, null).catch(() => {}); } setError(String(error)); }
     finally { setBusy(''); }
   };
+  React.useEffect(() => {
+    const next = items.find(item => item.kind === 'pick' && !startedPicks.current.has(item.id));
+    if (!next) return;
+    startedPicks.current.add(next.id);
+    void open(next);
+  }, [items]);
   if (!items.length) return null;
+  const visible = items.filter(item => item.kind !== 'pick' || error);
+  if (!visible.length) return null;
   return <aside className="fixed bottom-28 right-4 z-50 max-w-sm rounded border bg-background p-3 text-sm shadow" aria-label="待处理文件操作">
-    {items.map(item => <div key={item.id} className="my-2"><p>{item.input.title || (item.kind === 'download' ? '下载到浏览器设备' : '打开链接')}</p>{(item.input.url || item.input.path) && <p className="break-all text-xs text-muted-foreground">{item.input.url || item.input.path}</p>}<button disabled={!!busy} className="mr-3 underline" onClick={() => void open(item)}>继续</button><button disabled={!!busy} onClick={() => void respond(item.id, null).catch(reason => setError(String(reason)))}>取消</button></div>)}
+    {visible.map(item => <div key={item.id} className="my-2"><p>{item.input.title || (item.kind === 'download' ? '下载到浏览器设备' : '打开链接')}</p>{(item.input.url || item.input.path) && <p className="break-all text-xs text-muted-foreground">{item.input.url || item.input.path}</p>}<button disabled={!!busy} className="mr-3 underline" onClick={() => void open(item)}>继续</button><button disabled={!!busy} onClick={() => void respond(item.id, null).catch(reason => setError(String(reason)))}>取消</button></div>)}
     {error && <p role="alert">{error}</p>}
   </aside>;
 }
