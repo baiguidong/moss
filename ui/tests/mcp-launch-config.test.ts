@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { expandMcpHomePath, resolveMcpLaunchConfig } from '../src/apps/mcp-launch-config.mjs'
+import { expandMcpHomePath, resolveMcpLaunchConfig, usesElectronAsNode } from '../src/apps/mcp-launch-config.mjs'
 
 test('portable home paths resolve for macOS, Linux and Windows, including spaces', () => {
   for (const home of ['/Users/Test User', '/home/test-user']) {
@@ -20,4 +20,11 @@ test('only command and path arguments expand, without shell evaluation or mutati
   expect(config).toEqual(original)
   const http = { type: 'http', url: 'https://example.com/~user', headers: { Token: '~/literal' } }
   expect(resolveMcpLaunchConfig(http)).toEqual(http)
+})
+
+test('Electron needs Node mode only when an MCP service launches the host executable', () => {
+  const executable = '/opt/moss/ui/electron'
+  expect(usesElectronAsNode(executable, executable, true)).toBe(true)
+  expect(usesElectronAsNode('/usr/bin/node', executable, true)).toBe(false)
+  expect(usesElectronAsNode(executable, executable, false)).toBe(false)
 })

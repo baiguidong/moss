@@ -28,7 +28,7 @@ export function createMcpAppManifest(definition) {
   }, { requireNavigation: true })
 }
 
-export async function generateMcpApp({ definition, resourcesDir, destination }) {
+export async function generateMcpApp({ definition, resourcesDir, runtimeDir, destination }) {
   const manifest = createMcpAppManifest(definition)
   const config = normalizeMcpAppConfig({ mcpServers: definition.mcpServers })
   // Reject links and executable files before creating output. Resources are data.
@@ -37,10 +37,19 @@ export async function generateMcpApp({ definition, resourcesDir, destination }) 
     if (!/\.(svg|png|jpg|jpeg|gif|webp|ico|md|txt|json)$/i.test(file.relativePath)) throw new Error(`Unsupported MCP App resource: ${file.relativePath}`)
     if (['app.moss.json', 'mcp.json', 'checksums.json', 'app-signature.json', 'source-manifest.json', 'definition.json'].includes(file.relativePath) || file.relativePath.startsWith('source/')) throw new Error(`Reserved MCP App resource: ${file.relativePath}`)
   }
+  const runtimeFiles = runtimeDir ? await listPackageFiles(runtimeDir) : []
+  if (runtimeFiles.length && !Object.values(config.mcpServers).some(server => [server.command, ...(server.args || [])].some(value => typeof value === 'string' && value.startsWith('@app/runtime/')))) {
+    throw new Error('Bundled MCP runtime requires an @app/runtime/ launch path')
+  }
   await fs.mkdir(destination, { recursive: true })
   if ((await fs.readdir(destination)).length) throw new Error('MCP App output directory must be empty')
   for (const file of resources) {
     const target = path.join(destination, ensureSafeRelativePath(file.relativePath))
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.copyFile(file.absolutePath, target)
+  }
+  for (const file of runtimeFiles) {
+    const target = path.join(destination, 'runtime', ensureSafeRelativePath(file.relativePath))
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.copyFile(file.absolutePath, target)
   }

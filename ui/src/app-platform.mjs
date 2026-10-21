@@ -28,6 +28,13 @@ function advanceInstallationRevision(appId) {
   return revisions[appId]
 }
 
+async function queueAppInstallation(appId, operation) {
+  const previous = installationQueues.get(appId) || Promise.resolve()
+  const task = previous.then(operation, operation)
+  installationQueues.set(appId, task)
+  try { return await task } finally { if (installationQueues.get(appId) === task) installationQueues.delete(appId) }
+}
+
 export const APP_KINDS = Object.freeze({ app: 'app' })
 
 function now() { return Date.now() }
@@ -188,10 +195,7 @@ function registryEntryFromPublished(published, previous = {}) {
 
 export async function publishAppFromBuild(buildDir, options = {}) {
   const manifest = readAppManifestFromDir(buildDir)
-  const previous = installationQueues.get(manifest.id) || Promise.resolve()
-  const task = previous.then(() => publishAppFromBuildNow(buildDir, options), () => publishAppFromBuildNow(buildDir, options))
-  installationQueues.set(manifest.id, task)
-  try { return await task } finally { if (installationQueues.get(manifest.id) === task) installationQueues.delete(manifest.id) }
+  return queueAppInstallation(manifest.id, () => publishAppFromBuildNow(buildDir, options))
 }
 
 export function refreshAppRegistryFromCurrent(appId) {
@@ -365,6 +369,25 @@ export function rollbackAppToVersion(appId, version) {
     published,
     readAppRegistry().apps.find((item) => item.id === appId),
   ))
+}
+
+/** Restore an installation only while its own committed current/registry entry is still active. */
+export async function rollbackAppInstallationIfCurrent(appId, { expectedVersion, expectedInstallationRevision, previousVersion = null } = {}) {
+  if (!semver.valid(expectedVersion) || !Number.isSafeInteger(expectedInstallationRevision) || expectedInstallationRevision < 1) {
+    throw new TypeError('Conditional App rollback requires a committed version and installation revision')
+  }
+  if (previousVersion !== null && !semver.valid(previousVersion)) throw new TypeError('Invalid previous App version')
+  return queueAppInstallation(appId, async () => {
+    const current = readJsonFile(getAppCurrentPath(appId), null)
+    const published = readAppRegistry().apps.find(item => item.id === appId)
+    if (getAppInstallationRevision(appId) !== expectedInstallationRevision
+      || current?.installationRevision !== expectedInstallationRevision
+      || current?.version !== expectedVersion
+      || published?.currentVersion !== expectedVersion) return false
+    if (previousVersion) rollbackAppToVersion(appId, previousVersion)
+    else await deleteApp(appId)
+    return true
+  })
 }
 
 export async function deleteApp(appId) {

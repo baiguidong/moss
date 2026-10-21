@@ -249,6 +249,8 @@ export class AppHostCapabilityRegistry {
       version: request.version,
       instanceId: request.instanceId,
       generation: request.generation,
+      installationIncarnationId: request.installationIncarnationId || null,
+      instanceIncarnationId: request.instanceIncarnationId || null,
       owner: request.owner || null,
       principal: request.principal || null,
       invocation: request.invocation || null,
@@ -266,6 +268,7 @@ export class AppHostCapabilityRegistry {
       },
       signal: request.signal,
       assertCurrent: () => request.assertCurrent?.(authorization),
+      assertAppCurrent: () => (request.assertAppCurrent || request.assertCurrent)?.(authorization),
     })
     const operation = Promise.resolve().then(() => {
       if (request.signal?.aborted) throw cancellationError(request.signal)

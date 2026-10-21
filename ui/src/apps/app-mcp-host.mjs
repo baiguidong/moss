@@ -2,10 +2,11 @@ import { isToolSourceAvailable } from '../../../packages/app-sdk/src/tool-servic
 import { createMcpProtocolDefinition as contractDefinition, validateMcpHostInput as contractInput, validateMcpHostOutput } from '../../../packages/app-sdk/src/mcp/index.mjs'
 import { mcpLimits } from '../../../packages/host-contracts/src/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/protocol/index.mjs'
+import { compileJsonSchema } from '../../../packages/app-sdk/src/schemas/index.mjs'
 import fs from 'node:fs/promises'
 import { getAppToolScope } from '../../../packages/app-sdk/src/tool-scope.mjs'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { writePrivateFileAtomic } from '../../../shared/security/credential-crypto.mjs'
 import { isValidMcpServerName, normalizeMcpStore, validateMcpServerConfig } from '../desktop-mcp-settings.mjs'
 import { resolveMcpLaunchConfig } from './mcp-launch-config.mjs'
@@ -19,6 +20,8 @@ export const MCP_PROTOCOL = 'moss.mcp/v1'
 export const MCP_METHODS = ['servers.list', 'servers.save', 'servers.remove', 'servers.set-enabled', 'servers.inspect', 'auth.start', 'auth.clear']
 const MAX_SERVERS = mcpLimits.servers
 const SECRET_FIELD = 'mcpSecrets'
+const MAX_BRIDGE_TOOL_SCHEMA_BYTES = 64 * 1024
+const MAX_BRIDGE_CATALOG_BYTES = 512 * 1024
 const permissions = { 'servers.list': 'mcp:read', 'servers.inspect': 'mcp:connect', 'auth.start': 'mcp:auth', 'auth.clear': 'mcp:auth' }
 
 function record(value, keys) {
@@ -47,15 +50,24 @@ export function createMcpProtocolDefinition() {
   return definition
 }
 
-function key(context) { return `${context.appId}/${context.instanceId}` }
-function runtimeName(appId, name) {
-  if (appId === 'moss.mcp') return name
+function key(context) { return `${context.owner?.key || 'host'}/${context.appId}/${context.instanceId}` }
+function runtimeName(appId, name, owner) {
   const normalize = value => value.replace(/[^a-zA-Z0-9_]/g, '_')
   const appName = normalize(appId)
   // Standalone MCP Apps commonly repeat their local App name as the service name.
-  return normalize(appId.split('.').at(-1)) === normalize(name)
+  const base = appId === 'moss.mcp' ? name : normalize(appId.split('.').at(-1)) === normalize(name)
     ? appName
     : `${appName}__${name}`
+  if (!owner?.key || owner.key === 'host') return base
+  // OAuth credentials are keyed by MCP runtime name and config. Keep every
+  // non-host owner's transports in a stable, separate credential namespace.
+  // Limit the server name so ordinary model-facing names such as
+  // <server>__execute_sql fit within the API's 64-character tool-name limit.
+  // @ cannot occur in a user-configured server name, so a Host-owned service
+  // cannot reuse this raw name and its OAuth credential key.
+  const hint = value => normalize(value).replace(/_+/g, '_').slice(0, 8)
+  const digest = createHash('sha256').update(JSON.stringify([owner.key, appId, name])).digest('hex').slice(0, 20)
+  return `@o_${hint(appId.split('.').at(-1))}_${hint(name)}_${digest}`
 }
 function decodeSecrets(values) {
   if (!values[SECRET_FIELD]) return {}
@@ -84,10 +96,65 @@ function safeError(error, configs) {
   return message.slice(0, 1200)
 }
 
+function bridgeCallbackError(signal) {
+  // Transport errors can echo URL userinfo/query values, argv or provider data.
+  // A fixed message is the only safe response to a different App.
+  return signal?.aborted
+    ? new AppServiceError(APP_ERROR_CODES.actionCanceled, 'MCP 工具操作已取消。')
+    : new AppServiceError(APP_ERROR_CODES.hostUnavailable, '目标 MCP 服务暂不可用。')
+}
+
+function bridgeToolDescriptor(service, tool) {
+  try {
+    if (!tool || typeof tool.name !== 'string' || !tool.name || tool.name.length > 256 || /[\x00-\x1f\x7f]/.test(tool.name)
+      || !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema)) {
+      throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'MCP 工具目录格式无效。')
+    }
+    const inputSchema = structuredClone(tool.inputSchema)
+    if (Buffer.byteLength(JSON.stringify(inputSchema)) > MAX_BRIDGE_TOOL_SCHEMA_BYTES) {
+      throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'MCP 工具输入结构超过跨 App 调用上限。')
+    }
+    const description = typeof tool.description === 'string' ? tool.description.slice(0, 1500) : ''
+    const revision = createHash('sha256').update(JSON.stringify({
+      service: service.serviceRevision, name: tool.name, description: tool.description || '',
+      inputSchema, outputSchema: tool.outputSchema || null, annotations: tool.annotations || null,
+    })).digest('hex')
+    return { appId: service.appId, instanceId: service.instanceId, serviceId: service.serviceId, serviceName: service.localName,
+      revision, name: tool.name, description, inputSchema }
+  } catch (error) {
+    if (error instanceof AppServiceError) throw error
+    throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'MCP 工具目录格式无效。')
+  }
+}
+
+function bridgeInputString(value, label, optional = false) {
+  if (optional && value === undefined) return
+  if (typeof value !== 'string' || !value || value.length > 256) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidInput, `${label} 无效。`)
+  }
+}
+
+async function resolveBundledMcpServers(servers, packageRoot) {
+  const root = await fs.realpath(packageRoot)
+  const bundledPath = async value => {
+    if (typeof value !== 'string' || !value.startsWith('@app/')) return value
+    const relative = value.slice(5)
+    if (!relative || relative.includes('\\') || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('App 内 MCP 路径无效。')
+    const target = await fs.realpath(path.join(root, relative))
+    if (!target.startsWith(root + path.sep) || !(await fs.stat(target)).isFile()) throw new Error('App 内 MCP 文件不可用。')
+    return target
+  }
+  return Object.fromEntries(await Promise.all(Object.entries(servers).map(async ([name, config]) => [name, {
+    ...config,
+    ...(config.command ? { command: await bundledPath(config.command) } : {}),
+    ...(config.args ? { args: await Promise.all(config.args.map(bundledPath)) } : {}),
+  }])))
+}
+
 /** Host-owned registry. MCP transport and tool execution remain in the agent runtime. */
 export class AppMcpHost {
-  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, getIdleTimeoutMs, reservedName = () => false }) {
-    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, authenticate, clearAuth, getIdleTimeoutMs, reservedName })
+  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, reservedName = () => false }) {
+    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, reservedName })
     this.providers = new Map()
     this.checks = new Map()
     this.catalogs = new Map()
@@ -99,23 +166,37 @@ export class AppMcpHost {
     this.queue = pending.catch(() => {})
     return pending
   }
-  current(provider) {
+  currentOwner() { return this.getRuntime()?.currentOwner?.() || { key: 'host' } }
+  sameOwner(provider) { return (provider.owner?.key || 'host') === this.currentOwner().key }
+  withOwner(provider, operation) {
     const runtime = this.getRuntime()
-    const installation = runtime?.installations.get(provider.appId)
-    const instance = runtime?.instances.get(provider.instanceId)
-    return Boolean(installation?.enabled && instance?.enabled && instance.appId === provider.appId
-      && installation.activeVersion === provider.version)
+    return provider.owner && runtime?.withOwner ? runtime.withOwner(provider.owner, operation) : operation()
+  }
+  current(provider) {
+    return this.withOwner(provider, () => {
+      const runtime = this.getRuntime()
+      const installation = runtime?.installations.get(provider.appId)
+      const instance = runtime?.instances.get(provider.instanceId)
+      return Boolean(installation?.enabled && instance?.enabled && instance.appId === provider.appId
+        && installation.activeVersion === provider.version
+        && (!provider.installationIncarnationId || installation.incarnationId === provider.installationIncarnationId)
+        && (!provider.instanceIncarnationId || instance.incarnationId === provider.instanceIncarnationId))
+    })
   }
   active(provider) {
-    const grants = this.getRuntime()?.installations.get(provider.appId)?.grants || []
-    return this.current(provider) && grants.includes('mcp:manage') && grants.includes('mcp:connect')
+    return this.withOwner(provider, () => {
+      const grants = this.getRuntime()?.installations.get(provider.appId)?.grants || []
+      return this.current(provider) && grants.includes('mcp:manage') && grants.includes('mcp:connect')
+    })
   }
   assertCurrent(context) {
     if (context.signal?.aborted) throw new Error('操作已取消。')
     if (!this.current(context)) throw new Error('请先启用应用。')
-    if (context.permission && !this.getRuntime().installations.get(context.appId)?.grants?.includes(context.permission)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '请在应用管理中授予此操作需要的 MCP 权限。')
+    if (context.permission && !this.withOwner(context, () => this.getRuntime().installations.get(context.appId)?.grants?.includes(context.permission))) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '请在应用管理中授予此操作需要的 MCP 权限。')
   }
   async load(context) {
+    const runtime = this.getRuntime()
+    context = { ...context, owner: context.owner || runtime?.currentOwner?.() || { key: 'host' } }
     if (!this.catalogs.has(key(context))) this.catalogs.set(key(context), await readToolCatalog(context.dataDir))
     const file = path.join(context.dataDir, 'mcp-servers.json')
     let document
@@ -127,13 +208,19 @@ export class AppMcpHost {
       if (!entry.id) { entry.id = randomUUID(); migratedIds = true }
     }
     if (migratedIds) writePrivateFileAtomic(file, `${JSON.stringify(document, null, 2)}\n`)
-    const credentials = await this.getRuntime().credentials.get(context.appId, context.instanceId)
+    const credentials = await runtime.credentials.get(context.appId, context.instanceId)
     const secrets = decodeSecrets(credentials)
-    const pkg = await this.getRuntime().getActivePackage(context.appId)
-    const provider = { ...context, toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', mcpIdleTimeoutMs: pkg.manifest.mcpApp?.runtime?.state === 'stateless' ? pkg.manifest.mcpApp.runtime.idleTimeoutMs || 3_600_000 : 0, signal: undefined, document, file, secrets }
+    const pkg = await runtime.getActivePackage(context.appId)
+    const provider = { ...context,
+      installationIncarnationId: runtime.installations.get(context.appId)?.incarnationId,
+      instanceIncarnationId: runtime.instances.get(context.instanceId)?.incarnationId,
+      toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', mcpIdleTimeoutMs: pkg.manifest.mcpApp?.runtime?.state === 'stateless' ? pkg.manifest.mcpApp.runtime.idleTimeoutMs || 3_600_000 : 0, signal: undefined, document, file, secrets }
     this.providers.set(key(context), provider)
     if (pkg.manifest.mcpApp && this.active(provider)) {
       const definition = await readMcpAppConfig(pkg.root, pkg.manifest)
+      const bundled = Object.values(definition.mcpServers).some(config => [config.command, ...(config.args || [])].some(value => value?.startsWith('@app/')))
+      definition.mcpServers = await resolveBundledMcpServers(definition.mcpServers, pkg.root)
+      if (bundled) definition.revision = createHash('sha256').update(definition.revision).update(pkg.root).digest('hex')
       if (document.definitionRevision !== definition.revision) {
         const next = { version: 1, definitionRevision: definition.revision, definitionServers: definition.mcpServers, servers: {} }
         const values = { ...secrets }
@@ -208,25 +295,29 @@ export class AppMcpHost {
     this.onChanged?.(context.appId)
     return next
   }
-  async refresh() {
+  async refresh(targetAppId = null, { notify = true } = {}) {
     return this.serial(async () => {
       const runtime = this.getRuntime()
       if (!runtime) return
+      const owner = this.currentOwner()
       const current = new Set()
-      for (const installation of runtime.installations.list()) {
+      const installations = targetAppId ? [runtime.installations.get(targetAppId)].filter(Boolean) : runtime.installations.list()
+      for (const installation of installations) {
         if (!installation.grants?.includes('mcp:manage') || !installation.grants?.includes('mcp:connect')) continue
         const pkg = await runtime.getActivePackage(installation.appId).catch(() => null)
         if (!pkg?.manifest.host?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
         for (const instance of runtime.instances.list(installation.appId)) {
-          const context = { appId: installation.appId, instanceId: instance.id, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope),
+          const context = { appId: installation.appId, instanceId: instance.id, owner, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope),
             dataDir: runtime.appDataPath(runtime.dataDir, installation.appId, 'instances', instance.id) }
           current.add(key(context))
           const provider = await this.load(context)
           if (this.active(context)) await this.migrate(context, provider)
         }
       }
-      for (const id of this.providers.keys()) if (!current.has(id)) this.providers.delete(id)
-      this.onCatalogChanged?.()
+      for (const [id, provider] of this.providers) {
+        if (provider.owner.key === owner.key && (!targetAppId || provider.appId === targetAppId) && !current.has(id)) this.providers.delete(id)
+      }
+      if (notify) this.onCatalogChanged?.()
     })
   }
   serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
@@ -234,33 +325,179 @@ export class AppMcpHost {
   enabledServers(appIds, workspace, appServiceIds = []) {
     const result = {}
     for (const provider of this.providers.values()) {
-      if (!this.active(provider)) continue
+      if (!this.sameOwner(provider) || !this.active(provider)) continue
       for (const [name, entry] of Object.entries(provider.document.servers)) {
         if (Array.isArray(appIds) && !isToolSourceAvailable(this.owner(provider, entry), appIds, appServiceIds)) continue
         const config = restoreConfig(entry, provider.secrets)
-        if (entry.enabled && config) result[runtimeName(provider.appId, name)] = resolveMcpLaunchConfig(config, { workspace })
+        if (entry.enabled && config) result[runtimeName(provider.appId, name, provider.owner)] = resolveMcpLaunchConfig(config, { workspace })
       }
     }
     return result
   }
   serverOwners() {
-    return Object.fromEntries([...this.providers.values()].flatMap(provider =>
-      Object.keys(provider.document.servers).map(name => [runtimeName(provider.appId, name), this.owner(provider, provider.document.servers[name])]),
+    return Object.fromEntries([...this.providers.values()].filter(provider => this.sameOwner(provider)).flatMap(provider =>
+      Object.keys(provider.document.servers).map(name => [runtimeName(provider.appId, name, provider.owner), this.owner(provider, provider.document.servers[name])]),
     ))
   }
   effectiveScope(provider) { return this.getRuntime()?.getToolScope?.(provider.appId, provider.toolScope) ?? getAppToolScope(provider.toolScope) }
   findServer(name) {
     for (const provider of this.providers.values()) {
-      if (!this.active(provider)) continue
+      if (!this.sameOwner(provider) || !this.active(provider)) continue
       for (const [localName, entry] of Object.entries(provider.document.servers)) {
-        if (runtimeName(provider.appId, localName) !== name) continue
+        if (runtimeName(provider.appId, localName, provider.owner) !== name) continue
         const config = restoreConfig(entry, provider.secrets)
         return config ? { ...entry, config: resolveMcpLaunchConfig(config), provider, localName } : null
       }
     }
     return null
   }
-  hasApp(appId) { return [...this.providers.values()].some(provider => provider.appId === appId) }
+  bridgeServices(query) {
+    try { return this.bridgeServicesUnchecked(query) }
+    catch (error) {
+      if (error instanceof AppServiceError) throw error
+      throw bridgeCallbackError()
+    }
+  }
+  bridgeServicesUnchecked({ targetAppId, targetInstanceId, serviceId }) {
+    bridgeInputString(targetAppId, '目标 App')
+    bridgeInputString(targetInstanceId, '目标实例', true)
+    bridgeInputString(serviceId, 'MCP 服务', true)
+    const matches = []
+    for (const provider of this.providers.values()) {
+      if (!this.sameOwner(provider) || provider.appId !== targetAppId || (targetInstanceId && provider.instanceId !== targetInstanceId)) continue
+      for (const [localName, entry] of Object.entries(provider.document.servers)) {
+        const currentServiceId = this.serviceId(provider, entry)
+        if (serviceId && currentServiceId !== serviceId) continue
+        if (!this.active(provider) || !entry.enabled) {
+          if (serviceId) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '目标 MCP 服务已停用或失去授权。')
+          continue
+        }
+        const config = restoreConfig(entry, provider.secrets)
+        if (!config) {
+          if (serviceId) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, '目标 MCP 服务凭据不可用。')
+          continue
+        }
+        matches.push({ appId: provider.appId, instanceId: provider.instanceId, serviceId: currentServiceId,
+          serviceRevision: this.toolRevision(provider, entry), localName, runtimeName: runtimeName(provider.appId, localName, provider.owner),
+          config: resolveMcpLaunchConfig(config) })
+      }
+    }
+    if (serviceId && !matches.length) throw new AppServiceError(APP_ERROR_CODES.notFound, '目标 MCP 服务不存在。')
+    return matches
+  }
+  async refreshBridgeTarget(targetAppId, signal) {
+    try { await this.refresh(targetAppId, { notify: false }) }
+    catch { throw bridgeCallbackError(signal) }
+  }
+  assertBridgeServiceCurrent(service) {
+    const current = this.bridgeServices({ targetAppId: service.appId, targetInstanceId: service.instanceId, serviceId: service.serviceId })[0]
+    if (!current || current.serviceRevision !== service.serviceRevision) {
+      throw new AppServiceError(APP_ERROR_CODES.conflict, '目标 MCP 服务已变化，请重新发现工具。')
+    }
+    return current
+  }
+  /** Live discovery for the cross-App broker. Display caches never authorize a call. */
+  async discoverBridgeTools({ targetAppId, targetInstanceId, serviceId, toolNames, signal }) {
+    if (signal?.aborted) throw bridgeCallbackError(signal)
+    if (typeof this.discoverTool !== 'function') throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host 尚未提供 MCP 工具发现。')
+    bridgeInputString(targetAppId, '目标 App')
+    if (toolNames !== undefined && !(Array.isArray(toolNames) || toolNames instanceof Set)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'MCP 工具筛选条件无效。')
+    }
+    const selected = toolNames === undefined ? null : new Set(toolNames)
+    if (selected && (selected.size > 512 || [...selected].some(name => typeof name !== 'string' || !name || name.length > 256))) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'MCP 工具筛选条件无效。')
+    }
+    await this.refreshBridgeTarget(targetAppId, signal)
+    if (selected?.size === 0) return []
+    const services = await this.serial(() => this.bridgeServices({ targetAppId, targetInstanceId, serviceId }))
+    const discover = async service => {
+      if (signal?.aborted) throw bridgeCallbackError(signal)
+      let tools
+      try { tools = await this.discoverTool(service.runtimeName, service.config, signal) }
+      catch { throw bridgeCallbackError(signal) }
+      if (!Array.isArray(tools)) throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'MCP 工具目录格式无效。')
+      const descriptors = tools.filter(tool => (!selected || selected.has(tool?.name)) && !service.config.disabledTools?.includes(tool?.name))
+        .map(tool => bridgeToolDescriptor(service, tool))
+      await this.serial(() => this.assertBridgeServiceCurrent(service))
+      return descriptors
+    }
+    const result = []
+    let remaining = MAX_BRIDGE_CATALOG_BYTES - 2, firstUnavailable = null
+    // A broken connection must not hide working connections in the same App.
+    // The current broker API returns tools only; an explicit serviceId still
+    // reports its own error, and a completely empty partial result reports one.
+    for (let offset = 0; offset < services.length; offset += 3) {
+      const outcomes = await Promise.allSettled(services.slice(offset, offset + 3).map(discover))
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          if (!serviceId && outcome.reason?.code === APP_ERROR_CODES.hostUnavailable) {
+            firstUnavailable ||= outcome.reason
+            continue
+          }
+          throw outcome.reason
+        }
+        for (const descriptor of outcome.value) {
+          const bytes = Buffer.byteLength(JSON.stringify(descriptor)) + (result.length ? 1 : 0)
+          if (bytes > remaining) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'MCP 工具目录超过跨 App 调用上限。')
+          result.push(descriptor)
+          remaining -= bytes
+        }
+      }
+    }
+    if (!result.length && firstUnavailable) throw firstUnavailable
+    return result
+  }
+  /** A signed broker reference must identify this exact target App, instance and service. */
+  async invokeBridgeTool({ targetAppId, targetInstanceId, serviceId, revision, toolName, arguments: args = {}, signal, authorizeDispatch }) {
+    if (signal?.aborted) throw bridgeCallbackError(signal)
+    bridgeInputString(targetAppId, '目标 App')
+    bridgeInputString(targetInstanceId, '目标实例')
+    bridgeInputString(serviceId, 'MCP 服务')
+    bridgeInputString(toolName, 'MCP 工具')
+    if (typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) || typeof authorizeDispatch !== 'function'
+      || !args || typeof args !== 'object' || Array.isArray(args)) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, '跨 App MCP 工具调用参数无效。')
+    }
+    let inputBytes
+    try { inputBytes = Buffer.byteLength(JSON.stringify(args)) }
+    catch { throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'MCP 工具参数必须是 JSON 对象。') }
+    if (inputBytes > 256 * 1024) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'MCP 工具参数超过跨 App 调用上限。')
+    if (typeof this.invokeTool !== 'function') throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host 尚未提供 MCP 工具调用。')
+    await this.refreshBridgeTarget(targetAppId, signal)
+    const service = await this.serial(() => this.bridgeServices({ targetAppId, targetInstanceId, serviceId })[0])
+    if (service.config.disabledTools?.includes(toolName)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '此 MCP 工具已停用。')
+    let trustedBeforeCallError
+    let result
+    try {
+      result = await this.invokeTool(service.runtimeName, service.config, toolName, args, { signal,
+        beforeCall: async tool => {
+          try {
+            if (tool.name !== toolName || bridgeToolDescriptor(service, tool).revision !== revision) {
+              throw new AppServiceError(APP_ERROR_CODES.conflict, 'MCP 工具结构已变化，请重新发现。')
+            }
+            let valid
+            try { valid = compileJsonSchema(tool.inputSchema)(args) }
+            catch { throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'MCP 工具输入结构无法验证。') }
+            if (!valid) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'MCP 工具参数不符合实时输入结构。')
+            await authorizeDispatch()
+            await this.serial(() => {
+              const current = this.assertBridgeServiceCurrent(service)
+              if (current.config.disabledTools?.includes(toolName)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '此 MCP 工具已停用。')
+            })
+          } catch (error) {
+            if (error instanceof AppServiceError) trustedBeforeCallError = error
+            throw error
+          }
+        } })
+    } catch (error) {
+      if (error === trustedBeforeCallError) throw error
+      throw bridgeCallbackError(signal)
+    }
+    await this.serial(() => this.assertBridgeServiceCurrent(service))
+    return result
+  }
+  hasApp(appId) { return [...this.providers.values()].some(provider => this.sameOwner(provider) && provider.appId === appId) }
   toolRevision(provider, entry) { return `${provider.version}/${entry.secretId}/${entry.updatedAt}/${entry.enabled}` }
   cachedCatalog(provider, name) {
     const entry = provider.document.servers[name], cached = this.catalogs.get(key(provider))?.[name]
@@ -306,7 +543,7 @@ export class AppMcpHost {
     const result = [], runtime = this.getRuntime()
     let budget = 400 * 1024
     for (const provider of this.providers.values()) {
-      if (provider.appId !== appId) continue
+      if (!this.sameOwner(provider) || provider.appId !== appId) continue
       const installation = runtime?.installations.get(appId), instance = runtime?.instances.get(provider.instanceId)
       if (!installation || !instance || installation.activeVersion !== provider.version) continue
       for (const server of this.list(provider).servers) {
@@ -323,7 +560,7 @@ export class AppMcpHost {
             : server.credentialsMissing ? 'credentials-missing' : server.check?.state || 'unchecked'
         result.push({ appId, instanceId: provider.instanceId, name: server.name,
           serviceId: this.serviceId(provider, provider.document.servers[server.name]),
-          runtimeName: runtimeName(appId, server.name), revision: this.toolRevision(provider, provider.document.servers[server.name]),
+          runtimeName: runtimeName(appId, server.name, provider.owner), revision: this.toolRevision(provider, provider.document.servers[server.name]),
           status, tools, error: server.check?.error || cached?.error,
           schemaRevision: live ? server.check.schemaRevision : cached?.schemaRevision,
           catalogStale: live ? server.check.catalogStale : cached?.catalogStale,
@@ -336,7 +573,7 @@ export class AppMcpHost {
   }
   async inspectTools(input) {
     record(input, ['appId', 'instanceId', 'name', 'revision'])
-    const provider = [...this.providers.values()].find(item => item.appId === input.appId && item.instanceId === input.instanceId)
+    const provider = [...this.providers.values()].find(item => this.sameOwner(item) && item.appId === input.appId && item.instanceId === input.instanceId)
     const entry = provider?.document.servers[input.name]
     if (!entry || !this.active(provider) || !entry.enabled) throw new Error('服务已停用或未授权，请在 App 管理中检查。')
     if (this.toolRevision(provider, entry) !== input.revision) throw new Error('连接配置已变化，请重新加载。')
@@ -372,14 +609,15 @@ export class AppMcpHost {
   }
   assertUnique(provider, name, previousName) {
     if (name !== previousName && provider.document.servers[name]) throw new AppServiceError(APP_ERROR_CODES.conflict, '已有同名服务，请使用其他名称。')
-    const target = runtimeName(provider.appId, name).replaceAll('-', '_')
+    const target = runtimeName(provider.appId, name, provider.owner).replaceAll('-', '_')
     for (const other of this.providers.values()) {
+      if (other.owner.key !== provider.owner.key) continue
       for (const localName of Object.keys(other.document.servers)) {
         if (key(other) === key(provider) && localName === previousName) continue
-        if (runtimeName(other.appId, localName).replaceAll('-', '_') === target) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称会与其他 MCP 工具标识冲突，请使用其他名称。')
+        if (runtimeName(other.appId, localName, other.owner).replaceAll('-', '_') === target) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称会与其他 MCP 工具标识冲突，请使用其他名称。')
       }
     }
-    if (this.reservedName(runtimeName(provider.appId, name))) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称已被连接器使用，请使用其他名称。')
+    if (this.reservedName(runtimeName(provider.appId, name, provider.owner))) throw new AppServiceError(APP_ERROR_CODES.conflict, '该名称已被连接器使用，请使用其他名称。')
   }
   async handle(method, raw, context) {
     try { return validateMcpHostOutput(method, await this.handleRequest(method, raw, context)) }
@@ -430,7 +668,7 @@ export class AppMcpHost {
       return { result: this.list(provider, this.onChanged?.(context.appId) || {}) }
     })
     if (prepared.result) return prepared.result
-    const { config, entry } = prepared, name = runtimeName(context.appId, input.name)
+    const { config, entry } = prepared, name = runtimeName(context.appId, input.name, context.owner || this.currentOwner())
     try {
       let check
       if (method === 'servers.inspect') {

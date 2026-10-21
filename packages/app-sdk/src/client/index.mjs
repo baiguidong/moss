@@ -80,6 +80,7 @@ export class AppBackendClient {
     this.actionContext = new AsyncLocalStorage()
     this.context = null
     this.hostClosed = true
+    this.shuttingDown = false
     this.started = false
     this.onInitialize = options.onInitialize || null
     this.onShutdown = options.onShutdown || null
@@ -478,7 +479,10 @@ export class AppBackendClient {
     this.started = true
     this.onMessage((raw) => void this.handleMessage(raw).catch((error) => this.handleFatalError(error)))
     this.onDisconnect(() => {
+      this.shuttingDown = true
       this.closeHost()
+      const reason = new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App Backend lost its Host')
+      for (const controller of this.controllers.values()) controller.abort(reason)
       setImmediate(() => process.exit(0))
     })
     this.send(createEnvelope('service.hello', {
@@ -539,8 +543,12 @@ export class AppBackendClient {
       return
     }
     if (message.type === 'service.shutdown') {
+      if (this.shuttingDown) return
+      this.shuttingDown = true
       this.send(createEnvelope('service.status', { state: 'stopping', ...this.identity() }, { id: message.id }))
       this.closeHost(new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App Backend is shutting down'))
+      const reason = new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App Backend is shutting down')
+      for (const controller of this.controllers.values()) controller.abort(reason)
       if (this.onShutdown) await this.onShutdown(this.context)
       setImmediate(() => process.exit(0))
       return
@@ -574,6 +582,12 @@ export class AppBackendClient {
       return
     }
     if (message.type !== 'action.invoke') return
+    if (this.shuttingDown) {
+      this.send(createEnvelope('action.error', { requestId: message.id,
+        error: serializeError(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App Backend is shutting down')),
+        ...this.identity() }, { id: message.id }))
+      return
+    }
     const handler = this.actions.get(payload.name)
     if (!handler) {
       this.send(createEnvelope('action.error', {
@@ -595,7 +609,15 @@ export class AppBackendClient {
           platform: this.platform,
           signal: controller.signal,
           requestId: payload.submissionId || message.id,
-          source: Object.freeze({ surface: payload.source?.surface, workspace: payload.source?.workspace }),
+          source: Object.freeze({ surface: payload.source?.surface, workspace: payload.source?.workspace,
+            ...(payload.source?.surface === 'app' ? {
+              callerAppId: payload.source.callerAppId,
+              callerInstanceId: payload.source.callerInstanceId,
+              protocol: payload.source.protocol,
+              method: payload.source.method,
+              traceId: payload.source.traceId,
+            } : {}),
+          }),
           emit: (name, data) => this.emit(name, data),
           log: (level, text, details) => this.log(level, text, details),
         }))

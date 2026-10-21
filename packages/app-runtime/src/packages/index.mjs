@@ -244,11 +244,23 @@ export async function validateAppPackage(packageRoot, options = {}) {
       throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'icon exceeds the 2 MiB size limit')
     }
   }
-  if (!manifest.mcpApp) await ensureDeclaredFile(root, manifest.ui?.entry, 'ui.entry')
-  else {
+  if (!manifest.mcpApp || manifest.ui?.entry) await ensureDeclaredFile(root, manifest.ui?.entry, 'ui.entry')
+  if (manifest.mcpApp) {
     await ensureDeclaredFile(root, manifest.mcpApp.config, 'mcpApp.config')
-    await readMcpAppConfig(root, manifest)
-    if (files.some(file => !file.relativePath.startsWith('source/') && !/\.(json|svg|png|jpg|jpeg|gif|webp|ico|md|txt)$/i.test(file.relativePath))) {
+    const mcp = await readMcpAppConfig(root, manifest)
+    const bundledPaths = Object.values(mcp.mcpServers).flatMap(server => [server.command, ...(server.args || [])])
+      .filter(value => typeof value === 'string' && value.startsWith('@app/'))
+    for (const reference of bundledPaths) {
+      const relative = reference.slice(5)
+      if (!relative.startsWith('runtime/')) throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'Bundled MCP files must be inside runtime/')
+      await ensureDeclaredFile(root, relative, 'bundled MCP file')
+    }
+    const uiRoot = manifest.ui?.entry ? path.posix.dirname(manifest.ui.entry) + '/' : null
+    if (uiRoot && !uiRoot.startsWith('dist/ui/')) throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'Custom MCP UI must be inside dist/ui/')
+    if (files.some(file => !file.relativePath.startsWith('source/')
+      && !(bundledPaths.length && file.relativePath.startsWith('runtime/'))
+      && !(uiRoot && file.relativePath.startsWith(uiRoot) && /\.(html|js|mjs|css|json|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf)$/i.test(file.relativePath))
+      && !/\.(json|svg|png|jpg|jpeg|gif|webp|ico|md|txt)$/i.test(file.relativePath))) {
       throw new AppServiceError(APP_ERROR_CODES.invalidPackage, 'MCP configuration Apps contain only configuration and resources')
     }
   }

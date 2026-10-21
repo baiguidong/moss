@@ -66,6 +66,79 @@ it.each([0, 1].flatMap(response => [
   if (!response) expect(result.canceled).toBe(true)
 })
 
+it.each([
+  {
+    change: 'adding a protocol', previousManifest: {},
+    nextCapabilities: { requires: [{ protocol: 'moss.dataset/v1' }] },
+    expectedDetail: 'moss.dataset/v1', expectedPreviousDetail: '',
+  },
+  {
+    change: 'removing the final protocol',
+    previousManifest: { appCapabilities: { requires: [{ protocol: 'moss.dataset/v1' }] } },
+    nextCapabilities: null, expectedDetail: '原版本的跨 App 能力声明', expectedPreviousDetail: 'moss.dataset/v1',
+  },
+  {
+    change: 'keeping target tool access',
+    previousManifest: { appCapabilities: { usesTools: [{ appId: 'moss.database', tools: ['execute_sql'] }] } },
+    nextCapabilities: { usesTools: [{ appId: 'moss.database', tools: ['execute_sql'] }] },
+    expectedDetail: 'execute_sql', expectedPreviousDetail: '',
+  },
+  {
+    change: 'adding target tool access',
+    previousManifest: { appCapabilities: { usesTools: [{ appId: 'moss.database', tools: ['search_objects'] }] } },
+    nextCapabilities: { usesTools: [{ appId: 'moss.database', tools: ['search_objects', 'execute_sql'] }] },
+    expectedDetail: 'execute_sql', expectedPreviousDetail: 'search_objects',
+  },
+  {
+    change: 'removing target tool access',
+    previousManifest: { appCapabilities: { usesTools: [{ appId: 'moss.database', tools: ['execute_sql'] }] } },
+    nextCapabilities: null,
+    expectedDetail: '原版本的跨 App 能力声明', expectedPreviousDetail: 'execute_sql',
+  },
+  {
+    change: 'replacing an unreadable package', previousManifest: null,
+    nextCapabilities: null, expectedDetail: '无法读取原版本的跨 App 能力声明', expectedPreviousDetail: '',
+  },
+])('reviews cross-App declarations when $change with an existing grant', async ({ previousManifest, nextCapabilities, expectedDetail, expectedPreviousDetail }) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-capabilities-'))
+  roots.push(root)
+  const archive = Buffer.from('verified cross-App package')
+  const latest = { ...version(archive), permissions: ['apps:invoke'] }
+  const responses = new Map([
+    ['https://example.com/index.json', Buffer.from(JSON.stringify(catalog(latest)))],
+    ['https://example.com/example.app.json', Buffer.from(JSON.stringify(detail(latest)))],
+    [latest.artifact.downloadUrl, archive],
+  ])
+  const prompts: any[] = []
+  let installs = 0
+  const service = createAppMarketplaceService({
+    indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'), platform: 'darwin-arm64',
+    getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.1.0', manifest: previousManifest }],
+    getRuntime: () => ({ getInstallation: () => ({ activeVersion: '1.1.0', grants: ['apps:invoke'] }), registerInstalled: async () => {} }),
+    download: async (url: string) => responses.get(url),
+    installArchive: async (_runtime: unknown, _archive: string, options: any) => options.installPackage('/verified-package'),
+    validatePackage: async () => ({
+      manifest: { id: 'example.app', version: latest.version, displayName: 'Example', permissions: ['apps:invoke'],
+        ...(nextCapabilities ? { appCapabilities: nextCapabilities } : {}) },
+      trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
+    }),
+    confirmInstallation: (manifest: any, permissions: string[], details: string) => confirmAppInstallation({
+      showMessageBox: async (prompt: any) => { prompts.push(prompt); return { response: 0 } },
+    }, manifest, permissions, details),
+    installPackage: async () => { installs++; return { id: 'example.app' } },
+  })
+  const result = await service.install({ appId: 'example.app', acceptPermissions: true })
+  expect(result).toMatchObject({ ok: false, canceled: true })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0].detail).toContain(expectedDetail)
+  if (expectedPreviousDetail) expect(prompts[0].detail).toContain(expectedPreviousDetail)
+  if (nextCapabilities?.usesTools?.length) {
+    expect(prompts[0].detail).toContain('moss.database')
+    expect(prompts[0].detail).toContain('可能读取或修改目标 App 可访问的数据')
+  }
+  expect(installs).toBe(0)
+})
+
 function version(archive: Buffer, versionNumber = '1.2.0') {
   return {
     version: versionNumber,
@@ -135,7 +208,8 @@ async function localVersionFixture(overrides: Record<string, any> = {}) {
   const localVersion = '1.2.0-local.20261012'
   const state = {
     entry: { id: 'example.app', currentVersion: localVersion, localModification: { sourceHash: 'local-source' } } as any,
-    installs: [] as any[], registrations: [] as any[], rollbacks: [] as any[], prompts: [] as any[],
+    revision: 7,
+    installs: [] as any[], registrations: [] as any[], rollbacks: [] as any[], prompts: [] as any[], progress: [] as any[],
     validated: false,
   }
   const responses = new Map([
@@ -146,11 +220,12 @@ async function localVersionFixture(overrides: Record<string, any> = {}) {
   const service = createAppMarketplaceService({
     indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'), platform: 'darwin-arm64',
     getInstalledApps: async () => state.entry ? [state.entry] : [],
-    getInstallationRevision: () => 7,
+    getInstallationRevision: () => state.revision,
     getRuntime: () => ({
       getInstallation: () => ({ activeVersion: localVersion, grants: [] }),
       registerInstalled: async (...args: any[]) => { state.registrations.push(args) },
     }),
+    emitProgress: (value: any) => { state.progress.push(value) },
     download: async (url: string) => responses.get(url),
     installArchive: async (_runtime: unknown, _archive: string, options: any) => options.installPackage('/verified-package'),
     validatePackage: async () => {
@@ -161,8 +236,14 @@ async function localVersionFixture(overrides: Record<string, any> = {}) {
       }
     },
     confirmInstallation: async (...args: any[]) => { state.prompts.push(args); return true },
-    installPackage: async (_root: string, options: any) => { state.installs.push(options); return { id: 'example.app' } },
-    rollbackPackage: async (options: any) => { state.rollbacks.push(options) },
+    installPackage: async (_root: string, options: any) => {
+      state.installs.push(options)
+      state.revision += 1
+      state.entry = { ...state.entry, currentVersion: latest.version, localModification: null }
+      options.onCommit?.({ installationRevision: state.revision })
+      return { id: 'example.app' }
+    },
+    rollbackPackage: async (options: any) => { state.rollbacks.push(options); return true },
     ...overrides,
   })
   return { service, state, localVersion }
@@ -239,6 +320,44 @@ it('does not roll back a concurrent installation when the commit guard rejects t
   expect(state.registrations).toHaveLength(0)
 })
 
+it('does not roll back a package failure before this install commits', async () => {
+  let attempts = 0
+  const { service, state } = await localVersionFixture({
+    installPackage: async () => { attempts += 1; throw new Error('staging failed') },
+  })
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('staging failed')
+  expect(attempts).toBe(1)
+  expect(state.entry.currentVersion).toBe('1.2.0-local.20261012')
+  expect(state.revision).toBe(7)
+  expect(state.rollbacks).toHaveLength(0)
+  expect(state.progress.at(-1).phase).toBe('error')
+  expect(state.progress.some(value => value.phase === 'rolling-back')).toBe(false)
+})
+
+it.each([
+  { change: 'revision', currentRevision: 9, currentVersion: '1.2.0' },
+  { change: 'version', currentRevision: 8, currentVersion: '1.3.0' },
+])('does not roll back a concurrent $change after this install commits', async ({ currentRevision, currentVersion }) => {
+  let fixtureState: any
+  const { service, state } = await localVersionFixture({
+    installPackage: async (_root: string, options: any) => {
+      fixtureState.revision = 8
+      fixtureState.entry = { ...fixtureState.entry, currentVersion: '1.2.0', localModification: null }
+      options.onCommit({ installationRevision: 8 })
+      fixtureState.revision = currentRevision
+      fixtureState.entry = { ...fixtureState.entry, currentVersion }
+      throw new Error('failure after a concurrent install')
+    },
+  })
+  fixtureState = state
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('failure after a concurrent install')
+  expect(state.entry.currentVersion).toBe(currentVersion)
+  expect(state.revision).toBe(currentRevision)
+  expect(state.rollbacks).toHaveLength(0)
+  expect(state.progress.at(-1).phase).toBe('error')
+  expect(state.progress.some(value => value.phase === 'rolling-back')).toBe(false)
+})
+
 it('restores the local version when activating the marketplace replacement fails', async () => {
   const { service, state, localVersion } = await localVersionFixture({
     getRuntime: () => ({
@@ -248,7 +367,75 @@ it('restores the local version when activating the marketplace replacement fails
   })
   await expect(service.install({ appId: 'example.app' })).rejects.toThrow('activation failed')
   expect(state.installs).toHaveLength(1)
-  expect(state.rollbacks).toEqual([{ appId: 'example.app', previousVersion: localVersion, failedVersion: '1.2.0' }])
+  expect(state.rollbacks).toEqual([{ appId: 'example.app', previousVersion: localVersion, failedVersion: '1.2.0', expectedInstallationRevision: 8 }])
+  expect(state.progress.some(value => value.phase === 'rolling-back')).toBe(true)
+})
+
+it('does not restore Runtime after a newer install commits before the Runtime lock', async () => {
+  let fixtureState: any
+  let runtimeVersion = '1.2.0-local.20261012'
+  let runtimeRestores = 0
+  const changed: any[] = []
+  const { service, state } = await localVersionFixture({
+    getRuntime: () => ({
+      getInstallation: () => ({ activeVersion: runtimeVersion, grants: [] }),
+      registerInstalled: async () => { runtimeVersion = '1.2.0'; throw new Error('activation failed') },
+      registerInstalledNow: async () => { runtimeRestores += 1 },
+      transitionApp: async (_appId: string, operation: () => Promise<unknown>) => {
+        fixtureState.revision = 10
+        fixtureState.entry = { ...fixtureState.entry, currentVersion: '1.3.0' }
+        runtimeVersion = '1.3.0'
+        return operation()
+      },
+    }),
+    rollbackPackage: async (input: any) => {
+      fixtureState.rollbacks.push(input)
+      fixtureState.revision = 9
+      fixtureState.entry = { ...fixtureState.entry, currentVersion: '1.2.0-local.20261012' }
+      return true
+    },
+    emitChanged: async (value: any) => { changed.push(value) },
+  })
+  fixtureState = state
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('activation failed')
+  expect(state.rollbacks).toHaveLength(1)
+  expect(state.entry.currentVersion).toBe('1.3.0')
+  expect(state.revision).toBe(10)
+  expect(runtimeVersion).toBe('1.3.0')
+  expect(runtimeRestores).toBe(0)
+  expect(changed).toHaveLength(0)
+})
+
+it('lets Runtime filter edited grants against the restored version', async () => {
+  let fixtureState: any
+  let runtimeVersion = '1.2.0-local.20261012'
+  let runtimeGrants = ['apps:invoke']
+  const restoreCalls: any[] = []
+  const { service, state, localVersion } = await localVersionFixture({
+    getRuntime: () => ({
+      getInstallation: () => ({ activeVersion: runtimeVersion, grants: runtimeGrants }),
+      registerInstalled: async () => {
+        runtimeVersion = '1.2.0'
+        runtimeGrants = ['agent:catalog:read']
+        throw new Error('activation failed')
+      },
+      registerInstalledNow: async (_appId: string, version: string, options: any) => {
+        restoreCalls.push({ version, options })
+        runtimeVersion = version
+      },
+      transitionApp: async (_appId: string, operation: () => Promise<unknown>) => operation(),
+    }),
+    rollbackPackage: async (input: any) => {
+      fixtureState.rollbacks.push(input)
+      fixtureState.revision = 9
+      fixtureState.entry = { ...fixtureState.entry, currentVersion: localVersion }
+      return true
+    },
+  })
+  fixtureState = state
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('activation failed')
+  expect(restoreCalls).toEqual([{ version: localVersion, options: {} }])
+  expect(runtimeVersion).toBe(localVersion)
 })
 
 describe('App marketplace', () => {
@@ -315,7 +502,7 @@ describe('App marketplace', () => {
     }), 'https://example.com/v1/index.json')).toThrow('Invalid App artifact size')
   })
 
-  it('restores the package registry when activating an update fails', async () => {
+  it('restores distinct registry and Runtime versions when activating an update fails', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-market-rollback-'))
     roots.push(root)
     const archive = Buffer.from('signed update')
@@ -327,16 +514,32 @@ describe('App marketplace', () => {
     ])
     const rollbacks: unknown[] = []
     const progress: any[] = []
+    const recoveryOrder: string[] = []
+    let currentVersion = '1.1.0'
+    let runtimeVersion = '1.0.0'
+    let runtimeGrants = ['agent:turns:write', 'platform:files']
+    let revision = 7
     const runtime = {
-      getInstallation: () => ({ activeVersion: '1.1.0', grants: ['agent:turns:write'] }),
-      registerInstalled: async () => { throw new Error('backend did not start') },
+      getInstallation: () => ({ activeVersion: runtimeVersion, grants: runtimeGrants }),
+      registerInstalled: async (_appId: string, _version: string, options: { grants: string[] }) => {
+        runtimeVersion = '1.2.0'; runtimeGrants = options.grants
+        throw new Error('backend did not start')
+      },
+      registerInstalledNow: async (_appId: string, version: string, options: { grants: string[] }) => {
+        runtimeVersion = version; runtimeGrants = options.grants
+      },
+      transitionApp: async (_appId: string, operation: () => Promise<unknown>) => {
+        recoveryOrder.push('runtime-lock')
+        return operation()
+      },
     }
     const service = createAppMarketplaceService({
       indexUrl: 'https://example.com/index.json',
       cachePath: path.join(root, 'catalog.json'),
       platform: 'darwin-arm64',
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
-      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.1.0' }],
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion, manifest: {} }],
+      getInstallationRevision: () => revision,
       getRuntime: () => runtime,
       download: async (url: string) => {
         const response = responses.get(url)
@@ -350,8 +553,16 @@ describe('App marketplace', () => {
         manifest: { id: 'example.app', version: '1.2.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
-      installPackage: async () => ({ id: 'example.app', currentVersion: '1.2.0' }),
-      rollbackPackage: async (input: unknown) => { rollbacks.push(input) },
+      installPackage: async (_root: string, options: any) => {
+        currentVersion = '1.2.0'
+        revision = 8
+        options.onCommit({ installationRevision: revision })
+        return { id: 'example.app', currentVersion }
+      },
+      rollbackPackage: async (input: any) => {
+        recoveryOrder.push('package-rollback')
+        rollbacks.push(input); currentVersion = input.previousVersion; revision = 9; return true
+      },
       emitProgress: (value: unknown) => progress.push(value),
     })
 
@@ -360,10 +571,15 @@ describe('App marketplace', () => {
       appId: 'example.app',
       previousVersion: '1.1.0',
       failedVersion: '1.2.0',
+      expectedInstallationRevision: 8,
     }])
     expect(progress.slice(-3).map((value) => value.phase)).toEqual(['activating', 'rolling-back', 'error'])
     expect(progress.at(-1).error).toBe('backend did not start')
     expect(progress.some((value) => value.phase === 'completed')).toBe(false)
+    expect(currentVersion).toBe('1.1.0')
+    expect(runtimeVersion).toBe('1.0.0')
+    expect(runtimeGrants).toEqual(['agent:turns:write', 'platform:files'])
+    expect(recoveryOrder).toEqual(['package-rollback', 'runtime-lock'])
   })
 
   it('loads the catalog, asks for new permissions, then installs the selected signed version', async () => {
@@ -377,6 +593,7 @@ describe('App marketplace', () => {
       [latest.artifact.downloadUrl, archive],
     ])
     const calls: Array<{ version: string; grants: string[] }> = []
+    const changes: any[] = []
     const progress: any[] = []
     const runtime = {
       getInstallation: () => null,
@@ -392,6 +609,7 @@ describe('App marketplace', () => {
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
       getInstalledApps: async () => [],
       getRuntime: () => runtime,
+      emitChanged: async (value: any) => { changes.push(value) },
       emitProgress: (value: unknown) => progress.push(value),
       download: async (url: string, options: { onProgress?: (value: unknown) => void }) => {
         const response = responses.get(url)
@@ -407,7 +625,11 @@ describe('App marketplace', () => {
         manifest: { id: 'example.app', version: '1.2.0', permissions: latest.permissions },
         trust: { status: 'trusted', publisherId: 'moss', keyId: 'release-1' },
       }),
-      installPackage: async () => ({ id: 'example.app', name: 'example.app', currentVersion: '1.2.0' }),
+      installPackage: async (_root: string, options: any) => {
+        const app = { id: 'example.app', name: 'example.app', currentVersion: '1.2.0' }
+        await options.activateInstallation(app)
+        return app
+      },
     })
 
     const listing = await service.list({ forceRefresh: true })
@@ -420,6 +642,10 @@ describe('App marketplace', () => {
     expect(progress).toHaveLength(0)
     expect(await service.install({ appId: 'example.app', acceptPermissions: true })).toMatchObject({ ok: true, version: '1.2.0' })
     expect(calls).toEqual([{ version: '1.2.0', grants: ['agent:turns:write'] }])
+    expect(changes).toEqual([
+      { action: 'install', app: { id: 'example.app', name: 'example.app', currentVersion: '1.2.0' }, grants: ['agent:turns:write'] },
+      { action: 'marketplace-installed', appId: 'example.app' },
+    ])
     expect(progress.map((value) => value.phase)).toEqual([
       'downloading', 'downloading', 'verifying', 'extracting', 'validating', 'installing', 'activating', 'completed',
     ])
@@ -439,6 +665,7 @@ describe('App marketplace', () => {
       [latest.artifact.downloadUrl, archive],
     ])
     const registered: string[] = []
+    let confirmations = 0
     const runtime = {
       getInstallation: () => ({ activeVersion: '1.3.0', grants: ['agent:turns:write'] }),
       getApp: async () => { throw new Error('App requires Host API ^1.3.0; this Host provides 2.0.0') },
@@ -451,6 +678,7 @@ describe('App marketplace', () => {
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
       getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.3.0', packageStatus: 'incompatible' }],
       getRuntime: () => runtime,
+      confirmInstallation: async () => { confirmations += 1; return true },
       download: async (url: string) => {
         const response = responses.get(url)
         if (!response) throw new Error(`Unexpected URL: ${url}`)
@@ -472,6 +700,7 @@ describe('App marketplace', () => {
     })
     expect(await service.install({ appId: 'example.app' })).toMatchObject({ ok: true, version: '2.0.0' })
     expect(registered).toEqual(['2.0.0'])
+    expect(confirmations).toBe(1)
   })
 
   it('drops permissions removed by a newer marketplace version', async () => {
@@ -502,7 +731,7 @@ describe('App marketplace', () => {
       cachePath: path.join(root, 'catalog.json'),
       platform: 'darwin-arm64',
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
-      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.1.0' }],
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.1.0', manifest: {} }],
       getRuntime: () => runtime,
       download: async (url: string) => {
         const response = responses.get(url)
@@ -551,7 +780,7 @@ describe('App marketplace', () => {
       cachePath: path.join(root, 'catalog.json'),
       platform: 'darwin-arm64',
       trustedPublishers: { moss: { keys: { 'release-1': 'public key' } } },
-      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.2.0' }],
+      getInstalledApps: async () => [{ id: 'example.app', currentVersion: '1.2.0', manifest: {} }],
       getRuntime: () => runtime,
       download: async (url: string) => {
         if (url === 'https://example.com/index.json') return Buffer.from(JSON.stringify(catalog(activeVersion)))

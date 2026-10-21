@@ -1,7 +1,7 @@
-import type { AgentHostRequestMap, AgentHostResultMap, AccountHostRequestMap, AccountHostResultMap } from '../index.mjs'
+import type { AgentHostRequestMap, AgentHostResultMap, AccountHostRequestMap, AccountHostResultMap, AppCapabilitiesHostRequestMap, AppCapabilitiesHostResultMap } from '../index.mjs'
 import type { HostInputMap, HostOutputMap, HostEventMap } from '../../../host-contracts/src/generated.mjs'
-export interface HostInputs extends HostInputMap { 'moss.agent/v1': AgentHostRequestMap; 'moss.account/v1': AccountHostRequestMap }
-export interface HostOutputs extends HostOutputMap { 'moss.agent/v1': AgentHostResultMap; 'moss.account/v1': AccountHostResultMap }
+export interface HostInputs extends HostInputMap { 'moss.agent/v1': AgentHostRequestMap; 'moss.account/v1': AccountHostRequestMap; 'moss.app-capabilities/v1': AppCapabilitiesHostRequestMap }
+export interface HostOutputs extends HostOutputMap { 'moss.agent/v1': AgentHostResultMap; 'moss.account/v1': AccountHostResultMap; 'moss.app-capabilities/v1': AppCapabilitiesHostResultMap }
 export interface AppRequestOptions { requestId?: string; timeoutMs?: number; signal?: AbortSignal }
 export interface HostSubscriptionOptions { signal?: AbortSignal; onError?: (error: Error) => void }
 export interface TypedHostRequests {

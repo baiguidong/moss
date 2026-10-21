@@ -12,6 +12,10 @@
       "types": "./src/index.d.mts",
       "import": "./src/index.mjs"
     },
+    "./app-capabilities": {
+      "types": "./src/app-capabilities/index.d.mts",
+      "import": "./src/app-capabilities/index.mjs"
+    },
     "./execution": {
       "types": "./src/execution/index.d.mts",
       "import": "./src/execution/index.mjs"

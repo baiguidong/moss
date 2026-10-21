@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import {
   APP_ERROR_CODES,
   AppServiceError,
@@ -15,11 +16,15 @@ import {
   validateHostProtocol,
 } from '../../../app-sdk/src/index.mjs'
 import { redactAppValue } from '../logging/index.mjs'
+import { APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
 import { AppProcessLeases } from './lease.mjs'
 import { createAppWatchdog } from './watchdog.mjs'
 
 const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
 const MAX_HOST_REPLY_CACHE_ENTRIES = 128
+const MAX_CANCELED_ACTION_IDS = 4096
+const ACTIVITY_LEASE_MS = 120_000
+const MAX_ACTIVITY_END_TOMBSTONES = 1024
 const bootstrapUrl = new URL('./bootstrap.mjs', import.meta.url).href
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
@@ -66,6 +71,12 @@ function hostTransportCodes() {
   }
 }
 
+function canCompleteActivityAfterAction(hosted, protocol, method, input) {
+  if (protocol !== 'moss.runtime/v1') return false
+  if (method === 'activity.end') return true
+  return method === 'activity.renew' && hosted.activities.has(input?.id)
+}
+
 export class AppProcessSupervisor {
   constructor(options = {}) {
     this.nodeArgs = options.nodeArgs || []
@@ -75,6 +86,7 @@ export class AppProcessSupervisor {
     this.killTimeoutMs = options.killTimeoutMs || 2_000
     this.actionTimeoutMs = options.actionTimeoutMs || 30_000
     this.maxActionTimeoutMs = options.maxActionTimeoutMs || 300_000
+    this.actionCancelGraceMs = Math.max(100, Number(options.actionCancelGraceMs) || 5_000)
     this.hostRequestTimeoutMs = Math.max(100, Number(options.hostRequestTimeoutMs) || 30_000)
     this.hostEventTimeoutMs = Math.max(100, Number(options.hostEventTimeoutMs) || 30_000)
     this.maxHostTimeoutMs = Math.max(100, Number(options.maxHostTimeoutMs) || 300_000)
@@ -91,6 +103,7 @@ export class AppProcessSupervisor {
     this.onStatus = options.onStatus || (() => {})
     this.onEvent = options.onEvent || (() => {})
     this.onLog = options.onLog || (() => {})
+    this.shouldRestartOnDemand = options.shouldRestartOnDemand || (() => false)
     this.leases = new AppProcessLeases({
       directory: options.processesDir,
       killTimeoutMs: this.killTimeoutMs,
@@ -137,6 +150,7 @@ export class AppProcessSupervisor {
       pendingActions: hosted?.pending?.size || 0,
       pendingHostEvents: hosted?.pendingHostEvents?.size || 0,
       pendingHostRequests: hosted?.hostRequests?.size || 0,
+      activeWork: hosted?.activities?.size || 0,
     }
   }
 
@@ -153,7 +167,8 @@ export class AppProcessSupervisor {
   }
 
   async start(key, options = {}) {
-    return this.transition(key, () => this.startNow(key, options))
+    return this.transition(key, () => options.expectedDefinition && this.definitions.get(key) !== options.expectedDefinition
+      ? this.status(key) : this.startNow(key, options))
   }
 
   async startNow(key, options = {}) {
@@ -186,6 +201,7 @@ export class AppProcessSupervisor {
     await fsp.mkdir(definition.runtimeDir, { recursive: true })
     // Check immediately before reserving the process, after all asynchronous preparation.
     if (this.shuttingDown) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
+    if (options.expectedDefinition && this.definitions.get(key) !== options.expectedDefinition) return this.status(key)
     const running = [...this.processes.values()].filter((item) =>
       item.state === 'starting' || isChildRunning(item.child))
     if (running.length >= this.maxProcesses) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'Host App process limit reached')
@@ -198,16 +214,22 @@ export class AppProcessSupervisor {
       state: 'starting',
       child: null,
       pending: new Map(),
+      canceledActionIds: new Set(),
+      activeAppInvocations: new Set(),
+      actionCancelTimers: new Map(),
       seenReplies: new Set(),
       pendingHostEvents: new Map(),
       seenHostEventReplies: new Set(),
       hostRequests: new Map(),
       hostRequestReplies: new Map(),
+      activities: new Map(),
+      endedActivities: new Map(),
       startedAt: Date.now(),
       ready: null,
       readyResolve: null,
       readyReject: null,
       stopping: false,
+      terminating: false,
       failures: options.clearCrashLoop ? [] : current?.failures || this.failureHistory.get(key) || [],
       lastError: null,
       stderrTail: '',
@@ -232,6 +254,15 @@ export class AppProcessSupervisor {
     try {
       hosted.lease = await this.leases.acquire(definition)
       if (this.shuttingDown) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend supervisor is shutting down')
+      if (options.expectedDefinition && this.definitions.get(key) !== options.expectedDefinition) {
+        throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation changed before recovery')
+      }
+      if (options.recoveryGuard && !(await options.recoveryGuard())) {
+        throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'Pending App work is no longer eligible for recovery')
+      }
+      if (this.shuttingDown || (options.expectedDefinition && this.definitions.get(key) !== options.expectedDefinition)) {
+        throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime changed before recovery')
+      }
       child = spawn(this.nodeExecutable, [...this.nodeArgs, '--import', bootstrapUrl, entryPath, hosted.lease.marker], {
         cwd: definition.packageRoot,
         env: minimalEnvironment({
@@ -445,6 +476,9 @@ export class AppProcessSupervisor {
     }
     if (!['action.result', 'action.error'].includes(message.type)) return
     const requestId = payload.requestId || message.id
+    // A canceled Action still occupies its queue slot until the Backend confirms
+    // it stopped, so a later Action cannot overtake work that ignored cancellation.
+    this.clearActionTracking(hosted, requestId)
     if (hosted.seenReplies.has(requestId)) return
     hosted.seenReplies.add(requestId)
     if (hosted.seenReplies.size > 1000) hosted.seenReplies.delete(hosted.seenReplies.values().next().value)
@@ -453,7 +487,8 @@ export class AppProcessSupervisor {
     hosted.pending.delete(requestId)
     clearTimeout(pending.timeout)
     pending.signal?.removeEventListener('abort', pending.abortHandler)
-    if (message.type === 'action.result') pending.resolve(payload.result)
+    if (pending.cancellationReason) pending.reject(pending.cancellationReason)
+    else if (message.type === 'action.result') pending.resolve(payload.result)
     else pending.reject(errorFromPayload(payload, Object.values(hosted.definition.secrets || {})))
     this.scheduleIdleStop(key, hosted)
   }
@@ -463,6 +498,36 @@ export class AppProcessSupervisor {
     const codes = hostTransportCodes()
     const requestId = String(message.id || '')
     const fingerprint = hostFingerprint(payload.protocol, payload.method, payload.input)
+    const actionRequestId = String(payload.actionRequestId || '')
+    const actionRequest = actionRequestId ? hosted.pending.get(actionRequestId) : null
+    if (hosted.stopping || hosted.terminating || hosted.state === 'stopping') {
+      this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
+        APP_ERROR_CODES.hostUnavailable,
+        'App Backend is stopping',
+      ), { cache: false, fingerprint })
+      return
+    }
+    // actionRequestId is supplied by the Backend and can be omitted or forged.
+    // Do not use it to decide whether another App may be called while this
+    // process is serving an inbound cross-App action. Check before replaying a
+    // cached Host reply as well.
+    if (payload.protocol === APP_CAPABILITIES_PROTOCOL
+      && ['provider.invoke', 'resource.read', 'tool.invoke'].includes(payload.method)
+      && hosted.activeAppInvocations.size > 0) {
+      this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
+        APP_ERROR_CODES.permissionDenied,
+        'Nested cross-App calls are not supported',
+      ), { cache: false, fingerprint })
+      return
+    }
+    if (actionRequestId && !canCompleteActivityAfterAction(hosted, payload.protocol, payload.method, payload.input)
+      && (actionRequest?.cancellationReason || hosted.canceledActionIds.has(actionRequestId))) {
+      this.sendHostResponse(hosted, message, false, undefined, new AppServiceError(
+        APP_ERROR_CODES.actionCanceled,
+        'Action is no longer active',
+      ), { cache: false, fingerprint })
+      return
+    }
     const cached = hosted.hostRequestReplies.get(requestId)
     if (cached) {
       if (cached.fingerprint === fingerprint) this.send(hosted, cached.response)
@@ -501,10 +566,8 @@ export class AppProcessSupervisor {
       this.sendHostResponse(hosted, message, false, undefined, error, { fingerprint })
       return
     }
-    const actionRequestId = String(payload.actionRequestId || '')
-    const actionRequest = actionRequestId ? hosted.pending.get(actionRequestId) : null
     const controller = new AbortController()
-    const active = { controller, fingerprint, protocol, timer: null, finish: null }
+    const active = { controller, fingerprint, protocol, method, input, actionRequestId, timer: null, finish: null }
     const finish = (ok, result, error) => {
       if (hosted.hostRequests.get(requestId) !== active) return
       clearTimeout(active.timer)
@@ -515,6 +578,7 @@ export class AppProcessSupervisor {
         hosted.hostRequestReplies.delete(hosted.hostRequestReplies.keys().next().value)
       }
       if (this.processes.get(key) === hosted && !hosted.stopping) this.send(hosted, response)
+      this.scheduleIdleStop(key, hosted)
     }
     active.finish = finish
     active.timer = setTimeout(() => {
@@ -605,6 +669,30 @@ export class AppProcessSupervisor {
     return true
   }
 
+  clearActionTracking(hosted, requestId) {
+    hosted.activeAppInvocations.delete(requestId)
+    const timer = hosted.actionCancelTimers.get(requestId)
+    if (timer) clearTimeout(timer)
+    hosted.actionCancelTimers.delete(requestId)
+  }
+
+  stopUnresponsiveCanceledAction(key, hosted, requestId) {
+    if (hosted.actionCancelTimers.has(requestId)) return
+    const graceMs = hosted.definition.lifecycle === 'on-demand'
+      ? Math.min(this.actionCancelGraceMs, hosted.definition.idleTimeoutMs || this.idleTimeoutMs)
+      : this.actionCancelGraceMs
+    const timer = setTimeout(() => {
+      hosted.actionCancelTimers.delete(requestId)
+      void this.transition(key, async () => {
+        if (this.processes.get(key) === hosted && hosted.pending.get(requestId)?.cancellationReason && !hosted.stopping) {
+          await this.stopNow(key)
+        }
+      }).catch(() => {})
+    }, graceMs)
+    timer.unref?.()
+    hosted.actionCancelTimers.set(requestId, timer)
+  }
+
   handleHostEventResponse(key, hosted, message) {
     const payload = message.payload || {}
     let protocol
@@ -670,7 +758,9 @@ export class AppProcessSupervisor {
     await this.start(key)
     if (options.signal?.aborted) throw abortError(options.signal)
     const hosted = this.processes.get(key)
-    if (!hosted || hosted.state !== 'running') throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend is not running')
+    if (!hosted || hosted.state !== 'running' || hosted.terminating) {
+      throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend is not running')
+    }
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
     const requestId = randomUUID() // Transport attempts are distinct from caller submission identity.
     if (hosted.pending.has(requestId)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, `Duplicate action request: ${requestId}`)
@@ -683,7 +773,15 @@ export class AppProcessSupervisor {
         name: actionName,
         input,
         submissionId: String(options.requestId || requestId),
-        source: { surface: options.invocation?.surface, workspace: options.invocation?.workspace },
+        source: { surface: options.invocation?.surface, workspace: options.invocation?.workspace,
+          ...(options.invocation?.surface === 'app' ? {
+            callerAppId: options.invocation.callerAppId,
+            callerInstanceId: options.invocation.callerInstanceId,
+            protocol: options.invocation.protocol,
+            method: options.invocation.method,
+            traceId: options.invocation.traceId,
+          } : {}),
+        },
         principal: options.principal || hosted.definition.owner || null,
         generation: hosted.definition.generation,
         launchToken: hosted.launchToken,
@@ -692,13 +790,13 @@ export class AppProcessSupervisor {
     } catch (error) {
       throw new AppServiceError(APP_ERROR_CODES.invalidInput, `App action input cannot be serialized: ${error.message}`)
     }
+    // Authorization may change while the Action is queued or its Backend starts.
+    // Run the caller's synchronous check immediately before dispatch, without a yield.
+    options.authorizeDispatch?.()
+    if (options.signal?.aborted) throw abortError(options.signal)
     const promise = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        hosted.pending.delete(requestId)
-        options.signal?.removeEventListener('abort', abortHandler)
-        this.send(hosted, createEnvelope('action.cancel', { requestId, generation: hosted.definition.generation, launchToken: hosted.launchToken }))
-        reject(new AppServiceError(APP_ERROR_CODES.actionTimeout, `App action timed out after ${timeoutMs}ms`))
-        this.scheduleIdleStop(key, hosted)
+        this.cancel(key, requestId, new AppServiceError(APP_ERROR_CODES.actionTimeout, `App action timed out after ${timeoutMs}ms`))
       }, timeoutMs)
       const abortHandler = () => this.cancel(key, requestId, abortError(options.signal))
       hosted.pending.set(requestId, {
@@ -710,6 +808,7 @@ export class AppProcessSupervisor {
         invocation: options.invocation || null,
         principal: options.principal || hosted.definition.owner || null,
       })
+      if (options.invocation?.surface === 'app') hosted.activeAppInvocations.add(requestId)
       options.signal?.addEventListener('abort', abortHandler, { once: true })
     })
     if (!hosted.pending.has(requestId)) return promise
@@ -717,9 +816,10 @@ export class AppProcessSupervisor {
       const pending = hosted.pending.get(requestId)
       if (!pending) return
       hosted.pending.delete(requestId)
+      this.clearActionTracking(hosted, requestId)
       clearTimeout(pending.timeout)
       pending.signal?.removeEventListener('abort', pending.abortHandler)
-      pending.reject(new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Cannot invoke App Backend: ${error.message}`))
+      pending.reject(pending.cancellationReason || new AppServiceError(APP_ERROR_CODES.backendUnavailable, `Cannot invoke App Backend: ${error.message}`))
     })
     return promise
   }
@@ -727,13 +827,22 @@ export class AppProcessSupervisor {
   cancel(key, requestId, reason) {
     const hosted = this.processes.get(key)
     const pending = hosted?.pending.get(requestId)
-    if (!hosted || !pending) return false
-    hosted.pending.delete(requestId)
+    if (!hosted || !pending || pending.cancellationReason) return false
+    pending.cancellationReason = reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled')
+    hosted.canceledActionIds.add(requestId)
+    if (hosted.canceledActionIds.size > MAX_CANCELED_ACTION_IDS) {
+      hosted.canceledActionIds.delete(hosted.canceledActionIds.values().next().value)
+    }
     clearTimeout(pending.timeout)
     pending.signal?.removeEventListener('abort', pending.abortHandler)
-    pending.reject(reason || new AppServiceError(APP_ERROR_CODES.actionCanceled, 'App action canceled'))
+    for (const [hostRequestId, active] of [...hosted.hostRequests]) {
+      if (active.actionRequestId === requestId
+        && !canCompleteActivityAfterAction(hosted, active.protocol, active.method, active.input)) {
+        this.cancelHostRequest(hosted, hostRequestId, active.protocol, APP_ERROR_CODES.actionCanceled)
+      }
+    }
+    this.stopUnresponsiveCanceledAction(key, hosted, requestId)
     this.send(hosted, createEnvelope('action.cancel', { requestId, generation: hosted.definition.generation, launchToken: hosted.launchToken }))
-    this.scheduleIdleStop(key, hosted)
     return true
   }
 
@@ -747,7 +856,7 @@ export class AppProcessSupervisor {
     const normalizedData = validateHostData(data, `${normalizedProtocol} ${normalizedName} data`)
     const existing = this.processes.get(key)
     if (options.onlyIfRunning) {
-      if (existing?.state !== 'running' || existing.stopping) {
+      if (existing?.state !== 'running' || existing.stopping || existing.terminating) {
         throw new AppServiceError(codes.unavailable, 'App Backend is not running')
       }
     } else if (!(existing?.state === 'starting' && existing.handshakeState === 'waiting-ready')) await this.start(key)
@@ -755,7 +864,7 @@ export class AppProcessSupervisor {
       throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host event canceled')
     }
     const hosted = this.processes.get(key)
-    if (!hosted || !['starting', 'running'].includes(hosted.state)) {
+    if (!hosted || hosted.terminating || !['starting', 'running'].includes(hosted.state)) {
       throw new AppServiceError(codes.unavailable, 'App Backend is not running')
     }
     if (hosted.pendingHostEvents.size >= this.maxPendingHostEvents) {
@@ -860,10 +969,59 @@ export class AppProcessSupervisor {
       || hosted.pending.size > 0
       || hosted.pendingHostEvents.size > 0
       || hosted.hostRequests.size > 0
+      || hosted.activities.size > 0
       || hosted.state !== 'running'
     ) return
-    hosted.idleTimer = setTimeout(() => this.stop(key).catch(() => {}), hosted.definition.idleTimeoutMs || this.idleTimeoutMs)
+    hosted.idleTimer = setTimeout(() => this.transition(key, async () => {
+      if (this.processes.get(key) !== hosted || hosted.state !== 'running') return
+      if (hosted.pending.size || hosted.pendingHostEvents.size || hosted.hostRequests.size || hosted.activities.size) return
+      await this.stopNow(key)
+    }).catch(() => {}), hosted.definition.idleTimeoutMs || this.idleTimeoutMs)
     hosted.idleTimer.unref?.()
+  }
+
+  setActivity(key, generation, id, operation) {
+    const hosted = this.processes.get(key)
+    const initializing = hosted?.state === 'starting' && ['waiting-ready', 'ready'].includes(hosted.handshakeState)
+    if (!hosted || hosted.stopping || hosted.terminating || (!initializing && hosted.state !== 'running')
+      || hosted.definition.generation !== generation) {
+      throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App Backend activity belongs to a stale runtime')
+    }
+    if (hosted.definition.lifecycle !== 'on-demand') {
+      throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Activity tracking requires an on-demand Backend')
+    }
+    const now = performance.now()
+    for (const [endedId, expiresAt] of hosted.endedActivities) {
+      if (expiresAt > now) break
+      hosted.endedActivities.delete(endedId)
+    }
+    const existing = hosted.activities.get(id)
+    if (operation === 'end') {
+      if (existing) clearTimeout(existing)
+      hosted.activities.delete(id)
+      // A canceled begin or renew can finish after its compensating end.
+      hosted.endedActivities.delete(id)
+      // A begin/renew request can still be in flight after a compensating end.
+      // Keep the marker through the longest permitted Host request window.
+      hosted.endedActivities.set(id, now + Math.max(ACTIVITY_LEASE_MS, this.maxHostTimeoutMs + 1_000))
+      if (hosted.endedActivities.size > MAX_ACTIVITY_END_TOMBSTONES) {
+        hosted.endedActivities.delete(hosted.endedActivities.keys().next().value)
+      }
+      this.scheduleIdleStop(key, hosted)
+      return { active: false }
+    }
+    if (hosted.endedActivities.has(id)) return { active: false }
+    if (!existing && hosted.activities.size >= 32) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Backend activity limit reached')
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      if (this.processes.get(key) !== hosted || hosted.activities.get(id) !== timer) return
+      hosted.activities.delete(id)
+      this.scheduleIdleStop(key, hosted)
+    }, ACTIVITY_LEASE_MS)
+    timer.unref?.()
+    hosted.activities.set(id, timer)
+    if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
+    return { active: true }
   }
 
   async stop(key) { return this.transition(key, () => this.stopNow(key)) }
@@ -894,7 +1052,11 @@ export class AppProcessSupervisor {
   }
 
   async terminate(hosted) {
+    hosted.terminating = true
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
+    for (const timer of hosted.activities.values()) clearTimeout(timer)
+    hosted.activities.clear()
+    hosted.endedActivities.clear()
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
     this.clearHostWork(hosted)
@@ -931,11 +1093,18 @@ export class AppProcessSupervisor {
   handleExit(key, hosted, code, signal) {
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     if (hosted.idleTimer) clearTimeout(hosted.idleTimer)
+    for (const timer of hosted.activities.values()) clearTimeout(timer)
+    hosted.activities.clear()
+    hosted.endedActivities.clear()
     void this.releaseLease(hosted).catch(error => {
       hosted.lastError = `App Backend ownership cleanup failed: ${error.message}`
       this.log(hosted, 'error', hosted.lastError)
     })
-    if (this.processes.get(key) !== hosted) return
+    if (this.processes.get(key) !== hosted) {
+      this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
+      this.clearHostWork(hosted)
+      return
+    }
     if (hosted.state === 'starting') {
       const detail = redactAppValue(hosted.stderrTail.trim(), Object.values(hosted.definition.secrets || {}))
       hosted.readyReject(new AppServiceError(APP_ERROR_CODES.handshakeFailed, `App Backend exited before handshake: ${code ?? 'null'}${detail ? `\n${detail}` : ''}`))
@@ -957,15 +1126,36 @@ export class AppProcessSupervisor {
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, hosted.lastError))
     this.clearHostWork(hosted, hosted.lastError)
     this.emitStatus(key)
-    if (hosted.state === 'crash-loop' || hosted.definition.lifecycle !== 'persistent') return
+    const recoverPending = hosted.definition.lifecycle === 'on-demand'
+      && hosted.definition.protocols?.includes('moss.runtime/v1')
+    if (hosted.state === 'crash-loop' || (hosted.definition.lifecycle !== 'persistent' && !recoverPending)) return
     const delay = Math.min(this.maxRestartDelayMs, this.restartBaseDelayMs * (2 ** Math.max(0, hosted.failures.length - 1)))
     hosted.restartTimer = setTimeout(() => {
-      void this.releaseLease(hosted).then(() => {
-        if (this.processes.get(key) === hosted && !hosted.stopping && !this.shuttingDown) {
-          this.processes.delete(key)
-          this.start(key).catch(() => {})
+      void this.releaseLease(hosted).then(async () => {
+        if (this.processes.get(key) !== hosted || hosted.stopping || this.shuttingDown) return
+        let current
+        if (recoverPending) {
+          current = this.definitions.get(key)
+          if (!current || current.version !== hosted.definition.version
+            || current.generation !== hosted.definition.generation
+            || current.installationIncarnationId !== hosted.definition.installationIncarnationId
+            || current.instanceIncarnationId !== hosted.definition.instanceIncarnationId
+            || !(await this.shouldRestartOnDemand(hosted.definition))) return
         }
-      }).catch(() => {})
+        // The eligibility check may have awaited the disk or installation state.
+        if (this.processes.get(key) !== hosted || hosted.stopping || this.shuttingDown) return
+        if (recoverPending && this.definitions.get(key) !== current) return
+        this.processes.delete(key)
+        this.start(key, recoverPending ? {
+          expectedDefinition: current,
+          recoveryGuard: () => this.shouldRestartOnDemand(hosted.definition),
+        } : {}).catch(() => {})
+      }).catch(error => {
+        if (!recoverPending || this.processes.get(key) !== hosted) return
+        hosted.lastError = `Pending task recovery check failed: ${error.message}`
+        this.log(hosted, 'error', hosted.lastError)
+        this.emitStatus(key)
+      })
     }, delay)
     hosted.restartTimer.unref?.()
   }
@@ -988,9 +1178,13 @@ export class AppProcessSupervisor {
     for (const pending of hosted.pending.values()) {
       clearTimeout(pending.timeout)
       pending.signal?.removeEventListener('abort', pending.abortHandler)
-      pending.reject(error)
+      pending.reject(pending.cancellationReason || error)
     }
     hosted.pending.clear()
+    for (const timer of hosted.actionCancelTimers.values()) clearTimeout(timer)
+    hosted.actionCancelTimers.clear()
+    hosted.activeAppInvocations.clear()
+    hosted.canceledActionIds.clear()
   }
 
   async restart(key) {

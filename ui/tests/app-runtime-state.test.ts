@@ -235,6 +235,37 @@ describe('App package and state stores', () => {
     expect(new RuntimeStore(state).list('example.app')[0]).not.toHaveProperty('unused')
   })
 
+  it('migrates persistent JSON identities and changes them after record recreation', async () => {
+    const root = await tempRoot()
+    const statePath = path.join(root, 'state.json')
+    await fs.writeFile(statePath, JSON.stringify({ version: 5,
+      installations: { 'example.app': { appId: 'example.app', activeVersion: '1.0.0', enabled: true,
+        grants: [], createdAt: 1, updatedAt: 1 } },
+      instances: { 'example.app--default': { id: 'example.app--default', appId: 'example.app',
+        displayName: 'Default', config: {}, secretRefs: {}, enabled: true, createdAt: 1, updatedAt: 1 } },
+      runtimes: {},
+    }))
+    let state = await new JsonAppStateStore(statePath).initialize()
+    let installations = new InstallationStore(state)
+    let instances = new InstanceStore(state)
+    const installationId = installations.get('example.app')?.incarnationId
+    const instanceId = instances.get('example.app--default')?.incarnationId
+    expect(installationId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(instanceId).toMatch(/^[0-9a-f-]{36}$/)
+
+    state = await new JsonAppStateStore(statePath).initialize()
+    installations = new InstallationStore(state)
+    instances = new InstanceStore(state)
+    expect(installations.get('example.app')?.incarnationId).toBe(installationId)
+    expect(instances.get('example.app--default')?.incarnationId).toBe(instanceId)
+    await installations.remove('example.app')
+    await instances.remove('example.app--default')
+    const replacementInstallation = await installations.upsert('example.app', { activeVersion: '1.0.0' })
+    const replacementInstance = await instances.create('example.app')
+    expect(replacementInstallation.incarnationId).not.toBe(installationId)
+    expect(replacementInstance.incarnationId).not.toBe(instanceId)
+  })
+
   it('isolates identical App and instance ids by owner', async () => {
     const root = await tempRoot()
     const state = await new JsonAppStateStore(path.join(root, 'state.json')).initialize()
@@ -299,9 +330,66 @@ describe('App package and state stores', () => {
       assert.deepEqual(installations.get('example.app').owner, { scope: 'host', orgId: null, userId: null, key: 'host' });
       assert.equal(installations.get('example.app').activeVersion, '1.0.0');
       assert.deepEqual(installations.get('example.app').grants, []);
+      const installationId = installations.get('example.app').incarnationId;
+      const instanceId = instances.get('example.app--default').incarnationId;
+      assert.match(installationId, /^[0-9a-f-]{36}$/);
+      assert.match(instanceId, /^[0-9a-f-]{36}$/);
       assert.equal(instances.get('example.app--default').owner.scope, 'host');
       assert.deepEqual(runtimes.list('example.app'), []);
       state.close();
+      const restored = await new SqliteAppStateStore(databasePath).initialize();
+      const restoredInstallations = new InstallationStore(restored);
+      const restoredInstances = new InstanceStore(restored);
+      assert.equal(restoredInstallations.get('example.app').incarnationId, installationId);
+      assert.equal(restoredInstances.get('example.app--default').incarnationId, instanceId);
+      await restoredInstallations.remove('example.app');
+      await restoredInstances.remove('example.app--default');
+      assert.notEqual((await restoredInstallations.upsert('example.app', { activeVersion: '1.0.0' })).incarnationId, installationId);
+      assert.notEqual((await restoredInstances.create('example.app')).incarnationId, instanceId);
+      restored.close();
+    `
+    const nodeExecutable = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
+    expect(() => execFileSync(nodeExecutable, ['--no-warnings', '--input-type=module', '-e', script], { stdio: 'pipe' })).not.toThrow()
+  })
+
+  it('adds persistent identities to existing owner-aware SQLite state', async () => {
+    const root = await tempRoot()
+    const databasePath = path.join(root, 'owner-aware.sqlite')
+    const stateModuleUrl = new URL('../../packages/app-runtime/src/state/index.mjs', import.meta.url).href
+    const script = `
+      import assert from 'node:assert/strict';
+      import { DatabaseSync } from 'node:sqlite';
+      import { SqliteAppStateStore, InstallationStore, InstanceStore } from ${JSON.stringify(stateModuleUrl)};
+      const databasePath = ${JSON.stringify(databasePath)};
+      const old = new DatabaseSync(databasePath);
+      old.exec(\`
+        CREATE TABLE app_installations (
+          record_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
+          org_id TEXT, user_id TEXT, app_id TEXT NOT NULL, active_version TEXT,
+          enabled INTEGER NOT NULL DEFAULT 0, grants_json TEXT NOT NULL DEFAULT '[]',
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE app_instances (
+          record_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
+          org_id TEXT, user_id TEXT, id TEXT NOT NULL, app_id TEXT NOT NULL, display_name TEXT NOT NULL,
+          config_json TEXT NOT NULL, secret_refs_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        INSERT INTO app_installations VALUES ('example.app', 'host', 'host', NULL, NULL, 'example.app', '1.0.0', 1, '[]', 1, 1);
+        INSERT INTO app_instances VALUES ('example.app--default', 'host', 'host', NULL, NULL,
+          'example.app--default', 'example.app', 'Default', '{}', '{}', 1, 1, 1);
+      \`);
+      old.close();
+      const state = await new SqliteAppStateStore(databasePath).initialize();
+      const installationId = new InstallationStore(state).get('example.app').incarnationId;
+      const instanceId = new InstanceStore(state).get('example.app--default').incarnationId;
+      assert.match(installationId, /^[0-9a-f-]{36}$/);
+      assert.match(instanceId, /^[0-9a-f-]{36}$/);
+      state.close();
+      const restored = await new SqliteAppStateStore(databasePath).initialize();
+      assert.equal(new InstallationStore(restored).get('example.app').incarnationId, installationId);
+      assert.equal(new InstanceStore(restored).get('example.app--default').incarnationId, instanceId);
+      restored.close();
     `
     const nodeExecutable = execFileSync('which', ['node'], { encoding: 'utf8' }).trim()
     expect(() => execFileSync(nodeExecutable, ['--no-warnings', '--input-type=module', '-e', script], { stdio: 'pipe' })).not.toThrow()

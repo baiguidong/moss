@@ -15,6 +15,7 @@ export type AppHostCapabilityContext = {
   dataDir: string | null
   runtimeDir: string | null
   requestId: string
+  invocation?: { surface?: string; workspace?: string; callerAppId?: string; callerInstanceId?: string } | null
   protocol: string
   method: string
   permission: string | null
@@ -39,6 +40,21 @@ export interface AppStateStore {
   records(section: string, predicate?: (record: any) => boolean): any[]
   record(section: string, key: string): any | null
   transaction<T>(mutator: (state: Record<string, any>) => T | Promise<T>): Promise<T>
+}
+
+export const APP_CAPABILITIES_PROTOCOL: 'moss.app-capabilities/v1'
+export class AppCapabilityBroker {
+  constructor(runtime: AppRuntimeHost)
+  initialize(): Promise<void>
+  setToolBridge(bridge: AppToolBridge | null): void
+}
+
+export interface AppToolBridge {
+  discoverBridgeTools(input: { targetAppId: string; targetInstanceId: string; serviceId?: string; toolNames: string[]; signal?: AbortSignal }): Promise<Array<{
+    appId: string; instanceId: string; serviceId: string; serviceName?: string; revision: string; name: string; description?: string; inputSchema: Record<string, unknown>
+  }>>
+  invokeBridgeTool(input: { targetAppId: string; targetInstanceId: string; serviceId: string; revision: string; toolName: string;
+    arguments: Record<string, unknown>; signal?: AbortSignal; authorizeDispatch: () => void }): Promise<unknown>
 }
 
 export class AppRuntimeHost {
@@ -77,6 +93,7 @@ export class AppRuntimeHost {
   cancel(appId: string, instanceId: string, requestId: string): boolean
   registerHostProtocol(definition: Record<string, any>): () => void
   registerHostHandler(protocol: string, method: string, handler: (input: Record<string, unknown>, context: AppHostCapabilityContext) => unknown | Promise<unknown>): () => void
+  setAppToolBridge(bridge: AppToolBridge | null): void
   requestHostCapability(appId: string, instanceId: string, protocol: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal; principal?: Partial<AppOwner>; sourceId?: number }): Promise<unknown>
   dispatchHostRequest(request: Record<string, any>): Promise<unknown>
   publishHostEvent(appId: string, instanceId: string, protocol: string, name: string, data?: Record<string, unknown>, options?: Record<string, any>): Promise<unknown>
@@ -91,6 +108,7 @@ export class AppRuntimeHost {
   readonly packages: AppPackageStore
   readonly actions: AppActionBroker
   readonly hostCapabilities: AppHostCapabilityRegistry
+  readonly appCapabilities: AppCapabilityBroker
   readonly events: AppEventBroker
   readonly logs: AppLogStore
   readonly supervisor: AppProcessSupervisor

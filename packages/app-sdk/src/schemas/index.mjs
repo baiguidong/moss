@@ -2,14 +2,25 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
 import semver from 'semver'
+import { contracts } from '../../../host-contracts/src/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.16.0'
+export const APP_HOST_API_VERSION = '3.19.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
+// Legacy manifest fields are discarded during normalization. Capability declarations are
+// security relevant, so reject unknown fields before the general validator can strip them.
+const validateAppCapabilitiesSchema = new Ajv2020({ allErrors: true, strict: false })
+  .compile(APP_MANIFEST_SCHEMA.properties.appCapabilities)
+const HOST_TOOL_METHODS = new Set([
+  'moss.host/v1:info.get',
+  'moss.cloud-storage/v1:status.get', 'moss.cloud-storage/v1:quota.get',
+  'moss.cloud-storage/v1:files.list', 'moss.cloud-storage/v1:files.get',
+  'moss.cloud-storage/v1:transfers.list', 'moss.cloud-storage/v1:transfers.get',
+])
 
 export function ensureSafeRelativePath(value, fieldName = 'path') {
   const raw = String(value || '').trim()
@@ -131,10 +142,22 @@ function normalizeContributes(contributes, manifest) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Each tool in a services App must reference a declared serviceId')
     }
     const native = tool.execution === 'native'
+    const host = tool.execution === 'host'
     if (native && (!manifest.nativeAdapter || tool.permission !== 'desktop:control' || manifest.toolScope !== 'session')) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Native tools require a nativeAdapter, desktop:control permission and session scope')
     }
-    const action = native ? null : requireAction(tool.action, `tool ${tool.id}`)
+    if (host) {
+      const target = `${tool.host?.protocol}:${tool.host?.method}`
+      const member = contracts[tool.host?.protocol]?.methods?.[tool.host?.method]
+      if (!semver.subset(manifest.hostApi, '>=3.17.0') || !HOST_TOOL_METHODS.has(target) || !member
+        || !manifest.host?.protocols?.includes(tool.host.protocol) || tool.action !== undefined || tool.effect !== 'read'
+        || (member.permission || undefined) !== tool.permission || (member.permission && !requestedPermissions.has(member.permission))) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `tool ${tool.id} has an invalid Host method mapping`)
+      }
+    } else if (!tool.action || tool.host) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `tool ${tool.id} requires a Backend or native action`)
+    }
+    const action = native || host ? null : requireAction(tool.action, `tool ${tool.id}`)
     const inputSchema = ensureSafeRelativePath(tool.inputSchema, `tool ${tool.id} inputSchema`)
     const outputSchema = tool.outputSchema
       ? ensureSafeRelativePath(tool.outputSchema, `tool ${tool.id} outputSchema`)
@@ -146,7 +169,8 @@ function normalizeContributes(contributes, manifest) {
       id: tool.id,
       title: tool.title.trim(),
       description: tool.description.trim(),
-      action: tool.action,
+      ...(tool.action ? { action: tool.action } : {}),
+      ...(host ? { host: { protocol: tool.host.protocol, method: tool.host.method }, execution: 'host' } : {}),
       ...(tool.serviceId ? { serviceId: tool.serviceId } : {}),
       ...(native ? { execution: 'native' } : {}),
       ...(tool.instructions ? { instructions: ensureSafeRelativePath(tool.instructions, `tool ${tool.id} instructions`) } : {}),
@@ -225,6 +249,74 @@ function normalizeBackend(backend) {
   }
 }
 
+function normalizeAppCapabilities(candidate) {
+  const capabilities = candidate.appCapabilities
+  if (!capabilities) return undefined
+  if (!semver.subset(candidate.hostApi, '>=3.18.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Cross-App capabilities require hostApi >=3.18.0')
+  }
+  const provides = capabilities.provides || []
+  const requires = capabilities.requires || []
+  const usesTools = capabilities.usesTools || []
+  if (usesTools.length && !semver.subset(candidate.hostApi, '>=3.19.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Cross-App tool calls require hostApi >=3.19.0')
+  }
+  if (provides.length && !candidate.backend) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Cross-App providers require a Backend')
+  }
+  if ((requires.length || usesTools.length) && (!candidate.host?.protocols?.includes('moss.app-capabilities/v1')
+    || !candidate.permissions.includes('apps:invoke'))) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Cross-App consumers require moss.app-capabilities/v1 and apps:invoke')
+  }
+  const actionMap = new Map((candidate.backend?.actions || []).map(action => [action.name, action]))
+  const permissions = new Set(candidate.permissions)
+  const protocols = new Set()
+  for (const provider of provides) {
+    if (protocols.has(provider.protocol)) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate provided protocol: ${provider.protocol}`)
+    protocols.add(provider.protocol)
+    const methods = new Set()
+    for (const method of provider.methods) {
+      if (methods.has(method.name)) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate provided method: ${provider.protocol} ${method.name}`)
+      methods.add(method.name)
+      const action = actionMap.get(method.action)
+      if (!action?.inputSchema || !action?.outputSchema) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Provided method ${provider.protocol} ${method.name} requires a declared Action with input and output schemas`)
+      }
+      if (!permissions.has(method.permission)) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Provided method ${provider.protocol} ${method.name} references undeclared permission`)
+      }
+    }
+    for (const method of provider.methods) if (method.resourceReadMethod) {
+      const read = provider.methods.find(item => item.name === method.resourceReadMethod)
+      if (!read || read.resourceReadMethod || read.name === method.name) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Provided method ${provider.protocol} ${method.name} references an invalid resource reader`)
+      }
+      if (read.permission !== method.permission) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Provided method ${provider.protocol} ${method.name} and its resource reader must use the same permission`)
+      }
+    }
+  }
+  const dependencies = new Set()
+  for (const dependency of requires) {
+    if (dependencies.has(dependency.protocol)) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate required protocol: ${dependency.protocol}`)
+    dependencies.add(dependency.protocol)
+  }
+  const toolTargets = new Set()
+  for (const target of usesTools) {
+    if (target.appId === candidate.id) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'An App cannot declare its own tools as cross-App dependencies')
+    if (toolTargets.has(target.appId)) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Duplicate cross-App tool target: ${target.appId}`)
+    toolTargets.add(target.appId)
+    if (target.tools.some(name => name !== name.trim())) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Cross-App tool names must not have surrounding whitespace: ${target.appId}`)
+    }
+  }
+  return {
+    provides: provides.map(provider => ({ protocol: provider.protocol, methods: provider.methods.map(method => ({ ...method })) })),
+    requires: requires.map(dependency => ({ protocol: dependency.protocol, optional: dependency.optional === true })),
+    usesTools: usesTools.map(target => ({ appId: target.appId, tools: [...target.tools] })),
+  }
+}
+
 function validateNavigation(manifest, contributes, required) {
   const navigation = manifest.navigation
   const settings = contributes?.settings || []
@@ -258,6 +350,13 @@ function validateNavigation(manifest, contributes, required) {
 export function validateAppManifest(rawManifest, options = {}) {
   if (rawManifest?.backend && Object.hasOwn(rawManifest.backend, 'protocols')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Declare App Host protocols in host.protocols')
   const candidate = structuredClone(rawManifest)
+  if (candidate && Object.hasOwn(candidate, 'appCapabilities') && !validateAppCapabilitiesSchema(candidate.appCapabilities)) {
+    throw new AppServiceError(
+      APP_ERROR_CODES.invalidManifest,
+      `Invalid appCapabilities declaration: ${formatAjvErrors(validateAppCapabilitiesSchema.errors)}`,
+      validateAppCapabilitiesSchema.errors,
+    )
+  }
   if (!validateManifestSchema(candidate)) {
     throw new AppServiceError(
       APP_ERROR_CODES.invalidManifest,
@@ -299,18 +398,25 @@ export function validateAppManifest(rawManifest, options = {}) {
   if ((candidate.toolSelection !== undefined || candidate.contributes?.services?.length || candidate.contributes?.tools?.some(tool => tool.serviceId)) && !semver.subset(candidate.hostApi, '>=3.8.0')) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'App subservices require hostApi >=3.8.0')
   }
+  if (candidate.host?.protocols?.some(protocol => ['moss.runtime/v1', 'moss.artifacts/v1'].includes(protocol)) && !semver.subset(candidate.hostApi, '>=3.17.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Backend activity and artifact services require hostApi >=3.17.0')
+  }
   if (candidate.toolSelection !== 'services' && (candidate.contributes?.services?.length || candidate.contributes?.tools?.some(tool => tool.serviceId))) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Service declarations require toolSelection services')
   }
   if (candidate.mcpApp || candidate.ui?.builtin) {
     if (!semver.subset(candidate.hostApi, '>=3.9.0')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP configuration Apps require hostApi >=3.9.0')
-    if (!candidate.mcpApp || candidate.ui?.builtin !== 'mcp' || candidate.backend || candidate.nativeAdapter) {
-      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP configuration Apps require the Core builtin UI and no Backend or native adapter')
+    if (candidate.mcpApp?.config && candidate.ui?.entry && !semver.subset(candidate.hostApi, '>=3.17.0')) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Custom MCP App UI requires hostApi >=3.17.0')
+    }
+    if (!candidate.mcpApp || (!candidate.ui?.entry && candidate.ui?.builtin !== 'mcp') || candidate.backend || candidate.nativeAdapter) {
+      throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP configuration Apps require the Core builtin UI or a custom UI and no Backend or native adapter')
     }
     if (candidate.mcpApp.runtime?.state !== 'stateless' && candidate.mcpApp.runtime?.idleTimeoutMs !== undefined) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Idle recycling requires an explicitly stateless MCP App')
     const permissions = ['mcp:read', 'mcp:manage', 'mcp:connect']
+    const allowedPermissions = candidate.ui?.entry ? [...permissions, 'mcp:auth'] : permissions
     if (!permissions.every(permission => candidate.permissions.includes(permission))
-      || candidate.permissions.some(permission => !permissions.includes(permission))
+      || candidate.permissions.some(permission => !allowedPermissions.includes(permission))
       || !candidate.host?.protocols?.includes('moss.mcp/v1')
       || candidate.host.protocols.some(protocol => !['moss.mcp/v1', 'moss.host/v1'].includes(protocol))) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'MCP App requires only the MCP Host permissions and protocols')
@@ -331,6 +437,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     }
   }
   const contributes = normalizeContributes(candidate.contributes, candidate)
+  const appCapabilities = normalizeAppCapabilities(candidate)
   validateNavigation(candidate, contributes, options.requireNavigation)
   return {
     schemaVersion: 2,
@@ -355,6 +462,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     ...(candidate.backend ? { backend: normalizeBackend(candidate.backend) } : {}),
     ...(candidate.nativeAdapter ? { nativeAdapter: { kind: 'desktop-control', apiVersion: 1, entry: ensureSafeRelativePath(candidate.nativeAdapter.entry, 'nativeAdapter.entry') } } : {}),
     ...(contributes ? { contributes } : {}),
+    ...(appCapabilities ? { appCapabilities } : {}),
     permissions: [...candidate.permissions],
   }
 }

@@ -12,7 +12,9 @@ Moss 容器负责显示 App 名称、简介、迭代、AI 能力入口与整页�
 
 App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
 
-当前 SDK 对应 Host API `3.16.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
+当前 SDK 对应 Host API `3.19.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
+
+跨 App 只读能力和现有工具调用使用 Manifest `appCapabilities` 与 SDK `createAppCapabilitiesClient`。调用已有工具时，调用方用 `usesTools` 精确声明目标 App ID 和工具名；目标 App 无需更新。调用、授权与结果引用见 [跨 App 能力调用](../../ui/docs/app-capabilities.md)。
 
 配置型 MCP App 声明 `ui: { builtin: "mcp" }` 和 `mcpApp: { config: "mcp.json" }`。Core 生成 Manifest、提供公共设置页并直接注册 MCP，无需额外基础 App、包内 UI 文件或 Backend。要求 Host API 3.9，格式和 Draw.io 实测见 [配置型 MCP App 验证](../../ui/docs/mcp-configuration-app-proof.md)。
 

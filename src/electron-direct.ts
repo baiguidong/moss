@@ -12,6 +12,7 @@ export { assertWorkflowAppPolicy } from './services/appExecution/policy.js'
 
 import type { SessionRuntime, SessionExecutionEnvironment } from './utils/sessionIdContext.js'
 export { inspectDesktopMcpServer } from './services/mcp/desktopProbe.js'
+export { listDesktopAppMcpTools, callDesktopAppMcpTool } from './services/mcp/desktopAppToolBridge.js'
 export { onMcpToolCatalog } from './services/mcp/catalogUpdates.js'
 export { configureTraceOutput, writeTraceSessionSnapshot, traceOutputStatus, drainTraceOutput } from './services/trace/traceOutput.js'
 export { toTraceMessages } from './services/api/traceMessages.js'

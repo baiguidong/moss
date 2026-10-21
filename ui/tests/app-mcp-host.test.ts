@@ -3,9 +3,12 @@ import { afterEach, expect, test } from 'bun:test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL } from '../src/apps/app-mcp-host.mjs'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, validateMcpHostInput } from '../src/apps/app-mcp-host.mjs'
 import { AppCredentialAdapter } from '../src/apps/app-runtime.mjs'
 import { AppHostCapabilityRegistry } from '../../packages/app-runtime/src/capabilities/index.mjs'
+import { APP_ERROR_CODES, AppServiceError } from '../../packages/app-sdk/src/protocol/index.mjs'
+import { buildMcpToolName } from '../../src/services/mcp/mcpStringUtils.js'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -533,4 +536,229 @@ test('a failed live refresh retains the complete display catalog and exposes a r
   await f.host.recordRuntimeCatalog('docs', { ...config, scope: 'dynamic' }, { ...check, checkedAt: 21 })
   expect(f.host.toolCatalog('moss.mcp')[0].catalogStale).not.toBe(true)
   expect(f.calls).toHaveLength(0)
+})
+
+test('cross-App bridge discovers live tools and checks exact service, schema, grants and enabled state', async () => {
+  const f = await fixture(), target = f.addApp('moss.database')
+  const tool = { name: 'execute_sql', description: 'Execute SQL', inputSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'], additionalProperties: false } }
+  const disabled = { name: 'drop_all', description: 'Disabled tool', inputSchema: { type: 'object', properties: {} } }
+  const unrelated = { name: 'unrelated', inputSchema: { type: 'object', description: 'x'.repeat(70 * 1024) } }
+  const databaseConfig = { type: 'stdio', command: 'node', args: ['dbhub.mjs'], env: { DB_PASSWORD: 'private-value' }, disabledTools: ['drop_all'] }
+  await f.host.handle('servers.save', { name: 'database', enabled: true, config: databaseConfig }, target)
+  f.host.discoverTool = async (name: string, config: any) => {
+    expect(name).toBe('moss_database')
+    expect(config.env.DB_PASSWORD).toBe('private-value')
+    return [tool, disabled, unrelated]
+  }
+  const listed = await f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: ['execute_sql'] })
+  expect(listed).toHaveLength(1)
+  await expect(f.host.discoverBridgeTools({ targetAppId: target.appId })).rejects.toMatchObject({ code: 'APP_RESOURCE_EXHAUSTED' })
+  expect(listed[0]).toMatchObject({ appId: target.appId, instanceId: target.instanceId, serviceName: 'database', name: 'execute_sql', inputSchema: tool.inputSchema })
+  expect(JSON.stringify(listed)).not.toContain('private-value')
+  let authorized = 0, called = 0
+  f.host.invokeTool = async (_name: string, _config: any, _toolName: string, _args: any, options: any) => {
+    await options.beforeCall(tool); called++
+    return { content: [{ type: 'text', text: 'rows' }] }
+  }
+  const invoke = (changes: any = {}) => f.host.invokeBridgeTool({ targetAppId: target.appId, targetInstanceId: target.instanceId,
+    serviceId: listed[0].serviceId, revision: listed[0].revision, toolName: tool.name, arguments: { sql: 'SELECT 1' },
+    authorizeDispatch: () => { authorized++ }, ...changes })
+  expect(await invoke()).toEqual({ content: [{ type: 'text', text: 'rows' }] })
+  expect([authorized, called]).toEqual([1, 1])
+  await expect(invoke({ arguments: { sql: 123 } })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
+  await expect(invoke({ targetAppId: 'other.app' })).rejects.toMatchObject({ code: 'APP_NOT_FOUND' })
+  await expect(invoke({ toolName: 'drop_all' })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+  expect([authorized, called]).toEqual([1, 1])
+  f.host.invokeTool = async (_name: string, _config: any, _toolName: string, _args: any, options: any) => {
+    await options.beforeCall({ ...tool, inputSchema: { ...tool.inputSchema, properties: { sql: { type: 'number' } } } })
+  }
+  await expect(invoke()).rejects.toMatchObject({ code: 'APP_CONFLICT' })
+  await f.host.handle('servers.set-enabled', { name: 'database', enabled: false }, target)
+  await expect(invoke()).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+})
+
+test('cross-App MCP call rechecks target authorization immediately before the real tool call', async () => {
+  const f = await fixture(), target = f.addApp('moss.database')
+  const tool = { name: 'search_objects', inputSchema: { type: 'object', properties: {} } }
+  await f.host.handle('servers.save', { name: 'database', enabled: true, config: { command: 'node' } }, target)
+  f.host.discoverTool = async () => [tool]
+  const [listed] = await f.host.discoverBridgeTools({ targetAppId: target.appId })
+  let sent = false, authorize = 0
+  f.host.invokeTool = async (_name: string, _config: any, _toolName: string, _args: any, options: any) => {
+    f.installations.get(target.appId).grants = ['mcp:manage']
+    await options.beforeCall(tool)
+    sent = true
+  }
+  await expect(f.host.invokeBridgeTool({ targetAppId: target.appId, targetInstanceId: target.instanceId,
+    serviceId: listed.serviceId, revision: listed.revision, toolName: tool.name, arguments: {},
+    authorizeDispatch: () => { authorize++ } })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+  expect(authorize).toBe(1)
+  expect(sent).toBe(false)
+})
+
+test('MCP tools work after service re-enablement and Host restart without provider tool contributions', async () => {
+  const f = await fixture(), target = f.addApp('moss.database')
+  expect((await f.runtime.getActivePackage(target.appId)).manifest.contributes?.tools).toBeUndefined()
+  await f.host.handle('servers.save', { name: 'database', enabled: true, config: { command: 'node' } }, target)
+  const tool = { name: 'execute_sql', inputSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] } }
+  const discoverTool = async () => [tool]
+  const invokeTool = async (_name: string, _config: any, _toolName: string, args: any, options: any) => {
+    await options.beforeCall(tool)
+    return { content: [{ type: 'text', text: args.sql }] }
+  }
+  f.host.discoverTool = discoverTool
+  f.host.invokeTool = invokeTool
+  const [before] = await f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: [tool.name] })
+  const invoke = (host: AppMcpHost, descriptor: any) => host.invokeBridgeTool({ targetAppId: target.appId,
+    targetInstanceId: target.instanceId, serviceId: descriptor.serviceId, revision: descriptor.revision,
+    toolName: tool.name, arguments: { sql: 'SELECT 1' }, authorizeDispatch: () => {} })
+  expect(await invoke(f.host, before)).toMatchObject({ content: [{ text: 'SELECT 1' }] })
+  await f.host.handle('servers.set-enabled', { name: 'database', enabled: false }, target)
+  await expect(invoke(f.host, before)).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+  await f.host.handle('servers.set-enabled', { name: 'database', enabled: true }, target)
+  const restarted = new AppMcpHost({ ...f.options, discoverTool, invokeTool })
+  const [after] = await restarted.discoverBridgeTools({ targetAppId: target.appId, toolNames: [tool.name] })
+  expect(after).toMatchObject({ serviceId: before.serviceId, serviceName: 'database', name: tool.name })
+  expect(after.revision).not.toBe(before.revision)
+  await expect(invoke(restarted, before)).rejects.toMatchObject({ code: 'APP_CONFLICT' })
+  expect(await invoke(restarted, after)).toMatchObject({ content: [{ text: 'SELECT 1' }] })
+})
+
+test('cross-App MCP registry isolates owners that share the same App and instance IDs', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-mcp-owners-')); roots.push(root)
+  const hostOwner = { scope: 'host', orgId: null, userId: null, key: 'host' }
+  const userOwner = { scope: 'user', orgId: 'org', userId: 'user', key: 'user:org:user' }
+  const storage = new AsyncLocalStorage<any>()
+  const owner = () => storage.getStore() || hostOwner
+  const keyed = (id: string) => `${owner().key}/${id}`
+  const installations = new Map<string, any>(), instances = new Map<string, any>(), secrets = new Map<string, any>()
+  const runtime = {
+    dataDir: path.join(root, 'data'),
+    currentOwner: owner,
+    withOwner: (value: any, operation: () => any) => storage.run(value, operation),
+    installations: { get: (id: string) => installations.get(keyed(id)), list: () => [...installations.values()].filter(row => row.owner.key === owner().key) },
+    instances: { get: (id: string) => instances.get(keyed(id)), list: (appId: string) => [...instances.values()].filter(row => row.owner.key === owner().key && row.appId === appId) },
+    credentials: { get: async (appId: string, instanceId: string) => structuredClone(secrets.get(keyed(`${appId}/${instanceId}`)) || {}),
+      set: async (appId: string, instanceId: string, value: any) => { secrets.set(keyed(`${appId}/${instanceId}`), structuredClone(value)) } },
+    appDataPath: (base: string, appId: string, ...parts: string[]) => path.join(base, owner().key, appId, ...parts),
+    getActivePackage: async () => ({ manifest: { host: { protocols: [MCP_PROTOCOL] }, permissions: ['mcp:manage', 'mcp:connect'] } }),
+  }
+  const appId = 'moss.database', instanceId = 'moss.database--default'
+  const oauthConfig = { type: 'http', url: 'https://example.com/mcp', oauth: { clientId: 'same-client' } }
+  const host = new AppMcpHost({ getRuntime: () => runtime,
+    discoverTool: async (_name: string, config: any) => [{ name: config.env?.TOOL_NAME || 'oauth_tool', inputSchema: { type: 'object', properties: {} } }] })
+  const install = async (value: any, toolName: string) => runtime.withOwner(value, async () => {
+    installations.set(keyed(appId), { appId, owner: value, enabled: true, activeVersion: '0.2.2', grants: ['mcp:manage', 'mcp:connect'] })
+    instances.set(keyed(instanceId), { id: instanceId, appId, owner: value, enabled: true })
+    const context = { appId, instanceId, owner: value, version: '0.2.2', dataDir: runtime.appDataPath(runtime.dataDir, appId, 'instances', instanceId) }
+    await host.handle('servers.save', { name: 'database', enabled: true, config: { command: 'node', env: { TOOL_NAME: toolName } } }, context)
+    await host.handle('servers.save', { name: 'oauth', enabled: true, config: oauthConfig }, context)
+    await host.refresh()
+  })
+  await install(hostOwner, 'host_query')
+  await install(userOwner, 'user_query')
+  const [hostTools, userTools] = await Promise.all([
+    runtime.withOwner(hostOwner, () => host.discoverBridgeTools({ targetAppId: appId, toolNames: ['host_query'] })),
+    runtime.withOwner(userOwner, () => host.discoverBridgeTools({ targetAppId: appId, toolNames: ['user_query'] })),
+  ])
+  expect(hostTools.map((tool: any) => tool.name)).toEqual(['host_query'])
+  expect(userTools.map((tool: any) => tool.name)).toEqual(['user_query'])
+  expect(hostTools[0].serviceId).not.toBe(userTools[0].serviceId)
+  const [hostOauth, userOauth] = await Promise.all([
+    runtime.withOwner(hostOwner, () => host.toolCatalog(appId).find((item: any) => item.name === 'oauth')),
+    runtime.withOwner(userOwner, () => host.toolCatalog(appId).find((item: any) => item.name === 'oauth')),
+  ])
+  expect(hostOauth.runtimeName).toBe('moss_database__oauth')
+  expect(userOauth.runtimeName).not.toBe(hostOauth.runtimeName)
+  expect(userOauth.runtimeName).not.toContain(userOwner.key)
+  expect(userOauth.runtimeName.startsWith('@')).toBe(true)
+  // A Host-owned moss.mcp service cannot impersonate this raw OAuth key.
+  expect(() => validateMcpHostInput('servers.save', { name: userOauth.runtimeName,
+    enabled: true, config: oauthConfig })).toThrow()
+  const dbNames = ['db_0123456789abcdef', 'db_0123456789abcdeg']
+  await runtime.withOwner(userOwner, async () => {
+    const context = { appId, instanceId, owner: userOwner, version: '0.2.2',
+      dataDir: runtime.appDataPath(runtime.dataDir, appId, 'instances', instanceId) }
+    for (const name of dbNames) await host.handle('servers.save', { name, enabled: true, config: { command: 'node' } }, context)
+  })
+  const dbServices = await runtime.withOwner(userOwner, () => host.toolCatalog(appId).filter((item: any) => dbNames.includes(item.name)))
+  expect(dbServices.map((item: any) => item.name)).toEqual(dbNames)
+  expect(new Set(dbServices.map((item: any) => item.runtimeName)).size).toBe(2)
+  for (const service of dbServices) {
+    expect(service.runtimeName).not.toContain(userOwner.key)
+    expect(service.runtimeName.startsWith('@')).toBe(true)
+    expect(buildMcpToolName(service.runtimeName, 'execute_sql', appId).length).toBeLessThanOrEqual(64)
+  }
+  expect(await runtime.withOwner(hostOwner, () => host.enabledServers([appId])[hostOauth.runtimeName])).toEqual(oauthConfig)
+  expect(await runtime.withOwner(userOwner, () => host.enabledServers([appId])[userOauth.runtimeName])).toEqual(oauthConfig)
+  expect(await runtime.withOwner(userOwner, () => host.findServer(hostOauth.runtimeName))).toBeNull()
+  await expect(runtime.withOwner(userOwner, () => host.discoverBridgeTools({ targetAppId: appId, serviceId: hostTools[0].serviceId })))
+    .rejects.toMatchObject({ code: 'APP_NOT_FOUND' })
+  expect(await runtime.withOwner(hostOwner, () => host.discoverBridgeTools({ targetAppId: appId, toolNames: ['host_query'] }))).toEqual(hostTools)
+})
+
+test('MCP bridge keeps working services discoverable when another connection fails', async () => {
+  const f = await fixture(), target = f.addApp('moss.database')
+  for (const name of ['good', 'bad']) {
+    await f.host.handle('servers.save', { name, enabled: true, config: { command: 'node', args: [name] } }, target)
+  }
+  f.host.discoverTool = async (name: string) => {
+    if (name.endsWith('__bad')) throw new Error('DBHub connection failed')
+    return [{ name: 'search_objects', inputSchema: { type: 'object', properties: {} } }]
+  }
+  const services = f.host.toolCatalog(target.appId)
+  const tools = await f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: ['search_objects'] })
+  expect(tools).toMatchObject([{ serviceId: services.find((service: any) => service.name === 'good').serviceId, name: 'search_objects' }])
+  await expect(f.host.discoverBridgeTools({ targetAppId: target.appId,
+    serviceId: services.find((service: any) => service.name === 'bad').serviceId, toolNames: ['search_objects'] }))
+    .rejects.toMatchObject({ code: 'APP_HOST_UNAVAILABLE' })
+  await f.host.handle('servers.set-enabled', { name: 'good', enabled: false }, target)
+  await expect(f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: ['search_objects'] }))
+    .rejects.toMatchObject({ code: 'APP_HOST_UNAVAILABLE' })
+})
+
+test('cross-App MCP bridge never exposes transport, credentials, or cancellation errors', async () => {
+  const f = await fixture(), target = f.addApp('moss.database')
+  const tool = { name: 'execute_sql', inputSchema: { type: 'object', properties: {} } }
+  const secrets = ['url-user', 'url-pass', 'query-secret', 'header-secret', 'argv-secret', 'env-secret', 'provider-secret']
+  await f.host.handle('servers.save', { name: 'remote', enabled: true, config: { type: 'http',
+    url: 'https://url-user:url-pass@example.test/mcp?token=query-secret',
+    headers: { Authorization: 'Bearer header-secret' } } }, target)
+  await f.host.handle('servers.save', { name: 'local', enabled: true, config: { command: 'node',
+    args: ['--token=argv-secret'], env: { DB_PASSWORD: 'env-secret' } } }, target)
+  const services = f.host.toolCatalog(target.appId)
+  const failure = new AppServiceError(APP_ERROR_CODES.hostUnavailable, `provider-secret ${secrets.join(' ')}`)
+  const expectSafe = async (operation: Promise<unknown>, code = APP_ERROR_CODES.hostUnavailable) => {
+    let error: any
+    try { await operation } catch (caught) { error = caught }
+    expect(error).toBeInstanceOf(AppServiceError)
+    expect(error.code).toBe(code)
+    expect(error.message).toBe(code === APP_ERROR_CODES.actionCanceled ? 'MCP 工具操作已取消。' : '目标 MCP 服务暂不可用。')
+    for (const secret of secrets) expect(error.message).not.toContain(secret)
+  }
+  f.host.discoverTool = async (name: string) => { throw name.endsWith('__remote')
+    ? failure : new Error(`provider-secret ${secrets.join(' ')}`) }
+  for (const service of services) await expectSafe(f.host.discoverBridgeTools({ targetAppId: target.appId,
+    serviceId: service.serviceId, toolNames: [tool.name] }))
+  f.host.discoverTool = async () => [tool]
+  const descriptors = await f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: [tool.name] })
+  expect(descriptors.map((item: any) => item.serviceName).sort()).toEqual(['local', 'remote'])
+  for (const descriptor of descriptors) {
+    f.host.invokeTool = async () => descriptor.serviceName === 'remote' ? Promise.reject(failure)
+      : Promise.reject(new Error(`provider-secret ${secrets.join(' ')}`))
+    await expectSafe(f.host.invokeBridgeTool({ targetAppId: target.appId, targetInstanceId: target.instanceId,
+      serviceId: descriptor.serviceId, revision: descriptor.revision, toolName: tool.name, arguments: {},
+      authorizeDispatch: () => {} }))
+  }
+  f.runtime.credentials.get = async () => { throw new Error(`private path and ${secrets.join(' ')}`) }
+  await expectSafe(f.host.discoverBridgeTools({ targetAppId: target.appId, toolNames: [tool.name] }))
+  await expectSafe(f.host.invokeBridgeTool({ targetAppId: target.appId, targetInstanceId: target.instanceId,
+    serviceId: descriptors[0].serviceId, revision: descriptors[0].revision, toolName: tool.name,
+    arguments: {}, authorizeDispatch: () => {} }))
+  const canceled = new AbortController()
+  canceled.abort(new Error(`provider-secret ${secrets.join(' ')}`))
+  await expectSafe(f.host.discoverBridgeTools({ targetAppId: target.appId, signal: canceled.signal }), APP_ERROR_CODES.actionCanceled)
+  await expectSafe(f.host.invokeBridgeTool({ targetAppId: target.appId, targetInstanceId: target.instanceId,
+    serviceId: descriptors[0].serviceId, revision: descriptors[0].revision, toolName: tool.name,
+    arguments: {}, authorizeDispatch: () => {}, signal: canceled.signal }), APP_ERROR_CODES.actionCanceled)
 })

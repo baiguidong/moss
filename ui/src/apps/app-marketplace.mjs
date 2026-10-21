@@ -12,7 +12,7 @@ import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
 import { installAppArchive } from './app-runtime.mjs'
-import { describeAppTools } from './app-tool-disclosure.mjs'
+import { appCapabilityDeclarationChanged, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_CANCELED = 'MOSS_APP_MARKET_INSTALL_CANCELED'
 const MARKET_CACHE_VERSION = 2
@@ -352,7 +352,11 @@ export function createAppMarketplaceService(options = {}) {
       }
       if (localVersion && !options.confirmInstallation) throw new Error('此 App 包含本地修改，需要确认后才能安装市场版本。')
       const installation = runtime.getInstallation(appId)
-      const previousVersion = installation?.activeVersion || installedEntry?.currentVersion || null
+      const previousVersion = installedEntry?.currentVersion || null
+      const previousRuntimeVersion = installation?.activeVersion || null
+      let previousManifest = installedEntry?.manifest || null
+      try { previousManifest = (await runtime.getApp?.(appId))?.manifest || previousManifest } catch {}
+      const previousCapabilitiesUnknown = Boolean((previousVersion || previousRuntimeVersion) && !previousManifest)
       if (!localVersion && installation?.activeVersion === version.version) {
         return { ok: true, alreadyInstalled: true, appId, version: version.version }
       }
@@ -366,10 +370,11 @@ export function createAppMarketplaceService(options = {}) {
           throw new Error('此 App 的安装状态已变化，请重试安装市场版本。')
         }
       }
-      const currentGrants = installation?.grants || []
+      const currentGrants = [...(installation?.grants || [])]
       const declaredPermissions = new Set(version.permissions)
       const retainedGrants = currentGrants.filter((permission) => declaredPermissions.has(permission))
       const addedPermissions = version.permissions.filter((permission) => !currentGrants.includes(permission))
+      const grants = [...new Set([...retainedGrants, ...addedPermissions])]
       if (addedPermissions.length && !acceptPermissions && !options.confirmInstallation) {
         return { ok: false, requiresPermissionApproval: true, appId, version: version.version, permissions: addedPermissions }
       }
@@ -416,14 +421,22 @@ export function createAppMarketplaceService(options = {}) {
             }
             if (JSON.stringify([...(packageInfo.manifest.permissions || [])].sort()) !== JSON.stringify([...version.permissions].sort())) throw new Error('市场权限清单与安装包不一致，请联系发布者。')
             const pendingPermissions = options.confirmInstallation ? addedPermissions : acceptPermissions ? [] : addedPermissions
+            const capabilityChange = previousCapabilitiesUnknown || appCapabilityDeclarationChanged(previousManifest, packageInfo.manifest)
             await assertInstallationUnchanged()
-            if (localVersion || pendingPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length || packageInfo.manifest.nativeAdapter) {
+            if (localVersion || pendingPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length
+              || packageInfo.manifest.nativeAdapter || packageInfo.manifest.appCapabilities?.requires?.length
+              || packageInfo.manifest.appCapabilities?.provides?.length
+              || packageInfo.manifest.appCapabilities?.usesTools?.length || capabilityChange) {
               report({ phase: 'awaiting-permission' })
-              if (!options.confirmInstallation) throw new Error('安装此 App 前需要确认其 AI 工具列表')
+              if (!options.confirmInstallation) throw new Error('安装此 App 前需要确认其权限和能力')
               const replacementDetails = localVersion
                 ? `当前使用的是本地修改版本 ${localVersion}。安装后将切换到市场版本 ${version.version}。\n本地版本及其源码会保留在版本历史中，可通过回滚重新使用；现有 App 配置和数据会保留。`
                 : ''
-              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions, [replacementDetails, `安装包摘要：${packageReviewRevision(packageInfo)}`].filter(Boolean).join('\n\n'))) {
+              const previousCapabilities = previousCapabilitiesUnknown
+                ? '无法读取原版本的跨 App 能力声明，请确认新版本的能力。'
+                : describePreviousAppCapabilities(previousManifest, packageInfo.manifest)
+              if (!await options.confirmInstallation(packageInfo.manifest, pendingPermissions,
+                [replacementDetails, previousCapabilities, `安装包摘要：${packageReviewRevision(packageInfo)}`].filter(Boolean).join('\n\n'))) {
                 throw Object.assign(new Error('App installation was canceled'), { code: INSTALL_CANCELED })
               }
             }
@@ -433,6 +446,7 @@ export function createAppMarketplaceService(options = {}) {
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
               trustedPublishers,
+              activateInstallation: app => options.emitChanged?.({ action: 'install', app, grants }),
               onCommit: state => { commitRevision = state.installationRevision },
               validateCommit: assertInstallationUnchanged, expectedPackageChecksums: packageInfo.checksums,
               requireTrustedPublisher: true,
@@ -444,31 +458,49 @@ export function createAppMarketplaceService(options = {}) {
             })
           },
         })
-        const grants = [...new Set([...retainedGrants, ...addedPermissions])]
         report({ phase: 'activating' })
         await runtime.registerInstalled(appId, version.version, { grants })
         await options.emitChanged?.({ action: installation ? 'marketplace-updated' : 'marketplace-installed', appId })
         activationCompleted = true
         return { ok: true, appId, version: version.version, app }
       } catch (error) {
-        if (packageInstallStarted && !activationCompleted && error?.code !== 'MOSS_APP_INSTALLATION_CHANGED') {
+        if (packageInstallStarted && commitRevision !== undefined && !activationCompleted) {
           try {
-            report({ phase: 'rolling-back' })
             const restore = async () => {
-              if (commitRevision !== undefined && options.getInstallationRevision?.(appId) !== commitRevision) return
-              const current = runtime.getInstallation(appId)
-              if (current && ![previousVersion, version.version].includes(current.activeVersion)) return
-              await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version })
-              if (current?.activeVersion === version.version) {
-                // Publishing may activate the package before returning. Restore
-                // runtime ownership too, while retaining subsequent grant/enable edits.
-                if (previousVersion) await (runtime.registerInstalledNow || runtime.registerInstalled).call(runtime, appId, previousVersion, { grants: current.grants })
-                else await (runtime.uninstallNow || runtime.uninstall).call(runtime, appId)
+              // A failed pre-commit install may have staged an immutable version,
+              // but it did not replace the active registry entry.
+              if (options.getInstallationRevision && options.getInstallationRevision(appId) !== commitRevision) return
+              const published = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
+              if (published?.currentVersion !== version.version) return
+              const rolledBack = await options.rollbackPackage?.({ appId, previousVersion, failedVersion: version.version,
+                expectedInstallationRevision: commitRevision })
+              if (rolledBack !== true) return
+              report({ phase: 'rolling-back' })
+              // Commit owns the installation queue. Acquire the Runtime lock only
+              // after that queue has finished, then check for another commit.
+              const rollbackRevision = options.getInstallationRevision?.(appId)
+              const restoreRuntime = async () => {
+                if (rollbackRevision !== undefined && options.getInstallationRevision?.(appId) !== rollbackRevision) return false
+                const currentPublished = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
+                if ((currentPublished?.currentVersion || null) !== previousVersion) return false
+                const current = runtime.getInstallation(appId)
+                if (current?.activeVersion === version.version) {
+                  // Publishing may activate the package before returning. Restore
+                  // the previous grants when activation replaced them, while
+                  // retaining grants changed after this installation started.
+                  const activeGrants = current.grants || []
+                  const grantsUnchanged = JSON.stringify([...activeGrants].sort()) === JSON.stringify([...grants].sort())
+                  const restoreOptions = grantsUnchanged ? { grants: currentGrants } : {}
+                  if (previousRuntimeVersion) await (runtime.registerInstalledNow || runtime.registerInstalled).call(runtime, appId, previousRuntimeVersion, restoreOptions)
+                  else await (runtime.uninstallNow || runtime.uninstall).call(runtime, appId)
+                }
+                return true
               }
-              await options.emitChanged?.({ action: 'marketplace-rollback', appId })
+              const stillCurrent = runtime.transitionApp
+                ? await runtime.transitionApp(appId, restoreRuntime) : await restoreRuntime()
+              if (stillCurrent) await options.emitChanged?.({ action: 'marketplace-rollback', appId })
             }
-            if (runtime.transitionApp) await runtime.transitionApp(appId, restore)
-            else await restore()
+            await restore()
           } catch (rollbackError) {
             throw new Error(`${error.message}; package registry rollback also failed: ${rollbackError.message}`)
           }

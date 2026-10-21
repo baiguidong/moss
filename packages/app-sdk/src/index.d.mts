@@ -365,6 +365,60 @@ export interface AppActionManifest {
   timeoutMs?: number
 }
 
+export const APP_CAPABILITIES_PROTOCOL: 'moss.app-capabilities/v1'
+export interface AppCapabilityProvider {
+  appId: string
+  appName: string
+  instanceId: string
+  instanceName: string
+  protocol: string
+  status: 'available' | 'disabled' | 'instance_disabled' | 'permission_denied' | 'configuration_required' | 'backend_unavailable' | 'crash_loop'
+  methods: string[]
+  providerRef: string | null
+}
+export interface AppToolDescriptor {
+  appId: string
+  appName: string
+  instanceId: string
+  instanceName: string
+  source: 'contribution' | 'mcp'
+  serviceId: string | null
+  serviceName: string | null
+  name: string
+  description: string
+  /** MCP tools have no trustworthy effect declaration; treat unknown as possibly modifying data. */
+  effect: 'read' | 'write' | 'destructive' | 'unknown'
+  inputSchema: Record<string, unknown>
+  toolRef: string
+}
+export interface AppCapabilitiesHostRequestMap {
+  'providers.list': { protocol?: string }
+  'provider.invoke': { providerRef: string; method: string; input?: Record<string, unknown> }
+  'resource.read': { resourceRef: string; offset: number; limit: number }
+  'tools.list': { appId: string; instanceId?: string; serviceId?: string; offset?: number; limit?: number }
+  'tool.invoke': { toolRef: string; arguments?: Record<string, unknown> }
+}
+export interface AppCapabilitiesHostResultMap {
+  'providers.list': { providers: AppCapabilityProvider[]; unmet: Array<{ protocol: string; optional: boolean; reason: string }> }
+  'provider.invoke': { value: unknown; traceId: string }
+  'resource.read': { text: string; nextOffset?: number | null }
+  'tools.list': { tools: AppToolDescriptor[]; nextOffset: number | null }
+  'tool.invoke': { result: unknown; traceId: string }
+}
+export interface AppCapabilitiesClient {
+  list(input?: { protocol?: string }, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<{
+    providers: AppCapabilityProvider[]
+    unmet: Array<{ protocol: string; optional: boolean; reason: string }>
+  }>
+  invoke<T = unknown>(providerRef: string, method: string, input?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<T>
+  read(resourceRef: string, offset: number, limit: number, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<{ text: string; nextOffset?: number | null }>
+  listTools(input: AppCapabilitiesHostRequestMap['tools.list'], options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<AppCapabilitiesHostResultMap['tools.list']>
+  invokeTool<T = unknown>(toolRef: string, args?: Record<string, unknown>, options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<T>
+}
+export type AppCapabilitiesDiscoveryClient = Pick<AppCapabilitiesClient, 'list' | 'listTools'>
+export function createAppCapabilitiesClient(host: AppHostApi): AppCapabilitiesClient
+export function createAppCapabilitiesClient(host: Pick<TypedHostRequests, 'request'>): AppCapabilitiesDiscoveryClient
+
 /** Host API 3.2 native adapters execute in the trusted Electron main domain. */
 export interface NativeDesktopSession {
   id: string
@@ -445,6 +499,12 @@ export interface AppManifestV2 {
   icon: string
   hostApi: string
   host?: { protocols: AppBackendProtocol[] }
+  /** Explicit cross-App dependencies and read-only exported contracts. Tool dependencies require Host API >=3.19.0. */
+  appCapabilities?: {
+    provides?: Array<{ protocol: string; methods: Array<{ name: string; action: string; permission: string; effect: 'read'; resourceReadMethod?: string }> }>
+    requires?: Array<{ protocol: string; optional?: boolean }>
+    usesTools?: Array<{ appId: string; tools: string[] }>
+  }
   publisher?: { id: string; name: string }
   ui?: ({ entry: string; builtin?: never } | { builtin: 'mcp'; entry?: never }) & { window: { width: number; height: number; resizable: boolean } }
   backend?: {
@@ -497,7 +557,7 @@ export interface AppBackendContext {
 }
 
 export interface AppActionContext extends AppBackendContext {
-  readonly source?: Readonly<{ surface?: string; workspace?: string }>
+  readonly source?: Readonly<{ surface?: string; workspace?: string; callerAppId?: string; callerInstanceId?: string; protocol?: string; method?: string; traceId?: string }>
   principal: AppOwner | null
   signal: AbortSignal
   requestId: string

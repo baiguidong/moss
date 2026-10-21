@@ -8,9 +8,37 @@ import { AppRuntimeHost, defaultInstanceId, writePackageChecksums } from '../../
 import { HostRequests } from '../../packages/app-runtime/src/host/requests.mjs'
 import { AppActionBroker } from '../../packages/app-runtime/src/actions/index.mjs'
 import { createAppClient } from '../../packages/app-sdk/src/ui/index.mjs'
+import { contractDefinition } from '../../packages/app-sdk/src/host/contracts.mjs'
 import { registerAppUiRequests } from '../src/apps/app-ui-requests.mjs'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+test('a UI-only App can expose an allowlisted Host tool without starting a Backend', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'moss-host-tool-'))
+  try {
+    const source = path.join(root, 'source')
+    await mkdir(source)
+    await writeFile(path.join(source, 'index.html'), '<!doctype html><title>Host tool</title>')
+    await writeFile(path.join(source, 'input.json'), JSON.stringify({ type: 'object', additionalProperties: false }))
+    await writeFile(path.join(source, 'app.moss.json'), JSON.stringify({
+      schemaVersion: 2, id: 'test.host-tool', displayName: 'Host tool', version: '1.0.0', hostApi: '^3.17.0',
+      ui: { entry: 'index.html' }, host: { protocols: ['moss.cloud-storage/v1'] }, permissions: ['cloud-storage:read'],
+      contributes: { tools: [{ id: 'status', title: 'Status', description: 'Read cloud status', execution: 'host',
+        host: { protocol: 'moss.cloud-storage/v1', method: 'status.get' }, inputSchema: 'input.json', effect: 'read', permission: 'cloud-storage:read' }] },
+    }))
+    await writePackageChecksums(source)
+    const runtime = await new AppRuntimeHost({ rootDir: path.join(root, 'host') }).initialize()
+    try {
+      runtime.registerHostProtocol(contractDefinition('moss.cloud-storage/v1'))
+      runtime.registerHostHandler('moss.cloud-storage/v1', 'status.get', () => ({ state: 'ready' }))
+      await runtime.installFromDirectory(source)
+      expect(await runtime.invokeToolContribution('test.host-tool/status', {})).toEqual({ state: 'ready' })
+      expect(runtime.supervisor.listStatuses()).toEqual([])
+      await expect(runtime.invokeToolContribution('test.host-tool/status', { extra: true })).rejects.toMatchObject({ code: 'APP_INVALID_ACTION_INPUT' })
+      await runtime.setAppGrants('test.host-tool', [])
+      await expect(runtime.invokeToolContribution('test.host-tool/status', {})).rejects.toMatchObject({ code: 'APP_ACTION_NOT_FOUND' })
+    } finally { await runtime.shutdown() }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
 test('Host rejects invalid deadlines, preserves timeout reasons and accounts for handlers until they stop', async () => {
   const requests = new HostRequests({ maxPending: 1 })
   const base = { protocol: 'moss.test/v1', method: 'wait', input: {}, key: 'one' }

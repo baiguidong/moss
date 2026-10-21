@@ -11,7 +11,13 @@ export function resolveMcpLaunchConfig(config, { workspace } = {}) {
     ...config,
     // Runtime-only context. Never persist a session directory in shared App settings.
     // An empty value also prevents checks from inheriting a parent's session scope.
-    env: { ...config.env, MOSS_SESSION_WORKSPACE: workspace || '' },
+    env: {
+      ...config.env,
+      MOSS_SESSION_WORKSPACE: workspace || '',
+      // App backends use the bundled Electron executable as their Node runtime.
+      // MCP stdio children need the same mode or Electron starts a GUI process.
+      ...(usesElectronAsNode(config.command) ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    },
     ...(config.command ? { command: expand(config.command) } : {}),
     ...(config.args ? { args: config.args.map(arg => {
       // Also accept --output-dir=~/... without interpreting shell syntax or arbitrary values.
@@ -19,4 +25,8 @@ export function resolveMcpLaunchConfig(config, { workspace } = {}) {
       return option ? option[1] + expand(option[2]) : expand(arg)
     }) } : {}),
   }
+}
+
+export function usesElectronAsNode(command, executable = process.execPath, electron = Boolean(process.versions.electron)) {
+  return electron && command === executable
 }

@@ -13,6 +13,7 @@ import {
   resolveAppProtocols,
 } from '../../../app-sdk/src/index.mjs'
 import { AppActionBroker } from '../actions/index.mjs'
+import { AppCapabilityBroker, APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
 import { AppToolScopeStore } from '../tool-scope/index.mjs'
 import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
 import { HostRequests } from './requests.mjs'
@@ -51,6 +52,39 @@ export class MemoryCredentialAdapter {
 
 function maskedSecrets(value) {
   return Object.fromEntries(Object.keys(value || {}).map((key) => [key, { configured: true, masked: '********' }]))
+}
+
+function activityInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => key !== 'id')
+    || typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value.id)) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Backend activity id is invalid')
+  }
+  return { id: value.id }
+}
+
+function activityOutput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length !== 1 || typeof value.active !== 'boolean') {
+    throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'Backend activity response is invalid')
+  }
+  return { active: value.active }
+}
+
+const queuedTaskMarker = /^[a-f0-9-]{36}$/
+async function hasQueuedTaskMarkers(dataDir) {
+  const jobsDir = path.join(dataDir, 'jobs')
+  const pendingDir = path.join(jobsDir, '.pending')
+  try {
+    // Match the engine task store's marker format. Do not follow a redirected
+    // queue directory or treat an unrelated file as recoverable work.
+    if (!(await fsp.lstat(jobsDir)).isDirectory() || !(await fsp.lstat(pendingDir)).isDirectory()) return false
+    return (await fsp.readdir(pendingDir, { withFileTypes: true }))
+      .some(entry => entry.isFile() && queuedTaskMarker.test(entry.name))
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false
+    throw error
+  }
 }
 
 function normalizeInstallationGrants(manifest, value) {
@@ -134,6 +168,13 @@ export class AppRuntimeHost {
       throw new TypeError('hostCapabilities must implement dispatch(request) and registerProtocol(definition)')
     }
     this.hostCapabilities = options.hostCapabilities ?? new AppHostCapabilityRegistry(options.hostCapabilityOptions)
+    this.appCapabilities = new AppCapabilityBroker(this)
+    this.hostCapabilities.registerProtocol(this.appCapabilities.definition())
+    this.hostCapabilities.registerHandler(APP_CAPABILITIES_PROTOCOL, 'providers.list', (input, context) => this.appCapabilities.list(input, context))
+    this.hostCapabilities.registerHandler(APP_CAPABILITIES_PROTOCOL, 'provider.invoke', (input, context) => this.appCapabilities.invoke(input, context))
+    this.hostCapabilities.registerHandler(APP_CAPABILITIES_PROTOCOL, 'resource.read', (input, context) => this.appCapabilities.read(input, context))
+    this.hostCapabilities.registerHandler(APP_CAPABILITIES_PROTOCOL, 'tools.list', (input, context) => this.appCapabilities.listTools(input, context))
+    this.hostCapabilities.registerHandler(APP_CAPABILITIES_PROTOCOL, 'tool.invoke', (input, context) => this.appCapabilities.invokeTool(input, context))
     this.hostCapabilities.registerProtocol(contractDefinition('moss.host/v1'))
     this.hostCapabilities.registerHandler('moss.host/v1', 'capabilities.get', (input, context) => this.describeCapabilities(input, context))
     this.hostCapabilities.registerHandler('moss.host/v1', 'tools.scope.get', (_input, context) => this.toolScopeSettings(context))
@@ -143,6 +184,16 @@ export class AppRuntimeHost {
       context.assertCurrent()
       return this.nativeAdapterHost.settings(pkg, input, context)
     })
+    this.hostCapabilities.registerProtocol({ protocol: 'moss.runtime/v1', methods: Object.fromEntries(
+      ['begin', 'renew', 'end'].map(name => [`activity.${name}`, { surfaces: ['backend'], validateInput: activityInput,
+        validateOutput: activityOutput }]),
+    ) })
+    for (const name of ['begin', 'renew', 'end']) {
+      this.hostCapabilities.registerHandler('moss.runtime/v1', `activity.${name}`, (input, context) => {
+        context.assertCurrent()
+        return this.supervisor.setActivity(runtimeKey(context.instanceId, context.owner), context.generation, input.id, name)
+      })
+    }
     this.supervisor = new AppProcessSupervisor({
       nodeExecutable: options.nodeExecutable,
       processesDir: path.join(this.runtimeDir, 'processes'),
@@ -151,6 +202,7 @@ export class AppRuntimeHost {
       onLog: (entry) => this.logs.append(entry).catch(() => {}),
       ...(options.processOptions || {}),
       onHostRequest: (request) => this.dispatchHostRequest(request),
+      shouldRestartOnDemand: (definition) => this.canRecoverPendingRuntime(definition),
     })
     this.actions = new AppActionBroker({
       ...(options.actionOptions || {}),
@@ -166,6 +218,7 @@ export class AppRuntimeHost {
   async initialize({ restore = true } = {}) {
     if (this.initialized) return this
     await this.state.initialize()
+    await this.appCapabilities.initialize()
     const retiredDir = path.join(this.runtimeDir, 'retired-native-packages')
     for (const name of await fsp.readdir(retiredDir).catch(error => { if (error.code === 'ENOENT') return []; throw error })) {
       const appId = name.endsWith('.json') ? name.slice(0, -5) : ''
@@ -225,6 +278,29 @@ export class AppRuntimeHost {
     return owner.key === DEFAULT_APP_OWNER.key
       ? path.join(root, appId, ...parts)
       : path.join(root, 'owners', ownerStorageSegment(owner), appId, ...parts)
+  }
+
+  async canRecoverPendingRuntime(definition) {
+    return this.withOwner(definition.owner, async () => {
+      if (!this.automaticStartAllowed() || definition.lifecycle !== 'on-demand'
+        || !definition.protocols?.includes('moss.runtime/v1')) return false
+      const isCurrent = () => {
+        const installation = this.installations.get(definition.appId)
+        const instance = this.instances.get(definition.instanceId)
+        const runtimeRecord = this.runtimes.get(definition.key)
+        const registered = this.supervisor.definitions.get(definition.key)
+        return this.automaticStartAllowed() && installation?.enabled
+          && installation.activeVersion === definition.version
+          && installation.incarnationId === definition.installationIncarnationId
+          && instance?.enabled && instance.appId === definition.appId
+          && instance.incarnationId === definition.instanceIncarnationId
+          && runtimeRecord?.generation === definition.generation
+          && registered?.generation === definition.generation && registered?.version === definition.version
+          && registered?.installationIncarnationId === definition.installationIncarnationId
+          && registered?.instanceIncarnationId === definition.instanceIncarnationId
+      }
+      return Boolean(isCurrent() && await hasQueuedTaskMarkers(definition.dataDir) && isCurrent())
+    })
   }
 
   publishRuntimeEvent(event, owner = this.currentOwner()) {
@@ -523,6 +599,24 @@ export class AppRuntimeHost {
       options.signal?.throwIfAborted()
       return this.nativeAdapterHost.invoke(pkg, contribution.action, input, options)
     }
+    if (kind === 'tools' && contribution.execution === 'host') {
+      const pkg = await this.getActivePackage(contribution.appId)
+      const validate = compileJsonSchema(loadJsonSchema(pkg.root, contribution.inputSchema, 'Host tool input'))
+      if (!validate(input)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Host tool input does not match its schema')
+      const instance = this.requireInstance(contribution.appId, options.instanceId || defaultInstanceId(contribution.appId))
+      const runtimeRecord = this.runtimeForInstance(contribution.appId, instance.id)
+      if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App runtime is unavailable')
+      options.authorizeDispatch?.()
+      return this.dispatchHostRequest({
+        appId: contribution.appId, instanceId: instance.id, key: runtimeRecord.key,
+        generation: runtimeRecord.generation, version: pkg.manifest.version,
+        protocol: contribution.host.protocol, method: contribution.host.method, input,
+        owner: this.currentOwner(), principal: normalizeAppOwner(options.principal || this.currentOwner()),
+        surface: 'backend', signal: options.signal, timeoutMs: options.timeoutMs,
+        authorizeDispatch: options.authorizeDispatch,
+        invocation: options.invocation || { surface: 'tool' },
+      })
+    }
     const instance = this.resolveContributionInstance(contribution.appId, options.instanceId)
     const action = kind === 'resourceProviders' ? contribution.resolveAction : contribution.action
     return this.invoke(contribution.appId, instance.id, action, input, options)
@@ -641,8 +735,12 @@ export class AppRuntimeHost {
   async setAppEnabledNow(appId, enabled) {
     const packageInfo = await this.getActivePackage(appId)
     const previous = this.installations.get(appId)
-    await this.installations.upsert(appId, { enabled: Boolean(enabled) })
+    const nextEnabled = Boolean(enabled)
+    await this.installations.upsert(appId, { enabled: nextEnabled })
     try {
+      if (previous.enabled !== nextEnabled) {
+        for (const runtimeRecord of this.runtimes.list(appId)) await this.runtimes.bumpGeneration(runtimeRecord.key)
+      }
       if (!enabled) await this.beforeAppDeactivation(appId)
       await this.reconcileApp(appId)
     } catch (error) {
@@ -753,8 +851,14 @@ export class AppRuntimeHost {
         await this.credentials.get(appId, instanceId),
       )
     }
-    await this.instances.update(instanceId, { enabled: Boolean(enabled) })
+    const nextEnabled = Boolean(enabled)
+    await this.instances.update(instanceId, { enabled: nextEnabled })
     try {
+      if (previous.enabled !== nextEnabled) {
+        for (const runtimeRecord of this.runtimes.list(appId).filter(item => item.instanceId === instanceId)) {
+          await this.runtimes.bumpGeneration(runtimeRecord.key)
+        }
+      }
       if (!enabled) await this.beforeAppDeactivation(appId)
       await this.reconcileInstance(instanceId)
     } catch (error) {
@@ -829,9 +933,14 @@ export class AppRuntimeHost {
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
+    const authorizeDispatch = options.authorizeDispatch
     return this.actions.invoke(runtimeRecord, actionName, input, {
       ...options,
       principal: normalizeAppOwner(options.principal || this.currentOwner()),
+      authorizeDispatch: () => {
+        this.authorizeInvocation(runtimeRecord)
+        authorizeDispatch?.()
+      },
     })
   }
 
@@ -844,6 +953,10 @@ export class AppRuntimeHost {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker does not support handler registration')
     }
     return this.hostCapabilities.registerHandler(protocol, method, handler)
+  }
+
+  setAppToolBridge(bridge) {
+    this.appCapabilities.setToolBridge(bridge)
   }
 
   requestHostCapability(appId, instanceId, protocol, method, input = {}, options = {}) {
@@ -899,26 +1012,40 @@ export class AppRuntimeHost {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App version is stale')
     }
     this.authorizeInvocation(runtimeRecord)
+    const installationIncarnationId = this.installations.get(request.appId)?.incarnationId
+    const instanceIncarnationId = this.instances.get(request.instanceId)?.incarnationId
     const backend = packageInfo.manifest.backend
     if (typeof this.hostCapabilities?.dispatch !== 'function') {
       throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'Host capability broker is not configured')
     }
-    const assertCurrent = (authorization) => {
-      request.signal?.throwIfAborted()
+    const assertAppCurrent = (authorization) => {
       const current = this.runtimes.get(request.key)
-      if (!current || current.generation !== request.generation || this.installations.get(request.appId)?.activeVersion !== request.version) {
+      const installation = this.installations.get(request.appId)
+      const instance = this.instances.get(request.instanceId)
+      if (!current || current.appId !== request.appId || current.instanceId !== request.instanceId
+        || current.generation !== request.generation || installation?.activeVersion !== request.version
+        || installation?.incarnationId !== installationIncarnationId
+        || instance?.incarnationId !== instanceIncarnationId) {
         throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App runtime generation is stale')
       }
       this.authorizeInvocation(current)
-      if (authorization?.permission) requireHostPermission(this.installations.get(request.appId)?.grants ?? [], authorization.permission, { source: 'grant' })
+      if (authorization?.permission) requireHostPermission(installation.grants ?? [], authorization.permission, { source: 'grant' })
+    }
+    const assertCurrent = (authorization) => {
+      request.signal?.throwIfAborted()
+      assertAppCurrent(authorization)
+      request.authorizeDispatch?.()
     }
     return this.hostCapabilities.dispatch({
       ...request,
       assertCurrent,
+      assertAppCurrent,
       appId: runtimeRecord.appId,
       instanceId: runtimeRecord.instanceId,
       version: packageInfo.manifest.version,
       generation: runtimeRecord.generation,
+      installationIncarnationId,
+      instanceIncarnationId,
       dataDir: this.appDataPath(this.dataDir, runtimeRecord.appId, 'instances', runtimeRecord.instanceId),
       runtimeDir: this.appDataPath(this.runtimeDir, runtimeRecord.appId, runtimeRecord.instanceId),
       owner: this.currentOwner(),
@@ -1075,6 +1202,8 @@ export class AppRuntimeHost {
       version: packageInfo.manifest.version,
       instanceId: instance.id,
       generation: runtimeRecord.generation,
+      installationIncarnationId: this.installations.get(packageInfo.manifest.id)?.incarnationId,
+      instanceIncarnationId: instance.incarnationId,
       entry: backend.entry,
       lifecycle: backend.lifecycle,
       protocols: resolveAppProtocols(packageInfo.manifest),
@@ -1144,14 +1273,19 @@ export class AppRuntimeHost {
       runtimeRecord = await this.ensureRuntime(packageInfo, instance)
     }
     if (!runtimeRecord) return
+    // desiredState records the stay-running policy. A pending-work wakeup is
+    // temporary, so an on-demand Backend remains stopped in this record.
     await this.runtimes.upsert({ ...runtimeRecord, desiredState: shouldRun ? 'running' : 'stopped' })
     if (!installation.enabled || !instance.enabled || !configurationReady) {
       await this.supervisor.stop(runtimeRecord.key)
       return
     }
     if (!this.automaticStartAllowed()) return
-    // On-demand Backends are prepared when an action or Host event uses them.
-    if (shouldRun) {
+    // A queued engine task must be reconciled even when no App surface is open.
+    const shouldRecoverPending = backend.lifecycle === 'on-demand'
+      && packageInfo.manifest.host?.protocols?.includes('moss.runtime/v1')
+      && await hasQueuedTaskMarkers(this.appDataPath(this.dataDir, instance.appId, 'instances', instance.id))
+    if (shouldRun || shouldRecoverPending) {
       await this.prepareRuntime(runtimeRecord)
       await this.supervisor.start(runtimeRecord.key)
     }

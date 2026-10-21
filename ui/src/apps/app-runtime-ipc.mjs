@@ -4,7 +4,7 @@ import { installAppArchive } from './app-runtime.mjs'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
-import { confirmAppInstallation, describeAppTools } from './app-tool-disclosure.mjs'
+import { appCapabilityDeclarationChanged, confirmAppInstallation, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_PERMISSION_CANCELLED = 'MOSS_APP_INSTALL_PERMISSION_CANCELLED'
 
@@ -41,7 +41,7 @@ export function registerAppRuntimeIpc(options) {
       if (!context.principal?.userId || typeof payload.filePath !== 'string' || !path.isAbsolute(payload.filePath)
         || path.extname(payload.filePath).toLowerCase() !== '.zip') throw new Error('请选择云电脑上的 ZIP 安装包或上传 ZIP 文件。');
       const stat = await fs.stat(payload.filePath);
-      if (!stat.isFile() || stat.size > 100 * 1024 * 1024) throw new Error('安装包必须是小于 100 MB 的 ZIP 文件。');
+      if (!stat.isFile() || stat.size > 250 * 1024 * 1024) throw new Error('安装包必须是小于 250 MB 的 ZIP 文件。');
       selection = { filePaths: [payload.filePath] };
     } else selection = await dialog.showOpenDialog({
       title: 'Install Moss App', properties: ['openFile'], filters: [{ name: 'Moss App archive', extensions: ['zip'] }],
@@ -52,6 +52,7 @@ export function registerAppRuntimeIpc(options) {
       progress = { ...progress, ...patch }
       emitProgress?.(progress)
     }
+    let committed = null
     try {
       report({ phase: 'preparing' })
       let approvedGrants = []
@@ -66,7 +67,15 @@ export function registerAppRuntimeIpc(options) {
           const installationSnapshot = () => JSON.stringify([installation()?.activeVersion, [...(installation()?.grants || [])].sort()]);
           const expectedSnapshot = installationSnapshot();
           const installationRevision = options.getInstallationRevision?.(appId);
-          const expectedBaseVersion = options.getInstalledApp?.(appId)?.currentVersion || null;
+          const installedApp = options.getInstalledApp?.(appId) || null;
+          const expectedBaseVersion = installedApp?.currentVersion || null;
+          const previousRuntime = runtime().getInstallation?.(appId) || null;
+          const previousRuntimeVersion = previousRuntime?.activeVersion || null;
+          const previousRuntimeGrants = [...(previousRuntime?.grants || [])];
+          let previousManifest = installedApp?.manifest || null;
+          try { previousManifest = (await runtime().getApp?.(appId))?.manifest || previousManifest; } catch {}
+          const previousCapabilitiesUnknown = Boolean((expectedBaseVersion || previousRuntimeVersion) && !previousManifest);
+          const capabilityChange = previousCapabilitiesUnknown || appCapabilityDeclarationChanged(previousManifest, packageInfo.manifest);
           const assertUnchanged = () => {
             if (installationSnapshot() !== expectedSnapshot || (installationRevision !== undefined && options.getInstallationRevision(appId) !== installationRevision)) {
               throw new Error('确认期间 App 的安装或授权状态已变化，请重新安装。');
@@ -75,9 +84,15 @@ export function registerAppRuntimeIpc(options) {
           const currentGrants = installation()?.grants || []
           const addedPermissions = (packageInfo.manifest.permissions || [])
             .filter((permission) => !currentGrants.includes(permission))
-          if (addedPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length || packageInfo.manifest.nativeAdapter) {
+          if (addedPermissions.length || describeAppTools(packageInfo.manifest).length || packageInfo.manifest.contributes?.skills?.length
+            || packageInfo.manifest.nativeAdapter || packageInfo.manifest.appCapabilities?.requires?.length
+            || packageInfo.manifest.appCapabilities?.provides?.length
+            || packageInfo.manifest.appCapabilities?.usesTools?.length || capabilityChange) {
             report({ phase: 'awaiting-permission' })
-            if (!await confirmInstallation(packageInfo.manifest, addedPermissions, `安装包摘要：${packageReviewRevision(packageInfo)}`)) {
+            const reviewDetails = [`安装包摘要：${packageReviewRevision(packageInfo)}`,
+              previousCapabilitiesUnknown ? '无法读取原版本的跨 App 能力声明，请确认新版本的能力。'
+                : describePreviousAppCapabilities(previousManifest, packageInfo.manifest)].filter(Boolean).join('\n\n');
+            if (!await confirmInstallation(packageInfo.manifest, addedPermissions, reviewDetails)) {
               throw Object.assign(new Error('App installation permission approval was canceled'), {
                 code: INSTALL_PERMISSION_CANCELLED,
               })
@@ -90,6 +105,12 @@ export function registerAppRuntimeIpc(options) {
           approvedGrants = [...new Set([...retainedGrants, ...addedPermissions])]
           report({ phase: 'installing' })
           return installArchivePackage(packageRoot, { validateCommit: assertUnchanged, expectedPackageChecksums: packageInfo.checksums,
+            activateInstallation: app => emitChanged?.({ action: 'install', app, grants: approvedGrants }),
+            onCommit: ({ installationRevision: committedRevision }) => {
+              committed = { appId, version: packageInfo.manifest.version, revision: committedRevision,
+                previousVersion: expectedBaseVersion, previousRuntimeVersion, previousRuntimeGrants,
+                approvedGrants: [...approvedGrants] }
+            },
             ...(installationRevision !== undefined ? { expectedInstallationRevision: installationRevision, expectedBaseVersion } : {}),
           })
         },
@@ -99,13 +120,64 @@ export function registerAppRuntimeIpc(options) {
       if (!appId || !version) throw new Error('Installed App package did not return an identity and version')
       report({ phase: 'activating', appId, version })
       await runtime().registerInstalled(appId, version, { grants: approvedGrants })
-      const result = { ok: true, app: await changed('installed', appId, app) }
+      await emitChanged?.({ action: 'installed', appId })
+      const result = { ok: true, app }
       report({ phase: 'completed' })
       return result
     } catch (error) {
       if (error?.code === INSTALL_PERMISSION_CANCELLED) {
         report({ phase: 'canceled' })
         return { ok: false, canceled: true }
+      }
+      if (committed?.revision !== undefined && options.rollbackPackage) {
+        let packageRolledBack = false
+        try {
+          const rolledBack = await options.rollbackPackage({ appId: committed.appId, previousVersion: committed.previousVersion,
+            failedVersion: committed.version, expectedInstallationRevision: committed.revision })
+          if (rolledBack === true) {
+            packageRolledBack = true
+            report({ phase: 'rolling-back' })
+            const host = runtime()
+            const restoredRevision = options.getInstallationRevision?.(committed.appId)
+            const restoreRuntime = async (insideTransition = false) => {
+              // A newer installation can commit after the registry rollback.
+              // Leave its Runtime ownership to that installation's activation.
+              if (restoredRevision !== undefined && options.getInstallationRevision(committed.appId) !== restoredRevision) return
+              if (options.getInstalledApp && (options.getInstalledApp(committed.appId)?.currentVersion || null) !== committed.previousVersion) return
+              const installation = host.getInstallation?.(committed.appId)
+              const activeVersion = installation?.activeVersion || null
+              if (activeVersion !== committed.version) return
+              const currentGrants = [...(installation.grants || [])]
+              const sameGrants = JSON.stringify(currentGrants.sort()) === JSON.stringify([...committed.approvedGrants].sort())
+              if (activeVersion === committed.previousRuntimeVersion) {
+                if (sameGrants && JSON.stringify(currentGrants) !== JSON.stringify([...committed.previousRuntimeGrants].sort())) {
+                  if (insideTransition) await host.setAppGrantsNow(committed.appId, committed.previousRuntimeGrants)
+                  else await host.setAppGrants(committed.appId, committed.previousRuntimeGrants)
+                }
+                return
+              }
+              if (committed.previousRuntimeVersion) {
+                const restoreOptions = sameGrants ? { grants: committed.previousRuntimeGrants } : {}
+                if (insideTransition) await host.activateVersionNow(committed.appId, committed.previousRuntimeVersion, restoreOptions)
+                else await host.activateVersion(committed.appId, committed.previousRuntimeVersion, restoreOptions)
+              } else if (insideTransition) await host.uninstallNow(committed.appId)
+              else await host.uninstall(committed.appId)
+            }
+            const restoreMethod = !committed.previousRuntimeVersion ? 'uninstallNow'
+              : committed.previousRuntimeVersion === committed.version ? 'setAppGrantsNow' : 'activateVersionNow'
+            const canTransition = typeof host.transitionApp === 'function' && typeof host[restoreMethod] === 'function'
+            if (canTransition) await host.transitionApp(committed.appId, () => restoreRuntime(true))
+            else await restoreRuntime()
+          }
+        } catch (rollbackError) {
+          error = new Error(`${error.message || String(error)}；安装回滚失败：${rollbackError.message || String(rollbackError)}`, { cause: error })
+        }
+        if (packageRolledBack) {
+          try { await emitChanged?.({ action: 'install-rollback', appId: committed.appId }) }
+          catch (refreshError) {
+            error = new Error(`${error.message || String(error)}；回滚后刷新失败：${refreshError.message || String(refreshError)}`, { cause: error })
+          }
+        }
       }
       report({ phase: 'error', error: error.message || String(error) })
       throw error

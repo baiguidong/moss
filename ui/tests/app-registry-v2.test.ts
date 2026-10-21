@@ -12,6 +12,16 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
 })
 
+async function writeFixturePackage(packageRoot: string, appId: string, version: string) {
+  await fs.mkdir(packageRoot, { recursive: true })
+  await fs.writeFile(path.join(packageRoot, 'index.html'), `<p>${appId}@${version}</p>`)
+  await fs.writeFile(path.join(packageRoot, 'app.moss.json'), JSON.stringify({
+    schemaVersion: 2, id: appId, version, displayName: appId,
+    hostApi: '^3.0.0', ui: { entry: 'index.html' }, permissions: [],
+  }))
+  await writePackageChecksums(packageRoot)
+}
+
 describe('App V2 registry hydration', () => {
   it('preserves local packages and source when switching to the marketplace and rolling back', async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-local-market-'))
@@ -58,6 +68,85 @@ describe('App V2 registry hydration', () => {
       rollbackAppToVersion(appId, localVersion);
       assert.equal(listAppsFromRegistry()[0].currentVersion, localVersion);
       assert.deepEqual(listAppsFromRegistry()[0].localModification, localModification);
+    `], { env: { ...process.env, MOSS_HOME: path.join(home, 'profile') }, encoding: 'utf8' })
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+  })
+
+  it('rolls back only the committed installation and serializes rollback behind publication', async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-conditional-rollback-'))
+    roots.push(home)
+    const appId = 'fixture.conditional-rollback'
+    const firstOnlyAppId = 'fixture.first-install-rollback'
+    const first = path.join(home, 'packages', 'first')
+    const second = path.join(home, 'packages', 'second')
+    const firstOnly = path.join(home, 'packages', 'first-only')
+    await Promise.all([
+      writeFixturePackage(first, appId, '1.0.0'),
+      writeFixturePackage(second, appId, '1.1.0'),
+      writeFixturePackage(firstOnly, firstOnlyAppId, '1.0.0'),
+    ])
+    const modulePath = path.resolve(import.meta.dir, '../src/app-platform.mjs')
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { publishAppFromBuild, rollbackAppInstallationIfCurrent, getAppInstallationRevision,
+        getAppRoot, listAppVersions, readAppRegistry } from ${JSON.stringify(modulePath)};
+      const [first, second, firstOnly] = ${JSON.stringify([first, second, firstOnly])};
+      const appId = ${JSON.stringify(appId)}, firstOnlyAppId = ${JSON.stringify(firstOnlyAppId)};
+      await publishAppFromBuild(first);
+      const firstRevision = getAppInstallationRevision(appId);
+      assert.equal(await rollbackAppInstallationIfCurrent(appId, {
+        expectedVersion: '1.0.0', expectedInstallationRevision: firstRevision + 1,
+      }), false);
+      assert.equal(await rollbackAppInstallationIfCurrent(appId, {
+        expectedVersion: '9.9.9', expectedInstallationRevision: firstRevision,
+      }), false);
+      assert.equal(readAppRegistry().apps.find(app => app.id === appId).currentVersion, '1.0.0');
+
+      let signalStaged, releaseCommit;
+      const staged = new Promise(resolve => { signalStaged = resolve; });
+      const holdCommit = new Promise(resolve => { releaseCommit = resolve; });
+      const publishing = publishAppFromBuild(second, { validateCommit: async () => {
+        signalStaged();
+        await holdCommit;
+      }});
+      await staged;
+      const staleRollback = rollbackAppInstallationIfCurrent(appId, {
+        expectedVersion: '1.0.0', expectedInstallationRevision: firstRevision,
+      });
+      releaseCommit();
+      await publishing;
+      assert.equal(await staleRollback, false);
+      assert.equal(readAppRegistry().apps.find(app => app.id === appId).currentVersion, '1.1.0');
+
+      const secondRevision = getAppInstallationRevision(appId);
+      assert.equal(await rollbackAppInstallationIfCurrent(appId, {
+        expectedVersion: '1.1.0', expectedInstallationRevision: secondRevision, previousVersion: '1.0.0',
+      }), true);
+      assert.equal(readAppRegistry().apps.find(app => app.id === appId).currentVersion, '1.0.0');
+      assert.deepEqual(listAppVersions(appId).map(item => item.version), ['1.1.0', '1.0.0']);
+      assert.equal(getAppInstallationRevision(appId), secondRevision + 1);
+
+      let failedActivationRevision;
+      await assert.rejects(publishAppFromBuild(second, {
+        onCommit: ({ installationRevision }) => { failedActivationRevision = installationRevision; },
+        activateInstallation: async () => { throw new Error('activation failed inside publication'); },
+      }), /activation failed inside publication/);
+      assert.equal(readAppRegistry().apps.find(app => app.id === appId).currentVersion, '1.1.0');
+      assert.equal(await rollbackAppInstallationIfCurrent(appId, {
+        expectedVersion: '1.1.0', expectedInstallationRevision: failedActivationRevision, previousVersion: '1.0.0',
+      }), true);
+      assert.equal(readAppRegistry().apps.find(app => app.id === appId).currentVersion, '1.0.0');
+
+      await publishAppFromBuild(firstOnly);
+      const firstOnlyRevision = getAppInstallationRevision(firstOnlyAppId);
+      assert.equal(await rollbackAppInstallationIfCurrent(firstOnlyAppId, {
+        expectedVersion: '1.0.0', expectedInstallationRevision: firstOnlyRevision,
+      }), true);
+      assert.equal(readAppRegistry().apps.some(app => app.id === firstOnlyAppId), false);
+      assert.equal(fs.existsSync(getAppRoot(firstOnlyAppId)), false);
+      assert.equal(getAppInstallationRevision(firstOnlyAppId), firstOnlyRevision + 1);
     `], { env: { ...process.env, MOSS_HOME: path.join(home, 'profile') }, encoding: 'utf8' })
     expect(result.stderr).toBe('')
     expect(result.status).toBe(0)

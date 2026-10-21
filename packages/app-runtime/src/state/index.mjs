@@ -18,6 +18,11 @@ export const DEFAULT_APP_OWNER = Object.freeze({
 
 function clone(value) { return structuredClone(value) }
 
+function validIncarnationId(value) {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
 function normalizeGrants(value) {
   if (!Array.isArray(value)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'App grants must be an array')
   const grants = value.map((entry) => String(entry || '').trim())
@@ -97,16 +102,21 @@ export class JsonAppStateStore {
   async initialize() {
     try {
       const parsed = JSON.parse(await fsp.readFile(this.filePath, 'utf8'))
+      let migrated = false
       const installations = {}
       for (const item of Object.values(parsed?.installations || {})) {
         const owner = recordOwner(item)
-        const normalized = { ...item, owner, grants: normalizeGrants(Array.isArray(item?.grants) ? item.grants : []) }
+        const incarnationId = validIncarnationId(item.incarnationId) ? item.incarnationId : randomUUID()
+        if (incarnationId !== item.incarnationId) migrated = true
+        const normalized = { ...item, owner, incarnationId, grants: normalizeGrants(Array.isArray(item?.grants) ? item.grants : []) }
         installations[scopedRecordKey(owner, normalized.appId)] = normalized
       }
       const instances = {}
       for (const item of Object.values(parsed?.instances || {})) {
         const owner = recordOwner(item)
-        instances[scopedRecordKey(owner, item.id)] = { ...item, owner }
+        const incarnationId = validIncarnationId(item.incarnationId) ? item.incarnationId : randomUUID()
+        if (incarnationId !== item.incarnationId) migrated = true
+        instances[scopedRecordKey(owner, item.id)] = { ...item, owner, incarnationId }
       }
       const runtimes = {}
       for (const item of Object.values(parsed?.runtimes || {})) {
@@ -123,6 +133,7 @@ export class JsonAppStateStore {
         }
       }
       this.state = { version: 5, installations, instances, runtimes }
+      if (migrated) await this.persist()
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
       await this.persist()
@@ -197,6 +208,7 @@ export class SqliteAppStateStore {
           record_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
           org_id TEXT, user_id TEXT, app_id TEXT NOT NULL, active_version TEXT,
           enabled INTEGER NOT NULL DEFAULT 0, grants_json TEXT NOT NULL DEFAULT '[]',
+          incarnation_id TEXT NOT NULL DEFAULT '',
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
           UNIQUE(owner_key, app_id)
         );
@@ -205,6 +217,7 @@ export class SqliteAppStateStore {
           record_key TEXT PRIMARY KEY, owner_key TEXT NOT NULL, owner_scope TEXT NOT NULL,
           org_id TEXT, user_id TEXT, id TEXT NOT NULL, app_id TEXT NOT NULL, display_name TEXT NOT NULL,
           config_json TEXT NOT NULL, secret_refs_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+          incarnation_id TEXT NOT NULL DEFAULT '',
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
           UNIQUE(owner_key, id)
         );
@@ -217,6 +230,12 @@ export class SqliteAppStateStore {
         );
         CREATE INDEX IF NOT EXISTS idx_app_runtimes_owner_app ON app_runtimes(owner_key, app_id);
       `)
+      if (!columns('app_installations').has('incarnation_id')) {
+        this.db.exec("ALTER TABLE app_installations ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT ''")
+      }
+      if (!columns('app_instances').has('incarnation_id')) {
+        this.db.exec("ALTER TABLE app_instances ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT ''")
+      }
       if (legacyInstallations) {
         const legacyColumns = columns('app_installations_legacy_owner')
         const grantsExpression = legacyColumns.has('grants_json') ? 'grants_json' : "'[]'"
@@ -238,6 +257,14 @@ export class SqliteAppStateStore {
           DROP TABLE app_instances_legacy_owner;
         `)
       }
+      const assignIncarnations = (table) => {
+        const update = this.db.prepare(`UPDATE ${table} SET incarnation_id = ? WHERE record_key = ?`)
+        for (const row of this.db.prepare(`SELECT record_key, incarnation_id FROM ${table}`).all()) {
+          if (!validIncarnationId(row.incarnation_id)) update.run(randomUUID(), row.record_key)
+        }
+      }
+      assignIncarnations('app_installations')
+      assignIncarnations('app_instances')
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -255,7 +282,7 @@ export class SqliteAppStateStore {
         appId: row.app_id, activeVersion: row.active_version, enabled: Boolean(row.enabled),
         grants: normalizeGrants(JSON.parse(row.grants_json || '[]')),
         owner,
-        createdAt: row.created_at, updatedAt: row.updated_at,
+        incarnationId: row.incarnation_id, createdAt: row.created_at, updatedAt: row.updated_at,
       }
     }
     const instances = {}
@@ -264,7 +291,8 @@ export class SqliteAppStateStore {
       instances[row.record_key] = {
         id: row.id, appId: row.app_id, displayName: row.display_name,
         config: JSON.parse(row.config_json), secretRefs: JSON.parse(row.secret_refs_json),
-        enabled: Boolean(row.enabled), owner, createdAt: row.created_at, updatedAt: row.updated_at,
+        enabled: Boolean(row.enabled), owner, incarnationId: row.incarnation_id,
+        createdAt: row.created_at, updatedAt: row.updated_at,
       }
     }
     const runtimes = {}
@@ -312,8 +340,8 @@ export class SqliteAppStateStore {
     this.db.exec('DELETE FROM app_installations; DELETE FROM app_instances; DELETE FROM app_runtimes;')
     const insertInstallation = this.db.prepare(`
       INSERT INTO app_installations
-        (record_key, owner_key, owner_scope, org_id, user_id, app_id, active_version, enabled, grants_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (record_key, owner_key, owner_scope, org_id, user_id, app_id, active_version, enabled, grants_json, incarnation_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const [recordKey, item] of Object.entries(state.installations)) {
       const owner = recordOwner(item)
@@ -327,21 +355,23 @@ export class SqliteAppStateStore {
         item.activeVersion,
         item.enabled ? 1 : 0,
         JSON.stringify(item.grants || []),
+        item.incarnationId,
         item.createdAt,
         item.updatedAt,
       )
     }
     const insertInstance = this.db.prepare(`
       INSERT INTO app_instances
-        (record_key, owner_key, owner_scope, org_id, user_id, id, app_id, display_name, config_json, secret_refs_json, enabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (record_key, owner_key, owner_scope, org_id, user_id, id, app_id, display_name, config_json, secret_refs_json, enabled, incarnation_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const [recordKey, item] of Object.entries(state.instances)) {
       const owner = recordOwner(item)
       insertInstance.run(
         recordKey, owner.key, owner.scope, owner.orgId, owner.userId,
         item.id, item.appId, item.displayName, JSON.stringify(item.config || {}),
-        JSON.stringify(item.secretRefs || {}), item.enabled ? 1 : 0, item.createdAt, item.updatedAt,
+        JSON.stringify(item.secretRefs || {}), item.enabled ? 1 : 0, item.incarnationId,
+        item.createdAt, item.updatedAt,
       )
     }
     const insertRuntime = this.db.prepare(`
@@ -395,6 +425,7 @@ export class InstallationStore {
         activeVersion: patch.activeVersion ?? previous?.activeVersion ?? null,
         enabled: patch.enabled ?? previous?.enabled ?? false,
         grants: normalizeGrants(patch.grants ?? previous?.grants ?? []),
+        incarnationId: previous?.incarnationId || randomUUID(),
         createdAt: previous?.createdAt || timestamp,
         updatedAt: timestamp,
       }
@@ -441,6 +472,7 @@ export class InstanceStore {
         config: clone(input.config || {}),
         secretRefs: clone(input.secretRefs || {}),
         enabled: input.enabled ?? existing?.enabled ?? false,
+        incarnationId: randomUUID(),
         createdAt: existing?.createdAt || timestamp,
         updatedAt: timestamp,
       }

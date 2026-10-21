@@ -355,7 +355,6 @@
               "id",
               "title",
               "description",
-              "action",
               "inputSchema",
               "effect"
             ],
@@ -400,8 +399,18 @@
               "execution": {
                 "enum": [
                   "backend",
-                  "native"
+                  "native",
+                  "host"
                 ]
+              },
+              "host": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["protocol", "method"],
+                "properties": {
+                  "protocol": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "method": { "type": "string", "minLength": 1, "maxLength": 128 }
+                }
               },
               "instructions": {
                 "type": "string",
@@ -715,6 +724,73 @@
             },
             "secrets": {
               "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "appCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provides": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protocol", "methods"],
+            "properties": {
+              "protocol": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$" },
+              "methods": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "action", "permission", "effect"],
+                  "properties": {
+                    "name": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$" },
+                    "action": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$" },
+                    "permission": { "type": "string", "pattern": "^[a-z][a-z0-9:._-]*$" },
+                    "effect": { "const": "read" },
+                    "resourceReadMethod": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requires": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protocol"],
+            "properties": {
+              "protocol": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$" },
+              "optional": { "type": "boolean" }
+            }
+          }
+        },
+        "usesTools": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["appId", "tools"],
+            "properties": {
+              "appId": { "type": "string", "maxLength": 80, "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$" },
+              "tools": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f*?]+$" }
+              }
             }
           }
         }

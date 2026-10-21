@@ -34,6 +34,8 @@ const permissions = {
   'apps:author': ['创作 App', '准备 App 项目并编辑应用源码。'],
   'apps:build': ['构建 App', '构建、验证或预览 App 安装包。'],
   'apps:install': ['发布与安装 App', '提交 App 版本并安装到 Moss。'],
+  'apps:invoke': ['调用其他 App', '经 Moss 调用此 App 声明的目标工具或跨 App 能力；工具可能读取或修改目标 App 可访问的数据。'],
+  'dataset:share': ['共享工作台数据源', '允许其他已授权 App 读取在本地数据工作台中明确添加为共享数据源的文件结构、预览和有限查询结果。'],
   'settings:read': ['查看设置', '读取 Moss 设置目录及当前值。'],
   'settings:write': ['修改设置', '提交或撤销 Moss 设置变更，常规变更仍需确认。'],
   'settings:write:unrestricted': ['自动修改设置', '允许 App 无需逐次确认就修改 Moss 设置。'],

@@ -46,16 +46,47 @@ test('generation rejects executable resources, traversal, invalid configurations
   assert.throws(() => normalizeMcpAppConfig({ mcpServers: { bad: { command: 'node', args: 'not-an-array' } } }), /Invalid/)
 })
 
+test('bundled MCP executables are confined to runtime and referenced by the App config', async t => {
+  const f = await fixture(t)
+  const runtimeDir = path.join(f.root, 'runtime')
+  await fs.mkdir(runtimeDir)
+  await fs.writeFile(path.join(runtimeDir, 'server.mjs'), 'process.stdin.resume()\n')
+  const bundled = await f.generate({ mcpServers: { diagram: { command: 'node', args: ['@app/runtime/server.mjs'] } } }, { runtimeDir })
+  assert.equal((await validateAppPackage(bundled.root)).manifest.id, 'test.diagram')
+  await assert.rejects(f.generate({}, { runtimeDir }), /requires an @app/)
+  await assert.rejects(f.generate({ mcpServers: { diagram: { command: 'node', args: ['@app/other/server.mjs'] } } }, { runtimeDir }), /requires an @app\/runtime/)
+  await fs.rm(path.join(bundled.root, 'runtime/server.mjs'))
+  await writePackageChecksums(bundled.root)
+  await assert.rejects(validateAppPackage(bundled.root), /does not exist/)
+})
+
 test('builtin UI requires a data-only MCP App with Host API 3.9 and MCP permissions', async t => {
   const f = await fixture(t), { manifest } = await f.generate()
   assert.deepEqual(validateAppManifest(manifest).mcpApp, manifest.mcpApp)
   assert.throws(() => validateAppManifest({ ...manifest, hostApi: '^3.8.0' }), /3.9/)
   assert.throws(() => validateAppManifest({ ...manifest, mcpApp: undefined }), /builtin UI/)
-  assert.throws(() => validateAppManifest({ ...manifest, ui: { entry: 'other.html' } }), /builtin UI/)
+  assert.throws(() => validateAppManifest({ ...manifest, ui: { entry: 'dist/ui/index.html' } }), /3.17/)
+  assert.equal(validateAppManifest({ ...manifest, hostApi: '^3.17.0', ui: { entry: 'dist/ui/index.html' } }).ui.entry, 'dist/ui/index.html')
   assert.throws(() => validateAppManifest({ ...manifest, ui: { builtin: 'mcp', entry: 'other.html' } }), /Invalid/)
   assert.throws(() => validateAppManifest({ ...manifest, backend: { entry: 'run.mjs', runtime: 'node', apiVersion: 1, lifecycle: 'persistent', actions: [] } }), /no Backend/)
   assert.throws(() => validateAppManifest({ ...manifest, permissions: [...manifest.permissions, 'desktop:control'] }), /only the MCP/)
   assert.throws(() => validateAppManifest({ ...manifest, permissions: ['mcp:read'] }), /MCP Host/)
+})
+
+test('custom MCP UI packages keep MCP configuration and isolated UI assets', async t => {
+  const f = await fixture(t), generated = await f.generate()
+  const uiDir = path.join(generated.root, 'dist', 'ui')
+  await fs.mkdir(uiDir, { recursive: true })
+  await fs.writeFile(path.join(uiDir, 'index.html'), '<!doctype html><script src="app.js"></script>')
+  await fs.writeFile(path.join(uiDir, 'app.js'), 'document.title = "Diagram"')
+  const manifest = { ...generated.manifest, hostApi: '^3.17.0', ui: { entry: 'dist/ui/index.html' },
+    permissions: [...generated.manifest.permissions, 'mcp:auth'] }
+  await fs.writeFile(path.join(generated.root, 'app.moss.json'), JSON.stringify(manifest))
+  await writePackageChecksums(generated.root)
+  assert.equal((await validateAppPackage(generated.root)).manifest.ui.entry, 'dist/ui/index.html')
+  await fs.writeFile(path.join(uiDir, 'native.node'), 'binary')
+  await writePackageChecksums(generated.root)
+  await assert.rejects(validateAppPackage(generated.root), /only configuration/)
 })
 
 test('installation validates data files and config even when checksums are valid', async t => {

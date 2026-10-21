@@ -434,6 +434,63 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
     await runtime.shutdown()
   })
 
+  it('rechecks App authorization after Backend startup before sending an Action', async () => {
+    const runtime = await createRuntime('on-demand-single')
+    const appId = 'fixture.on-demand-single'
+    const instanceId = defaultInstanceId(appId)
+    await runtime.setInstanceEnabled(appId, instanceId, true)
+    await runtime.setAppEnabled(appId, true)
+    const originalStart = runtime.supervisor.start.bind(runtime.supervisor)
+    const originalStop = runtime.supervisor.stop.bind(runtime.supervisor)
+    const originalSend = runtime.supervisor.send.bind(runtime.supervisor)
+    let releaseStart!: () => void
+    let releaseStop!: () => void
+    let reportStarted!: () => void
+    let reportStopping!: () => void
+    const startGate = new Promise<void>(resolve => { releaseStart = resolve })
+    const stopGate = new Promise<void>(resolve => { releaseStop = resolve })
+    const started = new Promise<void>(resolve => { reportStarted = resolve })
+    const stopping = new Promise<void>(resolve => { reportStopping = resolve })
+    let actionMessages = 0
+    runtime.supervisor.start = async (key, options) => {
+      const status = await originalStart(key, options)
+      reportStarted()
+      await startGate
+      return status
+    }
+    runtime.supervisor.stop = async key => {
+      reportStopping()
+      await stopGate
+      return originalStop(key)
+    }
+    runtime.supervisor.send = (hosted, message, onError) => {
+      if (message.type === 'action.invoke') actionMessages++
+      return originalSend(hosted, message, onError)
+    }
+    let pending: Promise<any> | undefined
+    let disabling: Promise<any> | undefined
+    try {
+      pending = runtime.invoke(appId, instanceId, 'echo', { value: 'stale' }).catch(error => error)
+      await started
+      disabling = runtime.setAppEnabled(appId, false)
+      await stopping
+      releaseStart()
+      expect(await pending).toMatchObject({ code: 'APP_DISABLED' })
+      expect(actionMessages).toBe(0)
+      releaseStop()
+      await disabling
+    } finally {
+      releaseStart()
+      releaseStop()
+      runtime.supervisor.start = originalStart
+      runtime.supervisor.stop = originalStop
+      runtime.supervisor.send = originalSend
+      await pending?.catch(() => {})
+      await disabling?.catch(() => {})
+      await runtime.shutdown()
+    }
+  })
+
   it('preserves data, credentials, and instance configuration unless deletion is requested', async () => {
     const runtime = await createRuntime('persistent-configured', {}, async (source) => {
       const secretsPath = path.join(source, 'schemas/secrets.schema.json')

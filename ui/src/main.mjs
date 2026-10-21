@@ -134,6 +134,7 @@ import {
   publishAppFromBuild,
   readAppManifestFromDir,
   readAppRegistry,
+  rollbackAppInstallationIfCurrent,
   rollbackAppToVersion,
   refreshAppRegistryFromCurrent,
 } from './app-platform.mjs';
@@ -182,7 +183,7 @@ import {
 } from '../../packages/app-sdk/src/index.mjs';
 import { loadJsonSchema } from '../../packages/app-sdk/src/schemas/index.mjs';
 import { registerAppRuntimeIpc } from './apps/app-runtime-ipc.mjs';
-import { confirmAppInstallation, describeAppTools } from './apps/app-tool-disclosure.mjs';
+import { confirmAppInstallation, describeAppTools, describePreviousAppCapabilities } from './apps/app-tool-disclosure.mjs';
 import { createHostConfirmations } from './host/confirmations.mjs';
 import { createHostCapabilities } from './shared/host-capabilities.mjs';
 import {
@@ -5448,9 +5449,10 @@ async function emitAppsChanged(payload = {}) {
     const previousVersion = appRuntime.installations.get(appId)?.activeVersion || null;
     const versionChanged = Boolean(previousVersion && previousVersion !== version);
     const openViews = versionChanged ? closePublishedAppViews(appId) : { standalone: false, embedded: false };
+    const activationOptions = Array.isArray(payload.grants) ? { grants: payload.grants } : {};
     const activation = versionChanged
-      ? appRuntime.activateVersion(appId, version)
-      : appRuntime.registerInstalled(appId, version);
+      ? appRuntime.activateVersion(appId, version, activationOptions)
+      : appRuntime.registerInstalled(appId, version, activationOptions);
     try {
       await activation;
       await connectorAppHost?.refresh(appId);
@@ -5458,9 +5460,11 @@ async function emitAppsChanged(payload = {}) {
       broadcast();
     } catch (error) {
       mossLog('error', 'app-runtime', 'App version activation failed', { appId, version, error: error.message || String(error) });
-      if (previousVersion) rollbackAppToVersion(appId, previousVersion);
+      // Publication callers use their committed revision to roll back after
+      // the publish queue releases. Rolling back here would bypass that guard.
+      if (payload.action !== 'install' && previousVersion) rollbackAppToVersion(appId, previousVersion);
       emitToRenderer('app:runtime-event', { type: 'activation-error', appId, version, error: error.message || String(error) });
-      if (openViews.standalone) launchAppWindow(getPublishedApp(appId), { mode: 'published' });
+      if (openViews.standalone && payload.action !== 'install') launchAppWindow(getPublishedApp(appId), { mode: 'published' });
       broadcast({ action: 'activation-error', appId, version, error: error.message || String(error) });
       throw error;
     }
@@ -8067,6 +8071,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (!runtime.inspectDesktopMcpServer) throw new Error('请更新本地运行时后检查 MCP 连接。');
       return runtime.inspectDesktopMcpServer(name, config, signal);
     },
+    discoverTool: async (name, config, signal) => {
+      const runtime = await getClaudeRuntimeModule();
+      if (!runtime.listDesktopAppMcpTools) throw new Error('本地运行时尚未提供 App MCP 工具发现。');
+      return runtime.listDesktopAppMcpTools(name, config, signal);
+    },
+    invokeTool: async (name, config, toolName, args, options) => {
+      const runtime = await getClaudeRuntimeModule();
+      if (!runtime.callDesktopAppMcpTool) throw new Error('本地运行时尚未提供 App MCP 工具调用。');
+      return runtime.callDesktopAppMcpTool(name, config, toolName, args, options);
+    },
     authenticate: async (name, config, signal) => {
       const authenticate = await getAuthenticateDesktopMcpServerFn();
       try {
@@ -8349,14 +8363,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (appLifecycleChanged) {
         void cloudStorageHost?.watch();
       }
-      if (!appRuntimeRestorePending && (appLifecycleChanged || event.type === 'tool-scope-changed' || (event.type === 'instance-changed' && appMcpHost?.hasApp(event.appId)))) {
-        void appMcpHost?.refresh().then(async () => {
-          const contributions = await appRuntime.listContributions({ kinds: ['tools'], selectedAppIds: [], selectedAppServiceIds: [] });
-          const globalTools = (contributions.tools || []).some(tool => (tool.appId || tool.id.split('/')[0]) === event.appId);
-          return resetLocalRuntimesForMcpReload(event.appId, globalTools);
-        }).catch(error => {
-          mossLog('error', 'mcp', 'Unable to refresh App MCP registry', { error: error.message });
-          resetLocalRuntimesForMcpReload();
+      if (appRuntime && !appRuntimeRestorePending
+        && (appLifecycleChanged || event.type === 'tool-scope-changed' || event.type === 'instance-changed')) {
+        appRuntime.withOwner(event.owner || appRuntime.defaultOwner, () => {
+          void appMcpHost?.refresh(event.appId).then(async () => {
+            const contributions = await appRuntime.listContributions({ kinds: ['tools'], selectedAppIds: [], selectedAppServiceIds: [] });
+            const globalTools = (contributions.tools || []).some(tool => (tool.appId || tool.id.split('/')[0]) === event.appId);
+            return resetLocalRuntimesForMcpReload(event.appId, globalTools);
+          }).catch(error => {
+            mossLog('error', 'mcp', 'Unable to refresh App MCP registry', { error: error.message });
+            resetLocalRuntimesForMcpReload();
+          });
         });
       }
       for (const state of appWindowStates.values()) {
@@ -8368,6 +8385,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
     },
   });
+  appRuntime.setAppToolBridge(appMcpHost);
   if (isWebHost) {
     webResources = createWebResources();
     webApps = createWebApps({ registry: ipcMain, resources: webResources, assertWorkAllowed: assertUpdateWorkAllowed,
@@ -8437,17 +8455,78 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     authorizePreview: (manifest, grants) => {
       return confirmAppInstallation(hostConfirmations.dialog, manifest, grants);
     },
-    authorizeInstall: (manifest, result) => confirmAppInstallation(hostConfirmations.dialog,
-      JSON.stringify(result.tools) === JSON.stringify(result.previousTools) ? { ...manifest, contributes: { ...manifest.contributes, tools: [] } } : manifest, result.addedPermissions,
-      [result.source?.marketplace && result.source.appId === manifest.id ? `此本地修改将替换市场 App ${manifest.id}。原版本保留，当前版本不再继承市场签名信任；切回市场版本时需要再次确认。` : '',
-        result.dataCompatibility === 'migration-tested' ? `数据迁移验证：${result.verification}` : ''].filter(Boolean).join('\n\n')),
+    authorizeInstall: async (manifest, result) => {
+      const installed = listAllStoredApps().find(app => (app.id || app.name) === manifest.id);
+      const previousVersion = installed?.currentVersion || appRuntime.getInstallation(manifest.id)?.activeVersion || null;
+      let previousManifest = installed?.manifest || null;
+      try { previousManifest = (await appRuntime.getApp?.(manifest.id))?.manifest || previousManifest; } catch {}
+      const previousCapabilities = (previousVersion && !previousManifest)
+        ? '无法读取原版本的跨 App 能力声明，请确认新版本的能力。'
+        : describePreviousAppCapabilities(previousManifest, manifest);
+      return confirmAppInstallation(hostConfirmations.dialog,
+        JSON.stringify(result.tools) === JSON.stringify(result.previousTools) ? { ...manifest, contributes: { ...manifest.contributes, tools: [] } } : manifest, result.addedPermissions,
+        [result.source?.marketplace && result.source.appId === manifest.id ? `此本地修改将替换市场 App ${manifest.id}。原版本保留，当前版本不再继承市场签名信任；切回市场版本时需要再次确认。` : '',
+          result.dataCompatibility === 'migration-tested' ? `数据迁移验证：${result.verification}` : '',
+          previousCapabilities].filter(Boolean).join('\n\n'));
+    },
     install: async (artifact, { project, expectedGrants, ...expected }) => {
-      const installed = await publishAppFromBuild(artifact.directory, { ...expected, sourceRoot: artifact.source, reason: 'authoring', localModification: { origin: project.origin, sourceHash: artifact.sourceHash }, validateCommit: async installedPackage => {
-        if (await hashAuthoringArtifact(installedPackage.root, { packageFiles: true }) !== artifact.hash) throw new Error('App artifact changed before commit');
-        if (JSON.stringify([...(appRuntime.installations.get(project.appId)?.grants || [])].sort()) !== JSON.stringify(expectedGrants)) throw new Error('App permissions changed before commit');
-      } });
-      await appRuntime.setAppGrants(installed.id, artifact.manifest.permissions);
-      return { version: installed.currentVersion };
+      const appId = artifact.manifest.id;
+      const previousVersion = expected.expectedBaseVersion || null;
+      const approvedGrants = [...artifact.manifest.permissions];
+      let committedRevision;
+      let previousRuntimeVersion = null;
+      let previousRuntimeGrants = [];
+      try {
+        const installed = await publishAppFromBuild(artifact.directory, {
+          ...expected,
+          sourceRoot: artifact.source,
+          reason: 'authoring',
+          localModification: { origin: project.origin, sourceHash: artifact.sourceHash },
+          activateInstallation: app => emitAppsChanged({ action: 'install', app, grants: approvedGrants }),
+          onCommit: ({ installationRevision }) => {
+            committedRevision = installationRevision;
+            const previousRuntime = appRuntime.getInstallation(appId);
+            previousRuntimeVersion = previousRuntime?.activeVersion || null;
+            previousRuntimeGrants = [...(previousRuntime?.grants || [])];
+          },
+          validateCommit: async installedPackage => {
+            if (await hashAuthoringArtifact(installedPackage.root, { packageFiles: true }) !== artifact.hash) throw new Error('App artifact changed before commit');
+            if (JSON.stringify([...(appRuntime.installations.get(project.appId)?.grants || [])].sort()) !== JSON.stringify(expectedGrants)) throw new Error('App permissions changed before commit');
+          },
+        });
+        await appRuntime.setAppGrants(installed.id, approvedGrants);
+        return { version: installed.currentVersion };
+      } catch (error) {
+        if (committedRevision !== undefined) {
+          try {
+            const rolledBack = await rollbackAppInstallationIfCurrent(appId, {
+              expectedVersion: artifact.manifest.version, expectedInstallationRevision: committedRevision, previousVersion,
+            });
+            if (rolledBack) {
+              const rollbackRevision = getAppInstallationRevision(appId);
+              const restoreRuntime = async () => {
+                if (getAppInstallationRevision(appId) !== rollbackRevision) return false;
+                const published = listAllStoredApps().find(app => (app.id || app.name) === appId);
+                if ((published?.currentVersion || null) !== previousVersion) return false;
+                const current = appRuntime.getInstallation(appId);
+                if (current?.activeVersion === artifact.manifest.version) {
+                  const activeGrants = current.grants || [];
+                  const grantsUnchanged = JSON.stringify([...activeGrants].sort()) === JSON.stringify([...approvedGrants].sort());
+                  const restoreOptions = grantsUnchanged ? { grants: previousRuntimeGrants } : {};
+                  if (previousRuntimeVersion) await appRuntime.registerInstalledNow(appId, previousRuntimeVersion, restoreOptions);
+                  else await appRuntime.uninstallNow(appId);
+                }
+                return true;
+              };
+              const stillCurrent = await appRuntime.transitionApp(appId, restoreRuntime);
+              if (stillCurrent) await emitAppsChanged({ action: 'authoring-rollback', appId });
+            }
+          } catch (rollbackError) {
+            throw new Error(`${error.message || String(error)}；App 发布回滚失败：${rollbackError.message || String(rollbackError)}`, { cause: error });
+          }
+        }
+        throw error;
+      }
     },
     preview: createAuthoringPreview({ root: previewRoot, getRuntime: () => appRuntime, nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
       openWindow: ({ artifact, runtime, previewRoot }) => isWebHost ? webApps.offer({ id: artifact.manifest.id,
@@ -8504,6 +8583,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     sourceRoot: packageRoot,
     ...options,
   });
+  const rollbackInstalledAppPackage = ({ appId, previousVersion, failedVersion, expectedInstallationRevision }) =>
+    rollbackAppInstallationIfCurrent(appId, {
+      expectedVersion: failedVersion, expectedInstallationRevision, previousVersion,
+    });
   const appInstallProgress = new Map();
   const emitAppInstallProgress = (progress) => {
     const key = progress.source === 'local' ? 'local' : `marketplace:${progress.appId}`;
@@ -8521,6 +8604,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     emitChanged: emitAppsChanged,
     emitProgress: emitAppInstallProgress,
     installArchivePackage: installAppPackage,
+    rollbackPackage: rollbackInstalledAppPackage,
     getInstallationRevision: getAppInstallationRevision,
     getInstalledApp: id => listAllStoredApps().find(app => (app.id || app.name) === id),
     confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(hostConfirmations.dialog, manifest, permissions, details),
@@ -8552,10 +8636,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       getInstallationRevision: getAppInstallationRevision,
       installPackage: installAppPackage,
       confirmInstallation: (manifest, permissions, details) => confirmAppInstallation(hostConfirmations.dialog, manifest, permissions, details),
-      rollbackPackage: async ({ appId, previousVersion }) => {
-        if (previousVersion) rollbackAppToVersion(appId, previousVersion);
-        else await deleteApp(appId);
-      },
+      rollbackPackage: rollbackInstalledAppPackage,
       emitChanged: emitAppsChanged,
       emitProgress: emitAppInstallProgress,
     }),
@@ -8857,7 +8938,8 @@ function getInstallBlockers() {
   )) blockers.push('会话或后台任务');
   if (records.some(hasActiveAgentTeam)) blockers.push('Agent Team');
   if (terminalManager?.hasOpenTerminals()) blockers.push('终端窗口');
-  if (activeAppUpdateOperations || appRuntime?.supervisor?.listStatuses().some(status => status.pendingActions || status.pendingHostRequests || status.pendingHostEvents)) blockers.push('App 操作');
+  if (activeAppUpdateOperations || appRuntime?.supervisor?.listStatuses().some(status =>
+    status.pendingActions || status.pendingHostRequests || status.pendingHostEvents || status.activeWork)) blockers.push('App 操作');
   if (managedRuntimeInstallPromise) blockers.push('运行时安装');
   if (memoryDreamService.getStatus().phase === 'running') blockers.push('长期记忆整理');
   if (computerUseService.owner || computerUseService.inFlight) blockers.push('电脑操控');

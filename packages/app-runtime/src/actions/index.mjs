@@ -134,7 +134,11 @@ export class AppActionBroker {
         signal: controller.signal,
         principal: options.principal,
         invocation: options.invocation,
+        authorizeDispatch: options.authorizeDispatch,
       })
+      controller.signal.throwIfAborted()
+      await this.authorize(runtimeRecord)
+      controller.signal.throwIfAborted()
       if (activeAction.outputSchema) {
         const validate = this.validator(activePackage, actionName, 'output', activeAction.outputSchema)
         if (!validate(result)) {
