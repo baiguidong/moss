@@ -13,10 +13,10 @@ export const APP_AUTH_METHODS = Object.freeze([
 
 // Compatibility metadata for published packages that predate discovery fields.
 // Unknown Apps remain unclassified and discoverable in All/search.
-const localApps = new Set(['moss.app-builder', 'moss.audit', 'moss.browser-use', 'moss.buddy', 'moss.code-map',
-  'moss.computer-use', 'moss.database', 'moss.devtools', 'moss.document-converter', 'moss.drawio', 'moss.excel',
+const localApps = new Set(['moss.app-builder', 'moss.audit', 'moss.backup', 'moss.browser-use', 'moss.buddy', 'moss.code-map',
+  'moss.computer-use', 'moss.data-workbench', 'moss.database', 'moss.devtools', 'moss.document-converter', 'moss.drawio', 'moss.excel',
   'moss.file-cleaner', 'moss.filesystem', 'moss.git', 'moss.image-tools', 'moss.knowledge-rag', 'moss.library',
-  'moss.markitdown', 'moss.mcp', 'moss.memory', 'moss.pdf-tools', 'moss.self-test', 'moss.sequential-thinking',
+  'moss.markitdown', 'moss.mcp', 'moss.media-tools', 'moss.memory', 'moss.pdf-tools', 'moss.self-test', 'moss.sequential-thinking',
   'moss.takt', 'moss.trace', 'moss.transcription', 'moss.workflow'])
 const onlineApps = new Set(['moss.drive', 'moss.feishu', 'moss.openim'])
 
