@@ -273,7 +273,7 @@ export function ActivityGroup({
   }
 
   const failedCount = countFailedTools(toolCalls, resultMap, childToolCallsByParent);
-  const expanded = containsFocusedTool || (pinnedExpanded ?? (isLive || failedCount > 0));
+  const expanded = containsFocusedTool || (pinnedExpanded ?? isLive);
   const summary = buildActivitySummary(steps);
   const duration = isLive ? "" : getActivityDuration(steps, resultMap);
 

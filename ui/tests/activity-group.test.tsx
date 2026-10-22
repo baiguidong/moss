@@ -11,6 +11,8 @@ import { ToolCallGroup } from '../src/renderer-react/components/chat/tool-call-g
 import { normalizeToolHeaderSubject } from '../src/renderer-react/components/chat/tool-call-block';
 import { ToolDisplaySettingsProvider } from '../src/renderer-react/components/chat/tool-display-settings';
 import { thinkingPreview } from '../src/renderer-react/components/chat/thinking-block';
+import { buildRenderModel } from '../src/renderer-react/components/chat/message-list';
+import { buildMainChatRenderMessagesFromHistory } from '../src/renderer-react/lib/agent-transcript';
 import type { ThinkingRenderMessage, ToolUseRenderMessage } from '../src/renderer-react/lib/agent-transcript';
 
 const timestamp = new Date('2026-09-17T00:00:00.000Z');
@@ -34,6 +36,36 @@ function tool(id: string, toolName: string, input: unknown = {}): ToolUseRenderM
 }
 
 describe('merged activity group', () => {
+  it('counts interleaved streamed calls and failed results once in the rendered summary', () => {
+    const completed = (id: string) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: `/repo/${id}.md` } }] } });
+    const receipt = (id: string, isError: boolean) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: isError ? 'Invalid pages' : 'contents', is_error: isError }] } });
+    const messages = buildMainChatRenderMessagesFromHistory([
+      { type: 'user', uuid: 'read-turn', prompt: '你好' },
+      { type: 'stream_event', event: { type: 'message_start' } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'read-1', name: 'Read', input: {} } } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'read-2', name: 'Read', input: {} } } },
+      completed('read-1'), receipt('read-1', true), completed('read-2'), receipt('read-2', true),
+      { type: 'stream_event', event: { type: 'message_start' } },
+      completed('retry-1'), completed('retry-2'), receipt('retry-2', false), receipt('retry-1', false),
+      { type: 'result', subtype: 'success' },
+    ]);
+    const model = buildRenderModel(messages);
+    const groups = model.renderItems.filter(item => item.kind === 'tool_group');
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.toolCalls).toHaveLength(4);
+    const markup = renderToStaticMarkup(
+      <ToolDisplaySettingsProvider toolDisplayMode="merged">
+        <ActivityGroup {...groups[0]!} resultMap={model.resultMap} childToolCallsByParent={model.childToolCallsByParent} />
+      </ToolDisplaySettingsProvider>,
+    );
+    expect(markup).toContain('读取了 4 个文件');
+    expect(markup).toContain('2 项失败');
+    expect(markup).toContain('data-expanded="false"');
+    expect(markup).not.toContain('data-tool-call-chrome="row"');
+    expect(markup).not.toContain('读取了 5 个文件');
+    expect(markup).not.toContain('3 项失败');
+  });
+
   it('summarizes thinking and repeated tools in first-seen order', () => {
     const steps: ActivityStep[] = [
       { kind: 'thinking', message: thinking('thinking-1', 'first') },

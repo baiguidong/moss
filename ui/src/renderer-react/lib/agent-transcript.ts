@@ -1484,6 +1484,14 @@ export function buildTranscriptRenderMessages(
 
     if (event?.type === 'assistant') {
       const currentTurn = state.currentAssistantTurn;
+      const completesExistingToolCall = Array.isArray(event?.message?.content)
+        && event.message.content.some((block: any) => (
+          block?.type === 'tool_use'
+          && currentTurn?.items.some(item => (
+            item.type === 'tool_use'
+            && item.toolUseId === String(block.id || block.tool_use_id || block.toolCallId || '').trim()
+          ))
+        ));
 
       // Preserve streaming thinking content — the completed message often
       // contains redacted_thinking which would replace the full streamed content.
@@ -1495,7 +1503,7 @@ export function buildTranscriptRenderMessages(
       // finalize it before starting a new turn. Without this, resetAssistantTurn
       // discards all thinking and tool-call items from the previous response,
       // causing them to disappear from the chat after task completion.
-      const hasCompletedToolBoundary = currentTurn
+      const hasCompletedToolBoundary = currentTurn && !completesExistingToolCall
         ? currentTurn.items.some((item) => item.type === 'tool_result') ||
           currentTurn.hasHiddenAskUserQuestionResult === true
         : false;
@@ -1529,8 +1537,10 @@ export function buildTranscriptRenderMessages(
             }
           } else if (block.type === 'tool_use') {
             const toolUse = ensureToolUseMessage(state, turn, timestamp, block);
-            toolUse.status = 'running';
-            toolUse.statusText = '进行中';
+            if (toolUse.status === 'running' || toolUse.status === 'pending') {
+              toolUse.status = 'running';
+              toolUse.statusText = '进行中';
+            }
           } else if (block.type === 'image' && typeof block.source === 'object') {
             const imagePath = String(block.source?.data || block.source?.url || '').trim();
             if (imagePath) {

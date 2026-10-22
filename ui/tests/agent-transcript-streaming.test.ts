@@ -18,6 +18,18 @@ const complete = (type: 'thinking' | 'text', value: string) => ({
 });
 const stopBlock = (index: number) => stream({ type: 'content_block_stop', index });
 const result = () => ({ type: 'result', subtype: 'success' });
+const startTool = (index: number, id: string) => stream({
+  type: 'content_block_start', index,
+  content_block: { type: 'tool_use', id, name: 'Read', input: {} },
+});
+const completeTool = (id: string, input: Record<string, unknown>) => ({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id, name: 'Read', input }] },
+});
+const toolResult = (id: string, isError = false) => ({
+  type: 'user',
+  message: { content: [{ type: 'tool_result', tool_use_id: id, content: isError ? 'Invalid pages' : 'contents', is_error: isError }] },
+});
 
 describe('live transcript streaming', () => {
   it('shows each thinking and reply chunk before completion, preserving spaces and newlines', () => {
@@ -62,6 +74,72 @@ describe('live transcript streaming', () => {
       expect.objectContaining({ id: liveId, content: '已读取', streaming: false, turnId: 'turn-tool' }),
     ]);
     expect(render(history).find(item => item.type === 'tool_use')).toMatchObject({ status: 'success' });
+  });
+
+  it('merges streamed sibling calls when a result arrives before the next completed block', () => {
+    const firstInput = { file_path: '/repo/a.md', pages: '' };
+    const secondInput = { file_path: '/repo/b.md', pages: '' };
+    const history = [
+      user('turn-parallel'), startMessage(), startTool(0, 'read-1'), startTool(1, 'read-2'),
+      completeTool('read-1', firstInput), stopBlock(0), toolResult('read-1', true),
+    ];
+    const liveTools = render(history).filter(item => item.type === 'tool_use');
+    expect(liveTools).toHaveLength(2);
+    expect(liveTools[1]).toMatchObject({ toolUseId: 'read-2', status: 'running' });
+
+    history.push(
+      stream({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: JSON.stringify(secondInput) } }),
+      completeTool('read-2', secondInput), stopBlock(1),
+    );
+    const completedTools = render(history).filter(item => item.type === 'tool_use');
+    expect(completedTools).toEqual([
+      expect.objectContaining({ id: liveTools[0]!.id, toolUseId: 'read-1', input: firstInput, status: 'error' }),
+      expect.objectContaining({ id: liveTools[1]!.id, toolUseId: 'read-2', input: secondInput, status: 'running' }),
+    ]);
+
+    history.push(
+      toolResult('read-2', true), startMessage(), startTool(0, 'retry-1'), startTool(1, 'retry-2'),
+      completeTool('retry-1', { ...firstInput, pages: '1' }), stopBlock(0),
+      completeTool('retry-2', { ...secondInput, pages: '1' }), stopBlock(1),
+      toolResult('retry-2'), toolResult('retry-1'), startMessage(),
+      startBlock(0, 'text'), delta(0, 'text', '你好'), complete('text', '你好'), stopBlock(0), result(),
+    );
+    const tools = render(history).filter(item => item.type === 'tool_use');
+    expect(tools.map(item => item.toolUseId)).toEqual(['read-1', 'read-2', 'retry-1', 'retry-2']);
+    expect(tools.map(item => item.status)).toEqual(['error', 'error', 'success', 'success']);
+    expect(tools.map(item => item.input)).toEqual([
+      firstInput, secondInput, { ...firstInput, pages: '1' }, { ...secondInput, pages: '1' },
+    ]);
+    expect(render(history).filter(item => item.type === 'assistant_text')).toEqual([
+      expect.objectContaining({ content: '你好', streaming: false, turnId: 'turn-parallel' }),
+    ]);
+  });
+
+  it('reconciles sibling tools in completed snapshots that also contain assistant text', () => {
+    const secondTool = completeTool('read-2', { file_path: '/repo/b.md' });
+    const messages = render([
+      user('turn-snapshot'), startMessage(), startTool(0, 'read-1'), startTool(1, 'read-2'),
+      completeTool('read-1', { file_path: '/repo/a.md' }), toolResult('read-1', true),
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Checking the other file' }, ...secondTool.message.content] } },
+      toolResult('read-2'), result(),
+    ]);
+    expect(messages.filter(item => item.type === 'tool_use').map(item => item.toolUseId)).toEqual(['read-1', 'read-2']);
+    expect(messages.filter(item => item.type === 'tool_use').map(item => item.status)).toEqual(['error', 'success']);
+    expect(messages.filter(item => item.type === 'assistant_text')).toEqual([
+      expect.objectContaining({ content: 'Checking the other file', streaming: false }),
+    ]);
+  });
+
+  it.each([true, false])('keeps the terminal tool status when its completed block arrives after a result (error: %s)', (isError) => {
+    const input = { file_path: '/repo/a.md' };
+    const history = [
+      user('turn-delayed'), startMessage(), startTool(0, 'read-1'), toolResult('read-1', isError),
+    ];
+    const tool = render(history).find(item => item.type === 'tool_use')!;
+    history.push(completeTool('read-1', input), stopBlock(0), result());
+    expect(render(history).filter(item => item.type === 'tool_use')).toEqual([
+      expect.objectContaining({ id: tool.id, toolUseId: 'read-1', input, status: isError ? 'error' : 'success', duration: tool.duration }),
+    ]);
   });
 
   it('preserves earlier text blocks when another block streams in the same response', () => {
