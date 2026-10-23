@@ -128,7 +128,7 @@ export async function extractAppArchive(zipPath, destination, limits = {}) {
         if (error) { fail(error); return }
         try {
           await fsp.mkdir(path.dirname(outputPath), { recursive: true })
-          const file = fs.createWriteStream(outputPath, { flags: 'wx', mode: 0o600 })
+          const file = fs.createWriteStream(outputPath, { flags: 'wx', mode: mode & 0o111 ? 0o700 : 0o600 })
           stream.on('error', (streamError) => { file.destroy(); fail(streamError) })
           stream.pipe(file)
           file.on('finish', () => zip.readEntry())

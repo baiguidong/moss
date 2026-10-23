@@ -6,6 +6,7 @@ export function validateContract(protocol, name, direction, value) {
   const key = validators.validatorKeys[JSON.stringify([protocol, name, direction])]
   const validate = key && validators[key]
   if (!validate) throw new AppServiceError(APP_ERROR_CODES.hostProtocol, `Unsupported ${protocol} ${name}`)
+  if (direction === 'output') return value
   if (!validate(value)) throw new AppServiceError(direction === 'input' ? APP_ERROR_CODES.invalidInput : APP_ERROR_CODES.hostProtocol,
     `Invalid ${name} ${direction}: ${validate.errors.map(error => `${error.instancePath || '/'}${error.params?.missingProperty ? '/' + error.params.missingProperty : ''} ${error.message}`).join('; ')}`, validate.errors)
   return value

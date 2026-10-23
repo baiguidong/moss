@@ -117,7 +117,23 @@
         },
         {
           "const": "knowledge",
-          "title": "知识与文件"
+          "title": "文档与知识"
+        },
+        {
+          "const": "files",
+          "title": "文件与存储"
+        },
+        {
+          "const": "creative",
+          "title": "设计与音视频"
+        },
+        {
+          "const": "development",
+          "title": "开发工具"
+        },
+        {
+          "const": "data",
+          "title": "数据与分析"
         },
         {
           "const": "automation",
@@ -125,15 +141,43 @@
         },
         {
           "const": "ai",
-          "title": "AI 增强"
+          "title": "AI 与智能体"
         },
         {
-          "const": "development",
-          "title": "开发工具"
+          "const": "sales",
+          "title": "销售与客户"
+        },
+        {
+          "const": "marketing",
+          "title": "营销与电商"
+        },
+        {
+          "const": "finance",
+          "title": "金融与投研"
+        },
+        {
+          "const": "business",
+          "title": "经营与财税"
+        },
+        {
+          "const": "hr",
+          "title": "人事与招聘"
+        },
+        {
+          "const": "education",
+          "title": "教育与文化"
+        },
+        {
+          "const": "legal",
+          "title": "法律与风控"
+        },
+        {
+          "const": "life",
+          "title": "出行与生活"
         },
         {
           "const": "diagnostics",
-          "title": "诊断与审计"
+          "title": "诊断与安全"
         },
         {
           "const": "other",
@@ -874,6 +918,14 @@
         "group"
       ],
       "properties": {
+        "kind": {
+          "enum": ["app", "tool"]
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["mcp", "cli", "skills"] }
+        },
         "group": {
           "enum": [
             "local",

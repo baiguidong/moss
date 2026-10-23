@@ -171,13 +171,13 @@ export class AppCapabilityBroker {
       methods: {
         'providers.list': { permission: 'apps:invoke', surfaces: ['backend', 'ui'], validateInput: listInput,
           validateOutput: value => object(value, 'Provider discovery result') },
-        'provider.invoke': { permission: 'apps:invoke', surfaces: ['backend'], validateInput: invokeInput,
+        'provider.invoke': { permission: 'apps:invoke', surfaces: ['backend', 'ui'], validateInput: invokeInput,
           validateOutput: value => object(value, 'Provider invocation result') },
-        'resource.read': { permission: 'apps:invoke', surfaces: ['backend'], validateInput: readInput,
+        'resource.read': { permission: 'apps:invoke', surfaces: ['backend', 'ui'], validateInput: readInput,
           validateOutput: value => object(value, 'Resource read result') },
         'tools.list': { permission: 'apps:invoke', surfaces: ['backend', 'ui'], validateInput: toolListInput,
           validateOutput: value => object(value, 'Tool discovery result') },
-        'tool.invoke': { permission: 'apps:invoke', surfaces: ['backend'], validateInput: toolInvokeInput,
+        'tool.invoke': { permission: 'apps:invoke', surfaces: ['backend', 'ui'], validateInput: toolInvokeInput,
           validateOutput: value => object(value, 'Tool invocation result') },
       },
     }
@@ -488,7 +488,7 @@ export class AppCapabilityBroker {
     let outcome = 'ok'
     try {
       input = toolInvokeInput(input)
-      if (context.invocation?.surface === 'app') {
+      if (context.surface !== 'ui' && context.invocation?.surface === 'app') {
         throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       }
       binding = this.verify(input.toolRef, context, 'tool')
@@ -723,7 +723,7 @@ export class AppCapabilityBroker {
     let binding
     let outcome = 'ok'
     try {
-      if (context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
+      if (context.surface !== 'ui' && context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       binding = this.verify(input.providerRef, context)
       await this.consumer(context, binding.protocol)
       if (binding.providerAppId === context.appId) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'An App cannot invoke itself through the capability broker')
@@ -781,7 +781,7 @@ export class AppCapabilityBroker {
     let binding
     let outcome = 'ok'
     try {
-      if (context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
+      if (context.surface !== 'ui' && context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       binding = this.verify(input.resourceRef, context, 'resource')
       if (!Number.isFinite(binding.expiresAt) || binding.expiresAt < Date.now()) {
         throw unavailable('Result reference expired', 'expired')

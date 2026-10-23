@@ -1,13 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
+import Ajv from 'ajv'
 import semver from 'semver'
 import { contracts } from '../../../host-contracts/src/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../protocol/index.mjs'
 import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
+import { getAppCategoryMinimumHostVersion } from '../categories.mjs'
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.20.0'
+export const APP_HOST_API_VERSION = '3.21.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -383,6 +385,9 @@ export function validateAppManifest(rawManifest, options = {}) {
       `App requires Host API ${candidate.hostApi}; this Host provides ${hostApiVersion}`,
     )
   }
+  if (getAppCategoryMinimumHostVersion(candidate.category) === '3.21.0' && !semver.subset(candidate.hostApi, '>=3.21.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Extended App categories require hostApi >=3.21.0')
+  }
   if (candidate.toolScope !== undefined && !semver.subset(candidate.hostApi, '>=3.1.0')) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'toolScope requires hostApi >=3.1.0')
   }
@@ -506,9 +511,11 @@ export function loadJsonSchema(packageRoot, relativePath, fieldName = 'schema') 
 }
 
 export function compileJsonSchema(schema, options = {}) {
-  return new Ajv2020({
+  const draft07 = typeof schema?.$schema === 'string' && /^https?:\/\/json-schema\.org\/draft-07\/schema#?$/.test(schema.$schema)
+  const Compiler = draft07 ? Ajv : Ajv2020
+  return new Compiler({
     allErrors: true,
     strict: false,
     ...(options.removeAdditional ? { removeAdditional: true } : {}),
-  }).compile(schema || {})
+  }).compile(draft07 ? { ...schema, $schema: 'http://json-schema.org/draft-07/schema#' } : schema || {})
 }

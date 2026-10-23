@@ -548,6 +548,7 @@ export class AppMcpHost {
       if (!installation || !instance || installation.activeVersion !== provider.version) continue
       for (const server of this.list(provider).servers) {
         const cached = this.cachedCatalog(provider, server.name)
+        const runtimeCheck = this.checks.get(`${key(provider)}/${server.name}`)
         const live = server.check?.state === 'connected'
         const knownTools = live ? server.check.tools : cached?.tools || [], tools = []
         for (const tool of knownTools) {
@@ -562,8 +563,8 @@ export class AppMcpHost {
           serviceId: this.serviceId(provider, provider.document.servers[server.name]),
           runtimeName: runtimeName(appId, server.name, provider.owner), revision: this.toolRevision(provider, provider.document.servers[server.name]),
           status, tools, error: server.check?.error || cached?.error,
-          schemaRevision: live ? server.check.schemaRevision : cached?.schemaRevision,
-          catalogStale: live ? server.check.catalogStale : cached?.catalogStale,
+          schemaRevision: live ? runtimeCheck?.schemaRevision : cached?.schemaRevision,
+          catalogStale: live ? runtimeCheck?.catalogStale : cached?.catalogStale,
           catalogSource: live ? 'live' : cached ? 'cache' : 'unknown',
           checkedAt: live ? server.check.checkedAt : cached?.checkedAt,
           truncated: Boolean((live ? server.check.truncated : cached?.truncated) || tools.length < knownTools.length) })
@@ -595,11 +596,17 @@ export class AppMcpHost {
       if (!check) continue
       const tools = []
       for (const tool of check.tools || []) {
-        const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1
+        const publicTool = { name: tool.name, description: tool.description || '', disabled: tool.disabled === true }
+        const bytes = Buffer.byteLength(JSON.stringify(publicTool)) + 1
         if (bytes > budget) break
-        tools.push(tool); budget -= bytes
+        tools.push(publicTool); budget -= bytes
       }
-      checks.set(name, { ...check, tools, truncated: check.truncated || tools.length < (check.tools?.length || 0) })
+      checks.set(name, { state: check.state, tools, checkedAt: check.checkedAt,
+        truncated: Boolean(check.truncated || tools.length < (check.tools?.length || 0)),
+        ...(check.durationMs === undefined ? {} : { durationMs: check.durationMs }),
+        ...(check.error === undefined ? {} : { error: check.error }),
+        ...(check.serverInfo ? { serverInfo: { name: check.serverInfo.name, version: check.serverInfo.version } } : {}),
+      })
     }
     return { servers: Object.entries(provider.document.servers).map(([name, entry]) => ({
       name, enabled: entry.enabled, config: entry.config, updatedAt: entry.updatedAt,

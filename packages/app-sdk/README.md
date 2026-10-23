@@ -12,9 +12,13 @@ Moss 容器负责显示 App 名称、简介、迭代、AI 能力入口与整页�
 
 App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
 
-当前 SDK 对应 Host API `3.20.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
+当前 SDK 对应 Host API `3.21.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
+
+Host 兼容范围在安装、更新和启动加载时检查，例如 `^3.1.0` 接受 `>=3.1.0` 且 `<4.0.0`。运行时 Host 注册表和共享类型化客户端不执行返回值 Schema 校验，直接保留 Host 的扩展响应；参数、方法、身份、权限、生命周期、载荷限制和取消检查不变。生成类型与 Schema 仍用于开发和输入验证，显式领域数据验证函数仍可按业务需要调用。同一 Host 主版本必须保留既有字段的类型与含义，旧 App 不需要跟随每次 Host 次版本更新。
 
 跨 App 只读能力和现有工具调用使用 Manifest `appCapabilities` 与 SDK `createAppCapabilitiesClient`。调用已有工具时，调用方用 `usesTools` 精确声明目标 App ID 和工具名；目标 App 无需更新。调用、授权与结果引用见 [跨 App 能力调用](../../ui/docs/app-capabilities.md)。
+
+Host API 3.21 起，纯 UI App 可通过 `createAppCapabilitiesClient(createAppClient(window.mossApp).host)` 直接发现、调用和读取跨 App 能力，无需自己的 Backend。UI 从 `@moss/app-sdk/app-capabilities` 导入能力客户端，从 `@moss/app-sdk/ui` 导入 UI 客户端，不导入包含 Node 模块的 SDK 根运行时。授权、引用绑定、取消、大小限制和审计继续由 Host broker 管理。
 
 配置型 MCP App 声明 `ui: { builtin: "mcp" }` 和 `mcpApp: { config: "mcp.json" }`。Core 生成 Manifest、提供公共设置页并直接注册 MCP，无需额外基础 App、包内 UI 文件或 Backend。要求 Host API 3.9，格式和 Draw.io 实测见 [配置型 MCP App 验证](../../ui/docs/mcp-configuration-app-proof.md)。
 
