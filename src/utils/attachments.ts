@@ -2796,6 +2796,7 @@ function getTokenUsageAttachment(
   }
 
   const contextWindow = getEffectiveContextWindowSize(model)
+  if (!Number.isFinite(contextWindow)) return []
   const usedTokens = tokenCountFromLastAPIResponse(messages)
 
   return [

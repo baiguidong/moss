@@ -25,7 +25,7 @@ test('monitor IPC only accepts the desktop main frame and stops sampling on quit
     destroyed = false;
     await handler({ sender, senderFrame: frame }, { since: 1234, pid: 99, active: false });
     expect(requests).toEqual([{ since: 1234, active: false }]);
-    expect(starts).toBe(1);
+    expect(starts).toBe(0);
   } finally { quit!(); }
   expect(stops).toBe(1);
 });

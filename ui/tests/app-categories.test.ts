@@ -31,9 +31,22 @@ describe('App discovery categories', () => {
   test('searches names, category labels and keywords together with category filtering', () => {
     expect(filterApps(apps, '  CHROME 自动化 ', 'automation').map(app => app.id)).toEqual(['browser']);
     expect(filterApps(apps, 'CHROME', 'knowledge')).toEqual([]);
-    expect(filterApps(apps, '知识与文件').map(app => app.id)).toEqual(['files', 'library']);
+    expect(filterApps(apps, '文档与知识').map(app => app.id)).toEqual(['files', 'library']);
     expect(filterApps(apps, '', 'other').map(app => app.id)).toEqual(['legacy', 'future']);
     expect(filterApps(apps, '不存在')).toEqual([]);
+  });
+
+  test('old installed business tools use the new display categories without losing custom categories', () => {
+    const legacy = [
+      { id: 'moss.tencent-map', category: 'other' },
+      { id: 'moss.sharecrm', category: 'other' },
+      { id: 'moss.filesystem', category: 'knowledge' },
+      { id: 'external.custom', category: 'other' },
+    ];
+    expect(groupApps(legacy).map(group => group.id)).toEqual(['files', 'sales', 'life', 'other']);
+    expect(filterApps(legacy, '', 'life').map(app => app.id)).toEqual(['moss.tencent-map']);
+    expect(filterApps(legacy, '销售').map(app => app.id)).toEqual(['moss.sharecrm']);
+    expect(legacy[0].category).toBe('other');
   });
 
   test('keeps tool selection keyboard order aligned with grouping and preserves selected disabled Apps', () => {

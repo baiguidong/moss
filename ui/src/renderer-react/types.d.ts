@@ -79,6 +79,8 @@ export type SessionSummary = {
   agentMode?: 'local' | 'remote-direct';
   permissionMode: PermissionMode;
   composerIntent?: 'chat' | 'boss';
+  agentTeamsEnabled?: boolean;
+  skillIds?: string[];
   workspace: string;
   createdAt: number;
   updatedAt: number;
@@ -459,9 +461,15 @@ export type Project = {
   connectorIds: string[];
   expertIds: string[];
   skillIds: string[];
-  decisionPolicy: {
-    mode: 'auto_all' | 'recommend' | 'auto_low_risk';
-  };
+  appIds?: string[];
+  appServiceIds?: string[];
+  assistantName?: string | null;
+  permissionMode?: PermissionMode | null;
+  mode?: 'chat' | 'boss';
+  agentTeamsEnabled?: boolean;
+  workspaces?: string[];
+  defaultWorkspace?: string | null;
+  composerDefaults?: { skills: Array<{ name: string; source?: string; displayName?: string }>; assistantName: string | null };
   createdAt: number;
   updatedAt: number;
   archivedAt?: number | null;
@@ -470,7 +478,6 @@ export type Project = {
   assetCount?: number;
   taskCount?: number;
   sessionCount?: number;
-  pendingDecisionCount?: number;
 };
 
 export type ConnectorType = 'mcp' | 'cli' | 'unknown';
@@ -601,32 +608,7 @@ export type ProjectEvent = {
   createdAt: number;
 };
 
-export type ProjectDecision = {
-  id: string;
-  projectId: string;
-  requestId: string;
-  toolUseId?: string | null;
-  taskId?: string | null;
-  parentSessionId: string;
-  originSessionId: string;
-  originAgentId?: string | null;
-  originAgentType?: string | null;
-  originLabel: string;
-  kind: 'preference' | 'clarification' | 'external_action' | 'authorization' | 'tool_permission';
-  riskLevel: 'low' | 'medium' | 'high';
-  status: 'pending' | 'resolved' | 'rejected' | 'expired';
-  blocking: boolean;
-  questions: AskUserQuestion[];
-  recommendation?: { answers: Record<string, string>; reason: string } | null;
-  resolution?: {
-    answers: Record<string, string>;
-    source: 'user' | 'policy' | 'system';
-    note: string;
-  } | null;
-  createdAt: number;
-  resolvedAt?: number | null;
-  expiresAt?: number | null;
-};
+export type ProjectMemoryMaintenance = { phase: string; message: string; error?: string; lastRunAt?: number | null; nextRunAt?: number | null };
 
 export type ProjectMemory = {
   version: number;
@@ -635,6 +617,10 @@ export type ProjectMemory = {
   finalizedSessionCount: number;
   overview: string;
   overviewPath: string;
+  maintenance?: ProjectMemoryMaintenance;
+  sourceIds?: string[];
+  corrections?: Array<{ id: string; text: string; createdAt: number }>;
+  correctionCount?: number;
 };
 
 export type AskUserQuestionOption = {
@@ -658,10 +644,6 @@ export type AskUserQuestionRequest = {
     metadata?: Record<string, unknown>;
   };
   requestedAt: number;
-  projectId?: string | null;
-  decisionId?: string | null;
-  originSessionId?: string;
-  originLabel?: string;
 };
 
 export type AskUserQuestionAnnotations = Record<string, {
@@ -910,7 +892,7 @@ export type AppDiscoveryPreferences = { sections: { installed: string; marketpla
 export type AppDiscoveryPreferenceUpdate = { action?: 'section'; surface?: 'installed' | 'marketplace'; section?: string };
 
 export type StoredApp = {
-  discovery?: import('../../../packages/app-sdk/src/index.mjs').AppDiscovery | { group: 'unknown' };
+  discovery?: import('../../../packages/app-sdk/src/discovery.mjs').AppDiscoveryMetadata;
   connectorApp?: { id: string; capabilities: Array<'mcp' | 'cli' | 'skills'>; connection?: InstalledConnector | null };
   category?: string;
   keywords?: string[];
@@ -1072,7 +1054,7 @@ export type AppMarketplaceVersion = {
 };
 
 export type AppMarketplaceEntry = {
-  discovery?: import('../../../packages/app-sdk/src/index.mjs').AppDiscovery;
+  discovery?: import('../../../packages/app-sdk/src/discovery.mjs').AppDiscoveryMetadata;
   category?: string;
   id: string;
   displayName: string;
@@ -1393,32 +1375,22 @@ declare global {
       listProjectTemplates: () => Promise<ProjectTemplate[]>;
       listProjects: (payload?: { includeArchived?: boolean }) => Promise<Project[]>;
       getProject: (payload: { projectId: string }) => Promise<Project>;
-      createProject: (payload: {
+      createProject: (payload: Partial<Project> & {
         name: string;
         instructions?: string;
         templateId?: string | null;
         connectorIds?: string[];
         expertIds?: string[];
         skillIds?: string[];
-        decisionPolicy?: Project['decisionPolicy'];
       }) => Promise<Project>;
       updateProject: (payload: { projectId: string; updates: Partial<Project> }) => Promise<Project>;
       archiveProject: (payload: { projectId: string }) => Promise<Project>;
       listProjectAssets: (payload: { projectId: string }) => Promise<ProjectAsset[]>;
       listProjectEvents: (payload: { projectId: string }) => Promise<ProjectEvent[]>;
-      listProjectDecisions: (payload: { projectId: string }) => Promise<ProjectDecision[]>;
-      resolveProjectDecision: (payload: {
-        projectId: string;
-        decisionId: string;
-        answers: Record<string, string>;
-        annotations?: AskUserQuestionAnnotations;
-      }) => Promise<ProjectDecision>;
-      rejectProjectDecision: (payload: {
-        projectId: string;
-        decisionId: string;
-        message?: string;
-      }) => Promise<ProjectDecision>;
       getProjectMemory: (payload: { projectId: string }) => Promise<ProjectMemory>;
+      organizeProjectMemory: (payload: { projectId: string }) => Promise<ProjectMemoryMaintenance>;
+      noteProjectMemory: (payload: { projectId: string; text: string }) => Promise<unknown>;
+      readProjectMemory: (payload: { projectId: string; action?: string; sourceId?: string; query?: string; limit?: number; offset?: number }) => Promise<unknown>;
       addProjectAsset: (payload: { projectId: string; sourcePath: string; fileName?: string; name?: string; description?: string; sourceType?: string; sourceSessionId?: string }) => Promise<ProjectAsset>;
       removeProjectAsset: (payload: { projectId: string; assetId: string }) => Promise<{ ok: boolean }>;
       listProjectTasks: (payload: { projectId: string }) => Promise<ProjectTask[]>;
@@ -1430,7 +1402,7 @@ declare global {
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; agentTeamsEnabled?: boolean; workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
@@ -1516,7 +1488,7 @@ declare global {
       getInstalledSkills: () => Promise<MarketplaceResponse<unknown[]>>;
       onConnectorsChanged: (callback: (payload: ConnectorsChangedEvent) => void) => () => void;
       appDiscovery: (payload: AppDiscoveryPreferenceUpdate) => Promise<AppDiscoveryPreferences>;
-      connectorApp: (payload: { appId: string; action?: 'status' | 'refresh' | 'setup' | 'auth' | 'credentials' | 'provision'; values?: Record<string, string> }) => Promise<{ connector: InstalledConnector; auth?: { status?: string } }>;
+      connectorApp: (payload: { appId: string; action?: 'status' | 'refresh' | 'setup' | 'auth' | 'credentials' | 'provision'; values?: Record<string, string>; sessionId?: string }) => Promise<{ connector: InstalledConnector; auth?: { status?: string } }>;
       appMarketplace: {
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;

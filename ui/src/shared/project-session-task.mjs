@@ -2,16 +2,10 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped']);
 
 export function deriveProjectSessionTaskStatus({
   persistedStatus,
-  pendingDecisionCount = 0,
-  busy = false,
-  activeWorkerCount = 0,
+  pendingQuestionCount = 0,
 } = {}) {
   if (TERMINAL_STATUSES.has(persistedStatus)) return persistedStatus;
-  if (Number(pendingDecisionCount) > 0) return 'waiting_for_user';
-  if (busy || Number(activeWorkerCount) > 0) return 'working';
-  if (persistedStatus === 'working' || persistedStatus === 'waiting_for_user') {
-    return persistedStatus;
-  }
+  if (Number(pendingQuestionCount) > 0) return 'waiting_for_user';
   return 'working';
 }
 

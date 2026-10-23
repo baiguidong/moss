@@ -12,7 +12,6 @@ export function createProjectAssetService({
   getProjectAssetsDir,
   getProjectDir,
   getProjectWorkspaceDir,
-  invalidateProjectSessionRuntimes,
   normalizeProjectId,
   projectRecordQueues,
   readJsonFileAsync,
@@ -99,74 +98,10 @@ export function createProjectAssetService({
     const id = normalizeProjectId(projectId);
     await ensureProjectStructure(id);
     const raw = await readJsonFileAsync(getProjectAssetIndexPath(id), []);
+    // Results are explicit references. Old workspace-scan entries remain on disk for migration,
+    // but unrelated source files are no longer presented as deliverables.
     const indexed = Array.isArray(raw) ? raw.map(normalizeProjectAsset).filter(Boolean) : [];
-    const workspace = getProjectWorkspaceDir(id);
-    const { files, truncated } = await collectProjectWorkspaceFiles(workspace);
-    const indexedByPath = new Map(indexed.map((asset) => [path.resolve(asset.path), asset]));
-    let changed = false;
-    const assets = [];
-    for (const file of files) {
-      const resolvedPath = path.resolve(file.path);
-      const existing = indexedByPath.get(resolvedPath);
-      if (existing) {
-        const updatedAt = file.stat.mtimeMs || existing.updatedAt;
-        const changedOnDisk = existing.size !== file.stat.size || existing.updatedAt !== updatedAt;
-        const contentHash = !existing.contentHash || changedOnDisk
-          ? await calculateFileSha256(resolvedPath).catch(() => null)
-          : existing.contentHash;
-        assets.push({
-          ...existing,
-          path: resolvedPath,
-          relativePath: path.relative(getProjectDir(id), resolvedPath),
-          size: file.stat.size,
-          contentHash,
-          updatedAt,
-        });
-        if (
-          contentHash !== existing.contentHash ||
-          file.stat.size !== existing.size ||
-          updatedAt !== existing.updatedAt
-        ) changed = true;
-        indexedByPath.delete(resolvedPath);
-        continue;
-      }
-      changed = true;
-      const relativePath = path.relative(workspace, resolvedPath);
-      assets.push({
-        id: `asset-file-${createHash('sha1').update(relativePath).digest('hex').slice(0, 12)}`,
-        name: path.basename(resolvedPath),
-        fileName: path.basename(resolvedPath),
-        path: resolvedPath,
-        relativePath: path.relative(getProjectDir(id), resolvedPath),
-        size: file.stat.size,
-        mimeType: '',
-        sourceType: 'project_workspace',
-        sourceSessionId: null,
-        sourcePath: null,
-        contentHash: await calculateFileSha256(resolvedPath).catch(() => null),
-        provenance: [],
-        description: '',
-        createdAt: file.stat.birthtimeMs || file.stat.ctimeMs || Date.now(),
-        updatedAt: file.stat.mtimeMs || Date.now(),
-      });
-    }
-    if (truncated) {
-      for (const asset of indexedByPath.values()) {
-        if (
-          isPathInsideDirectory(workspace, asset.path) &&
-          fs.existsSync(asset.path)
-        ) {
-          assets.push(asset);
-        } else {
-          changed = true;
-        }
-      }
-    } else if (indexedByPath.size > 0) {
-      changed = true;
-    }
-    assets.sort((a, b) => b.updatedAt - a.updatedAt);
-    if (changed) await writeProjectAssets(id, assets);
-    return assets;
+    return indexed.filter(asset => asset.sourceType !== 'project_workspace').sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async function listProjectAssets(projectId) {
@@ -307,7 +242,6 @@ export function createProjectAssetService({
       await fsp.rm(destPath, { force: true }).catch(() => {});
       throw error;
     }
-    invalidateProjectSessionRuntimes(project.id);
     await appendProjectEvent(project.id, {
       type: asset.sourceType === 'session_output' ? 'asset.generated' : 'asset.uploaded',
       summary: `${asset.sourceType === 'session_output' ? '生成' : '上传'}资产：${asset.name}`,
@@ -325,6 +259,34 @@ export function createProjectAssetService({
     return runInKeyedQueue(projectAssetQueues, id, () => addProjectAssetUnlocked(id, payload));
   }
 
+  async function registerProjectResult(projectId, { sourcePath, sourceSessionId, name, description = '' }) {
+    const id = normalizeProjectId(projectId);
+    if (!sourceSessionId) throw new Error('Result source session is required.');
+    return runInKeyedQueue(projectAssetQueues, id, async () => {
+      const filePath = await fsp.realpath(sourcePath);
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile()) throw new Error('成果必须是文件。');
+      const assets = await listProjectAssetsUnlocked(id);
+      const contentHash = await calculateFileSha256(filePath);
+      const existing = assets.find(asset => path.resolve(asset.path) === filePath);
+      const now = Date.now();
+      const provenance = [...(existing?.provenance || [])];
+      if (!provenance.some(entry => entry.sourceSessionId === sourceSessionId && entry.sourcePath === filePath)) {
+        provenance.push({ sourceSessionId, sourcePath: filePath, recordedAt: now });
+      }
+      const asset = normalizeProjectAsset({ ...existing, id: existing?.id || `result-${randomUUID()}`,
+        name: name || path.basename(filePath), fileName: path.basename(filePath), path: filePath,
+        relativePath: path.relative(getProjectDir(id), filePath), size: stat.size, contentHash,
+        sourceType: 'session_output', sourceSessionId, sourcePath: filePath, provenance, description,
+        createdAt: existing?.createdAt || now, updatedAt: now });
+      await commitActiveProjectAssets(id, [asset, ...assets.filter(item => item.id !== asset.id)], now);
+      await appendProjectEvent(id, { type: 'asset.generated', summary: `登记成果：${asset.name}`, actor: 'agent',
+        targetType: 'asset', targetId: asset.id, metadata: { sourceSessionId } });
+      emitToRenderer('project:changed', { projectId: id, reason: 'assets' });
+      return asset;
+    });
+  }
+
   async function removeProjectAssetUnlocked(projectId, assetId) {
     const id = normalizeProjectId(projectId);
     const project = await readProject(id);
@@ -337,20 +299,12 @@ export function createProjectAssetService({
     await runInKeyedQueue(projectRecordQueues, id, async () => {
       const currentProject = await readProject(id);
       if (!currentProject || currentProject.archivedAt) throw new Error('Project not found.');
-      if (asset.path && isPathInsideDirectory(getProjectWorkspaceDir(id), asset.path)) {
-        try {
-          await fsp.unlink(asset.path);
-        } catch (error) {
-          if (error?.code !== 'ENOENT') throw error;
-        }
-      }
       await writeProjectAssets(id, next);
       await writeProject({
         ...currentProject,
         updatedAt: Math.max(currentProject.updatedAt || 0, removedAt),
       });
     });
-    invalidateProjectSessionRuntimes(id);
     if (asset) {
       await appendProjectEvent(id, {
         type: 'asset.removed',
@@ -373,8 +327,11 @@ export function createProjectAssetService({
 
   return {
     addProjectAsset,
+    registerProjectResult,
     collectProjectWorkspaceFiles,
     listProjectAssets,
+    // Only for callers already holding projectRecordQueues; avoids reversed queue order.
+    readProjectAssetsForCommit: listProjectAssetsUnlocked,
     removeProjectAsset,
   };
 }

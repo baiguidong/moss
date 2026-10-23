@@ -1,6 +1,6 @@
-import { getAppDiscovery } from '@/lib/app-discovery';
+import { getAppKind } from '@/lib/app-discovery';
 import { AppToolSelectionContext, canSelectToolApp, getToolPickerItems, getAppToolServices, parseAppServiceKey, type ToolPickerItem, toolAppId, toolAppTitle, toolAppDescription } from '@/lib/app-tool-selection';
-import { getAppCategory } from '@/lib/app-categories';
+import { getAppCategoryForApp } from '@/lib/app-categories';
 import { AppIcon } from '@/components/app-icon';
 import type { StoredApp } from '@/types';
 "use client";
@@ -21,7 +21,6 @@ import {
   FolderOpen,
   GitFork,
   Laptop,
-  Link2,
   ListTree,
   LoaderCircle,
   MessageSquareText,
@@ -87,7 +86,6 @@ import type {
   AskUserQuestionRequest,
   BackgroundTaskInfo,
   DesktopAgentDefinition,
-  InstalledConnector,
   PermissionMode,
   SessionSummary,
 } from "../types";
@@ -96,11 +94,6 @@ import {
   getSelectableInstalledAssistants,
   type InstalledAssistant,
 } from "@/components/assistant-selection-area";
-import {
-  ConnectorIcon,
-  connectorTypeLabel,
-  getSelectableInstalledConnectors,
-} from "@/components/connector-selection-area";
 import {
   getSelectableInstalledSkills,
   SkillIcon,
@@ -512,6 +505,7 @@ export function ComposerPanel({
   onChoicesChange,
   workspace,
   onWorkspaceChange,
+  workspaceOptions,
   onChange,
   onComposerIntentChange,
   permissionMode,
@@ -531,10 +525,6 @@ export function ComposerPanel({
   onOpenAgentManager,
   onOpenSkillHub,
   allowSkillSelection = true,
-  installedConnectors,
-  selectedConnectorIds,
-  onToggleConnector,
-  onOpenConnectorHub,
   className,
   contextUsage,
 }: {
@@ -553,6 +543,7 @@ export function ComposerPanel({
   choices?: ComposerChoices;
   onChoicesChange?: (choices: ComposerChoices) => void;
   workspace?: string;
+  workspaceOptions?: string[];
   onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
@@ -567,10 +558,6 @@ export function ComposerPanel({
   onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
   allowSkillSelection?: boolean;
-  installedConnectors?: InstalledConnector[];
-  selectedConnectorIds?: string[];
-  onToggleConnector?: (connector: InstalledConnector) => void;
-  onOpenConnectorHub?: () => void;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop?: () => void;
   onInteraction?: SendInteraction;
@@ -659,19 +646,17 @@ export function ComposerPanel({
     includeAgents: canSelectAgents,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
-    includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResources.available,
     includeApps: toolApps.enabled,
-  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant]);
   const defaultPlaceholder = React.useMemo(() => getDefaultComposerPlaceholder({
     hasActiveSession,
     includeAgents: canSelectAgents,
     includeSkills: allowSkillSelection,
     includeAssistants: !hasActiveSession && Boolean(onSelectAssistant),
-    includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResources.available,
     includeApps: toolApps.enabled,
-  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant, onToggleConnector]);
+  }), [toolApps.enabled, appResources.available, allowSkillSelection, canSelectAgents, hasActiveSession, onSelectAssistant]);
 
   React.useEffect(() => {
     if (!mentionTabs.includes(mentionTab)) setMentionTab(mentionTabs[0]);
@@ -850,23 +835,11 @@ export function ComposerPanel({
   const [mentionServiceAppId, setMentionServiceAppId] = React.useState<string | null>(null);
   const mentionServiceApp = toolApps.apps.find(app => toolAppId(app) === mentionServiceAppId);
   React.useEffect(() => { if (mentionFilter === null || mentionTab !== 'apps' || !mentionServiceApp) setMentionServiceAppId(null) }, [mentionFilter, mentionTab, mentionServiceApp]);
-  const pickerGroups = ['本地应用', '在线服务', '其他应用'];
+  const pickerGroups = ['应用', '工具'];
   const visibleToolApps = getToolPickerItems(toolApps.apps, mentionFilter || '', toolApps.selectedIds, toolApps.selectedServiceIds || [], mentionServiceAppId)
-    .filter(item => item.available).map(item => ({ ...item, discoveryGroup: getAppDiscovery(item.app).group === 'local' ? '本地应用' : getAppDiscovery(item.app).group === 'online' ? '在线服务' : '其他应用' }))
+    .filter(item => item.available).map(item => ({ ...item, discoveryGroup: getAppKind(item.app) === 'tool' ? '工具' : '应用' }))
     .sort((a, b) => pickerGroups.indexOf(a.discoveryGroup) - pickerGroups.indexOf(b.discoveryGroup));
   const leaveServiceMenu = () => { setMentionServiceAppId(null); setMentionIndex(0); textareaRef.current?.focus() };
-  const visibleConnectorItems = React.useMemo(() => {
-    if (mentionFilter === null) return [];
-    const query = mentionFilter.toLocaleLowerCase('zh-Hans-CN');
-    return getSelectableInstalledConnectors(installedConnectors ?? [])
-      .filter((connector) => !query || [
-        connector.name,
-        connector.description,
-        connector.type,
-      ].some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(query)))
-      .slice(0, 8);
-  }, [installedConnectors, mentionFilter]);
-
   React.useEffect(() => { if (mentionFilter !== null && mentionTab === 'workflows') appResources.search(mentionFilter) }, [mentionFilter, mentionTab]);
   const applyAppMention = (resource: AppComposerResource) => {
     selectAppResource(resource);
@@ -879,9 +852,9 @@ export function ComposerPanel({
       ? visibleAgentItems.length
     : mentionTab === 'skills'
       ? visibleSkillItems.length
-      : mentionTab === 'assistants'
+    : mentionTab === 'assistants'
         ? visibleAssistantItems.length
-        : visibleConnectorItems.length;
+        : 0;
 
   React.useEffect(() => {
     setMentionIndex(index => Math.min(index, Math.max(0, activeMentionItemCount - 1)));
@@ -924,14 +897,6 @@ export function ComposerPanel({
     setMentionIndex(0);
     setMentionTab("files");
   }, [onChange, onClearAssistant, onSelectAssistant, selectedAssistant?.name, value]);
-
-  const applyConnectorMention = React.useCallback((connector: InstalledConnector) => {
-    onToggleConnector?.(connector);
-    onChange(value.replace(/(^|\s)@[^\s@]*$/, "$1"));
-    setMentionFilter(null);
-    setMentionIndex(0);
-    setMentionTab("files");
-  }, [onChange, onToggleConnector, value]);
 
   const applyToolAppMention = (item: ToolPickerItem) => {
     if (item.expandable) {
@@ -1052,15 +1017,9 @@ export function ComposerPanel({
     setSelectedAgent(null);
   };
 
-  const selectedConnectorItems = React.useMemo(() => {
-    const selected = new Set(selectedConnectorIds ?? []);
-    return getSelectableInstalledConnectors(installedConnectors ?? [])
-      .filter((connector) => selected.has(connector.id));
-  }, [installedConnectors, selectedConnectorIds]);
   const hasSelectedResources = (toolApps.enabled && (toolApps.selectedIds.length > 0 || (toolApps.selectedServiceIds?.length || 0) > 0 || toolApps.nextTurn)) || Boolean(appSelection) || Boolean(selectedAssistant)
     || Boolean(canSelectAgents && selectedAgent)
-    || (allowSkillSelection && selectedSkills.length > 0)
-    || selectedConnectorItems.length > 0;
+    || (allowSkillSelection && selectedSkills.length > 0);
   const selectedResourceIcons = hasSelectedResources ? (
     <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
       {toolApps.enabled && toolApps.selectedIds.map(id => {
@@ -1136,21 +1095,6 @@ export function ComposerPanel({
           <TooltipContent>{skill.displayName || skill.name} · 点击移除</TooltipContent>
         </Tooltip>
       )) : null}
-      {selectedConnectorItems.map((connector) => (
-        <Tooltip key={connector.id}>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary transition-colors hover:bg-primary/15 hover:text-foreground"
-              onClick={() => onToggleConnector?.(connector)}
-              aria-label={`移除连接器：${connector.name}`}
-            >
-              <ConnectorIcon connector={connector} className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{connector.name} · 点击移除</TooltipContent>
-        </Tooltip>
-      ))}
     </div>
   ) : null;
 
@@ -1218,10 +1162,6 @@ export function ComposerPanel({
         </DropdownMenuItem>
         {toolApps.enabled && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('apps')}><AppIcon className="h-4 w-4" /><span>App</span></DropdownMenuItem>}
         {appResources.available && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('workflows')}><GitFork className="h-4 w-4"/><span>工作流</span></DropdownMenuItem>}
-        <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('connectors')}>
-          <Link2 className="h-4 w-4" />
-          <span className="flex-1">连接器</span>
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -1284,7 +1224,6 @@ export function ComposerPanel({
             onLeaveToolApp={leaveServiceMenu}
             toolAppItems={visibleToolApps}
             onSelectToolApp={applyToolAppMention}
-            connectorItems={visibleConnectorItems}
             notice={visibleMentionItems.length === 0
               ? (mentionNotice ?? (sessionId ? "无匹配文件" : null))
               : null}
@@ -1292,12 +1231,10 @@ export function ComposerPanel({
             selectedSkillNames={selectedSkills.map((skill) => skill.name)}
             selectedAgentType={selectedAgent?.agentType}
             selectedAssistantName={selectedAssistant?.name}
-            selectedConnectorIds={selectedConnectorIds ?? []}
             onSelectFile={applyMention}
             onSelectSkill={applySkillMention}
             onSelectAgent={applyAgentMention}
             onSelectAssistant={applyAssistantMention}
-            onSelectConnector={applyConnectorMention}
           />
         )}
         {subMenuCommand && !isHomeComposer && COMMANDS_WITH_ARGS[subMenuCommand] && (
@@ -1393,9 +1330,6 @@ export function ComposerPanel({
                   } else if (mentionTab === "assistants") {
                     const assistant = visibleAssistantItems[clamped];
                     if (assistant) applyAssistantMention(assistant);
-                  } else {
-                    const connector = visibleConnectorItems[clamped];
-                    if (connector) applyConnectorMention(connector);
                   }
                   return;
                 }
@@ -1595,10 +1529,6 @@ export function ComposerPanel({
                 onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
                 onOpenSkillHub={onOpenSkillHub}
                 skillsLoading={skillsLoading}
-                connectors={installedConnectors}
-                selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={onToggleConnector}
-                onOpenConnectorHub={onOpenConnectorHub}
               />
 
               <PermissionModeSelector
@@ -1696,6 +1626,7 @@ export function ComposerPanel({
 
               <WorkspaceSelector
                 value={workspace}
+                options={workspaceOptions}
                 onChange={(nextWorkspace) => onWorkspaceChange?.(nextWorkspace)}
                 disabled={loading}
               />
@@ -1722,10 +1653,6 @@ export function ComposerPanel({
                 onToggleSkill={allowSkillSelection ? toggleSelectedSkill : undefined}
                 onOpenSkillHub={onOpenSkillHub}
                 skillsLoading={skillsLoading}
-                connectors={installedConnectors}
-                selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={onToggleConnector}
-                onOpenConnectorHub={onOpenConnectorHub}
                 triggerVisible
                 openTab={resourcePickerTab}
                 onOpenTabChange={setResourcePickerTab}
@@ -1781,6 +1708,7 @@ function HomeLanding({
   onChoicesChange,
   workspace,
   onWorkspaceChange,
+  workspaceOptions,
   onChange,
   onComposerIntentChange,
   permissionMode,
@@ -1791,10 +1719,6 @@ function HomeLanding({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
-  installedConnectors,
-  selectedConnectorIds,
-  onToggleConnector,
-  onOpenConnectorHub,
   onOpenExpertHub,
   onOpenSkillHub,
   remoteEnabled,
@@ -1811,6 +1735,7 @@ function HomeLanding({
   choices?: ComposerChoices;
   onChoicesChange?: (choices: ComposerChoices) => void;
   workspace?: string;
+  workspaceOptions?: string[];
   onWorkspaceChange: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
@@ -1822,10 +1747,6 @@ function HomeLanding({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
-  installedConnectors?: InstalledConnector[];
-  selectedConnectorIds?: string[];
-  onToggleConnector?: (connector: InstalledConnector) => void;
-  onOpenConnectorHub?: () => void;
   onOpenExpertHub?: () => void;
   onOpenSkillHub?: () => void;
   remoteEnabled?: boolean;
@@ -1859,6 +1780,7 @@ function HomeLanding({
         choices={choices}
         onChoicesChange={onChoicesChange}
         workspace={workspace}
+        workspaceOptions={workspaceOptions}
         onWorkspaceChange={onWorkspaceChange}
         onChange={onChange}
         onComposerIntentChange={onComposerIntentChange}
@@ -1873,10 +1795,6 @@ function HomeLanding({
         onOpenExpertHub={onOpenExpertHub}
         onOpenAgentManager={onOpenAgentManager}
         onOpenSkillHub={onOpenSkillHub}
-        installedConnectors={installedConnectors}
-        selectedConnectorIds={selectedConnectorIds}
-        onToggleConnector={onToggleConnector}
-        onOpenConnectorHub={onOpenConnectorHub}
         className="w-full max-w-[820px]"
       />
     </div>
@@ -1927,7 +1845,6 @@ const MENTION_TAB_LABELS: Record<ComposerMentionTab, string> = {
   agents: 'Agents',
   skills: '技能',
   assistants: '专家',
-  connectors: '连接器',
   workflows: '工作流',
   apps: 'App',
 };
@@ -1992,18 +1909,15 @@ function MentionMenu({
   agentItems,
   skillItems,
   assistantItems,
-  connectorItems,
   notice,
   selectedIndex,
   selectedSkillNames,
   selectedAgentType,
   selectedAssistantName,
-  selectedConnectorIds,
   onSelectFile,
   onSelectAgent,
   onSelectSkill,
   onSelectAssistant,
-  onSelectConnector,
 }: {
   toolAppItems: ToolPickerItem[];
   toolAppParent?: StoredApp;
@@ -2020,22 +1934,18 @@ function MentionMenu({
   agentItems: DesktopAgentDefinition[];
   skillItems: SkillMentionItem[];
   assistantItems: InstalledAssistant[];
-  connectorItems: InstalledConnector[];
   notice?: string | null;
   selectedIndex: number;
   selectedSkillNames: string[];
   selectedAgentType?: string;
   selectedAssistantName?: string;
-  selectedConnectorIds: string[];
   onSelectFile: (item: WorkspaceMentionItem) => void;
   onSelectAgent: (agent: DesktopAgentDefinition) => void;
   onSelectSkill: (item: SkillMentionItem) => void;
   onSelectAssistant: (assistant: InstalledAssistant) => void;
-  onSelectConnector: (connector: InstalledConnector) => void;
 }) {
   const toolApps = React.useContext(AppToolSelectionContext);
   const selectedSkills = new Set(selectedSkillNames);
-  const selectedConnectors = new Set(selectedConnectorIds);
   const itemsRef = React.useRef<HTMLDivElement>(null);
   React.useLayoutEffect(() => {
     const container = itemsRef.current;
@@ -2157,26 +2067,13 @@ function MentionMenu({
           toolAppItems.length === 0 ? <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的可用 App 或服务</div> : toolAppItems.map((item, i) => (
             <React.Fragment key={item.id}>
             {!toolAppParent && (i === 0 || toolAppItems[i - 1].discoveryGroup !== item.discoveryGroup) &&
-              <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{item.discoveryGroup || getAppCategory(item.app.category).label}</div>}
+              <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{item.discoveryGroup || getAppCategoryForApp(item.app).label}</div>}
             <MentionResourceRow active={i === selectedIndex} selected={item.selected}
               icon={<AppIcon icon={item.app.icon} className="h-4 w-4" />} title={item.title} description={item.description}
               selectionStyle={item.expandable ? 'expand' : 'checkbox'} onSelect={() => onSelectToolApp(item)} />
             </React.Fragment>
           ))
-        ) : connectorItems.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配的已认证连接器</div>
-        ) : connectorItems.map((connector, i) => (
-          <MentionResourceRow
-            key={connector.id}
-            active={i === selectedIndex}
-            selected={selectedConnectors.has(connector.id)}
-            icon={<ConnectorIcon connector={connector} className="h-4 w-4" />}
-            title={connector.name}
-            description={`${connectorTypeLabel(connector)}${connector.description ? ` · ${connector.description}` : ''}`}
-            selectionStyle="checkbox"
-            onSelect={() => onSelectConnector(connector)}
-          />
-        ))}
+        ) : null}
       </div>
     </div>
   );
@@ -2451,6 +2348,8 @@ export function ChatArea({
   sessionWorkspace,
   sessionAgentMode = 'local',
   homeWorkspace,
+  workspaceOptions,
+  projectName,
   focusedToolUseId,
   focusedToolRequestId,
   focusedMessageId,
@@ -2483,10 +2382,6 @@ export function ChatArea({
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
-  installedConnectors,
-  selectedConnectorIds,
-  onToggleConnector,
-  onOpenConnectorHub,
   onOpenExpertHub,
   onOpenAgentManager,
   onOpenSkillHub,
@@ -2534,6 +2429,8 @@ export function ChatArea({
   sessionWorkspace?: string;
   sessionAgentMode?: 'local' | 'remote-direct';
   homeWorkspace?: string;
+  workspaceOptions?: string[];
+  projectName?: string;
   focusedToolUseId?: string;
   focusedToolRequestId?: number;
   focusedMessageId?: string;
@@ -2566,10 +2463,6 @@ export function ChatArea({
   selectedAssistant?: InstalledAssistant | null;
   onSelectAssistant?: (assistant: InstalledAssistant) => void;
   onClearAssistant?: () => void;
-  installedConnectors?: InstalledConnector[];
-  selectedConnectorIds?: string[];
-  onToggleConnector?: (connector: InstalledConnector) => void;
-  onOpenConnectorHub?: () => void;
   onOpenExpertHub?: () => void;
   onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
@@ -2740,6 +2633,7 @@ export function ChatArea({
     return (
       <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
         <div className="mx-auto w-full max-w-3xl px-4 pt-4"><QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} /></div>
+        {projectName && <div className="mx-auto mt-4 text-sm text-primary">项目 / {projectName}</div>}
         <HomeLanding
           value={value}
           loading={loading}
@@ -2750,6 +2644,7 @@ export function ChatArea({
           choices={composerChoices}
           onChoicesChange={onComposerChoicesChange}
           workspace={workspace}
+          workspaceOptions={workspaceOptions}
           onWorkspaceChange={(nextWorkspace) => {
             setWorkspace(nextWorkspace);
             onHomeWorkspaceChange?.(nextWorkspace);
@@ -2764,10 +2659,6 @@ export function ChatArea({
           selectedAssistant={selectedAssistant ?? null}
           onSelectAssistant={onSelectAssistant}
           onClearAssistant={onClearAssistant ?? (() => {})}
-          installedConnectors={installedConnectors}
-          selectedConnectorIds={selectedConnectorIds}
-          onToggleConnector={onToggleConnector}
-          onOpenConnectorHub={onOpenConnectorHub}
           onOpenExpertHub={onOpenExpertHub}
           onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
@@ -2922,11 +2813,7 @@ export function ChatArea({
             onOpenExpertHub={onOpenExpertHub}
             onOpenAgentManager={onOpenAgentManager}
             onOpenSkillHub={onOpenSkillHub}
-            allowSkillSelection={!isProjectSession}
-            installedConnectors={installedConnectors}
-            selectedConnectorIds={selectedConnectorIds}
-            onToggleConnector={onToggleConnector}
-            onOpenConnectorHub={onOpenConnectorHub}
+            allowSkillSelection={true}
           />
           </div>
         </div>

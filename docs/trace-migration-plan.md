@@ -15,6 +15,8 @@
 
 `AppTraceHost` 监听安装/实例变更，`beforeAppDeactivation` 在停用、撤权和卸载删除数据前完成写入器撤销。模型请求经 `traceFetch` 解析当前 scope 的输出，持有本次请求的写入器，避免跨 scope 或开关代际混用。
 
+2026-10-22 修复：启动/启用采集不重写所有历史会话快照。模型请求仍在POST发起阶段记录pending，响应结束补写最终记录；活跃会话元数据更新按会话合并、顺序落盘，不与16MiB原始记录队列争抢积压。工具执行入口记录真实 `tool_execution_started/completed` 区间（不含参数与结果正文），消息适配保留 `timestampSource`，避免将继承时间误作工具开始时间。旧版丢失记录与旧工具真实耗时不能由此次修复自动恢复。
+
 首次启用复制旧 `<MOSS_HOME>/traces/*.jsonl` 到 App 数据目录，保留源文件，以标记文件确保只导入一次。旧 `trace-settings.json` 不再控制 Desktop。卸载时按标准 App 选项保留或清除数据。
 
 已移除设置中的 Trace 分类、聊天头部旧入口、内置 Trace 组件、旧 `trace:*` IPC 和独立采集开关。打开应用市场中的 Trace App 即可使用。解析器、视图模型和页面回归测试迁至 App 仓库。

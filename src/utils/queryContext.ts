@@ -99,6 +99,7 @@ export async function buildSideQuestionFallbackParams({
   thinkingConfig,
   agents,
   emitAppEvent,
+  mainLoopModel: requestedMainLoopModel,
 }: {
   tools: Tools
   commands: Command[]
@@ -112,8 +113,9 @@ export async function buildSideQuestionFallbackParams({
   thinkingConfig: ThinkingConfig | undefined
   agents: AgentDefinition[]
   emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  mainLoopModel?: string
 }): Promise<CacheSafeParams> {
-  const mainLoopModel = getMainLoopModel()
+  const mainLoopModel = requestedMainLoopModel || getMainLoopModel()
   const appState = getAppState()
 
   const { defaultSystemPrompt, userContext, systemContext } =

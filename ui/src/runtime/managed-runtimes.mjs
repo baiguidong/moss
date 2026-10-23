@@ -203,6 +203,8 @@ async function markInstalled(name, version, executablePath, installPath) {
   const registry = await readRegistry();
   registry.runtimes ??= {};
   registry.runtimes[name] ??= {};
+  const previous = registry.runtimes[name][version];
+  if (previous?.verified && previous.executablePath === executablePath && previous.installPath === installPath) return;
   registry.runtimes[name][version] = {
     source: 'managed',
     executablePath,

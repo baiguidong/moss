@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { ToolUseContext } from './Tool.js'
 import { query } from './query.js'
 import type { QueryDeps } from './query/deps.js'
+import { shouldAutoCompact } from './services/compact/autoCompact.js'
 import {
   createAssistantAPIErrorMessage,
   createAssistantMessage,
@@ -20,6 +21,10 @@ function createTestAppState() {
 describe('query prompt-too-long recovery', () => {
   test('compacts once and continues the same query', async () => {
     const initialMessage = createUserMessage({ content: 'review the repository' })
+    const previous = createAssistantMessage({ content: 'prior response' })
+    previous.message.model = 'gpt-5.5'
+    previous.message.usage.input_tokens = 1_200_000
+    previous.message.usage.output_tokens = 1122
     const compactSummary = createUserMessage({
       content: 'Earlier repository review context.',
       isCompactSummary: true,
@@ -36,6 +41,7 @@ describe('query prompt-too-long recovery', () => {
       },
       async *callModel() {
         modelCalls += 1
+        if (modelCalls === 1) expect(compactCalls).toBe(0)
         yield modelCalls === 1
           ? createAssistantAPIErrorMessage({
               content: 'Prompt is too long',
@@ -49,6 +55,7 @@ describe('query prompt-too-long recovery', () => {
       },
       async autocompact() {
         expect(capabilitiesLoaded).toBe(true)
+        expect(await shouldAutoCompact([previous, initialMessage], 'gpt-5.5', 'agent:custom')).toBe(false)
         return { wasCompacted: false }
       },
       async compactAfterPromptTooLong() {
@@ -84,12 +91,12 @@ describe('query prompt-too-long recovery', () => {
       setResponseLength: () => {},
       updateFileHistoryState: () => {},
       updateAttributionState: () => {},
-      messages: [initialMessage],
+      messages: [previous, initialMessage],
     } as unknown as ToolUseContext
 
     const output = []
     const iterator = query({
-      messages: [initialMessage],
+      messages: [previous, initialMessage],
       systemPrompt: [],
       userContext: {},
       systemContext: {},

@@ -441,22 +441,14 @@ export async function* runAgent({
       state.toolPermissionContext,
     )
 
-    // Override effort level if agent defines one
-    const effortValue =
-      agentDefinition.effort !== undefined
-        ? agentDefinition.effort
-        : state.effortValue
-
-    if (
-      toolPermissionContext === state.toolPermissionContext &&
-      effortValue === state.effortValue
-    ) {
+    // Effort follows the main session, including updates before a worker resumes.
+    // Agent presets must not override the user's session selection.
+    if (toolPermissionContext === state.toolPermissionContext) {
       return state
     }
     return {
       ...state,
       toolPermissionContext,
-      effortValue,
     }
   }
 

@@ -8,7 +8,10 @@ mock.module('color-diff-napi', () => ({
 
 const { getContextWindowForModel, getModelMaxOutputTokens } = await import('../context.js')
 const { resolveDesktopModelContext } = await import('./desktopModelContext.js')
-const { calculateTokenWarningState, getAutoCompactThreshold } = await import('../../services/compact/autoCompact.js')
+const { calculateTokenWarningState, getAutoCompactThreshold, shouldAutoCompact } = await import('../../services/compact/autoCompact.js')
+const { createAssistantMessage } = await import('../messages.js')
+const { EMPTY_USAGE } = await import('../../services/api/emptyUsage.js')
+const { addToTotalSessionCost, getModelUsage } = await import('../../cost-tracker.js')
 
 const servers: ReturnType<typeof Bun.serve>[] = []
 const testGlobal = globalThis as typeof globalThis & { MACRO?: { VERSION: string } }
@@ -137,6 +140,23 @@ describe('provider model capabilities', () => {
       await loadModelCapabilities('gpt-5.5')
       expect(cursors).toEqual([null, 'first-model'])
       expect(getContextWindowForModel('gpt-5.5')).toBe(1_000_000)
+    })
+  })
+
+  test('unknown capacity never proactively compacts or blocks at the 200K fallback', async () => {
+    await withCatalog(() => Response.json({ data: [{ id: 'unknown-capacity' }] }), async () => {
+      await loadModelCapabilities('unknown-capacity')
+      const usage = { ...EMPTY_USAGE, input_tokens: 1_500_000, output_tokens: 1122 }
+      const message = createAssistantMessage({ content: 'response', usage })
+      message.message.model = 'unknown-capacity'
+      expect(getAutoCompactThreshold('unknown-capacity')).toBe(Number.POSITIVE_INFINITY)
+      expect(await shouldAutoCompact([message], 'unknown-capacity', 'sdk')).toBe(false)
+      expect(calculateTokenWarningState(1_501_122, 'unknown-capacity')).toMatchObject({
+        isAboveAutoCompactThreshold: false, isAtBlockingLimit: false,
+        isAboveWarningThreshold: false, isAboveErrorThreshold: false,
+      })
+      addToTotalSessionCost(0, usage, 'unknown-capacity')
+      expect(getModelUsage()['unknown-capacity']?.contextWindow).toBe(0)
     })
   })
 

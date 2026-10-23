@@ -1,86 +1,6 @@
-const MAX_INDEXED_MESSAGE_CHARS = 100_000;
-
-function textFromContent(content) {
-  if (typeof content === 'string') return content.trim();
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
-}
-
-function eventText(event) {
-  if (!event || typeof event !== 'object') return '';
-  if (event.type === 'user') {
-    if (
-      event.parent_tool_use_id != null
-      || event.tool_use_result
-      || event.toolUseResult
-      || event.isCompactSummary === true
-      || event.isMeta === true
-      || event.isSynthetic === true
-      || event.isVisibleInTranscriptOnly === true
-      || (typeof event.origin?.kind === 'string' && event.origin.kind !== 'human')
-    ) return '';
-    const text = (typeof event.prompt === 'string'
-      ? event.prompt
-      : textFromContent(event.message?.content)).trim();
-    if (text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>')) return '';
-    return text;
-  }
-  if (event.type === 'assistant') {
-    if (
-      event.parent_tool_use_id != null
-      || (event.isSidechain === true && typeof event.agentId === 'string')
-    ) return '';
-    return textFromContent(event.message?.content ?? event.content);
-  }
-  return '';
-}
-
-function stableTextHash(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-export function getSearchMessageId(event) {
-  if (typeof event?.uuid === 'string' && event.uuid.trim()) return event.uuid.trim();
-  if (typeof event?.id === 'string' && event.id.trim()) return `id:${event.id.trim()}`;
-  const role = event?.type === 'assistant' ? 'assistant' : 'user';
-  const timestamp = event?.timestamp instanceof Date
-    ? event.timestamp.toISOString()
-    : String(event?.timestamp ?? '');
-  return `event:${role}:${stableTextHash(`${timestamp}\n${eventText(event)}`)}`;
-}
-
-export function extractSearchableSessionMessages(history) {
-  const byMessage = new Map();
-  for (const [eventIndex, event] of (Array.isArray(history) ? history : []).entries()) {
-    if (event?.type !== 'user' && event?.type !== 'assistant') continue;
-    const body = eventText(event);
-    if (!body) continue;
-    const role = event.type;
-    const timestamp = Number.isFinite(event.timestamp)
-      ? Number(event.timestamp)
-      : Number.isFinite(Date.parse(event.timestamp)) ? Date.parse(event.timestamp) : eventIndex;
-    const messageId = getSearchMessageId(event);
-    const current = byMessage.get(`${role}:${messageId}`);
-    if (!current || body.length >= current.body.length) {
-      byMessage.set(`${role}:${messageId}`, {
-        messageId,
-        role,
-        body: body.slice(0, MAX_INDEXED_MESSAGE_CHARS),
-        timestamp,
-      });
-    }
-  }
-  return [...byMessage.values()];
-}
+import { createHash } from 'node:crypto';
+import { extractSearchableSessionMessages } from './shared/session-search-messages.mjs';
+export { getSearchMessageId, extractSearchableSessionMessages } from './shared/session-search-messages.mjs';
 
 function makeSnippet(body, query, maxLength = 180) {
   const compact = String(body || '').replace(/\s+/g, ' ').trim();
@@ -104,6 +24,10 @@ export function createSessionSearchIndex(db) {
     )
   `);
   const deleteSession = db.prepare('DELETE FROM session_message_search WHERE session_id = ?');
+  db.exec('CREATE TABLE IF NOT EXISTS session_search_revisions (session_id TEXT PRIMARY KEY, signature TEXT NOT NULL)');
+  const loadSignature = db.prepare('SELECT signature FROM session_search_revisions WHERE session_id = ?');
+  const saveSignature = db.prepare('INSERT INTO session_search_revisions VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET signature = excluded.signature');
+  const deleteSignature = db.prepare('DELETE FROM session_search_revisions WHERE session_id = ?');
   const insertRow = db.prepare(`
     INSERT INTO session_message_search (
       session_id, message_id, role, title, body, created_at
@@ -112,6 +36,9 @@ export function createSessionSearchIndex(db) {
 
   const syncSession = (sessionRecord) => {
     if (!sessionRecord?.id) return;
+    const messages = extractSearchableSessionMessages(sessionRecord.history);
+    const signature = createHash('sha256').update(JSON.stringify([sessionRecord.title || '', messages])).digest('hex');
+    if (loadSignature.get(sessionRecord.id)?.signature === signature) return;
     db.exec('BEGIN');
     try {
       deleteSession.run(sessionRecord.id);
@@ -123,7 +50,7 @@ export function createSessionSearchIndex(db) {
         '',
         Number(sessionRecord.updatedAt) || 0,
       );
-      for (const message of extractSearchableSessionMessages(sessionRecord.history)) {
+      for (const message of messages) {
         insertRow.run(
           sessionRecord.id,
           message.messageId,
@@ -133,6 +60,7 @@ export function createSessionSearchIndex(db) {
           message.timestamp,
         );
       }
+      saveSignature.run(sessionRecord.id, signature);
       db.exec('COMMIT');
     } catch (error) {
       try { db.exec('ROLLBACK'); } catch {}
@@ -180,7 +108,14 @@ export function createSessionSearchIndex(db) {
 
   return {
     syncSession,
-    deleteSession: (sessionId) => deleteSession.run(sessionId),
+    syncTitle: (record) => {
+      const existing = db.prepare("SELECT title FROM session_message_search WHERE session_id = ? AND role = 'title'").get(record.id);
+      if (!existing || existing.title === (record.title || '')) return;
+      db.prepare("UPDATE session_message_search SET title = ?, created_at = ? WHERE session_id = ? AND role = 'title'").run(record.title || '', Number(record.updatedAt) || 0, record.id);
+      deleteSignature.run(record.id);
+    },
+    hasSession: (sessionId) => Boolean(loadSignature.get(sessionId) || db.prepare('SELECT 1 FROM session_message_search WHERE session_id = ? LIMIT 1').get(sessionId)),
+    deleteSession: (sessionId) => { deleteSession.run(sessionId); deleteSignature.run(sessionId); },
     search,
   };
 }

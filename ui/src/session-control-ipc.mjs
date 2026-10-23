@@ -13,7 +13,6 @@ export function registerSessionControlIpc({
   schedulePersistSession,
   pendingQuestionRequests,
   respondToPendingQuestionRequest,
-  isPlainObject,
   buildAskUserQuestionUpdatedInput,
 }) {
   ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
@@ -22,10 +21,18 @@ export function registerSessionControlIpc({
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       projectTaskCancellationRequests.add(sessionRecord.id);
     }
-    await stopComputerUse(sessionId);
-    await stopAppTasks(sessionId);
     const runtime = sessionRecord.runtime;
-    await Promise.resolve(runtime?.abort?.());
+    // Trigger the model interrupt before any host cleanup. App/browser task
+    // shutdown can wait on an external process; waiting for it first makes the
+    // Stop button look ineffective and keeps the model request alive.
+    const invoke = operation => {
+      try { return Promise.resolve(operation()); }
+      catch (error) { return Promise.reject(error); }
+    };
+    const runtimeAbort = invoke(() => runtime?.abort?.());
+    const computerUseStop = invoke(() => stopComputerUse(sessionId));
+    const appTaskStop = invoke(() => stopAppTasks(sessionId));
+    await Promise.all([runtimeAbort, computerUseStop, appTaskStop]);
     if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
       await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
         status: 'stopped',
@@ -58,15 +65,12 @@ export function registerSessionControlIpc({
     }
 
     const result = await respondToPendingQuestionRequest(pending, {
-      allowed: true,
-      source: _event?.transport === 'web' ? 'web' : 'desktop',
-      resolutionAnswers: isPlainObject(answers) ? answers : {},
       permissionDecision: {
         behavior: 'allow',
         updatedInput: buildAskUserQuestionUpdatedInput(pending.input, answers, annotations),
       },
     });
-    if (!pending.appDecisionId && result?.behavior !== 'allow') {
+    if (result?.behavior !== 'allow') {
       throw new Error(result?.message || 'Question was not executed.');
     }
 
@@ -83,8 +87,6 @@ export function registerSessionControlIpc({
     }
 
     await respondToPendingQuestionRequest(pending, {
-      allowed: false,
-      source: _event?.transport === 'web' ? 'web' : 'desktop',
       permissionDecision: {
         behavior: 'deny',
         message: typeof message === 'string' && message.trim()

@@ -34,6 +34,7 @@ export class SessionRuntimePool {
     for (const record of this.records) {
       if (!record.runtime && !this.creating.has(record) && !this.closing.has(record)) this.records.delete(record);
     }
+    if (!this.records.size) { clearInterval(this.timer); this.timer = null; }
   }
   stats() {
     this.prune();
@@ -70,9 +71,11 @@ export class SessionRuntimePool {
     const existing = this.pending.get(record);
     if (existing) return existing.then(() => this.ensure(record, create));
     if (this.stopped) return Promise.reject(new Error('Moss 正在退出。'));
+    this.start();
     // Existing runtimes need no capacity reservation. Main's factory handles mode changes.
     if (record.runtime && !this.closing.has(record)) {
       this.records.add(record); this.creating.add(record);
+      this.start();
       const operation = this.use(record, create).then(async result => {
         if (this.stopped || record.deleted) { await this.dispose(record); throw new Error('会话已停止。'); }
         return result;
@@ -114,6 +117,7 @@ export class SessionRuntimePool {
       if (expired || this.now() >= deadline) throw timeoutError;
       clearTimeout(timeoutHandle);
       this.records.add(record); this.creating.add(record);
+      this.start();
       try {
         const result = await this.use(record, create);
         if (this.stopped || record.deleted) { await this.dispose(record); throw new Error('会话已停止。'); }

@@ -54,7 +54,7 @@ describe('chat composer mode placement', () => {
     expect(homeLanding).not.toContain('rounded-full border px-6 py-3');
   });
 
-  test('splits resource selection into the five add-menu actions', () => {
+  test('splits resource selection into the current add-menu actions', () => {
     const addMenu = source.slice(
       source.indexOf('const newSessionAddMenu'),
       source.indexOf('\n  return (', source.indexOf('const newSessionAddMenu')),
@@ -64,9 +64,10 @@ describe('chat composer mode placement', () => {
       source.indexOf('function HomeLanding'),
     );
 
-    for (const label of ['添加文件', '模式', '专家', '技能', '连接器']) {
+    for (const label of ['添加文件', '模式', '专家', '技能']) {
       expect(addMenu).toContain(`>${label}</span>`);
     }
+    expect(addMenu).not.toContain('连接器');
     expect(addMenu).toContain('DropdownMenuSubTrigger');
     expect(addMenu).toContain("style={{ overflow: 'visible' }}");
     expect(addMenu).not.toContain('<ChevronRight');

@@ -21,7 +21,7 @@ function renderSidebar({
   agentMailEnabled?: boolean;
   sessions?: any[];
   apps?: any[];
-  activeView?: 'chat' | 'overview' | 'skills' | 'experts' | 'connectors';
+  activeView?: 'chat' | 'overview' | 'skills' | 'experts';
   collapsed?: boolean;
   searchQuery?: string;
   activeSessionId?: string | null;

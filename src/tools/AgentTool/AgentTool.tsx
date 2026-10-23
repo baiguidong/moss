@@ -765,7 +765,8 @@ export const AgentTool = buildTool({
         // Coordinator Stop owns the delegated work, including agents that
         // finish registering after cancellation began. Ordinary background
         // agents can still outlive their parent turn.
-        parentAbortController: isCoordinator ? toolUseContext.abortController : undefined,
+        parentAbortController: isCoordinator ? toolUseContext.taskAbortController ?? toolUseContext.abortController : undefined,
+        toolAbortController: isCoordinator ? toolUseContext.abortController : undefined,
         toolUseId: toolUseContext.toolUseId
       });
 

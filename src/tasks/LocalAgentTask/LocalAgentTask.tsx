@@ -12,7 +12,7 @@ import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js';
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../../tools/SyntheticOutputTool/SyntheticOutputTool.js';
 import { asAgentId } from '../../types/ids.js';
 import type { Message } from '../../types/message.js';
-import { createAbortController, createChildAbortController } from '../../utils/abortController.js';
+import { createAbortController, createBackgroundTaskAbortController } from '../../utils/abortController.js';
 import { registerCleanup } from '../../utils/cleanupRegistry.js';
 import { getToolSearchOrReadInfo } from '../../utils/collapseReadSearch.js';
 import { enqueuePendingNotification } from '../../utils/messageQueueManager.js';
@@ -488,6 +488,7 @@ export function registerAsyncAgent({
   selectedAgent,
   setAppState,
   parentAbortController,
+  toolAbortController,
   toolUseId
 }: {
   agentId: string;
@@ -496,12 +497,13 @@ export function registerAsyncAgent({
   selectedAgent: AgentDefinition;
   setAppState: SetAppState;
   parentAbortController?: AbortController;
+  toolAbortController?: AbortController;
   toolUseId?: string;
 }): LocalAgentTaskState {
   void initTaskOutputAsSymlink(agentId, getAgentTranscriptPath(asAgentId(agentId)));
 
   // Create abort controller - if parent provided, create child that auto-aborts with parent
-  const abortController = parentAbortController ? createChildAbortController(parentAbortController) : createAbortController();
+  const abortController = parentAbortController ? createBackgroundTaskAbortController(parentAbortController, toolAbortController) : createAbortController();
   const taskState: LocalAgentTaskState = {
     ...createTaskStateBase(agentId, 'local_agent', description, toolUseId),
     type: 'local_agent',

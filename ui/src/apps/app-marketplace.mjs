@@ -7,7 +7,7 @@ import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import semver from 'semver'
 import { APP_HOST_API_VERSION } from '../../../packages/app-sdk/src/index.mjs'
-import { getAppCategory } from '../../../packages/app-sdk/src/categories.mjs'
+import { getAppCategoryForApp } from '../../../packages/app-sdk/src/categories.mjs'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
@@ -111,7 +111,7 @@ function normalizeMarketplaceSummary(raw, indexUrl) {
     displayName: safeString(raw.displayName, 'app.displayName'),
     summary: safeString(raw.summary, 'app.summary', { maxLength: 160 }),
     publisher: normalizePublisher(raw.publisher),
-    category: getAppCategory(raw.category).id,
+    category: getAppCategoryForApp(raw).id,
     keywords: normalizeStringArray(raw.keywords || [], 'app.keywords'),
     categories: normalizeStringArray(raw.categories || [], 'app.categories'),
     featured: raw.featured === true,
@@ -154,7 +154,7 @@ export function normalizeMarketplaceDetail(raw, detailUrl, expectedAppId) {
     summary: safeString(raw.summary, 'app.summary', { maxLength: 160 }),
     description: safeString(raw.description, 'app.description', { required: false, maxLength: 8_000 }),
     publisher: normalizePublisher(raw.publisher),
-    category: getAppCategory(raw.category).id,
+    category: getAppCategoryForApp(raw).id,
     categories: normalizeStringArray(raw.categories || [], 'app.categories'),
     keywords: normalizeStringArray(raw.keywords || [], 'app.keywords'),
     homepage: raw.homepage ? safeHttpsUrl(raw.homepage, detailUrl, 'app.homepage') : '',

@@ -15,6 +15,8 @@ export class AppTraceHost {
     this.queue = Promise.resolve()
     this.output = null
     this.closed = false
+    this.pendingSessions = new Map()
+    this.snapshotTask = null
   }
   active(instanceId) {
     const runtime = this.getRuntime()
@@ -48,12 +50,9 @@ export class AppTraceHost {
     const relative = path.relative(dataRoot, actual)
     const expected = path.join(dataRoot, path.relative(runtime.dataDir, directory))
     if (relative.startsWith('..') || path.isAbsolute(relative) || actual !== expected) throw new Error('调用追踪 数据目录不能包含符号链接。')
-    await this.importLegacy(directory)
     if (!this.active(instance.id)) return
     await core.configureTraceOutput(this.mossHome, { directory, isEnabled: () => this.active(instance.id) })
     this.output = { directory, instanceId: instance.id }
-    // Persist session metadata beside the wire records; the App never reads Core DBs.
-    await Promise.all([...this.getSessions()].map(record => this.recordSession(record)))
   }
   async importLegacy(directory) {
     const marker = path.join(directory, 'legacy-import-v1.json')
@@ -73,15 +72,30 @@ export class AppTraceHost {
   }
   async recordSession(record) {
     if (!this.output || !this.active(this.output.instanceId) || !record || record.agentMode === 'remote-direct' || record.deleted) return
-    const core = await this.getCore()
     const sessionId = record.underlyingSessionId || record.sessionId || record.id
     if (!sessionId || !/^[a-zA-Z0-9._-]{1,160}$/.test(sessionId)) return
-    await core.writeTraceSessionSnapshot(this.mossHome, sessionId, {
-      schemaVersion: 1,
-      session: { id: record.id, title: record.title || '未命名会话', projectPath: record.workspace || '',
-        workDir: record.workspace || null, parentSessionId: record.parentSessionId || null },
-      messages: core.toTraceMessages([], record.history || []),
-    })
+    this.pendingSessions.set(sessionId, { record, output: this.output })
+    if (!this.snapshotTask) {
+      this.snapshotTask = Promise.resolve().then(async () => {
+        try {
+          while (this.pendingSessions.size) {
+            const [identity, pending] = this.pendingSessions.entries().next().value
+            this.pendingSessions.delete(identity)
+            try {
+              const core = await this.getCore()
+              if (this.output !== pending.output || !this.active(pending.output.instanceId) || pending.record.deleted) continue
+              await core.writeTraceSessionSnapshot(this.mossHome, identity, {
+                schemaVersion: 1,
+                session: { id: pending.record.id, title: pending.record.title || '未命名会话', projectPath: pending.record.workspace || '',
+                  workDir: pending.record.workspace || null, parentSessionId: pending.record.parentSessionId || null },
+                messages: core.toTraceMessages([], pending.record.history || []),
+              })
+            } catch (error) { this.log(error) }
+          }
+        } finally { this.snapshotTask = null }
+      })
+    }
+    await this.snapshotTask
   }
   async getCompactionRequest(record, boundaryId) {
     if (record.agentMode === 'remote-direct') return { request: null, reason: '云端尚未提供此请求记录。' }
@@ -113,14 +127,18 @@ export class AppTraceHost {
   async status(context) {
     if (context.appId !== TRACE_APP_ID || !this.active(context.instanceId)) throw new Error('请先启用 调用追踪。')
     await this.refresh()
+    if (this.output) await this.importLegacy(this.output.directory).catch(error => this.log(error))
     const core = await this.getCore()
     return core.traceOutputStatus(this.mossHome)
   }
   async beforeDeactivation(appId) {
     if (appId !== TRACE_APP_ID) return
     await this.queue
+    if (!this.output && !this.snapshotTask) return
     this.output = null
+    this.pendingSessions.clear()
     await (await this.getCore()).configureTraceOutput(this.mossHome, null)
+    await this.snapshotTask
   }
   async close() {
     this.closed = true

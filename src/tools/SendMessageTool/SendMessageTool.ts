@@ -17,6 +17,7 @@ import { errorMessage } from '../../utils/errors.js'
 import { gracefulShutdown } from '../../utils/gracefulShutdown.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { semanticBoolean } from '../../utils/semanticBoolean.js'
+import { findSavedAgentByName } from '../../utils/sessionStorage.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import type { BackendType } from '../../utils/swarm/backends/types.js'
 import { TEAM_LEAD_NAME } from '../../utils/swarm/constants.js'
@@ -149,6 +150,10 @@ async function handleMessage(
 ): Promise<{ data: MessageOutput }> {
   const appState = context.getAppState()
   const teamName = getTeamName(appState.teamContext)
+  const team = teamName ? await readTeamFileAsync(teamName) : null
+  if (!team?.members.some(member => member.name === recipientName)) {
+    return { data: { success: false, message: `No agent or teammate named "${recipientName}" was found in this session. Start an Agent with that name before sending a message.` } }
+  }
   const senderName =
     getAgentName() || (isTeammate() ? 'teammate' : TEAM_LEAD_NAME)
   const senderColor = getTeammateColor()
@@ -656,7 +661,11 @@ export const SendMessageTool: Tool<InputSchema, SendMessageToolOutput> =
       if (typeof input.message === 'string' && input.to !== '*') {
         const appState = context.getAppState()
         const registered = appState.agentNameRegistry.get(input.to)
-        const agentId = registered ?? toAgentId(input.to)
+        const agentId = registered ?? toAgentId(input.to) ?? await findSavedAgentByName(input.to)
+        if (agentId && !registered) {
+          const setState = context.setAppStateForTasks ?? context.setAppState
+          setState(prev => ({ ...prev, agentNameRegistry: new Map(prev.agentNameRegistry).set(input.to, agentId) }))
+        }
         if (agentId) {
           const task = appState.tasks[agentId]
           if (isLocalAgentTask(task) && !isMainSessionTask(task)) {

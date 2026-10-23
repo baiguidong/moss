@@ -1,4 +1,5 @@
 import type { AgentEvent, ModelContextInfo } from '../types';
+import { getContextUsageFromUsage } from '../../../../shared/context-token-usage';
 
 export type ContextUsageInfo = {
   used: number;
@@ -20,13 +21,16 @@ export function deriveContextUsage(
   if (!Array.isArray(history)) return null;
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const event = history[i];
-    if (event?.type !== 'assistant' || event.parent_tool_use_id != null) continue;
+    if (event?.type === 'system' && event.subtype === 'compact_boundary' && event.parent_tool_use_id == null) return null;
+    if (event?.type !== 'assistant' || event.parent_tool_use_id != null || event.isSidechain
+      || event.isUnmetered || event.message?.model === '<synthetic>') continue;
     const usage = event.message?.usage;
     if (usage && typeof usage.input_tokens === 'number') {
-      const inputTokens = usage.input_tokens ?? 0;
-      const cacheRead = usage.cache_read_input_tokens ?? 0;
-      const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-      const outputTokens = usage.output_tokens ?? 0;
+      const contextUsage = getContextUsageFromUsage(usage);
+      const inputTokens = contextUsage.input_tokens;
+      const cacheRead = contextUsage.cache_read_input_tokens;
+      const cacheWrite = contextUsage.cache_creation_input_tokens;
+      const outputTokens = contextUsage.output_tokens;
       return {
         used: inputTokens + cacheRead + cacheWrite + outputTokens,
         inputTokens, cacheRead, cacheWrite, outputTokens,
@@ -60,6 +64,7 @@ export function getRemoteModelContext(history: AgentEvent[] | undefined): ModelC
     if (Number.isSafeInteger(contextWindow) && contextWindow > 0) {
       return { model, contextWindow, isDefault: false };
     }
+    if (event.modelUsage?.[model]) return null;
   }
   return null;
 }
@@ -72,11 +77,11 @@ export function formatTokenCount(n: number) {
 
 export function contextUsagePresentation(usage: ContextUsageInfo) {
   const limit = usage.modelContext?.contextWindow;
-  const pct = typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+  const pct = !usage.modelContext?.isDefault && typeof limit === 'number' && Number.isFinite(limit) && limit > 0
     ? Math.min(1, Math.max(0, usage.used / limit))
     : null;
   const capacity = pct !== null
-    ? `${formatTokenCount(limit!)}（${Math.round(pct * 100)}%）${usage.modelContext?.isDefault ? ' · 默认容量' : ''}`
+    ? `${formatTokenCount(limit!)}（${Math.round(pct * 100)}%）`
     : usage.loadingCapacity ? '容量读取中' : '容量未知';
   return {
     pct,

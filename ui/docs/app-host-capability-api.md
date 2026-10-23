@@ -152,3 +152,9 @@ UI 用 `createAppClient(window.mossApp)` 绑定当前 App，普通 `actions.invo
 两种 Host 入口共享请求容量、载荷上限、deadline 和生命周期取消；异步准备后以及 handler 派发前重新检查 App/实例/版本及当前授权。后台请求原有超时传入公共执行层。窗口销毁、App 停用、换版本及授权改变会取消相关请求；副作用 handler 仍须在异步提交前检查 signal / assertCurrent。
 
 Tasks/Execution 与 MCP 的统一契约见 [生成文档](../../packages/host-contracts/README.md)。声明允许的调用端不会自动授予能力；Manifest 和 grants 校验继续执行。新增机制不代表业务调用会自动重试或恰好执行一次。
+
+## Host 更新与旧 App
+
+兼容性由 Manifest 的 `hostApi` 范围决定：`^3.1.0` 接受 `>=3.1.0` 且 `<4.0.0`。安装、更新及 Host 重启后首次加载已安装 App 时检查版本，避免 Host 主版本升级绕过安装时的限制。单次调用不重复进行版本或返回值 Schema 兼容性检查；Host 注册表直接返回 handler 结果，共享类型化 SDK 原样返回 Host 响应。方法和参数验证、身份、Manifest permissions、installation grants、生命周期、载荷上限及取消机制继续执行。
+
+同一 Host 主版本必须保留已有字段的类型与语义。MCP 的 `servers.*` 返回值仅包含公开连接检查字段，内部 `schemaRevision` 和 `catalogStale` 留在桌面工具目录，不让携带旧版严格 SDK 的 App 因缓存元数据无法读取列表。历史签名包不原地修改；重新构建的 App 使用新的共享 SDK。生成输出 Schema 和显式领域数据验证辅助函数仍可用于开发测试，不参与自动调用兼容性判断。

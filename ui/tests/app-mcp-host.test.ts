@@ -9,6 +9,7 @@ import { AppCredentialAdapter } from '../src/apps/app-runtime.mjs'
 import { AppHostCapabilityRegistry } from '../../packages/app-runtime/src/capabilities/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../packages/app-sdk/src/protocol/index.mjs'
 import { buildMcpToolName } from '../../src/services/mcp/mcpStringUtils.js'
+import * as contractValidators from '../../packages/host-contracts/src/generated-validators.mjs'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -538,9 +539,29 @@ test('a failed live refresh retains the complete display catalog and exposes a r
   expect(f.calls).toHaveLength(0)
 })
 
+test('public MCP responses remain compatible with older SDK validators without losing desktop metadata', async () => {
+  const fixtureData = await fixture()
+  await fixtureData.host.handle('servers.save', { name: 'docs', enabled: true, config }, fixtureData.context)
+  const check = { state: 'connected', tools: [{ name: 'known', description: 'Known tool', inputSchema: { type: 'object' } }],
+    checkedAt: 20, schemaRevision: 'a'.repeat(64), catalogStale: true, error: 'Tool refresh failed' }
+  await fixtureData.host.recordRuntimeCatalog('docs', { ...config, scope: 'dynamic' }, check)
+  const response = await fixtureData.host.handle('servers.list', {}, fixtureData.context)
+  const validator = contractValidators[contractValidators.validatorKeys[JSON.stringify([MCP_PROTOCOL, 'servers.list', 'output'])]]
+  expect(validator(response)).toBe(true)
+  expect(response.servers[0].check).toMatchObject({ state: 'connected', tools: [{ name: 'known', disabled: false }], checkedAt: 20 })
+  expect(response.servers[0].check).not.toHaveProperty('schemaRevision')
+  expect(response.servers[0].check).not.toHaveProperty('catalogStale')
+  expect(response.servers[0].check.tools[0]).not.toHaveProperty('inputSchema')
+  expect(fixtureData.host.toolCatalog('moss.mcp')[0]).toMatchObject({ schemaRevision: check.schemaRevision, catalogStale: true })
+  fixtureData.host.inspect = async () => ({ ...check, durationMs: 5, serverInfo: { name: 'fixture', version: '1.0.0', futureField: true } })
+  const inspected = await fixtureData.host.handle('servers.inspect', { name: 'docs' }, fixtureData.context)
+  expect(validator(inspected)).toBe(true)
+  expect(inspected.servers[0].check).toMatchObject({ durationMs: 5, serverInfo: { name: 'fixture', version: '1.0.0' } })
+})
+
 test('cross-App bridge discovers live tools and checks exact service, schema, grants and enabled state', async () => {
   const f = await fixture(), target = f.addApp('moss.database')
-  const tool = { name: 'execute_sql', description: 'Execute SQL', inputSchema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'], additionalProperties: false } }
+  const tool = { name: 'execute_sql', description: 'Execute SQL', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'], additionalProperties: false } }
   const disabled = { name: 'drop_all', description: 'Disabled tool', inputSchema: { type: 'object', properties: {} } }
   const unrelated = { name: 'unrelated', inputSchema: { type: 'object', description: 'x'.repeat(70 * 1024) } }
   const databaseConfig = { type: 'stdio', command: 'node', args: ['dbhub.mjs'], env: { DB_PASSWORD: 'private-value' }, disabledTools: ['drop_all'] }

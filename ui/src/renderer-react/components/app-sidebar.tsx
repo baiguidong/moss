@@ -75,7 +75,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "overview" | "mail" | "skills" | "connectors" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "overview" | "mail" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
@@ -695,7 +695,7 @@ export function AppSidebar({
           </DropdownMenu>
         ) : (<div className={cn("grid gap-2", collapsed ? "grid-cols-1 justify-items-center" : "grid-cols-2")}>
           <Button
-            variant={activeView === "apps" || activeView === "connectors" ? "secondary" : "ghost"}
+            variant={activeView === "apps" ? "secondary" : "ghost"}
             aria-label={collapsed ? `Apps ${appsCount ?? '…'}` : undefined}
             className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
             onClick={() => onChangeView("apps")}

@@ -10,6 +10,8 @@ import {
   AppPackageStore,
 } from '../../packages/app-runtime/src/index.mjs'
 import { APP_ERROR_CODES, validateAppManifest } from '../../packages/app-sdk/src/index.mjs'
+import { getAppCatalogDiscovery } from '../../packages/app-sdk/src/discovery.mjs'
+import { getAppCategoryForApp } from '../../packages/app-sdk/src/categories.mjs'
 import { MOSS_HOME } from './moss-home.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -167,8 +169,8 @@ function registryEntryFromPublished(published, previous = {}) {
     displayName: published.displayName,
     title: published.displayName,
     description: published.description,
-    category: published.manifest.category,
-    discovery: published.manifest.discovery,
+    category: getAppCategoryForApp(published.manifest).id,
+    discovery: getAppCatalogDiscovery(published.manifest),
     connectorApp: published.manifest.connectorApp,
     keywords: published.manifest.keywords,
     icon: published.icon,
@@ -182,6 +184,7 @@ function registryEntryFromPublished(published, previous = {}) {
     hasBackend: Boolean(published.manifest.backend),
     backend: published.manifest.backend || null,
     permissions: published.manifest.permissions,
+    manifest: published.manifest,
     createdAt: previous.createdAt || now(),
     updatedAt: now(),
     currentVersion: published.version,
@@ -271,8 +274,8 @@ export function getPublishedApp(appId, version = null) {
     displayName: manifest.displayName,
     title: manifest.displayName,
     description: manifest.description,
-    category: manifest.category,
-    discovery: manifest.discovery,
+    category: getAppCategoryForApp(manifest).id,
+    discovery: getAppCatalogDiscovery(manifest),
     connectorApp: manifest.connectorApp,
     keywords: manifest.keywords,
     icon: readAppIconData(versionDir, manifest.icon),
@@ -298,7 +301,15 @@ export function listAppsFromRegistry() {
     if (!currentVersion) return []
     let published
     try {
-      published = getPublishedApp(app.id, currentVersion)
+      const versionDir = getAppVersionDir(app.id, currentVersion)
+      const manifest = app.currentVersion === currentVersion && app.manifest
+        ? validateAppManifest(app.manifest) : readAppManifestFromDir(versionDir)
+      if (manifest.id !== app.id || manifest.version !== currentVersion) throw new Error(`Stored App package identity mismatch: expected ${app.id}@${currentVersion}`)
+      published = { id: manifest.id, manifest, version: currentVersion, versionDir, displayName: manifest.displayName,
+        title: manifest.displayName, description: manifest.description, category: getAppCategoryForApp(manifest).id, discovery: getAppCatalogDiscovery(manifest),
+        connectorApp: manifest.connectorApp, keywords: manifest.keywords, icon: app.icon || '',
+        width: manifest.ui?.window?.width || 1100, height: manifest.ui?.window?.height || 760,
+        resizable: manifest.ui?.window?.resizable !== false, filePath: null, entryPath: null }
     } catch (error) {
       const packageError = error instanceof Error ? error.message : String(error)
       let requiredHostApi = null

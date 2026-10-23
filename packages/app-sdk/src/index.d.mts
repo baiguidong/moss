@@ -417,7 +417,7 @@ export interface AppCapabilitiesClient {
 }
 export type AppCapabilitiesDiscoveryClient = Pick<AppCapabilitiesClient, 'list' | 'listTools'>
 export function createAppCapabilitiesClient(host: AppHostApi): AppCapabilitiesClient
-export function createAppCapabilitiesClient(host: Pick<TypedHostRequests, 'request'>): AppCapabilitiesDiscoveryClient
+export function createAppCapabilitiesClient(host: Pick<TypedHostRequests, 'request'>): AppCapabilitiesClient
 
 /** Host API 3.2 native adapters execute in the trusted Electron main domain. */
 export interface NativeDesktopSession {
@@ -463,7 +463,7 @@ export interface NativeDesktopAdapter {
   invalidate?(): void
 }
 
-export type AppCategory = 'communication' | 'knowledge' | 'automation' | 'ai' | 'development' | 'diagnostics' | 'other'
+export type AppCategory = 'communication' | 'knowledge' | 'files' | 'creative' | 'development' | 'data' | 'automation' | 'ai' | 'sales' | 'marketing' | 'finance' | 'business' | 'hr' | 'education' | 'legal' | 'life' | 'diagnostics' | 'other'
 export interface AppCategoryDefinition { readonly id: AppCategory; readonly label: string }
 export type AppNavigation = { location: 'more' | 'settings'; viewId: string } | { location: 'none'; viewId?: never }
 export type AppSettingsGroup = 'integrations' | 'tools' | 'apps'
@@ -471,8 +471,10 @@ export interface AppViewContribution { id: string; title: string; route: string;
 export interface AppSettingsContribution { id: string; title: string; viewId: string; group?: AppSettingsGroup; order?: number; permission?: string }
 export const APP_CATEGORIES: readonly AppCategoryDefinition[]
 export function getAppCategory(value?: unknown): AppCategoryDefinition
+export function getAppCategoryForApp(app: { id?: string; name?: string; category?: string }): AppCategoryDefinition
+export function getAppCategoryMinimumHostVersion(value?: unknown): string
 
-export interface AppDiscovery { group: 'local' | 'online'; authMethods?: Array<'none' | 'browser' | 'api-key' | 'credentials' | 'moss-session'> }
+export interface AppDiscovery { group: 'local' | 'online'; kind?: 'app' | 'tool'; capabilities?: Array<'mcp' | 'cli' | 'skills'>; authMethods?: Array<'none' | 'browser' | 'api-key' | 'credentials' | 'moss-session'> }
 
 export interface AppManifestV2 {
   discovery?: AppDiscovery

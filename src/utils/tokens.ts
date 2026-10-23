@@ -1,8 +1,11 @@
 import type { BetaUsage as Usage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
+import { getContextUsageFromUsage } from '../../shared/context-token-usage.js'
 import { roughTokenCountEstimationForMessages } from '../services/tokenEstimation.js'
 import type { AssistantMessage, Message } from '../types/message.js'
 import { SYNTHETIC_MESSAGES, SYNTHETIC_MODEL } from './messages.js'
 import { jsonStringify } from './slowOperations.js'
+
+export { getContextUsageFromUsage }
 
 export function getTokenUsage(message: Message): Usage | undefined {
   if (
@@ -13,7 +16,8 @@ export function getTokenUsage(message: Message): Usage | undefined {
       message.message.content[0]?.type === 'text' &&
       SYNTHETIC_MESSAGES.has(message.message.content[0].text)
     ) &&
-    message.message.model !== SYNTHETIC_MODEL
+    message.message.model !== SYNTHETIC_MODEL &&
+    !('isUnmetered' in message && message.isUnmetered === true)
   ) {
     return message.message.usage
   }
@@ -45,11 +49,12 @@ function getAssistantMessageId(message: Message): string | undefined {
  * Use tokenCountWithEstimation() when you need context size from messages.
  */
 export function getTokenCountFromUsage(usage: Usage): number {
+  const contextUsage = getContextUsageFromUsage(usage)
   return (
-    usage.input_tokens +
-    (usage.cache_creation_input_tokens ?? 0) +
-    (usage.cache_read_input_tokens ?? 0) +
-    usage.output_tokens
+    contextUsage.input_tokens +
+    contextUsage.cache_creation_input_tokens +
+    contextUsage.cache_read_input_tokens +
+    contextUsage.output_tokens
   )
 }
 
@@ -146,12 +151,7 @@ export function getCurrentUsage(messages: Message[]): {
     const message = messages[i]
     const usage = message ? getTokenUsage(message) : undefined
     if (usage) {
-      return {
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
-        cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
-      }
+      return getContextUsageFromUsage(usage)
     }
   }
   return null
@@ -228,8 +228,14 @@ export function tokenCountWithEstimation(messages: readonly Message[]): number {
   let i = messages.length - 1
   while (i >= 0) {
     const message = messages[i]
+    if (message?.type === 'system' && message.subtype === 'compact_boundary') {
+      return roughTokenCountEstimationForMessages(messages.slice(i + 1))
+    }
     const usage = message ? getTokenUsage(message) : undefined
-    if (message && usage) {
+    const contextUsage = usage ? getContextUsageFromUsage(usage) : undefined
+    if (message && usage && contextUsage &&
+      contextUsage.input_tokens + contextUsage.cache_creation_input_tokens +
+        contextUsage.cache_read_input_tokens > 0) {
       // Walk back past any earlier sibling records split from the same API
       // response (same message.id) so interleaved tool_results between them
       // are included in the estimation slice.

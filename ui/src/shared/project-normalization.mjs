@@ -1,6 +1,6 @@
+import { normalizeProjectDefaults } from './project-session-defaults.mjs';
 import { randomUUID } from 'node:crypto';
 import { DESKTOP_PROJECT_KIND, DESKTOP_PROJECT_LAYOUT_VERSION, isDesktopProjectRecord } from '../desktop-data-layout.mjs';
-import { normalizeProjectDecisionPolicy } from './project-decisions.mjs';
 import { normalizeStringList } from './string-list.mjs';
 
 export const PROJECT_TASK_STATUSES = new Set(['working', 'waiting_for_user', 'completed', 'failed', 'stopped']);
@@ -57,7 +57,7 @@ export function normalizeProjectRecord(raw, fallbackId = '') {
     connectorIds: normalizeStringList(raw.connectorIds),
     expertIds: normalizeStringList(raw.expertIds),
     skillIds: normalizeStringList(raw.skillIds),
-    decisionPolicy: normalizeProjectDecisionPolicy(raw.decisionPolicy),
+    ...normalizeProjectDefaults(raw),
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
     updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
     archivedAt: Number.isFinite(raw.archivedAt) ? raw.archivedAt : null,

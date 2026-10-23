@@ -8,7 +8,7 @@ import { QueuedMessages } from '@/components/chat/queued-messages';
 import { WebComposerDraft } from '@/components/web-composer-draft';
 import { AppComposerContext } from '@/lib/app-composer';
 import { withdrawMessage, preserveQueuedMessages, recoverQueuedMessages, type ComposerDraft, type QueuedMessage } from '@/lib/composer-queue';
-import { listDrafts } from '@/lib/web-drafts';
+import { listDrafts, writeDraft } from '@/lib/web-drafts';
 import '@/globals.css';
 
 const api = window as any, root = createRoot(document.getElementById('root')!);
@@ -130,6 +130,15 @@ api.runComposerQueueReview = async () => {
   render(<Persistence key="cleared" session={session} initial={{ text: '', files: [] }} />); await delay(200);
   assert(!latest.queued?.length && !document.body.innerText.includes('其他已保存草稿'), 'Cleared draft reappeared after remount');
   passed.push('清空草稿后切换/重开不会恢复旧的待发送项');
+  const alternateSession = 'dismiss-other-saved-draft';
+  await writeDraft({ id: 'other-writer', scope: JSON.stringify(['desktop']), session: alternateSession, tab: 'other-tab', updatedAt: Date.now(), value: { text: '另一份草稿', files: [] } });
+  render(<Persistence key="alternative" session={alternateSession} initial={{ text: '当前输入', files: [] }} />);
+  await until(() => document.body.innerText.includes('其他已保存草稿（1）'), 'Alternative draft notice missing');
+  click('收起提示'); await delay();
+  assert(!document.querySelector('[role="status"]'), 'Dismiss did not hide the complete draft notice');
+  assert(latest.text === '当前输入', 'Dismiss changed the current input');
+  assert((await listDrafts<ComposerDraft>(JSON.stringify(['desktop']), alternateSession)).some(row => row.value.text === '另一份草稿'), 'Dismiss deleted a saved draft');
+  passed.push('收起其他已保存草稿提示会关闭整个浮层，并保留当前输入和已保存草稿');
   render(<Harness key="final" initial={recoverQueuedMessages([entry, { ...entry, id: 'second', prompt: '第二条' }])} />); await delay();
   return passed;
 };

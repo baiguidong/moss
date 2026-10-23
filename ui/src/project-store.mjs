@@ -12,8 +12,6 @@ const PROJECT_ASSET_INDEX_NAME = 'assets.json';
 
 const PROJECT_EVENT_INDEX_NAME = 'events.json';
 
-const PROJECT_DECISION_INDEX_NAME = 'decisions.json';
-
 const PROJECT_MEMORY_INDEX_NAME = 'index.json';
 
 const PROJECT_MEMORY_OVERVIEW_NAME = 'overview.md';
@@ -50,10 +48,6 @@ export function createProjectStore({
 
   function getProjectEventIndexPath(projectId) {
     return path.join(getProjectDir(projectId), PROJECT_EVENT_INDEX_NAME);
-  }
-
-  function getProjectDecisionIndexPath(projectId) {
-    return path.join(getProjectDir(projectId), PROJECT_DECISION_INDEX_NAME);
   }
 
   function getProjectMemoryDir(projectId) {
@@ -179,6 +173,10 @@ export function createProjectStore({
   async function getProjectMemory(projectId) {
     const id = normalizeProjectId(projectId);
     await ensureProjectStructure(id);
+    const snapshot = await readJsonFileAsync(path.join(getProjectMemoryDir(id), 'snapshot.json'), null);
+    if (snapshot && typeof snapshot.overview === 'string') {
+      return { ...snapshot, ...normalizeProjectMemoryIndex(snapshot), overviewPath: getProjectMemoryOverviewPath(id) };
+    }
     const index = normalizeProjectMemoryIndex(await readJsonFileAsync(getProjectMemoryIndexPath(id), null));
     let overview = '';
     try {
@@ -223,7 +221,6 @@ export function createProjectStore({
     unlinkSessionFromProject,
     getProjectAssetIndexPath,
     getProjectAssetsDir,
-    getProjectDecisionIndexPath,
     getProjectDir,
     getProjectEventIndexPath,
     getProjectMemory,

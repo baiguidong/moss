@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createProjectStore } from '../src/project-store.mjs';
@@ -67,6 +67,23 @@ it('serializes read-modify-write updates and recovers the queue after a failed m
   expect(projectRecordQueues.size).toBe(0);
 });
 
+it('ignores legacy decision settings while leaving historical decision files intact', async () => {
+  const { store } = await fixture();
+  const decisionPath = path.join(store.getProjectDir('project'), 'decisions.json');
+  const history = JSON.stringify([{ id: 'old-decision', status: 'pending' }]);
+  await writeFile(decisionPath, history);
+  await store.writeProject({
+    ...await store.readProject('project'),
+    decisionPolicy: { mode: 'auto_all' },
+  });
+
+  expect(await store.readProject('project')).not.toHaveProperty('decisionPolicy');
+  expect(store.readProjectSync('project')).not.toHaveProperty('decisionPolicy');
+  await store.mutateProjectRecord('project', project => ({ ...project, name: 'Updated' }));
+  expect(await readFile(decisionPath, 'utf8')).toBe(history);
+  expect(await store.readProject('project')).toMatchObject({ name: 'Updated' });
+});
+
 it('shares the record queue with asset imports so an upload cannot overwrite a concurrent rename', async () => {
   const { root, store, projectRecordQueues } = await fixture();
   const sourcePath = path.join(root, 'input.txt');
@@ -111,4 +128,33 @@ it('prunes old runtime runs using the existing age and count limits', async () =
   expect(runs).toContain('run-0');
   expect(runs).not.toContain('run-50');
   expect(runs).not.toContain('run-54');
+});
+
+it('lists only registered results, keeps original files on removal, and never resets runtimes', async () => {
+  const { store, projectRecordQueues, root } = await fixture();
+  const sourcePath = path.join(root, 'report.md');
+  await writeFile(sourcePath, 'final report');
+  await writeFile(path.join(store.getProjectWorkspaceDir('project'), 'source-code.ts'), 'not a deliverable');
+  const assets = createProjectAssetService({ ...store, projectRecordQueues, normalizeProjectId, runInKeyedQueue,
+    readJsonFileAsync, writeJsonFileAtomicAsync, appendProjectEvent: async () => {}, emitToRenderer() {},
+    invalidateProjectSessionRuntimes() { throw new Error('must not reset sessions'); } });
+  expect(await assets.listProjectAssets('project')).toEqual([]);
+  const result = await assets.registerProjectResult('project', { sourcePath, sourceSessionId: 's1', name: 'Report' });
+  expect(result.path).toBe(await realpath(sourcePath));
+  const updated = await assets.registerProjectResult('project', { sourcePath, sourceSessionId: 's2', name: 'Report' });
+  expect(updated.id).toBe(result.id);
+  expect(updated.provenance.map(item => item.sourceSessionId)).toEqual(['s1', 's2']);
+  expect(await assets.listProjectAssets('project')).toHaveLength(1);
+  await assets.removeProjectAsset('project', result.id);
+  expect(await assets.listProjectAssets('project')).toEqual([]);
+  expect(await readFile(sourcePath, 'utf8')).toBe('final report');
+});
+
+it('uses the atomic memory snapshot when compatibility files are stale after restart', async () => {
+  const { store } = await fixture();
+  await writeFile(store.getProjectMemoryOverviewPath('project'), 'stale');
+  await writeJsonFileAtomicAsync(path.join(store.getProjectDir('project'), 'memory/snapshot.json'), {
+    version: 4, overview: 'committed', noteIds: ['note1'], sourceIds: ['s1'], finalizedSessionCount: 1,
+  });
+  expect(await store.getProjectMemory('project')).toMatchObject({ version: 4, overview: 'committed', noteIds: ['note1'] });
 });

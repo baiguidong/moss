@@ -3,6 +3,45 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { fixture, writeApp, developerCatalog } from './helpers/app-authoring-fixture.mjs'
+import path from 'node:path'
+import { createToolAppManifest } from '../../packages/app-runtime/src/packages/generate-tool-app.mjs'
+import { validateAppPackage } from '../../packages/app-runtime/src/packages/index.mjs'
+
+for (const kind of ['connector', 'mcp']) test(`Builder packages ${kind} tool output at the runtime root`, async () => {
+  const f = await fixture({ waitTimeoutMs: 20000 })
+  try {
+    const project = await f.prepare({ appId: `test.${kind}-tool` })
+    const remote = { service: { type: 'http', url: 'https://example.invalid/mcp' } }
+    const definition = { schemaVersion: 1, id: project.appId, version: '0.1.0', displayName: 'Tool',
+      ...(kind === 'connector' ? { connector: { id: 'service', skillNames: ['guide'] }, mcp: { mcpServers: remote }, cli: { status: 'node --version' } } : { mcpServers: remote }) }
+    const manifest = createToolAppManifest(definition)
+    await fs.mkdir(path.join(project.path, 'scripts'))
+    await fs.writeFile(path.join(project.path, 'app.json'), JSON.stringify(definition))
+    await fs.writeFile(path.join(project.path, 'app.moss.json'), JSON.stringify(manifest))
+    await fs.writeFile(path.join(project.path, 'package.json'), JSON.stringify({ name: 'tool-fixture', version: definition.version,
+      type: 'module', scripts: { build: 'node scripts/build.mjs' } }))
+    if (kind === 'connector') {
+      await fs.mkdir(path.join(project.path, 'connector/.moss/skills/guide'), { recursive: true })
+      await fs.writeFile(path.join(project.path, 'connector/.moss/skills/guide/SKILL.md'), '# Guide\n')
+    }
+    const generator = new URL('../../packages/app-runtime/src/packages/generate-tool-app.mjs', import.meta.url).href
+    await fs.writeFile(path.join(project.path, 'scripts/build.mjs'), `import fs from 'node:fs/promises';import {generateToolApp} from ${JSON.stringify(generator)};const definition=JSON.parse(await fs.readFile('app.json','utf8'));await generateToolApp({definition,connectorDir:definition.connector?'connector':undefined,destination:'dist'});`)
+    const inspected = await f.call('source.inspect', { projectRef: project.projectRef }, { read: true })
+    assert.equal(inspected.editable, true)
+    const finished = await f.wait((await f.build(project)).operationRef)
+    assert.equal(finished.status, 'succeeded', finished.error)
+    const artifactDir = path.join(f.home, 'app-authoring/artifacts', finished.operationRef)
+    const pkg = await validateAppPackage(artifactDir, { requireSource: true })
+    assert.deepEqual(pkg.manifest, manifest)
+    await assert.rejects(fs.stat(path.join(artifactDir, 'dist')), /ENOENT/)
+    if (kind === 'connector') {
+      assert.deepEqual(pkg.manifest.connectorApp.capabilities, ['mcp', 'cli', 'skills'])
+      assert.equal(await fs.readFile(path.join(artifactDir, 'connector/.moss/skills/guide/SKILL.md'), 'utf8'), '# Guide\n')
+    } else {
+      assert.deepEqual(JSON.parse(await fs.readFile(path.join(artifactDir, 'mcp.json'), 'utf8')).mcpServers, remote)
+    }
+  } finally { await f.close() }
+}, 30000)
 
 test('BU-01/03/05: build uses an immutable snapshot and survives duplicate submission', async () => {
   const f = await fixture()

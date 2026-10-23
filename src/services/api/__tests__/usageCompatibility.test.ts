@@ -99,6 +99,47 @@ describe('usage compatibility', () => {
     expect(getTokenCountFromUsage(usage)).toBe(91_238)
   })
 
+  it('preserves final native usage when Responses billing only contains zero Chat placeholders', () => {
+    for (const [startInput, cacheRead, cacheWrite, output, total] of [
+      [221_624, 191_863, 2565, 1122, 195_553],
+      [232_828, 202_773, 737, 404, 203_917],
+      [243_494, 212_184, 46, 147, 212_380],
+    ]) {
+      const initial = updateUsage(EMPTY_USAGE, { ...EMPTY_USAGE, input_tokens: startInput })
+      const usage = updateUsage(initial, {
+        input_tokens: 3,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+        output_tokens: output,
+        billing_usage: {
+          source: 'oai_responses', semantic: 'openai',
+          openai_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: total,
+            prompt_tokens_details: { cached_tokens: 0 } },
+        },
+      } as unknown as Parameters<typeof updateUsage>[1])
+      expect(usage).toMatchObject({ input_tokens: 3, cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite, output_tokens: output })
+      expect(getTokenCountFromUsage(usage)).toBe(total!)
+      expect(getTokenCountFromUsage(accumulateUsage(EMPTY_USAGE, usage))).toBe(total!)
+    }
+  })
+
+  it('rejects zero billing input that contradicts positive native input', () => {
+    const usage = updateUsage(EMPTY_USAGE, {
+      ...gatewayUsage(0, 0), input_tokens: 221_624,
+    })
+    expect(usage.input_tokens).toBe(221_624)
+  })
+
+  it('counts cache creation details when the provider omits the aggregate field', () => {
+    const usage = updateUsage(EMPTY_USAGE, {
+      input_tokens: 3, cache_read_input_tokens: 191_863, output_tokens: 1122,
+      cache_creation: { ephemeral_1h_input_tokens: 2000, ephemeral_5m_input_tokens: 565 },
+    } as unknown as Parameters<typeof updateUsage>[1])
+    expect(usage.cache_creation_input_tokens).toBe(2565)
+    expect(getTokenCountFromUsage(usage)).toBe(195_553)
+  })
+
   it('preserves native Anthropic cache accounting and zero-valued streaming deltas', () => {
     const initial = updateUsage(EMPTY_USAGE, {
       ...EMPTY_USAGE,

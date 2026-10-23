@@ -11,7 +11,7 @@ import { AppHostCapabilityRegistry } from '../../packages/app-runtime/src/capabi
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
-async function fixture() {
+async function fixture(getSessions = () => [] as any[]) {
   const home = await fs.mkdtemp(path.join(tmpdir(), 'moss-trace-app-'))
   const id = 'moss.trace--default'
   const installation = { appId: 'moss.trace', enabled: false, grants: ['trace:capture'] }
@@ -25,7 +25,7 @@ async function fixture() {
     getActivePackage: async () => ({ manifest: { permissions: ['trace:capture'], host: { protocols: ['moss.trace/v1'] },
 backend: { } } }),
   }
-  const host = new AppTraceHost({ mossHome: home, getRuntime: () => runtime, getCore: async () => ({ ...output, toTraceMessages }) })
+  const host = new AppTraceHost({ mossHome: home, getRuntime: () => runtime, getCore: async () => ({ ...output, toTraceMessages }), getSessions })
   const directory = path.join(runtime.dataDir, 'moss.trace', 'instances', id, 'trace')
   const capture = () => withTraceScope(home, () => output.resolveTraceCapture())
   const record = (callId = 'call-1') => ({ id: callId, sessionId: 'session-1', source: 'anthropic' as const,
@@ -84,6 +84,72 @@ test('enabled App captures through actual fetch while its Backend is not running
   expect(meta.session.title).toBe('排查配置'); expect(meta.messages[0].content).toBe('hello')
 })
 
+test('startup enables capture without rewriting existing session snapshots or exhausting the queue', async () => {
+  let historyReads = 0
+  const existing = Array.from({ length: 80 }, (_, index) => ({ id: `old-${index}`,
+    get history() { historyReads++; return [{ type: 'user', content: 'old history' }] } }))
+  const f = await fixture(() => existing)
+  f.install(); await f.host.refresh()
+  expect(historyReads).toBe(0)
+  expect(output.traceOutputStatus(f.home)).toMatchObject({ enabled: true, queuedBytes: 0, droppedRecords: 0, error: null })
+  await expect(fs.stat(path.join(f.directory, 'sessions'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await f.host.refresh()
+  expect(historyReads).toBe(0)
+})
+
+test('coalesces pending snapshots and serializes active session writes without dropping wire records', async () => {
+  const f = await fixture(); f.install(); await f.host.refresh()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const written: string[] = []
+  const writes: Promise<unknown>[] = []
+  const original = f.host.getCore
+  f.host.getCore = async () => ({ ...await original(), writeTraceSessionSnapshot: async (_scope: string, identity: string, snapshot: any) => {
+    written.push(identity)
+    if (written.length === 1) await gate
+    await output.writeTraceSessionSnapshot(f.home, identity, snapshot)
+  } })
+  const history = [{ type: 'user', uuid: 'user', timestamp: 1000, content: 'x'.repeat(300_000) }]
+  writes.push(f.host.recordSession({ id: 'active', title: 'initial', history }))
+  while (written.length === 0) await new Promise(resolve => setTimeout(resolve, 1))
+  for (let index = 0; index < 75; index++) writes.push(f.host.recordSession({ id: `session-${index}`, history }))
+  for (let index = 0; index < 20; index++) writes.push(f.host.recordSession({ id: 'active', title: `revision-${index}`, history }))
+  await f.capture()!.recordCall(f.record('wire-call'))
+  expect(written).toEqual(['active'])
+  release(); await Promise.all(writes)
+  expect(written).toHaveLength(77)
+  const active = JSON.parse(await fs.readFile(path.join(f.directory, 'sessions/active.json'), 'utf8'))
+  expect(active.session.title).toBe('revision-19')
+  expect(output.traceOutputStatus(f.home)).toMatchObject({ queuedBytes: 0, droppedRecords: 0, error: null })
+  expect(await fs.readFile(path.join(f.directory, 'traces/session-1.jsonl'), 'utf8')).toContain('wire-call')
+})
+
+test('revoking capture discards queued snapshots and does not replay them after re-enabling', async () => {
+  const f = await fixture(); f.install(); await f.host.refresh()
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const written: string[] = []
+  const original = f.host.getCore
+  f.host.getCore = async () => ({ ...await original(), writeTraceSessionSnapshot: async (scope: string, identity: string, snapshot: any) => {
+    written.push(identity)
+    if (identity === 'active') { entered(); await gate }
+    await output.writeTraceSessionSnapshot(scope, identity, snapshot)
+  } })
+  const active = f.host.recordSession({ id: 'active', history: [] })
+  await started
+  const pending = f.host.recordSession({ id: 'pending', history: [] })
+  f.installation.enabled = false
+  const deactivation = f.host.beforeDeactivation('moss.trace')
+  release(); await Promise.all([active, pending, deactivation])
+  expect(written).toEqual(['active'])
+  f.installation.enabled = true; await f.host.refresh()
+  await f.host.recordSession({ id: 'new', history: [] })
+  expect(written).toEqual(['active', 'new'])
+  await expect(fs.stat(path.join(f.directory, 'sessions/pending.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 test('imports old raw records once, leaves originals intact, and never imports the old switch', async () => {
   const f = await fixture()
   await fs.mkdir(path.join(f.home, 'traces'))
@@ -91,6 +157,8 @@ test('imports old raw records once, leaves originals intact, and never imports t
   await fs.writeFile(path.join(f.home, 'trace-settings.json'), '{"traceCapture":{"enabled":false}}')
   f.install(); await f.host.refresh()
   expect(f.capture()).not.toBeNull()
+  await expect(fs.stat(path.join(f.directory, 'traces/legacy.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await f.host.status({ appId: 'moss.trace', instanceId: f.id })
   expect(await fs.readFile(path.join(f.directory, 'traces/legacy.jsonl'), 'utf8')).toContain('legacy')
   expect(await fs.readFile(path.join(f.home, 'traces/legacy.jsonl'), 'utf8')).toContain('legacy')
 })

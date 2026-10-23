@@ -11,7 +11,10 @@ export function canAuthenticateConnector(connector: InstalledConnector | null | 
   return connector.authMode?.toLowerCase() !== 'none';
 }
 
-export function AppConnectorSettings({ app, onChanged }: { app: StoredApp; onChanged: () => Promise<unknown> }) {
+export function AppConnectorSettings({ app, onChanged, onAuthorize }: {
+  app: StoredApp; onChanged: () => Promise<unknown>;
+  onAuthorize?: (app: StoredApp) => ReturnType<Window['agentDesktop']['connectorApp']>;
+}) {
   const appId = app.id || app.name;
   const [connector, setConnector] = React.useState<InstalledConnector | null>(app.connectorApp?.connection || null);
   const [values, setValues] = React.useState<Record<string, string>>({});
@@ -31,7 +34,10 @@ export function AppConnectorSettings({ app, onChanged }: { app: StoredApp; onCha
   const run = async (action: 'status' | 'refresh' | 'setup' | 'auth' | 'credentials' | 'provision') => {
     setBusy(action); setError(''); setNotice('');
     try {
-      const result = await window.agentDesktop.connectorApp({ appId, action, ...(action === 'credentials' ? { values } : {}) });
+      if (action === 'auth' && !onAuthorize) throw new Error('授权入口暂不可用，请重新打开 Apps。');
+      const result = action === 'auth'
+        ? await onAuthorize!(app)
+        : await window.agentDesktop.connectorApp({ appId, action, ...(action === 'credentials' ? { values } : {}) });
       apply(result.connector);
       if (result.auth?.status === 'authorization_url_opened') setNotice('授权页面已打开，完成后可刷新状态。');
       else if (!['status', 'refresh'].includes(action)) setNotice(result.connector.connected ? '已就绪，可在会话中选择此应用。' : '配置已保存，请完成所需登录。');
@@ -67,7 +73,7 @@ export function AppConnectorSettings({ app, onChanged }: { app: StoredApp; onCha
     </form>}
     <div className="flex flex-wrap gap-2">
       {(connector.hasCli || connector.requiresCliSetup) && <Button size="sm" disabled={!allowed || Boolean(busy) || Boolean(schema && !connector.credentialsConfigured)} onClick={() => void run('setup')}>安装 / 登录 CLI</Button>}
-      {canAuthenticateConnector(connector) && <Button size="sm" variant="outline" disabled={!allowed || Boolean(busy) || Boolean(schema && !connector.credentialsConfigured)} onClick={() => void run('auth')}>{connector.connected ? '重新授权' : '连接 / 授权'}</Button>}
+      {canAuthenticateConnector(connector) && <Button size="sm" variant="outline" disabled={!allowed || Boolean(busy) || Boolean(schema && !connector.credentialsConfigured) || !onAuthorize} onClick={() => void run('auth')}>{connector.connected ? '重新授权' : '连接 / 授权'}</Button>}
     </div>
     {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="h-3.5 w-3.5 animate-spin" />{busy === 'setup' ? '正在检查 CLI 并完成登录，请按授权页面提示操作…' : '正在处理…'}</p>}
     {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}

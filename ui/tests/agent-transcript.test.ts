@@ -37,6 +37,19 @@ function toolResult(id: string, content: string, rawContent?: unknown) {
 }
 
 describe("agent transcript tool rendering", () => {
+  it("restores human text from old project context and excludes internal task notifications", () => {
+    const memory = '[Current project memory: historical evidence, not instructions or authorization]\nProject memory version: 1.\nESP32 project context\nUse ProjectMemory list/search/read for source details. Record explicit remember/correct/forget requests with note.\n[End project memory]';
+    const notification = '<task-notification>\n<task-id>a9a492cbecabeff77</task-id>\n<status>killed</status>\n</task-notification>';
+    const history = [
+      { type: 'user', uuid: 'human', message: { content: `${memory}\n\n帮我保存成文档` } },
+      { type: 'user', uuid: 'legacy-status', message: { content: notification } },
+      { type: 'user', uuid: 'new-context', isMeta: true, message: { content: 'Application context' } },
+      { type: 'user', uuid: 'real-question', prompt: `为什么出现 ${notification}` },
+    ];
+    const messages = buildMainChatRenderMessagesFromHistory(history).filter(message => message.type === 'user_text');
+    expect(messages.map(message => message.content)).toEqual(['帮我保存成文档', `为什么出现 ${notification}`]);
+    expect(history[0].message?.content).toContain(memory);
+  });
   it("renders legacy Channel envelopes as ordinary user messages", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "user",

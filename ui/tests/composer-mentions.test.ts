@@ -13,21 +13,18 @@ describe('composer mention tabs', () => {
       includeAssistants: true,
       includeAgents: true,
       includeSkills: true,
-      includeConnectors: true,
-    })).toEqual(['assistants', 'agents', 'skills', 'connectors']);
+    })).toEqual(['assistants', 'agents', 'skills']);
 
     expect(getComposerResourceTabs({
       includeAssistants: false,
       includeAgents: false,
       includeSkills: true,
-      includeConnectors: true,
-    })).toEqual(['skills', 'connectors']);
+    })).toEqual(['skills']);
 
     expect(getComposerResourceTabs({
       includeAssistants: false,
       includeAgents: false,
       includeSkills: false,
-      includeConnectors: false,
     })).toEqual([]);
   });
 
@@ -37,23 +34,20 @@ describe('composer mention tabs', () => {
       includeAgents: true,
       includeSkills: true,
       includeAssistants: true,
-      includeConnectors: true,
-    })).toEqual(['agents', 'skills', 'assistants', 'connectors']);
+    })).toEqual(['agents', 'skills', 'assistants']);
 
     expect(getComposerMentionTabs({
       includeFiles: true,
       includeAgents: true,
       includeSkills: true,
       includeAssistants: false,
-      includeConnectors: true,
-    })).toEqual(['files', 'agents', 'skills', 'connectors']);
+    })).toEqual(['files', 'agents', 'skills']);
 
     expect(getComposerMentionTabs({
       includeFiles: true,
       includeAgents: false,
       includeSkills: false,
       includeAssistants: false,
-      includeConnectors: false,
     })).toEqual(['files']);
   });
 
@@ -63,16 +57,14 @@ describe('composer mention tabs', () => {
       includeAgents: true,
       includeSkills: true,
       includeAssistants: true,
-      includeConnectors: true,
     });
 
     expect(getNextComposerMentionTab(tabs, 'files')).toBe('agents');
     expect(getNextComposerMentionTab(tabs, 'agents')).toBe('skills');
     expect(getNextComposerMentionTab(tabs, 'skills')).toBe('assistants');
-    expect(getNextComposerMentionTab(tabs, 'assistants')).toBe('connectors');
-    expect(getNextComposerMentionTab(tabs, 'connectors')).toBe('files');
-    expect(getPreviousComposerMentionTab(tabs, 'files')).toBe('connectors');
-    expect(getPreviousComposerMentionTab(tabs, 'connectors')).toBe('assistants');
+    expect(getNextComposerMentionTab(tabs, 'assistants')).toBe('files');
+    expect(getPreviousComposerMentionTab(tabs, 'files')).toBe('assistants');
+    expect(getPreviousComposerMentionTab(tabs, 'assistants')).toBe('skills');
   });
 
   it('describes only the resources available in each composer', () => {
@@ -81,23 +73,20 @@ describe('composer mention tabs', () => {
       includeAgents: true,
       includeSkills: true,
       includeAssistants: true,
-      includeConnectors: true,
-    })).toBe('输入任务、问题或想法，使用 @ 添加Agent、技能、专家或连接器');
+    })).toBe('输入任务、问题或想法，使用 @ 添加Agent、技能或专家');
 
     expect(getDefaultComposerPlaceholder({
       hasActiveSession: true,
       includeAgents: true,
       includeSkills: true,
       includeAssistants: false,
-      includeConnectors: true,
-    })).toBe('继续输入，使用 @ 引用文件或添加Agent、技能、连接器');
+    })).toBe('继续输入，使用 @ 引用文件或添加Agent、技能');
 
     expect(getDefaultComposerPlaceholder({
       hasActiveSession: true,
       includeAgents: false,
       includeSkills: false,
       includeAssistants: false,
-      includeConnectors: false,
     })).toBe('继续输入，使用 @ 引用文件');
   });
 });

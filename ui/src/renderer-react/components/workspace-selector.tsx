@@ -23,10 +23,12 @@ export function WorkspaceSelector({
   value,
   onChange,
   disabled = false,
+  options,
 }: {
   value?: string;
   onChange: (workspace: string | undefined) => void;
   disabled?: boolean;
+  options?: string[];
 }) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -107,6 +109,12 @@ export function WorkspaceSelector({
     }
   };
 
+  if (options?.length) return (
+    <select aria-label="项目工作目录" title={value} disabled={disabled} value={value || options[0]}
+      onChange={event => onChange(event.target.value)} className="max-w-[240px] rounded-full border border-border bg-background px-3 py-1.5 text-xs">
+      {options.map(directory => <option key={directory} value={directory}>{directory}</option>)}
+    </select>
+  );
   return (
     <>
       <DropdownMenu

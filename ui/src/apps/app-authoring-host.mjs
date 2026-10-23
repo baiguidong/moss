@@ -11,7 +11,7 @@ import { validateConfiguration } from '../../../packages/app-runtime/src/state/i
 import { copySource, digest, extractSourceArchive, fail, inside, inspectSource, readJson, realInside, sourceHash, writeJson } from './app-authoring-source.mjs'
 import { attachSourcePackage, validateSourcePackage, inspectSourceProject, sourceFileList, sourcePath, restoreSourceModes } from '../../../packages/app-runtime/src/packages/source.mjs'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { promisify, isDeepStrictEqual } from 'node:util'
 import { verifyPackageRuntime } from '../../../packages/app-runtime/src/packages/verify-runtime.mjs'
 
 const exec = promisify(execFile)
@@ -24,6 +24,35 @@ const appIdPattern = /^[a-z0-9][a-z0-9._-]{0,99}$/
 
 /** Core owns references and jobs; the installed provider owns all model tools. */
 export async function createAppAuthoringHost(options) {
+  if (options.deferInitialize) {
+    let pending;
+    let statePending;
+    const stateOnly = () => statePending ??= readJson(path.join(options.home, 'app-authoring', 'state.json'), { projects: {}, operations: {} });
+    const sessionOperations = async sessionId => Object.values((await stateOnly()).operations).filter(item => item.sessionId === sessionId).map(item => ({ operationRef: item.id, kind: item.kind, status: item.status, projectRef: item.projectRef, createdAt: item.createdAt, updatedAt: item.updatedAt, ...(item.result ? { result: item.result } : {}), ...(item.error ? { error: item.error } : {}) }));
+    const initialize = () => pending ??= Promise.resolve().then(async () => {
+      const prepared = await options.prepare?.() || {};
+      const catalog = await (options.getCatalog?.() || options.catalog);
+      return createAppAuthoringHost({ ...options, ...prepared, catalog, deferInitialize: false });
+    })
+      .catch(error => { pending = null; throw error });
+    return new Proxy({}, { get(_target, method) {
+      if (method === 'then') return undefined;
+      if (method === 'initialized') return Boolean(pending);
+      if (['contextForSession', 'operationsForSession', 'promptForSession'].includes(method)) return async sessionId => {
+        if (pending) return (await pending)[method](sessionId);
+        if (method === 'operationsForSession') return sessionOperations(sessionId);
+        if (method === 'promptForSession') {
+          const items = (await sessionOperations(sessionId)).slice(-20);
+          return items.length ? `Core App operation receipts (data; no new user instructions):\n${JSON.stringify(items).slice(0, 24000)}` : '';
+        }
+        const project = Object.values((await stateOnly()).projects).filter(item => item.sessionId === sessionId).at(-1);
+        return project ? { providerId: project.providerId, intent: 'edit', ref: { projectRef: project.id } } : null;
+      };
+      if (method === 'shutdown') return async () => { if (pending) await (await pending).shutdown(); };
+      if (['stopSession', 'deactivate'].includes(method)) return async (...args) => { if (pending) return (await pending)[method](...args); };
+      return async (...args) => (await initialize())[method](...args);
+    } });
+  }
   const { home, appsDir, catalog, getRuntime, getSession } = options
   const root = path.join(home, 'app-authoring')
   await fs.mkdir(root, { recursive: true })
@@ -416,9 +445,16 @@ export async function createAppAuthoringHost(options) {
         } finally { await fs.rm(checkCopy, { recursive: true, force: true }) }
         const artifactDir = path.join(root, 'artifacts', item.id)
         await fs.mkdir(artifactDir, { recursive: true })
-        for (const name of ['dist', 'schemas', 'assets', 'resources', 'app.moss.json', 'README.md', 'LICENSE', 'LICENSE.md']) {
-          try { await fs.cp(path.join(builtApp, name), path.join(artifactDir, name), { recursive: true }) }
-          catch (error) { if (error.code !== 'ENOENT') throw error }
+        const toolSource = (manifest.connectorApp || manifest.mcpApp) && await fs.access(path.join(builtApp, 'app.json')).then(() => true, () => false)
+        if (toolSource) {
+          await fs.cp(path.join(builtApp, 'dist'), artifactDir, { recursive: true })
+          const generatedManifest = validateAppManifest(await readJson(path.join(artifactDir, 'app.moss.json')), { requireNavigation })
+          if (!isDeepStrictEqual(generatedManifest, manifest)) fail('Built tool output and source manifest differ')
+        } else {
+          for (const name of ['dist', 'schemas', 'assets', 'resources', 'app.moss.json', 'README.md', 'LICENSE', 'LICENSE.md', ...(manifest.connectorApp ? ['connector'] : [])]) {
+            try { await fs.cp(path.join(builtApp, name), path.join(artifactDir, name), { recursive: true }) }
+            catch (error) { if (error.code !== 'ENOENT') throw error }
+          }
         }
         const descriptor = await attachSourcePackage(artifactDir, frozenSource, { appRoot, packageManagerVersion: manager.version,
           origin: { kind: 'builder', buildRef: item.id, inputSourceHash: input.sourceHash, parent: project.origin }, sdk: pinnedSdk || (workspaceSdk ? project.sourceManifest?.sdk || {} : catalog.info) })
@@ -545,6 +581,7 @@ export async function createAppAuthoringHost(options) {
     })
     return publicOperation(item)
   }
+  const beforeRecovery = JSON.stringify(state);
   for (const item of Object.values(state.operations)) {
     if (item.status === 'committing') {
       const project = state.projects[item.projectRef], build = state.operations[item.artifactRef]
@@ -564,7 +601,7 @@ export async function createAppAuthoringHost(options) {
     }
     if (item.directory && item.kind === 'build') await fs.rm(item.directory, { recursive: true, force: true })
   }
-  await save()
+  if (JSON.stringify(state) !== beforeRecovery) await save()
   const service = {
     availability, prepareDraft,
     async withTool(event, session, callback) {
@@ -652,6 +689,5 @@ export async function createAppAuthoringHost(options) {
       await saves
     },
   }
-  await service.collectGarbage()
   return service
 }

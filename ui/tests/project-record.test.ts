@@ -14,7 +14,6 @@ describe('project soft deletion', () => {
       customMetadata: 'preserved',
       assetCount: 2,
       sessionCount: 3,
-      pendingDecisionCount: 4,
     };
 
     expect(softDeleteProjectRecord(project, 200)).toEqual({

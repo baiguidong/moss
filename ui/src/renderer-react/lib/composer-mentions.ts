@@ -1,18 +1,16 @@
-export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'connectors' | 'apps' | 'workflows';
+export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'apps' | 'workflows';
 export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'>;
 
 export function getComposerResourceTabs({
   includeAssistants,
   includeAgents,
   includeSkills,
-  includeConnectors,
   includeWorkflows = false,
   includeApps = false,
 }: {
   includeAssistants: boolean;
   includeAgents: boolean;
   includeSkills: boolean;
-  includeConnectors: boolean;
   includeWorkflows?: boolean;
   includeApps?: boolean;
 }): ComposerResourceTab[] {
@@ -20,7 +18,6 @@ export function getComposerResourceTabs({
   if (includeAssistants) tabs.push('assistants');
   if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
-  if (includeConnectors) tabs.push('connectors');
   if (includeApps) tabs.push('apps');
   if (includeWorkflows) tabs.push('workflows');
   return tabs;
@@ -31,7 +28,6 @@ export function getComposerMentionTabs({
   includeSkills,
   includeAssistants,
   includeAgents,
-  includeConnectors,
   includeWorkflows = false,
   includeApps = false,
 }: {
@@ -39,7 +35,6 @@ export function getComposerMentionTabs({
   includeSkills: boolean;
   includeAssistants: boolean;
   includeAgents: boolean;
-  includeConnectors: boolean;
   includeWorkflows?: boolean;
   includeApps?: boolean;
 }): ComposerMentionTab[] {
@@ -48,7 +43,6 @@ export function getComposerMentionTabs({
   if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
   if (includeAssistants) tabs.push('assistants');
-  if (includeConnectors) tabs.push('connectors');
   if (includeApps) tabs.push('apps');
   if (includeWorkflows) tabs.push('workflows');
   return tabs;
@@ -59,7 +53,6 @@ export function getDefaultComposerPlaceholder({
   includeSkills,
   includeAssistants,
   includeAgents,
-  includeConnectors,
   includeWorkflows = false,
   includeApps = false,
 }: {
@@ -67,7 +60,6 @@ export function getDefaultComposerPlaceholder({
   includeSkills: boolean;
   includeAssistants: boolean;
   includeAgents: boolean;
-  includeConnectors: boolean;
   includeWorkflows?: boolean;
   includeApps?: boolean;
 }) {
@@ -75,7 +67,6 @@ export function getDefaultComposerPlaceholder({
     includeAgents ? 'Agent' : null,
     includeSkills ? '技能' : null,
     includeAssistants ? '专家' : null,
-    includeConnectors ? '连接器' : null,
     includeApps ? 'App' : null,
     includeWorkflows ? '工作流' : null,
   ].filter((label): label is string => Boolean(label));

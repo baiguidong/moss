@@ -1,4 +1,4 @@
-import { Ajv } from 'ajv'
+import Ajv from 'ajv'
 import { DEFAULT_DESKTOP_SETTINGS, normalizeDesktopSettings } from './desktop-settings.mjs'
 import { validateMcpServerConfig } from './desktop-mcp-settings.mjs'
 import { PERMISSION_MODES } from './permission-modes.mjs'

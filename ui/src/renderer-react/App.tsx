@@ -1,4 +1,5 @@
 import { connectorIdFromApp } from '../../../packages/app-sdk/src/discovery.mjs';
+import { appendSessionRuntimeEvent } from '../shared/assistant-usage-reconcile.mjs';
 import { AppToolSelectionContext, canSelectToolApp, toolAppId, getAppToolServices, parseAppServiceKey } from '@/lib/app-tool-selection';
 import * as React from 'react';
 import { subscribeNotificationState } from '../client/notification-sync.mjs';
@@ -13,6 +14,7 @@ import { HostConfirmations } from '@/components/host-confirmations';
 import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
+import { authorizeAppConnector } from '@/lib/connector-auth-flow';
 import { appPageUnavailableReason, getAppPrimaryEntry, getAppSettingsEntries } from '@/lib/app-navigation';
 import { CronView } from '@/components/cron-view';
 import { OverviewView } from '@/components/overview-view';
@@ -60,7 +62,6 @@ import {
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
-import { isAuthorizedConnector } from '@/lib/connector-selection';
 import { readInstalledAppCount, writeInstalledAppCount } from '@/lib/installed-app-count';
 import {
   excludeRemovedSessions,
@@ -77,7 +78,6 @@ import type {
   DesktopAgentDefinition,
   DesktopSettings,
   FileTreeNode,
-  InstalledConnector,
   InstalledAssistant,
   ModelContextInfo,
   PermissionMode,
@@ -446,8 +446,6 @@ export default function App() {
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
   const assistantRefreshRequestIdRef = React.useRef(0);
-  const [installedConnectors, setInstalledConnectors] = React.useState<InstalledConnector[]>([]);
-  const [draftConnectorIds, setDraftConnectorIds] = React.useState<string[]>([]);
   const [draftAppIds, setDraftAppIds] = React.useState<string[]>([]);
   const [draftAppServiceIds, setDraftAppServiceIds] = React.useState<string[]>([]);
   const [appSelectionPending, setAppSelectionPending] = React.useState(false);
@@ -461,6 +459,7 @@ export default function App() {
   const [pendingSendRequests, setPendingSendRequests] = React.useState<Map<string, symbol>>(() => new Map());
   const [pendingFirstMessage, setPendingFirstMessage] = React.useState<PendingFirstMessage | null>(null);
   const [preparingNewSession, setPreparingNewSession] = React.useState(false);
+  const [draftProject, setDraftProject] = React.useState<Project | null>(null);
   const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
   const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
   const permissionModeSettingRequestRef = React.useRef<string | null>(null);
@@ -521,7 +520,7 @@ export default function App() {
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   React.useEffect(() => {
-    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl) {
+    if (window.mossWeb || activeView !== 'settings' || !desktopSettings?.remoteDirectServerUrl) {
       setServerAccount(null);
       return;
     }
@@ -532,7 +531,7 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
+  }, [activeView, desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
@@ -631,12 +630,6 @@ export default function App() {
     return assistants;
   }, []);
 
-  const refreshConnectors = React.useCallback(async () => {
-    const result = await window.agentDesktop.getInstalledConnectors();
-    const connectors = result?.data ?? [];
-    setInstalledConnectors(Array.isArray(connectors) ? connectors : []);
-    return connectors;
-  }, []);
 
   React.useEffect(() => {
     if (!activeSessionId) return;
@@ -788,6 +781,7 @@ export default function App() {
 
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
     setActiveView('chat');
+    setDraftProject(null);
     activeSessionIdRef.current = null;
     activeDetailRef.current = null;
     setActiveSessionId(null);
@@ -861,25 +855,25 @@ export default function App() {
     title?: string,
     workspace?: string,
     assistantName?: string,
-    connectorIds?: string[],
     permissionMode?: PermissionMode,
     agentMode: 'local' | 'remote-direct' = 'local',
     appIds: string[] = [],
     appServiceIds: string[] = [],
     onCreated?: (sessionId: string) => void,
+    projectOptions?: { projectId: string; mode: 'chat' | 'boss'; skillIds: string[] },
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
+    const payload: { title?: string; workspace?: string; assistant_name?: string; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
-    if (assistantName) payload.assistant_name = assistantName;
-    if (connectorIds && connectorIds.length > 0) payload.connectorIds = connectorIds;
+    if (assistantName || projectOptions) payload.assistant_name = assistantName || '';
     payload.appIds = agentMode === 'local' ? appIds : appIds.filter(id => connectorIdFromApp(apps.find(app => (app.id || app.name) === id))); if (agentMode === 'local') payload.appServiceIds = appServiceIds;
     if (permissionMode) payload.permissionMode = permissionMode;
-    const created = await window.agentDesktop.createSession(payload);
+    const created = await window.agentDesktop.createSession({ ...payload, ...projectOptions });
     setSummaries((prev) => upsertSummary(prev, created.summary));
     activeSessionIdRef.current = created.summary.id;
     activeDetailRef.current = created.detail;
     setActiveView('chat');
+    setDraftProject(null);
     setActiveSessionId(created.summary.id);
     setComposerIntent(restoreComposerIntent(created.detail));
     setActiveDetail(created.detail);
@@ -891,6 +885,12 @@ export default function App() {
     await openSession(created.summary.id);
     return created.summary.id;
   }, [apps, clearSessionWorkspaceState, openSession, sessionAgentModes, persistSessionAgentModes]);
+
+  const handleAuthorizeApp = React.useCallback((app: StoredApp) => authorizeAppConnector({
+    app,
+    createSession: title => createAndOpenSession(title),
+    api: window.agentDesktop,
+  }), [createAndOpenSession]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
@@ -1161,7 +1161,7 @@ export default function App() {
           refreshAssistants('local'),
         ]);
         if (!cancelled && initialApps.length === 0) setActiveView('apps');
-        void refreshConnectors().catch(() => {});
+        if (!cancelled && !window.mossWeb) requestAnimationFrame(() => { void window.agentDesktop.ipcInvoke('host:renderer-ready').catch(() => {}); });
       } catch (error: any) {
         if (!cancelled) {
           setBootError(error?.message || String(error));
@@ -1172,7 +1172,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshAssistants, refreshConnectors]);
+  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshAssistants]);
 
   React.useEffect(() => {
     if (!window.mossWeb) return;
@@ -1192,12 +1192,12 @@ export default function App() {
   }, [refreshSummaries, openSession]);
 
   React.useEffect(() => {
-    if (!desktopSettings?.remoteEnabled) return;
+    if (!desktopSettings?.remoteEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
     const timer = window.setInterval(() => {
       void window.agentDesktop.syncRemoteSessions().catch(() => {});
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [desktopSettings?.remoteEnabled]);
+  }, [desktopSettings?.remoteEnabled, desktopSettings?.agentMode, activeView]);
 
   React.useEffect(() => {
     if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
@@ -1211,7 +1211,7 @@ export default function App() {
       if (payload.sessionId !== activeSessionIdRef.current) return;
       setActiveDetail((prev) => {
         if (!prev) return prev;
-        const next = { ...prev, history: [...prev.history, payload.payload] };
+        const next = { ...prev, history: appendSessionRuntimeEvent(prev.history, payload.payload) };
         activeDetailRef.current = next;
         return next;
       });
@@ -1282,9 +1282,7 @@ export default function App() {
         ...prev.filter((entry) => entry.requestId !== payload.requestId),
         payload,
       ]);
-      if (payload.projectId) {
-        showPermissionNotice('项目有新的待决策，请到项目“待决策”中处理', 'info', 0);
-      } else if (payload.sessionId !== activeSessionIdRef.current) {
+      if (payload.sessionId !== activeSessionIdRef.current) {
         showPermissionNotice('另一个会话正在等待你回答问题', 'info', 0);
       }
     });
@@ -1293,7 +1291,7 @@ export default function App() {
       if (!payload?.requestId) return;
       updateQuestionRequests((prev) => {
         const next = prev.filter((entry) => entry.requestId !== payload.requestId);
-        if (!next.some((entry) => entry.projectId)) dismissPermissionNotice();
+        if (next.length === 0) dismissPermissionNotice();
         return next;
       });
     });
@@ -1377,9 +1375,6 @@ export default function App() {
       void refreshAssistants();
     });
 
-    const offConnectorsChanged = window.agentDesktop.onConnectorsChanged(() => {
-      void refreshConnectors();
-    });
 
     return () => {
       offEvent();
@@ -1395,9 +1390,8 @@ export default function App() {
       offSettingsChanged();
       offProjectsChanged();
       offAssistantsChanged();
-      offConnectorsChanged();
     };
-  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshConnectors, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1445,7 +1439,6 @@ export default function App() {
     if (!activeDetail) return '会话尚未加载完成';
     if (activeDetail.busy) return '请等待当前回复完成后再分叉';
     if (activeDetail.isSubAgent) return '子会话不能继续分叉';
-    if (activeDetail.projectId) return '项目会话由项目协调器管理，暂不支持分叉';
     if (activeDetail.sessionKind === 'cron') return '定时任务会话不能分叉';
     if (activeDetail.messageCount === 0) return '空会话不能分叉';
     return null;
@@ -1457,7 +1450,7 @@ export default function App() {
       return {
         ...session,
         title: displaySessionTitle(session),
-        ...(pendingCount > 0 ? { preview: `待决策 ${pendingCount}` } : {}),
+        ...(pendingCount > 0 ? { preview: `等待你处理 ${pendingCount}` } : {}),
       };
     }),
     [baseSidebarSessions, questionRequests],
@@ -1465,7 +1458,7 @@ export default function App() {
 
   const activeSessionQuestionRequest = React.useMemo(() => (
     questionRequests.find((request) => (
-      !request.projectId && request.sessionId === activeSessionId
+      request.sessionId === activeSessionId
     )) || null
   ), [activeSessionId, questionRequests]);
 
@@ -1515,14 +1508,18 @@ export default function App() {
     const payloadSessionId = typeof payload.sessionId === 'string' && payload.sessionId
       ? payload.sessionId
       : null;
-    let targetSessionId = payloadSessionId || activeSessionIdRef.current;
+    // Unscoped authorization belongs to a new session, even when a project
+    // conversation remains selected behind Apps or Settings.
+    const unscopedAuth = !payloadSessionId && Boolean(payload.connectorAuth || payload.mcpAuth);
+    let targetSessionId = payloadSessionId || (unscopedAuth ? null : activeSessionIdRef.current);
     if (payloadSessionId && payloadSessionId !== activeSessionIdRef.current) {
       const opened = await openSession(payloadSessionId);
       if (!opened) return;
       targetSessionId = payloadSessionId;
     }
     if (!targetSessionId && !payload.alreadyOpened) {
-      const created = await window.agentDesktop.createSession({ title: '浏览器授权', agentMode: 'local' });
+      const name = payload.connectorAuth?.displayName || payload.mcpAuth?.displayName;
+      const created = await window.agentDesktop.createSession({ title: name ? `${name}授权` : '浏览器授权', agentMode: 'local' });
       setSummaries((previous) => upsertSummary(previous, created.summary));
       const opened = await openSession(created.summary.id);
       if (!opened) return;
@@ -1597,6 +1594,29 @@ export default function App() {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }, []);
+
+  const handleNewProjectSession = React.useCallback(async (project: Project) => {
+    try {
+      const [current, assistants] = await Promise.all([
+        window.agentDesktop.getProject({ projectId: project.id }), refreshAssistants('local'),
+      ]);
+      const assistantName = current.composerDefaults?.assistantName ?? current.assistantName ?? (current.expertIds.length === 1 ? current.expertIds[0] : null);
+      const assistant = (Array.isArray(assistants) ? assistants : []).find(item => item.name === assistantName && item.enabled !== false);
+      if (assistantName && !assistant) throw new Error(`项目默认助手 ${assistantName} 未安装或已停用，请在项目设置中调整。`);
+      navigateToHome({ resetInput: true });
+      setDraftProject(current);
+      setNewSessionAgentMode('local');
+      setNewSessionPermissionMode(current.permissionMode || desktopSettingsRef.current?.permissionMode || 'default');
+      setComposerIntent(current.mode || 'boss');
+      setAppDraftWorkspace(current.defaultWorkspace || current.workspaces?.[0] || current.workspace);
+      // Connector selections now come from Apps; preserve legacy project data in storage only.
+      setDraftAppIds(current.appIds || []); setDraftAppServiceIds(current.appServiceIds || []);
+      setSelectedAssistant(assistant || null);
+      const choices = { skills: current.composerDefaults?.skills || current.skillIds.map(name => ({ name })), agent: null };
+      composerDraftsRef.current.home = { text: '', files: [], choices };
+      setComposerChoices(choices);
+    } catch (error) { showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000); }
+  }, [navigateToHome, refreshAssistants, showPermissionNotice]);
 
   const handleNewSession = React.useCallback(async () => {
     navigateToHome({ resetInput: true });
@@ -1703,13 +1723,6 @@ export default function App() {
   }, [showPermissionNotice]);
 
   const handleComposerIntentChange = React.useCallback((intent: ComposerIntent) => {
-    if (activeDetailRef.current?.projectId) {
-      setComposerIntent('boss');
-      if (intent !== 'boss') {
-        showPermissionNotice('项目会话固定使用 Boss 模式', 'info', 3000);
-      }
-      return;
-    }
     if (activeSessionIdRef.current) {
       composerIntentStatesRef.current.set(activeSessionIdRef.current, {
         ...composerIntentStatesRef.current.get(activeSessionIdRef.current),
@@ -1931,7 +1944,6 @@ export default function App() {
             firstMessageTitle(prompt),
             workspace || appDraftWorkspace,
             selectedAssistant?.name,
-            draftConnectorIds,
             newSessionPermissionMode,
             newSessionAgentMode,
             draftAppIds,
@@ -1946,6 +1958,7 @@ export default function App() {
                 submittedAt: Date.now(),
               });
             },
+            draftProject ? { projectId: draftProject.id, mode: intent, skillIds: (skills || []).map(skill => skill.name) } : undefined,
           ).finally(() => {
             creatingSessionRef.current = null;
             setPreparingNewSession(false);
@@ -2006,7 +2019,7 @@ export default function App() {
         setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
       }
     }
-  }, [appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftConnectorIds, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
+  }, [draftProject, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2367,57 +2380,6 @@ export default function App() {
       if ((activeSessionIdRef.current || undefined) === sessionId) setAppSelection({ ...resource, appId });
     });
   }, [enqueueAppSelection, addAppResourceOwner]);
-
-  const selectedConnectorIds = React.useMemo(
-    () => (activeSessionId ? (activeDetail?.connectorIds ?? []) : draftConnectorIds).filter(id => !apps.some(app => app.connectorApp?.id === id)),
-    [activeDetail?.connectorIds, activeSessionId, draftConnectorIds, apps],
-  );
-
-  React.useEffect(() => {
-    const authorizedIds = new Set(
-      installedConnectors.filter(isAuthorizedConnector).map((connector) => connector.id),
-    );
-    setDraftConnectorIds((prev) => prev.filter((id) => authorizedIds.has(id)));
-  }, [installedConnectors]);
-
-  const handleToggleConnector = React.useCallback(async (connector: InstalledConnector) => {
-    const current = activeSessionId ? (activeDetailRef.current?.connectorIds ?? []) : draftConnectorIds;
-    const isSelected = current.includes(connector.id);
-    if (!isSelected && !isAuthorizedConnector(connector)) {
-      showPermissionNotice(`${connector.name} 尚未完成认证，不能加入会话`, 'error', 6000);
-      return false;
-    }
-    const next = isSelected
-      ? current.filter((id) => id !== connector.id)
-      : [...current, connector.id];
-
-    if (!activeSessionId) {
-      setDraftConnectorIds(next);
-      return true;
-    }
-
-    const res = await window.agentDesktop.setSessionConnectors({
-      sessionId: activeSessionId,
-      connectorIds: next,
-    });
-    if (!res?.success || !res.data) {
-      const message = res?.error || '更新连接器失败';
-      showPermissionNotice(message, 'error', 6000);
-      pushAppNotification({
-        severity: 'error',
-        source: '连接器',
-        title: `${connector.name} 更新失败`,
-        message,
-        details: `连接器：${connector.name} (${connector.id})\n会话：${activeSessionId}`,
-      });
-      return false;
-    }
-    const detail = res.data;
-    setActiveDetail(detail);
-    activeDetailRef.current = detail;
-    setSummaries((prev) => upsertSummary(prev, detail));
-    return true;
-  }, [activeSessionId, draftConnectorIds, pushAppNotification, showPermissionNotice]);
 
   React.useEffect(() => window.agentDesktop.onAppOpenSession(({ sessionId, toolUseId }) => {
     void openSession(sessionId).then(opened => {
@@ -2792,10 +2754,6 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
-                installedConnectors={activeDetail?.projectId ? [] : installedConnectors.filter(connector => !apps.some(app => app.connectorApp?.id === connector.id))}
-                selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={activeDetail?.projectId || !installedConnectors.some(connector => !apps.some(app => app.connectorApp?.id === connector.id)) ? undefined : handleToggleConnector}
-                onOpenConnectorHub={() => setActiveView('apps')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
@@ -2838,6 +2796,8 @@ export default function App() {
                 sessionTitle=""
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
+                workspaceOptions={draftProject?.workspaces}
+                projectName={draftProject?.name}
                 onHomeWorkspaceChange={setAppDraftWorkspace}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
@@ -2860,10 +2820,6 @@ export default function App() {
                 selectedAssistant={selectedAssistant}
                 onSelectAssistant={handleSelectAssistant}
                 onClearAssistant={handleClearAssistant}
-                installedConnectors={installedConnectors.filter(connector => !apps.some(app => app.connectorApp?.id === connector.id))}
-                selectedConnectorIds={selectedConnectorIds}
-                onToggleConnector={installedConnectors.some(connector => !apps.some(app => app.connectorApp?.id === connector.id)) ? handleToggleConnector : undefined}
-                onOpenConnectorHub={() => setActiveView('apps')}
                 onOpenExpertHub={() => setActiveView('experts')}
                 onOpenAgentManager={() => {
                   setSettingsInitialSection('agents');
@@ -2873,7 +2829,7 @@ export default function App() {
                 onOpenSkillHub={() => setActiveView('skills')}
                 remoteEnabled={desktopSettings?.remoteEnabled ?? false}
                 newSessionMode={newSessionAgentMode}
-                onNewSessionModeChange={handleNewSessionModeChange}
+                onNewSessionModeChange={draftProject ? undefined : handleNewSessionModeChange}
               />
             )
           ) : activeView === 'overview' ? (
@@ -2899,9 +2855,11 @@ export default function App() {
               onActiveProjectChange={setActiveProjectId}
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
+              onNewSession={handleNewProjectSession}
             />
-          ) : activeView === 'apps' || activeView === 'connectors' ? (
+          ) : activeView === 'apps' ? (
             <AppsPanel
+              onAuthorize={handleAuthorizeApp}
               apps={apps}
               loading={!appsLoaded}
               onUseApp={app => { if (navigateToHome({ resetInput: true })) setDraftAppIds([app.id || app.name]); }}

@@ -40,6 +40,7 @@ import {
   type AgentId,
   asAgentId,
   asSessionId,
+  toAgentId,
   type SessionId,
 } from '../types/ids.js'
 import type { AttributionSnapshotMessage } from '../types/logs.js'
@@ -398,6 +399,38 @@ export async function readAgentMetadata(
     if (isFsInaccessible(e)) return null
     throw e
   }
+}
+
+/** Resolve names after runtime retirement without loading potentially large transcripts. */
+export async function findSavedAgentByName(name: string): Promise<AgentId | null> {
+  const directory = join(
+    getSessionEngineDir() ?? getProjectDir(getOriginalCwd()),
+    getSessionId(),
+    'subagents',
+  )
+  let entries: Dirent[]
+  try {
+    entries = await readdir(directory, { withFileTypes: true })
+  } catch (error) {
+    if (isFsInaccessible(error)) return null
+    throw error
+  }
+  const matches = await Promise.all(entries.map(async entry => {
+    if (!entry.isFile() || !entry.name.startsWith('agent-') || !entry.name.endsWith('.meta.json')) return null
+    const id = toAgentId(entry.name.slice('agent-'.length, -'.meta.json'.length))
+    if (!id) return null
+    try {
+      const metadata = await readAgentMetadata(id)
+      return metadata?.agentName === name && !metadata.teamName
+        ? { id, startedAt: metadata.startedAt ?? 0 } : null
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      logForDebugging(`Skipping malformed agent metadata: ${id}`)
+      return null
+    }
+  }))
+  return matches.filter(match => match !== null)
+    .sort((a, b) => b.startedAt - a.startedAt || b.id.localeCompare(a.id))[0]?.id ?? null
 }
 
 export function sessionIdExists(sessionId: string): boolean {

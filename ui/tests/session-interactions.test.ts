@@ -166,3 +166,79 @@ test('startup steering declines explicitly without side effects so the same mess
   expect(record.history).toEqual([]);
   expect(() => service.handle({ sessionId: 'a', action: 'side_question', id: 'cold-side', prompt: 'why' })).toThrow('尚未建立模型上下文');
 });
+
+test('side question restores an idle runtime and reports restore failures as a receipt', async () => {
+  const { record } = fixture(null);
+  let restores = 0;
+  record.underlyingSessionId = 'saved-session';
+  const service = createSessionInteractions({
+    getSessionRecord: () => record,
+    publish: (target: any, event: any) => target.history.push(event),
+    ensureRuntime: async () => {
+      restores += 1;
+      record.runtime = { askSideQuestion: async () => ({ status: 'completed', response: '恢复后的回答' }) };
+      return record.runtime;
+    },
+  });
+  expect(await service.handle({ sessionId: 'a', action: 'side_question', id: 'restored', prompt: 'why' })).toEqual({ status: 'running', id: 'restored' });
+  await tick();
+  expect(restores).toBe(1);
+  expect(latestSessionInteractions(record.history)[0]).toMatchObject({ status: 'completed', response: '恢复后的回答' });
+
+  const failed = fixture(null);
+  const failedService = createSessionInteractions({
+    getSessionRecord: () => failed.record,
+    publish: (target: any, event: any) => target.history.push(event),
+    ensureRuntime: async () => { throw new Error('resume failed'); },
+  });
+  expect(await failedService.handle({ sessionId: 'a', action: 'side_question', id: 'restore-failed', prompt: 'why' })).toEqual({ status: 'running', id: 'restore-failed' });
+  await tick();
+  expect(latestSessionInteractions(failed.record.history)[0]).toMatchObject({ status: 'failed', error: 'resume failed' });
+});
+
+test('side questions acknowledge runtime restoration immediately and can cancel it without a late model call', async () => {
+  const { record } = fixture(null);
+  let restore!: (runtime: any) => void, signal!: AbortSignal, restores = 0, questions = 0;
+  const service = createSessionInteractions({
+    getSessionRecord: () => record,
+    publish: (target: any, event: any) => target.history.push(event),
+    ensureRuntime: (_record: any, value: AbortSignal) => {
+      signal = value; restores++;
+      return new Promise(resolve => { restore = resolve; });
+    },
+  });
+  const request = { sessionId: 'a', action: 'side_question', id: 'restoring', prompt: '进展呢' };
+  expect(service.handle(request)).toEqual({ status: 'running', id: request.id });
+  expect(latestSessionInteractions(record.history)[0].status).toBe('running');
+  expect(service.handle(request).status).toBe('running');
+  expect(service.handle({ sessionId: 'a', action: 'inspect', id: request.id }).status).toBe('running');
+  expect(() => service.handle({ ...request, prompt: 'different' })).toThrow('同一消息标识');
+  expect(() => service.handle({ ...request, id: 'another' })).toThrow('本会话已有侧问');
+  await tick();
+  expect(restores).toBe(1);
+  expect(service.handle({ sessionId: 'a', action: 'cancel_side', id: request.id }).status).toBe('cancelled');
+  expect(signal.aborted).toBe(true);
+  restore({ askSideQuestion: () => { questions++; return { response: 'late' }; } });
+  await tick();
+  expect(questions).toBe(0);
+  expect(latestSessionInteractions(record.history)[0].status).toBe('cancelled');
+  expect(record.busy).toBe(true);
+});
+
+test('side question timeout includes restoration and a late restore cannot submit a model request', async () => {
+  const { record } = fixture(null);
+  let restore!: (runtime: any) => void, questions = 0;
+  const service = createSessionInteractions({
+    getSessionRecord: () => record,
+    publish: (target: any, event: any) => target.history.push(event),
+    timeoutMs: 5,
+    ensureRuntime: () => new Promise(resolve => { restore = resolve; }),
+  });
+  service.handle({ sessionId: 'a', action: 'side_question', id: 'timeout', prompt: '进展呢' });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  expect(latestSessionInteractions(record.history)[0].status).toBe('timeout');
+  restore({ askSideQuestion: () => { questions++; return { response: 'late' }; } });
+  await tick();
+  expect(questions).toBe(0);
+  expect(latestSessionInteractions(record.history)[0].status).toBe('timeout');
+});

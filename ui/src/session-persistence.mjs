@@ -1,5 +1,6 @@
 import { hasFile } from './shared/file-path-utils.mjs';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { DESKTOP_SESSION_KIND, DESKTOP_SESSION_LAYOUT_VERSION } from './desktop-data-layout.mjs';
 import { normalizePermissionMode } from './permission-modes.mjs';
@@ -14,7 +15,7 @@ import { deriveSessionPreview, derivePendingPlanApproval } from './shared/sessio
  * Settings and Trace Host are read lazily because they can change after startup.
  */
 export function createSessionPersistence({
-  statements: { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt },
+  statements: { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, persistSessionProjectionStmt, deleteSessionProjectionStmt },
   sessions,
   subAgentSessions,
   DESKTOP_DATA_PATHS,
@@ -26,6 +27,48 @@ export function createSessionPersistence({
   getDesktopAgentMode,
   mossLog,
 }) {
+  const savedRows = new WeakMap();
+
+  function savedSignature(record, row) {
+    return createHash('sha256').update(JSON.stringify([row, projectionFor(record, row), Boolean(record.busy)])).digest('hex');
+  }
+
+  function projectionFor(record, row) {
+    return {
+      pendingPlanApproval: record.pendingPlanApproval || null,
+      sourceTranscriptSignature: record.sourceTranscriptSignature || null,
+      sourceResourceManifestSignature: record.sourceResourceManifestSignature || null,
+      sourceTranscriptFailed: record.sourceTranscriptFailed === true,
+      sourceTranscriptTerminalStatus: record.sourceTranscriptTerminalStatus || null,
+      historyLength: record.historyLoaded === false ? record.historyLength || 0 : record.history.length,
+      historyRevision: record.historyLoaded === false ? record.historyRevision || null : createHash('sha256').update(row[12]).digest('hex'),
+    };
+  }
+
+  function installLazyHistory(record) {
+    record.historyLoaded = false;
+    Object.defineProperty(record, 'history', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const row = loadSessionHistoryStmt.get(record.id);
+        if (!row) throw new Error(`Session history is unavailable: ${record.id}`);
+        const history = JSON.parse(row.history_json);
+        if (!Array.isArray(history)) throw new Error(`Invalid session history: ${record.id}`);
+        record.history = history;
+        record.pendingPlanApproval = derivePendingPlanApproval(history);
+        if (!record.preview) record.preview = deriveSessionPreview(history) || '';
+        if (record.agentMode === 'remote-direct') applyRemoteSessionHistoryTitle(record);
+        return history;
+      },
+      set(history) {
+        if (!Array.isArray(history)) throw new Error('Session history must be an array');
+        Object.defineProperty(record, 'history', { configurable: true, enumerable: true, writable: true, value: history });
+        record.historyLoaded = true;
+      },
+    });
+  }
+
   function toPersistedSessionRow(sessionRecord, isSubAgent = false) {
     return [
       sessionRecord.id,
@@ -40,7 +83,7 @@ export function createSessionPersistence({
       sessionRecord.isCoordinatorMode ? 1 : 0,
       sessionRecord.remoteWorkspace || null,
       sessionRecord.underlyingSessionId,
-      serializeSessionHistory(sessionRecord.history),
+      sessionRecord.historyLoaded === false ? '[]' : serializeSessionHistory(sessionRecord.history),
       isSubAgent ? 1 : 0,
       sessionRecord.workerSummariesJson || null,
       sessionRecord.assistantName || null,
@@ -71,15 +114,13 @@ export function createSessionPersistence({
       JSON.stringify(normalizeStringList(sessionRecord.appIds)),
       normalizeSessionEffort(sessionRecord.effort),
       JSON.stringify(normalizeStringList(sessionRecord.appServiceIds)),
+      sessionRecord.projectDefaults ? JSON.stringify(sessionRecord.projectDefaults) : null,
+      sessionRecord.historyLoaded === false ? 0 : 1,
     ];
   }
 
   function serializeSessionHistory(history) {
-    try {
-      return JSON.stringify(Array.isArray(history) ? history : []);
-    } catch {
-      return '[]';
-    }
+    return JSON.stringify(Array.isArray(history) ? history : []);
   }
 
   function parsePersistedSessionHistory(value) {
@@ -133,6 +174,7 @@ export function createSessionPersistence({
       isSubAgent: Boolean(isSubAgent),
       assistantName: sessionRecord.assistantName || null,
       projectId: sessionRecord.projectId || null,
+      projectDefaults: sessionRecord.projectDefaults || null,
       connectorIds: normalizeStringList(sessionRecord.connectorIds),
       appIds: normalizeStringList(sessionRecord.appIds),
       appServiceIds: normalizeStringList(sessionRecord.appServiceIds),
@@ -171,11 +213,9 @@ export function createSessionPersistence({
       const sessionDir = getLocalSessionDir(sessionRecord.id);
       fs.mkdirSync(sessionDir, { recursive: true });
       fs.mkdirSync(getLocalSessionEngineDir(sessionRecord.id), { recursive: true });
-      fs.writeFileSync(
-        path.join(sessionDir, 'session.json'),
-        `${JSON.stringify(toSessionManifest(sessionRecord, isSubAgent), null, 2)}\n`,
-        'utf8',
-      );
+      const manifestPath = path.join(sessionDir, 'session.json');
+      const contents = `${JSON.stringify(toSessionManifest(sessionRecord, isSubAgent), null, 2)}\n`;
+      if (!fs.existsSync(manifestPath) || fs.readFileSync(manifestPath, 'utf8') !== contents) fs.writeFileSync(manifestPath, contents, 'utf8');
     } catch (error) {
       mossLog('warn', 'session', 'Failed to persist session manifest', {
         sessionId: sessionRecord?.id,
@@ -197,10 +237,21 @@ export function createSessionPersistence({
 
   function persistSessionRecord(sessionRecord, isSubAgent = false) {
     if (sessionRecord?.deleted) return;
-    persistSessionStmt.run(...toPersistedSessionRow(sessionRecord, isSubAgent));
-    if (!sessionRecord.busy) syncSessionSearchIndexBestEffort(sessionRecord);
+    if (sessionRecord.historyLoaded !== false) sessionRecord.pendingPlanApproval = derivePendingPlanApproval(sessionRecord.history);
+    if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.historyLoaded !== false) applyRemoteSessionHistoryTitle(sessionRecord);
+    const row = toPersistedSessionRow(sessionRecord, isSubAgent);
+    const projection = projectionFor(sessionRecord, row);
+    const signature = savedSignature(sessionRecord, row);
+    if (savedRows.get(sessionRecord) === signature) return;
+    persistSessionStmt.run(...row);
+    persistSessionProjectionStmt?.run(sessionRecord.id, JSON.stringify(projection));
+    sessionRecord.historyLength = projection.historyLength;
+    sessionRecord.historyRevision = projection.historyRevision;
+    if (!sessionRecord.busy && sessionRecord.historyLoaded !== false) syncSessionSearchIndexBestEffort(sessionRecord);
+    if (sessionRecord.historyLoaded === false) sessionSearchIndex.syncTitle?.(sessionRecord);
     persistSessionManifest(sessionRecord, isSubAgent);
-    void getTraceHost()?.recordSession(sessionRecord).catch(error => mossLog('warn', 'trace', error.message));
+    if (sessionRecord.historyLoaded !== false) void getTraceHost()?.recordSession(sessionRecord).catch(error => mossLog('warn', 'trace', error.message));
+    savedRows.set(sessionRecord, signature);
   }
 
   function flushPendingSessionPersist(sessionRecord) {
@@ -226,6 +277,7 @@ export function createSessionPersistence({
 
   function deletePersistedSession(sessionId) {
     deleteSessionStmt.run(sessionId);
+    deleteSessionProjectionStmt?.run(sessionId);
     try {
       sessionSearchIndex.deleteSession(sessionId);
     } catch (error) {
@@ -260,12 +312,13 @@ export function createSessionPersistence({
   }
 
   function hydratePersistedSessions() {
+    const projections = new Map((loadSessionProjectionsStmt?.all() || []).map(row => [row.session_id, parsePersistedObject(row.projection_json)]));
     const rows = loadSessionsStmt.all();
     for (const row of rows) {
       const agentMode = inferPersistedSessionAgentMode(row);
       if (agentMode === 'remote-direct' && remoteSessionDeletions.has(row.underlying_session_id)) continue;
-      const history = parsePersistedSessionHistory(row.history_json);
-      const preview = row.preview || deriveSessionPreview(history) || '';
+      const history = loadSessionHistoryStmt ? [] : parsePersistedSessionHistory(row.history_json);
+      const preview = row.preview || '';
       const messageCount = Number(row.message_count) || 0;
       const sessionRecord = {
         id: row.id,
@@ -279,7 +332,7 @@ export function createSessionPersistence({
         agentMode,
         permissionMode: normalizePermissionMode(row.permission_mode, getSettings().permissionMode),
         sessionDir: getLocalSessionDir(row.id),
-        isCoordinatorMode: Boolean(row.is_coordinator_mode || row.project_id),
+        isCoordinatorMode: Boolean(row.is_coordinator_mode),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         busy: false,
@@ -303,6 +356,7 @@ export function createSessionPersistence({
         assistantName: row.assistant_name || null,
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
+        projectDefaults: parsePersistedObject(row.project_defaults_json),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),
         appServiceIds: parsePersistedStringList(row.app_service_ids_json),
@@ -337,15 +391,17 @@ export function createSessionPersistence({
         applyRemoteSessionHistoryTitle(sessionRecord);
       }
       sessions.set(sessionRecord.id, sessionRecord);
-      syncSessionSearchIndexBestEffort(sessionRecord);
+      Object.assign(sessionRecord, projections.get(sessionRecord.id) || {});
+      if (loadSessionHistoryStmt) installLazyHistory(sessionRecord);
+      savedRows.set(sessionRecord, savedSignature(sessionRecord, toPersistedSessionRow(sessionRecord)));
     }
 
     // Load sub-agent sessions
     const subAgentRows = loadSubAgentSessionsStmt.all();
     for (const row of subAgentRows) {
       const agentMode = inferPersistedSessionAgentMode(row);
-      const history = parsePersistedSessionHistory(row.history_json);
-      const preview = row.preview || deriveSessionPreview(history) || '';
+      const history = loadSessionHistoryStmt ? [] : parsePersistedSessionHistory(row.history_json);
+      const preview = row.preview || '';
       const messageCount = Number(row.message_count) || 0;
       const sessionRecord = {
         id: row.id,
@@ -381,6 +437,7 @@ export function createSessionPersistence({
         assistantName: row.assistant_name || null,
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
+        projectDefaults: parsePersistedObject(row.project_defaults_json),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),
         appServiceIds: parsePersistedStringList(row.app_service_ids_json),
@@ -410,7 +467,9 @@ export function createSessionPersistence({
         applyRemoteSessionWorkspace(sessionRecord, sessionRecord.remoteWorkspace);
       }
       subAgentSessions.set(sessionRecord.id, sessionRecord);
-      syncSessionSearchIndexBestEffort(sessionRecord);
+      Object.assign(sessionRecord, projections.get(sessionRecord.id) || {});
+      if (loadSessionHistoryStmt) installLazyHistory(sessionRecord);
+      savedRows.set(sessionRecord, savedSignature(sessionRecord, toPersistedSessionRow(sessionRecord, true)));
     }
   }
 

@@ -50,12 +50,52 @@ describe('session information', () => {
     expect(info.tools.rows[0]).toMatchObject({ name: 'Read', total: 2, error: 1, durationMs: 2000, timedCount: 1 });
   });
 
+  it('replaces provisional usage with the final response instead of combining component maxima', () => {
+    const provisional = assistant('request-a', { input_tokens: 221_624, output_tokens: 0 });
+    const finalized = { ...assistant('request-a', { input_tokens: 3, output_tokens: 1122,
+      cache_read_input_tokens: 191_863, cache_creation_input_tokens: 2565 }),
+      message: { id: 'request-a', model: 'model-a', content: [], stop_reason: 'tool_use',
+        usage: { input_tokens: 3, output_tokens: 1122, cache_read_input_tokens: 191_863,
+          cache_creation_input_tokens: 2565 } } };
+    const info = buildSessionInfo([provisional, finalized, provisional]);
+    expect(info.latestContext?.totalTokens).toBe(195_553);
+    expect(info.historyUsage?.totals).toMatchObject({ inputTokens: 3, outputTokens: 1122,
+      cacheReadTokens: 191_863, cacheWriteTokens: 2565, totalTokens: 195_553, requestCount: 1 });
+  });
+
+  it('does not infer missing historical billing when a new response arrives in the same session', () => {
+    const historical = assistant('historical', { input_tokens: 0, output_tokens: 147 }, {
+      message: { id: 'historical', model: 'model-a', stop_reason: 'end_turn', content: [],
+        usage: { input_tokens: 0, output_tokens: 147 } },
+    });
+    const current = assistant('current', { input_tokens: 3, output_tokens: 13,
+      cache_read_input_tokens: 22_777, cache_creation_input_tokens: 687 }, {
+      message: { id: 'current', model: 'model-a', stop_reason: 'end_turn', content: [],
+        usage: { input_tokens: 3, output_tokens: 13, cache_read_input_tokens: 22_777,
+          cache_creation_input_tokens: 687 } },
+    });
+    const info = buildSessionInfo([historical, current, current]);
+    expect(info.latestContext?.totalTokens).toBe(23_480);
+    expect(info.historyUsage?.totals).toEqual({ inputTokens: 3, outputTokens: 160,
+      cacheReadTokens: 22_777, cacheWriteTokens: 687, totalTokens: 23_627, requestCount: 2 });
+  });
+
   it('distinguishes unavailable usage from measured zero and rejects invalid token values', () => {
     expect(buildSessionInfo([]).historyUsage).toBeNull();
     expect(buildSessionInfo([{ type: 'result', usage: { input_tokens: 123 } }]).historyUsage).toBeNull();
     const info = buildSessionInfo([assistant('zero', { input_tokens: 0, output_tokens: Number.NaN, cache_read_input_tokens: -100, cache_creation_input_tokens: Infinity })]);
     expect(info.historyUsage?.totals.totalTokens).toBe(0);
     expect(info.historyUsage?.totals.requestCount).toBe(1);
+  });
+
+  it('uses final iterations only for context, keeping cumulative billed request usage separate', () => {
+    const event = { type: 'assistant', message: { id: 'iterated', model: 'model-a', stop_reason: 'end_turn',
+      usage: { input_tokens: 500_000, output_tokens: 5000,
+        iterations: [{ type: 'message', input_tokens: 3, output_tokens: 1122,
+          cache_read_input_tokens: 191_863, cache_creation_input_tokens: 2565 }] } } };
+    const info = buildSessionInfo([event]);
+    expect(info.latestContext?.totalTokens).toBe(195_553);
+    expect(info.historyUsage?.totals.totalTokens).toBe(505_000);
   });
 
   it('keeps an unavailable context distinct from zero when rendering ledger-backed totals', () => {

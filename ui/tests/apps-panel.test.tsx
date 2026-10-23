@@ -87,7 +87,7 @@ describe('Apps management', () => {
         connection: { id: 'baidu-netdisk', hasMcp: true, hasRemoteMcp: true, authMode: 'server-side', connected: true },
       },
     } as StoredApp;
-    const renderPanel = (value: StoredApp) => renderToStaticMarkup(<AppsPanel apps={[value]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    const renderPanel = (value: StoredApp) => renderToStaticMarkup(<AppsPanel apps={[value]} initialExpandedApp={value.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
 
     expect(renderPanel(app)).toContain('重新授权');
     expect(renderToStaticMarkup(<AppConnectorSettings app={app} onChanged={async () => {}} />)).toContain('重新授权');

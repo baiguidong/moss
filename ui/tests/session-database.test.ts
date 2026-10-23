@@ -21,12 +21,14 @@ it('prepares fresh and migrated session databases without losing existing histor
           assert.equal(row.title, 'Keep me');
           assert.equal(row.underlying_session_id, 'engine-id');
           assert.equal(row.is_sub_agent, 0);
-          assert.equal(row.history_json, '[]');
+          assert.equal(Object.hasOwn(row, 'history_json'), false);
+          assert.equal(statements.loadSessionHistoryStmt.get('old').history_json, '[]');
         }
         db.exec("INSERT INTO sessions (id,title,workspace,created_at,updated_at,message_count,preview,is_sub_agent,history_json) VALUES ('child','Child','/workspace',3,4,1,'child preview',1,'[{\\\"type\\\":\\\"user\\\"}]')");
         statements = prepareSessionStatements(db);
         assert.equal(statements.loadSubAgentSessionsStmt.all().length, 1);
-        assert.equal(statements.loadSubAgentSessionsStmt.all()[0].history_json, JSON.stringify([{ type: 'user' }]));
+        assert.equal(Object.hasOwn(statements.loadSubAgentSessionsStmt.all()[0], 'history_json'), false);
+        assert.equal(statements.loadSessionHistoryStmt.get('child').history_json, JSON.stringify([{ type: 'user' }]));
         assert.equal(statements.loadSessionsStmt.all().length, legacy ? 1 : 0);
         statements.deleteSessionStmt.run('child');
         assert.equal(statements.loadSubAgentSessionsStmt.all().length, 0);

@@ -78,7 +78,7 @@ import {
   type ProcessUserInputContext,
   processUserInput,
 } from './utils/processUserInput/processUserInput.js'
-import { fetchSystemPromptParts } from './utils/queryContext.js'
+import { buildSideQuestionFallbackParams, fetchSystemPromptParts } from './utils/queryContext.js'
 import { setCwd } from './utils/Shell.js'
 import { sanitizeMessagesAfterApiFailure } from './utils/sessionResumeSanitizer.js'
 import {
@@ -188,6 +188,7 @@ export class QueryEngine {
   private finishAfterTools = false
   private turnInputs = new TurnInputQueue()
   private sideQuestionContext: CacheSafeParams | null = null
+  private sideQuestionContextPromise: Promise<CacheSafeParams> | null = null
 
   beginTurnInputs() { this.turnInputs.open() }
   closeTurnInputs() { this.turnInputs.close() }
@@ -197,9 +198,41 @@ export class QueryEngine {
   }
 
   async askSideQuestion(question: string, abortController: AbortController) {
-    if (!this.sideQuestionContext) throw new Error('当前会话尚未建立模型上下文，请先发送主会话消息。')
+    if (!this.sideQuestionContext) {
+      // A desktop runtime may be rebuilt from a saved transcript after being
+      // retired while idle. Recreate the same cache-safe prefix the CLI uses
+      // for a side question before the next main turn, instead of requiring a
+      // fresh message just to establish model context.
+      const hasConversation = this.mutableMessages.some(message =>
+        message?.type === 'user' || message?.type === 'assistant',
+      )
+      if (!hasConversation) throw new Error('当前会话尚未建立模型上下文，请先发送主会话消息。')
+      this.sideQuestionContextPromise ??= buildSideQuestionFallbackParams({
+        tools: this.config.refreshTools?.() ?? this.config.tools,
+        commands: this.config.commands,
+        mcpClients: this.config.mcpClients,
+        messages: this.mutableMessages,
+        readFileState: this.readFileState,
+        getAppState: this.config.getAppState,
+        setAppState: this.config.setAppState,
+        customSystemPrompt: this.config.customSystemPrompt,
+        appendSystemPrompt: this.config.appendSystemPrompt,
+        thinkingConfig: this.config.thinkingConfig,
+        agents: this.config.agents,
+        emitAppEvent: this.config.emitAppEvent,
+        mainLoopModel: this.config.userSpecifiedModel
+          ? parseUserSpecifiedModel(this.config.userSpecifiedModel)
+          : undefined,
+      }).then(context => {
+        this.sideQuestionContext = context
+        return context
+      }).finally(() => {
+        this.sideQuestionContextPromise = null
+      })
+    }
+    const sideQuestionContext = this.sideQuestionContext || await this.sideQuestionContextPromise!
     return runSideQuestion({ question, abortController, isolated: true,
-      cacheSafeParams: { ...this.sideQuestionContext, forkContextMessages: structuredClone(this.mutableMessages) } })
+      cacheSafeParams: { ...sideQuestionContext, forkContextMessages: structuredClone(this.mutableMessages) } })
   }
 
   constructor(config: QueryEngineConfig) {
@@ -766,6 +799,10 @@ export class QueryEngine {
 
     // Track current message usage (reset on each message_start)
     let currentMessageUsage: NonNullableUsage = EMPTY_USAGE
+    let currentResponseId: string | undefined
+    let awaitingFinalUsage = false
+    const emittedAssistants: Extract<SDKMessage, { type: 'assistant' }>[] = []
+    const responseAssistants: Extract<Message, { type: 'assistant' }>[] = []
     let turnCount = 1
     let hasAcknowledgedInitialMessages = false
     // Track structured output from StructuredOutput tool calls
@@ -835,21 +872,8 @@ export class QueryEngine {
           }
         }
         messages.push(message)
-        if (persistSession) {
-          // Fire-and-forget for assistant messages. claude.ts yields one
-          // assistant message per content block, then mutates the last
-          // one's message.usage/stop_reason on message_delta — relying on
-          // the write queue's 100ms lazy jsonStringify. Awaiting here
-          // blocks ask()'s generator, so message_delta can't run until
-          // every block is consumed; the drain timer (started at block 1)
-          // elapses first. Interactive CC doesn't hit this because
-          // useLogMessages.ts fire-and-forgets. enqueueWrite is
-          // order-preserving so fire-and-forget here is safe.
-          if (message.type === 'assistant') {
-            void recordTranscript(messages)
-          } else {
-            await recordTranscript(messages)
-          }
+        if (persistSession && !awaitingFinalUsage && message.type !== 'assistant') {
+          await recordTranscript(messages)
         }
 
         // Acknowledge initial user messages after first transcript recording
@@ -887,7 +911,13 @@ export class QueryEngine {
             lastStopReason = message.message.stop_reason
           }
           this.mutableMessages.push(message)
-          yield* normalizeMessage(message)
+          const awaitsUsage = awaitingFinalUsage && message.message.id === currentResponseId
+          if (awaitsUsage) responseAssistants.push(message)
+          for (const normalized of normalizeMessage(message)) {
+            if (awaitsUsage && normalized.type === 'assistant') emittedAssistants.push(normalized)
+            if (includePartialMessages || !awaitsUsage) yield normalized
+          }
+          if (persistSession && !awaitingFinalUsage) await recordTranscript(messages)
           break
         case 'progress':
           this.mutableMessages.push(message)
@@ -898,7 +928,7 @@ export class QueryEngine {
           // forking the chain and orphaning the conversation on resume.
           if (persistSession) {
             messages.push(message)
-            void recordTranscript(messages)
+            if (!awaitingFinalUsage) void recordTranscript(messages)
           }
           yield* normalizeMessage(message)
           break
@@ -908,6 +938,10 @@ export class QueryEngine {
           break
         case 'stream_event':
           if (message.event.type === 'message_start') {
+            awaitingFinalUsage = true
+            currentResponseId = message.event.message.id
+            emittedAssistants.length = 0
+            responseAssistants.length = 0
             // Reset current message usage for new message
             currentMessageUsage = EMPTY_USAGE
             currentMessageUsage = updateUsage(
@@ -927,8 +961,30 @@ export class QueryEngine {
             if (message.event.delta.stop_reason != null) {
               lastStopReason = message.event.delta.stop_reason
             }
+            for (const assistant of emittedAssistants) {
+              assistant.message.usage = currentMessageUsage
+              assistant.message.stop_reason = message.event.delta.stop_reason ?? null
+            }
+            for (const assistant of responseAssistants) {
+              assistant.message.usage = currentMessageUsage
+              assistant.message.stop_reason = message.event.delta.stop_reason ?? null
+            }
+            if (message.event.delta.stop_reason != null) {
+              awaitingFinalUsage = false
+              if (persistSession) await recordTranscript(messages)
+              if (!includePartialMessages) {
+                yield* emittedAssistants
+                emittedAssistants.length = 0
+              }
+            }
           }
           if (message.event.type === 'message_stop') {
+            awaitingFinalUsage = false
+            if (persistSession) await recordTranscript(messages)
+            if (!includePartialMessages) {
+              yield* emittedAssistants
+              emittedAssistants.length = 0
+            }
             // Accumulate current message usage into total
             this.totalUsage = accumulateUsage(
               this.totalUsage,
@@ -939,7 +995,10 @@ export class QueryEngine {
           if (includePartialMessages) {
             yield {
               type: 'stream_event' as const,
-              event: message.event,
+              event: message.event.type === 'message_start'
+                ? { ...message.event, message: { ...message.event.message, usage: currentMessageUsage } }
+                : message.event.type === 'message_delta'
+                  ? { ...message.event, usage: currentMessageUsage } : message.event,
               session_id: getSessionId(),
               parent_tool_use_id: null,
               uuid: randomUUID(),
@@ -952,7 +1011,7 @@ export class QueryEngine {
           // Record inline (same reason as progress above).
           if (persistSession) {
             messages.push(message)
-            void recordTranscript(messages)
+            if (!awaitingFinalUsage) void recordTranscript(messages)
           }
 
           // Extract structured output from StructuredOutput tool calls
@@ -1173,6 +1232,9 @@ export class QueryEngine {
       result?.type === 'assistant'
         ? (last(result.message.content)?.type ?? 'none')
         : 'n/a'
+
+    if (persistSession) await recordTranscript(messages)
+    if (!includePartialMessages && awaitingFinalUsage) yield* emittedAssistants
 
     // Flush buffered transcript writes before yielding result.
     // The desktop app kills the CLI process immediately after receiving the

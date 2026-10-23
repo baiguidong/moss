@@ -56,7 +56,7 @@ const REMOVED_CONNECTOR_IDS = [
 describe('connector catalog pruning', () => {
   it('keeps provider-blocked connectors out of the active ZIP', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const catalog = JSON.parse(await zip
       .file('.codebuddy-connector/connectors.json')!
@@ -74,7 +74,7 @@ describe('connector catalog pruning', () => {
 
   it('packages ShareOne as a skill-only connector with API key provisioning', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const catalog = JSON.parse(await zip
       .file('.codebuddy-connector/connectors.json')!
@@ -102,7 +102,7 @@ describe('connector catalog pruning', () => {
 
   it('packages RAGFlow with selectable Moss session and API key authentication', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const catalog = JSON.parse(await zip
       .file('.codebuddy-connector/connectors.json')!
@@ -166,7 +166,7 @@ describe('connector catalog pruning', () => {
 
   it('distinguishes the China and global Kling AI connectors', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const catalog = JSON.parse(await zip
       .file('.codebuddy-connector/connectors.json')!
@@ -180,7 +180,7 @@ describe('connector catalog pruning', () => {
 
   it('distinguishes Canva regions and marks FBSir as authorization-free', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const catalog = JSON.parse(await zip
       .file('.codebuddy-connector/connectors.json')!
@@ -196,7 +196,7 @@ describe('connector catalog pruning', () => {
 
   it('packages the WPS device login with its actual account host and Moss browser flow', async () => {
     const zip = await JSZip.loadAsync(readFileSync(
-      new URL('../resources/connectors/workbuddy-connectors-config.zip', import.meta.url),
+      new URL('./fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url),
     ));
     const cli = JSON.parse(await zip
       .file('connectors/wps-knowledgebase/cli.json')!
@@ -350,7 +350,7 @@ describe('connector MCP config normalization', () => {
 
   it('keeps the bundled QQ Mail WorkBuddy OAuth identity override', () => {
     const overrides = JSON.parse(readFileSync(
-      new URL('../resources/connectors/connector-mcp-overrides.json', import.meta.url),
+      new URL('./fixtures/connector-catalog/connector-mcp-overrides.json', import.meta.url),
       'utf8',
     ));
     const normalized = normalizeConnectorMcpConfig('qq-mail', {
@@ -366,7 +366,7 @@ describe('connector MCP config normalization', () => {
 
   it('applies connector-specific OAuth registration fixes', () => {
     const overrides = JSON.parse(readFileSync(
-      new URL('../resources/connectors/connector-mcp-overrides.json', import.meta.url),
+      new URL('./fixtures/connector-catalog/connector-mcp-overrides.json', import.meta.url),
       'utf8',
     ));
     const mx = normalizeConnectorMcpConfig('mx-ds-mcp', {
@@ -532,7 +532,7 @@ describe('connector MCP config normalization', () => {
 describe('connector CLI compatibility', () => {
   it('applies WPS authorization compatibility without changing the installed cli.json', () => {
     const overrides = JSON.parse(readFileSync(
-      new URL('../resources/connectors/connector-cli-overrides.json', import.meta.url),
+      new URL('./fixtures/connector-catalog/connector-cli-overrides.json', import.meta.url),
       'utf8',
     ));
     const installed = {

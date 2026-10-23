@@ -8,4 +8,5 @@ export const SKILL_HUB_META_FILE = '_moss_meta.json'
 
 export const MANAGED_SKILL_SEARCH_DIRS = [
   MOSS_SKILLS_DIR,
+  ...(process.env.MOSS_BUNDLED_SKILLS_DIR ? [process.env.MOSS_BUNDLED_SKILLS_DIR] : []),
 ] as const

@@ -128,7 +128,7 @@ export async function extractAppArchive(zipPath, destination, limits = {}) {
         if (error) { fail(error); return }
         try {
           await fsp.mkdir(path.dirname(outputPath), { recursive: true })
-          const file = fs.createWriteStream(outputPath, { flags: 'wx', mode: 0o600 })
+          const file = fs.createWriteStream(outputPath, { flags: 'wx', mode: mode & 0o111 ? 0o700 : 0o600 })
           stream.on('error', (streamError) => { file.destroy(); fail(streamError) })
           stream.pipe(file)
           file.on('finish', () => zip.readEntry())
@@ -172,6 +172,9 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
 export async function createAppRuntime(options) {
   const runtime = new AppRuntimeHost({
     automaticStartAllowed: options.automaticStartAllowed,
+    getManifestMetadata: options.getManifestMetadata,
+    prepareBackend: options.prepareBackend,
+    shouldRestoreInstance: options.shouldRestoreInstance,
     rootDir: options.mossHome,
     beforeAppDeactivation: options.beforeAppDeactivation,
     nativeAdapterHost: options.nativeAdapterHost,

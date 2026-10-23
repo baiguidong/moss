@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises'
 import { ExecutionStore } from './execution-store.mjs'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
-import { Ajv } from 'ajv'
+import Ajv from 'ajv'
 import { validateExecutionHostInput, MOSS_AGENT_EXECUTION_PROTOCOL, MOSS_TASKS_PROTOCOL } from '../../../packages/app-sdk/src/execution/index.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../../packages/app-sdk/src/protocol/index.mjs'
 
@@ -59,19 +59,35 @@ export class AppExecutionHost {
     this.contextQueues = new Map()
     this.creating = new Map()
     this.tasks = {}
-    this.ready = this.store.request('prune').then(() => this.store.request('load', { initial: true })).then(async tasks => {
+  }
+  get ready() {
+    if (this.closing && !this.readyPromise) return Promise.reject(new Error('Execution host is closed'))
+    if (this.readyPromise) return this.readyPromise
+    this.readyPromise = this.store.request('load', { initial: true }).then(async tasks => {
       this.tasks = tasks
       for (const task of Object.values(tasks)) {
         for (const execution of Object.values(task.executions)) this.executionsById.set(execution.id, task)
         this.cancelTask(task, 'Moss restarted', 'interrupted')
       }
       await this.flush()
+      this.ensureTimer()
     })
-    this.ready.catch(() => {})
-    this.timer = setInterval(() => { void this.ready.then(() => { if (!this.closing) this.expire() }).catch(() => {}) }, 1000)
+    this.readyPromise.catch(() => {})
+    return this.readyPromise
+  }
+  async recoverPending() {
+    if (this.readyPromise || await this.store.hasPending()) await this.ready
+  }
+  ensureTimer() {
+    if (this.closing || this.timer || !Object.values(this.tasks).some(task => task.status === 'running' || task.notificationPending)) return
+    this.timer = setInterval(() => {
+      if (!this.closing) this.expire()
+      if (!Object.values(this.tasks).some(task => task.status === 'running' || task.notificationPending)) { clearInterval(this.timer); this.timer = null }
+    }, 1000)
     this.timer.unref?.()
   }
   persist(task, execution, event) {
+    this.ensureTimer()
     const write = this.store.save(task, execution, event, this.publicTask(task)).catch(error => {
       this.persistenceError = error
       for (const controller of this.controllers.values()) controller.abort(error)
@@ -623,6 +639,7 @@ export class AppExecutionHost {
     return Object.values(this.tasks).filter(task => task.source.sessionId === sessionId && (task.status === 'running' || task.updatedAt + executionLimits.retentionMs > Date.now())).map(task => this.publicTask(task))
   }
   async listSessionHistory(sessionId) {
+    if (!this.readyPromise && !this.store.exists()) return []
     await this.ready
     await this.flush()
     return this.store.request('session', { sessionId })
@@ -667,7 +684,7 @@ export class AppExecutionHost {
     clearInterval(this.timer)
     this.closePromise = (async () => {
       try {
-        await this.ready
+        if (this.readyPromise) await this.readyPromise
         await this.pruning
         for (const task of Object.values(this.tasks)) this.cancelTask(task, 'Moss shut down', 'interrupted')
         await this.flush()

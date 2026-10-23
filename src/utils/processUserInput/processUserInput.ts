@@ -161,6 +161,18 @@ export async function processUserInput({
     return result
   }
 
+  // Background receipts must never be recorded as human prompts or run
+  // UserPromptSubmit hooks. Both live events and resumed transcripts use this provenance.
+  if (mode === 'task-notification' || mode === 'orphaned-permission') {
+    for (const message of result.messages) {
+      if (message.type === 'user') {
+        message.isMeta = true
+        message.origin = { kind: 'task-notification' }
+      }
+    }
+    return result
+  }
+
   // Execute UserPromptSubmit hooks and handle blocking
   queryCheckpoint('query_hooks_start')
   const inputMessage = getContentText(input) || ''

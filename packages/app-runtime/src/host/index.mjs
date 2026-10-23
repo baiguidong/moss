@@ -116,6 +116,9 @@ function ownerStorageSegment(owner) {
 
 export class AppRuntimeHost {
   constructor(options) {
+    this.getManifestMetadata = options.getManifestMetadata
+    this.prepareBackend = options.prepareBackend
+    this.shouldRestoreInstance = options.shouldRestoreInstance
     this.automaticStartAllowed = options.automaticStartAllowed || (() => true)
     this.nativeAdapterHost = options.nativeAdapterHost
     this.nativePublishers = new Set(options.nativePublishers || [])
@@ -219,6 +222,12 @@ export class AppRuntimeHost {
     if (this.initialized) return this
     await this.state.initialize()
     await this.appCapabilities.initialize()
+    this.initialized = true
+    if (restore) { await this.ensureOrphanRecovery(); await this.restoreAllOwners() }
+    return this
+  }
+
+  async maintainRetiredPackages() {
     const retiredDir = path.join(this.runtimeDir, 'retired-native-packages')
     for (const name of await fsp.readdir(retiredDir).catch(error => { if (error.code === 'ENOENT') return []; throw error })) {
       const appId = name.endsWith('.json') ? name.slice(0, -5) : ''
@@ -226,12 +235,53 @@ export class AppRuntimeHost {
       if (!this.installations.listAll().some(item => item.appId === appId) && !this.nativeAdapterHost?.isLoaded(appId)) await this.packages.removeApp(appId)
       await fsp.rm(path.join(retiredDir, name), { force: true })
     }
-    for (const error of await this.supervisor.recoverOrphans()) {
-      this.publishRuntimeEvent({ type: 'restore-error', error: error.message })
+  }
+
+  async ensureOrphanRecovery() {
+    return this.orphanRecovery ??= this.supervisor.recoverOrphans().then(errors => {
+      for (const error of errors) this.publishRuntimeEvent({ type: 'restore-error', error: error.message })
+    }).catch(error => { this.orphanRecovery = null; throw error })
+  }
+
+  async restoreBackground({ signal, concurrency = 3 } = {}) {
+    if (signal?.aborted) return
+    await this.ensureOrphanRecovery()
+    const owners = this.installations.listOwners()
+    for (const owner of owners.length ? owners : [this.defaultOwner]) {
+      if (signal?.aborted) return
+      await this.withOwner(owner, async () => {
+        const eligible = new Set()
+        for (const installation of this.installations.list()) {
+          if (signal?.aborted) return
+          if (!installation.enabled) continue
+          const manifest = await this.manifestMetadata(installation).catch(() => null)
+          if (!manifest?.backend) continue
+          const enabledInstances = []
+          for (const instance of this.instances.list(installation.appId)) {
+            if (!instance.enabled) continue
+            try {
+              if (!this.shouldRestoreInstance || await this.shouldRestoreInstance({ manifest, installation, instance,
+                dataDir: this.appDataPath(this.dataDir, installation.appId, 'instances', instance.id) })) enabledInstances.push(instance)
+            } catch (error) {
+              this.publishRuntimeEvent({ type: 'restore-error', appId: installation.appId, error: error.message })
+            }
+          }
+          if (!enabledInstances.length) continue
+          if (manifest.backend.lifecycle === 'persistent') eligible.add(installation.appId)
+          else if (manifest.host?.protocols?.includes('moss.runtime/v1')) {
+            for (const instance of enabledInstances) {
+              if (await hasQueuedTaskMarkers(this.appDataPath(this.dataDir, installation.appId, 'instances', instance.id))) { eligible.add(installation.appId); break }
+            }
+          }
+        }
+        await this.restore({ signal, concurrency, shouldRestore: installation => eligible.has(installation.appId) })
+      })
     }
-    this.initialized = true
-    if (restore) await this.restoreAllOwners()
-    return this
+  }
+
+  async manifestMetadata(installation) {
+    const cached = this.packageCache.get(`${installation.appId}@${installation.activeVersion}`)
+    return cached?.manifest || await this.getManifestMetadata?.(installation) || await readAppPackageManifest(path.join(this.appsDir, installation.appId, 'versions', installation.activeVersion))
   }
 
   async restoreAllOwners({ signal, concurrency = 1, shouldRestore } = {}) {
@@ -523,6 +573,10 @@ export class AppRuntimeHost {
     const result = Object.fromEntries(requestedKinds.map((kind) => [kind, []]))
     for (const installation of this.installations.list()) {
       if (options.appId && installation.appId !== options.appId) continue
+      if (!options.appId) {
+        const metadata = await this.manifestMetadata(installation).catch(() => null)
+        if (metadata && !requestedKinds.some(kind => metadata.contributes?.[kind]?.length)) continue
+      }
       let packageInfo
       try { packageInfo = await this.getActivePackage(installation.appId) }
       catch (error) {
@@ -911,6 +965,7 @@ export class AppRuntimeHost {
     const installation = this.installations.get(appId)
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+    if (!this.runtimeForInstance(appId, instanceId)) await this.reconcileApp(appId)
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
     const packageInfo = await this.getActivePackage(appId)
@@ -918,7 +973,7 @@ export class AppRuntimeHost {
     validateConfiguration(packageInfo.root, packageInfo.manifest.backend, instance.config || {}, secrets)
     const bumped = await this.runtimes.bumpGeneration(runtimeRecord.key)
     await this.supervisor.stop(runtimeRecord.key)
-    this.registerRuntime(packageInfo, instance, bumped, secrets)
+    await this.prepareRuntime(bumped)
     return this.supervisor.start(runtimeRecord.key, { clearCrashLoop: true })
   }
 
@@ -931,6 +986,7 @@ export class AppRuntimeHost {
     if (!installation?.enabled) throw new AppServiceError(APP_ERROR_CODES.disabled, 'App Backend is disabled')
     const instance = this.requireInstance(appId, instanceId)
     if (!instance.enabled) throw new AppServiceError(APP_ERROR_CODES.instanceDisabled, 'App instance is disabled')
+    if (!this.runtimeForInstance(appId, instanceId)) await this.reconcileApp(appId)
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
     const authorizeDispatch = options.authorizeDispatch
@@ -1181,6 +1237,7 @@ export class AppRuntimeHost {
   }
 
   async prepareRuntime(runtimeRecord) {
+    await this.ensureOrphanRecovery()
     const packageInfo = await this.getActivePackage(runtimeRecord.appId)
     const instance = this.instances.get(runtimeRecord.instanceId)
     if (!instance) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance does not exist')
@@ -1190,6 +1247,9 @@ export class AppRuntimeHost {
     if (this.installations.get(runtimeRecord.appId)?.activeVersion !== packageInfo.manifest.version) {
       throw new AppServiceError(APP_ERROR_CODES.staleGeneration, 'App version is stale')
     }
+    validateConfiguration(packageInfo.root, packageInfo.manifest.backend, instance.config, secrets)
+    await this.prepareBackend?.(runtimeRecord, this.supervisor)
+    this.authorizeInvocation(runtimeRecord)
     this.registerRuntime(packageInfo, instance, runtimeRecord, secrets)
   }
 

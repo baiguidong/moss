@@ -153,8 +153,8 @@ async function resolveBundledMcpServers(servers, packageRoot) {
 
 /** Host-owned registry. MCP transport and tool execution remain in the agent runtime. */
 export class AppMcpHost {
-  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, reservedName = () => false }) {
-    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, reservedName })
+  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName = () => false }) {
+    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName })
     this.providers = new Map()
     this.checks = new Map()
     this.catalogs = new Map()
@@ -303,10 +303,16 @@ export class AppMcpHost {
       const current = new Set()
       const installations = targetAppId ? [runtime.installations.get(targetAppId)].filter(Boolean) : runtime.installations.list()
       for (const installation of installations) {
+        if (!installation.enabled) continue
         if (!installation.grants?.includes('mcp:manage') || !installation.grants?.includes('mcp:connect')) continue
+        if (runtime.manifestMetadata) {
+          const metadata = await runtime.manifestMetadata(installation).catch(() => null)
+          if (!metadata?.host?.protocols?.includes(MCP_PROTOCOL)) continue
+        }
         const pkg = await runtime.getActivePackage(installation.appId).catch(() => null)
         if (!pkg?.manifest.host?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
         for (const instance of runtime.instances.list(installation.appId)) {
+          if (!instance.enabled) continue
           const context = { appId: installation.appId, instanceId: instance.id, owner, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope),
             dataDir: runtime.appDataPath(runtime.dataDir, installation.appId, 'instances', instance.id) }
           current.add(key(context))
@@ -319,6 +325,17 @@ export class AppMcpHost {
       }
       if (notify) this.onCatalogChanged?.()
     })
+  }
+  async prepareForSession(appIds = [], appServiceIds = []) {
+    await this.refresh(null, { notify: false })
+    if (!this.prepareProvider) return
+    for (const provider of this.providers.values()) {
+      if (!this.sameOwner(provider) || !this.active(provider)) continue
+      const available = this.effectiveScope(provider) === 'global' || appIds.includes(provider.appId)
+        || Object.values(provider.document.servers).some(entry => isToolSourceAvailable(this.owner(provider, entry), appIds, appServiceIds))
+      if (available) await this.withOwner(provider, () => this.prepareProvider(provider))
+    }
+    await this.refresh(null, { notify: false })
   }
   serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
   owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) } }
@@ -548,6 +565,7 @@ export class AppMcpHost {
       if (!installation || !instance || installation.activeVersion !== provider.version) continue
       for (const server of this.list(provider).servers) {
         const cached = this.cachedCatalog(provider, server.name)
+        const runtimeCheck = this.checks.get(`${key(provider)}/${server.name}`)
         const live = server.check?.state === 'connected'
         const knownTools = live ? server.check.tools : cached?.tools || [], tools = []
         for (const tool of knownTools) {
@@ -562,8 +580,8 @@ export class AppMcpHost {
           serviceId: this.serviceId(provider, provider.document.servers[server.name]),
           runtimeName: runtimeName(appId, server.name, provider.owner), revision: this.toolRevision(provider, provider.document.servers[server.name]),
           status, tools, error: server.check?.error || cached?.error,
-          schemaRevision: live ? server.check.schemaRevision : cached?.schemaRevision,
-          catalogStale: live ? server.check.catalogStale : cached?.catalogStale,
+          schemaRevision: live ? runtimeCheck?.schemaRevision : cached?.schemaRevision,
+          catalogStale: live ? runtimeCheck?.catalogStale : cached?.catalogStale,
           catalogSource: live ? 'live' : cached ? 'cache' : 'unknown',
           checkedAt: live ? server.check.checkedAt : cached?.checkedAt,
           truncated: Boolean((live ? server.check.truncated : cached?.truncated) || tools.length < knownTools.length) })
@@ -595,11 +613,17 @@ export class AppMcpHost {
       if (!check) continue
       const tools = []
       for (const tool of check.tools || []) {
-        const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1
+        const publicTool = { name: tool.name, description: tool.description || '', disabled: tool.disabled === true }
+        const bytes = Buffer.byteLength(JSON.stringify(publicTool)) + 1
         if (bytes > budget) break
-        tools.push(tool); budget -= bytes
+        tools.push(publicTool); budget -= bytes
       }
-      checks.set(name, { ...check, tools, truncated: check.truncated || tools.length < (check.tools?.length || 0) })
+      checks.set(name, { state: check.state, tools, checkedAt: check.checkedAt,
+        truncated: Boolean(check.truncated || tools.length < (check.tools?.length || 0)),
+        ...(check.durationMs === undefined ? {} : { durationMs: check.durationMs }),
+        ...(check.error === undefined ? {} : { error: check.error }),
+        ...(check.serverInfo ? { serverInfo: { name: check.serverInfo.name, version: check.serverInfo.version } } : {}),
+      })
     }
     return { servers: Object.entries(provider.document.servers).map(([name, entry]) => ({
       name, enabled: entry.enabled, config: entry.config, updatedAt: entry.updatedAt,

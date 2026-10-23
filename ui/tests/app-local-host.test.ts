@@ -21,7 +21,7 @@ test('Generic local Host picks files/directories and confines open/reveal to the
     expect(opened.length).toBe(2)
     await expect(local.open({ path: outside }, { dataDir })).rejects.toThrow('outside')
     await expect(local.open({ path: join(dataDir, 'escape.md') }, { dataDir })).rejects.toThrow('outside')
-    expect(handlers[RUNTIMES_PROTOCOL]['python.get']()).toEqual({ available: true, path: '/managed/python', version: null })
+    expect(await handlers[RUNTIMES_PROTOCOL]['python.get']()).toEqual({ available: true, path: '/managed/python', version: null })
     const definition = createLocalFilesProtocolDefinition()
     expect(() => definition.methods.pick.validateInput({ kind: 'wrong' })).toThrow()
     expect(() => definition.methods.open.validateInput({ path: 'relative' })).toThrow()

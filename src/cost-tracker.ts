@@ -38,7 +38,7 @@ import {
   saveCurrentProjectConfig,
 } from './utils/config.js'
 import {
-  getContextWindowForModel,
+  resolveContextWindowForModel,
   getModelMaxOutputTokens,
 } from './utils/context.js'
 import { isFastModeEnabled } from './utils/fastMode.js'
@@ -79,6 +79,11 @@ type StoredCostState = {
   modelUsage: { [modelName: string]: ModelUsage } | undefined
 }
 
+function getReportedContextWindow(model: string): number {
+  const context = resolveContextWindowForModel(model, getSdkBetas())
+  return context.isDefault ? 0 : context.contextWindow
+}
+
 /**
  * Gets stored cost state from project config for a specific session.
  * Returns the cost data if the session ID matches, or undefined otherwise.
@@ -102,7 +107,7 @@ export function getStoredSessionCosts(
         model,
         {
           ...usage,
-          contextWindow: getContextWindowForModel(model, getSdkBetas()),
+          contextWindow: getReportedContextWindow(model),
           maxOutputTokens: getModelMaxOutputTokens(model).default,
         },
       ]),
@@ -270,7 +275,7 @@ function addToTotalModelUsage(
   modelUsage.webSearchRequests +=
     usage.server_tool_use?.web_search_requests ?? 0
   modelUsage.costUSD += cost
-  modelUsage.contextWindow = getContextWindowForModel(model, getSdkBetas())
+  modelUsage.contextWindow = getReportedContextWindow(model)
   modelUsage.maxOutputTokens = getModelMaxOutputTokens(model).default
   return modelUsage
 }

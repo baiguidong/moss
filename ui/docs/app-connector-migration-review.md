@@ -5,7 +5,7 @@
 - 源码在相邻仓库 `moss-apps/apps/<服务名>`，App ID 使用 `moss.<服务名>`、包名使用 `@moss/<服务名>`，使用标准 App 构建、源码随包、签名发布流程。新增飞书 CLI 使用 `feishu-cli`，保留已有 `moss.feishu`。
 - 服务身份通过 Manifest 的 `connectorApp.id` 关联载荷，不从 App ID 拼接或解析。安装、账号配置、会话选择和卸载均使用实际 App ID；权限和载荷身份校验保持不变。
 - Moss 只读取 `https://baiguidong.github.io/moss-apps/v1/index.json`，不再混入内置连接器目录。
-- 桌面安装包不再携带旧连接器目录、认证配置与 overrides。仓库中的旧资源仅供一次性源码导出和测试；打包检查会拒绝意外携带该目录。
+- 桌面安装包不再携带旧连接器目录、认证配置与 overrides。旧目录已从 `ui/resources` 清除，兼容性测试 fixture 单独放在 `ui/tests/fixtures/connector-catalog`；打包检查会拒绝意外携带该目录。
 - 已删除 `migrateInstalled`、旧会话 Connector→App 转换、迁移回滚分支和 Main 启动中的旧连接器目录初始化；不是以开关禁用。
 - 既有普通 App 不需要迁移。本次误移出的 28 个普通 App 已原样恢复，安装清单逐项相同；数据与凭据没有删除。
 - 市场与已安装页提供分类/全部展示；搜索框与分区同排。已删除隐藏/恢复市场卡片的功能。

@@ -161,7 +161,6 @@ export function SessionInfoContent({ session, messages, childSessions = [], back
         <Field label="任务进度">{tasks.filter((task) => task.status === 'completed').length} / {tasks.length} 已完成</Field>
         <Field label="子会话">{childSessions.length} 个 · {childSessions.filter((child) => child.busy).length} 个运行中</Field>
         <Field label="后台任务">{backgroundTasks.length} 个 · {backgroundTasks.filter((task) => task.status === 'running').length} 个运行中</Field>
-        <Field label="连接器">{session.connectorIds?.length ?? 0} 个</Field>
         <Field label="上下文压缩">{info.compactionCount} 次（当前历史记录）</Field>
       </dl>
     </section>

@@ -35,6 +35,7 @@ import {
 import { asAgentId } from '../../types/ids.js'
 import type { Message as MessageType } from '../../types/message.js'
 import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
+import { TOOL_EXECUTION_COMPLETED } from '../../utils/abortController.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { AbortError, errorMessage } from '../../utils/errors.js'
 import type { CacheSafeParams } from '../../utils/forkedAgent.js'
@@ -597,6 +598,9 @@ export async function runAsyncAgentLifecycle({
       ...worktreeResult,
     })
   } finally {
+    // Release the finished execution's parent cancellation listeners. This
+    // runs after its final status and notification have already been recorded.
+    abortController.abort(TOOL_EXECUTION_COMPLETED)
     settleExecution()
     if (isCurrentExecution(toolUseContext.getAppState())) {
       clearInvokedSkillsForAgent(agentIdForCleanup)

@@ -1,4 +1,5 @@
 import type { AgentEvent, SessionTokenTotals } from '../types';
+import { getContextUsageFromUsage } from '../../../../shared/context-token-usage';
 
 type ToolCall = {
   id: string;
@@ -37,10 +38,10 @@ function readUsage(usage: any): SessionTokenTotals | null {
 }
 
 function mergeUsage(left: SessionTokenTotals, right: SessionTokenTotals): SessionTokenTotals {
-  const inputTokens = Math.max(left.inputTokens, right.inputTokens);
-  const outputTokens = Math.max(left.outputTokens, right.outputTokens);
-  const cacheReadTokens = Math.max(left.cacheReadTokens, right.cacheReadTokens);
-  const cacheWriteTokens = Math.max(left.cacheWriteTokens, right.cacheWriteTokens);
+  const inputTokens = right.inputTokens > 0 ? right.inputTokens : left.inputTokens;
+  const outputTokens = right.outputTokens;
+  const cacheReadTokens = right.cacheReadTokens > 0 ? right.cacheReadTokens : left.cacheReadTokens;
+  const cacheWriteTokens = right.cacheWriteTokens > 0 ? right.cacheWriteTokens : left.cacheWriteTokens;
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
     totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens, requestCount: 1 };
 }
@@ -51,7 +52,7 @@ function addUsage(sum: SessionTokenTotals, usage: SessionTokenTotals) {
 
 /** Use provider message IDs and tool-use IDs, never stream-event counts. */
 export function buildSessionInfo(history: AgentEvent[]) {
-  const requests = new Map<string, SessionTokenTotals & { model: string }>();
+  const requests = new Map<string, SessionTokenTotals & { model: string; finalized: boolean; context: SessionTokenTotals }>();
   const tools = new Map<string, ToolCall>();
   const compactions = new Set<string>();
   let latestContext: SessionTokenTotals | null = null;
@@ -82,16 +83,24 @@ export function buildSessionInfo(history: AgentEvent[]) {
       && Number.isFinite(event.duration_ms) && event.duration_ms >= 0) {
       lastTurnDurationMs = event.duration_ms;
     }
-    if (event.type === 'assistant' && event.message?.model !== '<synthetic>' && !event.isApiErrorMessage) {
+    if (event.type === 'assistant' && event.message?.model !== '<synthetic>'
+      && !event.isApiErrorMessage && !event.isUnmetered) {
       const model = typeof event.message?.model === 'string' ? event.message.model : 'unknown';
       if (isMain && model !== 'unknown') currentModel = model;
       const usage = readUsage(event.message?.usage);
       if (usage) {
         const key = `${event.parent_tool_use_id || ''}:${event.message?.id || event.uuid || index}`;
         const previous = requests.get(key);
-        const merged = previous ? mergeUsage(previous, usage) : usage;
-        requests.set(key, { ...merged, model });
-        if (isMain) latestContext = merged;
+        const finalized = event.message?.stop_reason != null;
+        const merged = finalized ? usage : previous?.finalized ? previous
+          : previous ? mergeUsage(previous, usage) : usage;
+        const context = finalized ? readUsage(getContextUsageFromUsage(event.message.usage))!
+          : previous?.finalized ? previous.context
+          : readUsage(getContextUsageFromUsage({ input_tokens: merged.inputTokens,
+            output_tokens: merged.outputTokens, cache_read_input_tokens: merged.cacheReadTokens,
+            cache_creation_input_tokens: merged.cacheWriteTokens, iterations: event.message.usage.iterations }))!;
+        requests.set(key, { ...merged, model, finalized: finalized || previous?.finalized === true, context });
+        if (isMain) latestContext = context;
       }
     }
 

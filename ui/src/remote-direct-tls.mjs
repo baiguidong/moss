@@ -201,7 +201,9 @@ export function createRemoteDirectTrustStore({
     }
     await fsp.mkdir(trustDir, { recursive: true, mode: 0o700 });
     await fsp.chmod(trustDir, 0o700);
-    await atomicWrite(bundlePath, `${chunks.map((chunk) => chunk.trim()).join('\n')}\n`);
+    const contents = `${chunks.map((chunk) => chunk.trim()).join('\n')}\n`;
+    const previous = await fsp.readFile(bundlePath, 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    if (contents !== previous) await atomicWrite(bundlePath, contents);
     process.env.NODE_EXTRA_CA_CERTS = bundlePath;
     return bundlePath;
   };

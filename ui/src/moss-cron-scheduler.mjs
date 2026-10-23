@@ -85,6 +85,8 @@ export function createMossCronScheduler({
   const activeRuns = new Map();
   let initialized;
   let timer;
+  let watcher;
+  let starting;
   let stopped = false;
   let ticking = false;
 
@@ -112,6 +114,7 @@ export function createMossCronScheduler({
   function legacyCreation(task) {
     for (const record of sessions.values()) {
       if (record.agentMode === 'remote-direct' || record.sessionKind === 'cron') continue;
+      if (task.ownerSessionId && record.id !== task.ownerSessionId) continue;
       let history = record.history || [];
       if (sessionDb) {
         try {
@@ -280,6 +283,11 @@ export function createMossCronScheduler({
     if (stopped || ticking) return;
     ticking = true;
     try {
+      const currentTasks = await readCronTaskStore(filePath);
+      if (!currentTasks.some(task => task.enabled !== false || task.runId)) {
+        clearInterval(timer); timer = null;
+        return;
+      }
       await initialize();
       await updateCronTaskStore(filePath, tasks => {
         for (let index = tasks.length - 1; index >= 0; index--) {
@@ -305,15 +313,24 @@ export function createMossCronScheduler({
   }
 
   function start() {
-    if (timer) return;
     stopped = false;
-    const check = () => void tick().catch(error => console.warn('[moss-cron] scheduler failed:', error?.message || error));
-    timer = setInterval(check, 20_000);
-    timer.unref?.();
-    check();
+    if (!watcher && fs.existsSync(mossHome)) {
+      watcher = fs.watch(mossHome, { persistent: false }, (_event, name) => {
+        if (String(name) === path.basename(filePath) && !stopped) start();
+      });
+    }
+    if (timer || starting) return starting;
+    starting = readCronTaskStore(filePath).then(tasks => {
+      if (stopped || !canRun() || !tasks.some(task => task.enabled !== false || task.runId)) return;
+      const check = () => void tick().catch(error => console.warn('[moss-cron] scheduler failed:', error?.message || error));
+      timer = setInterval(check, 20_000);
+      timer.unref?.();
+      check();
+    }).catch(error => console.warn('[moss-cron] scheduler failed:', error?.message || error)).finally(() => { starting = null; });
+    return starting;
   }
 
-  function stop() { stopped = true; clearInterval(timer); timer = null; }
+  function stop() { stopped = true; clearInterval(timer); timer = null; watcher?.close(); watcher = null; }
 
   async function removeTasksForSession(sessionId) {
     await initialize();

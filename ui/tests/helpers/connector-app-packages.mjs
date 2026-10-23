@@ -6,13 +6,13 @@ import assert from 'node:assert/strict'
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-connector-app-packages-'))
 process.env.MOSS_HOME = path.join(root, 'home')
 const { initializeBundledConnectorCatalog, listConnectorCatalog } = await import('../../src/connector-hub-ipc.mjs')
-const { generateConnectorAppPackage, serviceAppName } = await import('../../scripts/lib/connector-app-package.mjs')
+const { generateConnectorAppPackage, serviceAppName } = await import('./connector-app-package.mjs')
 try {
   await initializeBundledConnectorCatalog({
-    bundledCatalogPath: new URL('../../resources/connectors/workbuddy-connectors-config.zip', import.meta.url).pathname,
-    bundledMcpOverridesPath: new URL('../../resources/connectors/connector-mcp-overrides.json', import.meta.url).pathname,
-    bundledCliOverridesPath: new URL('../../resources/connectors/connector-cli-overrides.json', import.meta.url).pathname,
-    bundledCloudAuthPath: new URL('../../resources/connectors/cloud-auth-providers.json', import.meta.url).pathname,
+    bundledCatalogPath: new URL('../fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url).pathname,
+    bundledMcpOverridesPath: new URL('../fixtures/connector-catalog/connector-mcp-overrides.json', import.meta.url).pathname,
+    bundledCliOverridesPath: new URL('../fixtures/connector-catalog/connector-cli-overrides.json', import.meta.url).pathname,
+    bundledCloudAuthPath: new URL('../fixtures/connector-catalog/cloud-auth-providers.json', import.meta.url).pathname,
   })
   const catalog = await listConnectorCatalog()
   assert.equal(catalog.connectors.length, 115)

@@ -20,6 +20,19 @@ test('uses stable fallbacks and deduplicates a persisted message repeated in his
   expect(toTraceMessages(entries)).toEqual(toTraceMessages(entries))
   expect(toTraceMessages(entries)).toHaveLength(1)
   expect(toTraceMessages(entries)[0]!.timestamp).toBe('1970-01-01T00:00:00.000Z')
+  expect(toTraceMessages(entries)[0]!.timestampSource).toBe('inherited')
+})
+
+test('marks inherited timestamps so they cannot be mistaken for tool execution starts', () => {
+  const messages = toTraceMessages([], [
+    { type: 'user', uuid: 'user', timestamp: 1000, prompt: 'hello' },
+    { type: 'assistant', uuid: 'tool', message: { content: [{ type: 'tool_use', id: 'read', name: 'Read' }] } },
+    { type: 'user', uuid: 'result', timestamp: 6000, message: { content: [{ type: 'tool_result', tool_use_id: 'read', content: 'done' }] } },
+  ])
+  expect(messages.map(message => message.timestampSource)).toEqual(['explicit', 'inherited', 'explicit'])
+  expect(messages[1]!.timestamp).toBe(messages[0]!.timestamp)
+  const merged = toTraceMessages([messages[1]], [{ type: 'assistant', id: 'tool', content: messages[1]!.content }])
+  expect(merged[0]!.timestampSource).toBe('inherited')
 })
 
 const persistedUser = (id: string, timestamp: number, content = '你好啊') => ({

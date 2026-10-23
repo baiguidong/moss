@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   Bot,
-  Cable,
   Check,
   Loader2,
   Plus,
@@ -10,11 +9,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
-import { isAuthorizedConnector } from '@/lib/connector-selection';
 import { cn } from '@/lib/utils';
-import type { InstalledConnector } from '@/types';
 
-type ProjectResourceKind = 'connector' | 'skill' | 'expert';
+type ProjectResourceKind = 'skill' | 'expert';
 
 type ProjectResourceOption = {
   id: string;
@@ -35,6 +32,7 @@ type ProjectResourcePickerProps = {
   title: string;
   description: string;
   selectedIds: string[];
+  multiple?: boolean;
   onChange: (ids: string[]) => void;
 };
 
@@ -51,33 +49,6 @@ function uniqueOptions(items: ProjectResourceOption[]) {
     seen.add(item.id);
     return true;
   });
-}
-
-function matchesQuery(option: ProjectResourceOption, query: string) {
-  const normalizedQuery = query.trim().toLocaleLowerCase('zh-Hans-CN');
-  if (!normalizedQuery) return true;
-  return [option.id, option.name, option.description, option.meta]
-    .some((value) => String(value || '').toLocaleLowerCase('zh-Hans-CN').includes(normalizedQuery));
-}
-
-async function loadAuthorizedConnectors(query: string, page: number): Promise<ProjectResourcePage> {
-  if (page > 1) return { items: [], total: 0, hasMore: false };
-  const response = await window.agentDesktop.getInstalledConnectors();
-  if (!response?.success) {
-    throw new Error(response?.error || '读取已连接在线应用失败');
-  }
-  const items = (Array.isArray(response.data) ? response.data : [])
-    .filter(isAuthorizedConnector)
-    .map((connector) => ({
-      id: connector.id,
-      name: connector.name || connector.id,
-      description: connector.description || '',
-      icon: connector.icon,
-      meta: connector.type === 'mcp' ? 'MCP' : connector.type === 'cli' ? 'CLI' : '连接器',
-    }))
-    .filter((item) => matchesQuery(item, query))
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
-  return { items, total: items.length, hasMore: false };
 }
 
 async function loadMarketSkills(query: string, page: number): Promise<ProjectResourcePage> {
@@ -149,20 +120,11 @@ async function loadMarketExperts(query: string, page: number): Promise<ProjectRe
 }
 
 function loadResources(kind: ProjectResourceKind, query: string, page: number) {
-  if (kind === 'connector') return loadAuthorizedConnectors(query, page);
   if (kind === 'skill') return loadMarketSkills(query, page);
   return loadMarketExperts(query, page);
 }
 
 function resourceCopy(kind: ProjectResourceKind) {
-  if (kind === 'connector') {
-    return {
-      action: '选择',
-      pickerTitle: '选择已连接在线应用',
-      searchPlaceholder: '搜索已连接在线应用',
-      emptyLabel: '没有匹配的已连接在线应用',
-    };
-  }
   if (kind === 'skill') {
     return {
       action: '选择',
@@ -191,7 +153,6 @@ function ResourceIcon({ kind, option }: { kind: ProjectResourceKind; option?: Pr
       />
     );
   }
-  if (kind === 'connector') return <Cable className="h-4 w-4" />;
   if (kind === 'skill') return <Sparkles className="h-4 w-4" />;
   return <Bot className="h-4 w-4" />;
 }
@@ -201,6 +162,7 @@ export function ProjectResourcePicker({
   title,
   description,
   selectedIds,
+  multiple = true,
   onChange,
 }: ProjectResourcePickerProps) {
   const [open, setOpen] = React.useState(false);
@@ -281,7 +243,7 @@ export function ProjectResourcePicker({
   const toggle = (id: string) => {
     onChange(selected.has(id)
       ? selectedIds.filter((entry) => entry !== id)
-      : [...selectedIds, id]);
+      : multiple ? [...selectedIds, id] : [id]);
   };
 
   const close = () => {

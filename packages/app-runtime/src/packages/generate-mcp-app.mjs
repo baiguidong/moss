@@ -5,18 +5,20 @@ import { validateAppPackage, writePackageChecksums, listPackageFiles } from './i
 import { normalizeMcpAppConfig } from './mcp-app.mjs'
 import { mcpMinimumHostVersion } from '../../../app-sdk/src/mcp/local-options.mjs'
 import semver from 'semver'
+import { getAppCategoryMinimumHostVersion } from '../../../app-sdk/src/categories.mjs'
 
 /** Generate a data-only App. Core provides the executable UI and MCP lifecycle. */
 export function createMcpAppManifest(definition) {
   if (!definition || definition.schemaVersion !== 1) throw new Error('Expected MCP App definition schemaVersion 1')
-  const allowed = new Set(['schemaVersion', 'id', 'version', 'displayName', 'description', 'category', 'keywords', 'icon', 'toolScope', 'mcpServers', 'presentation', 'runtime', 'publisher'])
+  const allowed = new Set(['schemaVersion', 'id', 'version', 'displayName', 'description', 'category', 'keywords', 'icon', 'toolScope', 'mcpServers', 'presentation', 'runtime', 'publisher', 'discovery'])
   if (Object.keys(definition).some(key => !allowed.has(key))) throw new Error('Unknown MCP App definition field')
   normalizeMcpAppConfig({ mcpServers: definition.mcpServers })
   return validateAppManifest({
     schemaVersion: 2, id: definition.id, version: definition.version, displayName: definition.displayName,
     description: definition.description || '', category: definition.category || 'other', keywords: definition.keywords || [],
     publisher: definition.publisher,
-    icon: definition.icon || undefined, hostApi: '^' + Object.values(definition.mcpServers).map(mcpMinimumHostVersion).sort(semver.rcompare)[0], toolScope: definition.toolScope || 'session',
+    ...(definition.discovery ? { discovery: definition.discovery } : {}),
+    icon: definition.icon || undefined, hostApi: '^' + [getAppCategoryMinimumHostVersion(definition.category), ...Object.values(definition.mcpServers).map(mcpMinimumHostVersion)].sort(semver.rcompare)[0], toolScope: definition.toolScope || 'session',
     ui: { builtin: 'mcp', window: { width: 1120, height: 780, resizable: true } },
     permissions: ['mcp:read', 'mcp:manage', 'mcp:connect'], host: { protocols: ['moss.mcp/v1', 'moss.host/v1'] },
     navigation: { location: 'settings', viewId: 'settings' },

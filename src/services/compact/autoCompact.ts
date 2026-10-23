@@ -4,7 +4,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from '../../types/message.js'
 import { getGlobalConfig } from '../../utils/config.js'
-import { getContextWindowForModel } from '../../utils/context.js'
+import { resolveContextWindowForModel } from '../../utils/context.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
@@ -27,11 +27,13 @@ const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 
 // Returns the context window size minus the max output tokens for the model
 export function getEffectiveContextWindowSize(model: string): number {
+  const context = resolveContextWindowForModel(model, getSdkBetas())
+  if (context.isDefault) return Number.POSITIVE_INFINITY
   const reservedTokensForSummary = Math.min(
     getMaxOutputTokensForModel(model),
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   )
-  let contextWindow = getContextWindowForModel(model, getSdkBetas())
+  let contextWindow = context.contextWindow
 
   const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
   if (autoCompactWindow) {
@@ -149,6 +151,15 @@ export function calculateTokenWarningState(
   isAtBlockingLimit: boolean
 } {
   const autoCompactThreshold = getAutoCompactThreshold(model)
+  if (!Number.isFinite(autoCompactThreshold)) {
+    return {
+      percentLeft: 100,
+      isAboveWarningThreshold: false,
+      isAboveErrorThreshold: false,
+      isAboveAutoCompactThreshold: false,
+      isAtBlockingLimit: false,
+    }
+  }
   const threshold = isAutoCompactEnabled()
     ? autoCompactThreshold
     : getEffectiveContextWindowSize(model)

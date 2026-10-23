@@ -156,6 +156,7 @@ export class JsonAppStateStore {
       const next = clone(this.state)
       const result = await mutator(next)
       const previous = this.state
+      if (JSON.stringify(next) === JSON.stringify(previous)) return result
       this.state = next
       try {
         await this.persist()
@@ -533,6 +534,9 @@ export class RuntimeStore {
     const key = runtimeKey(input.instanceId, owner)
     return this.state.transaction((state) => {
       const current = state.runtimes[key]
+      if (current && current.appId === input.appId && current.instanceId === input.instanceId
+        && current.desiredState === (input.desiredState ?? current.desiredState)
+        && current.generation === (input.generation ?? current.generation)) return clone(current)
       state.runtimes[key] = {
         key,
         owner,

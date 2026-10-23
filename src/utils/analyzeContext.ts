@@ -895,8 +895,9 @@ export async function analyzeContextUsage(
 
   // Check if autocompact is enabled and calculate threshold
   const isAutoCompact = isAutoCompactEnabled()
-  const autoCompactThreshold = isAutoCompact
-    ? getEffectiveContextWindowSize(model) - AUTOCOMPACT_BUFFER_TOKENS
+  const effectiveWindow = getEffectiveContextWindowSize(model)
+  const autoCompactThreshold = isAutoCompact && Number.isFinite(effectiveWindow)
+    ? effectiveWindow - AUTOCOMPACT_BUFFER_TOKENS
     : undefined
 
   // Create categories

@@ -131,7 +131,7 @@ function submitHarness() {
     activeSessionIdRef: { current: 'session' }, activeDetailRef: { current: { workspace: '/work' } },
     inputDraftRef: { current: '' }, composerAttachmentsRef: { current: [] },
     composerChoicesRef: { current: { skills: [], agent: null } }, appSelectionDraftRef: { current: null },
-    draftConnectorIds: [], draftAppIds: [], draftAppServiceIds: [], newSessionAgentMode: 'local',
+    draftAppIds: [], draftAppServiceIds: [], newSessionAgentMode: 'local',
     newSessionPermissionMode: 'default', selectedAssistant: null, createAndOpenSession: () => {},
     composerIsEmpty, queue: [], dispatchToSession: () => pending,
     setInput: (value: string) => { state.inputDraftRef.current = value; },

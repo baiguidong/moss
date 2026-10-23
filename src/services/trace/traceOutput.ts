@@ -104,7 +104,11 @@ export async function configureTraceOutput(scope: string, config: { directory: s
 export async function writeTraceSessionSnapshot(scope: string, sessionId: string, snapshot: unknown): Promise<void> {
   const output = outputs.get(path.resolve(scope))
   if (!output || !enabled(output)) return
-  await write(output, `sessions/${id(sessionId)}.json`, sanitizeTraceValue(snapshot), true)
+  const value = sanitizeTraceValue(snapshot)
+  await write(output, `sessions/${id(sessionId)}.json`, value, true)
+  if (value && typeof value === 'object' && 'session' in value) {
+    await write(output, `session-summaries/${id(sessionId)}.json`, { session: value.session }, true)
+  }
 }
 export function traceOutputStatus(scope: string) {
   const output = outputs.get(path.resolve(scope))

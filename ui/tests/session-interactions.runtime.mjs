@@ -45,7 +45,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const timeout = setTimeout(() => { output('runtime test timed out\n'); process.exit(1); }, 45000);
 try {
   await mkdir(process.env.MOSS_CONFIG_DIR);
-  const { ClaudeSession, loadClaudeSessionSnapshot } = await import('../electron-direct.mjs');
+  const { ClaudeSession, loadClaudeSessionSnapshot, resumeClaudeSession } = await import('../electron-direct.mjs');
   async function createSession(name) {
     const cwd = path.join(root, name); await mkdir(cwd);
     const session = new ClaudeSession({ cwd, projectDir: cwd, model: 'gpt-5.5', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'fixture-key',
@@ -94,6 +94,20 @@ try {
   const snapshot = await loadClaudeSessionSnapshot(a.sessionId, { cwdHint: path.join(root, 'a'), sourceJsonlFile: path.join(root, 'a', `${a.sessionId}.jsonl`) });
   assert.equal(snapshot.messages.filter(message => message.uuid === inputId).length, 1);
   assert(!JSON.stringify(snapshot.messages).includes('The tool is still pending.'));
-  output('PASS: side answer during held tool; no side tools; independent cancellation; two sessions isolated; two receipts before one supplement; next model request sees prepared file and skill supplement; canonical transcript preserves it once.\n');
+  await a.dispose();
+  const resumed = await resumeClaudeSession(a.sessionId, {
+    cwd: path.join(root, 'a'), projectDir: path.join(root, 'a'), sourceJsonlFile: path.join(root, 'a', `${a.sessionId}.jsonl`),
+    model: 'gpt-5.5', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'fixture-key',
+    permissionMode: 'bypassPermissions', allowedTools: [toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
+    appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
+    appTools: [{ id: 'moss.self-test/self_test', appId: 'moss.self-test', name: toolName, title: 'fixture tool', description: 'Test a tool boundary', effect: 'write', inputSchemaDocument: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }],
+    onAppEvent: async () => ({ ok: true, result: { actualResult: 1 } }),
+    environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
+  });
+  assert(resumed?.session);
+  const resumedSide = await resumed.session.askSideQuestion('What was the last request?');
+  assert.equal(resumedSide.status, 'completed');
+  await resumed.session.dispose();
+  output('PASS: side answer during held tool; no side tools; independent cancellation; two sessions isolated; two receipts before one supplement; next model request sees prepared file and skill supplement; canonical transcript preserves it once; side question restores after runtime disposal.\n');
 } catch (error) { output(String(error.stack || error) + '\n'); process.exitCode = 1; }
 finally { clearTimeout(timeout); releaseTool(); releaseSide(); for (const session of sessions) await session.dispose(); server.closeAllConnections(); await new Promise(r => server.close(r)); await rm(root, { recursive: true, force: true }); }

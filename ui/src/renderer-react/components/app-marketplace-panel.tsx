@@ -1,6 +1,7 @@
 "use client";
 
 import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
+import { AppDiscoveryBadges } from '@/components/app-discovery-badges';
 import { useAppDiscoveryPreferences } from '@/lib/app-discovery';
 import { supportsHostFeature } from '@/lib/host-environment';
 
@@ -152,7 +153,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
   };
 
   const installedById = React.useMemo(() => new Map(installedApps.map((app) => [app.id || app.name, app])), [installedApps]);
-  const searchedApps = filterApps(catalog?.apps || [], query, 'all', { group: section });
+  const searchedApps = filterApps(catalog?.apps || [], query, 'all', { kind: section });
   const sectionApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(sectionApps).flatMap(group => group.apps);
   const changeSection = (value: string) => { setCategory('all'); void updatePreference({ action: 'section', surface: 'marketplace', section: value }).catch(reason => setError(reason.message)); };
@@ -164,7 +165,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
         {installedApps.length > 0 && <Button variant="ghost" size="icon" className="order-1 h-8 w-8" title="返回已安装 App" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>}
         <div className="order-2 flex shrink-0 items-baseline gap-2">
           <h1 className="text-sm font-semibold">应用市场</h1>
-          {catalog && <span className="hidden text-xs text-muted-foreground lg:inline">{catalog.apps.length} 个应用</span>}
+          {catalog && <span className="hidden text-xs text-muted-foreground lg:inline">{catalog.apps.length} 个应用与工具</span>}
         </div>
         <div className="order-5 w-full min-[480px]:order-3 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
         <Button size="sm" variant="ghost" className="order-3 h-8 shrink-0 px-2.5 text-xs sm:order-4" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Download className="h-3.5 w-3.5" />{importing ? '安装中…' : '本地安装 ZIP'}</Button>
@@ -235,6 +236,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled }: {
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">{entry.summary}</p>
                       <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
                         <span>v{entry.latestVersion}</span>
+                        <AppDiscoveryBadges app={entry} />
                         {entry.publisher?.name && <span>· {entry.publisher.name}</span>}
                       </div>
                     </div>

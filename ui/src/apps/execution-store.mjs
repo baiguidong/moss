@@ -1,14 +1,27 @@
 import { Worker } from 'node:worker_threads'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 
 /** SQLite and serialization run off the Electron main thread. No legacy JSON import. */
 export class ExecutionStore {
   constructor(directory) {
-    this.worker = new Worker(new URL('./execution-store-worker.mjs', import.meta.url), { workerData: { file: path.join(directory, 'tasks.sqlite') } })
+    this.file = path.join(directory, 'tasks.sqlite')
     this.pending = new Map()
     this.sequence = 0
     this.batch = []
     this.scheduled = false
+  }
+  exists() { return existsSync(this.file) }
+  async hasPending() {
+    if (!existsSync(this.file)) return false
+    const sqlite = await import(process.versions.bun ? 'bun:sqlite' : 'node:sqlite')
+    const db = sqlite.DatabaseSync ? new sqlite.DatabaseSync(this.file, { readOnly: true }) : new sqlite.Database(this.file, { readonly: true })
+    try { return Boolean(db.prepare("SELECT 1 FROM tasks WHERE json_extract(state,'$.status')='running' OR json_extract(state,'$.notificationPending')=1 LIMIT 1").get()) }
+    finally { db.close() }
+  }
+  initialize() {
+    if (this.worker) return
+    this.worker = new Worker(new URL('./execution-store-worker.mjs', import.meta.url), { workerData: { file: this.file } })
     this.worker.on('message', ({ id, result, error }) => {
       const entry = this.pending.get(id)
       this.pending.delete(id)
@@ -20,6 +33,8 @@ export class ExecutionStore {
   }
   request(method, input) {
     if (this.error) return Promise.reject(this.error)
+    if (this.closed && method !== 'close') return Promise.reject(new Error('Execution store is closed'))
+    this.initialize()
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
@@ -46,6 +61,7 @@ export class ExecutionStore {
   async close() {
     if (this.closed) return
     this.closed = true
+    if (!this.worker) return
     try { await this.request('close') } finally { await this.worker.terminate() }
   }
 }

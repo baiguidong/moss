@@ -54,7 +54,7 @@ describe('Account and Agent Host protocols', () => {
     })).toThrow(/user status/)
   })
 
-  it('validates fixed-shape Host protocol outputs', () => {
+  it('keeps explicit domain validators while shared response helpers accept Host extensions', () => {
     expect(validateAccountHostOutput('identity.current', {
       user: null, organization: null, scopes: [],
     })).toMatchObject({ user: null })
@@ -62,8 +62,8 @@ describe('Account and Agent Host protocols', () => {
       user: null, organization: null, scopes: [], token: 'secret',
     })).toThrow(/unknown field: token/)
     expect(validatePlatformHostOutput('file.pick', { files: [] })).toEqual({ files: [] })
-    expect(() => validatePlatformHostOutput('shell.open-external', { opened: false }))
-      .toThrow(/opened/)
+    const platformResponse = { opened: false, futureField: true }
+    expect(validatePlatformHostOutput('shell.open-external', platformResponse)).toBe(platformResponse)
     expect(validateAgentHostOutput('context.observe', { observed: true, duplicate: false }))
       .toEqual({ observed: true, duplicate: false })
     expect(validateAgentHostOutput('turn.start', {

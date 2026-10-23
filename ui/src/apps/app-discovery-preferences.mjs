@@ -3,14 +3,14 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { writeJsonFileAtomicAsync } from '../shared/json-files.mjs'
 
-const PREFERENCES_VERSION = 2
+const PREFERENCES_VERSION = 4
 
 export function normalizeAppPreferences(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
   return {
     sections: {
-      installed: ['local', 'online', 'all'].includes(value.sections?.installed) ? value.sections.installed : 'all',
-      marketplace: ['local', 'online', 'all'].includes(value.sections?.marketplace) ? value.sections.marketplace : 'all',
+      installed: ['app', 'tool'].includes(value.sections?.installed) ? value.sections.installed : 'app',
+      marketplace: ['app', 'tool'].includes(value.sections?.marketplace) ? value.sections.marketplace : 'app',
     },
   }
 }
@@ -26,12 +26,6 @@ export function createAppDiscoveryPreferences({ rootDir }) {
     try {
       const stored = JSON.parse(await fs.readFile(file(owner), 'utf8'))
       const value = normalizeAppPreferences(stored)
-      // Older profiles persisted the former default of "local" even when the
-      // user only changed the installed Apps filter. Show the full market once
-      // on upgrade; explicit choices made after this version remain persistent.
-      if (stored.schemaVersion !== PREFERENCES_VERSION && value.sections.marketplace === 'local') {
-        value.sections.marketplace = 'all'
-      }
       return { value, needsMigration: JSON.stringify(stored) !== JSON.stringify(storedAppPreferences(value)) }
     } catch (error) {
       if (error.code === 'ENOENT') return { value: normalizeAppPreferences(), needsMigration: false }
@@ -56,7 +50,7 @@ export function createAppDiscoveryPreferences({ rootDir }) {
     return enqueue(owner, async () => {
       const { value: current } = await readFile(owner)
       if (input.action !== 'section' || !Object.hasOwn(current.sections, input.surface)
-        || !['local', 'online', 'all'].includes(input.section)) throw new Error('Invalid App section')
+        || !['app', 'tool'].includes(input.section)) throw new Error('Invalid App section')
       current.sections[input.surface] = input.section
       const next = normalizeAppPreferences(current)
       await fs.mkdir(rootDir, { recursive: true, mode: 0o700 })

@@ -184,6 +184,8 @@ export type ToolUseContext = {
     shouldFinishAfterTools?: () => boolean
   }
   abortController: AbortController
+  /** Owning query lifetime, independent of a streamed tool call's cleanup. */
+  taskAbortController?: AbortController
   readFileState: FileStateCache
   getAppState(): AppState
   setAppState(f: (prev: AppState) => AppState): void

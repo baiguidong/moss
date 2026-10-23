@@ -64,10 +64,10 @@ const uiCapabilities = createCapabilitiesSubpath(ui.host)
 const uiDiscovery: AppCapabilitiesDiscoveryClient = uiCapabilities
 const uiProvider: AppCapabilityProvider = (await uiCapabilities.list({ protocol: 'moss.dataset/v1' })).providers[0]
 const uiTool: AppToolDescriptor = (await uiCapabilities.listTools({ appId: 'moss.database' })).tools[0]
-// @ts-expect-error UI callers can discover providers, but only Backend callers can invoke them.
 await uiCapabilities.invoke(uiProvider.providerRef!, 'describe', {})
-// @ts-expect-error UI callers can discover tools, but only Backend callers can invoke them.
 await uiCapabilities.invokeTool(uiTool.toolRef, {})
+await uiCapabilities.read('resource-ref', 0, 100)
+const uiFullCapabilities: AppCapabilitiesClient = uiCapabilities
 const runtimePath: string | null = (await ui.host.request('moss.runtimes/v1', 'python.get', {})).path
 const capabilities = await backend.host.request('moss.host/v1', 'capabilities.get', {})
 const allowed: boolean = capabilities.capabilities[0].allowed

@@ -63,7 +63,7 @@ import { getManagedFilePath } from '../utils/settings/managedPath.js'
 import { HooksSchema, type HooksSettings } from '../utils/settings/types.js'
 import { createSignal } from '../utils/signal.js'
 import {
-  MOSS_SKILLS_DIR,
+  MANAGED_SKILL_SEARCH_DIRS,
   SKILL_HUB_META_FILE,
 } from '../utils/skills/localSkillDirectories.js'
 import { registerMCPSkillBuilders } from './mcpSkillBuilders.js'
@@ -661,7 +661,7 @@ export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
     const userSkillsDir = join(getMossConfigHomeDir(), 'skills')
     const managedLocalSkillDirs =
-      userSkillsDir === MOSS_SKILLS_DIR ? [] : [MOSS_SKILLS_DIR]
+      MANAGED_SKILL_SEARCH_DIRS.filter(directory => directory !== userSkillsDir)
     const managedSkillsDir = join(getManagedFilePath(), '.moss', 'skills')
     const projectSkillsDirs = getProjectDirsUpToHome('skills', cwd)
 

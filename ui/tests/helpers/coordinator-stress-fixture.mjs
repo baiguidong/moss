@@ -92,11 +92,11 @@ export async function createCoordinatorStressFixture() {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   await mkdir(process.env.MOSS_CONFIG_DIR, { recursive: true });
-  const { ClaudeSession } = await import('../../electron-direct.mjs');
+  const { ClaudeSession, resumeClaudeSession } = await import('../../electron-direct.mjs');
   return {
     root, errors,
     stats: () => ({ requests, peakWorkers, activeWorkers, sessions: sessions.length }),
-    async scenario(name, count = 1, worker = async () => ({})) {
+    async scenario(name, count = 1, worker = async () => ({}), sessionOptions = {}) {
       const workspace = path.join(root, name);
       await mkdir(workspace, { recursive: true });
       const state = {
@@ -105,24 +105,35 @@ export async function createCoordinatorStressFixture() {
         } })), parentRequests: [], workerRequests: [], runs: new Map(),
       };
       scenarios.set(name, state);
-      const session = new ClaudeSession({
+      const options = {
         cwd: workspace, projectDir: workspace, coordinatorMode: true, model: 'gpt-5.5',
         url: `http://127.0.0.1:${server.address().port}`, apiKey: 'mock-key',
         permissionMode: 'bypassPermissions', mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
         environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
-      });
+        ...sessionOptions,
+      };
+      let session = new ClaudeSession(options);
       sessions.push(session);
       return {
-        session, state, workspace,
+        get session() { return session; }, state, workspace,
         tasks: () => Object.values(session.getAppState()?.tasks || {}).filter(task => task.type === 'local_agent'),
-        send(prompt = `STRESS_CASE:${name}`, signal) {
+        send(prompt = `STRESS_CASE:${name}`, signal, turnOptions) {
           const messages = [];
-          const done = (async () => { for await (const message of session.send(prompt, signal)) messages.push(message); return messages; })();
+          const done = (async () => { for await (const message of session.send(prompt, signal, turnOptions)) messages.push(message); return messages; })();
           const settled = done.then(() => null, error => error);
           return { done, settled, messages };
         },
         resume(index = 0, message = 'Continue the assigned work.') {
           state.batch.push({ name: 'SendMessage', input: { to: `worker-${index}`, message, summary: 'Continue worker' } });
+        },
+        async restart() {
+          await session.prepareForIdleDispose();
+          const id = session.sessionId;
+          await session.dispose();
+          const restored = await resumeClaudeSession(id, { ...options, sourceJsonlFile: path.join(workspace, `${id}.jsonl`) });
+          if (!restored?.session) throw new Error('Could not restore fixture session');
+          session = restored.session;
+          sessions.push(session);
         },
       };
     },

@@ -24,6 +24,7 @@ import {
 } from './hub-config.mjs';
 import { getInstalledSkills, installSkillFromZip } from './skill-store-ipc.mjs';
 import { MOSS_HOME } from './moss-home.mjs';
+import { bundledResourcePath } from './bundled-resource-paths.mjs';
 
 const MOSS_ASSISTANTS_DIR = path.join(MOSS_HOME, 'assistants');
 const LEGACY_ASSISTANT_HUB_DIR = path.join(MOSS_ASSISTANTS_DIR, 'hub');
@@ -39,6 +40,8 @@ const ASSISTANT_SEARCH_DIRS = [
   { dir: LEGACY_ASSISTANT_SYSTEM_DIR, category: 'system' },
   { dir: LEGACY_ASSISTANT_HUB_DIR, category: 'hub' },
   { dir: LEGACY_ASSISTANT_CUSTOM_DIR, category: 'custom' },
+  { dir: path.join(MOSS_HOME, 'experts'), category: 'custom' },
+  { dir: bundledResourcePath('assistants'), category: 'system', readOnly: true },
 ];
 
 async function verifyChecksum(buffer, expectedChecksum) {
@@ -60,8 +63,10 @@ function isReservedAssistantRootDir(targetPath) {
 }
 
 function getAssistantSearchRootDirs() {
-  return ASSISTANT_SEARCH_DIRS.map((entry) => entry.dir);
+  return ASSISTANT_SEARCH_DIRS.filter(entry => !entry.readOnly).map((entry) => entry.dir);
 }
+
+export function getAssistantSearchDirectories() { return ASSISTANT_SEARCH_DIRS; }
 
 function getAssistantCategory(meta, fallback = 'custom') {
   if (meta?.is_builtin === true || meta?.source_type === 'system') return 'system';
@@ -266,7 +271,7 @@ export async function getInstalledAssistants() {
           categories: meta.categories || [],
           version: meta.installed_version || '',
           source: assistantDir,
-          isBuiltin: meta.is_builtin === true,
+          isBuiltin: meta.is_builtin === true || assistantDir.startsWith(bundledResourcePath('assistants') + path.sep),
           isHubInstalled: meta.source_type === 'hub',
           tag: meta.tag || category,
           enabled: meta.enabled !== false,
@@ -603,6 +608,7 @@ export function registerAgentIpcHandlers() {
       }
 
       const metaPath = path.join(result.dir, ASSISTANT_META_FILE);
+      if (!getAssistantSearchRootDirs().some(root => isPathInsideDir(root, result.dir))) return { success: false, error: 'Bundled assistants are read-only' };
       let meta = {};
       try {
         const raw = await fsp.readFile(metaPath, 'utf-8');

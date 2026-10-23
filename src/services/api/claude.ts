@@ -2050,7 +2050,7 @@ async function* queryModel(
           }
           case 'message_delta': {
             usage = updateUsage(usage, part.usage)
-            // Write final usage and stop_reason back to the last yielded
+            // Write final usage and stop_reason back to every yielded
             // message. Messages are created at content_block_stop from
             // partialMessage, which was set at message_start before any tokens
             // were generated (output_tokens: 0, stop_reason: null).
@@ -2065,10 +2065,9 @@ async function* queryModel(
             // captures the final values.
             stopReason = part.delta.stop_reason
 
-            const lastMsg = newMessages.at(-1)
-            if (lastMsg) {
-              lastMsg.message.usage = usage
-              lastMsg.message.stop_reason = stopReason
+            for (const assistant of newMessages) {
+              assistant.message.usage = usage
+              assistant.message.stop_reason = stopReason
             }
 
             // Update cost
@@ -2775,10 +2774,14 @@ function getOpenAIBillingInputUsage(usage: unknown): Pick<
   'input_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens'
 > | undefined {
   const rawUsage = usage as {
+    input_tokens?: number
     cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
     billing_usage?: {
+      source?: string
       semantic?: string
       openai_usage?: {
+        total_tokens?: number
         prompt_tokens?: number
         prompt_tokens_details?: { cached_tokens?: number } | null
         input_tokens?: number
@@ -2790,15 +2793,32 @@ function getOpenAIBillingInputUsage(usage: unknown): Pick<
   const openai = billing?.openai_usage
   if (billing?.semantic !== 'openai' || !openai) return undefined
 
+  if (billing.source === 'oai_responses' && typeof openai.input_tokens !== 'number') {
+    return undefined
+  }
+  if (billing.source === 'oai_chat' && typeof openai.prompt_tokens !== 'number') {
+    return undefined
+  }
+
   // Gateways may include both shapes, with zero placeholders for the unused one.
   const isChatUsage =
-    typeof openai.prompt_tokens === 'number' &&
-    (openai.prompt_tokens > 0 || !openai.input_tokens)
+    billing.source === 'oai_chat' ||
+    (billing.source !== 'oai_responses' &&
+      typeof openai.prompt_tokens === 'number' &&
+      (openai.prompt_tokens > 0 || !openai.input_tokens))
   const total = isChatUsage ? openai.prompt_tokens : openai.input_tokens
   const details = isChatUsage
     ? openai.prompt_tokens_details
     : openai.input_tokens_details
   const cached = details?.cached_tokens ?? rawUsage?.cache_read_input_tokens ?? 0
+  if (total === 0 && (
+    (rawUsage?.input_tokens ?? 0) > 0 ||
+    (rawUsage?.cache_read_input_tokens ?? 0) > 0 ||
+    (rawUsage?.cache_creation_input_tokens ?? 0) > 0 ||
+    (openai.total_tokens ?? 0) > 0
+  )) {
+    return undefined
+  }
   if (
     typeof total !== 'number' ||
     !Number.isSafeInteger(total) || total < 0 ||
@@ -2834,6 +2854,9 @@ export function updateUsage(
     return previous
   }
   const billingInput = getOpenAIBillingInputUsage(partUsage)
+  const cacheCreation = (partUsage as BetaUsage).cache_creation
+  const cacheCreationTokens = (cacheCreation?.ephemeral_1h_input_tokens ?? 0) +
+    (cacheCreation?.ephemeral_5m_input_tokens ?? 0)
   return {
     // Authoritative billing input can be zero for a fully cached request.
     input_tokens: billingInput?.input_tokens ??
@@ -2844,7 +2867,7 @@ export function updateUsage(
       (partUsage.cache_creation_input_tokens !== null &&
       partUsage.cache_creation_input_tokens > 0
         ? partUsage.cache_creation_input_tokens
-        : previous.cache_creation_input_tokens),
+        : cacheCreationTokens > 0 ? cacheCreationTokens : previous.cache_creation_input_tokens),
     cache_read_input_tokens: billingInput?.cache_read_input_tokens ??
       (partUsage.cache_read_input_tokens !== null &&
       partUsage.cache_read_input_tokens > 0

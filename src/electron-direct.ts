@@ -33,6 +33,7 @@ import { QueryEngine } from './QueryEngine.js'
 import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
+import { createProjectMemoryTool, createProjectResultTool, type ProjectMemoryProvider, type ProjectResultProvider } from './tools/ProjectMemoryTool/ProjectMemoryTool.js'
 import {
   createAppContributionTools,
   type AppToolContributionDescriptor,
@@ -518,6 +519,8 @@ export interface ClaudeSessionOptions {
   /** Dynamically expose authenticated Moss Server Agent Mail operations. */
   agentMailEnabled?: boolean
   /** Tools contributed by enabled Apps. */
+  projectMemory?: ProjectMemoryProvider
+  projectResult?: ProjectResultProvider
   appTools?: AppToolContributionDescriptor[]
   appToolPolicy?: AppToolPolicy
   /** Restrict Bash to commands accepted by the core read-only validator. */
@@ -572,6 +575,8 @@ type ResolvedClaudeSessionOptions = {
   coordinatorMode: boolean
   onAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   agentMailEnabled: boolean
+  projectMemory?: ProjectMemoryProvider
+  projectResult?: ProjectResultProvider
   appTools: AppToolContributionDescriptor[]
   readOnlyBashOnly: boolean
   sessionId?: string
@@ -872,6 +877,8 @@ export class ClaudeSession {
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
       agentMailEnabled: opts.agentMailEnabled === true,
+      projectMemory: opts.projectMemory,
+      projectResult: opts.projectResult,
       appTools: Array.isArray(opts.appTools) ? [...opts.appTools] : [],
       readOnlyBashOnly: opts.readOnlyBashOnly === true,
       sessionId: opts.sessionId,
@@ -1174,6 +1181,8 @@ export class ClaudeSession {
           : applyChatToolFilter(assembled)
         const dynamicTools = [
           ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
+          ...(this.#opts.projectMemory ? [createProjectMemoryTool(this.#opts.projectMemory)] : []),
+          ...(this.#opts.projectResult ? [createProjectResultTool(this.#opts.projectResult)] : []),
           ...appTools,
         ]
         const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
@@ -1619,7 +1628,7 @@ export class ClaudeSession {
   }
 
   async askSideQuestion(question: string, signal?: AbortSignal) {
-    if (this.#disposed || !this.#engine) throw new Error('当前会话尚未建立模型上下文。')
+    if (this.#disposed) throw new Error('Session has been disposed')
     const controller = new AbortController()
     const combined = AbortSignal.any([this.#mcpLifetime.controller.signal, ...(signal ? [signal] : [])])
     const abort = () => controller.abort(combined.reason)
@@ -1627,11 +1636,14 @@ export class ClaudeSession {
     else combined.addEventListener('abort', abort, { once: true })
     const cwd = getWorktreeSessionForSessionId(this.sessionId)?.worktreePath ?? this.#opts.cwd
     try {
-      return await this.#withControl(() => runWithSessionApiOverrides(this.#sessionApiOverrides, () => runWithCwdOverride(cwd, () =>
-        runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
-          () => runWithCoordinatorMode(false, () => this.#engine!.askSideQuestion(question, controller)),
-          this.#opts.taskScope, this.#opts.environment, { ...this.#opts.runtime, unattended: false }),
-        { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs })))
+      return await this.#withControl(async () => {
+        const engine = await this.#initializeForControl()
+        return runWithSessionApiOverrides(this.#sessionApiOverrides, () => runWithCwdOverride(cwd, () =>
+          runWithSessionIdContext(asSessionId(this.sessionId), this.#opts.projectDir,
+            () => runWithCoordinatorMode(false, () => engine.askSideQuestion(question, controller)),
+            this.#opts.taskScope, this.#opts.environment, { ...this.#opts.runtime, unattended: false }),
+          { projectRoot: this.#projectRoot, additionalDirectories: this.#opts.addDirs }))
+      })
     } finally { combined.removeEventListener('abort', abort) }
   }
 

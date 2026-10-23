@@ -21,10 +21,11 @@ async function appFile(input, context) {
   if (!(await fs.stat(file)).isFile()) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Expected a file')
   return file
 }
-export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus, preview }) {
+export function createLocalAppHostHandlers({ dialog, shell, BrowserWindow, getManagedRuntimeStatus, ensurePython, preview }) {
   return {
     [RUNTIMES_PROTOCOL]: {
-      'python.get': () => {
+      'python.get': async () => {
+        await ensurePython?.()
         const python = getManagedRuntimeStatus().python
         return { available: python.installed === true, path: python.installed ? python.path : null, version: python.version || null }
       },

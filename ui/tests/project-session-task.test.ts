@@ -9,23 +9,28 @@ import {
 
 describe('project session task status', () => {
   test('keeps terminal root-session states authoritative', () => {
-    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'completed', pendingDecisionCount: 1 })).toBe('completed');
-    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'failed', busy: true })).toBe('failed');
-    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'stopped', activeWorkerCount: 1 })).toBe('stopped');
+    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'completed', pendingQuestionCount: 1 })).toBe('completed');
+    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'failed', pendingQuestionCount: 1 })).toBe('failed');
+    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'stopped', pendingQuestionCount: 1 })).toBe('stopped');
   });
 
-  test('shows pending decisions before running work', () => {
+  test('shows pending session questions before running work', () => {
     expect(deriveProjectSessionTaskStatus({
       persistedStatus: 'working',
-      pendingDecisionCount: 2,
-      busy: true,
-      activeWorkerCount: 1,
+      pendingQuestionCount: 2,
     })).toBe('waiting_for_user');
   });
 
   test('derives working state from the root session', () => {
     expect(deriveProjectSessionTaskStatus()).toBe('working');
-    expect(deriveProjectSessionTaskStatus({ activeWorkerCount: 1 })).toBe('working');
+    expect(deriveProjectSessionTaskStatus({ persistedStatus: 'working' })).toBe('working');
+  });
+
+  test('clears a historical waiting state when the session has no pending questions', () => {
+    expect(deriveProjectSessionTaskStatus({
+      persistedStatus: 'waiting_for_user',
+      pendingQuestionCount: 0,
+    })).toBe('working');
   });
 
   test('recovers only tasks that predate the current startup', () => {

@@ -22,7 +22,18 @@ const noHardLinks = e => ['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'EXDEV'].i
 
 // The App sees handles and task IDs only. Bytes never enter the Host JSON channel.
 export class CloudStorageHost {
-  constructor({ directory, getSettings, resolveConnection, fetchImpl = fetch, pickFiles, pickDestination, authorizeApp, publish = () => {}, linkFile = link }) {
+  constructor(options) {
+    if (options.deferInitialize) {
+      let host
+      return new Proxy({}, { get(_target, name) {
+        if (name === 'then') return undefined
+        if (name === 'close') return async () => { if (host) await host.close() }
+        host ??= new CloudStorageHost({ ...options, deferInitialize: false })
+        const value = host[name]
+        return typeof value === 'function' ? value.bind(host) : value
+      } })
+    }
+    const { directory, getSettings, resolveConnection, fetchImpl = fetch, pickFiles, pickDestination, authorizeApp, publish = () => {}, linkFile = link } = options
     Object.assign(this, { directory, getSettings, resolveConnection, fetchImpl, pickFiles, pickDestination, authorizeApp, publish, linkFile })
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     this.statePath = path.join(directory, 'transfers.json')
@@ -46,7 +57,9 @@ export class CloudStorageHost {
     return createHash('sha256').update(JSON.stringify(connection)).digest('hex')
   }
   persist() {
-    writeFileSync(`${this.statePath}.new`, JSON.stringify({ version: 1, tasks: [...this.tasks.values()] }), { mode: 0o600 })
+    const contents = JSON.stringify({ version: 1, tasks: [...this.tasks.values()] })
+    if (existsSync(this.statePath) && readFileSync(this.statePath, 'utf8') === contents) return
+    writeFileSync(`${this.statePath}.new`, contents, { mode: 0o600 })
     renameSync(`${this.statePath}.new`, this.statePath)
   }
   publicTask(t) {

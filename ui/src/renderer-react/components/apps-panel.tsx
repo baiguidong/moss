@@ -1,8 +1,9 @@
 "use client";
 
 import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
+import { AppDiscoveryBadges } from '@/components/app-discovery-badges';
 import { AppConnectorSettings, canAuthenticateConnector } from '@/components/app-connector-settings';
-import { useAppDiscoveryPreferences } from '@/lib/app-discovery';
+import { getAppKind, useAppDiscoveryPreferences } from '@/lib/app-discovery';
 export { AppAgentTools } from '@/components/app-capabilities';
 import { AppAgentTools, AppCapabilityButton } from '@/components/app-capabilities';
 
@@ -309,7 +310,8 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
 }
 
 
-export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp }: {
+export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp, onAuthorize }: {
+  onAuthorize?: (app: StoredApp) => ReturnType<Window['agentDesktop']['connectorApp']>;
   onUseApp?: (app: StoredApp) => void;
   apps: StoredApp[];
   loading?: boolean;
@@ -330,14 +332,15 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
   const [category, setCategory] = React.useState('all');
   const [query, setQuery] = React.useState('');
   const { preferences, update: updatePreference } = useAppDiscoveryPreferences();
-  const [sectionOverride, setSectionOverride] = React.useState<string | null>(initialExpandedApp ? 'all' : null);
-  React.useEffect(() => { if (initialExpandedApp) setSectionOverride('all'); }, [initialExpandedApp]);
+  const expandedSection = initialExpandedApp ? getAppKind(apps.find(app => (app.id || app.name) === initialExpandedApp)) : null;
+  const [sectionOverride, setSectionOverride] = React.useState<string | null>(expandedSection);
+  React.useEffect(() => { if (expandedSection) setSectionOverride(expandedSection); }, [initialExpandedApp, expandedSection]);
   const section = sectionOverride || preferences.sections.installed;
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
   const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
   const [authNotice, setAuthNotice] = React.useState<{ appId: string; message: string } | null>(null);
-  const searchedApps = filterApps(apps, query, 'all', { group: section });
+  const searchedApps = filterApps(apps, query, 'all', { kind: section });
   const matchedApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(matchedApps).flatMap(group => group.apps);
   const changeSection = (value: string) => { setSectionOverride(value); setCategory('all'); void updatePreference({ action: 'section', surface: 'installed', section: value }).catch(reason => setError(reason.message)); };
@@ -416,6 +419,7 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
+                    <AppDiscoveryBadges app={app} />
                     <AppCapabilityButton app={app} compact />
                     {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : trust?.status === "unsigned" ? "未签名" : "使用时校验"}</span>}
                     {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
@@ -426,10 +430,10 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                   {authNotice?.appId === appId && <p role="status" className="mt-2 text-xs text-muted-foreground">{authNotice.message}</p>}
                   <div className="mt-auto flex flex-wrap gap-1.5 pt-2.5">
                     {app.connectorApp?.connection?.connected && app.grants?.includes('connector:use') && enabled && onUseApp && <Button size="sm" className="h-8" onClick={() => onUseApp(app)}>在会话中使用</Button>}
-                    {!packageUnavailable && directAuth && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId || !enabled || !app.grants?.includes('connector:use')} onClick={() => {
+                    {!packageUnavailable && directAuth && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId || !enabled || !app.grants?.includes('connector:use') || !onAuthorize} onClick={() => {
                       setAuthNotice(null);
                       void run(appId, async () => {
-                        const result = await window.agentDesktop.connectorApp({ appId, action: 'auth' });
+                        const result = await onAuthorize!(app);
                         if (result.auth?.status === 'authorization_url_opened') setAuthNotice({ appId, message: '授权页面已打开，请在浏览器中完成登录。' });
                       });
                     }}><KeyRound className="h-4 w-4" />{app.connectorApp?.connection?.connected ? '重新授权' : '连接 / 授权'}</Button>}
@@ -456,7 +460,7 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
                   </div>
                   {isExpanded && (
                     <div className="mt-4 border-t border-border pt-3">
-                      {app.connectorApp && <AppConnectorSettings app={app} onChanged={onRefresh} />}
+                      {app.connectorApp && <AppConnectorSettings app={app} onChanged={onRefresh} onAuthorize={onAuthorize} />}
                       {app.hasBackend && (app.instances?.[0]
                         ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name, { settings: true })} />
                         : <div className="py-3 text-xs text-muted-foreground">后台服务尚未就绪</div>)}

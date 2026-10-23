@@ -15,10 +15,12 @@ import {
   SKILL_HUB_CURSOR_URL,
 } from './hub-config.mjs';
 import { MOSS_HOME } from './moss-home.mjs';
+import { bundledResourcePath } from './bundled-resource-paths.mjs';
 
 const MOSS_SKILLS_DIR = path.join(MOSS_HOME, 'skills');
 export const SKILL_SEARCH_DIRS = [
   MOSS_SKILLS_DIR,
+  bundledResourcePath('skills'),
 ];
 
 export const SKILL_HUB_META_FILE = '_moss_meta.json';
@@ -160,16 +162,14 @@ async function readSkillVersion(skillDir) {
   }
 }
 
-export async function getInstalledSkills() {
-  const skills = [];
-
-  // Check Moss skills directory (~/.moss/skills)
+async function readInstalledSkills(root, skills) {
   try {
-    await fsp.access(MOSS_SKILLS_DIR);
-    const entries = await fsp.readdir(MOSS_SKILLS_DIR, { withFileTypes: true });
+    await fsp.access(root);
+    const entries = await fsp.readdir(root, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const skillDir = path.join(MOSS_SKILLS_DIR, entry.name);
+        if (skills.some(skill => path.basename(skill.source) === entry.name)) continue;
+        const skillDir = path.join(root, entry.name);
         if (isRetiredAppAuthoringResource(skillDir)) continue;
         const meta = await readSkillMeta(skillDir);
         const version = await readSkillVersion(skillDir);
@@ -186,7 +186,7 @@ export async function getInstalledSkills() {
             emoji: meta.emoji || '',
             category: meta.category || '',
             categories: meta.categories || [],
-            isBuiltin: false,
+            isBuiltin: root !== MOSS_SKILLS_DIR,
             isHubInstalled: meta.source_type === 'hub' || meta.source_type === 'skillhub',
             isUploaded: meta.source_type === 'upload',
             enabled: meta.enabled !== false,
@@ -209,7 +209,7 @@ export async function getInstalledSkills() {
               emoji: frontmatter.emoji || '',
               category: frontmatter.category || '',
               categories: frontmatter.category ? [frontmatter.category] : [],
-              isBuiltin: false,
+              isBuiltin: root !== MOSS_SKILLS_DIR,
               isHubInstalled: false,
               isUploaded: false,
               enabled: true,
@@ -226,7 +226,7 @@ export async function getInstalledSkills() {
               emoji: '',
               category: '',
               categories: [],
-              isBuiltin: false,
+              isBuiltin: root !== MOSS_SKILLS_DIR,
               isHubInstalled: false,
               isUploaded: false,
               enabled: true,
@@ -239,7 +239,11 @@ export async function getInstalledSkills() {
   } catch {
     // Moss skills dir doesn't exist
   }
+}
 
+export async function getInstalledSkills() {
+  const skills = [];
+  for (const root of SKILL_SEARCH_DIRS) await readInstalledSkills(root, skills);
   return skills;
 }
 
@@ -250,7 +254,7 @@ async function uninstallSkill(skillName, sourcePath) {
     }
     const resolved = path.resolve(sourcePath);
     // 只允许删除严格位于已知技能目录内部的路径(排除目录本身), 防止 rm 任意目录。
-    const insideAllowed = SKILL_SEARCH_DIRS.some(
+    const insideAllowed = [MOSS_SKILLS_DIR].some(
       (root) => resolved !== path.resolve(root) && isPathInsideDir(root, resolved),
     );
     if (!insideAllowed) {

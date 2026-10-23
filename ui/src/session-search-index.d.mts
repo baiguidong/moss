@@ -1,14 +1,9 @@
-export type SearchableSessionMessage = {
-  messageId: string;
-  role: 'user' | 'assistant';
-  body: string;
-  timestamp: number;
-};
-
-export function getSearchMessageId(event: Record<string, any>): string;
-export function extractSearchableSessionMessages(history: Array<Record<string, any>>): SearchableSessionMessage[];
+export { getSearchMessageId, extractSearchableSessionMessages } from './shared/session-search-messages.mjs';
+export type { SearchableSessionMessage } from './shared/session-search-messages.mjs';
 export function createSessionSearchIndex(db: any): {
   syncSession: (sessionRecord: Record<string, any>) => void;
+  syncTitle: (sessionRecord: Record<string, any>) => void;
+  hasSession: (sessionId: string) => boolean;
   deleteSession: (sessionId: string) => void;
   search: (
     query: string,

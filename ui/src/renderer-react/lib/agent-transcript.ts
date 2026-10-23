@@ -3,7 +3,8 @@ import { formatApiRetry } from './api-retry';
 import { interactionTurnOwners } from '../../shared/session-interactions.mjs';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
 import { isIgnoredTextOutput } from '../../shared/session-message-count.mjs';
-import { getSearchMessageId } from '../../session-search-index.mjs';
+import { getSearchMessageId } from '../../shared/session-search-messages.mjs';
+import { isTaskNotificationText, splitLegacyProjectMemory } from '../../../../shared/message-context.mjs';
 
 const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
 
@@ -1058,7 +1059,7 @@ function isHiddenUserMetaEvent(event: AgentEvent): boolean {
     event.isVisibleInTranscriptOnly === true
   ) return true;
   const text = extractRawUserText(event).trim();
-  return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>');
+  return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>') || isTaskNotificationText(text);
 }
 
 function isSidechainEvent(event: AgentEvent): boolean {
@@ -1730,7 +1731,8 @@ function finalizeAssistant(message: MutableChatMessage | null) {
 }
 
 function extractUserText(event: AgentEvent): string {
-  return extractRawUserText(event);
+  const text = extractRawUserText(event);
+  return splitLegacyProjectMemory(text)?.prompt ?? text;
 }
 
 export function buildChatMessages(history: AgentEvent[]): ChatMessage[] {

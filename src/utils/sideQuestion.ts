@@ -132,10 +132,11 @@ ${question}`
     for await (const message of queryModelWithStreaming({
       messages: prependUserContext([...sideQuestionApiMessages(cacheSafeParams.forkContextMessages), createUserMessage({ content: wrappedQuestion })], cacheSafeParams.userContext),
       systemPrompt: asSystemPrompt(appendSystemContext(cacheSafeParams.systemPrompt, cacheSafeParams.systemContext)),
-      tools: [], thinkingConfig: { type: 'disabled' }, signal,
+      tools: [], thinkingConfig: context.options.thinkingConfig, signal,
       options: { model: context.options.mainLoopModel, isNonInteractiveSession: true,
         querySource: 'side_question', agents: [], mcpTools: [], hasAppendSystemPrompt: false,
         maxOutputTokensOverride: 4096, skipCacheWrite: true,
+        effortValue: context.getAppState().effortValue,
         getToolPermissionContext: async () => context.getAppState().toolPermissionContext },
     })) {
       if (message.type === 'stream_event') {

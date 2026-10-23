@@ -6,6 +6,31 @@ import os from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { copySource, inspectSource, extractSourceArchive, sourceHash } from '../src/apps/app-authoring-source.mjs'
 import { writeApp } from './helpers/app-authoring-fixture.mjs'
+import { createToolAppManifest } from '../../packages/app-runtime/src/packages/generate-tool-app.mjs'
+
+test('declarative tools and legacy connectors are editable without UI source modules', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-tool-source-'))
+  try {
+    const appRoot = 'tool-apps/service', appPath = path.join(root, appRoot)
+    await fs.mkdir(appPath, { recursive: true })
+    await fs.writeFile(path.join(appPath, 'package.json'), JSON.stringify({ scripts: { build: 'node ../../scripts/build.mjs' } }))
+    const common = { schemaVersion: 1, id: 'test.service', version: '1.0.0', displayName: 'Service' }
+    const remote = { service: { type: 'http', url: 'https://example.invalid/mcp' } }
+    for (const definition of [{ ...common, connector: { id: 'service' }, mcp: { mcpServers: remote } }, { ...common, mcpServers: remote }]) {
+      await fs.writeFile(path.join(appPath, 'app.json'), JSON.stringify(definition))
+      await fs.writeFile(path.join(appPath, 'app.moss.json'), JSON.stringify(createToolAppManifest(definition)))
+      assert.equal((await inspectSource(root, { appRoot })).editable, true)
+    }
+    await fs.writeFile(path.join(appPath, 'app.moss.json'), JSON.stringify({ id: 'test.ui', ui: { entry: 'dist/index.html' } }))
+    assert.equal((await inspectSource(root, { appRoot })).editable, false)
+    const connector = { ...common, connector: { id: 'service' }, mcp: { mcpServers: remote } }
+    await fs.writeFile(path.join(appPath, 'app.moss.json'), JSON.stringify(createToolAppManifest(connector)))
+    await fs.unlink(path.join(appPath, 'app.json'))
+    await fs.mkdir(path.join(appPath, 'connector'))
+    await fs.writeFile(path.join(appPath, 'connector/connector.json'), JSON.stringify(connector.connector))
+    assert.equal((await inspectSource(root, { appRoot })).editable, true)
+  } finally { await fs.rm(root, { recursive: true, force: true }) }
+})
 
 test('SO-01/02/03/04: snapshots preserve edits, exclude credentials, reject links and artifact-only input', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-source-'))

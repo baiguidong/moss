@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import fs from 'node:fs';
 
 const ARCHIVE_SCHEMA_VERSION = 1;
 const MAX_SNAPSHOTS_PER_RUN = 240;
@@ -351,6 +352,10 @@ export function createAgentTeamsService({
   let timer = null;
   let checkPromise = null;
   let archiveRecoveryLoaded = false;
+  const watched = new Map();
+  let stopped = true;
+  const activeIndexPath = path.join(mossHome, 'agent-team-active.json');
+  let activeIndexWrites = Promise.resolve();
 
   function resolveSessionRecord(leadSessionId, { includeDeleted = false } = {}) {
     if (!leadSessionId) return null;
@@ -399,6 +404,14 @@ export function createAgentTeamsService({
       teams: runs.map(summarizeRun).sort((left, right) => right.createdAt - left.createdAt),
     };
     await atomicWriteJson(path.join(root, 'index.json'), index);
+    const update = activeIndexWrites.catch(() => {}).then(async () => {
+      const active = await readJson(activeIndexPath) || {};
+      if (run.status === 'live' || (run.status === 'interrupted' && run.recoveryAttempt?.status === 'active')) active[run.incarnationId] = { sessionId, teamName: run.teamName };
+      else delete active[run.incarnationId];
+      await atomicWriteJson(activeIndexPath, active);
+    });
+    activeIndexWrites = update;
+    await update;
     emit('agent-teams:changed', await getSessionState(sessionId));
   }
 
@@ -577,6 +590,7 @@ export function createAgentTeamsService({
     for (const record of getSessionRecords()) {
       if (!record?.id || record.deleted || record.isSubAgent || record.busy) continue;
       if (sessionId && record.id !== sessionId) continue;
+      if (!sessionId && record.historyLoaded === false && ![...liveRuns.values()].some(run => run.sessionId === record.id)) continue;
       const state = await getSessionState(record.id);
       const run = state.teams[0];
       const plan = getInterruptedRecoveryPlan(run);
@@ -710,15 +724,8 @@ export function createAgentTeamsService({
     }
 
     if (!archiveRecoveryLoaded) {
-      for (const record of getSessionRecords()) {
-        if (!record?.id || record.deleted || record.isSubAgent) continue;
-        const archived = await getSessionState(record.id);
-        for (const run of archived.teams) {
-          if (run.status === 'live' && !liveRuns.has(run.incarnationId)) {
-            liveRuns.set(run.incarnationId, { sessionId: record.id, teamName: run.teamName });
-          }
-        }
-      }
+      const active = await readJson(activeIndexPath) || {};
+      for (const [incarnationId, run] of Object.entries(active)) if (!liveRuns.has(incarnationId) && resolveSessionRecord(run.sessionId)) liveRuns.set(incarnationId, run);
       archiveRecoveryLoaded = true;
     }
 
@@ -728,6 +735,11 @@ export function createAgentTeamsService({
       missingObservations.set(incarnationId, observations);
       if (observations < 2) continue;
       const run = await readRun(live.sessionId, incarnationId);
+      if (run?.recoveryAttempt?.status === 'active') {
+        await reconcilePersistedContinuations(live.sessionId);
+        const current = await readRun(live.sessionId, incarnationId);
+        if (current?.recoveryAttempt?.status === 'active') continue;
+      }
       const last = run?.snapshots?.at(-1);
       if (last && run.status === 'live') {
         const status = last.tasks.length > 0 && last.tasks.every((task) => task.status === 'completed')
@@ -767,18 +779,40 @@ export function createAgentTeamsService({
     return { sessionId: normalizedSessionId, teams };
   }
 
+  async function wake() {
+    if (stopped) return;
+    for (const root of [teamsRoot, tasksRoot]) {
+      if (!watched.has(root) && fs.existsSync(root)) {
+        try { watched.set(root, fs.watch(root, { recursive: true, persistent: false }, () => { void wake().catch(() => {}); })); } catch {}
+      }
+    }
+    if (timer) return;
+    const active = await readJson(activeIndexPath) || {};
+    if (!Object.keys(active).length && !(await listDirectories(teamsRoot)).length && !(await listJsonFiles(terminalRoot)).length) return;
+    await checkNow();
+    if (stopped || timer) return;
+    timer = setInterval(() => { void checkNow().then(async () => {
+      if (!liveRuns.size && !(await listDirectories(teamsRoot)).length && !(await listJsonFiles(terminalRoot)).length) { clearInterval(timer); timer = null; }
+    }).catch(() => {}); }, pollIntervalMs);
+    timer.unref?.();
+  }
+
   return {
     start() {
-      if (timer) return;
-      void checkNow().then(() => reconcilePersistedContinuations()).catch((error) => {
+      stopped = false;
+      if (!watched.has(mossHome) && fs.existsSync(mossHome)) watched.set(mossHome, fs.watch(mossHome, { persistent: false }, (_event, name) => {
+        if (['teams', 'tasks', 'agent-team-active.json'].includes(String(name))) void wake().catch(() => {});
+      }));
+      void wake().catch((error) => {
         log('warn', 'agent-teams', 'Unable to reconcile persisted Agent Team continuation', {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-      timer = setInterval(() => void checkNow(), pollIntervalMs);
-      timer.unref?.();
     },
     stop() {
+      stopped = true;
+      for (const watcher of watched.values()) watcher.close();
+      watched.clear();
       if (timer) clearInterval(timer);
       timer = null;
     },

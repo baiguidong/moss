@@ -94,7 +94,9 @@ export async function inspectSource(root, { appRoot = '.' } = {}) {
   }
   const files = await sourceFiles(root)
   const appFiles = appRoot === '.' ? files : files.filter(file => file.name.startsWith(appRoot + '/')).map(file => ({ ...file, name: file.name.slice(appRoot.length + 1) }))
-  if (!appFiles.some(file => /^(?:src\/|public\/|index\.)/.test(file.name)
+  const toolSource = (manifest?.connectorApp || manifest?.mcpApp) && appFiles.some(file => file.name === 'app.json')
+  const connectorSource = manifest?.connectorApp && appFiles.some(file => file.name === 'connector/connector.json')
+  if (!toolSource && !connectorSource && !appFiles.some(file => /^(?:src\/|public\/|index\.)/.test(file.name)
     || (!file.name.includes('/') && /\.(?:[cm]?js|tsx?|jsx|html|py)$/.test(file.name) && !/^(?:build|vite\.config|webpack\.config|rollup\.config|eslint\.config|postcss\.config)\./.test(file.name)))) missing.push('editable source files (src/, public/, or root source modules)')
   return { editable: !missing.length, missing, sourceHash: digest(files), appId: manifest?.id || null, version: manifest?.version || null, hostApi: manifest?.hostApi || null }
 }

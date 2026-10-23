@@ -164,7 +164,7 @@ ui/scripts/
 
 | 位置 | 当前用途 | 迁移方式 |
 | --- | --- | --- |
-| App / connector-hub-view | `connector-hub:changed` 的 on/off | `resources.connectors.onChanged()` 返回 unsubscribe |
+| App | App 状态变化的 on/off | `resources.apps.onChanged()` 返回 unsubscribe |
 | chat-area | `skill-store:getInstalledSkills` | 具名技能列表方法 |
 | cron-view | 动态拼接本地/云端定时任务 channel | source 枚举 + list/toggle/remove 三个具名方法 |
 | expert-hub-view | 专家目录、分类、详情、安装、卸载 | 专家市场具名方法 |
@@ -387,7 +387,7 @@ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 - 会话与核心入口：`App.tsx`（76）、`components/chat-area.tsx`（20）、`components/global-session-search.tsx`（1）、`components/session-info.tsx`（1）、`components/chat/turn-change-card.tsx`（2）、`components/chat/message-list.tsx`（1）、`components/chat/use-assistant-output-files.ts`（1）。
 - 文件和预览：`PreviewWindow.tsx`（1）、`components/file-preview.tsx`（2）、`components/local-image.tsx`（2）、`components/preview/viewers/ImageViewer.tsx`（1）、`components/workspace-selector.tsx`（4）、`components/workspace-versions.tsx`（2）、`lib/paste-service.ts`（2）、`ipc/workspace.ipc.ts`（1）、`ipc/preview.ipc.ts`（6）、`ipc/document.ipc.ts`（2）、`ipc/libreoffice.ipc.ts`（7）、`ipc/previewHistory.ipc.ts`（3）、`ipc/shell.ipc.ts`（3）。
 - 项目：`components/projects/project-workspace.tsx`（16）、`components/projects/project-resource-picker.tsx`（3）、`components/projects/project-tasks-tab.tsx`（2）、`lib/project-resource-sync.ts`（1）。
-- 资源与授权：`components/browser-panel.tsx`（27）、`components/connector-hub-view.tsx`（8）、`components/expert-hub-view.tsx`（8）、`components/skill-hub-view.tsx`（7）、`components/agent-manager.tsx`（7）。
+- 资源与授权：`components/browser-panel.tsx`（27）、`components/expert-hub-view.tsx`（8）、`components/skill-hub-view.tsx`（7）、`components/agent-manager.tsx`（7）。
 - App：`components/apps-panel.tsx`（10）、`components/app-marketplace-panel.tsx`（4）、`components/embedded-app-view.tsx`（3）、`lib/app-install-progress.ts`（2）。
 - 其他页面：`components/settings-view.tsx`（9）、`components/agent-mail-view.tsx`（4）、`components/workflow-library-view.tsx`（4）、`components/overview-view.tsx`（3）、`components/resource-monitor-view.tsx`（3）、`components/update-modal.tsx`（3）、`components/memory-overview.tsx`（2）、`components/cron-view.tsx`（1）、`components/session-terminal-actions.tsx`（1）。
 - 整对象引用：`components/chat/assistant-output-file-card.tsx`、`components/markdown/markdown-renderer.tsx`。

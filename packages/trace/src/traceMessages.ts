@@ -4,6 +4,7 @@ export type TraceMessageEntry = {
   type: 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result'
   content: unknown
   timestamp: string
+  timestampSource?: 'explicit' | 'inherited'
   toolUseResult?: unknown
   model?: string
   usage?: Record<string, number>
@@ -35,7 +36,7 @@ export function toTraceMessages(entries: unknown[], historyEntries?: unknown[]):
   }))
   const userPositions = history.flatMap((message, index) => message.type === 'user' ? [index] : [])
   const mirrored = new Set<string>()
-  const timestampAnchors = new Map(transcript.map(message => [message.id, message.timestamp]))
+  const timestampAnchors = new Map(transcript.map(message => [message.id, message]))
 
   for (const [turnIndex, position] of userPositions.entries()) {
     const user = history[position]!
@@ -70,7 +71,7 @@ export function toTraceMessages(entries: unknown[], historyEntries?: unknown[]):
     if (match) {
       consumed.add(match.id)
       mirrored.add(user.id)
-      timestampAnchors.set(user.id, match.timestamp)
+      timestampAnchors.set(user.id, match)
     }
   }
 
@@ -98,7 +99,7 @@ function userText(content: unknown): string {
 function normalizeTraceMessages(
   entries: unknown[],
   idPrefix = 'trace-message',
-  timestampAnchors?: ReadonlyMap<string, string>,
+  timestampAnchors?: ReadonlyMap<string, Pick<TraceMessageEntry, 'timestamp' | 'timestampSource'>>,
 ): TraceMessageEntry[] {
   const messages: TraceMessageEntry[] = []
   const seen = new Set<string>()
@@ -121,10 +122,13 @@ function normalizeTraceMessages(
       content = [{ type: 'tool_result', tool_use_id: entry.tool_use_id ?? entry.toolUseId, content, is_error: entry.is_error }]
     }
     const id = messageId(entry, index, idPrefix)
-    const rawTimestamp = timestampAnchors?.get(id) ?? entry.timestamp ?? message?.timestamp
+    const anchor = timestampAnchors?.get(id)
+    const rawTimestamp = anchor?.timestamp ?? entry.timestamp ?? message?.timestamp
     const date = typeof rawTimestamp === 'string' || typeof rawTimestamp === 'number'
       ? new Date(rawTimestamp) : null
     const timestamp = date && Number.isFinite(date.getTime()) ? date.toISOString() : previousTimestamp
+    const timestampSource = anchor?.timestampSource ?? (entry.timestampSource === 'inherited' ? 'inherited' : undefined) ??
+      (date && Number.isFinite(date.getTime()) ? 'explicit' : 'inherited')
     previousTimestamp = timestamp
     if (seen.has(id)) continue
     seen.add(id)
@@ -132,7 +136,7 @@ function normalizeTraceMessages(
     const usage = record(message?.usage ?? entry.usage)
     const usageKey = message?.id ?? entry.usageKey
     messages.push({
-      id, type, content, timestamp,
+      id, type, content, timestamp, timestampSource,
       ...(entry.toolUseResult !== undefined ? { toolUseResult: entry.toolUseResult } : {}),
       ...(typeof model === 'string' ? { model } : {}),
       ...(usage ? { usage: Object.fromEntries(Object.entries(usage).filter((pair): pair is [string, number] => typeof pair[1] === 'number')) } : {}),

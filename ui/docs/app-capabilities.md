@@ -39,7 +39,7 @@ Host API 3.18 支持 App 明确导出的只读能力；Host API 3.19 还支持�
 
 ## 调用
 
-SDK 的 `createAppCapabilitiesClient(context.host)` 提供 `list`、`invoke` 和 `read`。`list` 可以从 App UI 或 Backend 调用；`invoke` 和 `read` 只能从 Backend 调用。
+SDK 的 `createAppCapabilitiesClient(context.host)` 提供 `list`、`invoke` 和 `read`。Host API 3.21 起，三者均可从 App UI 或 Backend 调用。纯 UI 组合 App 无需增加自己的 Backend；声明 `hostApi: "^3.21.0"`，使用 `createAppCapabilitiesClient(createAppClient(window.mossApp).host)`，由 Host 负责目标 App 派发。
 
 ```js
 const capabilities = createAppCapabilitiesClient(context.host)
@@ -86,7 +86,7 @@ const rows = JSON.parse(text)
 
 `usesTools.tools` 使用 MCP `tools/list` 返回的原始工具名；静态 `contributes.tools` 使用其本地 `id`。没有通配符。安装或更新调用方 App 时，确认页会显示每个目标与工具，并提示工具可能修改数据。授权以目标 App ID 和工具名为边界，覆盖该 App 当前及以后启用的实例与 MCP 子服务；`serviceId` 可用于选择连接，但不缩小 Manifest 授权范围。目标 App 仍管理自己的 MCP 连接、启用状态和权限；撤权或关闭服务会使调用失效。Host 不要求用户在聊天会话里选择目标 App，因为这里的授权来自调用方 Manifest 与安装确认。
 
-SDK 在 UI 和 Backend 提供 `listTools`，Backend 另可调用 `invokeTool`。发现结果含来源 `source`、MCP 连接名 `serviceName`、服务 `serviceId`、实例、输入 Schema 和签名 `toolRef`；同名工具位于不同连接时会分别列出。调用方使用工具的实时 Schema 构造参数：
+Host API 3.21 起，SDK 在 UI 和 Backend 均提供 `listTools` 和 `invokeTool`。发现结果含来源 `source`、MCP 连接名 `serviceName`、服务 `serviceId`、实例、输入 Schema 和签名 `toolRef`；同名工具位于不同连接时会分别列出。调用方使用工具的实时 Schema 构造参数：
 
 ```js
 const capabilities = createAppCapabilitiesClient(context.host)
@@ -97,7 +97,23 @@ const result = await capabilities.invokeTool(query.toolRef, { sql: 'SELECT 1' })
 
 上例按单连接演示。目标 App 有多个同名工具时，组合 App 应让用户选定 `serviceId`，并在重新发现后调用对应的 `toolRef`。
 
+UI 调用与 Backend 调用使用同一 broker，不接受调用方自报 App 身份，不绕过 Manifest、安装授权、owner/实例绑定、实时派发前复核和嵌套调用限制。`signal` 会沿 UI SDK 和 Host 传递取消；页面卸载需取消在途请求并释放 client。可能写入或删除的工具应在 UI 展示明确确认，不能把 MCP 的 `unknown` 效果当作只读。
+
+纯 UI 的浏览器安全入口：
+
+```js
+import { createAppClient } from '@moss/app-sdk/ui'
+import { createAppCapabilitiesClient } from '@moss/app-sdk/app-capabilities'
+
+const client = createAppClient(window.mossApp)
+const capabilities = createAppCapabilitiesClient(client.host)
+const { tools } = await capabilities.listTools({ appId: 'moss.database' })
+const result = await capabilities.invokeTool(tools[0].toolRef, { sql: 'SELECT 1' })
+```
+
 Host 在发现、调用和实际派发前复核调用方的 `usesTools`、`apps:invoke` 与目标 App 当前授权。`toolRef` 绑定 owner、调用方与目标方的安装和实例、工具来源、服务 ID、工具名及结构 revision；有效期 15 分钟。MCP 工具目录来自实时 `tools/list`，配置或 Schema 变化后需重新发现。参数最多 256 KiB，结果最多 768 KiB；审计只记录双方、工具身份、耗时和状态，不记录参数或结果。MCP 工具效果按未知处理，可能读取、写入或删除目标数据。静态 Backend/Host 工具可经此接口调用；需要独立桌面授权的 native 工具不在此接口内。
+
+实时参数校验支持显式 Draft-07（包括官方 Memory MCP）和 2020-12 Schema，按声明使用对应校验器，保留其原有语义，不通过删除 `$schema` 绕过验证。
 
 Host 授权是 App API 边界。当前 Node Backend 进程仍以同一操作系统用户运行，尚无独立的文件系统沙箱；因此不能把此协议当作抵御恶意本地代码的 OS 级隔离。面向不受信任的第三方 App 开放前，需要补进程沙箱和受控文件访问，并验证平台差异。
 

@@ -285,16 +285,22 @@ export async function resumeAgentBackground({
       )
     : runAgent(params)
 
-  // Skip name-registry write — original entry persists from the initial spawn
   const agentBackgroundTask = registerAsyncAgent({
     agentId,
     description: uiDescription,
     prompt,
     selectedAgent,
     setAppState: rootSetAppState,
-    parentAbortController: isCoordinatorMode() ? toolUseContext.abortController : undefined,
+    parentAbortController: isCoordinatorMode() ? toolUseContext.taskAbortController ?? toolUseContext.abortController : undefined,
+    toolAbortController: isCoordinatorMode() ? toolUseContext.abortController : undefined,
     toolUseId: toolUseContext.toolUseId,
   })
+  if (meta?.agentName) {
+    rootSetAppState(prev => ({
+      ...prev,
+      agentNameRegistry: new Map(prev.agentNameRegistry).set(meta.agentName!, asAgentId(agentId)),
+    }))
+  }
 
   const metadata = {
     prompt,

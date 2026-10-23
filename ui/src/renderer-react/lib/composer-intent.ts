@@ -11,7 +11,7 @@ export type ComposerIntentState = {
 
 export function restoreComposerIntent(session?: Partial<IntentSummary> | null): ComposerIntent {
   const intent = session?.composerIntent as string | undefined;
-  return session?.projectId || intent === 'boss' || intent === 'coordinator' ? 'boss' : 'chat';
+  return intent === 'boss' || intent === 'coordinator' ? 'boss' : 'chat';
 }
 
 export function reconcileComposerIntent(
@@ -29,7 +29,7 @@ export function reconcileComposerIntent(
   const persisted = current?.persisted && current.persisted.updatedAt > incoming.updatedAt
     ? current.persisted
     : incoming;
-  const selected = persisted.project || current?.selected === persisted.intent
+  const selected = current?.selected === persisted.intent
     ? undefined
     : current?.selected;
   states.set(session.id, { persisted, selected });

@@ -16,6 +16,7 @@ import {
 } from 'src/services/analytics/metadata.js'
 import {
   addToToolDuration,
+  getSessionId,
   getCodeEditToolDecisionCounter,
   getStatsStore,
 } from '../../bootstrap/state.js'
@@ -119,6 +120,7 @@ import {
   runPreToolUseHooks,
 } from './toolHooks.js'
 import { validateRewrittenInput } from './validateRewrittenInput.js'
+import { traceToolExecution } from '../trace/toolTrace.js'
 
 /** Minimum total hook duration (ms) to show inline timing summary */
 export const HOOK_TIMING_DISPLAY_THRESHOLD_MS = 500
@@ -319,6 +321,16 @@ function getMcpServerBaseUrlFromToolName(
 }
 
 export async function* runToolUse(
+  toolUse: ToolUseBlock,
+  assistantMessage: AssistantMessage,
+  canUseTool: CanUseToolFn,
+  toolUseContext: ToolUseContext,
+): AsyncGenerator<MessageUpdateLazy, void> {
+  yield* traceToolExecution(toolUse, getSessionId(),
+    runToolUseImpl(toolUse, assistantMessage, canUseTool, toolUseContext))
+}
+
+async function* runToolUseImpl(
   toolUse: ToolUseBlock,
   assistantMessage: AssistantMessage,
   canUseTool: CanUseToolFn,

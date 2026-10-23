@@ -2,17 +2,12 @@ import { AppToolSelectionContext, getToolPickerItems, getAppToolServices, toolAp
 import { AppIcon } from '@/components/app-icon';
 import * as React from 'react';
 import { resourceKey, type AppComposerResource } from '@/lib/app-composer';
-import { ArrowLeft, Bot, Cable, Check, ChevronRight, GitFork, Hammer, ListFilter } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronRight, GitFork, Hammer, ListFilter } from 'lucide-react';
 import {
   AssistantAvatar,
   getSelectableInstalledAssistants,
   type InstalledAssistant,
 } from '@/components/assistant-selection-area';
-import {
-  ConnectorIcon,
-  connectorTypeLabel,
-  getSelectableInstalledConnectors,
-} from '@/components/connector-selection-area';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
 import {
   getSelectableInstalledSkills,
@@ -25,14 +20,14 @@ import {
   type ComposerResourceTab,
 } from '@/lib/composer-mentions';
 import { cn } from '@/lib/utils';
-import type { DesktopAgentDefinition, InstalledConnector } from '@/types';
+import type { DesktopAgentDefinition } from '@/types';
 
 type ComposerResourceSelectionAreaProps = {
   appResources?: AppComposerResource[];
   appResourcesAvailable?: boolean;
   selectedAppResource?: AppComposerResource | null;
   onSelectAppResource?: (resource: AppComposerResource | null) => void;
-  onAppResourceQuery?: (query:string) => void;
+  onAppResourceQuery?: (query: string) => void;
   onMoreAppResources?: () => void;
   assistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
@@ -49,10 +44,6 @@ type ComposerResourceSelectionAreaProps = {
   onToggleSkill?: (skill: InstalledSkillOption) => void;
   onOpenSkillHub?: () => void;
   skillsLoading?: boolean;
-  connectors?: InstalledConnector[];
-  selectedConnectorIds?: string[];
-  onToggleConnector?: (connector: InstalledConnector) => void;
-  onOpenConnectorHub?: () => void;
   triggerVisible?: boolean;
   openTab?: ComposerResourceTab | null;
   onOpenTabChange?: (tab: ComposerResourceTab | null) => void;
@@ -83,12 +74,6 @@ const RESOURCE_TAB_META: Record<ComposerResourceTab, {
     managerLabel: '技能市场',
     searchPlaceholder: '搜索已安装技能',
     icon: <Hammer className="h-4 w-4" />,
-  },
-  connectors: {
-    label: '连接器',
-    managerLabel: '管理连接器',
-    searchPlaceholder: '搜索连接器',
-    icon: <Cable className="h-4 w-4" />,
   },
 };
 
@@ -169,10 +154,6 @@ export function ComposerResourceSelectionArea({
   onToggleSkill,
   onOpenSkillHub,
   skillsLoading = false,
-  connectors = [],
-  selectedConnectorIds = [],
-  onToggleConnector,
-  onOpenConnectorHub,
   triggerVisible = true,
   openTab = null,
   onOpenTabChange,
@@ -183,9 +164,8 @@ export function ComposerResourceSelectionArea({
     includeAssistants: Boolean(onSelectAssistant),
     includeAgents: Boolean(onSelectAgent),
     includeSkills: Boolean(onToggleSkill),
-    includeConnectors: Boolean(onToggleConnector),
     includeWorkflows: appResourcesAvailable,
-  }), [toolApps.enabled, appResourcesAvailable, onSelectAgent, onSelectAssistant, onToggleConnector, onToggleSkill]);
+  }), [toolApps.enabled, appResourcesAvailable, onSelectAgent, onSelectAssistant, onToggleSkill]);
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ComposerResourceTab>(() => tabs[0] ?? 'skills');
   const [query, setQuery] = React.useState('');
@@ -207,10 +187,6 @@ export function ComposerResourceSelectionArea({
   );
   const installedSkills = React.useMemo(() => getSelectableInstalledSkills(skills), [skills]);
   const activeAgents = React.useMemo(() => agents.filter((agent) => agent.active), [agents]);
-  const installedConnectors = React.useMemo(
-    () => getSelectableInstalledConnectors(connectors),
-    [connectors],
-  );
   const filteredAssistants = React.useMemo(() => installedAssistants.filter((assistant) => matchesQuery([
     assistant.displayName,
     assistant.name,
@@ -228,12 +204,6 @@ export function ComposerResourceSelectionArea({
     agent.description,
     agent.source,
   ], query)), [activeAgents, query]);
-  const filteredConnectors = React.useMemo(() => installedConnectors.filter((connector) => matchesQuery([
-    connector.name,
-    connector.description,
-    connector.type,
-  ], query)), [installedConnectors, query]);
-
   const allToolApps = getToolPickerItems(toolApps.apps, '', toolApps.selectedIds, selectedServiceIds).map(item => item.app);
   const filteredToolItems = getToolPickerItems(toolApps.apps, query, toolApps.selectedIds, selectedServiceIds, serviceAppId);
   const availableServiceIds = serviceApp ? getAppToolServices(serviceApp).filter(service => service.available).map(service => service.id) : [];
@@ -241,29 +211,21 @@ export function ComposerResourceSelectionArea({
   if (tabs.length === 0) return null;
 
   const selectedSkillNames = new Set(selectedSkills.map((skill) => skill.name));
-  const selectedConnectors = new Set(selectedConnectorIds);
   const selectedCount = (toolApps.enabled ? (toolApps.selectedIds.length + selectedServiceIds.length) : 0) + (selectedAppResource ? 1 : 0) + (tabs.includes('assistants') && selectedAssistant ? 1 : 0)
     + (tabs.includes('agents') && selectedAgent ? 1 : 0)
     + (tabs.includes('skills')
       ? installedSkills.filter((skill) => selectedSkillNames.has(skill.name)).length
-      : 0)
-    + (tabs.includes('connectors')
-      ? installedConnectors.filter((connector) => selectedConnectors.has(connector.id)).length
       : 0);
   const activeItems = displayedTab === 'apps' ? filteredToolItems : displayedTab === 'workflows' ? appResources : displayedTab === 'assistants'
     ? filteredAssistants
     : displayedTab === 'agents'
       ? filteredAgents
-    : displayedTab === 'skills'
-      ? filteredSkills
-      : filteredConnectors;
+    : filteredSkills;
   const activeTotal = displayedTab === 'apps' ? (serviceApp ? getAppToolServices(serviceApp).length : allToolApps.length) : displayedTab === 'workflows' ? appResources.length : displayedTab === 'assistants'
     ? installedAssistants.length
     : displayedTab === 'agents'
       ? activeAgents.length
-    : displayedTab === 'skills'
-      ? installedSkills.length
-      : installedConnectors.length;
+    : installedSkills.length;
   const meta = RESOURCE_TAB_META[displayedTab];
   const closePicker = () => {
     setOpen(false);
@@ -275,16 +237,14 @@ export function ComposerResourceSelectionArea({
     ? onOpenExpertHub
     : displayedTab === 'agents'
       ? onOpenAgentManager
-    : displayedTab === 'skills'
-      ? onOpenSkillHub
-      : onOpenConnectorHub;
+    : onOpenSkillHub;
   const emptyLabel = displayedTab === 'apps' ? '没有匹配的带工具 App' : displayedTab === 'workflows' ? '没有匹配的已发布工作流' : displayedTab === 'assistants'
     ? '没有匹配的已安装专家'
     : displayedTab === 'agents'
       ? '没有匹配的已启用 Agent'
     : displayedTab === 'skills'
       ? skillsLoading ? '正在加载已安装技能...' : '没有匹配的已安装技能'
-      : '没有匹配的已认证连接器';
+      : '没有匹配的资源';
 
   return (
     <>
@@ -404,16 +364,7 @@ export function ComposerResourceSelectionArea({
               description={skill.description || skill.name}
               onSelect={() => onToggleSkill?.(skill)}
             />
-          )) : filteredConnectors.map((connector) => (
-            <ResourceRow
-              key={`connector:${connector.id}`}
-              selected={selectedConnectors.has(connector.id)}
-              icon={<ConnectorIcon connector={connector} className="h-4 w-4" />}
-              title={connector.name}
-              description={`${connectorTypeLabel(connector)}${connector.description ? ` · ${connector.description}` : ''}`}
-              onSelect={() => onToggleConnector?.(connector)}
-            />
-          ))}
+          )) : null}
         </div>
       </SelectionPickerDialog>
     </>

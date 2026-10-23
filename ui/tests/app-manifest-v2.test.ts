@@ -5,6 +5,7 @@ import {
   APP_MANIFEST_SCHEMA,
   AppBackendClient,
   createEnvelope,
+  compileJsonSchema,
   resolveAppProtocols,
   validateAppManifest,
 } from '../../packages/app-sdk/src/index.mjs'
@@ -20,6 +21,18 @@ const valid = {
 }
 
 describe('App manifest V2', () => {
+  it('validates draft-07 MCP schemas and 2020-12 App schemas without changing input data', () => {
+    const legacy = { $schema: 'http://json-schema.org/draft-07/schema#', type: 'array', items: [{ type: 'string' }, { type: 'number' }], additionalItems: false }
+    const current = { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'array', prefixItems: [{ type: 'string' }, { type: 'number' }], items: false }
+    for (const schema of [legacy, { ...legacy, $schema: 'https://json-schema.org/draft-07/schema' }, current]) {
+      const before = JSON.stringify(schema), validate = compileJsonSchema(schema)
+      expect(validate(['task', 1])).toBe(true)
+      expect(validate(['task', 'wrong'])).toBe(false)
+      expect(validate(['task', 1, 'extra'])).toBe(false)
+      expect(JSON.stringify(schema)).toBe(before)
+    }
+  })
+
   it('preserves one category and search keywords through normalization while accepting legacy Apps', () => {
     const source = { ...valid, category: 'automation', keywords: ['Chrome', ' 网页 ', '网页'] };
     expect(validateAppManifest(source)).toMatchObject({ category: 'automation', keywords: ['Chrome', '网页'] });
@@ -34,10 +47,10 @@ describe('App manifest V2', () => {
   })
 
   it('advertises Host API 3 and rejects unpublished older contracts', () => {
-    expect(APP_HOST_API_VERSION).toBe('3.20.0')
+    expect(APP_HOST_API_VERSION).toBe('3.21.0')
     expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.21.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.22.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {

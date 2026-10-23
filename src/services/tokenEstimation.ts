@@ -273,7 +273,7 @@ export function roughTokenCountEstimationForMessage(message: {
   attachment?: Attachment
 }): number {
   if (
-    (message.type === 'assistant' || message.type === 'user') &&
+    (message.type === 'assistant' || message.type === 'user' || message.type === 'api_system') &&
     message.message?.content
   ) {
     return roughTokenCountEstimationForContent(
@@ -325,6 +325,15 @@ function roughTokenCountEstimationForBlock(
   }
   if (block.type === 'text') {
     return roughTokenCountEstimation(block.text)
+  }
+  if (block.type === 'document' && 'source' in block && block.source && typeof block.source === 'object') {
+    if (block.source.type === 'text') {
+      const extension = block.title?.split('.').pop()?.toLowerCase() ?? ''
+      return roughTokenCountEstimation(block.source.data, bytesPerTokenForFileType(extension))
+    }
+    if (block.source.type === 'content') {
+      return roughTokenCountEstimationForContent(block.source.content as Parameters<typeof roughTokenCountEstimationForContent>[0])
+    }
   }
   if (block.type === 'image' || block.type === 'document') {
     // tokens = (width px * height px)/750

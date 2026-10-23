@@ -4,6 +4,22 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { cleanIpcErrorMessage, getErrorMessage } from '../src/renderer-react/lib/app-notifications';
 
+test('desktop execution and settings modules load with Node CommonJS interop', () => {
+  const executionUrl = new URL('../src/apps/app-execution-host.mjs', import.meta.url).href;
+  const settingsUrl = new URL('../src/moss-settings-adapters.mjs', import.meta.url).href;
+  const result = spawnSync('node', ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    const { AppExecutionHost } = await import(${JSON.stringify(executionUrl)});
+    const { createMossSettingsAdapters } = await import(${JSON.stringify(settingsUrl)});
+    assert.equal(typeof AppExecutionHost, 'function');
+    const desktop = { model: 'fixture', appearance: { chatFontSize: 14 } };
+    const adapters = createMossSettingsAdapters({ getDesktop: () => desktop });
+    adapters.desktop.validate(desktop, [{ path: 'appearance.chatFontSize', value: 14 }]);
+    assert.throws(() => adapters.desktop.validate(desktop, [{ path: 'appearance.chatFontSize', value: 99 }]));
+  `], { encoding: 'utf8' });
+  expect(result.status, result.stderr).toBe(0);
+});
+
 test('loads runtime file URLs in Node and retries after a failed Windows runtime import', () => {
   const main = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
   const start = main.indexOf('async function getClaudeRuntimeModule()');
@@ -26,6 +42,9 @@ test('loads runtime file URLs in Node and retries after a failed Windows runtime
     let sdkPath = 'C:/moss-missing-runtime-' + process.pid + '/Moss #1/runtime.mjs';
     let claudeRuntimeModulePromise = null;
     const installRuntimeMacros = () => {};
+    const getBundledResourceDir = () => '/bundled/skills';
+    const MOSS_REPO_SKILLS_DIR = '/bundled/skills';
+    const appMcpHost = null;
     const remoteDirectNetFetch = () => {};
     const logs = [];
     const mossLog = (...args) => logs.push(args);

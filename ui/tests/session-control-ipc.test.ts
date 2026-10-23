@@ -5,7 +5,7 @@ import { loadDesktopPreload } from './helpers/desktop-preload';
 function fixture(context = {}) {
   const handlers = new Map<string, Function>();
   const actions: string[] = [];
-  const pending = { requestId: 'q1', sessionId: 's1', input: { questions: ['choose'] }, appDecisionId: null as string | null };
+  const pending = { requestId: 'q1', sessionId: 's1', input: { questions: ['choose'] } };
   const pendingQuestionRequests = new Map([['q1', pending]]);
   const decisions: unknown[] = [];
   const record = {
@@ -29,7 +29,6 @@ function fixture(context = {}) {
       pendingQuestionRequests.delete(request.requestId);
       return decision.permissionDecision;
     },
-    isPlainObject: (value: unknown) => !!value && typeof value === 'object' && !Array.isArray(value),
     buildAskUserQuestionUpdatedInput: (input: object, answers: object, annotations: object) => ({ ...input, answers, annotations }),
   };
   registerSessionControlIpc(deps);
@@ -42,13 +41,13 @@ function fixture(context = {}) {
 }
 
 describe('Desktop session controls through preload and IPC', () => {
-  it('records the trusted Web transport for browser approvals and rejections', async () => {
+  it('uses the same session answers and rejections over the Web transport', async () => {
     const allowed = fixture({ transport: 'web' });
     await allowed.api.answerQuestion({ requestId: 'q1', sessionId: 's1', answers: {} });
-    expect(allowed.decisions[0]).toMatchObject({ decision: { source: 'web', allowed: true } });
+    expect(allowed.decisions[0]).toMatchObject({ decision: { permissionDecision: { behavior: 'allow' } } });
     const denied = fixture({ transport: 'web' });
     await denied.api.rejectQuestion({ requestId: 'q1', sessionId: 's1' });
-    expect(denied.decisions[0]).toMatchObject({ decision: { source: 'web', allowed: false } });
+    expect(denied.decisions[0]).toMatchObject({ decision: { permissionDecision: { behavior: 'deny' } } });
   });
   it('rejects cross-session approvals and rejections without resolving the request', async () => {
     const { api, deps, decisions } = fixture();
@@ -63,7 +62,6 @@ describe('Desktop session controls through preload and IPC', () => {
     const request = { requestId: 'q1', sessionId: 's1', answers: { choose: 'yes' }, annotations: { choose: { notes: 'approved' } } };
     expect(await api.answerQuestion(request)).toEqual({ ok: true });
     expect(decisions).toEqual([{ request: pending, decision: {
-      allowed: true, source: 'desktop', resolutionAnswers: request.answers,
       permissionDecision: { behavior: 'allow', updatedInput: { ...pending.input, answers: request.answers, annotations: request.annotations } },
     } }]);
     await expect(api.answerQuestion(request)).rejects.toThrow('no longer pending');
@@ -71,26 +69,24 @@ describe('Desktop session controls through preload and IPC', () => {
     expect(decisions).toHaveLength(1);
   });
 
-  it('reports a rejected runtime decision and accepts durable app decisions', async () => {
-    const { api, deps, pending } = fixture();
+  it('reports a rejected runtime decision', async () => {
+    const { api, deps } = fixture();
     deps.respondToPendingQuestionRequest = async () => ({ behavior: 'deny', message: 'expired' });
     // Re-register with the alternate domain implementation.
     registerSessionControlIpc(deps);
     await expect(api.answerQuestion({ requestId: 'q1', sessionId: 's1', answers: {} })).rejects.toThrow('expired');
-    pending.appDecisionId = 'durable-decision';
-    expect(await api.answerQuestion({ requestId: 'q1', sessionId: 's1', answers: {} })).toEqual({ ok: true });
   });
 
   it('forwards a denial with its trimmed reason', async () => {
     const { api, decisions } = fixture();
     expect(await api.rejectQuestion({ requestId: 'q1', sessionId: 's1', message: '  no thanks  ' })).toEqual({ ok: true });
-    expect(decisions[0]).toMatchObject({ decision: { allowed: false, permissionDecision: { behavior: 'deny', message: 'no thanks' } } });
+    expect(decisions[0]).toMatchObject({ decision: { permissionDecision: { behavior: 'deny', message: 'no thanks' } } });
   });
 
   it('stops App tasks and the runtime before clearing approvals', async () => {
     const { api, actions, deps } = fixture();
     expect(await api.abort({ sessionId: 's1' })).toEqual({ ok: true });
-    expect(actions).toEqual(['apps:s1', 'abort', 'project:stopped', 'project:event', 'reject:s1', 'persist:true']);
+    expect(actions).toEqual(['abort', 'apps:s1', 'project:stopped', 'project:event', 'reject:s1', 'persist:true']);
     expect(deps.projectTaskCancellationRequests.has('s1')).toBe(true);
     expect(deps.pendingQuestionRequests.size).toBe(0);
   });
@@ -99,7 +95,7 @@ describe('Desktop session controls through preload and IPC', () => {
     const { api, actions, deps, record } = fixture();
     record.parentSessionId = 'parent';
     await api.abort({ sessionId: 's1' });
-    expect(actions).toEqual(['apps:s1', 'abort', 'reject:s1', 'persist:true']);
+    expect(actions).toEqual(['abort', 'apps:s1', 'reject:s1', 'persist:true']);
     expect(deps.projectTaskCancellationRequests.size).toBe(0);
   });
 
@@ -124,5 +120,29 @@ describe('Desktop session controls through preload and IPC', () => {
     expect(controller.signal.aborted).toBe(true);
     release();
     expect(await stopping).toEqual({ ok: true });
+  });
+
+  it('starts the runtime interrupt while host cleanup is still blocked', async () => {
+    const { api, deps, record } = fixture();
+    let release!: () => void;
+    let cleanupStarted = false;
+    let abortStarted = false;
+    record.runtime.abort = async () => { abortStarted = true; };
+    registerSessionControlIpc({ ...deps,
+      stopComputerUse: async () => {
+        cleanupStarted = true;
+        await new Promise<void>(resolve => { release = resolve; });
+      },
+    });
+    const stopping = api.abort({ sessionId: 's1' });
+    await new Promise(resolve => queueMicrotask(resolve));
+    expect(cleanupStarted).toBe(true);
+    expect(abortStarted).toBe(true);
+    let settled = false;
+    void stopping.then(() => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+    release();
+    await expect(stopping).resolves.toEqual({ ok: true });
   });
 });

@@ -1,3 +1,29 @@
+import type { StoredApp } from '../types';
+
+export async function authorizeAppConnector({ app, createSession, api }: {
+  app: StoredApp;
+  createSession: (title: string) => Promise<string>;
+  api: Pick<Window['agentDesktop'], 'connectorApp' | 'getSession' | 'setSessionConnectors' | 'setConnectorAuthStatus'>;
+}) {
+  const connectorId = app.connectorApp?.id;
+  if (!connectorId) throw new Error('此 App 未提供连接能力');
+  const connectorName = app.displayName || app.title || app.name;
+  const { result } = await runMcpConnectorAuthorization({
+    connectorId,
+    createSession: () => createSession(`${connectorName}授权`),
+    authenticate: sessionId => api.connectorApp({ appId: app.id || app.name, action: 'auth', sessionId }),
+    attachConnector: (sessionId, id) => attachAuthorizedConnectorToSession({
+      sessionId, connectorId: id, getSession: api.getSession, setSessionConnectors: api.setSessionConnectors,
+    }),
+    onSessionCreated: sessionId => api.setConnectorAuthStatus({ sessionId, connectorId, connectorName, status: 'pending' }),
+    onAuthenticated: sessionId => api.setConnectorAuthStatus({ sessionId, connectorId, connectorName, status: 'success' }),
+    onFailed: (sessionId, _id, error) => api.setConnectorAuthStatus({
+      sessionId, connectorId, connectorName, status: 'failed', message: error instanceof Error ? error.message : String(error),
+    }),
+  });
+  return result;
+}
+
 type SessionWithConnectors = {
   connectorIds?: string[];
 };

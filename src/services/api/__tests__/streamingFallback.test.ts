@@ -6,6 +6,7 @@ import { getEmptyToolPermissionContext } from '../../../Tool.js'
 import { createAssistantMessage, createUserMessage } from '../../../utils/messages.js'
 import { queryModelWithStreaming } from '../claude.js'
 import { RetryBudget } from '../retryBudget.js'
+import { normalizeMessages } from '../../../utils/messages.js'
 import type { AdvancedSettings } from '../../../../packages/direct-connect-protocol/src/index.js'
 
 const envKeys = [
@@ -121,6 +122,35 @@ async function runQuery(
 }
 
 describe('independent stream recovery policy', () => {
+  test('finalizes all streamed blocks with captured native usage despite zero billing placeholders', async () => {
+    const finalUsage = { input_tokens: 3, cache_read_input_tokens: 191_863,
+      cache_creation_input_tokens: 2565, output_tokens: 1122,
+      billing_usage: { source: 'oai_responses', semantic: 'openai',
+        openai_usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 195_553,
+          prompt_tokens_details: { cached_tokens: 0 } } } }
+    const result = await runQuery({}, sse([
+      { ...messageStart, message: { ...messageStart.message,
+        usage: { input_tokens: 221_624, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'first' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'second' } },
+      { type: 'content_block_stop', index: 1 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: finalUsage },
+      { type: 'message_stop' },
+    ]))
+    expect(result.requests).toHaveLength(1)
+    expect(result.assistants).toHaveLength(2)
+    for (const message of normalizeMessages(result.assistants)) {
+      expect(message.type).toBe('assistant')
+      if (message.type === 'assistant') expect(message.message).toMatchObject({
+        usage: { input_tokens: 3, cache_read_input_tokens: 191_863,
+          cache_creation_input_tokens: 2565, output_tokens: 1122 }, stop_reason: 'end_turn',
+      })
+    }
+  })
+
   test('404 recovery shares the streaming request attempt budget', async () => {
     const result = await runQuery({}, new Response(JSON.stringify({ error: { message: 'stream endpoint unavailable' } }), { status: 404 }), undefined, new RetryBudget({ maxAttempts: 1 }))
     expect(result.requests).toHaveLength(1)

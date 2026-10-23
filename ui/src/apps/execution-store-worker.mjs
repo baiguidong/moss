@@ -19,6 +19,7 @@ db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=F
   CREATE TABLE IF NOT EXISTS change_floors (owner TEXT PRIMARY KEY, cursor INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS executions_task ON executions(task_id);
+  CREATE INDEX IF NOT EXISTS tasks_pending ON tasks(id) WHERE json_extract(state,'$.status')='running' OR json_extract(state,'$.notificationPending')=1;
   CREATE TABLE IF NOT EXISTS events (execution_id TEXT NOT NULL REFERENCES executions(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY(execution_id, sequence));
 `)
 const saveTask = db.prepare('INSERT INTO tasks(id,owner,updated,state,summary) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated, state=excluded.state, summary=excluded.summary')
@@ -73,7 +74,7 @@ parentPort.on('message', ({ id, method, input }) => {
     let result
     if (method === 'load') {
       result = loadRows(input?.initial
-        ? db.prepare("SELECT id,state FROM tasks WHERE json_extract(state,'$.status')='running' OR json_extract(state,'$.notificationPending')=1 UNION SELECT id,state FROM (SELECT id,state FROM tasks ORDER BY updated DESC LIMIT 100)").all()
+        ? db.prepare("SELECT id,state FROM tasks WHERE json_extract(state,'$.status')='running' OR json_extract(state,'$.notificationPending')=1").all()
         : input?.taskId ? db.prepare('SELECT id,state FROM tasks WHERE id=?').all(input.taskId)
         : input?.executionId ? db.prepare('SELECT t.id,t.state FROM tasks t JOIN executions e ON e.task_id=t.id WHERE e.id=?').all(input.executionId)
         : input?.key ? db.prepare("SELECT id,state FROM tasks WHERE json_extract(state,'$.key')=?").all(input.key)

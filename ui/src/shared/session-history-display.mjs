@@ -1,3 +1,5 @@
+import { isTaskNotificationText } from '../../../shared/message-context.mjs';
+
 function extractDisplayTextFromTranscriptEntry(entry) {
   const content = entry?.message?.content;
   if (typeof content === 'string') {
@@ -24,9 +26,11 @@ export function isDisplayTranscriptEntry(entry) {
   if (entry.type === 'user') {
     if (entry.isCompactSummary) return true;
     if (entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
+    if (entry.origin?.kind && entry.origin.kind !== 'human') return false;
     const text = extractDisplayTextFromTranscriptEntry(entry).trim();
     if (text.startsWith('<local-command-caveat>')) return false;
     if (text.startsWith('<command-name>')) return false;
+    if (isTaskNotificationText(text)) return false;
     return true;
   }
   if (entry.type === 'assistant') return true;
@@ -43,10 +47,12 @@ export function isDisplayTranscriptEntry(entry) {
 function isVisibleUserTextEntry(entry) {
   if (!entry || entry.type !== 'user') return false;
   if (entry.isCompactSummary || entry.isMeta || entry.isSynthetic || entry.isVisibleInTranscriptOnly) return false;
+  if (entry.origin?.kind && entry.origin.kind !== 'human') return false;
   const text = extractDisplayTextFromTranscriptEntry(entry).trim();
   if (!text) return false;
   if (text.startsWith('<local-command-caveat>')) return false;
   if (text.startsWith('<command-name>')) return false;
+  if (isTaskNotificationText(text)) return false;
   return true;
 }
 

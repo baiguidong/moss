@@ -6,6 +6,7 @@ import { defaultInstanceId } from '../../../packages/app-runtime/src/state/index
 export function createAuthoringPreview({ root, getRuntime, nodeExecutable, openWindow }) {
   return async (artifact, { previewRef, grants, config, signal, onClosed }) => {
     const previewRoot = path.join(root, previewRef)
+    await fs.mkdir(root, { recursive: true })
     await fs.mkdir(previewRoot, { recursive: false })
     const host = getRuntime().hostCapabilities
     const clean = definition => Object.fromEntries(Object.entries(definition).filter(([, value]) => value != null))

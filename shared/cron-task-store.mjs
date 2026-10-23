@@ -24,7 +24,9 @@ export async function updateCronTaskStore(filePath, update) {
   const temporary = `${filePath}.${randomUUID()}.tmp`;
   try {
     const tasks = await readCronTaskStore(filePath);
+    const previous = JSON.stringify(tasks);
     const result = update(tasks);
+    if (JSON.stringify(tasks) === previous) return result;
     await writeFile(temporary, `${JSON.stringify({ tasks }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, filePath);
     return result;

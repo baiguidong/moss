@@ -107,3 +107,30 @@ export function createChildAbortController(
 
   return child
 }
+
+/** Background work survives successful tool cleanup, but not Stop or a discarded attempt. */
+export function createBackgroundTaskAbortController(
+  parent: AbortController,
+  tool?: AbortController,
+): AbortController {
+  const child = createChildAbortController(parent)
+  if (!tool || tool === parent || child.signal.aborted) return child
+
+  const weakChild = new WeakRef(child)
+  const weakTool = new WeakRef(tool)
+  const onToolAbort = () => {
+    const reason = weakTool.deref()?.signal.reason
+    if (reason !== TOOL_EXECUTION_COMPLETED) weakChild.deref()?.abort(reason)
+  }
+  if (tool.signal.aborted) {
+    onToolAbort()
+  } else {
+    tool.signal.addEventListener('abort', onToolAbort, { once: true })
+    child.signal.addEventListener(
+      'abort',
+      removeAbortHandler.bind(weakTool, new WeakRef(onToolAbort)),
+      { once: true },
+    )
+  }
+  return child
+}

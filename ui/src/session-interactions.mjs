@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 /** Bypasses the serialized foreground-send queue, while retaining session ownership. */
-export function createSessionInteractions({ getSessionRecord, publish, assertWorkAllowed = () => {}, timeoutMs = 120_000, prepareSteer }) {
+export function createSessionInteractions({ getSessionRecord, publish, assertWorkAllowed = () => {}, timeoutMs = 120_000, prepareSteer, ensureRuntime }) {
   const preparations = new Map();
   const activeSides = new Map();
   const latest = (record, id) => record.history.findLast(event => event.type === 'session_interaction' && event.id === id);
@@ -40,7 +40,9 @@ export function createSessionInteractions({ getSessionRecord, publish, assertWor
       const runtime = record.runtime;
       if (!runtime) {
         if (action === 'steer') return { status: 'not_running', id };
-        throw new Error('当前会话尚未建立模型上下文，请先发送主会话消息。');
+        if (typeof ensureRuntime !== 'function') {
+          throw new Error('当前会话尚未建立模型上下文，请先发送主会话消息。');
+        }
       }
       const base = { id, kind: action, prompt, ...(details ? { details: structuredClone(details) } : {}), status: 'accepted', ...(action === 'steer' && record.activeInputTurnId ? { turnId: record.activeInputTurnId } : {}) };
       if (action === 'steer') {
@@ -68,7 +70,7 @@ export function createSessionInteractions({ getSessionRecord, publish, assertWor
         preparations.set(key, { signature, promise });
         return promise;
       }
-      if (typeof runtime.askSideQuestion !== 'function') throw new Error('当前运行时尚不支持侧问，请更新并重启 Moss。');
+      if (runtime && typeof runtime.askSideQuestion !== 'function') throw new Error('当前运行时尚不支持侧问，请更新并重启 Moss。');
       if (activeSides.has(sessionId)) throw new Error('本会话已有侧问，请等待回答或先取消。');
       if (activeSides.size >= 16) throw new Error('正在回答的侧问过多，请稍后再试。');
       const controller = new AbortController();
@@ -80,6 +82,8 @@ export function createSessionInteractions({ getSessionRecord, publish, assertWor
         if (activeSides.get(sessionId)?.id === id) activeSides.delete(sessionId);
         emit(record, base, patch);
       };
+      // Restoration can wait on MCP startup/disposal. Acknowledge and bound the
+      // entire operation so the user can cancel even before a runtime is ready.
       const timer = setTimeout(() => {
         controller.abort(new Error('侧问超时'));
         finish({ status: 'timeout', response: null });
@@ -87,9 +91,16 @@ export function createSessionInteractions({ getSessionRecord, publish, assertWor
       timer.unref?.();
       activeSides.set(sessionId, { id, controller, finish });
       emit(record, base, { status: 'running' });
-      void Promise.resolve().then(() => runtime.askSideQuestion(prompt, controller.signal))
-        .then(result => finish({ status: result.status || (result.response ? 'completed' : 'empty'), response: result.response, usage: result.usage }))
-        .catch(error => finish({ status: controller.signal.aborted ? 'cancelled' : 'failed', response: null, error: String(error?.message || error).slice(0, 2000) }));
+      void Promise.resolve().then(async () => {
+        if (finished || record.deleted) return;
+        const resolvedRuntime = runtime || await ensureRuntime(record, controller.signal);
+        if (finished || record.deleted) return;
+        if (!resolvedRuntime || typeof resolvedRuntime.askSideQuestion !== 'function') throw new Error('当前运行时尚不支持侧问，请更新并重启 Moss。');
+        const result = await resolvedRuntime.askSideQuestion(prompt, controller.signal);
+        finish({ status: result.status || (result.response ? 'completed' : 'empty'), response: result.response, usage: result.usage });
+      }).catch(error => {
+        finish({ status: controller.signal.aborted ? 'cancelled' : 'failed', response: null, error: String(error?.message || error).slice(0, 2000) });
+      });
       return { status: 'running', id };
     },
   };

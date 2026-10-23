@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -39,6 +39,7 @@ function fixture(t) {
       statements, sessions, subAgentSessions, DESKTOP_DATA_PATHS: paths, sessionPaths,
       remoteSessionDeletions,
       sessionSearchIndex: {
+        syncTitle: record => searchIndex.syncTitle(record),
         syncSession(record) { indexed.push(record.id); searchIndex.syncSession(record); },
         deleteSession: id => searchIndex.deleteSession(id),
       },
@@ -69,6 +70,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   let service = f.open();
   const main = record('parent', {
     projectId: 'project', isCoordinatorMode: true, permissionMode: 'plan', effort: 'xhigh',
+    projectDefaults: { version: 1, instructions: 'frozen rules', skillIds: ['skill'], agentTeamsEnabled: false },
     appIds: ['builder', 'mcp', 'builder'],
     appServiceIds: ['["customer.app","sales"]', '["customer.app","sales"]'],
     connectorIds: [' mail ', 'drive', 'mail'], sessionKind: 'cron', originChannel: 'cron',
@@ -94,7 +96,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   service.hydratePersistedSessions();
   const restored = service.sessions.get('parent');
   for (const key of ['title', 'workspace', 'createdAt', 'updatedAt', 'messageCount', 'underlyingSessionId',
-    'history', 'projectId', 'isCoordinatorMode', 'permissionMode', 'effort', 'sessionKind', 'originChannel',
+    'history', 'projectId', 'projectDefaults', 'isCoordinatorMode', 'permissionMode', 'effort', 'sessionKind', 'originChannel',
     'sourceSessionId', 'cronTaskId', 'sessionRole', 'assistantName', 'workerSummariesJson',
     'projectTaskStatus', 'projectTaskPrompt', 'projectTaskError', 'projectTaskCompletedAt',
     'toolDisplayMode', 'rewindMessageId', 'rewindCreatedAt', 'channelAppId', 'channelInstanceId', 'channelRuntimePolicy']) {
@@ -189,7 +191,7 @@ test('restores remote workspace/title mappings and honors durable remote tombsto
   assert.equal(service.sessions.has('removed-remote'), false);
 });
 
-test('infers legacy modes from local transcript existence and tolerates corrupt cached JSON', t => {
+test('infers legacy modes without parsing corrupt history and refuses to erase it', t => {
   const f = fixture(t);
   const service = f.open();
   for (const id of ['local', 'remote']) {
@@ -200,7 +202,60 @@ test('infers legacy modes from local transcript existence and tolerates corrupt 
   service.hydratePersistedSessions();
   assert.equal(service.sessions.get('local').agentMode, 'local');
   assert.equal(service.sessions.get('remote').agentMode, 'remote-direct');
-  assert.deepEqual(service.sessions.get('local').history, []);
+  assert.throws(() => service.sessions.get('local').history, SyntaxError);
+  service.sessions.get('local').title = 'Renamed';
+  service.persistSessionRecord(service.sessions.get('local'));
+  assert.equal(service.statements.loadSessionHistoryStmt.get('local').history_json, '{broken');
   assert.deepEqual(service.sessions.get('local').connectorIds, []);
   assert.equal(service.sessions.get('local').channelRuntimePolicy, null);
+});
+
+test('metadata hydration and unchanged shutdown do not read history or write business records', t => {
+  const f = fixture(t);
+  let service = f.open();
+  service.persistSessionRecord(record('lazy'));
+  const manifestPath = path.join(f.sessionPaths.getLocalSessionDir('lazy'), 'session.json');
+  const manifestTime = statSync(manifestPath).mtimeMs;
+  service = f.open();
+  let reads = 0;
+  const load = service.statements.loadSessionHistoryStmt.get.bind(service.statements.loadSessionHistoryStmt);
+  service.statements.loadSessionHistoryStmt.get = id => { reads++; return load(id); };
+  const before = service.db.prepare('SELECT total_changes() AS count').get().count;
+  service.hydratePersistedSessions();
+  const session = service.sessions.get('lazy');
+  assert.equal(session.historyLoaded, false);
+  service.flushPendingSessionPersist(session);
+  assert.equal(reads, 0);
+  assert.equal(service.db.prepare('SELECT total_changes() AS count').get().count, before);
+  assert.equal(statSync(manifestPath).mtimeMs, manifestTime);
+  assert.deepEqual(service.indexed, []);
+  assert.equal(session.history[0].prompt, 'Preserve this conversation');
+  assert.equal(session.history.length, 1);
+  assert.equal(reads, 1);
+});
+
+test('unopened metadata edits preserve history, approval, source signatures and searchable messages', t => {
+  const f = fixture(t);
+  let service = f.open();
+  service.persistSessionRecord(record('metadata', {
+    sourceTranscriptSignature: 'source-v1', sourceResourceManifestSignature: 'resources-v1',
+    history: [...record('unused').history, { type: 'app_plan_state', kind: 'plan', state: 'awaiting_approval', plan: 'Keep this plan', timestamp: 30 }],
+  }));
+  const original = service.statements.loadSessionHistoryStmt.get('metadata').history_json;
+  service = f.open();
+  service.hydratePersistedSessions();
+  const session = service.sessions.get('metadata');
+  assert.equal(session.pendingPlanApproval.plan, 'Keep this plan');
+  session.title = 'Changed title';
+  let snapshots = 0;
+  f.setTraceHost({ async recordSession() { snapshots++; } });
+  service.persistSessionRecord(session);
+  assert.equal(session.historyLoaded, false);
+  assert.equal(service.statements.loadSessionHistoryStmt.get('metadata').history_json, original);
+  assert.equal(session.sourceTranscriptSignature, 'source-v1');
+  assert.equal(session.sourceResourceManifestSignature, 'resources-v1');
+  assert.equal(snapshots, 0);
+  const search = createSessionSearchIndex(service.db);
+  assert.equal(search.search('conversation', { sessionIds: ['metadata'] }).length, 1);
+  assert.equal(search.search('Changed title', { sessionIds: ['metadata'] }).length, 1);
 });

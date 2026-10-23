@@ -59,7 +59,6 @@ export function buildProcessLabels({ app, webContents, getWindow, getRuntime, ge
 export function registerResourceMonitorIpc(options) {
   const { ipcMain, app, getWindow, log = () => {}, createMonitor = createResourceMonitor } = options;
   const lag = monitorEventLoopDelay({ resolution: 100 });
-  lag.enable();
   let appNames = [];
   let namesReadAt = 0;
   const service = createMonitor({
@@ -79,9 +78,9 @@ export function registerResourceMonitorIpc(options) {
     if (!webOwner && (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)) {
       throw new Error('资源监控请求来源无效');
     }
+    lag.enable();
     return service.getSnapshot({ since: Number(payload?.since) || 0, active: payload?.active !== false });
   });
-  service.start();
   app.once('will-quit', () => { service.stop(); lag.disable(); });
   return service;
 }

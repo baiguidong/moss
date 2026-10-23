@@ -46,7 +46,7 @@ export class AppSessionSourceHost {
       id: session.id,
       revision: this.getSessionRevision(session),
       updatedAt: sessionSourceTimestamp(session.updatedAt),
-      historyLength: Array.isArray(session.history) ? session.history.length : 0,
+      historyLength: session.historyLoaded === false ? session.historyLength || 0 : Array.isArray(session.history) ? session.history.length : 0,
       busy: Boolean(session.busy),
     }
   }

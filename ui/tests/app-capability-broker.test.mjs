@@ -223,9 +223,9 @@ test('declared consumers discover and call existing static and MCP tools through
     await expect(runtime.invoke(otherId, otherInstance, 'consume.tool', {
       toolRef: dynamicTool.toolRef, arguments: { sql: 'select 1' },
     })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
-    await expect(runtime.requestHostCapability(consumerId, consumerInstance, hostProtocol, 'tool.invoke', {
+    expect(await runtime.requestHostCapability(consumerId, consumerInstance, hostProtocol, 'tool.invoke', {
       toolRef: dynamicTool.toolRef, arguments: { sql: 'select 1' },
-    })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    })).toMatchObject({ result: { content: [{ text: 'row 1' }] } })
     await expect(runtime.invoke(consumerId, consumerInstance, 'consume.tool', {
       toolRef: dynamicTool.toolRef, arguments: { large: true },
     })).rejects.toMatchObject({ code: 'APP_RESOURCE_EXHAUSTED' })
@@ -242,7 +242,7 @@ test('declared consumers discover and call existing static and MCP tools through
     releaseCall()
     releaseCall = null
     await expect(blocked).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
-    expect(actualCalls).toBe(3) // The oversized result ran; the revoked call never reached the tool.
+    expect(actualCalls).toBe(4) // The UI and oversized result calls ran; the revoked call never reached the tool.
     gate = null
     await runtime.installations.upsert(providerId, { grants: ['mcp:manage', 'mcp:connect'] })
     await expect(runtime.invoke(consumerId, consumerInstance, 'consume.tool', {
@@ -608,6 +608,77 @@ test('resource reads reject unsafe offsets, gaps and references that expire duri
   })
   await expect(broker.read({ resourceRef: expiringRef, offset: 0, limit: 10 }, context))
     .rejects.toMatchObject({ code: 'APP_HOST_UNAVAILABLE', details: { reason: 'expired' } })
+})
+
+test('UI-only consumers invoke providers, resource readers and static/MCP tools through the Host', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'moss-ui-app-capabilities-'))
+  const runtime = await new AppRuntimeHost({ rootDir: path.join(root, 'host') }).initialize()
+  try {
+    const providerId = 'fixture.dataset-provider', consumerId = 'fixture.ui-consumer', otherId = 'fixture.ui-other'
+    const provider = await fixture(root, providerId, { provides: [{ protocol, methods: [
+      { name: 'describe', action: 'dataset.describe', permission: 'dataset:read', effect: 'read' },
+      { name: 'query', action: 'dataset.query', permission: 'dataset:read', effect: 'read', resourceReadMethod: 'result.read' },
+      { name: 'result.read', action: 'dataset.result.read', permission: 'dataset:read', effect: 'read' },
+    ] }] }, ['dataset:read', 'mcp:manage', 'mcp:connect'], [], {
+      tools: [{ id: 'describe', title: 'Describe', description: 'Describe', action: 'dataset.describe',
+        inputSchema: 'schemas/object.json', permission: 'dataset:read', effect: 'read' }],
+    })
+    const capabilities = { requires: [{ protocol }], usesTools: [{ appId: providerId, tools: ['describe', 'execute_sql'] }] }
+    for (const id of [consumerId, otherId]) {
+      const source = path.join(root, id)
+      await mkdir(source)
+      await writeFile(path.join(source, 'index.html'), '<!doctype html><title>UI-only consumer</title>')
+      await writeFile(path.join(source, 'app.moss.json'), JSON.stringify({
+        schemaVersion: 2, id, version: '1.0.0', displayName: id, hostApi: '^3.21.0',
+        ui: { entry: 'index.html' }, permissions: ['apps:invoke'], host: { protocols: [hostProtocol] }, appCapabilities: capabilities,
+      }))
+      await writePackageChecksums(source)
+      await runtime.installFromDirectory(source)
+    }
+    await runtime.installFromDirectory(provider)
+    const consumerInstance = defaultInstanceId(consumerId), providerInstance = defaultInstanceId(providerId), otherInstance = defaultInstanceId(otherId)
+    const call = (method, input, options) => runtime.requestHostCapability(consumerId, consumerInstance, hostProtocol, method, input,
+      { ...options, invocation: { surface: 'app', origin: 'ui' } })
+    const reference = (await call('providers.list', { protocol })).providers[0].providerRef
+    expect((await runtime.getActivePackage(consumerId)).manifest.backend).toBeUndefined()
+    expect(await call('provider.invoke', { providerRef: reference, method: 'describe', input: { value: 'UI' } }))
+      .toMatchObject({ value: { callerAppId: consumerId, value: 'UI' } })
+    const query = await call('provider.invoke', { providerRef: reference, method: 'query', input: {} })
+    expect(await call('resource.read', { resourceRef: query.value.resourceRef, offset: 0, limit: 100 }))
+      .toEqual({ text: 'customer_id\n1\n', nextOffset: null })
+    let actualCalls = 0
+    runtime.setAppToolBridge({
+      async discoverBridgeTools() { return [{ appId: providerId, instanceId: providerInstance,
+        serviceId: `mcp/${providerInstance}/server-1`, serviceName: 'local-database', revision: 'a'.repeat(64),
+        name: 'execute_sql', description: 'Query', inputSchema: { type: 'object' } }] },
+      async invokeBridgeTool({ authorizeDispatch, arguments: args, signal }) {
+        signal?.throwIfAborted(); authorizeDispatch(); actualCalls += 1
+        return { content: [{ type: 'text', text: JSON.stringify(args) }] }
+      },
+    })
+    const tools = (await call('tools.list', { appId: providerId })).tools
+    const staticTool = tools.find(tool => tool.source === 'contribution'), mcpTool = tools.find(tool => tool.source === 'mcp')
+    expect(await call('tool.invoke', { toolRef: staticTool.toolRef, arguments: { value: 'static-UI' } }))
+      .toMatchObject({ result: { callerAppId: consumerId, value: 'static-UI' } })
+    expect(await call('tool.invoke', { toolRef: mcpTool.toolRef, arguments: { sql: 'select 1' } }))
+      .toMatchObject({ result: { content: [{ text: '{"sql":"select 1"}' }] } })
+    await expect(runtime.requestHostCapability(otherId, otherInstance, hostProtocol, 'tool.invoke', { toolRef: mcpTool.toolRef }))
+      .rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    await expect(runtime.requestHostCapability(otherId, otherInstance, hostProtocol, 'provider.invoke', { providerRef: reference, method: 'describe' }))
+      .rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    await expect(runtime.requestHostCapability(otherId, otherInstance, hostProtocol, 'resource.read', { resourceRef: query.value.resourceRef, offset: 0, limit: 1 }))
+      .rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    const controller = new AbortController(); controller.abort()
+    await expect(call('tool.invoke', { toolRef: mcpTool.toolRef }, { signal: controller.signal })).rejects.toBeDefined()
+    expect(actualCalls).toBe(1)
+    await runtime.setAppGrants(providerId, [])
+    await expect(call('tool.invoke', { toolRef: mcpTool.toolRef })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    await expect(call('provider.invoke', { providerRef: reference, method: 'describe' })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    await expect(call('resource.read', { resourceRef: query.value.resourceRef, offset: 0, limit: 1 })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+    expect(actualCalls).toBe(1)
+    await runtime.setAppGrants(consumerId, [])
+    await expect(call('tools.list', { appId: providerId })).rejects.toMatchObject({ code: 'APP_PERMISSION_DENIED' })
+  } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }) }
 })
 
 test('cross-App manifests reject undeclared or unsafe method exports', () => {

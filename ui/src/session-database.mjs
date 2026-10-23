@@ -5,6 +5,7 @@ import { migrateCronSessionIndex } from './moss-cron-scheduler.mjs';
 export function prepareSessionStatements(sessionDb) {
   const persistSessionStmt = (() => {
     try { sessionDb.exec('ALTER TABLE sessions ADD COLUMN effort TEXT'); } catch {}
+    try { sessionDb.exec('ALTER TABLE sessions ADD COLUMN project_defaults_json TEXT'); } catch {}
     try { sessionDb.exec("ALTER TABLE sessions ADD COLUMN app_service_ids_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
     try { sessionDb.exec("ALTER TABLE sessions ADD COLUMN app_ids_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
     // Migration: add columns if table exists but columns are missing
@@ -188,15 +189,16 @@ export function prepareSessionStatements(sessionDb) {
         channel_instance_id TEXT,
         channel_runtime_policy_json TEXT,
         app_ids_json TEXT NOT NULL DEFAULT '[]',
-        app_service_ids_json TEXT NOT NULL DEFAULT '[]'
+        app_service_ids_json TEXT NOT NULL DEFAULT '[]',
+        project_defaults_json TEXT
       )
     `);
     migrateCronSessionIndex(sessionDb);
     return sessionDb.prepare(`
       INSERT INTO sessions (
-        id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json, app_ids_json, effort, app_service_ids_json
+        id, title, workspace, created_at, updated_at, message_count, preview, agent_mode, permission_mode, is_coordinator_mode, remote_workspace, underlying_session_id, history_json, is_sub_agent, worker_summaries_json, assistant_name, project_id, origin_channel, connector_ids_json, session_kind, source_session_id, cron_task_id, parent_session_id, session_role, subagent_status, project_task_status, project_task_prompt, project_task_error, project_task_completed_at, auto_collapse_tool_calls, tool_display_mode, rewind_message_id, rewind_created_at, channel_app_id, channel_instance_id, channel_runtime_policy_json, app_ids_json, effort, app_service_ids_json, project_defaults_json
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
@@ -210,7 +212,7 @@ export function prepareSessionStatements(sessionDb) {
         is_coordinator_mode = excluded.is_coordinator_mode,
         remote_workspace = excluded.remote_workspace,
         underlying_session_id = excluded.underlying_session_id,
-        history_json = excluded.history_json,
+        history_json = CASE WHEN ? THEN excluded.history_json ELSE sessions.history_json END,
         is_sub_agent = excluded.is_sub_agent,
         worker_summaries_json = excluded.worker_summaries_json,
         assistant_name = excluded.assistant_name,
@@ -236,10 +238,16 @@ export function prepareSessionStatements(sessionDb) {
         channel_runtime_policy_json = excluded.channel_runtime_policy_json,
         app_ids_json = excluded.app_ids_json,
         app_service_ids_json = excluded.app_service_ids_json,
+        project_defaults_json = excluded.project_defaults_json,
         effort = excluded.effort
     `);
   })();
   const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
+  sessionDb.exec(`CREATE TABLE IF NOT EXISTS session_projections (session_id TEXT PRIMARY KEY, projection_json TEXT NOT NULL)`);
+  const loadSessionHistoryStmt = sessionDb.prepare('SELECT history_json FROM sessions WHERE id = ?');
+  const loadSessionProjectionsStmt = sessionDb.prepare('SELECT session_id, projection_json FROM session_projections');
+  const persistSessionProjectionStmt = sessionDb.prepare(`INSERT INTO session_projections VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET projection_json = excluded.projection_json WHERE projection_json != excluded.projection_json`);
+  const deleteSessionProjectionStmt = sessionDb.prepare('DELETE FROM session_projections WHERE session_id = ?');
   const loadSessionsStmt = sessionDb.prepare(`
     SELECT
       effort,
@@ -255,7 +263,6 @@ export function prepareSessionStatements(sessionDb) {
       is_coordinator_mode,
       remote_workspace,
       underlying_session_id,
-      history_json,
       is_sub_agent,
       worker_summaries_json,
       assistant_name,
@@ -280,7 +287,8 @@ export function prepareSessionStatements(sessionDb) {
       channel_instance_id,
       channel_runtime_policy_json,
       app_ids_json,
-      app_service_ids_json
+      app_service_ids_json,
+      project_defaults_json
     FROM sessions
     WHERE is_sub_agent = 0
     ORDER BY updated_at DESC
@@ -300,7 +308,6 @@ export function prepareSessionStatements(sessionDb) {
       is_coordinator_mode,
       remote_workspace,
       underlying_session_id,
-      history_json,
       is_sub_agent,
       worker_summaries_json,
       assistant_name,
@@ -325,11 +332,12 @@ export function prepareSessionStatements(sessionDb) {
       channel_instance_id,
       channel_runtime_policy_json,
       app_ids_json,
-      app_service_ids_json
+      app_service_ids_json,
+      project_defaults_json
     FROM sessions
     WHERE is_sub_agent = 1
     ORDER BY created_at ASC
   `);
 
-  return { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt };
+  return { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, persistSessionProjectionStmt, deleteSessionProjectionStmt };
 }

@@ -79,9 +79,9 @@ test('100 reordered metadata, state and history snapshots preserve the latest mo
   expect(f.intent()).toBe('chat');
 });
 
-test('preserves other sessions and keeps project sessions in Boss mode', () => {
+test('preserves other sessions and uses each project session’s selected mode', () => {
   const overrides = new Map([['session', { selected: 'chat' as const }], ['other', { selected: 'boss' as const }]]);
-  expect(reconcileComposerIntent({ id: 'session', projectId: 'project', composerIntent: 'chat' }, overrides)).toBe('boss');
+  expect(reconcileComposerIntent({ id: 'session', projectId: 'project', composerIntent: 'chat' }, overrides)).toBe('chat');
   expect(overrides.get('session')?.selected).toBeUndefined();
   expect(overrides.get('other')?.selected).toBe('boss');
   expect(restoreComposerIntent({ composerIntent: 'coordinator' as any })).toBe('boss');

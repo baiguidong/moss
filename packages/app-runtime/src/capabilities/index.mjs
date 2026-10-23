@@ -274,7 +274,7 @@ export class AppHostCapabilityRegistry {
       if (request.signal?.aborted) throw cancellationError(request.signal)
       request.assertCurrent?.(authorization)
       return handler(input, context)
-    }).then((result) => { request.assertCurrent?.(authorization); return member.validateOutput ? member.validateOutput(result) : result }).finally(release)
+    }).then((result) => { request.assertCurrent?.(authorization); return result }).finally(release)
     const canceled = cancellation(request.signal)
     try {
       return await (canceled ? Promise.race([operation, canceled.promise]) : operation)
