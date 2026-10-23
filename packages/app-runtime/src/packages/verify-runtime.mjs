@@ -1,9 +1,21 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { runtimeFileList, sourcePath } from './source.mjs'
 import { AppProcessSupervisor } from '../process/index.mjs'
+
+function verificationNodeArgs(nodeExecutable, temporary) {
+  const args = ['--permission', `--allow-fs-read=${temporary}`, `--allow-fs-write=${temporary}`,
+    `--allow-fs-read=${fileURLToPath(new URL('../process/bootstrap.mjs', import.meta.url))}`]
+  try {
+    const help = execFileSync(nodeExecutable || process.execPath, ['--help'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    if (help.includes('--allow-net')) args.push('--allow-net=127.0.0.1')
+  } catch {}
+  args.push('--allow-addons')
+  return args
+}
 
 function placeholder(schema) {
   if (schema.default !== undefined) return schema.default
@@ -25,7 +37,7 @@ export async function verifyPackageRuntime(packageRoot, { nodeExecutable, signal
   const supervisor = new AppProcessSupervisor({ onHostRequest: ({ protocol, method }) => {
     if (protocol === 'moss.runtimes/v1' && method === 'python.get') return { available: false, path: null, version: null }
     throw new Error(`Host service is unavailable in package verification: ${protocol}/${method}`)
-  }, onLog: entry => { if (entry.level === 'error') logs.push(entry.message) }, nodeExecutable, nodeArgs: ['--permission', `--allow-fs-read=${temporary}`, `--allow-fs-write=${temporary}`, `--allow-fs-read=${fileURLToPath(new URL('../process/bootstrap.mjs', import.meta.url))}`, '--allow-net=127.0.0.1', '--allow-addons'], processesDir: path.join(temporary, 'processes'), handshakeTimeoutMs: 15000, shutdownTimeoutMs: 1000 })
+  }, onLog: entry => { if (entry.level === 'error') logs.push(entry.message) }, nodeExecutable, nodeArgs: verificationNodeArgs(nodeExecutable, temporary), processesDir: path.join(temporary, 'processes'), handshakeTimeoutMs: 15000, shutdownTimeoutMs: 1000 })
   const abort = () => { void supervisor.shutdown() }
   try {
     for (const file of await runtimeFileList(packageRoot)) {
