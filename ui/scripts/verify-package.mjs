@@ -407,6 +407,12 @@ async function main() {
     requireFile(path.join(paths.resourcesDir, 'packages', 'app-runtime', 'src', 'process', file), 'App process recovery');
   }
   requireFile(path.join(paths.resourcesDir, 'shared', 'security', 'credential-crypto.mjs'), 'credential crypto');
+  requireFile(path.join(paths.resourcesDir, 'shared', 'message-context.mjs'), 'message context');
+  run(paths.executable, ['--input-type=module', '-e',
+    "import { pathToFileURL } from 'node:url'; await Promise.all(process.argv.slice(1).map(file => import(pathToFileURL(file).href)));",
+    ...['session-history-display.mjs', 'session-search-messages.mjs'].map(name =>
+      path.join(paths.resourcesDir, 'app.asar', 'src', 'shared', name)),
+  ], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
   const cronStorePath = requireFile(path.join(paths.resourcesDir, 'shared', 'cron-task-store.mjs'), 'cron task store');
   const cronStore = await import(pathToFileURL(cronStorePath).href);
   const cronTestRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-package-cron-'));
