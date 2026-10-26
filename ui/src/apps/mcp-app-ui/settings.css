@@ -1,7 +1,4 @@
 select { font:inherit; color:var(--foreground); background:var(--card); border:1px solid var(--border); border-radius:7px; padding:9px 11px; }
 .server-settings { display:flex; flex-direction:column; gap:16px; }
 .server-settings+.server-settings { border-top:1px solid var(--border); padding-top:16px; }
-.enable-service { display:flex; align-items:center; gap:8px; font-size:12px; }
-.connection-settings summary { cursor:pointer; font-size:12px; color:var(--muted-foreground); }
-.connection-settings .field { margin-top:12px; }
 .tool-row p { overflow-wrap:anywhere; white-space:pre-wrap; }

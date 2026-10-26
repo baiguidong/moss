@@ -924,6 +924,8 @@ export type StoredApp = {
     version: string;
   };
   hasUi?: boolean;
+  /** Builtin UI identifier, when the Host supplies the page instead of the App package. */
+  uiBuiltin?: string | null;
   hasSettings?: boolean;
   hasBackend?: boolean;
   enabled?: boolean;

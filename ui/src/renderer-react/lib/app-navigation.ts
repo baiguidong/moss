@@ -22,6 +22,10 @@ export type AppSettingsEntry = {
   version: string;
 };
 
+function usesBuiltinMcpUi(app: StoredApp) {
+  return app.uiBuiltin === 'mcp' || (app as StoredApp & { manifest?: { ui?: { builtin?: string } } }).manifest?.ui?.builtin === 'mcp';
+}
+
 export function appPageUnavailableReason(app: StoredApp, ...permissions: Array<string | undefined>) {
   if (!supportsHostFeature('embeddedApps')) return '此 Host 尚未提供 App 页面。';
   if (app.packageStatus === 'incompatible') return '此 App 与当前 Moss 不兼容，请在应用管理中更新版本。';
@@ -42,7 +46,11 @@ export function getAppSettingsEntries(apps: StoredApp[]): AppSettingsEntry[] {
         id: `app:${encodeURIComponent(appId)}/${encodeURIComponent(setting.id)}`,
         appId, appName: app.name, appTitle: app.displayName || app.title || app.name, appIcon: app.icon,
         title: setting.title, group: setting.group || 'apps', viewId: view.id,
-        route: view.route || '#/', order: setting.order || 0,
+        // The Core-hosted MCP page keeps the service workspace at #/ and
+        // exposes its editor from the Host toolbar at a separate route. This
+        // lets the top-level Settings button open the editor instead of
+        // navigating to the same page again.
+        route: usesBuiltinMcpUi(app) ? '#/settings' : view.route || '#/', order: setting.order || 0,
         keywords: app.keywords || [],
         unavailableReason: appPageUnavailableReason(app, setting.permission, view.permission),
         version: app.currentVersion || app.currentVersionId || '',

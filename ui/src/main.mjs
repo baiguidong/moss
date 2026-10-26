@@ -9608,6 +9608,7 @@ async function listAppsForRenderer() {
       discovery: getAppDiscovery({ ...appEntry, discovery: manifest?.discovery }),
       connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connectorRecords.get(manifest.connectorApp.id) || null } : undefined,
       hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
+      uiBuiltin: manifest?.ui?.builtin || appEntry.uiBuiltin || null,
       hasSettings: manifest
         ? Boolean(manifest.ui && manifest.contributes?.settings?.length)
         : Boolean(appEntry.hasSettings),

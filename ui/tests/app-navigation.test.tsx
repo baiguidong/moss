@@ -99,6 +99,10 @@ describe('App navigation projection', () => {
     expect(entries.find(entry => entry.appId === b.id)?.group).toBe('apps');
     expect(getAppPrimaryEntry(a)).toMatchObject({ location: 'settings', route: '#/settings', settingsId: 'app:test.navigation/preferences' });
   });
+  test('Core-hosted MCP Apps expose their editor from the top settings route', () => {
+    const app = stored({ id: 'moss.drawio', name: 'moss.drawio', uiBuiltin: 'mcp' });
+    expect(getAppSettingsEntries([app])[0].route).toBe('#/settings');
+  });
   test('Settings embeds only the selected App and retains navigation and recovery access', () => {
     const props = { settingsDraft: normalizeDesktopSettings({}) as DesktopSettings, setSettingsDraft: () => {}, settingsNotice: '',
       autoSaveSettings: async () => {}, autoSaveImageSettings: async () => {}, themeMode: 'light' as const, setThemeMode: () => {},

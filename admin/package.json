@@ -1,6 +1,6 @@
 {
   "name": "moss-admin",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "private": true,
   "scripts": {
     "dev": "vite --host 0.0.0.0",

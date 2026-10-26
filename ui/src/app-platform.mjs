@@ -178,6 +178,7 @@ function registryEntryFromPublished(published, previous = {}) {
     height: published.height,
     resizable: published.resizable,
     hasUi: Boolean(published.manifest.ui),
+    uiBuiltin: published.manifest.ui?.builtin || null,
     hasSettings: Boolean(published.manifest.contributes?.settings?.length),
     navigation: published.manifest.navigation,
     uiContributes: { views: published.manifest.contributes?.views || [], settings: published.manifest.contributes?.settings || [] },
