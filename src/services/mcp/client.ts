@@ -132,6 +132,11 @@ import { clearKeychainCache } from '../../utils/secureStorage/macOsKeychainHelpe
 import { sleep } from '../../utils/sleep.js'
 import { getSessionIdContext, getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import {
+  McpToolTimeoutError,
+  nextMcpTimeout,
+  waitForMcpElicitation,
+} from './mcpTimeout.js'
+import {
   McpAuthProvider,
   hasMcpDiscoveryButNoToken,
   wrapFetchWithStepUpDetection,
@@ -213,6 +218,9 @@ export function isMcpSessionExpiredError(error: Error): boolean {
  * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
  */
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
+const DEFAULT_MCP_TOOL_FIRST_BYTE_TIMEOUT_MS = 30_000
+const DEFAULT_MCP_TOOL_IDLE_TIMEOUT_MS = 30_000
+const DEFAULT_MCP_ELICITATION_TIMEOUT_MS = 120_000
 
 /**
  * Cap on MCP tool descriptions and server instructions sent to the model.
@@ -229,6 +237,32 @@ function getMcpToolTimeoutMs(): number {
   return (
     parseInt(process.env.MCP_TOOL_TIMEOUT || '', 10) ||
     DEFAULT_MCP_TOOL_TIMEOUT_MS
+  )
+}
+
+function getPositiveTimeout(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function getMcpToolTimeoutPolicy() {
+  return {
+    firstByteTimeoutMs: getPositiveTimeout(
+      'MCP_TOOL_FIRST_BYTE_TIMEOUT',
+      DEFAULT_MCP_TOOL_FIRST_BYTE_TIMEOUT_MS,
+    ),
+    idleProgressTimeoutMs: getPositiveTimeout(
+      'MCP_TOOL_IDLE_TIMEOUT',
+      DEFAULT_MCP_TOOL_IDLE_TIMEOUT_MS,
+    ),
+    maxTotalTimeoutMs: getMcpToolTimeoutMs(),
+  }
+}
+
+function getMcpElicitationTimeoutMs(): number {
+  return getPositiveTimeout(
+    'MCP_ELICITATION_TIMEOUT',
+    DEFAULT_MCP_ELICITATION_TIMEOUT_MS,
   )
 }
 
@@ -2720,18 +2754,15 @@ export async function callMCPToolWithUrlElicitationRetry({
           continue
         }
 
-        // Resolve the URL elicitation via callback (print/SDK mode) or queue (REPL mode).
-        let userResult: ElicitResult
-        if (handleElicitation) {
-          // Print/SDK mode: delegate to structuredIO which sends a control request
-          userResult = await handleElicitation(serverName, elicitation, signal)
-        } else {
-          // REPL mode: queue for ElicitationDialog with two-phase consent/waiting flow
-          const waitingState: ElicitationWaitingState = {
-            actionLabel: 'Retry now',
-            showCancel: true,
-          }
-          userResult = await new Promise<ElicitResult>(resolve => {
+        // Resolve the URL elicitation via callback (print/SDK mode) or queue
+        // for ElicitationDialog (REPL mode), with a bounded wait in both.
+        const elicitationPromise = handleElicitation
+          ? handleElicitation(serverName, elicitation, signal)
+          : new Promise<ElicitResult>(resolve => {
+              const waitingState: ElicitationWaitingState = {
+                actionLabel: 'Retry now',
+                showCancel: true,
+              }
             const onAbort = () => {
               void resolve({ action: 'cancel' })
             }
@@ -2774,7 +2805,24 @@ export async function callMCPToolWithUrlElicitationRetry({
               },
             }))
           })
+
+        const elicitationWait = await waitForMcpElicitation({
+          promise: elicitationPromise,
+          signal,
+          timeoutMs: getMcpElicitationTimeoutMs(),
+        })
+        if (elicitationWait.kind === 'timeout') {
+          return {
+            content:
+              `No response was received for URL elicitation ${elicitationId}. The tool "${tool}" was not retried; do not call it again until the user responds.`,
+          }
         }
+        if (elicitationWait.kind === 'aborted') {
+          return {
+            content: `URL elicitation was cancelled. The tool "${tool}" was not retried.`,
+          }
+        }
+        const userResult = elicitationWait.value
 
         // Run ElicitationResult hooks — they can modify or block the response
         const finalResult = await runElicitationResultHooks(
@@ -2827,6 +2875,43 @@ async function callMCPTool({
 }> {
   const toolStartTime = Date.now()
   let progressInterval: NodeJS.Timeout | undefined
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let timeoutReject: ((error: Error) => void) | undefined
+  const timeoutPolicy = getMcpToolTimeoutPolicy()
+  const timeoutState: { startedAt: number; firstByteAt?: number; lastProgressAt?: number } = {
+    startedAt: toolStartTime,
+  }
+  const callAbortController = new AbortController()
+  const abortCall = () => callAbortController.abort()
+  signal.addEventListener('abort', abortCall, { once: true })
+
+  const armTimeout = () => {
+    if (timeoutId) clearTimeout(timeoutId)
+    const now = Date.now()
+    const next = nextMcpTimeout(timeoutPolicy, timeoutState, now)
+    const delay = Math.max(0, next.at - now)
+    timeoutId = setTimeout(() => {
+      const error = new McpToolTimeoutError(
+        name,
+        tool,
+        next.reason,
+        next.reason === 'total'
+          ? timeoutPolicy.maxTotalTimeoutMs
+          : next.reason === 'first_byte'
+            ? timeoutPolicy.firstByteTimeoutMs
+            : timeoutPolicy.idleProgressTimeoutMs,
+      )
+      timeoutReject?.(error)
+      callAbortController.abort()
+    }, delay)
+  }
+
+  const markProgress = () => {
+    const now = Date.now()
+    timeoutState.firstByteAt ??= now
+    timeoutState.lastProgressAt = now
+    armTimeout()
+  }
 
   try {
     logMCPDebug(name, `Calling MCP tool: ${tool}`)
@@ -2839,7 +2924,7 @@ async function callMCPTool({
         const duration = `${elapsedSeconds}s`
         logMCPDebug(name, `Tool '${tool}' still running (${duration} elapsed)`)
       },
-      30000, // Log every 30 seconds
+      Math.min(timeoutPolicy.idleProgressTimeoutMs, 30000), // Log at most every 30 seconds
       toolStartTime,
       name,
       tool,
@@ -2847,25 +2932,10 @@ async function callMCPTool({
 
     // Use Promise.race with our own timeout to handle cases where SDK's
     // internal timeout doesn't work (e.g., SSE stream breaks mid-request)
-    const timeoutMs = getMcpToolTimeoutMs()
-    let timeoutId: NodeJS.Timeout | undefined
-
+    const timeoutMs = timeoutPolicy.maxTotalTimeoutMs
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        (reject, name, tool, timeoutMs) => {
-          reject(
-            new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
-              `MCP server "${name}" tool "${tool}" timed out after ${Math.floor(timeoutMs / 1000)}s`,
-              'MCP tool timeout',
-            ),
-          )
-        },
-        timeoutMs,
-        reject,
-        name,
-        tool,
-        timeoutMs,
-      )
+      timeoutReject = reject
+      armTimeout()
     })
 
     const result = await Promise.race([
@@ -2877,21 +2947,22 @@ async function callMCPTool({
         },
         CallToolResultSchema,
         {
-          signal,
+          signal: callAbortController.signal,
           timeout: timeoutMs,
-          onprogress: onProgress
-            ? sdkProgress => {
-                onProgress({
-                  type: 'mcp_progress',
-                  status: 'progress',
-                  serverName: name,
-                  toolName: tool,
-                  progress: sdkProgress.progress,
-                  total: sdkProgress.total,
-                  progressMessage: sdkProgress.message,
-                })
-              }
-            : undefined,
+          onprogress: sdkProgress => {
+            markProgress()
+            if (onProgress) {
+              onProgress({
+                type: 'mcp_progress',
+                status: 'progress',
+                serverName: name,
+                toolName: tool,
+                progress: sdkProgress.progress,
+                total: sdkProgress.total,
+                progressMessage: sdkProgress.message,
+              })
+            }
+          },
         },
       ),
       timeoutPromise,
@@ -3021,6 +3092,8 @@ async function callMCPTool({
     if (progressInterval !== undefined) {
       clearInterval(progressInterval)
     }
+    if (timeoutId) clearTimeout(timeoutId)
+    signal.removeEventListener('abort', abortCall)
   }
 }
 
