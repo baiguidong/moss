@@ -507,6 +507,7 @@ async function handleSpawnSplitPane(
     insideTmux,
     backendType: detectionResult.backend.type,
     toolUseId: context.toolUseId,
+    parentId: context.agentId,
   })
 
   // Register agent in the team file
@@ -728,6 +729,7 @@ async function handleSpawnSeparateWindow(
     insideTmux: false,
     backendType: 'tmux',
     toolUseId: context.toolUseId,
+    parentId: context.agentId,
   })
 
   // Register agent in the team file
@@ -802,6 +804,7 @@ function registerOutOfProcessTeammateTask(
     insideTmux,
     backendType,
     toolUseId,
+    parentId,
   }: {
     teammateId: string
     sanitizedName: string
@@ -813,6 +816,7 @@ function registerOutOfProcessTeammateTask(
     insideTmux: boolean
     backendType: BackendType
     toolUseId?: string
+    parentId?: string
   },
 ): void {
   const taskId = generateTaskId('in_process_teammate')
@@ -846,6 +850,7 @@ function registerOutOfProcessTeammateTask(
     lastReportedToolCount: 0,
     lastReportedTokenCount: 0,
     pendingUserMessages: [],
+    ...(parentId ? { parentId } : {}),
   }
 
   registerTask(taskState, setAppState)

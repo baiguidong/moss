@@ -31,6 +31,7 @@ import { getInitialSettings } from '../utils/settings/settings.js'
 import type { SettingsJson } from '../utils/settings/types.js'
 import { shouldEnableThinkingByDefault } from '../utils/thinking.js'
 import type { Store } from './store.js'
+import type { AgentRegistryEntry } from '../utils/task/agentRegistry.js'
 
 export type CompletionBoundary =
   | { type: 'complete'; completedAt: number; outputTokens: number }
@@ -106,6 +107,8 @@ export type AppState = DeepImmutable<{
   // Name → AgentId registry populated by Agent tool when `name` is provided.
   // Latest-wins on collision. Used by SendMessage to route by name.
   agentNameRegistry: Map<string, AgentId>
+  /** Unified lifecycle view for local and in-process agents. */
+  agentRegistry?: Record<string, AgentRegistryEntry>
   // Task ID that has been foregrounded - its messages are shown in main view
   foregroundedTaskId?: string
   // Task ID of in-process teammate whose transcript is being viewed (undefined = leader's view)
@@ -274,6 +277,7 @@ export function getDefaultAppState(): AppState {
     settings: getInitialSettings(),
     tasks: {},
     agentNameRegistry: new Map(),
+    agentRegistry: {},
     verbose: false,
     mainLoopModel: null, // alias, full name (as with --model or env var), or null (default)
     mainLoopModelForSession: null,

@@ -46,6 +46,8 @@ type SetAppStateFn = (updater: (prev: AppState) => AppState) => void
 export type SpawnContext = {
   setAppState: SetAppStateFn
   toolUseId?: string
+  /** Stable parent agent identity for registry nesting and lifecycle views. */
+  agentId?: string
 }
 
 /**
@@ -167,6 +169,7 @@ export async function spawnInProcessTeammate(
       lastReportedTokenCount: 0,
       pendingUserMessages: [],
       messages: [], // Initialize to empty array so getDisplayedMessages works immediately
+      ...(context.agentId ? { parentId: context.agentId } : {}),
     }
 
     // Register cleanup handler for graceful shutdown

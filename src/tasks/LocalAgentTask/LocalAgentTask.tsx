@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { OUTPUT_FILE_TAG, STATUS_TAG, SUMMARY_TAG, TASK_ID_TAG, TASK_NOTIFICATION_TAG, TOOL_USE_ID_TAG, WORKTREE_BRANCH_TAG, WORKTREE_PATH_TAG, WORKTREE_TAG } from '../../constants/xml.js';
 import { abortSpeculation } from '../../services/PromptSuggestion/speculation.js';
 import type { AppState } from '../../state/AppState.js';
-import type { SetAppState, Task, TaskStateBase } from '../../Task.js';
+import type { AgentTaskBudget, SetAppState, Task, TaskStateBase } from '../../Task.js';
 import { createTaskStateBase } from '../../Task.js';
 import type { Tools } from '../../Tool.js';
 import { findToolByName } from '../../Tool.js';
@@ -360,12 +360,16 @@ export function updateAgentProgress(taskId: string, progress: AgentProgress, set
       return task;
     }
     const existingSummary = task.progress?.summary;
+    const budget = task.budget
+      ? { ...task.budget, usedTokens: progress.tokenCount }
+      : undefined;
     return {
       ...task,
       progress: existingSummary ? {
         ...progress,
         summary: existingSummary
-      } : progress
+      } : progress,
+      ...(budget ? { budget } : {}),
     };
   });
 }
@@ -489,7 +493,9 @@ export function registerAsyncAgent({
   setAppState,
   parentAbortController,
   toolAbortController,
-  toolUseId
+  toolUseId,
+  parentId,
+  budget,
 }: {
   agentId: string;
   description: string;
@@ -499,6 +505,8 @@ export function registerAsyncAgent({
   parentAbortController?: AbortController;
   toolAbortController?: AbortController;
   toolUseId?: string;
+  parentId?: string;
+  budget?: AgentTaskBudget;
 }): LocalAgentTaskState {
   void initTaskOutputAsSymlink(agentId, getAgentTranscriptPath(asAgentId(agentId)));
 
@@ -521,7 +529,9 @@ export function registerAsyncAgent({
     // registerAsyncAgent immediately backgrounds
     pendingMessages: [],
     retain: false,
-    diskLoaded: false
+    diskLoaded: false,
+    ...(parentId ? { parentId } : {}),
+    ...(budget ? { budget } : {}),
   };
 
   // Register cleanup handler
@@ -551,7 +561,9 @@ export function registerAgentForeground({
   selectedAgent,
   setAppState,
   autoBackgroundMs,
-  toolUseId
+  toolUseId,
+  parentId,
+  budget,
 }: {
   agentId: string;
   description: string;
@@ -560,6 +572,8 @@ export function registerAgentForeground({
   setAppState: SetAppState;
   autoBackgroundMs?: number;
   toolUseId?: string;
+  parentId?: string;
+  budget?: AgentTaskBudget;
 }): {
   taskId: string;
   backgroundSignal: Promise<void>;
@@ -587,7 +601,9 @@ export function registerAgentForeground({
     // Not yet backgrounded - running in foreground
     pendingMessages: [],
     retain: false,
-    diskLoaded: false
+    diskLoaded: false,
+    ...(parentId ? { parentId } : {}),
+    ...(budget ? { budget } : {}),
   };
 
   // Create background signal promise

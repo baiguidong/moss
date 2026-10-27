@@ -9,6 +9,13 @@ export type TaskType =
   | 'in_process_teammate'
   | 'dream'
 
+export type AgentTaskBudget = {
+  maxTokens?: number
+  maxTurns?: number
+  usedTokens: number
+  usedTurns: number
+}
+
 export type TaskStatus =
   | 'pending'
   | 'running'
@@ -53,6 +60,12 @@ export type TaskStateBase = {
   notified: boolean
   /** Model-facing background task kind. Shell tasks omit this field. */
   kind?: 'shell' | 'monitor'
+  /** Common agent lifecycle metadata used by the Agent Registry. */
+  parentId?: string
+  depth?: number
+  needsInput?: boolean
+  lastHeartbeat?: number
+  budget?: AgentTaskBudget
 }
 
 export type LocalShellSpawnInput = {
@@ -115,5 +128,8 @@ export function createTaskStateBase(
     outputFile: getTaskOutputPath(id),
     outputOffset: 0,
     notified: false,
+    depth: 0,
+    needsInput: false,
+    lastHeartbeat: Date.now(),
   }
 }

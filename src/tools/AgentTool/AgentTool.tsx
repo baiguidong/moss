@@ -767,7 +767,11 @@ export const AgentTool = buildTool({
         // agents can still outlive their parent turn.
         parentAbortController: isCoordinator ? toolUseContext.taskAbortController ?? toolUseContext.abortController : undefined,
         toolAbortController: isCoordinator ? toolUseContext.abortController : undefined,
-        toolUseId: toolUseContext.toolUseId
+        toolUseId: toolUseContext.toolUseId,
+        parentId: toolUseContext.agentId,
+        budget: selectedAgent.maxTurns
+          ? { maxTurns: selectedAgent.maxTurns, usedTokens: 0, usedTurns: 0 }
+          : undefined,
       });
 
       // Register name → agentId for SendMessage routing. Post-registerAsyncAgent
@@ -897,6 +901,10 @@ export const AgentTool = buildTool({
             selectedAgent,
             setAppState: rootSetAppState,
             toolUseId: toolUseContext.toolUseId,
+            parentId: toolUseContext.agentId,
+            budget: selectedAgent.maxTurns
+              ? { maxTurns: selectedAgent.maxTurns, usedTokens: 0, usedTurns: 0 }
+              : undefined,
             autoBackgroundMs: getAutoBackgroundMs() || undefined
           });
           foregroundTaskId = registration.taskId;

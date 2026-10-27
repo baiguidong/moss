@@ -17,6 +17,10 @@ import type { TaskState } from '../../tasks/types.js'
 import { enqueuePendingNotification } from '../messageQueueManager.js'
 import { enqueueSdkEvent } from '../sdkEventQueue.js'
 import { getTaskOutputDelta, getTaskOutputPath } from './diskOutput.js'
+import {
+  assertAgentSpawnAllowed,
+  toAgentRegistryEntry,
+} from './agentRegistry.js'
 
 // Standard polling interval for all tasks
 export const POLL_INTERVAL_MS = 1000
@@ -61,12 +65,22 @@ export function updateTaskState<T extends TaskState>(
       // spread so s.tasks subscribers don't re-render on unchanged state.
       return prev
     }
+    const heartbeated =
+      (updated.type === 'local_agent' || updated.type === 'in_process_teammate') &&
+      updated.status === 'running' &&
+      updated.lastHeartbeat === task.lastHeartbeat
+        ? { ...updated, lastHeartbeat: Date.now() }
+        : updated
+    const registryEntry = toAgentRegistryEntry(heartbeated)
     return {
       ...prev,
       tasks: {
         ...prev.tasks,
-        [taskId]: updated,
+        [taskId]: heartbeated,
       },
+      agentRegistry: registryEntry
+        ? { ...(prev.agentRegistry ?? {}), [taskId]: registryEntry }
+        : prev.agentRegistry,
     }
   })
 }
@@ -84,18 +98,30 @@ export function registerTask(task: TaskState, setAppState: SetAppState): void {
     // the panel sort stable; messages + diskLoaded preserve the viewed
     // transcript across the replace (the user's just-appended prompt lives
     // in messages and isn't on disk yet).
+    let taskToRegister = task
+    if (!existing && (task.type === 'local_agent' || task.type === 'in_process_teammate')) {
+      const depth = assertAgentSpawnAllowed(prev.tasks, { parentId: task.parentId })
+      taskToRegister = { ...task, depth, lastHeartbeat: Date.now() }
+    }
     const merged =
       existing && 'retain' in existing
         ? {
-            ...task,
+            ...taskToRegister,
             retain: existing.retain,
             startTime: existing.startTime,
             messages: existing.messages,
             diskLoaded: existing.diskLoaded,
             pendingMessages: existing.pendingMessages,
           }
-        : task
-    return { ...prev, tasks: { ...prev.tasks, [task.id]: merged } }
+        : taskToRegister
+    const registryEntry = toAgentRegistryEntry(merged)
+    return {
+      ...prev,
+      tasks: { ...prev.tasks, [task.id]: merged },
+      agentRegistry: registryEntry
+        ? { ...(prev.agentRegistry ?? {}), [task.id]: registryEntry }
+        : prev.agentRegistry,
+    }
   })
 
   // Replacement (resume) — not a new start. Skip to avoid double-emit.

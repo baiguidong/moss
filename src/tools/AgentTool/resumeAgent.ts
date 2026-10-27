@@ -294,6 +294,10 @@ export async function resumeAgentBackground({
     parentAbortController: isCoordinatorMode() ? toolUseContext.taskAbortController ?? toolUseContext.abortController : undefined,
     toolAbortController: isCoordinatorMode() ? toolUseContext.abortController : undefined,
     toolUseId: toolUseContext.toolUseId,
+    parentId: toolUseContext.agentId,
+    budget: selectedAgent.maxTurns
+      ? { maxTurns: selectedAgent.maxTurns, usedTokens: 0, usedTurns: 0 }
+      : undefined,
   })
   if (meta?.agentName) {
     rootSetAppState(prev => ({

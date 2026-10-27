@@ -1307,6 +1307,9 @@ export async function runInProcessTeammate(
                 return {
                   ...task,
                   progress,
+                  ...(task.budget
+                    ? { budget: { ...task.budget, usedTokens: progress.tokenCount } }
+                    : {}),
                   messages: appendCappedMessage(task.messages, message),
                   inProgressToolUseIDs,
                 }
