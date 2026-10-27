@@ -15,6 +15,7 @@ function fixture(extra: Record<string, any> = {}) {
     localTranscriptSync: { dispose: () => calls.push('transcript-sync-stop') },
     appTestingHost: { close: async () => { calls.push('testing-close'); } },
     memoryDreamService: { stop: () => {}, waitForIdle: async () => {} },
+    projectMemoryService: { stop: async () => {} },
     computerUseService: { stop: async () => { calls.push('computer-use-stop'); } },
     sessions: new Map([['chat', { id: 'chat' }]]), subAgentSessions: new Map([['child', { id: 'child' }]]),
     hasActiveAgentTeam: () => false, shutdownSessionAgentTeam: async () => true,
@@ -69,19 +70,39 @@ test('a failing component does not skip other cleanup or authorize installation'
 test('shutdown cancels App restoration before closing the runtime', async () => {
   let finish!: () => void;
   const restoration = new Promise<void>(resolve => { finish = resolve; });
+  let aborted!: () => void;
+  const cancellation = new Promise<void>(resolve => { aborted = resolve; });
   const calls: string[] = [];
   const { shutdown, context } = fixture({
-    appRuntimeRestoreController: { abort: () => calls.push('abort-restore') },
+    appRuntimeRestoreController: { abort: () => { calls.push('abort-restore'); aborted(); } },
     appRuntimeRestorePromise: restoration,
     appRuntime: { shutdown: () => { calls.push('runtime-close'); } },
   });
   const pending = shutdown();
+  await cancellation;
   expect(calls).toEqual(['abort-restore']);
   expect(context.appShutdownComplete).toBe(false);
   finish();
   await pending;
   expect(calls).toEqual(['abort-restore', 'runtime-close']);
 });
+for (const component of ['appRuntimeRestorePromise', 'appAuthoring', 'webApps', 'localTranscriptSync']) {
+  test(`shutdown still closes Apps and persists sessions when ${component} fails`, async () => {
+    const failure = new Error(`${component} failed`);
+    const extra = component === 'appRuntimeRestorePromise'
+      ? { appRuntimeRestorePromise: Promise.reject(failure) }
+      : { [component]: { shutdown: () => { throw failure; }, close: () => { throw failure; }, dispose: () => { throw failure; } } };
+    // The restore promise may settle while earlier services are still closing.
+    extra.appRuntimeRestorePromise?.catch(() => {});
+    const { shutdown, calls, context } = fixture(extra);
+    await expect(shutdown()).rejects.toThrow(failure.message);
+    expect(calls).toContain('persist-chat');
+    expect(calls).toContain('persist-child');
+    expect(calls).toContain('apps-close');
+    expect(calls).toContain('artifacts-close');
+    expect(context.appShutdownComplete).toBe(false);
+  });
+}
 test('Windows installation blockers include queued work, teams, terminals, App background work and runtime setup', () => {
   const getBlockers = runInNewContext(source.slice(source.indexOf('function getInstallBlockers()'), source.indexOf('const updateInstallPreparation')) + '\ngetInstallBlockers', {
     sessions: new Map([['session', { busy: true }]]), subAgentSessions: new Map(),
@@ -92,6 +113,7 @@ test('Windows installation blockers include queued work, teams, terminals, App b
     computerUseService: { owner: null, inFlight: false },
     appRuntime: { supervisor: { listStatuses: () => [{ activeWork: 1 }] } }, managedRuntimeInstallPromise: Promise.resolve(),
     memoryDreamService: { getStatus: () => ({ phase: 'idle' }) },
+    projectMemoryService: { isRunning: () => false },
   });
   expect(getBlockers()).toEqual(['会话或后台任务', 'Agent Team', '终端窗口', 'App 操作', '运行时安装']);
 });

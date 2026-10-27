@@ -83,7 +83,7 @@ export function showWebLogin(mode: string, onLogin: (values: Record<string, Form
 }
 
 const connectionLabels: Record<string, string> = {
-  connected: '已连接', connecting: '正在连接…', disconnected: '正在重连…',
+  connected: '已连接 Moss Server', connecting: '正在连接 Moss Server…', disconnected: '正在重连 Moss Server…',
   unauthenticated: '登录已失效', incompatible: '版本已更新', 'environment-changed': '环境已恢复，请刷新',
 };
 
@@ -123,9 +123,7 @@ function WebSessionControls({ status, account, onLogout }: { status: string; acc
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
         <DropdownMenuLabel className="space-y-1 text-xs">
-          <span className="block truncate text-sm font-medium" title={accountName}>{accountName}</span>
-          {account?.userEmail && account.userEmail !== accountName && <span className="block truncate font-normal text-muted-foreground" title={account.userEmail}>{account.userEmail}</span>}
-          <span role="status" className="block font-normal text-muted-foreground">我的云电脑 · {connectionLabels[status] || status}</span>
+          <span role="status" className="block truncate text-sm font-medium" title={accountName}>{accountName}<span className="font-normal text-muted-foreground"> · {connectionLabels[status] || status}</span></span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate('apps')}><LayoutGrid aria-hidden="true" />Apps</DropdownMenuItem>

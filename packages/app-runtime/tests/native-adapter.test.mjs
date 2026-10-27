@@ -68,9 +68,12 @@ test('uninstall stops before deleting files and retains loaded native versions',
     assert.deepEqual(events,['stop']); assert.equal(runtime.installations.get(manifest.id),null);
     if (loaded) {
       await fs.access(installedRoot);
+      await runtime.maintainRetiredPackages();
+      await fs.access(installedRoot);
+      await fs.access(path.join(runtime.runtimeDir, 'retired-native-packages', `${manifest.id}.json`));
       await runtime.shutdown();
       const restarted = new AppRuntimeHost({rootDir:runtime.rootDir});
-      await restarted.initialize();
+      await restarted.initialize({restore:false});
       await assert.rejects(fs.access(installedRoot));
       await restarted.shutdown();
     } else await assert.rejects(fs.access(installedRoot));

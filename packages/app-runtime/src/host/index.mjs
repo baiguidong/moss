@@ -54,6 +54,14 @@ function maskedSecrets(value) {
   return Object.fromEntries(Object.keys(value || {}).map((key) => [key, { configured: true, masked: '********' }]))
 }
 
+async function stopRuntimes(supervisor, runtimes, message = 'App Backend cleanup failed') {
+  const results = await Promise.allSettled(runtimes.map(runtime => supervisor.stop(runtime.key)))
+  const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+  if (errors.length) {
+    throw new AggregateError(errors, `${message}: ${errors.map(error => error?.message || String(error)).join('; ')}`)
+  }
+}
+
 function activityInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some(key => key !== 'id')
@@ -216,15 +224,29 @@ export class AppRuntimeHost {
     })
     this.appTransitions = new Map()
     this.initialized = false
+    this.initializationPromise = null
   }
 
   async initialize({ restore = true } = {}) {
     if (this.initialized) return this
-    await this.state.initialize()
-    await this.appCapabilities.initialize()
-    this.initialized = true
-    if (restore) { await this.ensureOrphanRecovery(); await this.restoreAllOwners() }
-    return this
+    if (this.initializationPromise) return this.initializationPromise
+    const initialization = (async () => {
+      await this.state.initialize()
+      await this.maintainRetiredPackages()
+      await this.appCapabilities.initialize()
+      // Mark the Host initialized only after orphan recovery and restoration
+      // finish.  A transient startup failure must be retryable; setting this
+      // flag earlier made the next initialize() silently skip recovery.
+      if (restore) { await this.ensureOrphanRecovery(); await this.restoreAllOwners() }
+      this.initialized = true
+      return this
+    })()
+    this.initializationPromise = initialization
+    try {
+      return await initialization
+    } finally {
+      if (this.initializationPromise === initialization) this.initializationPromise = null
+    }
   }
 
   async maintainRetiredPackages() {
@@ -232,7 +254,8 @@ export class AppRuntimeHost {
     for (const name of await fsp.readdir(retiredDir).catch(error => { if (error.code === 'ENOENT') return []; throw error })) {
       const appId = name.endsWith('.json') ? name.slice(0, -5) : ''
       if (!/^[a-z][a-z0-9._-]*$/.test(appId)) continue
-      if (!this.installations.listAll().some(item => item.appId === appId) && !this.nativeAdapterHost?.isLoaded(appId)) await this.packages.removeApp(appId)
+      if (this.nativeAdapterHost?.isLoaded(appId)) continue
+      if (!this.installations.listAll().some(item => item.appId === appId)) await this.packages.removeApp(appId)
       await fsp.rm(path.join(retiredDir, name), { force: true })
     }
   }
@@ -414,7 +437,7 @@ export class AppRuntimeHost {
         if (options.enabled !== undefined) {
           await this.installations.upsert(appId, { enabled: Boolean(options.enabled) })
         }
-        await this.activateVersionNow(appId, version, { grants: options.grants })
+        await this.activateVersionNow(appId, version, { grants: options.grants, deferStart: options.deferStart })
       } catch (error) {
         if (options.enabled !== undefined) {
           await this.installations.upsert(appId, { enabled: current.enabled })
@@ -434,7 +457,7 @@ export class AppRuntimeHost {
         // Repeated registration after installation/startup keeps the same owner
         // alive. Only cancel its calls and subscriptions when replacing it.
         this.cancelHostRequests(appId)
-        await Promise.allSettled(runtimeSnapshots.map((item) => this.supervisor.stop(item.key)))
+        await stopRuntimes(this.supervisor, runtimeSnapshots, 'Cannot stop App Backend before changing grants')
       }
       await this.installations.upsert(appId, {
         activeVersion: version,
@@ -445,7 +468,7 @@ export class AppRuntimeHost {
         for (const runtimeRecord of runtimeSnapshots) await this.runtimes.bumpGeneration(runtimeRecord.key)
       }
       await this.ensureDefaultInstance(appId)
-      await this.reconcileApp(appId)
+      if (!options.deferStart) await this.reconcileApp(appId)
       this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return packageInfo
     } catch (error) {
@@ -1386,11 +1409,11 @@ export class AppRuntimeHost {
     this.cancelHostRequests(appId)
     const activeRuntimes = this.runtimes.list(appId)
     const activeInstanceIds = new Set(this.instances.list(appId).map((instance) => instance.id))
-    await Promise.allSettled(activeRuntimes.map((item) => this.supervisor.stop(item.key)))
+    await stopRuntimes(this.supervisor, activeRuntimes, 'Cannot stop App Backend before activating version')
     try {
       await this.installations.upsert(appId, { activeVersion: version, grants: nextGrants })
       for (const runtimeRecord of activeRuntimes) await this.runtimes.bumpGeneration(runtimeRecord.key)
-      await this.reconcileApp(appId)
+      if (!options.deferStart) await this.reconcileApp(appId)
       const app = await this.getApp(appId)
       this.publishRuntimeEvent({ type: 'installation-changed', appId })
       return app
@@ -1439,7 +1462,7 @@ export class AppRuntimeHost {
     await this.installations.upsert(appId, { enabled: false })
     await this.beforeAppDeactivation(appId)
     const runtimes = this.runtimes.list(appId)
-    await Promise.allSettled(runtimes.map((item) => this.supervisor.stop(item.key)))
+    await stopRuntimes(this.supervisor, runtimes, 'Cannot stop App Backend before uninstalling')
     for (const runtimeRecord of runtimes) this.supervisor.unregister(runtimeRecord.key)
     await this.runtimes.removeForApp(appId)
     if (options.deleteData) await this.instances.removeForApp(appId)
@@ -1473,10 +1496,18 @@ export class AppRuntimeHost {
   }
 
   async shutdown() {
-    await this.nativeAdapterHost?.stop('shutdown')
-    this.hostRequests.cancelWhere(() => true)
-    for (const entry of this.uiHostSubscriptions) entry.onClosed?.(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host shut down'))
+    const errors = []
+    const attempt = async operation => {
+      try { await operation() } catch (error) { errors.push(error) }
+    }
+    await attempt(() => this.nativeAdapterHost?.stop('shutdown'))
+    await attempt(() => this.hostRequests.cancelWhere(() => true))
+    const subscriptions = [...this.uiHostSubscriptions]
     this.uiHostSubscriptions.clear()
-    await this.supervisor.shutdown()
+    for (const entry of subscriptions) {
+      await attempt(() => entry.onClosed?.(new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Host shut down')))
+    }
+    await attempt(() => this.supervisor.shutdown())
+    if (errors.length) throw new AggregateError(errors, `App Runtime shutdown failed: ${errors.map(error => error?.message || String(error)).join('; ')}`)
   }
 }

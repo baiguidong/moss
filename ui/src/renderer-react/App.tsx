@@ -519,8 +519,10 @@ export default function App() {
   const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
+  const [serverAuthState, setServerAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
+  const [serverAuthError, setServerAuthError] = React.useState('');
   React.useEffect(() => {
-    if (window.mossWeb || activeView !== 'settings' || !desktopSettings?.remoteDirectServerUrl) {
+    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl || !desktopSettings.remoteDirectApiKey) {
       setServerAccount(null);
       return;
     }
@@ -531,7 +533,7 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [activeView, desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
+  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
@@ -2485,6 +2487,55 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
+  const handleServerLogin = React.useCallback(async () => {
+    const serverUrl = desktopSettings?.remoteDirectServerUrl?.trim() || '';
+    if (!serverUrl) {
+      setSettingsInitialSection('basic-info');
+      setSettingsInitialAppId(null);
+      setActiveView('settings');
+      showPermissionNotice('请先在设置的“Moss Server”中配置服务器地址。', 'info', 5000);
+      return;
+    }
+    if (serverAuthState === 'loading') return;
+    setServerAuthState('loading');
+    setServerAuthError('');
+    try {
+      const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
+      applyDesktopSettings(next);
+      setServerAccount(
+        next.remoteDirectUserName || next.remoteDirectUserEmail
+          ? { userName: next.remoteDirectUserName || '', userEmail: next.remoteDirectUserEmail || '' }
+          : null,
+      );
+      setServerAuthState('success');
+      window.setTimeout(() => setServerAuthState('idle'), 2000);
+    } catch (error) {
+      setServerAuthState('idle');
+      const message = cleanIpcErrorMessage(error);
+      if (message !== '认证已取消。') setServerAuthError(message);
+    }
+  }, [applyDesktopSettings, desktopSettings?.remoteDirectServerUrl, serverAuthState, showPermissionNotice]);
+
+  const handleServerLogout = React.useCallback(async () => {
+    if (serverAuthState === 'loading') return;
+    setServerAuthState('loading');
+    setServerAuthError('');
+    try {
+      const next = await window.agentDesktop.updateSettings({
+        remoteDirectApiKey: '',
+        remoteDirectUserName: '',
+        remoteDirectUserEmail: '',
+        remoteDirectUserPassword: '',
+      });
+      applyDesktopSettings(next);
+      setServerAccount(null);
+      setServerAuthState('idle');
+    } catch (error) {
+      setServerAuthState('idle');
+      setServerAuthError(`退出 Moss Server 失败：${cleanIpcErrorMessage(error)}`);
+    }
+  }, [applyDesktopSettings, serverAuthState]);
+
   React.useEffect(() => {
     if (!desktopSettings || localStorage.getItem('ui.buddyVisibilityMigrated.v1')) return;
     const old = localStorage.getItem('ui.buddyEnabled');
@@ -2662,6 +2713,11 @@ export default function App() {
             localEnabled={desktopSettings?.localEnabled ?? true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
+            serverConfigured={Boolean(desktopSettings?.remoteDirectServerUrl?.trim())}
+            serverAuthState={serverAuthState}
+            serverAuthError={serverAuthError}
+            onLoginServer={handleServerLogin}
+            onLogoutServer={handleServerLogout}
             onChangeView={(view) => {
               if (view === 'settings') { setSettingsInitialSection('basic-info'); setSettingsInitialAppId(null); }
               if (view === 'apps') setAppManagementName(null);

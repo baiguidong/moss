@@ -2,10 +2,16 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/index.mjs'
-import { findMarkedProcesses, hasProcessMarker, readProcessInfo } from './process-info.mjs'
+import {
+  findMarkedProcesses,
+  hasProcessMarker,
+  processTreeExists,
+  readProcessInfo,
+  signalProcessTree,
+  waitForProcessTreeGone,
+} from './process-info.mjs'
 
 const ownerFilePattern = /^[a-f0-9-]{36}\.json$/
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const unavailable = message => new AppServiceError(APP_ERROR_CODES.backendUnavailable, message)
 
 async function removeLease(directory, id) {
@@ -20,15 +26,6 @@ async function removeLease(directory, id) {
   await fs.rmdir(directory).catch(error => {
     if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error
   })
-}
-
-async function sameProcess(info, marker, appId) {
-  const current = await readProcessInfo(info.pid)
-  if (current?.started !== info.started) return false
-  if (!hasProcessMarker(current, marker)) {
-    throw unavailable(`Cannot verify the previous App Backend identity; refusing to start another process: ${appId}`)
-  }
-  return true
 }
 
 export class AppProcessLeases {
@@ -91,6 +88,7 @@ export class AppProcessLeases {
         const temporary = path.join(directory, `${id}.child.tmp`)
         await fs.writeFile(temporary, JSON.stringify({ pid, started: child.started }), { mode: 0o600 })
         await fs.rename(temporary, path.join(directory, `${id}.child.json`))
+        return child
       },
       release: () => removeLease(directory, id),
     }
@@ -149,6 +147,14 @@ export class AppProcessLeases {
     // Do not lose a recorded child if it changes its process title during the
     // scan. Termination must reverify it or fail closed, rather than release.
     if (recordedProcess && !children.some(child => child.pid === recordedProcess.pid)) children.push(recordedProcess)
+    // The Backend can exit after losing its Host while a helper remains in
+    // the detached process group.  Its command line no longer carries the
+    // launch marker, so the process scan cannot find it.  The durable child
+    // identity still pins the group leader PID; recover that group before
+    // releasing the lease instead of silently orphaning the helper.
+    if (!recordedProcess && savedChild && await processTreeExists(savedChild.pid)) {
+      children.push({ pid: savedChild.pid, started: savedChild.started, command: '' })
+    }
     for (const child of children) {
       if (savedChild?.pid === child.pid && savedChild.started !== child.started) {
         throw unavailable(`App Backend process identity changed: ${appId}`)
@@ -161,13 +167,24 @@ export class AppProcessLeases {
 
   async terminateOrphan(child, marker, appId) {
     for (const [signal, timeout] of [['SIGTERM', this.killTimeoutMs], ['SIGKILL', 2_000]]) {
-      if (!await sameProcess(child, marker, appId)) return
-      try { process.kill(child.pid, signal) } catch (error) { if (error.code !== 'ESRCH') throw error }
-      const deadline = Date.now() + timeout
-      do {
-        if (!await sameProcess(child, marker, appId)) return
-        await delay(25)
-      } while (Date.now() < deadline)
+      const current = await readProcessInfo(child.pid)
+      if (!current) {
+        // A detached Backend can have exited while one of its helpers still
+        // occupies the process group.  The group was already identified by
+        // the marked root before this loop, so finish reaping it.  If there is
+        // no group either, the orphan is already gone.
+        if (!processTreeExists(child.pid)) return
+        // The durable lease identifies the detached process group even when
+        // its leader has already exited.  A reused PID would still be caught
+        // by the identity check above whenever a process is present.
+      } else {
+        if (current.started !== child.started) throw unavailable(`App Backend process identity changed: ${appId}`)
+        if (!hasProcessMarker(current, marker)) {
+          throw unavailable(`Cannot verify the previous App Backend identity; refusing to terminate an unverified process: ${appId}`)
+        }
+      }
+      await signalProcessTree(child.pid, signal)
+      if (await waitForProcessTreeGone(child.pid, timeout)) return
     }
     throw unavailable(`Orphaned App Backend did not exit; refusing to start another process: ${appId}`)
   }

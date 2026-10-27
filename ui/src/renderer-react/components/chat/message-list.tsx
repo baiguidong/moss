@@ -388,7 +388,7 @@ function formatLoadingTokens(n: number) {
   return String(n);
 }
 
-function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; tokens?: number }) {
+function LoadingIndicator({ startTime, tokens = 0, label = "正在处理" }: { startTime?: number; tokens?: number; label?: string }) {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     if (startTime == null) return;
@@ -408,7 +408,7 @@ function LoadingIndicator({ startTime, tokens = 0 }: { startTime?: number; token
       />
       <div className="assistant-message-body text-sm text-muted-foreground">
         <div className="flex min-h-7 items-center gap-2">
-          <span role="status">working...</span>
+          <span role="status">{label}</span>
           {meta.length > 0 && (
             <span className="tabular-nums text-xs text-muted-foreground/70">{meta.join(" · ")}</span>
           )}
@@ -506,6 +506,7 @@ type VirtualListContext = {
   loading?: boolean;
   loadingStartTime?: number;
   loadingTokens?: number;
+  loadingLabel?: string;
   contentClassName?: string;
 };
 
@@ -520,7 +521,7 @@ function VirtuosoFooter({ context }: { context?: VirtualListContext }) {
       context?.contentClassName ?? "max-w-[1180px] px-3 sm:px-4",
     )}>
       {context?.loading && (
-        <LoadingIndicator startTime={context.loadingStartTime} tokens={context.loadingTokens} />
+        <LoadingIndicator startTime={context.loadingStartTime} tokens={context.loadingTokens} label={context.loadingLabel} />
       )}
       {context?.footer}
     </div>
@@ -568,6 +569,7 @@ export const VirtualMessageList = React.forwardRef<
     loading?: boolean;
     loadingStartTime?: number;
     loadingTokens?: number;
+    loadingLabel?: string;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     onAtTopChange?: (atTop: boolean) => void;
@@ -586,6 +588,7 @@ export const VirtualMessageList = React.forwardRef<
     loading,
     loadingStartTime,
     loadingTokens,
+    loadingLabel,
     footer,
     emptyState,
     onAtTopChange,
@@ -777,7 +780,7 @@ export const VirtualMessageList = React.forwardRef<
               暂无消息
             </div>
           )}
-          {loading && <LoadingIndicator startTime={loadingStartTime} tokens={loadingTokens} />}
+          {loading && <LoadingIndicator startTime={loadingStartTime} tokens={loadingTokens} label={loadingLabel} />}
           {footer}
         </div>
       </WorkspacePathProvider>
@@ -799,6 +802,7 @@ export const VirtualMessageList = React.forwardRef<
           loading,
           loadingStartTime,
           loadingTokens,
+          loadingLabel,
           contentClassName: resolvedContentClassName,
         }}
         // Virtuoso's resize-follow path checks the prop itself against false;
@@ -895,6 +899,7 @@ export const MessageListPane = React.forwardRef<
     loading?: boolean;
     loadingStartTime?: number;
     loadingTokens?: number;
+    loadingLabel?: string;
     footer?: React.ReactNode;
     emptyState?: React.ReactNode;
     focusedToolUseId?: string;
@@ -989,6 +994,7 @@ export function MessageList({
   emptyState,
   workspace,
   loading,
+  loadingLabel,
   sessionId,
   agentMode,
 }: {
@@ -997,6 +1003,7 @@ export function MessageList({
   emptyState?: React.ReactNode;
   workspace?: string;
   loading?: boolean;
+  loadingLabel?: string;
   sessionId?: string;
   agentMode?: 'local' | 'remote-direct';
 }) {
@@ -1032,7 +1039,7 @@ export function MessageList({
         )
       )}
 
-      {loading && <LoadingIndicator />}
+      {loading && <LoadingIndicator label={loadingLabel} />}
 
       {bottomRef ? <div ref={bottomRef} /> : null}
     </div>

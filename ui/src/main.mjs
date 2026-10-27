@@ -59,7 +59,10 @@ import { createWebApps } from './web/apps.mjs';
 import { createWebOAuth } from './web/oauth.mjs';
 import { createWebTerminals } from './web/terminal.mjs';
 import { createOfflineAwareFetch } from './remote-network-fetch.mjs';
+import { registerProcessOutputErrorHandlers } from './process-output.mjs';
+import { closeWindowBeforeQuit } from './desktop-quit.mjs';
 const { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences, Menu, protocol, webContents, powerMonitor } = electron;
+registerProcessOutputErrorHandlers();
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -564,6 +567,8 @@ let connectorAppHost = null;
 let appAuthoring = null;
 let appMcpHost = null;
 let cloudStorageHost = null;
+let appQuitting = false;
+let appQuitPending = false;
 let appShutdownComplete = false;
 let agentTeamsService = null;
 let desktopShutdownPromise = null;
@@ -592,7 +597,7 @@ const REMOTE_DIRECT_TLS_RESTART_MESSAGE = '新证书已接受并保存。请完�
 
 if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (appQuitting || !mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
@@ -3788,8 +3793,16 @@ function getBootStatus() {
 
 function emitToRenderer(channel, payload) {
   ipcMain.publish(channel, payload);
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(channel, payload);
+  if (appQuitting || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  try {
+    if (mainWindow.webContents.mainFrame.isDestroyed()) return;
+    mainWindow.webContents.send(channel, payload);
+  } catch (error) {
+    // The renderer can be destroyed between the checks above and send().
+    // Treat that as a normal lifecycle race; a late event must not crash the
+    // desktop process while it is closing.
+    mossLog('debug', 'app', 'Renderer unavailable while publishing event', { channel, error: error?.message || String(error) });
+  }
 }
 
 function emitSessionMeta(sessionRecord) {
@@ -6445,6 +6458,7 @@ function createPreviewWindow() {
 }
 
 async function openPreviewWindow(data) {
+  assertUpdateWorkAllowed();
   if (data && !data.file) data = { ...data, metadata: { ...data.metadata, artifactId: data.metadata?.artifactId || randomUUID() } };
   if (data?.file?.metadata?.sessionId) data = { ...data, file: { ...data.file, metadata: { ...data.file.metadata, takeOwnership: true } } };
   const target = createPreviewWindow();
@@ -7143,6 +7157,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ])),
     },
     onEvent: (event) => {
+      // Shutdown still emits status events after renderer frames start closing.
+      // Service cleanup is handled by shutdownDesktop; UI refreshes must stop.
+      if (appQuitting) return;
       if (event.type === 'status' && ['stopping', 'stopped', 'failed', 'crashed', 'crash_loop'].includes(event.state)) {
         void appTestingHost.deactivate(event.appId, event.instanceId).catch(error => mossLog('error', 'app-testing', error.message));
       }
@@ -7351,7 +7368,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       // Restore has already verified current installations. Registering them
       // again queues one full MCP catalog refresh per App.
       if (appRuntime.getInstallation(installed.id)?.activeVersion === installed.currentVersion) continue;
-      await appRuntime.registerInstalled(installed.id, installed.currentVersion).catch((error) => {
+      // Registration during startup must only restore durable state. Defer
+      // Backend process starts to restoreBackground so an aborted startup
+      // cannot launch a persistent App after shutdown has begun.
+      await appRuntime.registerInstalled(installed.id, installed.currentVersion, { deferStart: true }).catch((error) => {
         mossLog('error', 'app-runtime', 'Unable to register installed App', {
           appId: installed.id,
           error: error.message || String(error),
@@ -7359,8 +7379,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       });
     }
   };
-  const refreshRestoredAppServices = async (storedApps = listAllStoredApps()) => {
+  const refreshRestoredAppServices = async (storedApps = listAllStoredApps(), signal) => {
+    if (signal?.aborted) return;
     await appMcpHost.refresh().catch(error => mossLog('error', 'mcp', 'Unable to load App MCP registry', { error: error.message }));
+    if (signal?.aborted) return;
     const storedById = new Map(storedApps.map(stored => [stored.id, stored]));
     for (const installation of appRuntime.installations.list().filter((entry) => entry.enabled && !webAutomationsPaused
       && (!storedById.has(entry.appId) || !storedById.get(entry.appId)?.manifest
@@ -7370,6 +7392,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
     }
     for (const stored of storedApps) {
+      if (signal?.aborted) return;
       if (!stored.connectorApp && !stored.manifest?.connectorApp) continue;
       await connectorAppHost.refresh(stored.id, { connectorApp: stored.connectorApp || stored.manifest?.connectorApp });
     }
@@ -7516,7 +7539,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   } else {
     terminalManager = registerTerminalIpc({
     ipcMain, app, BrowserWindow,
-    canOpen: (sender) => !updateInstallPreparation.isPreparing() && sender === mainWindow?.webContents,
+    canOpen: (sender) => !appQuitting && !appQuitPending && !updateInstallPreparation.isPreparing() && sender === mainWindow?.webContents,
     preloadPath: path.join(__dirname, 'terminal-preload.mjs'),
     rendererHtml,
     rendererDevServerUrl,
@@ -7639,8 +7662,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (skipMissed) await skipMissedMossCronTasks();
         webAutomationsPaused = false;
         appRuntimeRestoreController = new AbortController();
-        appRuntimeRestorePromise = appRuntime?.restore({ signal: appRuntimeRestoreController.signal, concurrency: 3 });
-        await appRuntimeRestorePromise; initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
+        const resumeSignal = appRuntimeRestoreController.signal;
+        appRuntimeRestorePromise = appRuntime?.restore({ signal: resumeSignal, concurrency: 3 });
+        await appRuntimeRestorePromise;
+        if (resumeSignal.aborted) return;
+        initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
       },
       registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides, oauth: webOAuth, resources: webResources, apps: webApps,
       onDisconnect: connectionId => webTerminals?.disconnect(connectionId),
@@ -7667,10 +7693,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (webRestoreSignal.aborted) return;
       appRuntimeRestorePromise = (async () => {
         await registerStoredApps(webRestoreSignal);
+        if (webRestoreSignal.aborted) return;
         await appRuntime.restoreBackground({ signal: webRestoreSignal, concurrency: 3 });
         if (webRestoreSignal.aborted) return;
         await appExecutionHost.recoverPending();
-        await refreshRestoredAppServices();
+        if (webRestoreSignal.aborted) return;
+        await refreshRestoredAppServices(undefined, webRestoreSignal);
+        if (webRestoreSignal.aborted) return;
         if (!webAutomationsPaused) {
           initializeAgentMail();
           startMossCronScheduler();
@@ -7699,6 +7728,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           .filter(stored => stored.manifest && !stored.manifest.backend && stored.currentVersion)
           .map(stored => [stored.id, stored.currentVersion]));
         await registerStoredApps(restoreSignal);
+        if (restoreSignal.aborted) return;
         await appRuntime.restoreBackground({
           signal: restoreSignal,
           concurrency: 3,
@@ -7708,7 +7738,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         await appExecutionHost.recoverPending();
         if (restoreSignal.aborted) return;
         const registeredAt = Date.now();
-        await refreshRestoredAppServices(startupApps);
+        await refreshRestoredAppServices(startupApps, restoreSignal);
+        if (restoreSignal.aborted) return;
         if (!webAutomationsPaused) {
           initializeAgentMail();
           startMossCronScheduler();
@@ -7742,7 +7773,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
 
   app.on('activate', () => {
-    if (isWebHost) return;
+    if (isWebHost || appQuitting || appQuitPending) return;
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
       mossLog('info', 'app', 'Main window recreated on activate');
@@ -7775,6 +7806,7 @@ function getInstallBlockers() {
 
 const updateInstallPreparation = createUpdateInstallPreparation({ getBlockers: getInstallBlockers, shutdown: shutdownDesktop });
 function assertUpdateWorkAllowed() {
+  if (appQuitting || appQuitPending) throw new Error('Moss 正在退出，无法开始新的操作。');
   webServer?.assertWorkAllowed();
   if (updateInstallPreparation.isPreparing()) throw new Error('正在准备安装更新，请完成安装或退出后重新打开 Moss。');
 }
@@ -7782,19 +7814,19 @@ function assertUpdateWorkAllowed() {
 function shutdownDesktop() {
   if (appShutdownComplete) return Promise.resolve();
   if (desktopShutdownPromise) return desktopShutdownPromise;
-  sessionRuntimePool.stop();
-  appRuntimeRestoreController?.abort();
-  stopMossCronScheduler();
-  localTranscriptSync.dispose();
   desktopShutdownPromise = (async () => {
     const errors = [];
     const attempt = async (operation) => {
       try { await operation(); } catch (error) { errors.push(error); }
     };
+    await attempt(() => sessionRuntimePool.stop());
+    await attempt(() => appRuntimeRestoreController?.abort());
+    await attempt(() => stopMossCronScheduler());
+    await attempt(() => localTranscriptSync.dispose());
     await attempt(() => webTerminals?.close());
-    webInteractions?.close();
-    webApps?.close();
-    webOAuth?.close();
+    await attempt(() => webInteractions?.close());
+    await attempt(() => webApps?.close());
+    await attempt(() => webOAuth?.close());
     await attempt(() => hostConfirmations?.close());
     await attempt(() => appTestingHost.close());
     await attempt(async () => { memoryDreamService.stop(); await memoryDreamService.waitForIdle(); });
@@ -7820,7 +7852,9 @@ function shutdownDesktop() {
     ));
     await attempt(() => Promise.all([...pendingRuntimeDisposals]));
     await attempt(async () => { await cloudStorageHost?.close(); cloudStorageHost = null; });
-    await attempt(async () => { await appRuntimeRestorePromise; await appAuthoring?.shutdown(); await appRuntime?.shutdown(); appRuntime = null; });
+    await attempt(() => appRuntimeRestorePromise);
+    await attempt(() => appAuthoring?.shutdown());
+    await attempt(async () => { await appRuntime?.shutdown(); appRuntime = null; });
     await attempt(() => appArtifacts.close());
     void fsp.rm(REMOTE_PREVIEW_CACHE_DIR, { recursive: true, force: true }).catch(() => {});
     await attempt(() => webServer?.close());
@@ -7831,7 +7865,7 @@ function shutdownDesktop() {
 }
 
 app.on('window-all-closed', () => {
-  if (isWebHost) return;
+  if (isWebHost || appQuitting || appQuitPending) return;
   if (selfTestTarget) { app.quit(); return; }
   void computerUseService.stop('window-closed').catch(() => {});
   if (process.platform !== 'darwin') {
@@ -7855,14 +7889,36 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
-  if (appShutdownComplete) return;
+  if (appShutdownComplete) { appQuitting = true; return; }
   event.preventDefault();
-  void shutdownDesktop().catch(error => {
-    mossLog('error', 'app', 'Desktop shutdown failed', { error: error?.message || String(error) });
-  }).finally(() => {
+  if (appQuitting || appQuitPending) return;
+  appQuitPending = true;
+  void (async () => {
+    // A dirty preview can veto closing. Keep the main window and services alive
+    // until it has closed, so the user can save and retry quitting.
+    if (!isWebHost && previewWindow && !previewWindow.isDestroyed()) {
+      const preview = previewWindow;
+      if (!await closeWindowBeforeQuit(preview)) {
+        if (!preview.isDestroyed()) { preview.show(); preview.focus(); }
+        return;
+      }
+    }
+    appQuitting = true;
+    try {
+      await shutdownDesktop();
+    } catch (error) {
+      // Keep the process alive when a Backend or another service could not be
+      // stopped. The next quit attempt can retry cleanup while its lease and
+      // process record remain available for recovery.
+      mossLog('error', 'app', 'Desktop shutdown failed', { error: error?.message || String(error) });
+      appQuitting = false;
+      return;
+    }
     appShutdownComplete = true;
     app.quit();
-  });
+  })().catch(error => {
+    mossLog('error', 'app', 'Unable to close preview before quitting', { error: error?.message || String(error) });
+  }).finally(() => { appQuitPending = false; });
 });
 
 ipcMain.handle('agent:get-status', () => getBootStatus());

@@ -39,7 +39,7 @@ function setup() {
     ({open: openPreviewWindow, ready: markPreviewWindowReady, sync: syncPreviewWindow, close: closePreviewWindow});
   `, {
     BrowserWindow: FakeWindow, path, randomUUID: () => 'test-artifact', previewOwnership: { releaseSender: async () => {} }, __dirname: '/ui/src', rendererDevServerUrl: null,
-    rendererHtml: '/ui/dist/renderer/index.html', hasFile: () => true, mossLog: () => {},
+    rendererHtml: '/ui/dist/renderer/index.html', hasFile: () => true, mossLog: () => {}, assertUpdateWorkAllowed: () => {},
   });
   return { api, windows };
 }

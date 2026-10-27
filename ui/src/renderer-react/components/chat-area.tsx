@@ -80,6 +80,7 @@ import { QueuedMessages } from '@/components/chat/queued-messages';
 import { pasteService } from "@/lib/paste-service";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import type { TranscriptRenderMessage } from "@/lib/agent-transcript";
+import { deriveAgentActivity } from "@/lib/agent-activity";
 import type {
   AgentTeamsSessionState,
   AskUserQuestionAnnotations,
@@ -2145,29 +2146,6 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
   );
 }
 
-function deriveComposerActivity(
-  messages: TranscriptRenderMessage[],
-  loading: boolean,
-) {
-  if (!loading) return null;
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const m = messages[i];
-    if (m.type === "user_text") break;
-    if (m.type === "tool_use" && (m.status === "running" || m.status === "pending")) {
-      return { label: `正在执行 ${m.displayName || m.toolName}`, kind: "tool" as const };
-    }
-    if (m.type === "thinking" && m.streaming) {
-      const lines = m.content.trim().split("\n").filter(Boolean);
-      const tail = lines[lines.length - 1] ?? "";
-      return { label: tail.length > 64 ? `…${tail.slice(-64)}` : tail || "思考中", kind: "thinking" as const };
-    }
-    if (m.type === "assistant_text" && m.streaming) {
-      return { label: "正在输出回复", kind: "text" as const };
-    }
-  }
-  return { label: "working...", kind: "working" as const };
-}
-
 function ActivityStrip({
   label,
   startTime,
@@ -2579,9 +2557,19 @@ export function ChatArea({
     ? (busyStartedAt ?? fallbackBusyStartRef.current?.startedAt)
     : undefined;
   const composerActivity = React.useMemo(
-    () => deriveComposerActivity(messages, loading),
-    [messages, loading],
+    () => deriveAgentActivity(messages, loading, {
+      toolPermissionRequest,
+      questionRequest,
+      pendingPlanApproval: Boolean(pendingPlanApproval),
+    }),
+    [messages, loading, pendingPlanApproval, questionRequest, toolPermissionRequest],
   );
+  const activityStartTime = loadingStartTime
+    ?? (composerActivity?.kind === "waiting"
+      ? (toolPermissionRequest?.requestedAt
+        ?? questionRequest?.requestedAt
+        ?? pendingPlanApproval?.requestedAt)
+      : undefined);
   const conversationRequest = toolPermissionRequest && onSubmitToolPermission && onRejectToolPermission ? (
               <ToolPermissionCard
                 request={toolPermissionRequest}
@@ -2752,6 +2740,7 @@ export function ChatArea({
             loading={loading && !toolPermissionRequest && !questionRequest}
             loadingStartTime={loadingStartTime}
             loadingTokens={turnTokens}
+            loadingLabel={composerActivity?.label}
             focusedToolUseId={focusedToolUseId}
             contentClassName={MAIN_CHAT_CONTENT_CLASS_NAME}
             latestMessageActions={onForkSession ? (
@@ -2777,8 +2766,8 @@ export function ChatArea({
           {backgroundTasks && backgroundTasks.some((task) => task.appId !== "moss.workflow" && !appWorkbench.appIds.has(task.appId || "")) && (
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.appId !== "moss.workflow" && !appWorkbench.appIds.has(task.appId || ""))} />
           )}
-          {loading && composerActivity && loadingStartTime != null && (
-            <ActivityStrip label={composerActivity.label} startTime={loadingStartTime} tokens={turnTokens} />
+          {composerActivity && activityStartTime != null && (
+            <ActivityStrip label={composerActivity.label} startTime={activityStartTime} tokens={turnTokens} />
           )}
           <QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} />
           {sessionId && <SessionInteractions key={sessionId} sessionId={sessionId} items={interactions} busy={loading} onRestore={item => onRestoreInteraction ? onRestoreInteraction(item) : onChange(value ? `${value}\n\n${item.prompt}` : item.prompt)} />}

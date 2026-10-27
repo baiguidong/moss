@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { ChevronDown, ShieldCheck } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 

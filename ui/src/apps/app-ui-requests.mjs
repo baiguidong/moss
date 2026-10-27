@@ -2,6 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { defaultInstanceId } from '../../../packages/app-runtime/src/state/index.mjs'
 import { APP_ERROR_CODES, AppServiceError, serializeError } from '../../../packages/app-sdk/src/protocol/index.mjs'
 
+function createSubscriptionLifetime(controller, remove) {
+  let unsubscribe
+  const cleanup = () => {
+    const off = unsubscribe
+    unsubscribe = undefined
+    try { off?.() } finally { remove() }
+  }
+  controller.signal.addEventListener('abort', cleanup, { once: true })
+  return {
+    attach(off) { unsubscribe = off; if (controller.signal.aborted) cleanup() },
+    close() { controller.abort(); cleanup() },
+  }
+}
+
 /** Each renderer owns its request ids; trusted Main binds the App and default instance. */
 export function registerAppUiRequests({ ipc, cancelIpc = ipc, getState, invocation = () => undefined, beginRequest = () => () => {} }) {
   const senders = new Map()
@@ -63,26 +77,31 @@ export function registerAppUiRequests({ ipc, cancelIpc = ipc, getState, invocati
   }
   ipc.handle('app-ui:host:subscribe', async (event, input = {}) => {
     let close = () => {}
+    let endRequest = () => {}
     try {
+      endRequest = beginRequest()
       const state = getState(event.sender), { subscriptionId, protocol, name } = input
       if (typeof subscriptionId !== 'string' || !subscriptionId || subscriptionId.length > 128) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid subscription id')
       const group = groupFor(event.sender), key = `subscription:${subscriptionId}`
       if (group.has(key)) throw new AppServiceError(APP_ERROR_CODES.conflict, 'Duplicate subscription')
       if (group.size >= 64) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many subscriptions')
       const controller = new AbortController()
-      let unsubscribe = () => {}
-      close = () => { controller.abort(); unsubscribe(); group.delete(key) }
-      controller.signal.addEventListener('abort', () => { unsubscribe(); group.delete(key) }, { once: true })
+      const subscription = createSubscriptionLifetime(controller, () => {
+        if (group.get(key) === controller) group.delete(key)
+      })
+      close = subscription.close
       group.set(key, controller)
-      unsubscribe = await state.runtime.subscribeHostEvent(state.id, defaultInstanceId(state.id), protocol, name,
+      subscription.attach(await state.runtime.subscribeHostEvent(state.id, defaultInstanceId(state.id), protocol, name,
         (data, context) => { if (!controller.signal.aborted) event.sender.send('app-ui:host:event', { subscriptionId, data, context }) },
         { signal: controller.signal, onClosed: error => {
-          if (!event.sender.isDestroyed?.()) event.sender.send('app-ui:host:event', { subscriptionId, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) })
+          if (controller.signal.aborted) return
           close()
-        } })
-      if (controller.signal.aborted) { unsubscribe(); throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled') }
+          if (!event.sender.isDestroyed?.()) event.sender.send('app-ui:host:event', { subscriptionId, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) })
+        } }))
+      if (controller.signal.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled')
       return { ok: true, result: { subscriptionId } }
     } catch (error) { close(); return { ok: false, error: serializeError(error, APP_ERROR_CODES.hostUnavailable) } }
+    finally { endRequest() }
   })
   cancelIpc.handle('app-ui:host:unsubscribe', (event, { subscriptionId } = {}) => {
     getState(event.sender)
@@ -114,25 +133,32 @@ export function createAppUiRequestScope({ getState, sourceId, send, invocation =
         if (requests.has(key) || requests.size >= 64) throw new AppServiceError(APP_ERROR_CODES.resourceExhausted, 'Too many or duplicate requests');
         const controller = new AbortController(); requests.set(key, controller);
         const options = { requestId: randomUUID(), timeoutMs: input.timeoutMs, signal: controller.signal, sourceId, invocation: invocation(state) };
-        let subscribed = false;
+        let subscribed = false, lifetime;
         try {
           const instanceId = defaultInstanceId(state.id);
           let result;
           if (method === 'app-ui:actions:invoke') result = await state.runtime.invoke(state.id, instanceId, input.name, input.input, options);
           else if (method === 'app-ui:host:request') result = await state.runtime.requestHostCapability(state.id, instanceId, input.protocol, input.method, input.input ?? {}, options);
           else if (method === 'app-ui:host:subscribe') {
-            let off = () => {};
-            const close = () => { controller.abort(); off(); requests.delete(key); };
-            controller.signal.addEventListener('abort', () => { off(); requests.delete(key); }, { once: true });
-            off = await state.runtime.subscribeHostEvent(state.id, instanceId, input.protocol, input.name,
+            lifetime = createSubscriptionLifetime(controller, () => {
+              if (requests.get(key) === controller) requests.delete(key);
+            });
+            lifetime.attach(await state.runtime.subscribeHostEvent(state.id, instanceId, input.protocol, input.name,
               (data, context) => { if (!controller.signal.aborted) send('app-ui:host:event', { subscriptionId: id, data, context }); },
-              { ...options, onClosed: error => { send('app-ui:host:event', { subscriptionId: id, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) }); close(); } });
-            if (controller.signal.aborted) { off(); throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled'); }
+              { ...options, onClosed: error => {
+                if (controller.signal.aborted) return;
+                lifetime.close();
+                send('app-ui:host:event', { subscriptionId: id, closed: true, error: serializeError(error, APP_ERROR_CODES.actionCanceled) });
+              } }));
+            if (controller.signal.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Subscription cancelled');
             subscribed = true; result = { subscriptionId: id };
           } else throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Unsupported App request');
           if (controller.signal.aborted) throw new AppServiceError(APP_ERROR_CODES.actionCanceled, 'Request cancelled');
           return { ok: true, result };
-        } finally { if (!subscribed || controller.signal.aborted) requests.delete(key); }
+        } finally {
+          if (!subscribed) lifetime?.close();
+          if ((!subscribed || controller.signal.aborted) && requests.get(key) === controller) requests.delete(key);
+        }
       } catch (error) { return { ok: false, error: serializeError(error, APP_ERROR_CODES.hostUnavailable) }; }
     },
   };

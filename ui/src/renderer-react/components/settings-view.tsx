@@ -21,6 +21,7 @@ import {
   Save,
   Search,
   SlidersHorizontal,
+  Sparkles,
   SunMedium,
   Trash2,
   TriangleAlert,
@@ -52,7 +53,7 @@ import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'agents' | 'tools' | 'advanced' | 'apps';
+type NavigationGroupId = 'basic' | 'ai' | 'agents' | 'tools' | 'memory' | 'advanced' | 'apps';
 type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
@@ -215,99 +216,49 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
 
 const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
   {
-    id: 'basic',
-    title: '通用',
-    icon: Monitor,
-    iconGradientClassName: 'from-sky-400 to-blue-600',
+    id: 'basic', title: '通用', icon: Monitor, iconGradientClassName: 'from-sky-400 to-blue-600',
     keywords: ['通用', 'general', '基础', '基本', '常规', '外观'],
     sections: [
-      {
-        id: 'basic-info',
-        title: '基本信息',
-        keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'],
-      },
-      {
-        id: 'model',
-        title: '模型',
-        keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', 'thinking', '思考模式', '测试'],
-      },
-      {
-        id: 'web-search',
-        title: '网页搜索',
-        keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'],
-      },
-      {
-        id: 'appearance',
-        title: '外观',
-        keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距', 'AI', '回复', '边框', '图标', '头像', 'border', 'avatar'],
-      },
+      { id: 'basic-info', title: '基本信息', keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'] },
+      { id: 'appearance', title: '外观', keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距', 'AI', '回复', '边框', '图标', '头像', 'border', 'avatar'] },
     ],
   },
   {
-    id: 'agents',
-    title: 'Agents',
-    icon: Bot,
-    iconGradientClassName: 'from-indigo-400 to-violet-600',
+    id: 'ai', title: '模型与搜索', icon: Sparkles, iconGradientClassName: 'from-amber-400 to-orange-600',
+    keywords: ['模型', '搜索', 'model', 'web search', 'ai', 'provider', 'api', 'key', 'thinking', '思考'],
+    sections: [
+      { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', 'thinking', '思考模式', '测试'] },
+      { id: 'web-search', title: '网页搜索', keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'] },
+    ],
+  },
+  {
+    id: 'agents', title: 'Agents', icon: Bot, iconGradientClassName: 'from-indigo-400 to-violet-600',
     keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证'],
     sections: [
-      {
-        id: 'agents',
-        title: 'Agents',
-        keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用'],
-      },
+      { id: 'agents', title: 'Agents', keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用'] },
+      { id: 'agent-execution', title: 'Agent 与执行', keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', '回收', '空闲', '运行时', '进程', 'mcp'] },
     ],
   },
   {
-    id: 'tools',
-    title: '工具',
-    icon: Wrench,
-    iconGradientClassName: 'from-cyan-400 to-blue-600',
-    keywords: ['工具', 'tool', '常驻', '按需', '加载'],
+    id: 'tools', title: '工具与性能', icon: Wrench, iconGradientClassName: 'from-cyan-400 to-blue-600',
+    keywords: ['工具', 'tool', 'performance', '权限', 'permission', 'streaming', '结果', 'mcp', 'read'],
     sections: [
-      {
-        id: 'tools',
-        title: '工具',
-        keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'],
-      },
+      { id: 'tools', title: '工具', keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
+      { id: 'permission', title: '权限', keywords: ['permission', 'allow', '权限确认', 'bypass', 'bash', 'ast', '命令解析'] },
+      { id: 'tool-performance', title: '工具与性能', keywords: ['tool', 'performance', 'streaming', 'fallback', '禁止失败恢复', '流式工具执行', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'] },
     ],
   },
   {
-    id: 'advanced',
-    title: '高级设置',
-    icon: SlidersHorizontal,
-    iconGradientClassName: 'from-violet-400 to-fuchsia-600',
-    keywords: ['高级', 'advanced'],
+    id: 'memory', title: '记忆与上下文', icon: Bot, iconGradientClassName: 'from-emerald-400 to-teal-600',
+    keywords: ['memory', '记忆', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'],
+    sections: [{ id: 'memory', title: '记忆与上下文', keywords: ['memory', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'] }],
+  },
+  {
+    id: 'advanced', title: '系统与服务', icon: SlidersHorizontal, iconGradientClassName: 'from-violet-400 to-fuchsia-600',
+    keywords: ['高级', 'advanced', 'prompt', '系统提示', 'service', '服务', 'skillhub', 'expert'],
     sections: [
-      {
-        id: 'permission',
-        title: '权限',
-        keywords: ['permission', 'allow', '权限确认', 'bypass', 'bash', 'ast', '命令解析'],
-      },
-      {
-        id: 'memory',
-        title: '记忆',
-        keywords: ['memory', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'],
-      },
-      {
-        id: 'agent-execution',
-        title: 'Agent 与执行',
-        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', '回收', '空闲', '运行时', '进程', 'mcp'],
-      },
-      {
-        id: 'tool-performance',
-        title: '工具与性能',
-        keywords: ['tool', 'performance', 'streaming', 'fallback', '禁止失败恢复', '流式工具执行', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'],
-      },
-      {
-        id: 'prompt',
-        title: '系统提示',
-        keywords: ['prompt', '系统提示', 'append', 'instruction', '归因', 'attribution'],
-      },
-      {
-        id: 'service-address',
-        title: '服务地址',
-        keywords: ['skillhub', 'skill', '专家中心', 'expert', 'experthub', 'market', 'api', '公网', '根地址'],
-      },
+      { id: 'prompt', title: '系统提示', keywords: ['prompt', '系统提示', 'append', 'instruction', '归因', 'attribution'] },
+      { id: 'service-address', title: '服务地址', keywords: ['skillhub', 'skill', '专家中心', 'expert', 'experthub', 'market', 'api', '公网', '根地址'] },
     ],
   },
 ];
@@ -980,10 +931,11 @@ export function SettingsView({
   onAppearanceCommit,
   apps = [],
   workspace,
-  initialSection = 'basic-info',
+  initialSection,
   initialAppSettingId = null,
   onOpenAppManagement,
 }: SettingsViewProps) {
+  const initialSectionValue = initialSection ?? 'basic-info';
   const [searchQuery, setSearchQuery] = React.useState('');
   const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [remoteAuthError, setRemoteAuthError] = React.useState('');
@@ -993,8 +945,9 @@ export function SettingsView({
   const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
   const [webSearchError, setWebSearchError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
-  const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSection]);
-  const [activeSection, setActiveSection] = React.useState<SectionId>(initialSection);
+  const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSectionValue]);
+  const [activeSection, setActiveSection] = React.useState<SectionId>(initialSectionValue);
+  const [showAllSettings, setShowAllSettings] = React.useState(initialSection === undefined);
   const [selectedAppSettingId, setSelectedAppSettingId] = React.useState(initialAppSettingId);
   const [appRefreshKey, setAppRefreshKey] = React.useState(0);
   const appSettingsEntries = React.useMemo(() => getVisibleAppSettingsEntries(apps), [apps]);
@@ -1049,7 +1002,9 @@ export function SettingsView({
     ?? SETTINGS_NAVIGATION_GROUPS[0];
   const visibleSections = selectedAppSetting ? [] : deferredSearchQuery
     ? visibleNavigationGroups.flatMap((group) => group.sections)
-    : activeGroup.sections;
+    : showAllSettings
+      ? navigationGroups.flatMap((group) => group.sections)
+      : activeGroup.sections;
   const visibleSectionKey = visibleSections.map((section) => section.id).join('|');
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
@@ -1078,10 +1033,11 @@ export function SettingsView({
   React.useEffect(() => {
     if (initialAppSettingId) return;
     setSelectedAppSettingId(null);
-    setActiveSection(initialSection);
-    setActiveGroupId(SECTION_GROUP_IDS[initialSection]);
+    setActiveSection(initialSectionValue);
+    setActiveGroupId(SECTION_GROUP_IDS[initialSectionValue]);
+    setShowAllSettings(initialSection === undefined);
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [initialSection, initialAppSettingId]);
+  }, [initialSection, initialSectionValue, initialAppSettingId]);
 
   React.useEffect(() => {
     setSelectedAppSettingId(initialAppSettingId);
@@ -1182,6 +1138,7 @@ export function SettingsView({
     const targetSection = group.sections[0]?.id;
     setSearchQuery('');
     setSelectedAppSettingId(null);
+    setShowAllSettings(false);
     setActiveGroupId(group.id);
     if (targetSection) setActiveSection(targetSection);
     window.requestAnimationFrame(() => {
@@ -1507,8 +1464,30 @@ export function SettingsView({
                 <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
                   <div className="px-1">
                     <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-                      {deferredSearchQuery ? '搜索设置' : activeGroup.title}
+                      {deferredSearchQuery ? '搜索设置' : showAllSettings ? '设置' : activeGroup.title}
                     </h1>
+                    {!deferredSearchQuery && !showAllSettings && visibleSections.length > 1 ? (
+                      <nav className="mt-4 -mx-1 flex gap-1 overflow-x-auto pb-1" aria-label={`${activeGroup.title}设置分区`}>
+                        {visibleSections.map((section) => (
+                          <button
+                            key={section.id}
+                            type="button"
+                            className={cn(
+                              'shrink-0 rounded-xl px-3 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
+                              activeSection === section.id
+                                ? 'bg-sidebar-accent font-medium text-sidebar-foreground'
+                                : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
+                            )}
+                            onClick={() => {
+                              setActiveSection(section.id);
+                              sectionRefs.current[section.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                          >
+                            {section.title}
+                          </button>
+                        ))}
+                      </nav>
+                    ) : null}
                   </div>
 
                   {isWebUI() && activeGroup.id === 'basic' && (window.mossWeb?.managed ? <CloudSnapshots /> : <Surface className="p-4 text-sm">当前 Web Host 未接入 Docker 环境控制器，无法创建环境快照。其他功能可正常使用。</Surface>)}
@@ -1600,7 +1579,7 @@ export function SettingsView({
                     </SettingsGroup>
 
                     <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
-                      连接
+                      Moss Server
                     </div>
                     <div className="space-y-3">
                       {/* 本地模式 */}
@@ -1713,9 +1692,7 @@ export function SettingsView({
                           </div>
                         </SettingsRow>
 
-                        {(settingsDraft.remoteEnabled ?? false) ? (
-                          <>
-                            <SettingsRow
+                        <SettingsRow
                               title="服务器地址"
                               controlClassName="sm:w-[420px]"
                             >
@@ -1731,9 +1708,9 @@ export function SettingsView({
                                 }}
                                 placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
                               />
-                            </SettingsRow>
+                        </SettingsRow>
 
-                            <SettingsRow
+                        <SettingsRow
                               title="OAuth 认证"
                               description={isWebUI() ? (supportsHostFeature('remoteOAuth') ? '在当前浏览器完成授权，凭据保存在云电脑。' : '此 Host 尚未配置公开 HTTPS 登录回调。') : undefined}
                               controlClassName="sm:w-[320px]"
@@ -1780,10 +1757,7 @@ export function SettingsView({
                                   <p className="text-right text-xs text-destructive">{remoteAuthError}</p>
                                 ) : null}
                               </div>
-                            </SettingsRow>
-
-                          </>
-                        ) : null}
+                        </SettingsRow>
                       </SettingsGroup>
                     </div>
 
@@ -1794,6 +1768,38 @@ export function SettingsView({
                       settingsDraft={settingsDraft}
                       updateSetting={updateSetting}
                     />
+                    <SettingsGroup className="mt-3">
+                      <SettingsRow
+                        title="网页搜索"
+                        description="搜索配置集中在“模型与搜索”，这里保留当前状态，方便快速确认连接是否可用。"
+                        controlClassName="sm:w-[300px]"
+                      >
+                        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                          <button
+                            type="button"
+                            className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                            aria-label="网页搜索方式"
+                            onClick={() => {
+                              setActiveGroupId('ai');
+                              setActiveSection('web-search');
+                              window.requestAnimationFrame(() => sectionRefs.current['web-search']?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                            }}
+                          >
+                            当前生效：{activeWebSearchProviderLabel}
+                          </button>
+                          <span className="text-xs text-muted-foreground">{nativeWebSearchStatusLabel}</span>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-sidebar-border px-2.5 py-1.5 text-xs text-foreground hover:bg-sidebar-accent"
+                            aria-label="重新检测原生搜索"
+                            disabled={webSearchAction !== 'idle'}
+                            onClick={() => void probeNativeWebSearch()}
+                          >
+                            {webSearchAction === 'probe' ? '检测中…' : '重新检测'}
+                          </button>
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 

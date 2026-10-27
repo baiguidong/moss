@@ -18,6 +18,7 @@ import {
 import { redactAppValue } from '../logging/index.mjs'
 import { APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
 import { AppProcessLeases } from './lease.mjs'
+import { processTreeExists, readProcessInfo, signalProcessTree, waitForProcessTreeGone } from './process-info.mjs'
 import { createAppWatchdog } from './watchdog.mjs'
 
 const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
@@ -188,9 +189,13 @@ export class AppProcessSupervisor {
     if (current?.state === 'crash-loop' && !options.clearCrashLoop) {
       throw new AppServiceError(APP_ERROR_CODES.crashLoop, `App runtime is in crash-loop: ${key}`)
     }
-    // A caller can retry immediately after an exit, before asynchronous lease
-    // cleanup has finished. Wait before trying to acquire our own old lease.
-    if (current && !isChildRunning(current.child)) await this.releaseLease(current)
+    // A caller can retry immediately after an exit, before asynchronous tree
+    // cleanup has finished. Reap the complete process group before releasing
+    // the old lease; releasing it directly would orphan helpers left behind
+    // by a Backend that exited unexpectedly.
+    if (current && !isChildRunning(current.child)) {
+      await this.beginTermination(current)
+    }
     const launchToken = randomUUID()
     const entryPath = path.resolve(definition.packageRoot, definition.entry)
     const relative = path.relative(path.resolve(definition.packageRoot), entryPath)
@@ -242,7 +247,9 @@ export class AppProcessSupervisor {
       handshakeState: 'bootstrapping',
       lease: null,
       leaseRelease: null,
+      childIdentity: null,
       bootstrap: null,
+      exitCleanup: null,
     }
     hosted.ready = new Promise((resolve, reject) => {
       hosted.readyResolve = resolve
@@ -275,6 +282,9 @@ export class AppProcessSupervisor {
         }),
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         windowsHide: true,
+        // App Backends are allowed to start helper processes.  A dedicated
+        // POSIX process group lets shutdown reap the complete App tree.
+        detached: process.platform !== 'win32',
       })
     } catch (error) {
       await this.releaseLease(hosted)
@@ -291,7 +301,8 @@ export class AppProcessSupervisor {
     child.on('message', (message) => {
       if (hosted.handshakeState === 'bootstrapping' && message?.type === 'moss.app.bootstrap' && message.marker === hosted.lease.marker) {
         hosted.handshakeState = 'recording-process'
-        hosted.bootstrap = hosted.lease.recordChild(child.pid).then(() => {
+        hosted.bootstrap = hosted.lease.recordChild(child.pid).then(identity => {
+          hosted.childIdentity = identity
           if (!isChildRunning(child)) return
           hosted.handshakeState = 'waiting-hello'
           this.send(hosted, { type: 'moss.app.launch', marker: hosted.lease.marker }, error => hosted.readyReject(error))
@@ -324,7 +335,7 @@ export class AppProcessSupervisor {
         if (hosted.healthWatchdog.expired()) {
           hosted.failureReason = hosted.lastError = 'App Backend health check timed out'
           this.log(hosted, 'error', hosted.lastError, { pid: hosted.child.pid })
-          void this.terminate(hosted).catch((error) => {
+          void this.beginTermination(hosted).catch((error) => {
             hosted.lastError = `App Backend health termination failed: ${error.message}`
           })
           return
@@ -343,7 +354,13 @@ export class AppProcessSupervisor {
       } else hosted.lastError ||= error.message
       if (hosted.state !== 'crash-loop') hosted.state = 'error'
       this.emitStatus(key)
-      await this.terminate(hosted)
+      await this.beginTermination(hosted).catch(cleanupError => {
+        // Preserve the handshake/action failure that caused startup to abort.
+        // The lease remains on disk when cleanup cannot be verified, so the
+        // next Host can retry recovery instead of treating this as a clean
+        // launch failure.
+        this.log(hosted, 'error', `App Backend cleanup after startup failure failed: ${cleanupError.message}`)
+      })
       throw error
     } finally {
       clearInterval(timeout)
@@ -1045,7 +1062,7 @@ export class AppProcessSupervisor {
         sleep(this.shutdownTimeoutMs),
       ])
     }
-    await this.terminate(hosted)
+    await this.beginTermination(hosted)
     if (this.processes.get(key) === hosted) this.processes.delete(key)
     this.emitStatus(key)
     return this.status(key)
@@ -1060,26 +1077,44 @@ export class AppProcessSupervisor {
     if (hosted.pingTimer) clearInterval(hosted.pingTimer)
     this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
     this.clearHostWork(hosted)
-    if (!isChildRunning(hosted.child)) {
+    const pid = hosted.child?.pid
+    if (!pid) {
       await this.releaseLease(hosted)
       return
     }
-    hosted.child.kill('SIGTERM')
-    await Promise.race([
-      new Promise((resolve) => hosted.child.once('exit', resolve)),
-      sleep(this.killTimeoutMs),
-    ])
-    if (isChildRunning(hosted.child)) {
-      hosted.child.kill('SIGKILL')
-      await Promise.race([
-        new Promise((resolve) => hosted.child.once('exit', resolve)),
-        sleep(250),
-      ])
+    if (!isChildRunning(hosted.child) && process.platform !== 'win32') {
+      const current = await readProcessInfo(pid)
+      if (current && hosted.childIdentity?.started && current.started !== hosted.childIdentity.started) {
+        throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend process identity changed: ${hosted.definition.appId}`)
+      }
     }
-    if (isChildRunning(hosted.child)) {
+    // The Backend may already have exited after handling service.shutdown
+    // while a helper process is still alive in its process group.  Always
+    // signal the tree, even when the direct child no longer appears running.
+    if (isChildRunning(hosted.child) || processTreeExists(pid)) {
+      await signalProcessTree(pid, 'SIGTERM')
+      await waitForProcessTreeGone(pid, this.killTimeoutMs)
+    }
+    if (!await waitForProcessTreeGone(pid, 0)) {
+      await signalProcessTree(pid, 'SIGKILL')
+      await waitForProcessTreeGone(pid, 250)
+    }
+    if (!await waitForProcessTreeGone(pid, 0)) {
       throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend did not exit: ${hosted.definition.appId}`)
     }
     await this.releaseLease(hosted)
+  }
+
+  beginTermination(hosted) {
+    if (!hosted.exitCleanup) {
+      const cleanup = this.terminate(hosted)
+      const tracked = cleanup.catch(error => {
+        if (hosted.exitCleanup === tracked) hosted.exitCleanup = null
+        throw error
+      })
+      hosted.exitCleanup = tracked
+    }
+    return hosted.exitCleanup
   }
 
   releaseLease(hosted) {
@@ -1096,10 +1131,15 @@ export class AppProcessSupervisor {
     for (const timer of hosted.activities.values()) clearTimeout(timer)
     hosted.activities.clear()
     hosted.endedActivities.clear()
-    void this.releaseLease(hosted).catch(error => {
-      hosted.lastError = `App Backend ownership cleanup failed: ${error.message}`
-      this.log(hosted, 'error', hosted.lastError)
-    })
+    // The leader can exit while a helper remains in its detached process
+    // group. Keep the ownership lease until the group has been reaped so an
+    // automatic restart cannot strand that helper.
+    if (!hosted.stopping && !this.shuttingDown && !hosted.exitCleanup) {
+      void this.beginTermination(hosted).catch(error => {
+        hosted.lastError = `App Backend process cleanup failed: ${error.message}`
+        this.log(hosted, 'error', hosted.lastError)
+      })
+    }
     if (this.processes.get(key) !== hosted) {
       this.clearActionWork(hosted, new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App Backend stopped'))
       this.clearHostWork(hosted)
@@ -1131,7 +1171,8 @@ export class AppProcessSupervisor {
     if (hosted.state === 'crash-loop' || (hosted.definition.lifecycle !== 'persistent' && !recoverPending)) return
     const delay = Math.min(this.maxRestartDelayMs, this.restartBaseDelayMs * (2 ** Math.max(0, hosted.failures.length - 1)))
     hosted.restartTimer = setTimeout(() => {
-      void this.releaseLease(hosted).then(async () => {
+      const cleanup = hosted.exitCleanup || (hosted.terminating ? this.beginTermination(hosted) : this.releaseLease(hosted))
+      void cleanup.then(async () => {
         if (this.processes.get(key) !== hosted || hosted.stopping || this.shuttingDown) return
         let current
         if (recoverPending) {
@@ -1195,7 +1236,14 @@ export class AppProcessSupervisor {
 
   async shutdown() {
     this.shuttingDown = true
-    await Promise.allSettled([...this.processes.keys()].map((key) => this.stop(key)))
-    this.processes.clear()
+    const results = await Promise.allSettled([...this.processes.keys()].map((key) => this.stop(key)))
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    // A failed stop stays in `processes` so a caller can retry the force-kill
+    // and the ownership lease remains visible for the next Host's recovery.
+    // Swallowing this error and clearing the map would make a live Backend
+    // indistinguishable from a clean shutdown.
+    if (errors.length) {
+      throw new AggregateError(errors, `App Backend shutdown failed: ${errors.map(error => error?.message || String(error)).join('; ')}`)
+    }
   }
 }

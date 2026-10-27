@@ -12,6 +12,7 @@ import {
   MoonStar,
   PenSquare,
   Pin,
+  LogIn,
   Search,
   Settings,
   SunMedium,
@@ -26,6 +27,7 @@ import {
   ChartNoAxesCombined,
   Plug,
   GitFork,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -141,6 +143,11 @@ interface AppSidebarProps {
   onOpenGlobalSearch?: () => void;
   headerActions?: React.ReactNode;
   serverAccount?: { userName: string; userEmail: string } | null;
+  serverConfigured?: boolean;
+  serverAuthState?: 'idle' | 'loading' | 'success';
+  serverAuthError?: string;
+  onLoginServer?: () => void | Promise<void>;
+  onLogoutServer?: () => void | Promise<void>;
 }
 
 function SessionItem({
@@ -317,6 +324,11 @@ export function AppSidebar({
   onOpenGlobalSearch,
   headerActions,
   serverAccount,
+  serverConfigured = false,
+  serverAuthState = 'idle',
+  serverAuthError = '',
+  onLoginServer,
+  onLogoutServer,
 }: AppSidebarProps) {
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
   const [expandedSessionGroups, setExpandedSessionGroups] = React.useState<Partial<Record<SessionGroupId, boolean>>>({});
@@ -674,50 +686,32 @@ export function AppSidebar({
       <div className="border-t border-sidebar-border px-2.5 py-2.5">
         {typeof window !== 'undefined' && window.mossWeb ? (
           <div id="moss-web-account-slot" data-collapsed={collapsed} />
-        ) : (serverAccount?.userName || serverAccount?.userEmail) ? (
+        ) : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className={cn("flex h-10 w-full items-center gap-2 rounded-xl px-1.5 text-left text-xs hover:bg-sidebar-accent", collapsed && "h-8 w-8 justify-center p-0 mx-auto")} aria-label="个人中心" title="个人中心">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent"><UserRound className="h-4 w-4" /></span>
-                {!collapsed && <><span className="min-w-0 flex-1 truncate" title={serverAccount.userName || serverAccount.userEmail}>{serverAccount.userName || serverAccount.userEmail}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></>}
+                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent"><UserRound className="h-4 w-4" /><span className={cn('absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-sidebar', serverAccount ? 'bg-emerald-500' : 'bg-muted-foreground/45')} aria-hidden="true" /></span>
+                {!collapsed && <><span className="min-w-0 flex-1 truncate" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>{serverAccount?.userName || serverAccount?.userEmail || '个人中心'}</span>{!serverAccount ? <span className="sr-only">Apps<span>{appsCount ?? '…'}</span></span> : null}<ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></>}
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
               <DropdownMenuLabel className="space-y-1 text-xs">
-                <span className="block truncate text-sm font-medium" title={serverAccount.userName || serverAccount.userEmail}>{serverAccount.userName || serverAccount.userEmail}</span>
-                {serverAccount.userEmail && serverAccount.userEmail !== serverAccount.userName && <span className="block truncate font-normal text-muted-foreground" title={serverAccount.userEmail}>{serverAccount.userEmail}</span>}
-                <span className="block font-normal text-muted-foreground">已连接 Moss Server</span>
+                <span role="status" className="block truncate text-sm font-medium" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>
+                  {serverAccount?.userName || serverAccount?.userEmail || '个人中心'}<span className="font-normal text-muted-foreground"> · {serverAccount ? '已连接 Moss Server' : serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? 'Moss Server 已配置，尚未登录' : '请先配置 Moss Server'}</span>
+                </span>
+                {serverAuthError ? <span className="block pt-1 font-normal text-destructive">{serverAuthError}</span> : null}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => onChangeView('apps')}><LayoutGrid className="h-4 w-4" />Apps</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onChangeView('apps')}><LayoutGrid className="h-4 w-4" />Apps{!serverAccount ? <span className="ml-auto text-xs text-muted-foreground">{appsCount ?? '…'}</span> : null}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onChangeView('settings')}><Settings className="h-4 w-4" />设置</DropdownMenuItem>
+              {serverAccount ? <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLogoutServer?.()}>
+                <LogOut className="h-4 w-4" />{serverAuthState === 'loading' ? '正在退出 Moss Server…' : '退出登录'}
+              </DropdownMenuItem> : <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLoginServer?.()}>
+                <LogIn className="h-4 w-4" />{serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? '登录 Moss Server' : '配置 Moss Server'}
+              </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
-        ) : (<div className={cn("grid gap-2", collapsed ? "grid-cols-1 justify-items-center" : "grid-cols-2")}>
-          <Button
-            variant={activeView === "apps" ? "secondary" : "ghost"}
-            aria-label={collapsed ? `Apps ${appsCount ?? '…'}` : undefined}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("apps")}
-          >
-            <LayoutGrid className="h-4 w-4" />
-            {!collapsed && (
-              <>
-                Apps
-                <span className="ml-auto text-[11px] text-muted-foreground">{appsCount ?? '…'}</span>
-              </>
-            )}
-          </Button>
-          <Button
-            variant={activeView === "settings" ? "secondary" : "ghost"}
-            aria-label={collapsed ? "设置" : undefined}
-            className={cn("rounded-xl", collapsed ? "justify-center px-0 h-8 w-8" : "justify-start")}
-            onClick={() => onChangeView("settings")}
-          >
-            <Settings className="h-4 w-4" />
-            {!collapsed && "设置"}
-          </Button>
-        </div>)}
+        )}
       </div>
     </div>
   );
