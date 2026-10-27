@@ -16,6 +16,7 @@ import {
 } from 'src/services/analytics/metadata.js'
 import {
   addToToolDuration,
+  getSessionEngineDir,
   getSessionId,
   getCodeEditToolDecisionCounter,
   getStatsStore,
@@ -78,6 +79,11 @@ import {
   stopSessionActivity,
 } from '../../utils/sessionActivity.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
+import {
+  classifyDeferredPermission,
+  persistDeferredPermission,
+} from '../../utils/permissions/deferredPermission.js'
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import { Stream } from '../../utils/stream.js'
 import {
   addToolContentEvent,
@@ -883,8 +889,78 @@ async function checkPermissionsAndCallTool(
     endToolSpan()
     throw error
   }
-  const permissionDecision = resolved.decision
+  let permissionDecision = resolved.decision
   processedInput = resolved.input
+
+  // A deferred decision is only meaningful when the process can persist and
+  // later resume it. Interactive sessions keep the normal prompt semantics;
+  // served sessions without a resume channel fail closed. This mirrors the
+  // upstream `permissionDecision=defer` boundary and prevents an unattended
+  // tool call from disappearing after the current turn.
+  if (permissionDecision.behavior === 'defer') {
+    const classified = classifyDeferredPermission(permissionDecision, {
+      isNonInteractiveSession: toolUseContext.options.isNonInteractiveSession,
+      isServedSession:
+        toolUseContext.options.querySource === 'remote' ||
+        getSessionRuntimeContext()?.executionEnvironment === 'server',
+      hasResumeCapability: Boolean(getSessionEngineDir()),
+    })
+    if (classified.kind === 'unchanged') {
+      const storageDir = getSessionEngineDir()
+      if (!storageDir) {
+        permissionDecision = {
+          behavior: 'deny',
+          message:
+            'Permission was deferred, but the session has no durable storage for resuming it.',
+          decisionReason: {
+            type: 'other',
+            reason: 'deferred permission storage is unavailable',
+          },
+          toolUseID,
+        }
+      } else {
+        try {
+          const record = await persistDeferredPermission({
+            storageDir,
+            decision: permissionDecision,
+            toolUseID,
+            toolName: tool.name,
+            toolInput: processedInput,
+            permissionMode,
+            hookSnapshot: hookPermissionResult,
+          })
+          permissionDecision = {
+            behavior: 'deny',
+            message: `${permissionDecision.message}\nDeferred permission saved for resume (token ${record.resumeToken}).`,
+            decisionReason: {
+              type: 'other',
+              reason: 'permission deferred and persisted for resume',
+            },
+            toolUseID,
+          }
+          logEvent('tengu_pre_tool_hook_deferred', {
+            toolName: sanitizeToolNameForAnalytics(tool.name) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+            toolUseID: toolUseID as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+            resumeToken: record.resumeToken as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          })
+        } catch (error) {
+          logError(error)
+          permissionDecision = {
+            behavior: 'deny',
+            message:
+              'Permission was deferred, but Moss could not persist the pending request. The tool call was rejected to avoid losing an unattended action.',
+            decisionReason: {
+              type: 'other',
+              reason: 'deferred permission persistence failed',
+            },
+            toolUseID,
+          }
+        }
+      }
+    } else {
+      permissionDecision = classified.decision
+    }
+  }
 
   // Emit code-edit counter if the interactive
   // permission path didn't already log it (headless mode bypasses permission

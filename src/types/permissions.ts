@@ -219,6 +219,23 @@ export type PermissionDenyDecision = {
 }
 
 /**
+ * A headless permission decision that pauses the tool call until the host
+ * resumes it. This is deliberately a decision-level value rather than a
+ * permission rule behavior: rules can allow, deny, or ask, while a host may
+ * defer an otherwise askable decision across a process restart.
+ */
+export type PermissionDeferDecision = {
+  behavior: 'defer'
+  message: string
+  toolUseID?: string
+  decisionReason?: PermissionDecisionReason
+  /** Stable id used by the resume endpoint/CLI to claim this request. */
+  resumeToken?: string
+  /** Absolute expiry in milliseconds since epoch. */
+  expiresAt?: number
+}
+
+/**
  * A permission decision - allow, ask, or deny
  */
 export type PermissionDecision<
@@ -227,6 +244,7 @@ export type PermissionDecision<
   | PermissionAllowDecision<Input>
   | PermissionAskDecision<Input>
   | PermissionDenyDecision
+  | PermissionDeferDecision
 
 /**
  * Permission result with additional passthrough option
@@ -234,7 +252,9 @@ export type PermissionDecision<
 export type PermissionResult<
   Input extends { [key: string]: unknown } = { [key: string]: unknown },
 > =
-  | PermissionDecision<Input>
+  | PermissionAllowDecision<Input>
+  | PermissionAskDecision<Input>
+  | PermissionDenyDecision
   | {
       behavior: 'passthrough'
       message: string

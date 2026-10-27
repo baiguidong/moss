@@ -478,6 +478,12 @@ export class StructuredIO {
       ) {
         return mainPermissionResult
       }
+      // The SDK transport has no local prompt queue. A host that wants to
+      // defer must persist and resume the request itself; pass the decision
+      // through so tool execution can apply the fail-closed boundary.
+      if (mainPermissionResult.behavior === 'defer') {
+        return mainPermissionResult
+      }
 
       // Run PermissionRequest hooks in parallel with the SDK permission
       // prompt.  In the terminal CLI, hooks race against the interactive
