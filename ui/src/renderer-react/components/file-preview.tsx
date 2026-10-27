@@ -53,20 +53,17 @@ export function FilePreview({ path, name, onRemove, readonly = false, sessionId 
   }
   const sizeLabel = size === undefined ? '' : size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.round(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return (
-    <div className="w-[250px] max-w-full" data-file-attachment={path}>
+    <div className="w-[230px] max-w-full" data-file-attachment={path}>
       <div className="flex min-w-0 items-center overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20">
         <button type="button" disabled={busy} onClick={() => void act('preview')} title={path} aria-label={`预览 ${fileName}`}
-          className="flex min-w-0 flex-1 items-center gap-2.5 p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
-          <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg ${fileIcon.color}`}>
+          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
+          <span className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md ${fileIcon.color}`}>
             {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setImageUrl('')} />
-              : <fileIcon.Icon className={extension === 'PDF' ? 'h-9 w-9' : 'h-5 w-5'} aria-hidden="true" />}
+              : <fileIcon.Icon className={extension === 'PDF' ? 'h-6 w-6' : 'h-4 w-4'} aria-hidden="true" />}
           </span>
-          <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate text-xs font-semibold" title={fileName}>{fileName}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className="rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 font-medium tracking-wide">{typeLabel}</span>
-              <span className="truncate">{sizeLabel || '点击预览'}</span>
-            </span>
+            <span className="shrink-0 text-[10px] text-muted-foreground" title={sizeLabel || '点击预览'}>{typeLabel}</span>
           </span>
         </button>
         <DropdownMenu>

@@ -1,4 +1,5 @@
 import { parseAppServiceKey } from '../../../packages/app-sdk/src/tool-services.mjs'
+import { APP_ERROR_CODES } from '../../../packages/app-sdk/src/errors.mjs'
 // App-owned resources can prepare an ordinary composer without creating a session.
 // The Host supplies identity/workspace; Apps supply bounded display and prompt data.
 export function createAppComposer({ getRuntime, getSession }) {
@@ -12,6 +13,27 @@ export function createAppComposer({ getRuntime, getSession }) {
     const instance = runtime.resolveContributionInstance(provider.appId)
     return runtime.invoke(provider.appId, instance.id, action, input, { invocation })
   }
+  async function listProvider(provider, input, invocation) {
+    // Listing resources is read-only. Wait behind lifecycle changes already in
+    // progress, then resolve the current provider/action and instance. Do not
+    // hold the lifecycle queue while the Backend handles the list request.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const runtime = getRuntime()
+      await runtime.transitionApp?.(provider.appId, () => {})
+      const { resourceProviders } = await runtime.listContributions({ appId: provider.appId, kinds: ['resourceProviders'] })
+      const current = resourceProviders.find(item => item.id === provider.id && item.appId === provider.appId && item.listAction)
+      if (!current) return null // The App/provider may have been disabled or removed.
+      try {
+        const instance = runtime.resolveContributionInstance(current.appId)
+        const result = await runtime.invoke(current.appId, instance.id, current.listAction, input, { invocation })
+        return { provider: current, result }
+      } catch (error) {
+        // A restart can begin after the wait above. Retry this read once, while
+        // retaining stale-generation rejection for all ordinary action calls.
+        if (error?.code !== APP_ERROR_CODES.staleGeneration || attempt > 0) throw error
+      }
+    }
+  }
   const text = (value, max = 512) => typeof value === 'string' ? value.slice(0, max) : ''
   function route(value) { return typeof value === 'string' && /^#\/[a-zA-Z0-9/_?=&.%+-]*$/.test(value) ? value : '' }
   return {
@@ -21,15 +43,18 @@ export function createAppComposer({ getRuntime, getSession }) {
       const invocation = source(options)
       const { resourceProviders } = await runtime.listContributions({ kinds: ['resourceProviders'] })
       const providers = resourceProviders.filter(p => p.listAction)
-      const items = []
+      const items = [], listedProviders = []
       for (const provider of providers) {
-        const result = await invoke(provider, provider.listAction, { query: text(options.query), offset: Math.max(0, Math.trunc(options.offset || 0)), limit: 20 }, invocation)
+        const page = await listProvider(provider, { query: text(options.query), offset: Math.max(0, Math.trunc(options.offset || 0)), limit: 20 }, invocation)
+        if (!page) continue
+        const { provider: current, result } = page
+        listedProviders.push({ id: current.id, title: current.title || current.appDisplayName })
         for (const item of (Array.isArray(result) ? result : result.items || []).slice(0, 20)) {
           if (!item.ref || JSON.stringify(item.ref).length > 4096) continue
-          items.push({ providerId: provider.id, appId: provider.appId, title: text(item.title), description: text(item.description), ref: item.ref, route: route(item.route), scope: text(item.scope), workspace: invocation.workspace })
+          items.push({ providerId: current.id, appId: current.appId, title: text(item.title), description: text(item.description), ref: item.ref, route: route(item.route), scope: text(item.scope), workspace: invocation.workspace })
         }
       }
-      return { items, providers: providers.map(p => ({ id: p.id, title: p.title || p.appDisplayName })) }
+      return { items, providers: listedProviders }
     },
     async resolve(context, options = {}) {
       if (!context || !['create', 'edit', 'use'].includes(context.intent) || JSON.stringify(context).length > 8192) throw new Error('App 资源选择无效')

@@ -20,3 +20,12 @@ test('result registration is distinct from read-only listing and cannot choose a
   expect(tool.isReadOnly({ action: 'register', path: 'report.md' })).toBe(false)
   expect(await tool.checkPermissions({ action: 'register', path: 'report.md' }, {} as any)).toMatchObject({ behavior: 'ask' })
 })
+
+test('worker calls cannot reach main-session project providers', async () => {
+  let calls = 0
+  const provider = async () => { calls++; return {} }
+  const worker = { agentId: 'document-worker' } as any
+  await expect(createProjectMemoryTool(provider).call({ action: 'note', text: 'remember' }, worker, undefined as any, undefined as any)).rejects.toThrow('main conversation')
+  await expect(createProjectResultTool(provider).call({ action: 'register', path: 'report.md' }, worker, undefined as any, undefined as any)).rejects.toThrow('main conversation')
+  expect(calls).toBe(0)
+})

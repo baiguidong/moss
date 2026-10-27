@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
 import { normalizeCodeLanguage, renderStructuredCodeBlock } from "@/components/structured/structured-renderer-registry";
-import { fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from "@/lib/markdown-links";
+import { fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform, normalizeMarkdownHref } from "@/lib/markdown-links";
 import { remarkFileReferences } from '@/lib/remark-file-references';
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { isInlineFileReference } from '../../../shared/file-reference.mjs';
@@ -29,19 +29,20 @@ function looksInline(code: string) {
 }
 
 function MarkdownLink({ href, children, sessionId, validate, onError }: { href?: string; children: React.ReactNode; sessionId?: string; validate: boolean; onError: (error: unknown) => void }) {
+  const target = normalizeMarkdownHref(href);
   const [available, setAvailable] = React.useState(!validate);
   React.useEffect(() => {
     let active = true;
     if (!validate) { setAvailable(true); return; }
     setAvailable(false);
-    if (sessionId && href) void resolveVisibleFileReference(sessionId, href).then(value => { if (active) setAvailable(value); });
+    if (sessionId && target) void resolveVisibleFileReference(sessionId, target).then(value => { if (active) setAvailable(value); });
     return () => { active = false; };
-  }, [href, sessionId, validate]);
+  }, [target, sessionId, validate]);
   if (!available) return <>{children}</>;
-  const label = typeof children === 'string' ? fileLinkLabel(href, children) : null;
-  return <a href={href} title={label ? href : undefined} target="_blank" rel="noopener noreferrer"
+  const label = typeof children === 'string' ? fileLinkLabel(target, children) : null;
+  return <a href={target} title={label ? target : undefined} target="_blank" rel="noopener noreferrer"
     className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
-    onClick={event => void handleMarkdownLinkClick(event, href, window.agentDesktop, sessionId).catch(onError)}>{label || children}</a>;
+    onClick={event => void handleMarkdownLinkClick(event, target, window.agentDesktop, sessionId).catch(onError)}>{label || children}</a>;
 }
 
 export const MarkdownRenderer = React.memo(function MarkdownRenderer({

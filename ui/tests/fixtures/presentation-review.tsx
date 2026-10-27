@@ -12,6 +12,8 @@ import { useAssistantOutputFiles } from '@/components/chat/use-assistant-output-
 import { TaskPanel } from '@/components/task-panel';
 import { TurnChangeCard } from '@/components/chat/turn-change-card';
 import { PresentationToolbar, PresentationContent } from '@/components/presentation/presentation-panel';
+import { AssistantOutputFileCard } from '@/components/chat/assistant-output-file-card';
+import { usePresentation } from '@/lib/use-presentation';
 import { usePreviewDocument } from '@/lib/use-preview-document';
 import '@/globals.css';
 
@@ -55,6 +57,7 @@ api.agentDesktop = {
 
 function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?: string; mode?: 'collapsed' | 'expanded' | 'merged' | 'diff' }) {
   const [view, setView] = React.useState(initialView), files = useAssistantOutputFiles([user, tool, reply], 'session', 'local', '/workspace', false);
+  const sessionTasks = [{ id: '1', subject: '生成三个笑话文件', status: 'completed', blockedBy: [] }, { id: '2', subject: '检查链接与预览', status: 'in_progress', blockedBy: [] }] as any;
   const current = { ...snapshot, state: { ...snapshot.state, activeId: view } };
   const action = (action: any) => { if (action.type === 'select') setView(action.id); };
   return <div style={{ display: 'flex', height: '100vh', background: 'var(--background)' }}>
@@ -68,9 +71,167 @@ function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?
       <MarkdownRenderer sessionId="session" content={'路径也可直接点击：/workspace/joke_bash.txt\n\n不存在的路径 /workspace/missing.txt 应保持文本。'} />
     </main>
     <aside style={{ width: 400, borderLeft: '1px solid var(--border)' }}><TaskPanel collapsed={false} searchQuery="" onSearchChange={noop} onRefresh={noop} onOpenWorkspace={noop} treeItems={names.map((name, index) => ({ name, path: paths[index], type: 'file' })) as any} expandedPaths={new Set()} selectedFilePath={null} onFocusFile={noop} onToggleFolder={noop} onSelectFile={noop}
-      sessionTasks={[{ id: '1', subject: '生成三个笑话文件', status: 'completed', blockedBy: [] }, { id: '2', subject: '检查链接与预览', status: 'in_progress', blockedBy: [] }] as any}
-      navigation={<PresentationToolbar snapshot={current} action={action} />} showBrowser={false} content={mode === 'diff' ? <div id="diff-review-test" className="p-2"><TurnChangeCard sessionId="session" change={observation} rewindSupported={false} initiallyExpanded inset={false}/></div> : view === 'results' ? <PresentationContent snapshot={current} action={action} /> : undefined}/></aside>
+      sessionTasks={sessionTasks}
+      navigation={({ tasksActive, onSelectTasks, onSelectPresentation }) => <PresentationToolbar snapshot={current} action={action} sessionTasks={sessionTasks} tasksActive={tasksActive} onSelectTasks={onSelectTasks} onSelectPresentation={onSelectPresentation} />} showBrowser={false} content={mode === 'diff' ? <div id="diff-review-test" className="p-2"><TurnChangeCard sessionId="session" change={observation} rewindSupported={false} initiallyExpanded inset={false}/></div> : view === 'results' ? <PresentationContent snapshot={current} action={action} /> : undefined}/></aside>
   </div>;
+}
+
+async function openMenu(label: string) {
+  const trigger = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+  assert(trigger?.getBoundingClientRect().width > 0, `${label} trigger is not visible`);
+  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await until(() => Boolean(document.querySelector('[role="menu"]')), `${label} menu did not open`);
+}
+async function clickView(title: string) {
+  const button = [...document.querySelectorAll<HTMLButtonElement>('.presentation-navigation-tabs button')]
+    .find(item => item.textContent?.includes(title) && item.getBoundingClientRect().width > 0);
+  if (button) button.click();
+  else {
+    await openMenu('切换右侧视图');
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.includes(title));
+    assert(item, `${title} is missing from the view menu`);
+    item!.click();
+  }
+  await delay();
+}
+const previewResources = ['compound-check.png', 'video.mp4'].map((title, i) => ({ ...resources[0], id: `preview-${i}`, title, source: { type: 'file', path: `/workspace/${title}` } }));
+function CompactPreviewExample({ width = 320, withTasks = true }: { width?: number; withTasks?: boolean }) {
+  const [current, setCurrent] = React.useState({ ...snapshot, resources: previewResources, state: { ...snapshot.state, activeId: 'preview-0', back: ['workspace'], openedIds: ['preview-0', 'preview-1'] } });
+  const [tasksActive, setTasksActive] = React.useState(false);
+  const action = (event: any) => {
+    if (event.type === 'select') setCurrent((value: any) => ({ ...value, state: { ...value.state, activeId: event.id } }));
+    if (event.type === 'back') { setTasksActive(false); setCurrent((value: any) => ({ ...value, state: { ...value.state, activeId: 'workspace' } })); }
+    if (event.type === 'follow') setCurrent((value: any) => ({ ...value, state: { ...value.state, autoFollow: event.value } }));
+    if (event.type === 'dismiss') setCurrent((value: any) => ({ ...value, state: { ...value.state, activeId: 'results', openedIds: value.state.openedIds.filter((id: string) => id !== event.id) } }));
+  };
+  return <aside id="compact-preview" className="flex min-h-0 flex-col border bg-background" style={{ width, height: 620, margin: 24 }}>
+    <PresentationToolbar snapshot={current} action={action} sessionTasks={withTasks ? [{ id: 'task', subject: '检查预览', description: '', status: 'pending', blockedBy: [] }] : []}
+      tasksActive={tasksActive} onSelectTasks={() => setTasksActive(true)} onSelectPresentation={() => setTasksActive(false)}/>
+    {tasksActive ? <div>任务内容</div> : ['workspace', 'browser'].includes(current.state.activeId) ? <div>{current.state.activeId}</div>
+      : <div className="min-h-0 flex-1"><PresentationContent snapshot={current} action={action}/></div>}
+  </aside>;
+}
+function setupCompactPreview() {
+  api.agentDesktop.presentation.load = async ({ artifactId }: any) => {
+    const resource = previewResources.find(item => item.id === artifactId)!;
+    return { resource, epoch: 'epoch', file: { path: resource.source.path, relativePath: resource.title, content: '',
+      contentType: artifactId === 'preview-0' ? 'image' : 'unsupported', size: 100, truncated: false, metadata: { previewEditable: false } } };
+  };
+  api.agentDesktop.fs = { getImageBase64: async () => 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e6f4ed"/><rect x="48" y="48" width="544" height="264" rx="16" fill="#289766"/><text x="320" y="195" text-anchor="middle" fill="white" font-size="28">Preview fixture</text></svg>') };
+}
+async function reviewCompactPreview() {
+  setupCompactPreview();
+  render(<CompactPreviewExample/>);
+  await until(() => Boolean(document.querySelector('[aria-label="切换已打开内容"]')), 'Unified filename did not render');
+  const panel = document.querySelector<HTMLElement>('#compact-preview')!;
+  assert((panel.innerText.match(/compound-check.png/g) || []).length === 1, 'Filename repeats across multiple rows');
+  assert(!panel.querySelector('[aria-label="预览标签"]'), 'Nested file tabs remain');
+  assert(panel.querySelectorAll('[data-preview-header-row]').length === 2, 'Preview should have only filename and action rows');
+  const nav = panel.querySelector<HTMLElement>('[aria-label="内容导航"]')!;
+  const checkBounds = () => {
+    assert(nav.scrollWidth <= nav.clientWidth + 1, 'Navigation overflows at this panel width');
+    const back = nav.querySelector('[aria-label="返回上一个内容"]')!.getBoundingClientRect();
+    const selector = nav.querySelector('[aria-label="切换右侧视图"]')!.getBoundingClientRect();
+    assert(back.right <= selector.left, 'Back arrow should precede the dropdown');
+    assert(nav.getBoundingClientRect().height < 50, 'Navigation wraps to a second row');
+  };
+  for (const width of [280, 320, 440]) {
+    panel.style.width = `${width}px`; await delay(); checkBounds();
+    assert(nav.querySelector('[aria-label="切换右侧视图"]')!.getBoundingClientRect().width > 0, 'Narrow navigation should be a dropdown');
+  }
+  await openMenu('切换右侧视图');
+  for (const title of ['会话任务', '工作区', '结果', '浏览器']) assert(document.querySelector('[role="menu"]')?.textContent?.includes(title), `${title} hidden in narrow navigation`);
+  [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.includes('浏览器'))!.click(); await delay();
+  assert(panel.innerText.includes('browser'), 'Browser selection did not change content');
+  await clickView('会话任务'); assert(panel.innerText.includes('任务内容'), 'Tasks selection did not change content');
+  await clickView('结果');
+  [...panel.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.includes('compound-check.png'))!.click();
+  await until(() => Boolean(document.querySelector('[aria-label="切换已打开内容"]')), 'File could not be reopened');
+  await openMenu('切换已打开内容');
+  [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.includes('video.mp4'))!.click(); await delay();
+  assert(panel.querySelector('[aria-label="切换已打开内容"]')?.textContent?.includes('video.mp4'), 'File dropdown did not switch resource');
+  assert((panel.innerText.match(/video.mp4/g) || []).length === 1, 'Second filename duplicated');
+  panel.style.width = '560px'; await delay();
+  assert(nav.querySelector('[aria-label="切换右侧视图"]')!.getBoundingClientRect().width === 0, 'Wide panel should use tabs');
+  for (const button of nav.querySelectorAll<HTMLElement>('.presentation-navigation-tabs button')) assert(button.getBoundingClientRect().right <= nav.getBoundingClientRect().right, 'Wide navigation tab is clipped');
+  panel.querySelector<HTMLButtonElement>('[aria-label="关闭当前内容"]')!.click(); await delay();
+  assert(panel.innerText.includes('会话结果'), 'Close preview did not return to results');
+  render(<CompactPreviewExample key="no-tasks" width={440} withTasks={false}/>); await delay();
+  assert(!document.querySelector('.presentation-navigation-tabs')?.textContent?.includes('会话任务'), 'Empty task tab is visible');
+  assert(document.querySelector('[aria-label="切换右侧视图"]')!.getBoundingClientRect().width === 0, 'Three tabs should fit at 440px');
+}
+api.showCompactPreviewExample = async (width: number, dark = false) => {
+  setupCompactPreview(); document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  render(<CompactPreviewExample key={width} width={width}/>);
+  await until(() => Boolean(document.querySelector('[aria-label="切换已打开内容"]')), 'Preview not ready'); await delay(100);
+};
+
+function TaskPreviewExample() {
+  const presentation = usePresentation('session', '/workspace', true, noop);
+  const sessionTasks = [{ id: 'task', subject: '检查图片', description: '', status: 'completed' as const, blockedBy: [] }];
+  return <div className="flex h-screen gap-6 p-6">
+    <main className="flex-1"><AssistantOutputFileCard sessionId="session" workspace="/workspace"
+      file={{ path: '/workspace/compound-check.png', name: 'compound-check.png', subtitle: 'compound-check.png', type: 'PNG', operation: 'create', toolUseId: 'write', sourcePaths: [] }}/></main>
+    <aside id="task-preview" style={{ width: 440 }}><TaskPanel collapsed={false} searchQuery="" onSearchChange={noop} onRefresh={noop} onOpenWorkspace={noop}
+      treeItems={[]} expandedPaths={new Set()} selectedFilePath={null} onFocusFile={noop} onToggleFolder={noop} onSelectFile={noop}
+      sessionId="session" sessionTasks={sessionTasks} presentationOpenSignal={presentation.openSignal} showBrowser={false}
+      navigation={props => <PresentationToolbar snapshot={presentation.snapshot} action={presentation.action} sessionTasks={sessionTasks} {...props}/>}
+      content={presentation.snapshot && <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/>}/></aside>
+  </div>;
+}
+async function reviewOpenFromTasks() {
+  const originalPresentation = api.agentDesktop.presentation;
+  const originalWorkspaceChanged = api.agentDesktop.onWorkspaceChanged;
+  setupCompactPreview();
+  let current: any = { ...snapshot, resources: previewResources, state: { ...snapshot.state, activeId: 'workspace', activeOrigin: 'restore', openedIds: [] } };
+  const acknowledgements: string[] = [];
+  const publish = (patch: any = {}) => { current = { ...current, ...patch, version: current.version + 1 }; emit('presentation', current); };
+  api.agentDesktop.onWorkspaceChanged = () => noop;
+  api.agentDesktop.presentation = { ...originalPresentation,
+    snapshot: async () => current,
+    acknowledge: async ({ requestId }: any) => { acknowledgements.push(requestId); return { accepted: true }; },
+    open: async () => {
+      publish({ state: { ...current.state, activeId: 'preview-0', activeOrigin: 'manual', openedIds: ['preview-0'] },
+        request: { requestId: `open-${current.version}`, artifactId: 'preview-0', revision: '1', epoch: 'epoch' } });
+      return { ok: true };
+    },
+    action: async ({ action }: any) => {
+      if (action.type === 'follow') publish({ state: { ...current.state, autoFollow: action.value } });
+      if (action.type === 'select') publish({ request: undefined, state: { ...current.state, activeId: action.id, activeOrigin: 'manual' } });
+    },
+  };
+  try {
+    render(<TaskPreviewExample/>); await delay();
+    const tasksVisible = () => Boolean(document.querySelector('[data-session-tasks]'));
+    assert(tasksVisible(), 'Existing session tasks should initially be selected');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) {
+        await clickView('会话任务'); assert(tasksVisible(), 'Task view cannot be revisited');
+        publish(); await delay();
+        assert(tasksVisible(), 'Snapshot refresh stole the task selection');
+        document.querySelector<HTMLInputElement>('[aria-label="内容导航"] input')!.click(); await delay();
+        assert(!current.state.autoFollow && tasksVisible(), 'Changing follow should keep the task view');
+        emit('presentation', { ...current, sessionId: 'another-session', request: { ...current.request, requestId: 'another-open' } }); await delay();
+        assert(tasksVisible(), 'Another session stole the task selection');
+      }
+      document.querySelector<HTMLButtonElement>('[aria-label="Moss 预览 compound-check.png"]')!.click();
+      await until(() => {
+        const img = document.querySelector<HTMLImageElement>('#task-preview img[alt="compound-check.png"]');
+        return Boolean(img?.complete && img.naturalWidth > 0 && !tasksVisible());
+      }, 'Image eye button left the right panel on tasks');
+      await until(() => acknowledgements.includes(current.request.requestId), 'Visible image was not acknowledged');
+      assert(document.querySelector('[aria-label="切换右侧视图"]')?.textContent?.includes('结果'), 'Preview navigation still selects tasks');
+    }
+    await clickView('会话任务');
+    publish({ request: undefined, resources: [...current.resources, { ...previewResources[1], id: 'background-result' }] }); await delay();
+    assert(tasksVisible(), 'A background result stole the task selection');
+    publish({ state: { ...current.state, activeId: 'results', activeOrigin: 'manual' } }); await delay();
+    assert(!tasksVisible() && document.querySelector('#task-preview')?.textContent?.includes('会话结果'), 'External view selection did not exit tasks');
+  } finally {
+    render(null);
+    api.agentDesktop.presentation = originalPresentation;
+    api.agentDesktop.onWorkspaceChanged = originalWorkspaceChanged;
+  }
 }
 
 let disk = 'original', state: any, failNext = false, gate: (() => Promise<void>) | null = null, saveEntered = false, released = false;
@@ -96,12 +257,13 @@ api.runPresentationReview = async () => {
   assert(observationReads === readsBeforeEdit, 'Editing reread the full conversation history');
   assert(document.querySelectorAll('[aria-label="会话任务"]').length === 1, 'Duplicate task list');
   const task = document.querySelector('[aria-label="会话任务"]')!, nav = document.querySelector('[aria-label="内容导航"]')!;
-  assert(task.getBoundingClientRect().bottom <= nav.getBoundingClientRect().top, 'Tasks still belong inside a view');
-  const taskToggle = task.querySelector('button')!; taskToggle.click(); await delay();
-  [...nav.querySelectorAll('button')].find(button => button.textContent?.includes('工作区'))!.click(); await delay();
-  [...nav.querySelectorAll('button')].find(button => button.textContent?.includes('结果'))!.click(); await delay();
-  assert(taskToggle.getAttribute('aria-expanded') === 'false', 'Task fold lost on navigation');
-  passed.push('three verified cards; one task list; task fold survives workspace/results switches');
+  assert(task.getBoundingClientRect().top >= nav.getBoundingClientRect().bottom, 'Tasks should render below the merged navigation');
+  const taskTab = nav.querySelector('button[aria-label^="会话任务"]')!;
+  assert(taskTab.getAttribute('aria-pressed') === 'true', 'Session tasks should be selected when available');
+  await clickView('工作区');
+  await clickView('结果');
+  assert(!document.querySelector('[data-session-tasks]'), 'Task view did not close after navigation');
+  passed.push('three verified cards; one task list; task tab switches with workspace/results');
   const link = document.querySelector<HTMLAnchorElement>('a[href="/workspace/joke_write.txt:1"]')!;
   assert(link.textContent === 'joke_write.txt', 'File label should omit the target line number'); link.click(); await delay();
   assert(opened[0].sessionId === 'session' && opened[0].input.items[0].path === '/workspace/joke_write.txt:1', 'File link lost session/line');
@@ -140,11 +302,16 @@ api.runPresentationReview = async () => {
   assert(!document.body.textContent?.includes('本轮改动'), 'Retry record produced an empty file-change card');
   passed.push('retry status shows attempts/wait allowance once and does not create a file-change card');
   render(<Example mode="diff" />); await delay();
+  await clickView('结果');
   const diff = document.querySelector('#diff-review-test')!;
   const diffCard = diff.firstElementChild!;
   assert(diffCard.getBoundingClientRect().left - diff.getBoundingClientRect().left <= 20, 'Result panel adds a second inset to the change card');
   passed.push('result panel change card has no duplicate inset');
+  await reviewCompactPreview();
+  passed.push('single filename header; file dropdown switches and closes; responsive navigation keeps all views reachable at 280–560px');
+  await reviewOpenFromTasks();
+  passed.push('image eye button exits tasks, including reopening the same image with follow off; refreshes and background events preserve tasks');
   return passed;
 };
-api.showPresentationExample = async (mode: string) => { render(<Example key={mode} initialView={mode === 'workspace' ? 'workspace' : 'results'} mode={mode === 'expanded' ? 'expanded' : mode === 'diff' ? 'diff' : 'collapsed'} />); await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Example not ready'); await delay(200); };
+api.showPresentationExample = async (mode: string) => { render(<Example key={mode} initialView={mode === 'workspace' ? 'workspace' : 'results'} mode={mode === 'expanded' ? 'expanded' : mode === 'diff' ? 'diff' : 'collapsed'} />); await delay(); await clickView(mode === 'workspace' ? '工作区' : '结果'); await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Example not ready'); await delay(200); };
 api.showRetryExample = async () => { render(<RetryExample />); await delay(200); };

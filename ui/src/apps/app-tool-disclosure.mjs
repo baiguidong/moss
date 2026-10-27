@@ -1,8 +1,16 @@
-import { formatAppPermission } from '../shared/app-capability-descriptions.mjs'
+import { describeAppPermission, formatAppPermission } from '../shared/app-capability-descriptions.mjs'
+
+// Keep this formatter local to the disclosure module so the renderer does not
+// pull the Node-only App Runtime bundle into the App settings UI.
+function appToolName(appId, localId) {
+  const normalize = value => String(value).replace(/[^a-zA-Z0-9_]/g, '_')
+  return `app__${normalize(appId)}__${normalize(localId)}`.slice(0, 64)
+}
 
 export function describeAppTools(manifest) {
   return (manifest?.contributes?.tools || []).map(tool => ({
     id: tool.id,
+    name: appToolName(manifest.id, tool.id),
     title: tool.title,
     description: tool.description,
     effect: tool.effect,
@@ -12,6 +20,25 @@ export function describeAppTools(manifest) {
 }
 
 const effectLabels = { read: '只读', write: '可修改数据', destructive: '破坏性操作' }
+
+function toolAvailability(manifest) {
+  return manifest.toolSelection === 'services'
+    ? (manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择具体子服务后，其工具常驻。' : '以下工具仅在会话选择对应子服务后常驻提供。')
+    : manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择此 App 后常驻。' : '以下工具仅在会话选择此 App 后常驻提供（包括 App 接入的 MCP 工具）。'
+}
+
+export function describeAppInstallation(manifest, permissions = [], details = '') {
+  const notices = details ? [details] : []
+  if (manifest.nativeAdapter) notices.push('原生控制适配器将在 Moss 主进程运行，需要可信签名及宿主允许的发布者。系统权限归属于 Moss，目标应用和前台控制仍由 Moss 单独询问；更换已加载的驱动需重启 Moss。')
+  return {
+    type: 'app-installation', appId: manifest.id, name: manifest.displayName || manifest.id,
+    version: manifest.version || '', publisher: manifest.publisher?.name || manifest.publisher?.id || '',
+    permissions: permissions.map(describeAppPermission), tools: describeAppTools(manifest),
+    skills: (manifest.contributes?.skills || []).map(({ id, title, description }) => ({ id, title, description })),
+    capabilities: structuredClone(manifest.appCapabilities || {}),
+    toolAvailability: toolAvailability(manifest), notices,
+  }
+}
 
 function capabilitySections(capabilities) {
   const required = capabilities?.requires || []
@@ -53,16 +80,15 @@ export async function confirmAppInstallation(dialog, manifest, permissions = [],
   sections.push(...capabilityDetails)
   if (tools.length) sections.push([
     `AI 工具（${tools.length} 个）`,
-    manifest.toolSelection === 'services'
-      ? (manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择具体子服务后，其工具常驻。' : '以下工具仅在会话选择对应子服务后常驻提供。')
-      : manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择此 App 后常驻。' : '以下工具仅在会话选择此 App 后常驻提供（包括 App 接入的 MCP 工具）。',
-    ...tools.map(tool => `• ${tool.title}（${tool.id}） · ${effectLabels[tool.effect]}\n  ${tool.description}`),
+    toolAvailability(manifest),
+    ...tools.map(tool => `• ${tool.title}（${tool.id}） · ${effectLabels[tool.effect]}\n  工具名称：${tool.name}\n  ${tool.description}`),
   ].join('\n'))
   if (skills.length) sections.push(['CLI skills', ...skills.map(skill => `• ${skill.title}: ${skill.description}`)].join('\n'))
   const result = await dialog.showMessageBox({
     type: 'question', title: '安装 Moss App',
     message: `确认“${manifest.displayName || manifest.id}”提供的能力`,
     detail: sections.join('\n\n'),
+    disclosure: describeAppInstallation(manifest, permissions, details),
     buttons: ['取消', permissions.length ? '安装并授权' : '安装'],
     defaultId: 1, cancelId: 0, noLink: true,
   })

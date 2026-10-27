@@ -14,7 +14,7 @@ import { createUserMessage, extractTextContent } from './messages.js'
 import { queryModelWithStreaming, accumulateUsage, updateUsage } from '../services/api/claude.js'
 import { EMPTY_USAGE } from '../services/api/logging.js'
 import { utf8Prefix } from './boundedToolOutput.js'
-import { asSystemPrompt } from './systemPromptType.js'
+import { asSystemPrompt, stripMainSessionSystemPrompt } from './systemPromptType.js'
 
 // Pattern to detect "/btw" at start of input (case-insensitive, word boundary)
 const BTW_PATTERN = /^\/btw\b/gi
@@ -131,7 +131,10 @@ ${question}`
     let truncated = false
     for await (const message of queryModelWithStreaming({
       messages: prependUserContext([...sideQuestionApiMessages(cacheSafeParams.forkContextMessages), createUserMessage({ content: wrappedQuestion })], cacheSafeParams.userContext),
-      systemPrompt: asSystemPrompt(appendSystemContext(cacheSafeParams.systemPrompt, cacheSafeParams.systemContext)),
+      systemPrompt: asSystemPrompt(appendSystemContext(
+        stripMainSessionSystemPrompt(cacheSafeParams.systemPrompt, context.options.mainSessionSystemPrompt),
+        cacheSafeParams.systemContext,
+      )),
       tools: [], thinkingConfig: context.options.thinkingConfig, signal,
       options: { model: context.options.mainLoopModel, isNonInteractiveSession: true,
         querySource: 'side_question', agents: [], mcpTools: [], hasAppendSystemPrompt: false,

@@ -1,10 +1,14 @@
 # 灵活内容区与文件观察
 
-右侧的文件、目录、变更、结果集合、浏览器及 App 工作台入口由同一个会话展示控制器管理。Task list 位于导航上方的会话共用区域，切换工作区、结果或预览时保留折叠状态。工作区入口继续提供原文件树与版本；手动浏览文件不会自动变成交付结果。App 继续使用自己的工作台；右侧提供入口，不擅自把 App 页面压缩到窄面板。
+右侧的文件、目录、变更、结果集合、浏览器及 App 工作台入口由同一个会话展示控制器管理。会话任务与工作区、结果、浏览器共用顶部导航：存在任务时展示任务入口，任务首次出现或切换到有任务的会话时自动选中。返回箭头始终位于导航最左侧；面板较窄时导航改用下拉菜单。文件预览只保留一处文件名，多份已打开内容通过标题下拉菜单切换。手动打开文件（包括再次打开同一文件）或收到新的有效展示请求时退出任务视图；普通刷新和后台结果登记保留任务视图。工作区入口继续提供原文件树与版本；手动浏览文件不会自动变成交付结果。App 继续使用自己的工作台；右侧提供入口，不擅自把 App 页面压缩到窄面板。
 
 ## 展示链路
 
 `moss_present` 或宿主适配器 → 资源解析 → 会话资源登记 → 用户状态仲裁 → renderer → 就绪回执。
+
+展示能力由宿主显式声明：只有传入 `presentationEnabled: true` 并接入 `onAppEvent`，且最终工具池允许 `moss_present` 的主会话，才注入展示提示词。CLI、无 UI 宿主和未声明能力的调用方不获得该工具，也不收到面板、预览回执和文件观察说明。
+
+项目事实和用户约束继续使用共享 `appendSystemPrompt`；`ProjectMemory`、`ProjectResult` 和展示职责使用 `mainSessionSystemPrompt`，追加到主会话选定的 Agent 系统提示词。独立 Agent、恢复的 worker 和继承父上下文的 fork 都排除这些主会话指令及工具；worker 返回实际路径与验证结果，主会话负责最终交付。
 
 - `ui/src/shared/presentation-contracts.mjs` 定义模型输入、能力提示与纯状态转换。模型只能提交路径、已授权 URI 或本会话已有资源 ID，不能指定窗口或会话。
 - `ui/src/presentation/presentation-service.mjs` 保存资源、回合绑定、请求顺序、会话 epoch、用户选择和回执。持久化内容位于 `MOSS_HOME/presentations`。
@@ -32,6 +36,8 @@
 
 `turn-observation-service.mjs` 在真实发送队列中捕获回合前后内容，成功、失败和取消都经过结束处理。文件内容先固定，模型的工具记录用于补充未核实候选，不作为已核实清单。
 
+子会话历史不生成主会话的文件变化与回退卡片；没有独立观察记录的 worker 不会因此显示“文件变化未核实”。主会话仍按实际观察覆盖情况报告。
+
 - 使用 moss 版本服务已有的独立 bare Git 内容存储；不修改用户 workspace 的 `.git`、HEAD、index 或分支，也不自动安装 Git。
 - 基线包含已有脏文件。改后还原不算净变化；新增、删除、二进制和文件模式变化保留。
 - 扫描结束复查文件和目录状态。超时、权限失败、Git 缺失、远程无 adapter 或 workspace 变更标为覆盖不足，不能报告为完整零变化。
@@ -46,6 +52,8 @@
 常规检查：`cd ui && bun run check`，构建：`bun run build:direct && bun run build:renderer`。
 
 新增测试：`presentation-service.test.ts`、`preview-ownership.test.ts`、`turn-observation.test.ts`，并扩展 MossTool、浏览器、任务面板及预览生命周期测试。
+
+`bun run build:electron-direct && node ui/tests/main-session-prompts.runtime.mjs` 使用本地模型桩验证主会话与独立 Agent 的提示词、工具隔离、续跑与恢复，以及无 UI 展示能力时的行为。
 
 `cd ui && bun run test:presentation` 启动隔离的 Electron 实例，验证真实右侧预览、编辑、脏草稿交接、独立窗口保存、目录与版本入口。测试不调用模型，不使用用户数据。设置 `MOSS_PRESENTATION_SMOKE_OUTPUT` 可保存截图。主程序启动/重启验证继续用 `bun run test:main-services`。
 

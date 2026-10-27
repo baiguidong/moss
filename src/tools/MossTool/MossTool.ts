@@ -57,6 +57,8 @@ type MossToolConfig<InputSchema extends MossInputSchema> = {
   event: (input: z.infer<InputSchema>, context: ToolUseContext) => MossAppEvent
   readOnly?: boolean
   supportedEnvironments?: readonly ('desktop' | 'server')[]
+  requiresPresentation?: boolean
+  requiresInteractiveMainSession?: boolean
   userFacingName?: string
   repeatKey?: (input: z.infer<InputSchema>) => string
   maxCallsPerTurn?: number
@@ -154,6 +156,8 @@ function createMossTool<InputSchema extends MossInputSchema>(
   return buildTool({
     name: config.name,
     requiresDesktop: true,
+    requiresPresentation: config.requiresPresentation,
+    requiresInteractiveMainSession: config.requiresInteractiveMainSession,
     supportedEnvironments: config.supportedEnvironments ?? ['desktop'],
     searchHint: config.searchHint,
     maxResultSizeChars: 100_000,
@@ -256,6 +260,8 @@ function createMossTool<InputSchema extends MossInputSchema>(
 
 export const MossPresentTool = createMossTool({
   name: 'moss_present',
+  requiresPresentation: true,
+  requiresInteractiveMainSession: true,
   description: 'Present existing files or authorized App artifacts in the current Moss conversation. Group related outputs and mark at most one primary. This does not create files. Pending/deferred is not shown; never repeat the call to force focus.',
   searchHint: 'present preview artifact deliverable files results right panel',
   inputSchema: z.object({
@@ -267,6 +273,7 @@ export const MossPresentTool = createMossTool({
   }),
   inputJSONSchema: PRESENTATION_INPUT_SCHEMA as ToolInputJSONSchema,
   event(input, context) {
+    if (context.agentId) throw new Error('Result presentation belongs to the main conversation')
     const turn = getSessionRuntimeContext()?.presentationTurn
     if (!turn) throw new Error('Presentation requires an active Moss conversation turn')
     return { type: 'present', input, presentationContext: { turnId: turn.id, sessionId: turn.sessionId, epoch: turn.epoch,

@@ -37,11 +37,25 @@ app.on('browser-window-created', (_event, window) => {
       await waitFor(() => run(window, () => { const title = [...document.querySelectorAll('span')].find(el => el.textContent === 'Presentation smoke'); if (title) { title.click(); return true; } return false; }), 'Session is missing from sidebar');
       await waitFor(() => run(window, () => Boolean(document.querySelector('[aria-label="内容导航"]'))), 'Right panel did not mount');
       await waitFor(() => run(window, () => document.querySelectorAll('[aria-label="会话任务"]').length === 1), 'Session task list did not mount');
-      assert.equal(await run(window, () => document.querySelector('[aria-label="会话任务"]').getBoundingClientRect().bottom <= document.querySelector('[aria-label="内容导航"]').getBoundingClientRect().top), true);
       await invoke('presentation:snapshot', { sessionId, activate: true });
       const result = await invoke('presentation:open', { sessionId, input: { items: [{ path: filePath }] } });
       assert.equal(result.ok, true);
       await waitFor(() => run(window, () => document.body.innerText.includes('Preview smoke')), 'Markdown did not render');
+      assert.equal(await run(window, () => Boolean(document.querySelector('[data-session-tasks]'))), false, 'Opening a file should exit tasks');
+      await run(window, () => {
+        const button = [...document.querySelectorAll('.presentation-navigation-tabs button')].find(item => item.textContent?.includes('会话任务') && item.getBoundingClientRect().width > 0);
+        if (button) button.click();
+        else document.querySelector('[aria-label="切换右侧视图"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      await waitFor(() => run(window, () => {
+        if (document.querySelector('[data-session-tasks]')) return true;
+        const item = [...document.querySelectorAll('[role="menuitemradio"]')].find(el => el.textContent?.includes('会话任务'));
+        item?.click(); return false;
+      }), 'Could not return to tasks');
+      await invoke('presentation:action', { sessionId, action: { type: 'follow', value: false } });
+      assert.equal(await run(window, () => Boolean(document.querySelector('[data-session-tasks]'))), true, 'Follow toggle should preserve tasks');
+      await invoke('presentation:open', { sessionId, input: { items: [{ path: filePath }] } });
+      await waitFor(() => run(window, () => !document.querySelector('[data-session-tasks]') && document.body.innerText.includes('Preview smoke')), 'Reopening the same file stayed on tasks');
       if (process.env.MOSS_PRESENTATION_SMOKE_OUTPUT) { await mkdir(process.env.MOSS_PRESENTATION_SMOKE_OUTPUT, { recursive: true }); await writeFile(path.join(process.env.MOSS_PRESENTATION_SMOKE_OUTPUT, 'right-preview.png'), (await window.webContents.capturePage()).toPNG()); }
       await waitFor(() => run(window, () => { const button = [...document.querySelectorAll('button')].find(el => el.textContent?.trim() === '编辑' && !el.disabled); if (button) { button.click(); return true; } return false; }), 'Editable preview not ready');
       const draft = '# Preview smoke\nUnsaved handoff\n';

@@ -5,6 +5,7 @@ export function registerSessionControlIpc({
   abortPendingSends = () => {},
   stopComputerUse = async () => {},
   stopAppTasks = async () => {},
+  shutdownAgentTeam = async () => {},
   getSessionRecord,
   projectTaskCancellationRequests,
   updateProjectRootTaskLifecycle,
@@ -15,10 +16,10 @@ export function registerSessionControlIpc({
   respondToPendingQuestionRequest,
   buildAskUserQuestionUpdatedInput,
 }) {
-  ipcMain.handle('agent:abort', async (_event, { sessionId }) => {
+  ipcMain.handle('agent:abort', async (_event, { sessionId, terminateSession = true }) => {
     const sessionRecord = getSessionRecord(sessionId);
     abortPendingSends(sessionId);
-    if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
+    if (terminateSession && sessionRecord.projectId && !sessionRecord.parentSessionId) {
       projectTaskCancellationRequests.add(sessionRecord.id);
     }
     const runtime = sessionRecord.runtime;
@@ -33,7 +34,11 @@ export function registerSessionControlIpc({
     const computerUseStop = invoke(() => stopComputerUse(sessionId));
     const appTaskStop = invoke(() => stopAppTasks(sessionId));
     await Promise.all([runtimeAbort, computerUseStop, appTaskStop]);
-    if (sessionRecord.projectId && !sessionRecord.parentSessionId) {
+    // An Agent Team owns work inside the interrupted turn. Clear it even when
+    // another UI message will continue the same session; otherwise teamContext
+    // keeps the session busy forever after the model request is aborted.
+    await invoke(() => shutdownAgentTeam(sessionId));
+    if (terminateSession && sessionRecord.projectId && !sessionRecord.parentSessionId) {
       await updateProjectRootTaskLifecycle(sessionRecord.projectId, sessionRecord.id, {
         status: 'stopped',
         completedAt: Date.now(),

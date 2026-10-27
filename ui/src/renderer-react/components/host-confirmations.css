@@ -1,0 +1,56 @@
+.host-confirmation-dialog{width:min(860px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 32px);margin:auto;padding:0;border:1px solid var(--border);border-radius:16px;background:var(--card);color:var(--foreground);overflow:hidden;box-shadow:0 24px 80px #0003}
+.host-confirmation-dialog::backdrop{background:#0007;backdrop-filter:blur(3px)}
+.host-confirmation-layout{display:flex;flex-direction:column;max-height:calc(100dvh - 34px);min-height:0}
+.host-confirmation-heading{flex-shrink:0;padding:20px 24px 16px;border-bottom:1px solid var(--border)}
+.host-confirmation-heading>div{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.host-confirmation-heading h2{font-size:16px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;margin:0}
+.host-confirmation-heading button{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:6px;flex-shrink:0;color:var(--muted-foreground)}
+.host-confirmation-heading p{font-size:12px;color:var(--muted-foreground);margin:7px 0 0;overflow-wrap:anywhere}
+.host-confirmation-scroll{min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:20px 24px;scrollbar-gutter:stable}
+.host-confirmation-footer{flex-shrink:0;padding:14px 24px;border-top:1px solid var(--border);background:var(--card)}
+.host-confirmation-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.host-confirmation-actions>span{margin-right:auto;font-size:11px;color:var(--muted-foreground)}
+.host-confirmation-actions>button{border:1px solid var(--border);border-radius:7px;padding:8px 18px;min-height:36px;font-size:13px}
+.host-confirmation-actions>button:first-of-type{margin-left:auto}
+.host-confirmation-actions>button.host-confirmation-defer{margin-right:auto;margin-left:0;padding-left:0;border-color:transparent;color:var(--muted-foreground)}
+.host-confirmation-actions>button.host-confirmation-accept{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground);font-weight:500}
+.host-confirmation-dialog button{cursor:pointer}.host-confirmation-dialog button:disabled{opacity:.5;cursor:wait}
+.host-confirmation-dialog button:focus-visible,.host-confirmation-dialog input:focus-visible,.host-confirmation-dialog summary:focus-visible{outline:2px solid var(--ring);outline-offset:3px}
+.host-confirmation-error{font-size:12px;color:var(--destructive);margin-bottom:10px;overflow-wrap:anywhere;max-height:65px;overflow:auto}
+.host-confirmation-detail{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:13px;line-height:1.8}
+.install-summary{display:flex;align-items:center;gap:13px;padding:0 0 19px;min-width:0}
+.install-app-icon{display:flex;align-items:center;justify-content:center;background:var(--muted);color:var(--primary);border-radius:12px;width:46px;height:46px;flex-shrink:0}
+.install-summary>div{min-width:0;flex:1}.install-summary strong{display:block;font-size:17px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.install-summary p{font-size:11px;color:var(--muted-foreground);margin-top:3px;overflow-wrap:anywhere}
+.install-summary-count{font-size:11px;color:var(--muted-foreground);text-align:right}
+.install-notice{margin-bottom:16px;background:var(--muted);border:1px solid var(--border);border-radius:9px;padding:12px;font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+.install-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:15px;overflow-x:auto}
+.install-tabs>button{display:flex;align-items:center;gap:7px;padding:10px 10px 12px;color:var(--muted-foreground);border-bottom:2px solid transparent;font-size:12px;white-space:nowrap;background:transparent}
+.install-tabs>button[aria-selected=true]{border-bottom-color:var(--primary);color:var(--foreground);font-weight:500}
+.install-tabs>button>span{display:inline-flex;align-items:center;justify-content:center;min-width:21px;padding:1px 5px;border-radius:5px;background:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+.install-availability{font-size:11px;line-height:1.8;color:var(--muted-foreground);margin:0 0 13px;overflow-wrap:anywhere}
+.install-search{display:flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:14px;color:var(--muted-foreground)}
+.install-search input{background:transparent;min-width:0;flex:1;border:0;font-size:12px;color:var(--foreground);outline:none}
+.install-search>span{font-size:10px;white-space:nowrap}
+.install-table-wrap{border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.install-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left;font-size:12px;line-height:1.7}
+.install-table th{padding:10px 13px;background:var(--muted);font-weight:500;color:var(--muted-foreground);font-size:11px}
+.install-table td{padding:13px;vertical-align:top;border-top:1px solid var(--border);overflow-wrap:anywhere}
+.install-table th:first-child{width:29%}.install-table th:last-child:not(:nth-child(2)){width:112px}
+.install-table strong{font-weight:550;color:var(--foreground)}
+.install-table code{font:10px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
+.install-table tbody tr:hover{background:color-mix(in srgb,var(--muted) 35%,transparent)}
+.install-description{color:var(--muted-foreground)}.install-excerpt{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.install-description>button{display:inline-flex;align-items:center;gap:3px;margin-top:5px;font-size:10px;color:var(--primary)}
+.install-rotated{transform:rotate(180deg)}
+.install-effect{display:inline-flex;align-items:center;gap:3px;max-width:100%;font-size:10px;border:1px solid var(--border);background:var(--muted);padding:2px 6px;border-radius:5px;white-space:normal;line-height:1.6}
+.install-effect-read{color:var(--primary);background:color-mix(in srgb,var(--primary) 8%,transparent);border-color:color-mix(in srgb,var(--primary) 18%,transparent)}
+.install-effect-destructive{color:var(--destructive);background:color-mix(in srgb,var(--destructive) 7%,transparent);border-color:color-mix(in srgb,var(--destructive) 20%,transparent)}
+.install-identifiers{margin-top:5px;font-size:10px;color:var(--muted-foreground)}.install-identifiers summary{cursor:pointer;width:fit-content}
+.install-identifiers dl{margin-top:6px}.install-identifiers dd{margin:0 0 5px}.install-identifiers dt{font-size:9px}
+.install-secondary-id{display:block;margin-top:4px;color:var(--muted-foreground)}
+.install-empty{min-height:140px;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--muted-foreground);font-size:12px}
+.install-capability-section+section{margin-top:22px}.install-capability-section h3{font-size:12px;font-weight:550;margin-bottom:10px}
+.install-method{display:grid;grid-template-columns:55px minmax(0,1fr);gap:4px}.install-method dt{color:var(--muted-foreground);font-size:10px}.install-method dd{margin:0;font-size:11px}
+@media(max-width:600px){.host-confirmation-dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);border-radius:12px}.host-confirmation-layout{max-height:calc(100dvh - 18px)}.host-confirmation-heading{padding:14px 15px 12px}.host-confirmation-heading h2{font-size:14px}.host-confirmation-scroll{padding:15px 12px;scrollbar-gutter:auto}.host-confirmation-footer{padding:12px 15px}.host-confirmation-actions>span{display:none}.install-summary{gap:10px;flex-wrap:wrap;padding-bottom:14px}.install-summary strong{font-size:15px}.install-summary-count{width:100%;text-align:left;padding-left:56px}.install-tabs{gap:0}.install-tabs>button{gap:5px;padding:9px 6px;font-size:11px}.install-tabs>button>svg{display:none}.install-table th{font-size:10px;padding:8px}.install-table td{font-size:11px;padding:10px 8px}.install-table th:first-child{width:29%}.install-table th:last-child:not(:nth-child(2)){width:80px}.install-effect{font-size:9px;padding:2px 4px}.install-app-icon{width:40px;height:40px}.install-summary-count{padding-left:50px}}
+@media(max-height:500px){.host-confirmation-heading{padding-top:10px;padding-bottom:10px}.host-confirmation-heading p{margin-top:4px}.host-confirmation-footer{padding-top:10px;padding-bottom:10px}.host-confirmation-scroll{padding-top:10px;padding-bottom:10px}.install-summary{padding-bottom:5px;gap:10px}.install-app-icon{width:32px;height:32px;border-radius:8px}.install-summary strong{font-size:14px}.install-summary p{font-size:10px;margin-top:0}.install-summary-count{display:none}.install-tabs{margin-bottom:8px}.install-tabs>button{padding-top:7px;padding-bottom:7px}.install-availability{margin-bottom:8px}.install-search{padding-top:6px;padding-bottom:6px;margin-bottom:8px}.install-table th{padding-top:6px;padding-bottom:6px}}

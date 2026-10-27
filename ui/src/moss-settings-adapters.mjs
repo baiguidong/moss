@@ -11,7 +11,7 @@ const object = {type:'object',additionalProperties:true}
 const enums = {
   'appearance.themeMode':['light','dark','system'], 'appearance.cssThemeId':['default','grid-theme','dot-theme','gradient-theme','takt-theme'],
   'appearance.toolDisplayMode':['expanded','collapsed','merged'], 'permissionMode':PERMISSION_MODES,
-  'thinkingMode':['adaptive','enabled','disabled'],
+  'thinkingMode':['auto','adaptive','enabled','disabled'],
 }
 for (const [key, values] of Object.entries(enums)) { const field = configurationValue(desktopSchema.properties,key.split('.').join('.properties.')); if (field) field.enum = values }
 for (const [key,min,max] of [['chatFontSize',12,18],['chatLineHeight',1.3,2],['chatMessageSpacing',4,24]]) Object.assign(desktopSchema.properties.appearance.properties[key],{minimum:min,maximum:max})

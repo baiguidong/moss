@@ -87,10 +87,7 @@ import {
 } from './utils/sessionStorage.js'
 import { asSystemPrompt } from './utils/systemPromptType.js'
 import { resolveThemeSetting } from './utils/systemTheme.js'
-import {
-  shouldEnableThinkingByDefault,
-  type ThinkingConfig,
-} from './utils/thinking.js'
+import type { ThinkingConfig } from './utils/thinking.js'
 
 // Lazy: MessageSelector.tsx pulls React/ink; only needed for message filtering at query time
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -140,6 +137,7 @@ export type QueryEngineConfig = {
   readFileCache: FileStateCache
   customSystemPrompt?: string
   appendSystemPrompt?: string
+  mainSessionSystemPrompt?: string
   userSpecifiedModel?: string
   fallbackModel?: string
   thinkingConfig?: ThinkingConfig
@@ -217,6 +215,7 @@ export class QueryEngine {
         setAppState: this.config.setAppState,
         customSystemPrompt: this.config.customSystemPrompt,
         appendSystemPrompt: this.config.appendSystemPrompt,
+        mainSessionSystemPrompt: this.config.mainSessionSystemPrompt,
         thinkingConfig: this.config.thinkingConfig,
         agents: this.config.agents,
         emitAppEvent: this.config.emitAppEvent,
@@ -254,7 +253,7 @@ export class QueryEngine {
       options: {
         commands: config.commands, debug: false, tools, verbose: false,
         mainLoopModel: config.userSpecifiedModel ? parseUserSpecifiedModel(config.userSpecifiedModel) : getMainLoopModel(),
-        thinkingConfig: config.thinkingConfig ?? { type: 'adaptive' },
+        thinkingConfig: config.thinkingConfig ?? { type: 'auto' },
         mcpClients: config.mcpClients, mcpResources: {}, ideInstallationStatus: null,
         isNonInteractiveSession: false,
         agentDefinitions: { activeAgents: config.agents ?? [], allAgents: [] },
@@ -321,6 +320,7 @@ export class QueryEngine {
       canUseTool,
       customSystemPrompt,
       appendSystemPrompt,
+      mainSessionSystemPrompt,
       userSpecifiedModel,
       fallbackModel,
       jsonSchema,
@@ -382,11 +382,7 @@ export class QueryEngine {
       ? parseUserSpecifiedModel(userSpecifiedModel)
       : getMainLoopModel()
 
-    const initialThinkingConfig: ThinkingConfig = thinkingConfig
-      ? thinkingConfig
-      : shouldEnableThinkingByDefault() !== false
-        ? { type: 'adaptive' }
-        : { type: 'disabled' }
+    const initialThinkingConfig: ThinkingConfig = thinkingConfig ?? { type: 'auto' }
 
     headlessProfilerCheckpoint('before_getSystemPrompt')
     const systemPromptStart = Date.now()
@@ -441,6 +437,7 @@ export class QueryEngine {
       ...(customPrompt !== undefined ? [customPrompt] : defaultSystemPrompt),
       ...(memoryMechanicsPrompt ? [memoryMechanicsPrompt] : []),
       ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+      ...(mainSessionSystemPrompt ? [mainSessionSystemPrompt] : []),
     ])
 
     // Register function hook for structured output enforcement
@@ -478,6 +475,7 @@ export class QueryEngine {
         isNonInteractiveSession: true,
         customSystemPrompt,
         appendSystemPrompt,
+        mainSessionSystemPrompt,
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
@@ -645,6 +643,7 @@ export class QueryEngine {
         isNonInteractiveSession: true,
         customSystemPrompt,
         appendSystemPrompt,
+        mainSessionSystemPrompt,
         theme: resolveThemeSetting(getGlobalConfig().theme),
         agentDefinitions: { activeAgents: agents, allAgents: [] },
         maxBudgetUsd,

@@ -4,6 +4,7 @@ import type {
 } from '../types';
 
 export type SessionRequest = { sessionId: string };
+export type AbortRequest = SessionRequest & { terminateSession?: boolean };
 export type ControlResult = { ok: true };
 export type SendRequest = SessionRequest & {
   appContext?: {providerId:string;intent:string;ref?:unknown};

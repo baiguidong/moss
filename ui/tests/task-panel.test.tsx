@@ -30,7 +30,7 @@ test('task panel keeps files and browser views without restoring removed tabs', 
   expect(html).not.toContain('保存到资料库');
 });
 
-test('task panel keeps session tasks when a resource replaces the file tree', () => {
+test('task panel auto-switches to session tasks when they are available', () => {
   const html = renderToStaticMarkup(
     <TaskPanel
       collapsed={false}
@@ -69,8 +69,9 @@ test('task panel keeps session tasks when a resource replaces the file tree', ()
 
   expect(html).toContain('会话任务');
   expect(html.match(/aria-label="会话任务"/g)).toHaveLength(1);
-  expect(html.indexOf('aria-label="会话任务"')).toBeLessThan(html.indexOf('内容导航测试'));
-  expect(html).toContain('已打开文档预览');
+  expect(html.indexOf('内容导航测试')).toBeLessThan(html.indexOf('aria-label="会话任务"'));
+  expect(html).not.toContain('已打开文档预览');
+  expect(html).toContain('data-session-tasks');
   expect(html).toContain('2 项');
   expect(html).toContain('正在实现任务展示');
   expect(html).toContain('实现任务展示');

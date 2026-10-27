@@ -62,6 +62,7 @@ import {
 } from '../../utils/sessionStorage.js'
 import {
   asSystemPrompt,
+  stripMainSessionSystemPrompt,
   type SystemPrompt,
 } from '../../utils/systemPromptType.js'
 import type { ContentReplacementState } from '../../utils/toolResultStorage.js'
@@ -294,9 +295,9 @@ export async function* runAgent({
    * the same tool results are re-replaced (prompt cache stability). When
    * omitted, createSubagentContext clones the parent's state. */
   contentReplacementState?: ContentReplacementState
-  /** When true, use availableTools directly without filtering through
-   * resolveAgentTools(). Also inherits the parent's thinkingConfig and
-   * isNonInteractiveSession instead of overriding them. Used by the fork
+  /** When true, use availableTools (except main-session-only tools) without filtering through
+   * resolveAgentTools(). Also inherits the parent's isNonInteractiveSession
+   * instead of overriding it. Used by the fork
    * subagent path to produce byte-identical API request prefixes for
    * prompt cache hits. */
   useExactTools?: boolean
@@ -453,7 +454,7 @@ export async function* runAgent({
   }
 
   const resolvedTools = useExactTools
-    ? availableTools
+    ? availableTools.filter(tool => !tool.requiresInteractiveMainSession)
     : resolveAgentTools(agentDefinition, availableTools, isAsync).resolvedTools
 
   const additionalWorkingDirectories = Array.from(
@@ -462,7 +463,9 @@ export async function* runAgent({
   )
 
   const agentSystemPrompt = override?.systemPrompt
-    ? override.systemPrompt
+    // A fork may reuse the parent's rendered prefix, but host delivery rules
+    // belong to the main conversation even when other context is inherited.
+    ? stripMainSessionSystemPrompt(override.systemPrompt, toolUseContext.options.mainSessionSystemPrompt)
     : asSystemPrompt(
         await getAgentSystemPrompt(
           agentDefinition,
@@ -627,12 +630,9 @@ export async function* runAgent({
     ...(!model && agentDefinition.modelRole
       ? { modelRole: agentDefinition.modelRole }
       : {}),
-    // For fork children (useExactTools), inherit thinking config to match the
-    // parent's API request prefix for prompt cache hits. For regular
-    // sub-agents, disable thinking to control output token costs.
-    thinkingConfig: useExactTools
-      ? toolUseContext.options.thinkingConfig
-      : { type: 'disabled' as const },
+    // Keep the main session's thinking mode and budget for every worker.
+    // Forcing disabled can make compatible gateways send unsupported effort "none".
+    thinkingConfig: toolUseContext.options.thinkingConfig,
     mcpClients: mergedMcpClients,
     mcpResources: toolUseContext.options.mcpResources,
     agentDefinitions: toolUseContext.options.agentDefinitions,

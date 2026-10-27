@@ -4,10 +4,12 @@ import { getDefaultAppState } from '../state/AppStateStore.js'
 import { assembleToolPool, getAllBaseTools } from '../tools.js'
 import { createAppContributionTools } from '../tools/AppContributionTool/AppContributionTool.js'
 import { MossMailTool } from '../tools/MossMailTool/MossMailTool.js'
-import { MossTools } from '../tools/MossTool/MossTool.js'
+import { MossPresentTool, MossTools } from '../tools/MossTool/MossTool.js'
+import { createProjectMemoryTool, createProjectResultTool } from '../tools/ProjectMemoryTool/ProjectMemoryTool.js'
+import { filterToolsForAgent } from '../tools/AgentTool/agentToolUtils.js'
 import { ToolSearchTool } from '../tools/ToolSearchTool/ToolSearchTool.js'
 import { asSessionId } from '../types/ids.js'
-import { mergeAndFilterTools } from './toolPool.js'
+import { applyCoordinatorToolFilter, mergeAndFilterTools } from './toolPool.js'
 import { getSessionRuntimeContext, runWithSessionIdContext, runWithSessionIdContextGenerator, runWithSessionContextOverridesGenerator, type SessionRuntime } from './sessionIdContext.js'
 
 const workflowNames = ['WorkflowRun', 'WorkflowCreate', 'WorkflowEdit', 'WorkflowManage']
@@ -34,6 +36,29 @@ const scope = <T>(environment: SessionRuntime['executionEnvironment'], fn: () =>
   runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image })
 
 describe('session tool availability', () => {
+  test('CLI cannot discover presentation tools without a host capability', async () => {
+    expect(getSessionRuntimeContext()).toBeUndefined()
+    for (const pool of [assembleMain(), assembleWorker()]) {
+      expect(pool.map(tool => tool.name)).not.toContain('moss_present')
+      const result = await ToolSearchTool.call({ query: 'select:moss_present', max_results: 10 },
+        { options: { tools: pool }, getAppState: () => state } as ToolUseContext)
+      expect(result.data.matches).toEqual([])
+    }
+    // Merely identifying as desktop still does not grant UI capabilities.
+    scope('desktop', () => expect(assembleMain().map(tool => tool.name)).not.toContain('moss_present'))
+  })
+
+  test('capable main sessions retain delivery tools in Boss; all workers exclude them', () => {
+    runWithSessionIdContext(asSessionId('ui'), null, () => {
+      const delivery = [MossPresentTool, createProjectResultTool(async () => ({})), createProjectMemoryTool(async () => ({}))]
+      expect(assembleMain().map(tool => tool.name)).toContain('moss_present')
+      expect(applyCoordinatorToolFilter(delivery)).toEqual(delivery)
+      for (const isBuiltIn of [true, false]) for (const isAsync of [true, false]) {
+        expect(filterToolsForAgent({ tools: delivery, isBuiltIn, isAsync })).toEqual([])
+      }
+    }, undefined, undefined, { executionEnvironment: 'desktop', presentationEnabled: true })
+  })
+
   test.each(['desktop', 'server'] as const)('%s registers only moss_browser_open and cannot rediscover removed native tools', async environment => {
     await scope(environment, async () => {
       for (const pool of [getAllBaseTools(), assembleMain(), assembleWorker()]) {

@@ -114,6 +114,8 @@ export function createTurnObservationService({ storageRoot, versions, captureMs 
       return finished;
     },
     async turnsForHistory(sessionId, history) {
+      // Worker transcripts are not observed main-session turns and cannot rewind.
+      if (getSessionRecord?.(sessionId)?.isSubAgent) return [];
       await writes.get(sessionId);
       const index = indexHistoryTurns(history);
       const observations = await list(sessionId);

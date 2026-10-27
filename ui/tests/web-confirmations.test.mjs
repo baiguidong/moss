@@ -6,6 +6,7 @@ import { createAppNotificationBroker } from '../src/app-notification-broker.mjs'
 import { createDecisionBroker } from '../src/decision-broker.mjs';
 import { createHostConfirmations } from '../src/host/confirmations.mjs';
 import { createRequestRegistry } from '../src/host/request-registry.mjs';
+import { confirmAppInstallation, describeAppInstallation } from '../src/apps/app-tool-disclosure.mjs';
 
 const caller = { transport: 'web', principal: { userId: 'owner' }, viewId: 'tab-one' };
 function fixture(t, options = {}) {
@@ -72,4 +73,50 @@ test('Desktop uses the same decision with cancellation focused by default', asyn
   assert.equal(dialog.defaultId, 0);
   assert.deepEqual(dialog.buttons, ['取消', '安装']);
   assert.equal(f.service.snapshot().requests.length, 0);
+});
+
+test('Desktop installation waits for structured review and binds the full disclosure to its revision', async t => {
+  let shown = 0, native = 0;
+  const f = fixture(t, { mode: 'desktop', showRenderer: () => shown++, showNative: async () => { native++; return { response: 1 }; } });
+  const manifest = {
+    id: 'test.video', displayName: '视频工坊', version: '1.0.0', publisher: { name: 'Test' },
+    contributes: { tools: [{ id: 'render', title: '生成视频', description: '写入本地视频', effect: 'write', permission: 'local-files:pick', serviceId: 'video' }],
+      skills: [{ id: 'video-guide', title: '视频创作', description: '说明创作流程' }] },
+    appCapabilities: { requires: [{ protocol: 'test.media/v1', optional: true }],
+      provides: [{ protocol: 'test.video/v1', methods: [{ name: 'render', action: 'render.start', permission: 'video:write', resourceReadMethod: 'read' }] }],
+      usesTools: [{ appId: 'test.editor', tools: ['open'] }] },
+    nativeAdapter: {},
+  };
+  const installation = confirmAppInstallation(f.service.dialog, manifest, ['local-files:pick'], '升级安装');
+  const item = f.service.snapshot().requests[0];
+  assert.equal(shown, 1);
+  assert.equal(native, 0);
+  assert.equal(item.disclosure.tools[0].name, 'app__test_video__render');
+  assert.equal(item.disclosure.tools[0].permission, 'local-files:pick');
+  assert.equal(item.disclosure.tools[0].serviceId, 'video');
+  assert.equal(item.disclosure.permissions[0].label, '选择本机文件');
+  assert.equal(item.disclosure.skills[0].title, '视频创作');
+  assert.deepEqual(item.disclosure.capabilities, manifest.appCapabilities);
+  assert.equal(item.disclosure.notices[0], '升级安装');
+  assert.match(item.disclosure.notices[1], /原生控制适配器/);
+  await assert.rejects(f.service.respond({}, { ...item, revision: 'stale', allowed: true }), /完整内容/);
+  assert.equal(f.service.snapshot().requests.length, 1);
+  await f.service.respond({}, { ...item, allowed: true });
+  assert.equal(await installation, true);
+
+  const disclosure = describeAppInstallation(manifest);
+  const canceled = f.service.request({ title: 'Same title', disclosure });
+  const original = f.service.snapshot().requests[0];
+  disclosure.tools[0].description = 'Changed after request';
+  disclosure.capabilities.usesTools[0].tools.push('delete');
+  assert.equal(original.disclosure.tools[0].description, '写入本地视频');
+  assert.deepEqual(original.disclosure.capabilities.usesTools[0].tools, ['open']);
+  const changed = f.service.request({ title: 'Same title', disclosure });
+  const updated = f.service.snapshot().requests[1];
+  assert.notEqual(updated.revision, original.revision);
+  await f.service.respond({}, { ...original, allowed: false });
+  await f.service.respond({}, { ...updated, allowed: false });
+  assert.equal(await canceled, false);
+  assert.equal(await changed, false);
+  assert.equal(native, 0);
 });

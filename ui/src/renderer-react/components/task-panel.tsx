@@ -8,7 +8,6 @@ import {
   Cloud,
   FolderOpen,
   Globe2,
-  ListChecks,
   RefreshCw,
   Search,
   X,
@@ -74,7 +73,6 @@ function SessionTasks({
   tasks: SessionTask[];
   projectName?: string | null;
 }) {
-  const [expanded, setExpanded] = React.useState(true);
   const taskCounts = React.useMemo(() => {
     const counts: Record<SessionTaskStatus, number> = {
       pending: 0,
@@ -86,86 +84,68 @@ function SessionTasks({
   }, [tasks]);
 
   return (
-    <section className="shrink-0 border-b border-border/80 px-3 py-2.5" aria-label="会话任务">
-      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} className="mb-2 flex w-full items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
-          <ListChecks className="h-3.5 w-3.5 shrink-0" />
-          <span>{projectName ? "项目任务" : "会话任务"}</span>
-        </div>
-        <Badge variant={tasks.length > 0 ? "default" : "secondary"}>
-          {tasks.length} 项
-        </Badge>
-      </button>
+    <section className="min-h-0 flex-1 overflow-y-auto p-3" aria-label="会话任务" data-session-tasks>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="text-sm font-medium text-foreground">{projectName ? "项目任务" : "会话任务"}</span>
+        <Badge variant="default">{tasks.length} 项</Badge>
+        <span className="ml-auto">{taskCounts.in_progress} 进行中 · {taskCounts.pending} 待处理 · {taskCounts.completed} 已完成</span>
+      </div>
+      <div className="space-y-1.5">
+        {tasks.length > 0 ? tasks.map((task) => {
+          const meta = taskStatusMeta[task.status];
+          const Icon = meta.icon;
+          const displayText = getTaskDisplayText(task);
+          const showOriginal =
+            task.status === "in_progress" &&
+            Boolean(task.activeForm?.trim()) &&
+            task.activeForm?.trim() !== task.subject.trim();
+          const title = showOriginal ? `${displayText}\n${task.subject}` : displayText;
 
-      {expanded && tasks.length > 0 ? (
-        <>
-          <div className="mb-2 grid grid-cols-3 gap-1.5 text-[10px] text-muted-foreground">
-            <div className="rounded-md border border-border/55 bg-background/55 px-1.5 py-1">
-              {taskCounts.in_progress} 进行中
-            </div>
-            <div className="rounded-md border border-border/55 bg-background/55 px-1.5 py-1">
-              {taskCounts.pending} 待处理
-            </div>
-            <div className="rounded-md border border-border/55 bg-background/55 px-1.5 py-1">
-              {taskCounts.completed} 已完成
-            </div>
-          </div>
-          <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
-            {tasks.map((task) => {
-              const meta = taskStatusMeta[task.status];
-              const Icon = meta.icon;
-              const displayText = getTaskDisplayText(task);
-              const showOriginal =
-                task.status === "in_progress" &&
-                Boolean(task.activeForm?.trim()) &&
-                task.activeForm?.trim() !== task.subject.trim();
-
-              return (
+          return (
+            <div
+              key={task.id}
+              className={cn("flex gap-2 rounded-md border px-2 py-2", meta.rowClassName)}
+            >
+              <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", meta.iconClassName)} />
+              <div className="min-w-0 flex-1">
                 <div
-                  key={task.id}
-                  className={cn("flex gap-2 rounded-md border px-2 py-2", meta.rowClassName)}
+                  className={cn(
+                    "line-clamp-2 whitespace-pre-line break-words text-xs leading-4 text-foreground",
+                    task.status === "in_progress" && "font-medium",
+                    task.status === "completed" && "text-muted-foreground line-through",
+                  )}
                 >
-                  <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", meta.iconClassName)} />
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className={cn(
-                        "break-words text-xs leading-snug text-foreground",
-                        task.status === "in_progress" && "font-medium",
-                        task.status === "completed" && "text-muted-foreground line-through",
-                      )}
-                    >
-                      {displayText}
-                    </div>
-                    {showOriginal ? (
-                      <div className="mt-1 break-words text-[11px] leading-snug text-muted-foreground">
-                        {task.subject}
-                      </div>
-                    ) : null}
-                    {task.owner || task.blockedBy.length > 0 ? (
-                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                        {task.owner ? <span>@{task.owner}</span> : null}
-                        {task.blockedBy.length > 0 ? (
-                          <span>阻塞于 #{task.blockedBy.join(", #")}</span>
-                        ) : null}
-                      </div>
+                  {title}
+                </div>
+                {task.owner || task.blockedBy.length > 0 ? (
+                  <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                    {task.owner ? <span>@{task.owner}</span> : null}
+                    {task.blockedBy.length > 0 ? (
+                      <span>阻塞于 #{task.blockedBy.join(", #")}</span>
                     ) : null}
                   </div>
-                  <span className="shrink-0 self-start rounded border border-border/55 bg-background/55 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {meta.label}
-                  </span>
-                </div>
-              );
-            })}
+                ) : null}
+              </div>
+              <span className="shrink-0 self-start rounded border border-border/55 bg-background/55 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {meta.label}
+              </span>
+            </div>
+          );
+        }) : (
+          <div className="rounded-md border border-dashed border-border/60 px-2 py-2 text-center text-[11px] text-muted-foreground">
+            暂无任务
           </div>
-        </>
-      ) : expanded ? (
-        <div className="rounded-md border border-dashed border-border/60 px-2 py-2 text-center text-[11px] text-muted-foreground">
-          暂无任务
-        </div>
-      ) : null}
+        )}
+      </div>
     </section>
   );
 }
+
+export type TaskPanelNavigationProps = {
+  tasksActive: boolean;
+  onSelectTasks: () => void;
+  onSelectPresentation: () => void;
+};
 
 export function TaskPanel({
   collapsed,
@@ -183,6 +163,7 @@ export function TaskPanel({
   sessionTasks = [],
   projectName,
   browserOpenSignal,
+  presentationOpenSignal,
   onBrowserOpen,
   workspace,
   workspaceRemote = false,
@@ -210,19 +191,22 @@ export function TaskPanel({
   sessionTasks?: SessionTask[];
   projectName?: string | null;
   browserOpenSignal?: number;
+  presentationOpenSignal?: number;
   onBrowserOpen?: () => void;
   workspace?: string;
   workspaceRemote?: boolean;
   workspaceBusy?: boolean;
   hasUnsavedEdits?: boolean;
   onVersionRestored?: () => void | Promise<void>;
-  navigation?: React.ReactNode;
+  navigation?: React.ReactNode | ((props: TaskPanelNavigationProps) => React.ReactNode);
   content?: React.ReactNode;
   showBrowser?: boolean;
   browserTabId?: string;
   onBrowserReady?: () => void;
 }) {
   const [activeView, setActiveView] = React.useState<TaskPanelView>("files");
+  const [tasksActive, setTasksActive] = React.useState(() => sessionTasks.length > 0);
+  const previousTaskScope = React.useRef<{ sessionId?: string | null; count: number }>({ sessionId, count: sessionTasks.length });
   const [searchOpen, setSearchOpen] = React.useState(false);
   const searchButton = React.useRef<HTMLButtonElement>(null);
   const searchId = React.useId();
@@ -231,11 +215,30 @@ export function TaskPanel({
   React.useEffect(() => { setSearchOpen(false); }, [sessionId, workspace]);
 
   React.useEffect(() => {
+    const previous = previousTaskScope.current;
+    const sessionChanged = previous.sessionId !== sessionId;
+    if (sessionChanged) {
+      setTasksActive(sessionTasks.length > 0);
+    } else if (previous.count === 0 && sessionTasks.length > 0) {
+      setTasksActive(true);
+    } else if (sessionTasks.length === 0) {
+      setTasksActive(false);
+    }
+    previousTaskScope.current = { sessionId, count: sessionTasks.length };
+  }, [sessionId, sessionTasks.length]);
+
+  React.useEffect(() => {
     if (!browserOpenSignal) return;
+    setTasksActive(false);
     setActiveView("browser");
   }, [browserOpenSignal]);
 
+  React.useEffect(() => {
+    if (presentationOpenSignal) setTasksActive(false);
+  }, [presentationOpenSignal]);
+
   const selectView = (view: TaskPanelView) => {
+    setTasksActive(false);
     setActiveView(view);
     if (view === "browser") onBrowserOpen?.();
   };
@@ -257,10 +260,17 @@ export function TaskPanel({
 
   if (collapsed) return null;
 
+  const navigationContent = typeof navigation === "function"
+    ? navigation({
+        tasksActive,
+        onSelectTasks: () => setTasksActive(true),
+        onSelectPresentation: () => setTasksActive(false),
+      })
+    : navigation;
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background">
-      {sessionTasks.length > 0 && <SessionTasks key={sessionId} tasks={sessionTasks} projectName={projectName} />}
-      {navigation || <div className="shrink-0 border-b border-border/80 px-3 py-2">
+      {navigationContent || <div className="shrink-0 border-b border-border/80 px-3 py-2">
         <div className="grid grid-cols-2 gap-1 rounded-md border border-border/70 bg-muted/35 p-1">
           {(Object.keys(viewMeta) as TaskPanelView[]).map((view) => {
             const Icon = viewMeta[view].icon;
@@ -284,7 +294,7 @@ export function TaskPanel({
         </div>
       </div>}
 
-      {(showBrowser ?? activeView === "browser") ? (
+      {tasksActive ? <SessionTasks key={sessionId} tasks={sessionTasks} projectName={projectName} /> : (showBrowser ?? activeView === "browser") ? (
         <BrowserPanel sessionId={sessionId} tabId={browserTabId} onReady={onBrowserReady} />
       ) : content || (
         <>

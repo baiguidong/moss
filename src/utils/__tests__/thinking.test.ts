@@ -41,6 +41,12 @@ beforeEach(() => {
 afterEach(resetEnv)
 
 describe('thinking configuration forwarding', () => {
+  it.each([undefined, { type: 'auto' } as const])('omits an unspecified thinking mode (%j)', config => {
+    const result = buildAPIThinkingParam('my-custom-model', config, 32000)
+    expect(result.hasThinking).toBe(false)
+    expect(JSON.parse(JSON.stringify({ thinking: result.thinking }))).not.toHaveProperty('thinking')
+  })
+
   it.each([
     'gpt-5.5',
     'deepseek-reasoner',
@@ -95,7 +101,7 @@ describe('thinking configuration forwarding', () => {
     process.env.MOSS_MODEL_BASE_URL = 'https://model.example.test'
     process.env.CLAUDE_CODE_DISABLE_THINKING = '1'
 
-    for (const config of [{ type: 'adaptive' }, { type: 'enabled', budgetTokens: 16000 }] as const) {
+    for (const config of [undefined, { type: 'auto' }, { type: 'adaptive' }, { type: 'enabled', budgetTokens: 16000 }] as const) {
       expect(buildAPIThinkingParam('gpt-5.5', config, 32000))
         .toEqual({ hasThinking: false, thinking: { type: 'disabled' } })
     }

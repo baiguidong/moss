@@ -112,6 +112,19 @@ test('unobserved and unavailable turns never report Write-only changes', async (
   expect(unavailable).toMatchObject({ coverage: 'unavailable', files: [], hasUnverifiedChanges: true });
 });
 
+test('worker transcripts do not synthesize main-session observation and rewind cards', async () => {
+  const { workspace, versions, session } = await setup();
+  const observer = createTurnObservationService({
+    storageRoot: path.join(workspace, 'observations'), versions,
+    getSessionRecord: id => ({ ...session, id, isSubAgent: id === 'worker' }),
+  });
+  const history = [user(), tool(), receipt];
+  expect(await observer.turnsForHistory('worker', history)).toEqual([]);
+  expect(await observer.turnsForHistory(session.id, history)).toMatchObject([
+    { coverage: 'unavailable', files: [], hasUnverifiedChanges: true },
+  ]);
+});
+
 test('persisted runtime anchors recover canonical IDs without presentation tools', async () => {
   const { workspace, observer, session } = await setup();
   const record = await observer.begin(session, 'turn');

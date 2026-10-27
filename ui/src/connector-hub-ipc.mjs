@@ -166,18 +166,30 @@ export function getWebSearchCredentials() {
   };
 }
 
-export function saveWebSearchCredentials({ tavilyApiKey, braveApiKey }) {
+export function saveWebSearchCredentials({
+  tavilyApiKey,
+  braveApiKey,
+  clearTavilyApiKey = false,
+  clearBraveApiKey = false,
+}) {
   const updatedAt = new Date().toISOString();
   connectorCredentialStore.update((current) => {
-    const records = {};
-    if (normalizeString(tavilyApiKey)) {
+    const existing = isPlainObject(current.webSearchCredentials)
+      ? current.webSearchCredentials
+      : {};
+    const records = { ...existing };
+    if (clearTavilyApiKey === true) {
+      delete records.tavilyApiKey;
+    } else if (normalizeString(tavilyApiKey)) {
       records.tavilyApiKey = {
         value: normalizeString(tavilyApiKey),
         field: 'tavilyApiKey',
         updatedAt,
       };
     }
-    if (normalizeString(braveApiKey)) {
+    if (clearBraveApiKey === true) {
+      delete records.braveApiKey;
+    } else if (normalizeString(braveApiKey)) {
       records.braveApiKey = {
         value: normalizeString(braveApiKey),
         field: 'braveApiKey',

@@ -1,0 +1,30 @@
+.presentation-navigation {
+  container: presentation-navigation / inline-size;
+}
+
+.presentation-navigation-tabs {
+  display: none;
+}
+
+.presentation-navigation-select {
+  display: block;
+}
+
+/* Use the panel width, so dragging the divider also changes the navigation. */
+@container presentation-navigation (min-width: 420px) {
+  .presentation-navigation-row:not(.has-tasks) .presentation-navigation-tabs {
+    display: flex;
+  }
+  .presentation-navigation-row:not(.has-tasks) .presentation-navigation-select {
+    display: none;
+  }
+}
+
+@container presentation-navigation (min-width: 520px) {
+  .presentation-navigation-tabs {
+    display: flex;
+  }
+  .presentation-navigation-select {
+    display: none;
+  }
+}

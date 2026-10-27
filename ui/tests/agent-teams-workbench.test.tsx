@@ -3,7 +3,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
-  AgentTeamsStrip,
+  AgentTeamsStatus,
   AgentTeamsWorkbench,
 } from '../src/renderer-react/components/agent-teams-workbench';
 import type { AgentTeamsSessionState } from '../src/renderer-react/types';
@@ -43,12 +43,13 @@ const state: AgentTeamsSessionState = {
   }],
 };
 
-test('Agent Teams strip and workbench expose archived DAG playback', () => {
-  const strip = renderToStaticMarkup(<AgentTeamsStrip state={state} onOpen={() => {}} />);
+test('Agent Teams header status and workbench expose archived DAG playback', () => {
+  const status = renderToStaticMarkup(<AgentTeamsStatus state={state} onOpen={() => {}} />);
   const workbench = renderToStaticMarkup(<AgentTeamsWorkbench state={state} onClose={() => {}} />);
 
-  expect(strip).toContain('Agent Teams · agent-team-demo');
-  expect(strip).toContain('回看');
+  expect(status).toContain('Agent Teams 已完成');
+  expect(status).toContain('2/2');
+  expect(status).not.toContain('跟随');
   expect(workbench).toContain('Agent Teams · 共享任务图');
   expect(workbench).not.toContain('Ship Agent Teams');
   expect(workbench).not.toContain('按依赖分层 · 左至右');

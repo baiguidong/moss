@@ -8,7 +8,7 @@ import { QueuedMessages } from '@/components/chat/queued-messages';
 import { WebComposerDraft } from '@/components/web-composer-draft';
 import { AppComposerContext } from '@/lib/app-composer';
 import { withdrawMessage, preserveQueuedMessages, recoverQueuedMessages, type ComposerDraft, type QueuedMessage } from '@/lib/composer-queue';
-import { listDrafts, writeDraft } from '@/lib/web-drafts';
+import { acknowledgeDrafts, listDrafts, writeDraft, type WebDraft } from '@/lib/web-drafts';
 import '@/globals.css';
 
 const api = window as any, root = createRoot(document.getElementById('root')!);
@@ -82,6 +82,7 @@ function Harness({ initial = [entry], typed = '' }: { initial?: QueuedMessage[];
 function Persistence({ initial, session }: { initial: ComposerDraft; session: string }) {
   const [draft, setDraft] = React.useState(initial); latest = draft;
   api.clearPersistedDraft = () => setDraft({ text: '', files: [] });
+  api.setPersistedDraft = setDraft;
   return <WebComposerDraft session={session} value={draft} restore={value => setDraft({ ...value, queued: recoverQueuedMessages(value.queued) })} />;
 }
 function click(label: string) {
@@ -141,6 +142,96 @@ api.runComposerQueueReview = async () => {
   passed.push('收起其他已保存草稿提示会关闭整个浮层，并保留当前输入和已保存草稿');
   render(<Harness key="final" initial={recoverQueuedMessages([entry, { ...entry, id: 'second', prompt: '第二条' }])} />); await delay();
   return passed;
+};
+
+const desktopScope = JSON.stringify(['desktop']);
+async function stored(session: string, check: (rows: WebDraft<ComposerDraft>[]) => boolean, scope = desktopScope) {
+  for (let i = 0; i < 150; i++) {
+    const rows = await listDrafts<ComposerDraft>(scope, session);
+    if (check(rows)) return rows;
+    await delay(20);
+  }
+  throw new Error(`Draft storage did not settle: ${session}`);
+}
+const savedDraft = (session: string, id: string, value: ComposerDraft): WebDraft<ComposerDraft> =>
+  ({ id, scope: desktopScope, session, tab: id, updatedAt: Date.now(), value });
+const noDraftNotice = () => assert(!document.querySelector('[role="status"]'), 'An unchanged saved draft was offered again');
+
+api.runDraftNoticeReview = async () => {
+  const passed: string[] = [];
+  const workflow: ComposerDraft = { text: '请帮我创建一个工作流，我的需求是：', files: [] };
+  const duplicates = 'duplicate-auto-recovery';
+  await writeDraft(savedDraft(duplicates, 'duplicate-older', workflow));
+  await writeDraft(savedDraft(duplicates, 'duplicate-newer', { ...workflow, appSelection: null, choices: { skills: [], agent: null }, intent: 'chat', queued: [] }));
+  render(<Persistence key="auto-duplicates" session={duplicates} initial={{ text: '', files: [] }} />);
+  await until(() => latest.text === workflow.text, 'Automatic recovery lost the draft');
+  await stored(duplicates, rows => rows.filter(row => row.id.startsWith('duplicate-')).every(row => row.noticeAcknowledged));
+  noDraftNotice();
+  api.clearPersistedDraft();
+  await stored(duplicates, rows => rows.some(row => row.tab === sessionStorage.getItem('moss-draft-tab') && !row.value.text));
+  render(<Persistence key="auto-cleared" session={duplicates} initial={{ text: '', files: [] }} />); await delay(150);
+  assert(!latest.text, 'Cleared recovered content returned'); noDraftNotice();
+  passed.push('相同草稿副本只恢复一次，默认字段差异不误报，清空后旧副本不再提示');
+
+  const dismissed = 'persisted-dismissal-review';
+  const old = savedDraft(dismissed, 'dismissed-copy-one', workflow);
+  await writeDraft(old);
+  await writeDraft(savedDraft(dismissed, 'dismissed-copy-two', workflow));
+  render(<Persistence key="dismiss-duplicates" session={dismissed} initial={{ text: '保留当前输入', files: [] }} />);
+  await until(() => document.body.innerText.includes('其他已保存草稿（1）'), 'Duplicate alternatives were not grouped');
+  click('收起提示');
+  await stored(dismissed, rows => rows.filter(row => row.id.startsWith('dismissed-copy-')).every(row => row.noticeAcknowledged));
+  assert(latest.text === '保留当前输入', 'Dismiss overwrote current input'); noDraftNotice();
+  await writeDraft({ ...old, updatedAt: Date.now() });
+  render(<Persistence key="dismiss-remount" session={dismissed} initial={latest} />); await delay(150); noDraftNotice();
+  passed.push('收起状态持久保存，切换会话或仅更新时间不再提醒，原草稿仍然保留');
+
+  const changed = { ...old, updatedAt: Date.now(), value: { ...workflow, text: '新增的工作流需求' } };
+  await writeDraft(changed);
+  await acknowledgeDrafts([old]);
+  assert(!(await listDrafts(desktopScope, dismissed)).find(row => row.id === old.id)?.noticeAcknowledged, 'An outdated dismissal hid another window\'s new content');
+  render(<Persistence key="changed-alternative" session={dismissed} initial={latest} />);
+  await until(() => document.body.innerText.includes('其他已保存草稿（1）'), 'Changed content did not show a new notice');
+  click('恢复为独立草稿');
+  await until(() => latest.queued?.length === 1, 'Manual recovery did not create a separate draft');
+  assert(latest.text === '保留当前输入' && latest.queued?.[0].prompt === changed.value.text, 'Manual recovery changed the wrong draft');
+  await stored(dismissed, rows => rows.find(row => row.id === old.id)?.noticeAcknowledged === true);
+  render(<Persistence key="manual-remount" session={dismissed} initial={latest} />); await delay(150); noDraftNotice();
+  api.clearPersistedDraft();
+  await stored(dismissed, rows => rows.some(row => row.tab === sessionStorage.getItem('moss-draft-tab') && !row.value.text && !row.value.queued?.length));
+  render(<Persistence key="manual-cleared" session={dismissed} initial={{ text: '', files: [] }} />); await delay(150); noDraftNotice();
+  assert(!latest.text && !latest.queued?.length, 'Handled draft was restored a second time');
+  passed.push('其他窗口修改草稿仍会提醒，过期的收起操作不吞掉新内容，手动恢复后不重复入队');
+
+  const priorScope = JSON.stringify(['draft-user', 'draft-host', 1]);
+  const scope = JSON.stringify(['draft-user', 'draft-host', 2]);
+  const prior = { ...savedDraft('prior-review', 'prior-notice-review', workflow), scope: priorScope };
+  await writeDraft(prior);
+  api.mossWeb = { identity: { userId: 'draft-user', hostId: 'draft-host', generation: 2 } };
+  render(<Persistence key="prior-notice" session="prior-review" initial={{ text: '新环境的输入', files: [] }} />);
+  await until(() => document.body.innerText.includes('恢复前草稿（1）'), 'Prior environment draft was not offered');
+  click('收起提示');
+  await stored('prior-review', rows => rows[0]?.noticeAcknowledged === true, priorScope);
+  render(<Persistence key="prior-dismissed" session="prior-review" initial={latest} />); await delay(150); noDraftNotice();
+  assert((await listDrafts<ComposerDraft>(scope, 'prior-review'))[0].value.text === '新环境的输入', 'Prior notice changed the current environment draft');
+  render(<div />); delete api.mossWeb;
+  passed.push('恢复前草稿的收起状态也会保存，保留原环境和当前环境的内容');
+
+  const reloadSession = 'notice-reload-review';
+  await writeDraft(savedDraft(reloadSession, 'reload-alternative', workflow));
+  render(<Persistence key="reload-setup" session={reloadSession} initial={{ text: '重开后保留的输入', files: [] }} />);
+  await until(() => document.body.innerText.includes('其他已保存草稿（1）'), 'Reload test did not create a notice');
+  click('收起提示');
+  await stored(reloadSession, rows => rows.some(row => row.id === 'reload-alternative' && row.noticeAcknowledged) && rows.some(row => row.value.text === '重开后保留的输入'));
+  return passed;
+};
+
+api.runDraftNoticeReloadReview = async () => {
+  render(<Persistence key="after-real-reload" session="notice-reload-review" initial={{ text: '', files: [] }} />);
+  await until(() => latest.text === '重开后保留的输入', 'Real page reload did not recover the saved input');
+  await delay(150); noDraftNotice();
+  assert((await listDrafts<ComposerDraft>(desktopScope, 'notice-reload-review')).some(row => row.id === 'reload-alternative' && row.value.text.startsWith('请帮我创建')), 'Dismiss deleted the original draft');
+  return '重新加载页面或重开窗口后静默恢复输入，已收起的旧草稿不会重新弹出';
 };
 
 function sideInput(text: string) {

@@ -23,10 +23,7 @@ import type { FileStateCache } from './fileStateCache.js'
 import type { CacheSafeParams } from './forkedAgent.js'
 import { getMainLoopModel } from './model/model.js'
 import { asSystemPrompt } from './systemPromptType.js'
-import {
-  shouldEnableThinkingByDefault,
-  type ThinkingConfig,
-} from './thinking.js'
+import type { ThinkingConfig } from './thinking.js'
 
 /**
  * Fetch the three context pieces that form the API cache-key prefix:
@@ -96,6 +93,7 @@ export async function buildSideQuestionFallbackParams({
   setAppState,
   customSystemPrompt,
   appendSystemPrompt,
+  mainSessionSystemPrompt,
   thinkingConfig,
   agents,
   emitAppEvent,
@@ -110,6 +108,7 @@ export async function buildSideQuestionFallbackParams({
   setAppState: (f: (prev: AppState) => AppState) => void
   customSystemPrompt: string | undefined
   appendSystemPrompt: string | undefined
+  mainSessionSystemPrompt?: string
   thinkingConfig: ThinkingConfig | undefined
   agents: AgentDefinition[]
   emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
@@ -134,6 +133,7 @@ export async function buildSideQuestionFallbackParams({
       ? [customSystemPrompt]
       : defaultSystemPrompt),
     ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+    ...(mainSessionSystemPrompt ? [mainSessionSystemPrompt] : []),
   ])
 
   // Strip in-progress assistant message (stop_reason === null) — same guard
@@ -151,17 +151,14 @@ export async function buildSideQuestionFallbackParams({
       mainLoopModel,
       tools,
       verbose: false,
-      thinkingConfig:
-        thinkingConfig ??
-        (shouldEnableThinkingByDefault() !== false
-          ? { type: 'adaptive' }
-          : { type: 'disabled' }),
+      thinkingConfig: thinkingConfig ?? { type: 'auto' },
       mcpClients,
       mcpResources: {},
       isNonInteractiveSession: true,
       agentDefinitions: { activeAgents: agents, allAgents: [] },
       customSystemPrompt,
       appendSystemPrompt,
+      mainSessionSystemPrompt,
     },
     abortController: createAbortController(),
     readFileState,

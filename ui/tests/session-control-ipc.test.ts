@@ -17,6 +17,7 @@ function fixture(context = {}) {
   const deps = {
     ipcMain: { handle: (channel: string, handler: Function) => handlers.set(channel, handler) },
     stopAppTasks: async (id: string) => { actions.push(`apps:${id}`); },
+    shutdownAgentTeam: async () => {},
     getSessionRecord: (id: string) => { if (id !== record.id) throw new Error('Unknown session'); return record; },
     projectTaskCancellationRequests: new Set<string>(),
     updateProjectRootTaskLifecycle: async () => { actions.push('project:stopped'); },
@@ -97,6 +98,14 @@ describe('Desktop session controls through preload and IPC', () => {
     await api.abort({ sessionId: 's1' });
     expect(actions).toEqual(['abort', 'apps:s1', 'reject:s1', 'persist:true']);
     expect(deps.projectTaskCancellationRequests.size).toBe(0);
+  });
+
+  it('keeps the project task alive when Stop is only moving on to queued messages', async () => {
+    const { api, actions, deps } = fixture();
+    registerSessionControlIpc({ ...deps, shutdownAgentTeam: async (id: string) => { actions.push(`team:${id}`); } });
+    await api.abort({ sessionId: 's1', terminateSession: false });
+    expect(actions).toEqual(['abort', 'apps:s1', 'team:s1', 'reject:s1', 'persist:true']);
+    expect(deps.projectTaskCancellationRequests.has('s1')).toBe(false);
   });
 
   it('surfaces abort failures instead of claiming the task stopped', async () => {

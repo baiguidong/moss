@@ -12,3 +12,13 @@ export type SystemPrompt = readonly string[] & {
 export function asSystemPrompt(value: readonly string[]): SystemPrompt {
   return value as SystemPrompt
 }
+
+/** Main-session instructions are kept as a separate block at composition time. */
+export function stripMainSessionSystemPrompt(
+  prompt: SystemPrompt,
+  mainSessionSystemPrompt: string | undefined,
+): SystemPrompt {
+  return mainSessionSystemPrompt
+    ? asSystemPrompt(prompt.filter(part => part !== mainSessionSystemPrompt))
+    : prompt
+}

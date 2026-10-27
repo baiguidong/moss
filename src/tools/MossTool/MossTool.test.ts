@@ -41,6 +41,13 @@ describe('split Moss host tools', () => {
       .toEqual(MossTools.map(tool => tool.name))
   })
 
+  test('a worker cannot present into its parent conversation', async () => {
+    let calls = 0
+    const context = { agentId: 'document-worker', emitAppEvent: async () => { calls++; return { ok: true } } } as unknown as ToolUseContext
+    await expect(MossPresentTool.call({ items: [{ path: 'report.pdf' }] }, context)).rejects.toThrow('main conversation')
+    expect(calls).toBe(0)
+  })
+
   test('uses action-specific schemas with required fields', () => {
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero', out_path: 'hero.png' }).success).toBe(true)
     expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero' }).success).toBe(false)

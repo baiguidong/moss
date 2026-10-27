@@ -3,6 +3,7 @@ import { isEnvTruthy } from './envUtils.js'
 import { getSettingsWithErrors } from './settings/settings.js'
 
 export type ThinkingConfig =
+  | { type: 'auto' }
   | { type: 'adaptive' }
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
@@ -14,21 +15,28 @@ export type APIThinkingParam =
 
 export function buildAPIThinkingParam(
   model: string,
-  thinkingConfig: ThinkingConfig,
+  thinkingConfig: ThinkingConfig | undefined,
   maxOutputTokens: number,
+  disableThinking = isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING),
 ): {
   hasThinking: boolean
-  thinking: APIThinkingParam
+  thinking: APIThinkingParam | undefined
 } {
   const thinkingDisabled =
-    thinkingConfig.type === 'disabled' ||
-    isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
+    thinkingConfig?.type === 'disabled' ||
+    disableThinking
 
   if (thinkingDisabled) {
     return {
       hasThinking: false,
       thinking: { type: 'disabled' },
     }
+  }
+
+  // Unspecified means the endpoint chooses its default. It is not a request
+  // to disable reasoning, and must not be serialized as disabled or none.
+  if (!thinkingConfig || thinkingConfig.type === 'auto') {
+    return { hasThinking: false, thinking: undefined }
   }
 
   // Forward the selected mode for every model. The configured endpoint decides

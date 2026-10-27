@@ -17,7 +17,7 @@ let invalidConsolidation = false, service, sourceRuntime;
 const server = createServer(async (request, response) => {
   if (request.url?.startsWith('/v1/models')) {
     response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ data: [{ id: 'gpt-5.5', context_window: 200000 }] }));
+    response.end(JSON.stringify({ data: [{ id: 'gpt-6.1-sol', context_window: 200000 }] }));
     return;
   }
   const chunks = [];
@@ -26,6 +26,12 @@ const server = createServer(async (request, response) => {
   const text = JSON.stringify(body.messages || []);
   const stage = text.includes('Extract a faithful') ? 'extract' : text.includes('Consolidate the supplied project') ? 'consolidate' : 'session';
   requests.push({ stage, body });
+  if (stage !== 'session' && body.thinking?.type === 'disabled') {
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ error: { type: 'invalid_request_error',
+      message: 'gpt-6.1-sol does not support reasoning effort "none"; use low, medium, high, xhigh or max; mock-key' } }));
+    return;
+  }
   const reply = stage === 'extract' ? '{"summary":"Verified fixture output [source]"}'
     : stage === 'consolidate' ? invalidConsolidation ? 'broken JSON' : '{"overview":"Project fixture knowledge [source]"}' : 'Ordinary session is still usable.';
   const message = { id: `msg_${requests.length}`, type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 12, output_tokens: 0 } };
@@ -46,7 +52,7 @@ try {
   await mkdir(process.env.MOSS_CONFIG_DIR, { recursive: true });
   const { ClaudeSession, getAuthDebugSnapshot } = await import('../electron-direct.mjs');
   getAuthDebugSnapshot();
-  const settings = { model: 'gpt-5.5', fastModel: 'gpt-5.5', language: 'chinese', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'mock-key' };
+  const settings = { model: 'gpt-6.1-sol', fastModel: 'gpt-6.1-sol', thinkingMode: 'adaptive', language: 'chinese', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'mock-key' };
   const store = createProjectStore({ DESKTOP_DATA_PATHS: createDesktopDataPaths(root), projectRecordQueues: new Map(), mossLog() {} });
   await store.ensureProjectStructure('p');
   await store.writeProject({ id: 'p', name: 'Fixture', createdAt: 1, updatedAt: 1 });
@@ -76,7 +82,10 @@ try {
   assert.equal((await store.getProjectMemory('p')).version, 1);
   assert.equal((await service.read('p', { sourceId: 'source' })).summary, 'Verified fixture output [source]');
   assert.deepEqual(requests.filter(item => item.stage !== 'session').map(item => item.stage), ['extract', 'consolidate']);
-  for (const request of requests.filter(item => item.stage !== 'session')) assert.equal(request.body.tools?.length || 0, 0, 'Maintenance must have no tools');
+  for (const request of requests.filter(item => item.stage !== 'session')) {
+    assert.equal(request.body.tools?.length || 0, 0, 'Maintenance must have no tools');
+    assert.deepEqual(request.body.thinking, { type: 'adaptive' }, 'Maintenance must respect the configured thinking mode');
+  }
   assert.deepEqual(await readdir(store.getProjectRunsDir('p')), [], 'Disposable maintenance runtime files must be removed');
   invalidConsolidation = true;
   await service.addNote('p', { text: 'Correct fixture knowledge.' });
@@ -92,7 +101,19 @@ try {
     assert(!JSON.stringify(body.messages).includes('INITIAL_PROJECT_MEMORY_FIXTURE'), 'Project memory must never become conversation messages');
   }
   assert.equal(requests.filter(item => item.stage === 'extract').length, 1, 'Retry should reuse extraction');
-  console.log('PROJECT_MEMORY_RUNTIME_PASSED: independent maintenance, source session continuity, constructor appendSystemPrompt keeps memory out of user messages');
+  settings.thinkingMode = 'disabled';
+  await service.addNote('p', { text: 'Keep confirmed findings.' });
+  await assert.rejects(service.run('p', { force: true }), /记忆模型请求失败：.*400.*does not support reasoning effort/);
+  const failed = await service.getStatus('p');
+  assert.match(failed.error, /reasoning effort "none"/);
+  assert(!failed.error.includes(settings.apiKey), 'Provider errors must redact the configured API key');
+  assert.equal((await store.getProjectMemory('p')).version, 2, 'A rejected model request must retain the previous memory');
+  settings.thinkingMode = 'auto';
+  await service.run('p', { force: true });
+  assert.equal(Object.hasOwn(requests.at(-1).body, 'thinking'), false, 'Automatic thinking must use the endpoint default');
+  assert.equal((await service.getStatus('p')).error, '');
+  assert.equal((await store.getProjectMemory('p')).version, 3);
+  console.log('PROJECT_MEMORY_RUNTIME_PASSED: configured/default thinking, reasoning-only model rejection and recovery, redacted errors, independent maintenance and source session continuity');
 } finally {
   clearTimeout(watchdog);
   await service?.stop();

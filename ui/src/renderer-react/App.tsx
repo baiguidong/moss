@@ -8,7 +8,7 @@ import { WebAppPreviews } from '@/components/web-app-previews';
 import { WebAuthorizations } from '@/components/web-authorizations';
 import { WebComposerDraft } from '@/components/web-composer-draft';
 import { latestSessionInteractions, type InteractionKind, type InteractionDetails, type SessionInteraction } from '@/lib/session-interactions';
-import { composerIsEmpty, messageFromDraft, preserveQueuedMessages, recoverQueuedMessages, withdrawMessage,
+import { composerIsEmpty, messageFromDraft, recoverQueuedMessages, requeueMessagesAfterStop, withdrawMessage,
   type ComposerAttachment, type ComposerChoices, type ComposerDraft, type QueuedMessage } from '@/lib/composer-queue';
 import { HostConfirmations } from '@/components/host-confirmations';
 import { ComputerUseControl } from '@/components/computer-use';
@@ -1259,7 +1259,11 @@ export default function App() {
         });
       }
       if (payload?.busy === false && payload?.sessionId) {
-        flushQueuedMessagesRef.current(payload.sessionId);
+        if (stoppingSessions.current.has(payload.sessionId)) {
+          stopFlushPending.current.add(payload.sessionId);
+        } else {
+          flushQueuedMessagesRef.current(payload.sessionId);
+        }
       }
     });
 
@@ -1846,8 +1850,14 @@ export default function App() {
   // once-registered agent:state listener always calls the latest version.
   const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
   const flushingQueues = React.useRef(new Set<string>());
+  const stoppingSessions = React.useRef(new Set<string>());
+  const stopFlushPending = React.useRef(new Set<string>());
   React.useEffect(() => {
     flushQueuedMessagesRef.current = (sessionId: string) => {
+      if (stoppingSessions.current.has(sessionId)) {
+        stopFlushPending.current.add(sessionId);
+        return;
+      }
       if (flushingQueues.current.has(sessionId)) return;
       const queue = queuedMessagesRef.current[sessionId] ?? [];
       const next = queue.find(item => !item.status || item.status === 'queued');
@@ -1859,24 +1869,38 @@ export default function App() {
         try {
           const detail = await window.agentDesktop.getSession({ sessionId });
           if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) {
-            updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft', notice: '已停止排队，内容已保留。' } : item));
+            updateQueue(sessionId, items => items.map(item => item.id === next.id
+              ? { ...item, status: 'queued', notice: undefined }
+              : item));
             return;
           }
           if (next.workspace !== undefined && next.workspace !== detail.workspace) throw new Error('工作区已变化，请切回原工作区后编辑。');
           await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection);
-          updateQueue(sessionId, items => items.filter(item => item.id !== next.id));
+          if (epoch !== (queueEpochs.current.get(sessionId) ?? 0) || stoppingSessions.current.has(sessionId)) {
+            updateQueue(sessionId, items => items.map(item => item.id === next.id
+              ? { ...item, status: 'queued', notice: undefined }
+              : item));
+          } else {
+            updateQueue(sessionId, items => items.filter(item => item.id !== next.id));
+          }
         } catch (err) {
           // A transport rejection does not prove that the Host never accepted
           // the message. Preserve it for review, never enqueue an automatic replay.
-          updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft',
-            notice: `发送未确认，请先核对会话记录。${cleanIpcErrorMessage(err)}` } : item));
+          if (epoch !== (queueEpochs.current.get(sessionId) ?? 0) || stoppingSessions.current.has(sessionId)) {
+            updateQueue(sessionId, items => items.map(item => item.id === next.id
+              ? { ...item, status: 'queued', notice: undefined }
+              : item));
+          } else {
+            updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft',
+              notice: `发送未确认，请先核对会话记录。${cleanIpcErrorMessage(err)}` } : item));
+          }
         } finally {
           flushingQueues.current.delete(sessionId);
           // turn-end can arrive before send() resolves. Reconcile once after
           // releasing the lock so that event ordering cannot strand the queue.
-          if (epoch === (queueEpochs.current.get(sessionId) ?? 0) && !removedSessionIdsRef.current.has(sessionId)) {
+          if (!stoppingSessions.current.has(sessionId) && !removedSessionIdsRef.current.has(sessionId)) {
             void window.agentDesktop.getSession({ sessionId }).then(detail => {
-              if (!detail.busy && epoch === (queueEpochs.current.get(sessionId) ?? 0)) flushQueuedMessagesRef.current(sessionId);
+              if (!detail.busy) flushQueuedMessagesRef.current(sessionId);
             }).catch(() => {});
           }
         }
@@ -2130,27 +2154,32 @@ export default function App() {
 
   const handleStop = React.useCallback(async () => {
     if (!activeSessionId) return;
-    // Preserve independent snapshots before abort, so busy=false cannot send them.
-    queueEpochs.current.set(activeSessionId, (queueEpochs.current.get(activeSessionId) ?? 0) + 1);
-    const queue = queuedMessagesRef.current[activeSessionId] ?? [];
-    const preserved = preserveQueuedMessages(queue);
-    const first = preserved.find(item => item.status === 'draft');
-    const current: ComposerDraft = { text: inputDraftRef.current, files: composerAttachmentsRef.current,
-      choices: composerChoicesRef.current, appSelection: appSelectionDraftRef.current };
-    if (first && composerIsEmpty(current)) {
-      const result = withdrawMessage(preserved, first.id, current, activeDetailRef.current?.workspace);
-      updateQueue(activeSessionId, () => result.queue);
-      if (result.restored) {
-        setInput(result.draft.text); setComposerAttachments(result.draft.files);
-        setComposerChoices(result.draft.choices!); setAppSelection(result.draft.appSelection || null);
-        handleComposerIntentChange(result.draft.intent!);
+    const sessionId = activeSessionId;
+    stoppingSessions.current.add(sessionId);
+    stopFlushPending.current.delete(sessionId);
+    queueEpochs.current.set(sessionId, (queueEpochs.current.get(sessionId) ?? 0) + 1);
+    const queue = queuedMessagesRef.current[sessionId] ?? [];
+    const hasQueuedMessages = queue.some(item => !item.status || item.status === 'queued' || item.status === 'dispatching');
+    // The current dispatch may be waiting on file/App preparation when Stop
+    // arrives. Put it back in the live queue so the interrupted turn cannot
+    // make the message disappear or convert it into a manual draft.
+    updateQueue(sessionId, () => requeueMessagesAfterStop(queue));
+    updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
+    try {
+      await window.agentDesktop.abort({ sessionId, terminateSession: !hasQueuedMessages });
+    } finally {
+      const observedIdle = stopFlushPending.current.delete(sessionId);
+      stoppingSessions.current.delete(sessionId);
+      if (hasQueuedMessages || observedIdle) {
+        void window.agentDesktop.getSession({ sessionId }).then(detail => {
+          // A busy=false event may arrive before the abort IPC completes. The
+          // event is remembered above; otherwise the fresh session snapshot is
+          // the final guard before dispatching the next queued prompt.
+          if (observedIdle || !detail.busy) flushQueuedMessagesRef.current(sessionId);
+        }).catch(() => {});
       }
-    } else {
-      updateQueue(activeSessionId, () => preserved);
     }
-    updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== activeSessionId));
-    await window.agentDesktop.abort({ sessionId: activeSessionId });
-  }, [activeSessionId, updateQueue, updateQuestionRequests, handleComposerIntentChange]);
+  }, [activeSessionId, updateQueue, updateQuestionRequests]);
 
   const handleEditQueuedMessage = React.useCallback((id: string) => {
     const sessionId = activeSessionIdRef.current || 'home';
@@ -2896,9 +2925,19 @@ export default function App() {
               style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth, minWidth: layout.rightCollapsed ? 0 : RIGHT_WIDTH_RANGE.min }}
             >
               <TaskPanel
+                presentationOpenSignal={presentation.openSignal}
                 browserTabId={presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot.state.activeId)?.source.tabId}
                 onBrowserReady={() => { const request = presentation.snapshot?.request; if (request) void window.agentDesktop.presentation.acknowledge({ sessionId: activeSessionId, ...request, state: 'shown' }).catch(() => {}); }}
-                navigation={<PresentationToolbar snapshot={presentation.snapshot} action={presentation.action}/>}
+                navigation={({ tasksActive, onSelectTasks, onSelectPresentation }) => (
+                  <PresentationToolbar
+                    snapshot={presentation.snapshot}
+                    action={presentation.action}
+                    sessionTasks={activeDetail?.tasks || []}
+                    tasksActive={tasksActive}
+                    onSelectTasks={onSelectTasks}
+                    onSelectPresentation={onSelectPresentation}
+                  />
+                )}
                 showBrowser={presentation.snapshot?.state.activeId === 'browser' || presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot.state.activeId && resource.source.type === 'browser-tab' && resource.availability !== 'expired' && resource.availability !== 'unavailable')}
                 content={presentation.snapshot && !['workspace', 'browser'].includes(presentation.snapshot.state.activeId) ? <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/> : undefined}
                 collapsed={layout.rightCollapsed}

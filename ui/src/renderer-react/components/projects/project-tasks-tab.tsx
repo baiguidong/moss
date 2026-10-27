@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   CheckCircle2,
-  ChevronDown,
   Circle,
   CircleX,
   Loader2,
@@ -65,7 +64,6 @@ export function ProjectTasksTab({
   const [query, setQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [sort, setSort] = React.useState<'newest' | 'oldest' | 'updated' | 'status'>('newest');
-  const [expandedTaskIds, setExpandedTaskIds] = React.useState<Set<string>>(() => new Set());
   const [deletingTaskId, setDeletingTaskId] = React.useState<string | null>(null);
   const [error, setError] = React.useState('');
   const visibleTasks = React.useMemo(() => filterAndSortProjectTasks(tasks, {
@@ -78,18 +76,8 @@ export function ProjectTasksTab({
     setQuery('');
     setStatusFilter('all');
     setSort('newest');
-    setExpandedTaskIds(new Set());
     setError('');
   }, [project.id]);
-
-  const toggleDetails = (taskId: string) => {
-    setExpandedTaskIds((current) => {
-      const next = new Set(current);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
-      return next;
-    });
-  };
 
   const deleteTask = async (task: ProjectTask) => {
     if (!window.confirm(`删除会话“${task.subject}”？该会话及其子会话记录将一并删除。`)) return;
@@ -147,24 +135,23 @@ export function ProjectTasksTab({
 
         {visibleTasks.length > 0 ? (
           <div className="divide-y divide-border/70 border-y border-border">
-            {visibleTasks.map((task) => {
-              const expanded = expandedTaskIds.has(task.id);
-              return (
-                <article key={task.id}>
-                  <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 px-2 py-2 transition-colors hover:bg-accent/30">
+            {visibleTasks.map((task) => (
+              <article key={task.id}>
+                <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2 transition-colors hover:bg-accent/30">
+                  <button
+                    type="button"
+                    onClick={() => onOpenSession(task.sessionId)}
+                    className="grid min-h-14 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-2 text-left outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                     <TaskStatusIcon status={task.status} />
-                    <button
-                      type="button"
-                      onClick={() => toggleDetails(task.id)}
-                      className="min-w-0 text-left outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
-                    >
+                    <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-foreground">{task.subject}</div>
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{formatTime(task.createdAt)}</span>
                         {task.workerCount > 0 ? <span>{task.activeWorkerCount > 0 ? `${task.activeWorkerCount} 个子 Agent 运行中` : `${task.workerCount} 个子 Agent`}</span> : null}
                         {task.outputAssetIds.length > 0 ? <span>{task.outputAssetIds.length} 个成果</span> : null}
                       </div>
-                    </button>
+                    </div>
                     <span className={cn(
                       'text-xs',
                       task.status === 'failed' ? 'text-destructive' :
@@ -172,61 +159,33 @@ export function ProjectTasksTab({
                     )}>
                       {taskStatusLabel(task.status)}
                     </span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant={task.attentionCount > 0 || task.status === 'failed' ? 'outline' : 'ghost'}
-                        size={task.attentionCount > 0 || task.status === 'failed' ? 'sm' : 'icon-sm'}
-                        onClick={() => onOpenSession(task.sessionId)}
-                        title={task.attentionCount > 0 ? '进入会话处理' : task.status === 'failed' ? '进入会话介入' : '进入会话'}
-                      >
-                        <MessageSquare className="h-4 w-4" />
-                        {task.attentionCount > 0 ? '去处理' : task.status === 'failed' ? '介入' : null}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => void deleteTask(task)}
-                        disabled={deletingTaskId !== null}
-                        title="删除会话"
-                        aria-label={`删除会话：${task.subject}`}
-                      >
-                        {deletingTaskId === task.id
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : <Trash2 className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => toggleDetails(task.id)}
-                        title={expanded ? '收起详情' : '查看详情'}
-                      >
-                        <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} />
-                      </Button>
-                    </div>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant={task.attentionCount > 0 || task.status === 'failed' ? 'outline' : 'ghost'}
+                      size={task.attentionCount > 0 || task.status === 'failed' ? 'sm' : 'icon-sm'}
+                      onClick={() => onOpenSession(task.sessionId)}
+                      title={task.attentionCount > 0 ? '进入会话处理' : task.status === 'failed' ? '进入会话介入' : '进入会话'}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      {task.attentionCount > 0 ? '去处理' : task.status === 'failed' ? '介入' : null}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => void deleteTask(task)}
+                      disabled={deletingTaskId !== null}
+                      title="删除会话"
+                      aria-label={`删除会话：${task.subject}`}
+                    >
+                      {deletingTaskId === task.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Trash2 className="h-4 w-4" />}
+                    </Button>
                   </div>
-                  {expanded ? (
-                    <div className="grid gap-3 bg-muted/20 px-9 py-4 text-sm">
-                      <div>
-                        <div className="mb-1 text-xs font-medium text-foreground">会话内容</div>
-                        <div className="whitespace-pre-wrap leading-6 text-muted-foreground">{task.description || '暂无会话描述'}</div>
-                      </div>
-                      {task.conclusion ? (
-                        <div>
-                          <div className="mb-1 text-xs font-medium text-foreground">最近回复</div>
-                          <div className="whitespace-pre-wrap leading-6 text-foreground">{task.conclusion}</div>
-                        </div>
-                      ) : null}
-                      {task.error ? <div className="leading-6 text-destructive">{task.error}</div> : null}
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span>根会话 {task.sessionId.slice(0, 8)}</span>
-                        {task.workerCount > 0 ? <span>{task.workerCount} 个子 Agent</span> : null}
-                        {task.completedAt ? <span>回复于 {formatTime(task.completedAt)}</span> : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
+                </div>
+              </article>
+            ))}
           </div>
         ) : (
           <div className="flex min-h-28 items-center justify-center text-sm text-muted-foreground">

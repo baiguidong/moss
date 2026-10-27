@@ -62,8 +62,13 @@ test('isolated side question uses one model request with no tools or executor ev
     requests.push(JSON.parse(String(init?.body)))
     return stream([{ type: 'tool_use', id: 'unexpected', name: 'Bash', input: { command: 'never-execute' } }], 'tool_use')
   }, { preconnect: () => {} }))
-  const result = await runSideQuestion({ question: 'why?', cacheSafeParams: params(), isolated: true })
+  const context = params()
+  context.systemPrompt = ['SHARED_IDENTITY', 'MAIN_ONLY_DELIVERY'] as any
+  context.toolUseContext.options.mainSessionSystemPrompt = 'MAIN_ONLY_DELIVERY'
+  const result = await runSideQuestion({ question: 'why?', cacheSafeParams: context, isolated: true })
   expect(requests).toHaveLength(1)
+  expect(JSON.stringify(requests[0].system)).toContain('SHARED_IDENTITY')
+  expect(JSON.stringify(requests[0].system)).not.toContain('MAIN_ONLY_DELIVERY')
   expect(requests[0].tools || []).toHaveLength(0)
   expect(result.status).toBe('tool_unavailable')
 })
@@ -78,7 +83,7 @@ test('isolated answers report output limits and use their own abort signal', asy
   await expect(runSideQuestion({ question: 'why?', cacheSafeParams: context, isolated: true, abortController: cancel })).rejects.toThrow('cancel only side')
 })
 
-test.each(['adaptive', 'disabled'])('gpt-6.1-sol side question inherits effort with %s thinking on the HTTP request', async thinkingType => {
+test.each(['auto', 'adaptive', 'disabled'])('gpt-6.1-sol side question inherits effort with %s thinking on the HTTP request', async thinkingType => {
   const requests: any[] = []
   fetchMock = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const body = JSON.parse(String(init?.body)); requests.push(body)
@@ -90,7 +95,8 @@ test.each(['adaptive', 'disabled'])('gpt-6.1-sol side question inherits effort w
   context.toolUseContext.getAppState = () => ({ toolPermissionContext: getEmptyToolPermissionContext(), effortValue: 'low' })
   const result = await runSideQuestion({ question: 'Are you generating it?', cacheSafeParams: context, isolated: true })
   expect(requests).toHaveLength(1)
-  expect(requests[0].thinking).toEqual({ type: thinkingType })
+  if (thinkingType === 'auto') expect(requests[0]).not.toHaveProperty('thinking')
+  else expect(requests[0].thinking).toEqual({ type: thinkingType })
   expect(requests[0].output_config?.effort).toBe('low')
   expect(requests[0].tools || []).toHaveLength(0)
   expect(result.status).toBe('completed')

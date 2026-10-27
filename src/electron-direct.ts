@@ -34,6 +34,7 @@ import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { createProjectMemoryTool, createProjectResultTool, type ProjectMemoryProvider, type ProjectResultProvider } from './tools/ProjectMemoryTool/ProjectMemoryTool.js'
+import { MOSS_PRESENTATION_PROMPT } from '../ui/src/shared/presentation-contracts.mjs'
 import {
   createAppContributionTools,
   type AppToolContributionDescriptor,
@@ -143,6 +144,7 @@ import {
   readUnreadMessages,
 } from './utils/teammateMailbox.js'
 import { probeNativeWebSearch } from './tools/WebSearchTool/nativeProbe.js'
+import { probeModelRequest } from './services/api/modelProbe.js'
 import {
   cleanupTeamDirectories,
   killOrphanedTeammatePanes,
@@ -491,6 +493,10 @@ export interface ClaudeSessionOptions {
   customSystemPrompt?: string
   /** 系统提示词补充内容（追加到主系统提示词之后） */
   appendSystemPrompt?: string
+  /** Additive host instructions that are not passed to subagents. */
+  mainSessionSystemPrompt?: string
+  /** The host implements result previews; CLI/headless callers leave this off. */
+  presentationEnabled?: boolean
   /** 权限模式：与 Claude Code 的五档权限语义保持一致。 */
   permissionMode?: PermissionMode
   /** CLI 权限引擎最终返回 ask 时调用的桌面确认回调 */
@@ -559,6 +565,7 @@ type ResolvedClaudeSessionOptions = {
   webSearch?: SessionWebSearchSettings
   customSystemPrompt?: string
   appendSystemPrompt: string
+  mainSessionSystemPrompt: string
   permissionMode: PermissionMode
   onPermissionRequest: (
     tool: string,
@@ -751,6 +758,16 @@ export async function probeWebSearchCapability(options: {
   ))
 }
 
+export async function probeModelConfiguration(options: {
+  model: string
+  url?: string
+  apiKey?: string
+  thinkingConfig?: ThinkingConfig
+  timeoutMs?: number
+}) {
+  return runWithSessionApiOverrides(buildSessionApiOverrides(options), () => probeModelRequest(options))
+}
+
 async function resolveResumeSourceJsonlFile(
   sessionId: string | undefined,
   options: {
@@ -853,6 +870,7 @@ export class ClaudeSession {
     this.#opts = {
       runtime: {
         executionEnvironment: opts.executionEnvironment ?? 'desktop',
+        presentationEnabled: opts.presentationEnabled === true && Boolean(opts.onAppEvent),
         mcpLifetime: { id: this.#mcpLifetime.id, signal: this.#mcpLifetime.controller.signal, revokedServers: this.#mcpLifetime.revokedServers },
         image: opts.image ? { ...opts.image } : undefined,
         desktopCronHostId: opts.desktopCronHostId,
@@ -868,11 +886,12 @@ export class ClaudeSession {
       webSearch: opts.webSearch,
       customSystemPrompt: opts.customSystemPrompt,
       appendSystemPrompt: opts.appendSystemPrompt ?? '',
+      mainSessionSystemPrompt: opts.mainSessionSystemPrompt ?? '',
       permissionMode: opts.permissionMode ?? 'allow-all',
       onPermissionRequest: opts.onPermissionRequest ?? defaultDesktopPermissionRequest,
       onToolUseValidation: opts.onToolUseValidation,
       maxTurns: opts.maxTurns ?? 100,
-      thinkingConfig: opts.thinkingConfig ?? { type: 'adaptive' },
+      thinkingConfig: opts.thinkingConfig ?? { type: 'auto' },
       effort: opts.effort,
       coordinatorMode: opts.coordinatorMode ?? false,
       onAppEvent: opts.onAppEvent,
@@ -1243,6 +1262,11 @@ export class ClaudeSession {
       userSpecifiedModel: model,
       customSystemPrompt: effectiveCustomSystemPrompt,
       appendSystemPrompt: appendSystemPrompt || undefined,
+      mainSessionSystemPrompt: [
+        this.#opts.mainSessionSystemPrompt,
+        // Use the final tool pool, after host, mode and allowlist filtering.
+        tools.some(tool => tool.name === 'moss_present') ? MOSS_PRESENTATION_PROMPT : '',
+      ].filter(Boolean).join('\n\n') || undefined,
       thinkingConfig,
       maxTurns,
       // Desktop and server clients render thinking/text deltas as they arrive.

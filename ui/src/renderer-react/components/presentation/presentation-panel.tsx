@@ -1,26 +1,110 @@
 import * as React from 'react';
-import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ExternalLink, X } from 'lucide-react';
+import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ExternalLink, ListChecks, ChevronDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
+import './presentation-panel.css';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { TurnChangeCard } from '@/components/chat/turn-change-card';
 import { conversationView } from '@/lib/app-conversation-workbench';
-import type { PresentationResource, PresentationSnapshot, WorkspacePreviewData } from '@/types';
+import type { PresentationResource, PresentationSnapshot, SessionTask, WorkspacePreviewData } from '@/types';
 
 type Action = (action: { type: string; id?: string; value?: boolean }) => void;
-export function PresentationToolbar({ snapshot, action }: { snapshot: PresentationSnapshot | null; action: Action }) {
+type PresentationToolbarProps = {
+  snapshot: PresentationSnapshot | null;
+  action: Action;
+  sessionTasks?: SessionTask[];
+  tasksActive?: boolean;
+  onSelectTasks?: () => void;
+  onSelectPresentation?: () => void;
+};
+
+const followHelp = '开启后，Moss 生成新的文件或结果时会自动切换到最新内容；关闭后保持当前查看位置。';
+
+export function PresentationToolbar({
+  snapshot,
+  action,
+  sessionTasks = [],
+  tasksActive = false,
+  onSelectTasks,
+  onSelectPresentation,
+}: PresentationToolbarProps) {
   const state = snapshot?.state;
-  return <div className="flex min-w-0 flex-col gap-1.5 border-b border-border/70 px-2 py-2" aria-label="内容导航">
-    <div className="flex items-center gap-1">
-      <button className="rounded p-1.5 hover:bg-muted disabled:opacity-40" aria-label="返回上一个内容" disabled={!state?.back.length} onClick={() => action({ type: 'back' })}><ArrowLeft size={14}/></button>
-      {([{ id: 'workspace', title: '工作区', icon: FolderOpen }, { id: 'results', title: '结果', icon: PanelsTopLeft }, { id: 'browser', title: '浏览器', icon: Globe2 }]).map(({ id, title, icon: Icon }) =>
-        <button key={id} className={'flex items-center gap-1 rounded px-2 py-1.5 text-xs hover:bg-muted ' + (state?.activeId === id ? 'bg-muted text-primary' : '')} onClick={() => action({ type: 'select', id })}><Icon size={13}/>{title}{id === 'results' && snapshot?.resources.some(r => r.kind !== 'collection' && r.isResult !== false) ? <span className="text-muted-foreground">{snapshot.resources.filter(r => r.kind !== 'collection' && r.isResult !== false).length}</span> : null}</button>)}
-      <button className="ml-auto rounded p-1.5 hover:bg-muted" aria-label={state?.pinnedId ? '取消固定内容' : '固定当前内容'} title={state?.pinnedId ? '取消固定' : '固定当前内容'} onClick={() => action({ type: 'pin', value: !state?.pinnedId })}>{state?.pinnedId ? <PinOff size={14}/> : <Pin size={14}/>}</button>
+  const activeResource = snapshot?.resources.find(item => item.id === state?.activeId);
+  const activeView = tasksActive ? 'tasks' : !state || state.activeId === 'workspace' ? 'workspace'
+    : state?.activeId === 'browser' || activeResource?.source.type === 'browser-tab' ? 'browser' : 'results';
+  const resultCount = snapshot?.resources.filter(item => item.kind !== 'collection' && item.isResult !== false).length || 0;
+  const views = [
+    ...(sessionTasks.length ? [{ id: 'tasks', title: '会话任务', icon: ListChecks, count: sessionTasks.length }] : []),
+    { id: 'workspace', title: '工作区', icon: FolderOpen, count: 0 },
+    { id: 'results', title: '结果', icon: PanelsTopLeft, count: resultCount },
+    { id: 'browser', title: '浏览器', icon: Globe2, count: 0 },
+  ];
+  const selected = views.find(view => view.id === activeView) || views[0];
+  const selectView = (id: string) => {
+    if (id === 'tasks') { onSelectTasks?.(); return; }
+    onSelectPresentation?.();
+    action({ type: 'select', id });
+  };
+  const iconButton = 'flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40';
+
+  return <div className="presentation-navigation min-w-0 shrink-0 border-b border-border/70" aria-label="内容导航">
+    <div className={cn('presentation-navigation-row flex min-w-0 items-center gap-1 px-2 py-1.5 text-xs', sessionTasks.length > 0 && 'has-tasks')}>
+      <button type="button" className={iconButton} aria-label="返回上一个内容" disabled={!state?.back.length} onClick={() => { onSelectPresentation?.(); action({ type: 'back' }); }}><ArrowLeft size={14}/></button>
+      <div className="presentation-navigation-tabs min-w-0 flex-1 items-center gap-0.5">
+        {views.map(({ id, title, icon: Icon, count }) => <button key={id} type="button"
+          className={cn('flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', activeView === id && 'bg-muted text-primary')}
+          aria-label={count ? `${title} ${count} 项` : title} aria-pressed={activeView === id} onClick={() => selectView(id)}>
+          <Icon size={13}/><span>{title}</span>{count > 0 && <span className="text-muted-foreground tabular-nums">{count}</span>}
+        </button>)}
+      </div>
+      <div className="presentation-navigation-select min-w-0 flex-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label="切换右侧视图" className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded bg-muted px-2 text-left text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <selected.icon size={13} className="shrink-0"/><span className="truncate">{selected.title}</span>
+              {selected.count > 0 && <span className="text-muted-foreground tabular-nums">{selected.count}</span>}
+              <ChevronDown size={13} className="ml-auto shrink-0"/>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-44" aria-label="右侧视图">
+            <DropdownMenuRadioGroup value={activeView} onValueChange={selectView}>
+              {views.map(({ id, title, icon: Icon, count }) => <DropdownMenuRadioItem key={id} value={id} className="text-xs">
+                <Icon size={13}/><span>{title}</span>{count > 0 && <span className="ml-auto text-muted-foreground tabular-nums">{count}</span>}
+              </DropdownMenuRadioItem>)}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <label className="flex h-7 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded px-1 text-muted-foreground hover:bg-muted" title={followHelp}>
+        <input className="h-3 w-3 accent-primary" type="checkbox" checked={state?.autoFollow ?? true} onChange={e => action({ type: 'follow', value: e.target.checked })}/>
+        <span>跟随新结果</span>
+      </label>
+      <button type="button" className={iconButton} aria-label={state?.pinnedId ? '取消固定内容' : '固定当前内容'} title={state?.pinnedId ? '取消固定' : '固定当前内容'} disabled={!state || tasksActive} onClick={() => action({ type: 'pin', value: !state?.pinnedId })}>{state?.pinnedId ? <PinOff size={14}/> : <Pin size={14}/>}</button>
     </div>
-    <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground"><label className="flex items-center gap-1.5"><input type="checkbox" checked={state?.autoFollow ?? true} onChange={e => action({ type: 'follow', value: e.target.checked })}/>跟随新结果</label>{state?.pinnedId ? <span>已固定当前内容</span> : null}</div>
-    {Boolean(state?.openedIds.some(id => snapshot.resources.some(r => r.id === id))) && <div className="flex gap-1 overflow-x-auto" aria-label="已打开内容">{state.openedIds.map(id => {
-      const item = snapshot.resources.find(r => r.id === id); if (!item) return null;
-      return <button key={id} title={item.title} className={'max-w-44 shrink-0 truncate rounded px-2 py-1 text-xs ' + (id === state.activeId ? 'bg-primary/10 text-primary' : 'hover:bg-muted')} onClick={() => action({ type: 'select', id })}>{item.title}</button>;
-    })}</div>}
   </div>;
+}
+
+function ResourceNavigation({ resource, snapshot, action }: { resource: PresentationResource; snapshot: PresentationSnapshot; action: Action }) {
+  const openedIds = new Set([...snapshot.state.openedIds, resource.id]);
+  const items = snapshot.resources.filter(item => openedIds.has(item.id));
+  if (items.length < 2) return <span title={resource.title} className="block truncate px-2 text-xs">{resource.title}</span>;
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <button type="button" aria-label="切换已打开内容" title={resource.title} className="flex h-7 w-full min-w-0 items-center gap-2 rounded px-2 text-left text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="min-w-0 flex-1 truncate">{resource.title}</span><ChevronDown size={13} className="shrink-0"/>
+      </button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-24px)]" aria-label="已打开内容">
+      <DropdownMenuRadioGroup value={resource.id} onValueChange={id => action({ type: 'select', id })}>
+        {items.map(item => <DropdownMenuRadioItem key={item.id} value={item.id} textValue={item.title} title={item.source.path || item.title} className="text-xs">
+          <span className="min-w-0">
+            <span className="block truncate">{item.title}</span>
+            {item.source.path && <span className="block truncate text-muted-foreground">{item.source.path}</span>}
+          </span>
+        </DropdownMenuRadioItem>)}
+      </DropdownMenuRadioGroup>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 type RendererProps = { resource: PresentationResource; snapshot: PresentationSnapshot; action: Action; onReady: () => void; onError: (message: string) => void };
@@ -54,9 +138,11 @@ function FileResource({ resource, snapshot, action, onReady, onError }: Renderer
   }, [snapshot.sessionId, snapshot.epoch, resource.id, resource.revision, resource.view, resource.location?.line, resource.location?.column, file?.metadata?.dirty, onError]);
   if (!file) return <div className="p-4 text-sm text-muted-foreground">{error || '正在加载内容…'}</div>;
   return <div className="flex h-full min-h-0 flex-col">
-    <div className="flex items-center gap-2 border-b border-border/70 px-3 py-1.5"><span className="min-w-0 flex-1 truncate text-xs">{resource.title}</span><button className="rounded p-1 hover:bg-muted" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}><ExternalLink size={14}/></button></div>
     {error && <div role="status" className="px-3 py-2 text-xs text-amber-600">{error}</div>}
-    <div className="min-h-0 flex-1"><PreviewDrawer onReady={loadedKey === loadKey ? onReady : undefined} onError={loadedKey === loadKey ? onError : undefined} visible tabs={[file]} activePath={file.path} standalone onActivate={() => {}} onUpdateTab={(_path, patch) => { setFile(current => ({ ...current, ...patch })); if (file.metadata?.remote && typeof patch.metadata?.dirty === 'boolean') action({ type: 'dirty', id: resource.id, value: patch.metadata.dirty }); }} onCloseTab={() => action({ type: 'dismiss', id: resource.id })} onCloseOthers={() => {}} onCloseAll={() => action({ type: 'dismiss', id: resource.id })} onCloseDrawer={() => action({ type: 'dismiss', id: resource.id })}/></div>
+    <div className="min-h-0 flex-1"><PreviewDrawer
+      navigation={<ResourceNavigation resource={resource} snapshot={snapshot} action={action}/>}
+      headerActions={<button type="button" className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}><ExternalLink size={14}/></button>}
+      onReady={loadedKey === loadKey ? onReady : undefined} onError={loadedKey === loadKey ? onError : undefined} visible tabs={[file]} activePath={file.path} standalone onActivate={() => {}} onUpdateTab={(_path, patch) => { setFile(current => ({ ...current, ...patch })); if (file.metadata?.remote && typeof patch.metadata?.dirty === 'boolean') action({ type: 'dirty', id: resource.id, value: patch.metadata.dirty }); }} onCloseTab={() => action({ type: 'dismiss', id: resource.id })} onCloseOthers={() => {}} onCloseAll={() => action({ type: 'dismiss', id: resource.id })} onCloseDrawer={() => action({ type: 'dismiss', id: resource.id })}/></div>
   </div>;
 }
 

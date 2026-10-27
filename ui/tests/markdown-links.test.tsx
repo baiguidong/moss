@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarkdownRenderer } from '../src/renderer-react/components/markdown/markdown-renderer';
-import { appRouteLink, fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform } from '../src/renderer-react/lib/markdown-links';
+import { appRouteLink, fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform, normalizeMarkdownHref } from '../src/renderer-react/lib/markdown-links';
 import { remarkFileReferences } from '../src/renderer-react/lib/remark-file-references';
 import { isAppResourceUri } from '../src/shared/app-resource-uri.mjs';
 const uri = 'example-notes://document/11112222?revision=abc&name=Notes';
@@ -76,4 +76,18 @@ test('local file navigation retains the owning session and line suffix', async (
   await handleMarkdownLinkClick(event, '/tmp/joke.txt:1', host, 'owning-session');
   expect(opened).toEqual([{ sessionId: 'owning-session', input: { items: [{ path: '/tmp/joke.txt:1' }] } }]);
   await expect(handleMarkdownLinkClick(event, '/tmp/joke.txt', host)).rejects.toThrow('所属会话');
+});
+
+test('trims formatting whitespace from angle-bracket file links', async () => {
+  const file = '/Users/bgd/.moss/sessions/session/workspace/index.html';
+  expect(normalizeMarkdownHref(` ${file} `)).toBe(file);
+  expect(normalizeMarkdownHref(`%20${file}%20`)).toBe(file);
+  expect(markdownUrlTransform(` ${file} `, 'href')).toBe(file);
+  expect(markdownUrlTransform(`%20${file}%20`, 'href')).toBe(file);
+  const html = renderToStaticMarkup(<MarkdownRenderer content={`[Linux](< ${file} >)`} sessionId="owning-session" />);
+  expect(html).toContain(`href="${file}"`);
+  const opened: any[] = [];
+  const host = { ...setup().host, presentation: { open: async (input: any) => { opened.push(input); return { ok: true }; } } } as any;
+  await handleMarkdownLinkClick({ preventDefault() {} }, ` ${file} `, host, 'owning-session');
+  expect(opened).toEqual([{ sessionId: 'owning-session', input: { items: [{ path: file }] } }]);
 });

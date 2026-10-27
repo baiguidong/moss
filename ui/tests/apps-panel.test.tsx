@@ -147,6 +147,16 @@ describe('Apps management', () => {
     expect(prompt.detail).toContain('新增、修改、启停或删除 MCP 服务配置');
   });
 
+  test('includes the model tool name in the install confirmation', async () => {
+    let prompt: any;
+    await confirmAppInstallation({ showMessageBox: async (value: any) => { prompt = value; return { response: 0 }; } }, {
+      id: 'moss.computer-use', displayName: '电脑操控', contributes: {
+        tools: [{ id: 'computer_use', title: '电脑操控', description: '读取并操作窗口', effect: 'write' }],
+      },
+    });
+    expect(prompt.detail).toContain('工具名称：app__moss_computer_use__computer_use');
+  });
+
   test('centers the MCP service cell across long tool rows', () => {
     const html = renderToStaticMarkup(<table><AppMcpToolRows app={settingsApp()} service={{
       appId: 'moss.knowledge-rag', instanceId: 'instance', name: 'knowledge', revision: '1', status: 'connected',
@@ -176,6 +186,16 @@ describe('Apps management', () => {
     expect(disabled).toContain('查询记录');
     expect(disabled).toContain('App 已停用');
     expect(disabled).not.toContain('已注册');
+  });
+
+  test('shows the model tool name alongside the App-local tool id', () => {
+    const app = {
+      ...settingsApp(), enabled: true,
+      id: 'moss.computer-use', name: 'moss.computer-use',
+      agentTools: [{ id: 'computer_use', name: 'app__moss_computer_use__computer_use', title: '电脑操控', description: '读取并操作窗口', effect: 'write' as const }],
+    };
+    const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
+    expect(markup).toContain('工具名称：app__moss_computer_use__computer_use');
   });
 
   test('makes tool registration visible on the App card before opening management', () => {

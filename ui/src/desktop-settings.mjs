@@ -38,7 +38,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   runtimeLifecycle: { ...DEFAULT_RUNTIME_LIFECYCLE },
   language: 'chinese',
   appendSystemPrompt: '',
-  thinkingMode: 'adaptive',
+  thinkingMode: 'auto',
   thinkingBudgetTokens: 16000,
   url: '',
   apiKey: '',
@@ -341,12 +341,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
     stringField(result, 'language') ??
     DEFAULT_DESKTOP_SETTINGS.language;
 
-  result.thinkingMode =
+  result.thinkingMode = (
     source.thinkingMode ??
     sourceTextThinking.mode ??
     result.thinkingMode ??
     existingTextThinking.mode ??
-    DEFAULT_DESKTOP_SETTINGS.thinkingMode;
+    DEFAULT_DESKTOP_SETTINGS.thinkingMode
+  ) || 'auto';
 
   result.thinkingBudgetTokens =
     boundedInt(source.thinkingBudgetTokens, 1024, 128_000) ??
@@ -903,6 +904,15 @@ function loadDesktopSettings(settingsPath, log) {
   }
 }
 
+export function buildThinkingConfig(settings) {
+  if (settings?.thinkingMode === 'disabled') return { type: 'disabled' };
+  if (settings?.thinkingMode === 'adaptive') return { type: 'adaptive' };
+  if (settings?.thinkingMode === 'enabled') {
+    return { type: 'enabled', budgetTokens: settings.thinkingBudgetTokens };
+  }
+  return { type: 'auto' };
+}
+
 function syncDesktopThinkingEnv(settings) {
   if (settings?.thinkingMode === 'disabled') {
     process.env.CLAUDE_CODE_DISABLE_THINKING = '1';
@@ -1098,6 +1108,15 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
     save(nextSettings) {
       state = saveDesktopSettingsFile(settingsPath, nextSettings, value);
       value = state.value;
+      return { state, value };
+    },
+    hydrate(nextSettings) {
+      // Credentials are kept in the encrypted store rather than settings.json.
+      // Keep the in-memory snapshot in sync without writing those private values
+      // back to the public settings file.
+      value = normalizeDesktopSettings(nextSettings, value);
+      syncDesktopThinkingEnv(value);
+      syncDesktopModelEnv(value);
       return { state, value };
     },
     reload() {

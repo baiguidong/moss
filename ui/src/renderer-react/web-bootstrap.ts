@@ -11,6 +11,12 @@ async function jsonFetch(url: string, init?: RequestInit) {
 
 export async function initializeHostClient() {
   if (window.agentDesktop) return;
+  // Desktop terminals intentionally expose only their dedicated IPC bridge.
+  // They must not try to authenticate against a file:///api/auth endpoint.
+  if (new URLSearchParams(location.search).get('window') === 'terminal' && window.mossTerminal) return;
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') {
+    throw new Error('桌面连接未初始化，请关闭此窗口后重新打开 Moss。');
+  }
   const { showWebLogin, mountWebSessionControls } = await import('./web-interface');
   let auth = await jsonFetch('/api/auth');
   if (!auth.authenticated) {

@@ -58,6 +58,13 @@ export function preserveQueuedMessages(queue: QueuedMessage[]) {
     { ...item, status: 'draft' as const, notice: '已停止排队，内容已保留。' });
 }
 
+/** Stop interrupts the current turn while keeping queued messages live. */
+export function requeueMessagesAfterStop(queue: QueuedMessage[]) {
+  return queue.map(item => item.status === 'dispatching'
+    ? { ...item, status: 'queued' as const, notice: undefined }
+    : item);
+}
+
 /** Restored browser/desktop drafts never resume sending automatically. */
 export function recoverQueuedMessages(queue: QueuedMessage[] = []) {
   return queue.map(item => ({ ...item, status: 'draft' as const,

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { composerIsEmpty, mergeRecoveredDraft, preserveQueuedMessages, recoverQueuedMessages, withdrawMessage,
+import { composerIsEmpty, mergeRecoveredDraft, preserveQueuedMessages, recoverQueuedMessages, requeueMessagesAfterStop, withdrawMessage,
   type ComposerDraft, type QueuedMessage } from '../src/renderer-react/lib/composer-queue';
 import { firstMessageTitle } from '../src/renderer-react/lib/pending-first-message';
 
@@ -52,6 +52,18 @@ test('Stop and reload keep separate complete drafts without automatic replay', (
   expect(recovered[2].notice).toContain('未确认');
 });
 
+test('Stop requeues an in-flight item while keeping existing drafts untouched', () => {
+  const items: QueuedMessage[] = [
+    { ...queued, status: 'dispatching', notice: '正在发送' },
+    { ...queued, id: 'two', status: 'queued' },
+    { ...queued, id: 'draft', status: 'draft', notice: '请核对记录' },
+  ];
+  const stopped = requeueMessagesAfterStop(items);
+  expect(stopped.map(item => item.status)).toEqual(['queued', 'queued', 'draft']);
+  expect(stopped[0].notice).toBeUndefined();
+  expect(stopped[2].notice).toBe('请核对记录');
+});
+
 test('recovering another window preserves its intent/resources independently of current input', () => {
   const current: ComposerDraft = { text: 'current', files: [], intent: 'chat' };
   const other = withdrawMessage([queued], 'one', empty, '/work').draft;
@@ -79,7 +91,7 @@ function dispatchHarness(items: QueuedMessage[], host: any, dispatch: any) {
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-test('duplicate turn-end events do not dispatch twice; Stop during preparation prevents late sends', async () => {
+test('duplicate turn-end events do not dispatch twice; Stop during preparation requeues late sends', async () => {
   let resolve!: (value: any) => void;
   let sends = 0;
   const host = { getSession: () => new Promise(value => { resolve = value; }) };
@@ -90,7 +102,7 @@ test('duplicate turn-end events do not dispatch twice; Stop during preparation p
   resolve({ workspace: '/work', busy: false });
   await settle();
   expect(sends).toBe(0);
-  expect(state.queuedMessagesRef.current.session[0]).toMatchObject({ status: 'draft', files: queued.files });
+  expect(state.queuedMessagesRef.current.session[0]).toMatchObject({ status: 'queued', files: queued.files });
 });
 
 test('failed transport preserves a reviewable draft instead of retrying automatically', async () => {
@@ -126,7 +138,7 @@ function submitHarness() {
     queueEpochs: { current: new Map() }, creatingSessionRef: { current: null },
     cleanIpcErrorMessage: (error: Error) => error.message,
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},
-    input: 'original', appSelection: null, appDraftWorkspace: undefined, planDecisionBusy: false,
+    input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, planDecisionBusy: false,
     activeSessionId: 'session', activeDetail: { workspace: '/work', agentMode: 'local', busy: false },
     activeSessionIdRef: { current: 'session' }, activeDetailRef: { current: { workspace: '/work' } },
     inputDraftRef: { current: '' }, composerAttachmentsRef: { current: [] },

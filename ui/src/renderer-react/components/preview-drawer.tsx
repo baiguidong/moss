@@ -183,6 +183,8 @@ export function PreviewDrawer({
   onCloseAll,
   onCloseDrawer,
   standalone = false,
+  navigation,
+  headerActions,
   onReady,
   onError,
 }: {
@@ -196,6 +198,8 @@ export function PreviewDrawer({
   onCloseAll: () => void;
   onCloseDrawer: () => void;
   standalone?: boolean;
+  navigation?: React.ReactNode;
+  headerActions?: React.ReactNode;
   onReady?: () => void;
   onError?: (message: string) => void;
 }) {
@@ -456,7 +460,7 @@ export function PreviewDrawer({
   };
 
   const handleCloseDrawerWithConfirm = () => {
-    const targetName = standalone ? "预览窗口" : "预览抽屉";
+    const targetName = navigation ? "当前内容" : standalone ? "预览窗口" : "预览抽屉";
     if (!confirmDiscard(dirtyTabs, `有 ${dirtyTabs.length} 个预览存在未保存修改，确认关闭${targetName}？`)) return;
     onCloseDrawer();
   };
@@ -467,6 +471,10 @@ export function PreviewDrawer({
       standalone ? "" : "border-r border-border/70",
     )}>
       <div data-preview-header-row="tabs" className="flex h-10 shrink-0 items-center border-b border-border/70 bg-background/72">
+        {navigation ? <div className="flex min-w-0 flex-1 items-center pl-2 pr-1">
+          {activeDirty && <span className="shrink-0 text-xs text-primary" aria-label="未保存修改" title="未保存修改">*</span>}
+          <div className="min-w-0 flex-1">{navigation}</div>
+        </div> : <>
         <div aria-label="预览标签" className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <div className="flex w-max min-w-full items-center gap-1.5 px-2">
             {tabs.map((tab) => (
@@ -516,13 +524,15 @@ export function PreviewDrawer({
             <DropdownMenuItem onClick={handleCloseAllWithConfirm}>关闭全部</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </>}
+        {headerActions}
         <Button
           variant="ghost"
           size="icon-sm"
           className="mr-2 h-7 w-7 shrink-0 rounded-md"
           onClick={handleCloseDrawerWithConfirm}
-          title={standalone ? "关闭预览窗口" : "关闭预览"}
-          aria-label={standalone ? "关闭预览窗口" : "关闭预览"}
+          title={navigation ? "关闭当前内容" : standalone ? "关闭预览窗口" : "关闭预览"}
+          aria-label={navigation ? "关闭当前内容" : standalone ? "关闭预览窗口" : "关闭预览"}
         >
           <X className="h-4 w-4" />
         </Button>

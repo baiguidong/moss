@@ -4,6 +4,7 @@ import type { PresentationSnapshot } from '@/types';
 export function usePresentation(sessionId: string | null, workspace: string | undefined, enabled: boolean, onReveal: () => void) {
   const [snapshot, setSnapshot] = React.useState<PresentationSnapshot | null>(null);
   const [error, setError] = React.useState('');
+  const [openSignal, setOpenSignal] = React.useState(0);
   const reveal = React.useRef(onReveal); reveal.current = onReveal;
   const current = React.useRef<PresentationSnapshot | null>(null);
   React.useEffect(() => {
@@ -12,8 +13,17 @@ export function usePresentation(sessionId: string | null, workspace: string | un
     const accept = (value: PresentationSnapshot | null, live = false) => {
       if (!active || !value || value.sessionId !== sessionId) return;
       if (current.current?.epoch === value.epoch && current.current.version > value.version) return;
+      const previous = current.current;
       const next = value;
       current.current = next; setSnapshot(next);
+      // A fresh request also covers reopening the same file while viewing tasks.
+      // Ordinary refreshes and draft updates must preserve the selected task view.
+      const newRequest = value.request && value.request.requestId !== previous?.request?.requestId;
+      const selectionChanged = previous && value.state.activeOrigin !== 'restore'
+        && (value.state.activeId !== previous.state.activeId || !previous.state.visible);
+      if (live && enabled && value.state.visible && (newRequest || selectionChanged)) {
+        setOpenSignal(signal => signal + 1);
+      }
       if (live && enabled && value.state.visible && (value.request || value.state.activeOrigin === 'manual')) reveal.current();
     };
     const off = window.agentDesktop.presentation.onChanged(value => accept(value, true));
@@ -32,5 +42,5 @@ export function usePresentation(sessionId: string | null, workspace: string | un
     if (!sessionId) return;
     void window.agentDesktop.presentation.action({ sessionId, action }).catch(reason => setError(String(reason)));
   }, [sessionId]);
-  return { snapshot: snapshot?.sessionId === sessionId ? snapshot : null, action, error };
+  return { snapshot: snapshot?.sessionId === sessionId ? snapshot : null, action, error, openSignal };
 }

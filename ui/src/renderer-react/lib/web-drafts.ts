@@ -1,5 +1,5 @@
 // One record per page writer: concurrent tabs never overwrite each other's draft.
-export type WebDraft<T = unknown> = { id: string; scope: string; session: string; tab: string; updatedAt: number; value: T };
+export type WebDraft<T = unknown> = { id: string; scope: string; session: string; tab: string; updatedAt: number; value: T; noticeAcknowledged?: boolean };
 let database: Promise<IDBDatabase> | undefined;
 let loggingOut = false;
 export function draftScope() {
@@ -25,14 +25,38 @@ export async function listDrafts<T>(scope: string, session?: string): Promise<We
     request.onerror = () => reject(request.error);
   });
 }
-export async function writeDraft(record: WebDraft, replaceId?: string) {
+export async function writeDraft(record: WebDraft) {
   if (loggingOut) return;
   const db = await open();
   if (loggingOut) return;
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction('drafts', 'readwrite'), store = tx.objectStore('drafts');
     // Older writers may still be active in another tab; retain their copies.
-    store.put(record);
+    const request = store.get(record.id);
+    request.onsuccess = () => {
+      const previous: WebDraft | undefined = request.result;
+      // Remounting saves again; only changed content needs another notice.
+      const noticeAcknowledged = previous?.noticeAcknowledged === true && JSON.stringify(previous.value) === JSON.stringify(record.value);
+      store.put({ ...record, noticeAcknowledged });
+    };
+    tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+  });
+}
+
+/** Acknowledge only the version the user saw, without deleting its recovery copy. */
+export async function acknowledgeDrafts(records: WebDraft[]) {
+  if (!records.length || loggingOut) return;
+  const db = await open();
+  if (loggingOut) return;
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('drafts', 'readwrite'), store = tx.objectStore('drafts');
+    for (const record of records) {
+      const request = store.get(record.id);
+      request.onsuccess = () => {
+        const stored: WebDraft | undefined = request.result;
+        if (stored && JSON.stringify(stored.value) === JSON.stringify(record.value)) store.put({ ...stored, noticeAcknowledged: true });
+      };
+    }
     tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
   });
 }

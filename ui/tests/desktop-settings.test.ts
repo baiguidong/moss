@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildThinkingConfig,
   createDesktopSettingsStore,
   normalizeDesktopSettings,
   normalizeMossBaseUrl,
@@ -18,6 +19,36 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('uses model defaults when thinking is unset or the legacy default option is blank', () => {
+    for (const input of [{}, { thinkingMode: '' }, { models: { text: { thinking: { mode: '' } } } }]) {
+      const settings = normalizeDesktopSettings(input);
+      expect(settings.thinkingMode).toBe('auto');
+      expect(buildThinkingConfig(settings)).toEqual({ type: 'auto' });
+    }
+    expect(buildThinkingConfig(undefined)).toEqual({ type: 'auto' });
+  });
+
+  it.each(['auto', 'adaptive', 'enabled', 'disabled'])('preserves explicit thinking mode %s across restart and unrelated saves', mode => {
+    const previousDisable = process.env.CLAUDE_CODE_DISABLE_THINKING;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-thinking-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text: { thinking: { mode, budgetTokens: 8192 } } } }));
+    try {
+      const store = createDesktopSettingsStore({ settingsPath });
+      store.save({ language: 'english' });
+      const reloaded = createDesktopSettingsStore({ settingsPath });
+      expect(reloaded.value.thinkingMode).toBe(mode);
+      expect(buildThinkingConfig(reloaded.value)).toEqual(mode === 'enabled' ? { type: mode, budgetTokens: 8192 } : { type: mode });
+      reloaded.save({ thinkingMode: 'auto' });
+      expect(buildThinkingConfig(createDesktopSettingsStore({ settingsPath }).value)).toEqual({ type: 'auto' });
+      expect(process.env.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
+    } finally {
+      if (previousDisable === undefined) delete process.env.CLAUDE_CODE_DISABLE_THINKING;
+      else process.env.CLAUDE_CODE_DISABLE_THINKING = previousDisable;
+    }
+  });
+
   it('migrates computer control grants and keeps the generic Host setting on subsequent saves', () => {
     const legacy = { computerUse: { enabled:true, apps:[{bundleId:'com.example',name:'Example'}] } };
     const migrated = normalizeDesktopSettings(legacy);
@@ -620,5 +651,29 @@ describe('desktop settings', () => {
     expect(serialized).not.toContain('tvly-private-value');
     expect(serialized).not.toContain('brave-private-value');
     expect(JSON.parse(serialized).webSearch).toEqual({ mode: 'auto' });
+  });
+
+  it('keeps hydrated WebSearch credentials when the public settings are reloaded', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-desktop-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify({ webSearch: { mode: 'auto' } }));
+    const store = createDesktopSettingsStore({ settingsPath });
+
+    store.hydrate({
+      ...store.value,
+      webSearch: {
+        ...store.value.webSearch,
+        tavilyApiKey: 'tvly-private-value',
+      },
+    });
+    const reloaded = store.reload();
+
+    expect(reloaded.value.webSearch).toMatchObject({
+      mode: 'auto',
+      tavilyApiKey: 'tvly-private-value',
+    });
+    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).webSearch)
+      .toEqual({ mode: 'auto' });
   });
 });

@@ -176,6 +176,8 @@ export type ToolUseContext = {
     customSystemPrompt?: string
     /** Additional system prompt appended after the main system prompt */
     appendSystemPrompt?: string
+    /** Host instructions for the main conversation only; never inherited by workers. */
+    mainSessionSystemPrompt?: string
     /** Override querySource for analytics tracking */
     querySource?: QuerySource
     /** Optional callback to get the latest tools (e.g., after MCP servers connect mid-query) */
@@ -562,6 +564,8 @@ export type Tool<
   aliases?: string[]
   /** Omitted for tools available in either environment. Applied before model exposure. */
   requiresDesktop?: boolean
+  /** Requires a host that explicitly supports conversation result previews. */
+  requiresPresentation?: boolean
   /** Host-mediated capabilities reserved for the attended main session. */
   requiresInteractiveMainSession?: boolean
   supportedEnvironments?: readonly import('./utils/sessionIdContext.js').SessionExecutionEnvironment[]

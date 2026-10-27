@@ -77,6 +77,7 @@ export function createMossClient(transport, platform = {}) {
   ensureManagedRuntimes: (payload) => transport.invoke('agent:ensure-managed-runtimes', payload),
   getAuthDebug: () => transport.invoke('agent:get-auth-debug'),
   getSettings: () => transport.invoke('agent:get-settings'),
+  testModel: (payload) => transport.invoke('agent:test-model', payload),
   updateSettings: (payload) => transport.invoke('agent:update-settings', payload),
   probeWebSearch: () => transport.invoke('agent:probe-web-search'),
   usage: {

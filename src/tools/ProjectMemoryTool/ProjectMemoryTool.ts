@@ -15,6 +15,7 @@ export type ProjectMemoryProvider = (input: ProjectMemoryInput) => Promise<unkno
 export function createProjectMemoryTool(provider: ProjectMemoryProvider) {
   return buildTool({
     name: 'ProjectMemory',
+    requiresInteractiveMainSession: true,
     searchHint: 'read search project memory and record user corrections',
     maxResultSizeChars: 100_000,
     inputSchema,
@@ -35,7 +36,10 @@ export function createProjectMemoryTool(provider: ProjectMemoryProvider) {
         : { behavior: 'allow' as const, updatedInput: input }
     },
     renderToolUseMessage() { return null },
-    async call(input) { return { data: JSON.stringify(await provider(input)) } },
+    async call(input, context) {
+      if (context.agentId) throw new Error('Project memory belongs to the main conversation')
+      return { data: JSON.stringify(await provider(input)) }
+    },
     mapToolResultToToolResultBlockParam(data, toolUseID) {
       return { type: 'tool_result' as const, tool_use_id: toolUseID, content: data }
     },
@@ -53,6 +57,7 @@ export type ProjectResultProvider = (input: z.infer<typeof resultSchema>) => Pro
 export function createProjectResultTool(provider: ProjectResultProvider) {
   return buildTool({
     name: 'ProjectResult', inputSchema: resultSchema, maxResultSizeChars: 50000,
+    requiresInteractiveMainSession: true,
     searchHint: 'list project deliverables register a completed output file',
     async description() { return 'List project results or register a deliverable from this session, retaining the original file.' },
     async prompt() { return 'Register actual deliverables after creating them. Do not register inputs, source code, credentials, caches or temporary files as results. Use list to find previous results. The host supplies project/session identity; registration never copies or deletes the original file.' },
@@ -69,7 +74,10 @@ export function createProjectResultTool(provider: ProjectResultProvider) {
         : { behavior: 'ask' as const, message: '将此文件登记为项目成果？' }
     },
     renderToolUseMessage() { return null },
-    async call(input) { return { data: JSON.stringify(await provider(input)) } },
+    async call(input, context) {
+      if (context.agentId) throw new Error('Project result registration belongs to the main conversation')
+      return { data: JSON.stringify(await provider(input)) }
+    },
     mapToolResultToToolResultBlockParam(data, toolUseID) {
       return { type: 'tool_result' as const, tool_use_id: toolUseID, content: data }
     },

@@ -2,7 +2,7 @@
  * Helper for running forked agent query loops with usage tracking.
  *
  * This utility ensures forked agents:
- * 1. Share identical cache-critical params with the parent to guarantee prompt cache hits
+ * 1. Reuse parent cache-critical params except main-session-only instructions and tools
  * 2. Track full usage metrics across the entire query loop
  * 3. Log metrics via the tengu_fork_agent_query event when complete
  * 4. Isolate mutable state to prevent interference with the main agent loop
@@ -35,7 +35,7 @@ import {
 } from './messages.js'
 import { parseToolListFromCLI } from './permissions/permissionSetup.js'
 import { recordSidechainTranscript } from './sessionStorage.js'
-import type { SystemPrompt } from './systemPromptType.js'
+import { stripMainSessionSystemPrompt, type SystemPrompt } from './systemPromptType.js'
 import {
   type ContentReplacementState,
   cloneContentReplacementState,
@@ -349,6 +349,9 @@ export function createSubagentContext(
   parentContext: ToolUseContext,
   overrides?: SubagentContextOverrides,
 ): ToolUseContext {
+  const options = overrides?.options ?? parentContext.options
+  const workerTools = (tools: ToolUseContext['options']['tools']) =>
+    tools.filter(tool => !tool.requiresInteractiveMainSession)
   // Determine abortController: explicit override > share parent's > new child
   const abortController =
     overrides?.abortController ??
@@ -442,7 +445,12 @@ export function createSubagentContext(
     openMessageSelector: undefined,
 
     // Fields that can be overridden or copied from parent
-    options: overrides?.options ?? parentContext.options,
+    options: {
+      ...options,
+      mainSessionSystemPrompt: undefined,
+      tools: workerTools(options.tools),
+      refreshTools: options.refreshTools ? () => workerTools(options.refreshTools!()) : undefined,
+    },
     messages: overrides?.messages ?? parentContext.messages,
     emitAppEvent: parentContext.emitAppEvent,
     // Generate new agentId for subagents (each subagent should have its own ID)
@@ -468,7 +476,7 @@ export function createSubagentContext(
  * Runs a forked agent query loop and tracks cache hit metrics.
  *
  * This function:
- * 1. Uses identical cache-safe params from parent to enable prompt caching
+ * 1. Reuses parent cache-safe params while excluding main-session-only capabilities
  * 2. Accumulates usage across all query iterations
  * 3. Logs tengu_fork_agent_query with full usage when complete
  *
@@ -543,11 +551,11 @@ export async function runForkedAgent({
         : null
   }
 
-  // Run the query loop with isolated context (cache-safe params preserved)
+  // Preserve the shared prefix except for host instructions reserved for the main session.
   try {
     for await (const message of query({
       messages: initialMessages,
-      systemPrompt,
+      systemPrompt: stripMainSessionSystemPrompt(systemPrompt, toolUseContext.options.mainSessionSystemPrompt),
       userContext,
       systemContext,
       canUseTool,

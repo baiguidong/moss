@@ -35,7 +35,8 @@ function isProactiveActive_SAFE_TO_CALL_ANYWHERE(): boolean {
  * 3. Custom system prompt (if specified via --system-prompt)
  * 4. Default system prompt (the standard Claude Code prompt)
  *
- * Plus appendSystemPrompt is always added at the end if specified (except when override is set).
+ * Shared appendSystemPrompt and mainSessionSystemPrompt follow the selected identity
+ * (except when override is set). Subagent contexts omit mainSessionSystemPrompt.
  */
 export function buildEffectiveSystemPrompt({
   mainThreadAgentDefinition,
@@ -55,6 +56,7 @@ export function buildEffectiveSystemPrompt({
   if (overrideSystemPrompt) {
     return asSystemPrompt([overrideSystemPrompt])
   }
+  const mainSessionSystemPrompt = toolUseContext.options.mainSessionSystemPrompt
   // Coordinator mode: use coordinator prompt instead of default
   // Lazy require to avoid circular dependency issues.
   // isCoordinatorMode() checks session context (electron-direct) or env var (CLI).
@@ -66,6 +68,7 @@ export function buildEffectiveSystemPrompt({
       return asSystemPrompt([
         getCoordinatorSystemPrompt(),
         ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+        ...(mainSessionSystemPrompt ? [mainSessionSystemPrompt] : []),
       ])
     }
   }
@@ -101,6 +104,7 @@ export function buildEffectiveSystemPrompt({
       ...defaultSystemPrompt,
       `\n# Custom Agent Instructions\n${agentSystemPrompt}`,
       ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+      ...(mainSessionSystemPrompt ? [mainSessionSystemPrompt] : []),
     ])
   }
 
@@ -111,5 +115,6 @@ export function buildEffectiveSystemPrompt({
         ? [customSystemPrompt]
         : defaultSystemPrompt),
     ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+    ...(mainSessionSystemPrompt ? [mainSessionSystemPrompt] : []),
   ])
 }

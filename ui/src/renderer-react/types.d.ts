@@ -15,7 +15,7 @@ export type ComputerUseStatus = {
   requests: Array<{ id: string; sessionId: string; sessionTitle: string; app: { name: string; bundleId: string }; foreground: boolean }>;
 };
 import type {
-  SendRequest, SendResult, SessionRequest, ControlResult, PlanDecisionResult,
+  SendRequest, SendResult, SessionRequest, AbortRequest, ControlResult, PlanDecisionResult,
   AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
   SessionHistoryEvent, ConnectorsChangedEvent, SkillHubApi, ExpertHubApi,
   SessionCronApi, MarketplaceResponse,
@@ -740,7 +740,7 @@ export type DesktopSettings = {
   maxTurns: number;
   language: string;
   appendSystemPrompt: string;
-  thinkingMode: 'adaptive' | 'enabled' | 'disabled';
+  thinkingMode: 'auto' | 'adaptive' | 'enabled' | 'disabled';
   thinkingBudgetTokens: number;
   url: string;
   apiKey: string;
@@ -942,6 +942,7 @@ export type StoredApp = {
   navigation?: import('../../../packages/app-sdk/src/index.mjs').AppNavigation;
   agentTools?: Array<{
     id: string;
+    name?: string;
     serviceId?: string;
     title: string;
     description: string;
@@ -1292,10 +1293,23 @@ export type BackgroundTaskInfo = {
 };
 
 
+export type AppInstallationDisclosure = {
+  type: 'app-installation'; appId: string; name: string; version: string; publisher: string;
+  toolAvailability: string; notices: string[];
+  permissions: Array<{ id: string; label: string; description: string }>;
+  tools: Array<{ id: string; name?: string; title: string; description: string; effect: string; permission?: string; serviceId?: string }>;
+  skills: Array<{ id: string; title: string; description: string }>;
+  capabilities: {
+    requires?: Array<{ protocol: string; optional?: boolean }>;
+    provides?: Array<{ protocol: string; methods: Array<{ name: string; action: string; permission: string; resourceReadMethod?: string }> }>;
+    usesTools?: Array<{ appId: string; tools: string[] }>;
+  };
+};
 export type HostConfirmationRequest = {
   id: string; kind: string; title: string; message: string; detail: string;
   confirmLabel: string; cancelLabel: string; revision: string;
   originViewId: string | null; createdAt: number; expiresAt: number;
+  disclosure?: AppInstallationDisclosure;
 };
 export type HostConfirmationSnapshot = { revision: number; requests: HostConfirmationRequest[] };
 
@@ -1339,6 +1353,10 @@ declare global {
       ensureManagedRuntimes: (payload?: { node?: boolean; python?: boolean; git?: boolean }) => Promise<Record<string, unknown>>;
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
+      testModel: (payload: Pick<DesktopSettings, 'model' | 'url' | 'apiKey' | 'thinkingMode' | 'thinkingBudgetTokens'>) => Promise<{
+        ok: boolean; status: number | null; durationMs: number; message: string;
+        thinking: string;
+      }>;
       updateSettings: (payload: Partial<Omit<DesktopSettings, 'webSearch'>> & {
         webSearch?: Partial<NonNullable<DesktopSettings['webSearch']>>;
       }) => Promise<DesktopSettings>;
@@ -1483,7 +1501,7 @@ declare global {
       rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
       answerQuestion: (payload: AnswerQuestionRequest) => Promise<ControlResult>;
       rejectQuestion: (payload: RejectQuestionRequest) => Promise<ControlResult>;
-      abort: (payload: SessionRequest) => Promise<ControlResult>;
+      abort: (payload: AbortRequest) => Promise<ControlResult>;
       skillHub: SkillHubApi;
       expertHub: ExpertHubApi;
       sessionCron: SessionCronApi;

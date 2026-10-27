@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
-  GitBranch,
   History,
   LoaderCircle,
   MessageSquareText,
@@ -48,7 +47,7 @@ function latestRun(state: AgentTeamsSessionState): AgentTeamRun | null {
   return state.teams.find((team) => team.status === "live") ?? state.teams[0] ?? null;
 }
 
-export function AgentTeamsStrip({
+export function AgentTeamsStatus({
   state,
   onOpen,
 }: {
@@ -59,40 +58,36 @@ export function AgentTeamsStrip({
   const snapshot = run?.snapshots.at(-1);
   if (!run || !snapshot) return null;
   const counts = snapshot.taskCounts;
+  const unclaimedCount = snapshot.tasks.filter((task) => task.status === "pending" && !task.owner).length;
   const activeMembers = snapshot.team.members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.status === "running").length;
+  const live = run.status === "live";
+  const phaseLabel = PHASE_LABELS[snapshot.phase] ?? snapshot.phase;
+  const statusLabel = live ? "运行中" : run.status === "completed" ? "已完成" : "已中断";
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group flex min-h-12 shrink-0 items-center gap-3 border-b border-border/70 bg-muted/25 px-4 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label="打开 Agent Teams 共享任务图"
+      className="group inline-flex h-7 max-w-[min(42vw,240px)] shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/25 px-2 text-left transition-colors hover:border-primary/40 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={`Agent Teams ${statusLabel}，${phaseLabel}，完成 ${counts.completed}/${counts.total}`}
+      title={`Agent Teams · ${statusLabel} · ${phaseLabel} · 完成 ${counts.completed}/${counts.total} · 进行中 ${counts.inProgress} · 待领 ${unclaimedCount} · ${live ? `跟随 ${activeMembers} 位成员` : `${snapshot.team.members.length} 位成员`}`}
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-primary">
-        <Network className="h-4 w-4" />
+      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center text-primary">
+        <Network className="h-3.5 w-3.5" />
+        <span className={cn(
+          "absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full",
+          live ? "bg-emerald-500" : run.status === "completed" ? "bg-muted-foreground/60" : "bg-amber-500",
+          live && "animate-pulse",
+        )} />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
-          <span className="truncate">Agent Teams · {run.teamName}</span>
-          <span className={cn(
-            "shrink-0 text-[10px]",
-            run.status === "live" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
-          )}>
-            {run.status === "live" ? "实时" : "回看"}
-          </span>
-        </span>
-        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-          {PHASE_LABELS[snapshot.phase] ?? snapshot.phase} · 完成 {counts.completed}/{counts.total} · 进行中 {counts.inProgress} · 待领 {counts.pending} · 阻塞 {counts.blocked}
-        </span>
-      </span>
-      <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-        <Users className="h-3.5 w-3.5" />
-        {run.status === "live" ? `跟随 ${activeMembers} 位成员` : `${snapshot.team.members.length} 位成员`}
-      </span>
-      <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+      <span className="truncate text-[11px] font-medium text-foreground">{statusLabel}</span>
+      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{counts.completed}/{counts.total}</span>
     </button>
   );
 }
+
+/** @deprecated Use the compact header status; the full task graph opens on click. */
+export const AgentTeamsStrip = AgentTeamsStatus;
 
 type PositionedTask = AgentTeamTask & { x: number; y: number };
 
@@ -130,7 +125,7 @@ function layoutTasks(tasks: AgentTeamTask[]) {
 
 function TaskNode({ task, selected, onSelect }: { task: PositionedTask; selected: boolean; onSelect: () => void }) {
   const blocked = task.blocked;
-  const statusLabel = task.status === "completed" ? "完成" : task.status === "in_progress" ? "进行中" : blocked ? "阻塞" : "待领";
+  const statusLabel = task.status === "completed" ? "完成" : task.status === "in_progress" ? "进行中" : blocked ? "阻塞" : task.owner ? "已分配" : "待领";
   const ownerLabel = task.owner || (task.status === "completed" ? "团队任务" : "未领取");
   const StatusIcon = task.status === "completed" ? CheckCircle2 : task.status === "in_progress" ? LoaderCircle : Circle;
   return (
@@ -304,6 +299,7 @@ export function AgentTeamsWorkbench({
   const snapshot = run.snapshots[Math.min(frame, run.snapshots.length - 1)] ?? run.snapshots.at(-1);
   if (!snapshot) return null;
   const counts = snapshot.taskCounts;
+  const unclaimedCount = snapshot.tasks.filter((task) => task.status === "pending" && !task.owner).length;
   const endAt = run.status === "live" ? now : Date.parse(run.deletedAt || run.updatedAt) || now;
   const activeMembers = snapshot.team.members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.status === "running").length;
 
@@ -341,7 +337,7 @@ export function AgentTeamsWorkbench({
           <span className="font-medium text-foreground">阶段 {PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</span>
           <span>完成 <b className="font-medium text-emerald-600 dark:text-emerald-400">{counts.completed}/{counts.total}</b></span>
           <span>进行中 <b className="font-medium text-sky-600 dark:text-sky-400">{counts.inProgress}</b></span>
-          <span>待领 <b className="font-medium text-foreground">{counts.pending}</b></span>
+          <span>待领 <b className="font-medium text-foreground">{unclaimedCount}</b></span>
           <span>阻塞 <b className="font-medium text-amber-600 dark:text-amber-400">{counts.blocked}</b></span>
           <span className="ml-auto flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{formatElapsed(run.createdAt, endAt)}</span>
         </div>

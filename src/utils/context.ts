@@ -7,6 +7,83 @@ import { getModelCapability } from './model/modelCapabilities.js'
 // Fallback when the configured provider does not publish a context window.
 export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 
+/**
+ * Static context-window values used only when the provider does not publish
+ * model metadata. These are deliberately conservative, high-confidence
+ * families rather than an exhaustive model list. Provider metadata always
+ * wins, so a model upgrade can take effect without a Moss release.
+ *
+ * Values are based on public model specifications reviewed 2026-10-26. Keep
+ * the date here so refreshing this table is an explicit maintenance task.
+ */
+export const MODEL_CONTEXT_WINDOW_FALLBACKS = {
+  claude: 200_000,
+  gpt41: 1_047_576,
+  gpt4o: 128_000,
+  openaiReasoning: 200_000,
+  gemini: 1_048_576,
+  deepseek: 128_000,
+  mistralLarge: 128_000,
+  llama3: 128_000,
+} as const
+
+type ContextWindowFallbackRule = {
+  readonly pattern: RegExp
+  readonly contextWindow: number
+}
+
+// Match model families across common provider prefixes (for example
+// "openai/gpt-4.1" and "us.anthropic.claude-sonnet-4-5-v1:0"). Do not add a
+// generic provider prefix here: custom gateways may expose a different limit
+// for the same-looking name, and their metadata should be authoritative.
+const MODEL_CONTEXT_WINDOW_FALLBACK_RULES: readonly ContextWindowFallbackRule[] = [
+  {
+    pattern: /\bclaude-(?:3(?:-\d+)?|(?:opus|sonnet|haiku)-4)(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.claude,
+  },
+  {
+    pattern: /\bgpt-4\.1(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gpt41,
+  },
+  {
+    pattern: /\bgpt-4o(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gpt4o,
+  },
+  {
+    pattern: /\bo[134](?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.openaiReasoning,
+  },
+  {
+    pattern: /\bgemini-(?:1\.5|2(?:\.\d+)?|3)(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gemini,
+  },
+  {
+    pattern: /\bdeepseek-(?:chat|reasoner|v3|r1)(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.deepseek,
+  },
+  {
+    pattern: /\bmistral-large(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.mistralLarge,
+  },
+  {
+    pattern: /\bllama-3(?:\.\d+)?(?:[-_.:]|$)/i,
+    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.llama3,
+  },
+]
+
+function normalizeModelForContextLookup(model: string): string {
+  return model.replace(/\[1m\]$/i, '').trim().toLowerCase()
+}
+
+/** Return a curated static value, if the model belongs to a known family. */
+export function getKnownModelContextWindow(model: string): number | undefined {
+  const normalized = normalizeModelForContextLookup(model)
+  if (!normalized) return undefined
+  return MODEL_CONTEXT_WINDOW_FALLBACK_RULES.find(rule =>
+    rule.pattern.test(normalized),
+  )?.contextWindow
+}
+
 // Maximum output tokens for compact operations
 export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
 
@@ -80,6 +157,17 @@ export function resolveContextWindowForModel(
   )) {
     return { contextWindow: 1_000_000, isDefault: false }
   }
+
+  const knownContextWindow = getKnownModelContextWindow(model)
+  if (knownContextWindow !== undefined) {
+    return {
+      contextWindow: is1mContextDisabled()
+        ? Math.min(knownContextWindow, MODEL_CONTEXT_WINDOW_DEFAULT)
+        : knownContextWindow,
+      isDefault: false,
+    }
+  }
+
   return { contextWindow: MODEL_CONTEXT_WINDOW_DEFAULT, isDefault: true }
 }
 

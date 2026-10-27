@@ -65,7 +65,7 @@ import {
 } from "@/components/chat/tool-display-settings";
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
 import { AskUserQuestionCard, type AskUserQuestionCardProps } from "@/components/chat/ask-user-question-card";
-import { AgentTeamsStrip, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
+import { AgentTeamsStatus, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 
 import {
   CoordinatorWorkersSummary,
@@ -189,6 +189,7 @@ export function SessionTabBar({
   onOpenWorkers,
   onSelectWorker,
   appWorkbenchAction,
+  agentTeamsStatus,
 }: {
   title: string;
   leftCollapsed: boolean;
@@ -212,6 +213,7 @@ export function SessionTabBar({
   onOpenWorkers: () => void;
   onSelectWorker: (workerId: string) => void;
   appWorkbenchAction?: React.ReactNode;
+  agentTeamsStatus?: React.ReactNode;
 }) {
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
@@ -278,6 +280,7 @@ export function SessionTabBar({
             <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           ) : null}
           {appWorkbenchAction}
+          {agentTeamsStatus}
           <CoordinatorWorkersSummary
             workers={childSessions}
             onOpen={onOpenWorkers}
@@ -1671,9 +1674,10 @@ export function ComposerPanel({
                 className="h-9 rounded-full px-3.5 sm:px-4"
                 disabled={submitDisabled}
                 onClick={handleSendClick}
+                title={loading ? "在当前轮下一次工具调用前加入补充" : "发送消息"}
               >
                 <Send className="h-4 w-4" />
-                {loading ? "排队" : "发送"}
+                {loading ? "补充" : "发送"}
               </Button>
             </div>
           </div>
@@ -2701,6 +2705,11 @@ export function ChatArea({
           if (appWorkbench.open) appWorkbench.close();
           else { setAgentTeamsOpen(false); setCoordinatorWorkersOpen(false); appWorkbench.show(); }
         }}/>}
+        agentTeamsStatus={agentTeams && agentTeams.teams.length > 0 ? <AgentTeamsStatus state={agentTeams} onOpen={() => {
+          appWorkbench.close();
+          setCoordinatorWorkersOpen(false);
+          setAgentTeamsOpen(true);
+        }} /> : undefined}
         onOpenWorkers={() => {
           appWorkbench.close();
           setAgentTeamsOpen(false);
@@ -2716,14 +2725,6 @@ export function ChatArea({
       />
 
       <AppConversationFlow sessionId={sessionId} tasks={backgroundTasks || []} suspended={appWorkbench.open}>
-      {!appWorkbench.open && !agentTeamsOpen && !coordinatorWorkersOpen && agentTeams && agentTeams.teams.length > 0 ? (
-        <AgentTeamsStrip state={agentTeams} onOpen={() => {
-          appWorkbench.close();
-          setCoordinatorWorkersOpen(false);
-          setAgentTeamsOpen(true);
-        }} />
-      ) : null}
-
       {showAgentTeamsWorkbench && agentTeams ? (
         <AgentTeamsWorkbench state={agentTeams} onClose={() => setAgentTeamsOpen(false)} />
       ) : showCoordinatorWorkers ? (

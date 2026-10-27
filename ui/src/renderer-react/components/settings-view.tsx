@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { UserAvatarSetting } from '@/components/user-avatar-setting';
 import { AgentManager } from '@/components/agent-manager';
+import { ModelConnectionTest } from '@/components/model-connection-test';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -228,7 +229,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'model',
         title: '模型',
-        keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url'],
+        keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', 'thinking', '思考模式', '测试'],
       },
       {
         id: 'web-search',
@@ -290,7 +291,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
       {
         id: 'agent-execution',
         title: 'Agent 与执行',
-        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', 'thinking', '思考模式', '回收', '空闲', '运行时', '进程', 'mcp'],
+        keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', '回收', '空闲', '运行时', '进程', 'mcp'],
       },
       {
         id: 'tool-performance',
@@ -583,7 +584,7 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
                       </th>}
                       <td className="px-4 py-3 text-xs">
                         <span className="block break-words font-medium text-foreground">{tool.title}</span>
-                        <code className="mt-1 block break-all text-[11px] text-muted-foreground">{tool.id}</code>
+                        <code className="mt-1 block break-all text-[11px] text-muted-foreground">工具名称：{tool.name || tool.id}</code>
                       </td>
                       <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">
                         <ToolDescription description={tool.description} toolName={tool.id} />
@@ -1868,45 +1869,6 @@ export function SettingsView({
                       />
 
                       <SettingsRow
-                        title="思考模式"
-                        controlClassName="sm:w-[220px]"
-                      >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={settingsDraft.thinkingMode ?? 'disabled'}
-                          onChange={(event) => {
-                            updateSetting('thinkingMode', event.target.value as DesktopSettings['thinkingMode']);
-                          }}
-                        >
-                          <option value="disabled">disabled (关闭)</option>
-                          <option value="adaptive">adaptive (自动)</option>
-                          <option value="enabled">enabled (强制开启)</option>
-                          <option value="">default (保持手动配置)</option>
-                        </select>
-                      </SettingsRow>
-
-                      {settingsDraft.thinkingMode === 'enabled' ? (
-                        <SettingsRow
-                          title="Thinking Budget Tokens"
-                          description="只在强制开启思考模式时显示。"
-                          controlClassName="sm:w-[180px]"
-                        >
-                          <Input
-                            type="number"
-                            min={1024}
-                            max={128000}
-                            className={FIELD_CLASS_NAME}
-                            value={settingsDraft.thinkingBudgetTokens ?? 16000}
-                            onChange={(event) => {
-                              const value = Number.parseInt(event.target.value || '1024', 10);
-                              updateSetting('thinkingBudgetTokens', value);
-                            }}
-                            placeholder="thinking budget tokens"
-                          />
-                        </SettingsRow>
-                      ) : null}
-
-                      <SettingsRow
                         title="Boss 长任务自动转后台"
                         description="仅在 Boss 模式下，worker 运行超过 120 秒后自动转为后台任务。"
                         controlClassName="sm:w-[56px]"
@@ -2475,6 +2437,53 @@ export function SettingsView({
                             </Button>
                           ) : null}
                         </div>
+                      </SettingsRow>
+                      <SettingsRow
+                        title="思考模式"
+                        description="模型默认不传 thinking；关闭思考需接口支持。"
+                        controlClassName="sm:w-[220px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.thinkingMode || 'auto'}
+                          onChange={(event) => {
+                            updateSetting('thinkingMode', event.target.value as DesktopSettings['thinkingMode']);
+                          }}
+                        >
+                          <option value="auto">模型默认</option>
+                          <option value="adaptive">自适应思考</option>
+                          <option value="enabled">开启思考（指定预算）</option>
+                          <option value="disabled">关闭思考</option>
+                        </select>
+                      </SettingsRow>
+
+                      {settingsDraft.thinkingMode === 'enabled' ? (
+                        <SettingsRow
+                          title="思考预算（Tokens）"
+                          description="只在强制开启思考模式时显示。"
+                          controlClassName="sm:w-[180px]"
+                        >
+                          <Input
+                            type="number"
+                            min={1024}
+                            max={128000}
+                            className={FIELD_CLASS_NAME}
+                            value={settingsDraft.thinkingBudgetTokens ?? 16000}
+                            onChange={(event) => {
+                              const value = Number.parseInt(event.target.value || '1024', 10);
+                              updateSetting('thinkingBudgetTokens', value);
+                            }}
+                            placeholder="thinking budget tokens"
+                          />
+                        </SettingsRow>
+                      ) : null}
+
+                      <SettingsRow
+                        title="测试模型"
+                        description="用当前模型和思考设置发送一条简短请求。"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <ModelConnectionTest settings={settingsDraft} />
                       </SettingsRow>
                     </SettingsGroup>
 

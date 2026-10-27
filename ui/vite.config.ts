@@ -21,7 +21,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist/renderer',
-    emptyOutDir: true,
+    // Open desktop windows still reference the previous build's hashed chunks.
+    // Keep them available for lazy imports until those windows are reloaded.
+    // A clean release build can explicitly use `vite build --emptyOutDir`.
+    emptyOutDir: false,
     rollupOptions: {
       input: {
         index: path.resolve(__dirname, 'index.html'),

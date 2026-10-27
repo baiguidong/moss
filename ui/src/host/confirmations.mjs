@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getHostRequestContext } from './request-registry.mjs';
 
-export function createHostConfirmations({ broker, ownerId = 'owner', mode = 'desktop', showNative,
+export function createHostConfirmations({ broker, ownerId = 'owner', mode = 'desktop', showNative, showRenderer,
   publish = () => {}, now = Date.now, timeoutMs = 30 * 60_000 }) {
   const pending = new Map();
   let revision = 0;
@@ -30,6 +30,7 @@ export function createHostConfirmations({ broker, ownerId = 'owner', mode = 'des
       kind, title: String(options.title || '确认操作'), message: String(options.message || ''),
       detail: String(options.detail || ''), confirmLabel: String(options.confirmLabel || '允许'),
       cancelLabel: String(options.cancelLabel || '取消'),
+      ...(options.disclosure?.type === 'app-installation' ? { disclosure: structuredClone(options.disclosure) } : {}),
     };
     const serialized = JSON.stringify(content);
     if (Buffer.byteLength(serialized) > 256 * 1024) throw new Error('确认内容过长，无法完整展示，请缩小操作范围。');
@@ -67,7 +68,11 @@ export function createHostConfirmations({ broker, ownerId = 'owner', mode = 'des
         signal?.addEventListener('abort', cancel, { once: true });
         if (signal?.aborted) cancel();
         changed();
-        if (mode === 'desktop') {
+        if (mode === 'desktop' && content.disclosure) {
+          // Structured installation reviews need a bounded, scrollable UI. A
+          // native message box grows with every tool and can hide its buttons.
+          showRenderer?.();
+        } else if (mode === 'desktop') {
           void Promise.resolve().then(() => showNative({ type: 'question', title: item.title,
             message: item.message, detail: item.detail, buttons: [item.cancelLabel, item.confirmLabel],
             defaultId: 0, cancelId: 0, noLink: true,

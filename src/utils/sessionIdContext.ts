@@ -8,6 +8,8 @@ export type SessionExecutionEnvironment = 'desktop' | 'server'
 
 /** Host-owned capabilities, inherited by workers; never taken from model input. */
 export type SessionRuntime = {
+  /** Explicit host capability; a desktop execution environment alone is insufficient. */
+  presentationEnabled?: boolean
   presentationTurn?: { id: string; sessionId: string; epoch?: string }
   executionEnvironment: SessionExecutionEnvironment
   image?: ImageSettings

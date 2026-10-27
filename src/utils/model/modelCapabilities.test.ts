@@ -6,7 +6,12 @@ mock.module('color-diff-napi', () => ({
   ColorDiff: {}, ColorFile: {}, getSyntaxTheme: () => ({}),
 }))
 
-const { getContextWindowForModel, getModelMaxOutputTokens } = await import('../context.js')
+const {
+  getContextWindowForModel,
+  getKnownModelContextWindow,
+  getModelMaxOutputTokens,
+  resolveContextWindowForModel,
+} = await import('../context.js')
 const { resolveDesktopModelContext } = await import('./desktopModelContext.js')
 const { calculateTokenWarningState, getAutoCompactThreshold, shouldAutoCompact } = await import('../../services/compact/autoCompact.js')
 const { createAssistantMessage } = await import('../messages.js')
@@ -126,6 +131,50 @@ describe('provider model capabilities', () => {
     })
   })
 
+  test('uses curated model-family fallbacks when the provider omits context metadata', async () => {
+    await withCatalog(() => Response.json({ data: [
+      { id: 'gpt-4.1' },
+      { id: 'gemini-2.5-pro' },
+      { id: 'openai/gpt-4o' },
+      { id: 'meta-llama/llama-3.3-70b-instruct' },
+    ] }), async () => {
+      await loadModelCapabilities('gpt-4.1')
+      await loadModelCapabilities('gemini-2.5-pro')
+      await loadModelCapabilities('openai/gpt-4o')
+      await loadModelCapabilities('meta-llama/llama-3.3-70b-instruct')
+
+      expect(getKnownModelContextWindow('gpt-4.1')).toBe(1_047_576)
+      expect(getKnownModelContextWindow('gemini-2.5-pro')).toBe(1_048_576)
+      expect(getKnownModelContextWindow('openai/gpt-4o')).toBe(128_000)
+      expect(getKnownModelContextWindow('meta-llama/llama-3.3-70b-instruct')).toBe(128_000)
+      expect(resolveContextWindowForModel('claude-sonnet-4')).toEqual({
+        contextWindow: 200_000,
+        isDefault: false,
+      })
+      expect(resolveContextWindowForModel('claude-sonnet-4[1m]')).toEqual({
+        contextWindow: 1_000_000,
+        isDefault: false,
+      })
+      expect(resolveContextWindowForModel('gpt-4.1')).toEqual({
+        contextWindow: 1_047_576,
+        isDefault: false,
+      })
+      expect(getAutoCompactThreshold('gpt-4.1')).toBe(1_014_576)
+    })
+  })
+
+  test('provider metadata overrides a static family fallback', async () => {
+    await withCatalog(() => Response.json({ data: [
+      { id: 'gpt-4.1', context_window: 131_072 },
+    ] }), async () => {
+      await loadModelCapabilities('gpt-4.1')
+      expect(resolveContextWindowForModel('gpt-4.1')).toEqual({
+        contextWindow: 131_072,
+        isDefault: false,
+      })
+    })
+  })
+
   test('reads subsequent catalog pages and native Anthropic token fields', async () => {
     const cursors: (string | null)[] = []
     await withCatalog(request => {
@@ -205,6 +254,7 @@ describe('provider model capabilities', () => {
       await loadModelCapabilities('gpt-5.5')
       expect(requests).toBe(1)
       expect(getContextWindowForModel('gpt-5.5')).toBe(200_000)
+      expect(getContextWindowForModel('gpt-4.1')).toBe(1_047_576)
     })
   })
 

@@ -1576,7 +1576,7 @@ async function* queryModel(
     })
     const logMessagesLength = queryParams.messages.length
     const logBetas = useBetas ? (queryParams.betas ?? []) : []
-    const logThinkingType = queryParams.thinking?.type ?? 'disabled'
+    const logThinkingType = queryParams.thinking?.type
     const logEffortValue = queryParams.output_config?.effort
     void options.getToolPermissionContext().then(permissionContext => {
       logAPIQuery({
