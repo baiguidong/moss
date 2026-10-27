@@ -8,7 +8,7 @@ import {
   getAgentRegistryPolicy,
   toAgentRegistryEntry,
 } from './agentRegistry.js'
-import { registerTask } from './framework.js'
+import { evictTerminalTask, registerTask } from './framework.js'
 
 function agentTask(
   id: string,
@@ -126,5 +126,23 @@ describe('agent registry', () => {
       depth: 1,
       status: 'running',
     })
+  })
+
+  test('evicting a terminal task removes its registry entry', () => {
+    let state = { tasks: {}, agentRegistry: {} } as any
+    const setAppState = (update: (previous: any) => any) => {
+      state = update(state)
+    }
+    const task = {
+      ...agentTask('terminal'),
+      status: 'completed',
+      notified: true,
+      evictAfter: 0,
+    }
+    registerTask(task, setAppState)
+    expect(state.agentRegistry.terminal).toBeDefined()
+    evictTerminalTask('terminal', setAppState)
+    expect(state.tasks.terminal).toBeUndefined()
+    expect(state.agentRegistry.terminal).toBeUndefined()
   })
 })

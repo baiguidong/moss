@@ -161,7 +161,12 @@ export function evictTerminalTask(
       return prev
     }
     const { [taskId]: _, ...remainingTasks } = prev.tasks
-    return { ...prev, tasks: remainingTasks }
+    const { [taskId]: __, ...remainingRegistry } = prev.agentRegistry ?? {}
+    return {
+      ...prev,
+      tasks: remainingTasks,
+      agentRegistry: remainingRegistry,
+    }
   })
 }
 
@@ -244,6 +249,7 @@ export function applyTaskOffsetsAndEvictions(
   setAppState(prev => {
     let changed = false
     const newTasks = { ...prev.tasks }
+    const newRegistry = { ...(prev.agentRegistry ?? {}) }
     for (const id of offsetIds) {
       const fresh = newTasks[id]
       // Re-check status on fresh state — task may have completed during the
@@ -265,8 +271,13 @@ export function applyTaskOffsetsAndEvictions(
       }
       delete newTasks[id]
       changed = true
+      // Keep the registry's lifecycle view aligned with task eviction.
+      // Terminal history is already delivered through the task notification.
+      delete newRegistry[id]
     }
-    return changed ? { ...prev, tasks: newTasks } : prev
+    return changed
+      ? { ...prev, tasks: newTasks, agentRegistry: newRegistry }
+      : prev
   })
 }
 
