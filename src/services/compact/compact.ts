@@ -108,6 +108,7 @@ import {
   roughTokenCountEstimationForMessages,
 } from '../tokenEstimation.js'
 import { groupMessagesByApiRound } from './grouping.js'
+import { estimateDenseTextTokensInMessages } from './denseText.js'
 import {
   getCompactPrompt,
   getCompactUserSummaryMessage,
@@ -264,6 +265,15 @@ export function truncateHeadForPTLRetry(
     }
   } else {
     dropCount = Math.max(1, Math.floor(groups.length * 0.2))
+    // Dense base64/SVG payloads can remain above the API limit even after the
+    // usual 20% retry. Drop a larger history slice in that case while still
+    // retaining at least one complete API round for the summarizer.
+    const denseTokens = estimateDenseTextTokensInMessages(input)
+    if (denseTokens >= 64_000) {
+      dropCount = Math.max(dropCount, Math.ceil(groups.length * 0.6))
+    } else if (denseTokens >= 16_000) {
+      dropCount = Math.max(dropCount, Math.ceil(groups.length * 0.4))
+    }
   }
 
   // Keep at least one group so there's something to summarize.
