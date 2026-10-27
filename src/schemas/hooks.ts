@@ -44,6 +44,10 @@ function buildHookSchemas() {
       .positive()
       .optional()
       .describe('Timeout in seconds for this specific command'),
+    onFailure: z
+      .enum(['ignore', 'block'])
+      .optional()
+      .describe('Whether a hook execution failure blocks the operation'),
     statusMessage: z
       .string()
       .optional()
@@ -77,6 +81,10 @@ function buildHookSchemas() {
       .positive()
       .optional()
       .describe('Timeout in seconds for this specific prompt evaluation'),
+    onFailure: z
+      .enum(['ignore', 'block'])
+      .optional()
+      .describe('Whether a hook execution failure blocks the operation'),
     // @[MODEL LAUNCH]: Update the example model ID in the .describe() strings below (prompt + agent hooks).
     model: z
       .string()
@@ -103,6 +111,10 @@ function buildHookSchemas() {
       .positive()
       .optional()
       .describe('Timeout in seconds for this specific request'),
+    onFailure: z
+      .enum(['ignore', 'block'])
+      .optional()
+      .describe('Whether a hook execution failure blocks the operation'),
     headers: z
       .record(z.string(), z.string())
       .optional()
@@ -146,6 +158,10 @@ function buildHookSchemas() {
       .positive()
       .optional()
       .describe('Timeout in seconds for agent execution (default 60)'),
+    onFailure: z
+      .enum(['ignore', 'block'])
+      .optional()
+      .describe('Whether a hook execution failure blocks the operation'),
     model: z
       .string()
       .optional()

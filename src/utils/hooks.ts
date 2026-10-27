@@ -153,6 +153,11 @@ import type { AppState } from '../state/AppState.js'
 import { jsonStringify, jsonParse } from './slowOperations.js'
 import { isEnvTruthy } from './envUtils.js'
 import { errorMessage, getErrnoCode } from './errors.js'
+import {
+  getHookConcurrencyLimit,
+  HookConcurrencyLimiter,
+  withHookConcurrency,
+} from './hooks/hookConcurrency.js'
 
 const TOOL_HOOK_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -1360,6 +1365,18 @@ type MatchedHook = {
   hookSource?: string
 }
 
+/**
+ * Hook failures are informational by default. A configured `onFailure:block`
+ * turns a non-blocking execution error into a blocking result while preserving
+ * the original hook output attachment for diagnostics.
+ */
+export function shouldBlockHookFailure(
+  hook: { type: string; onFailure?: 'ignore' | 'block' },
+  outcome: HookResult['outcome'],
+): boolean {
+  return outcome === 'non_blocking_error' && hook.onFailure === 'block'
+}
+
 function isInternalHook(matched: MatchedHook): boolean {
   return matched.hook.type === 'callback' && matched.hook.internal === true
 }
@@ -1999,6 +2016,7 @@ async function* executeHooks({
   }
 
   // Run all hooks in parallel with individual timeouts
+  const hookConcurrency = new HookConcurrencyLimiter(getHookConcurrencyLimit())
   const hookPromises = matchingHooks.map(async function* (
     { hook, skillRoot },
     hookIndex,
@@ -2009,15 +2027,17 @@ async function* executeHooks({
         signal,
         { timeoutMs: callbackTimeoutMs },
       )
-      yield executeHookCallback({
-        toolUseID,
-        hook,
-        hookEvent,
-        hookInput,
-        signal: abortSignal,
-        hookIndex,
-        toolUseContext,
-      }).finally(cleanup)
+      yield await withHookConcurrency(hookConcurrency, () =>
+        executeHookCallback({
+          toolUseID,
+          hook,
+          hookEvent,
+          hookInput,
+          signal: abortSignal,
+          hookIndex,
+          toolUseContext,
+        }).finally(cleanup),
+      )
       return
     }
 
@@ -2038,15 +2058,17 @@ async function* executeHooks({
       }
 
       // Function hooks only come from session storage with callback embedded
-      yield executeFunctionHook({
-        hook,
-        messages,
-        hookName,
-        toolUseID,
-        hookEvent,
-        timeoutMs,
-        signal,
-      })
+      yield await withHookConcurrency(hookConcurrency, () =>
+        executeFunctionHook({
+          hook,
+          messages,
+          hookName,
+          toolUseID,
+          hookEvent,
+          timeoutMs,
+          signal,
+        }),
+      )
       return
     }
 
@@ -2086,15 +2108,17 @@ async function* executeHooks({
             'ToolUseContext is required for prompt hooks. This is a bug.',
           )
         }
-        const promptResult = await execPromptHook(
-          hook,
-          hookName,
-          hookEvent,
-          jsonInput,
-          abortSignal,
-          toolUseContext,
-          messages,
-          toolUseID,
+        const promptResult = await withHookConcurrency(hookConcurrency, () =>
+          execPromptHook(
+            hook,
+            hookName,
+            hookEvent,
+            jsonInput,
+            abortSignal,
+            toolUseContext,
+            messages,
+            toolUseID,
+          ),
         )
         // Inject timing fields for hook visibility
         if (promptResult.message?.type === 'attachment') {
@@ -2123,18 +2147,20 @@ async function* executeHooks({
             'Messages are required for agent hooks. This is a bug.',
           )
         }
-        const agentResult = await execAgentHook(
-          hook,
-          hookName,
-          hookEvent,
-          jsonInput,
-          abortSignal,
-          toolUseContext,
-          toolUseID,
-          messages,
-          'agent_type' in hookInput
-            ? (hookInput.agent_type as string)
-            : undefined,
+        const agentResult = await withHookConcurrency(hookConcurrency, () =>
+          execAgentHook(
+            hook,
+            hookName,
+            hookEvent,
+            jsonInput,
+            abortSignal,
+            toolUseContext,
+            toolUseID,
+            messages,
+            'agent_type' in hookInput
+              ? (hookInput.agent_type as string)
+              : undefined,
+          ),
         )
         // Inject timing fields for hook visibility
         if (agentResult.message?.type === 'attachment') {
@@ -2158,11 +2184,8 @@ async function* executeHooks({
         // execHttpHook manages its own timeout internally via hook.timeout or
         // DEFAULT_HTTP_HOOK_TIMEOUT_MS, so pass the parent signal directly
         // to avoid double-stacking timeouts with abortSignal.
-        const httpResult = await execHttpHook(
-          hook,
-          hookEvent,
-          jsonInput,
-          signal,
+        const httpResult = await withHookConcurrency(hookConcurrency, () =>
+          execHttpHook(hook, hookEvent, jsonInput, signal),
         )
         cleanup?.()
 
@@ -2304,17 +2327,19 @@ async function* executeHooks({
 
       emitHookStarted(hookId, hookName, hookEvent)
 
-      const result = await execCommandHook(
-        hook,
-        hookEvent,
-        hookName,
-        jsonInput,
-        abortSignal,
-        hookId,
-        hookIndex,
-        skillRoot,
-        forceSyncExecution,
-        boundRequestPrompt,
+      const result = await withHookConcurrency(hookConcurrency, () =>
+        execCommandHook(
+          hook,
+          hookEvent,
+          hookName,
+          jsonInput,
+          abortSignal,
+          hookId,
+          hookIndex,
+          skillRoot,
+          forceSyncExecution,
+          boundRequestPrompt,
+        ),
       )
       cleanup?.()
       const durationMs = Date.now() - hookStartMs
@@ -2600,6 +2625,15 @@ async function* executeHooks({
   // Run all hooks in parallel and wait for all to complete
   for await (const result of all(hookPromises)) {
     outcomes[result.outcome]++
+
+    if (shouldBlockHookFailure(result.hook, result.outcome)) {
+      yield {
+        blockingError: {
+          blockingError: `Hook ${getHookDisplayText(result.hook)} failed and is configured to block this operation.`,
+          command: getHookDisplayText(result.hook),
+        },
+      }
+    }
 
     // Check for preventContinuation early
     if (result.preventContinuation) {
