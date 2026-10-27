@@ -10,6 +10,8 @@ import { getCodeEditToolDecisionCounter } from '../../bootstrap/state.js'
 import type { Tool as ToolType, ToolUseContext } from '../../Tool.js'
 import { getLanguageName } from '../../utils/cliHighlight.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
+import { getSessionId } from '../../bootstrap/state.js'
+import { recordPermissionDecisionTrace } from '../../services/trace/decisionTrace.js'
 import type {
   PermissionApprovalSource,
   PermissionRejectionSource,
@@ -207,6 +209,18 @@ function logPermissionDecision(
     source: sourceString,
     decision,
     timestamp: Date.now(),
+  })
+
+  recordPermissionDecisionTrace({
+    sessionId: getSessionId(),
+    turnId: toolUseContext.queryTracking?.chainId ?? messageId,
+    toolUseId: toolUseID,
+    toolName: sanitizeToolNameForAnalytics(tool.name),
+    agentId: toolUseContext.agentId,
+    decision,
+    source: sourceString,
+    permissionMode: toolUseContext.getAppState().toolPermissionContext.mode,
+    waitingForUserPermissionMs: waiting_for_user_permission_ms,
   })
 
 }
