@@ -48,6 +48,7 @@ import { getSessionWorkspaceDirectories } from '../sessionWorkspaceRegistry.js'
 import { windowsPathToPosixPath } from '../windowsPaths.js'
 import type {
   PermissionDecision,
+  PermissionPathDetails,
   PermissionResult,
 } from './PermissionResult.js'
 import type { PermissionRule, PermissionRuleSource } from './PermissionRule.js'
@@ -56,6 +57,29 @@ import type { PermissionUpdate } from './PermissionUpdateSchema.js'
 import { getRuleByContentsForToolName } from './permissions.js'
 
 declare const MACRO: { VERSION: string }
+
+export function permissionPathDetails(
+  displayPath: string,
+  pathsToCheck: readonly string[],
+  decisionPath?: string,
+): PermissionPathDetails {
+  const resolvedPath = pathsToCheck.at(-1) ?? displayPath
+  return {
+    displayPath,
+    resolvedPath,
+    decisionPath: decisionPath ?? resolvedPath,
+  }
+}
+
+export function pathForPermissionMessage(
+  displayPath: string,
+  pathsToCheck: readonly string[],
+): string {
+  const resolvedPath = pathsToCheck.at(-1)
+  return resolvedPath && resolvedPath !== displayPath
+    ? `${displayPath} (resolves to ${resolvedPath})`
+    : displayPath
+}
 
 /**
  * Dangerous files that should be protected from auto-editing.
@@ -1109,7 +1133,8 @@ export function checkReadPermissionForTool(
     if (pathToCheck.startsWith('\\\\') || pathToCheck.startsWith('//')) {
       return {
         behavior: 'ask',
-        message: `Claude requested permissions to read from ${path}, which appears to be a UNC path that could access network resources.`,
+        message: `Claude requested permissions to read from ${pathForPermissionMessage(path, pathsToCheck)}, which appears to be a UNC path that could access network resources.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'other',
           reason: 'UNC path detected (defense-in-depth check)',
@@ -1123,7 +1148,8 @@ export function checkReadPermissionForTool(
     if (hasSuspiciousWindowsPathPattern(pathToCheck)) {
       return {
         behavior: 'ask',
-        message: `Claude requested permissions to read from ${path}, which contains a suspicious Windows path pattern that requires manual approval.`,
+        message: `Claude requested permissions to read from ${pathForPermissionMessage(path, pathsToCheck)}, which contains a suspicious Windows path pattern that requires manual approval.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'other',
           reason:
@@ -1146,7 +1172,8 @@ export function checkReadPermissionForTool(
     if (denyRule) {
       return {
         behavior: 'deny',
-        message: `Permission to read ${path} has been denied.`,
+        message: `Permission to read ${pathForPermissionMessage(path, pathsToCheck)} has been denied.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'rule',
           rule: denyRule,
@@ -1167,7 +1194,8 @@ export function checkReadPermissionForTool(
     if (askRule) {
       return {
         behavior: 'ask',
-        message: `Claude requested permissions to read from ${path}, but you haven't granted it yet.`,
+        message: `Claude requested permissions to read from ${pathForPermissionMessage(path, pathsToCheck)}, but you haven't granted it yet.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'rule',
           rule: askRule,
@@ -1234,7 +1262,8 @@ export function checkReadPermissionForTool(
   // At this point, isInWorkingDir is false (from step #6), so path is outside working directories
   return {
     behavior: 'ask',
-    message: `Claude requested permissions to read from ${path}, but you haven't granted it yet.`,
+    message: `Claude requested permissions to read from ${pathForPermissionMessage(path, pathsToCheck)}, but you haven't granted it yet.`,
+    pathDetails: permissionPathDetails(path, pathsToCheck),
     suggestions: generateSuggestions(
       path,
       'read',
@@ -1284,7 +1313,8 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
     if (denyRule) {
       return {
         behavior: 'deny',
-        message: `Permission to edit ${path} has been denied.`,
+        message: `Permission to edit ${pathForPermissionMessage(path, pathsToCheck)} has been denied.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'rule',
           rule: denyRule,
@@ -1386,7 +1416,8 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
       : generateSuggestions(path, 'write', toolPermissionContext, pathsToCheck)
     return {
       behavior: 'ask',
-      message: safetyCheck.message,
+      message: safetyCheck.message.replace(path, pathForPermissionMessage(path, pathsToCheck)),
+      pathDetails: permissionPathDetails(path, pathsToCheck),
       suggestions: safetySuggestions,
       decisionReason: {
         type: 'safetyCheck',
@@ -1406,7 +1437,8 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
     if (askRule) {
       return {
         behavior: 'ask',
-        message: `Claude requested permissions to write to ${path}, but you haven't granted it yet.`,
+        message: `Claude requested permissions to write to ${pathForPermissionMessage(path, pathsToCheck)}, but you haven't granted it yet.`,
+        pathDetails: permissionPathDetails(path, pathsToCheck, pathToCheck),
         decisionReason: {
           type: 'rule',
           rule: askRule,
@@ -1464,7 +1496,8 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
   // 5. Default to asking for permission
   return {
     behavior: 'ask',
-    message: `Claude requested permissions to write to ${path}, but you haven't granted it yet.`,
+    message: `Claude requested permissions to write to ${pathForPermissionMessage(path, pathsToCheck)}, but you haven't granted it yet.`,
+    pathDetails: permissionPathDetails(path, pathsToCheck),
     suggestions: generateSuggestions(
       path,
       'write',

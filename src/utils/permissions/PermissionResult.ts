@@ -7,6 +7,7 @@ import type {
   PermissionDeferDecision,
   PermissionDenyDecision,
   PermissionMetadata,
+  PermissionPathDetails,
   PermissionResult,
 } from '../../types/permissions.js'
 
@@ -19,6 +20,7 @@ export type {
   PermissionDeferDecision,
   PermissionDenyDecision,
   PermissionMetadata,
+  PermissionPathDetails,
   PermissionResult,
 }
 

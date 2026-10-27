@@ -166,6 +166,16 @@ export type PermissionMetadata =
   | { command: PermissionCommandMetadata }
   | undefined
 
+/** Path forms used for both the permission decision and its explanation. */
+export type PermissionPathDetails = {
+  /** Path as emitted by the tool/model and shown in the primary prompt. */
+  displayPath?: string
+  /** Canonical path after resolving symlink components, when available. */
+  resolvedPath?: string
+  /** Path form that matched the rule or safety decision. */
+  decisionPath?: string
+}
+
 /**
  * Result when permission is granted
  */
@@ -179,6 +189,7 @@ export type PermissionAllowDecision<
   toolUseID?: string
   acceptFeedback?: string
   contentBlocks?: ContentBlockParam[]
+  pathDetails?: PermissionPathDetails
 }
 
 /**
@@ -206,6 +217,7 @@ export type PermissionAskDecision<
    * message in the tool result. Used when users paste images as feedback.
    */
   contentBlocks?: ContentBlockParam[]
+  pathDetails?: PermissionPathDetails
 }
 
 /**
@@ -216,6 +228,7 @@ export type PermissionDenyDecision = {
   message: string
   decisionReason: PermissionDecisionReason
   toolUseID?: string
+  pathDetails?: PermissionPathDetails
 }
 
 /**
@@ -233,6 +246,7 @@ export type PermissionDeferDecision = {
   resumeToken?: string
   /** Absolute expiry in milliseconds since epoch. */
   expiresAt?: number
+  pathDetails?: PermissionPathDetails
 }
 
 /**
