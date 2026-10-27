@@ -43,6 +43,10 @@ import {
   isDeferredTool,
   TOOL_SEARCH_TOOL_NAME,
 } from '../../tools/ToolSearchTool/prompt.js'
+import {
+  DEFERRED_TOOL_SCHEMA_ERROR,
+  getDeferredToolSchemaHint,
+} from './deferredToolSchema.js'
 import { getAllBaseTools } from '../../tools.js'
 import type { HookProgress } from '../../types/hooks.js'
 import type {
@@ -613,6 +617,36 @@ async function checkPermissionsAndCallTool(
     progress: ToolProgress<ToolProgressData> | ProgressMessage<HookProgress>,
   ) => void,
 ): Promise<MessageUpdateLazy[]> {
+  const deferredSchemaHint = getDeferredToolSchemaHint(
+    tool,
+    toolUseContext.messages,
+    toolUseContext.options.tools,
+  )
+  if (deferredSchemaHint) {
+    const errorContent = `${DEFERRED_TOOL_SCHEMA_ERROR}: ${deferredSchemaHint.trim()}`
+    logForDebugging(`${tool.name} tool schema was not loaded before invocation`)
+    logEvent('tengu_deferred_tool_schema_not_sent', {
+      toolName: sanitizeToolNameForAnalytics(tool.name),
+      isMcp: tool.isMcp ?? false,
+    })
+    return [
+      {
+        message: createUserMessage({
+          content: [
+            {
+              type: 'tool_result',
+              content: `<tool_use_error>${errorContent}</tool_use_error>`,
+              is_error: true,
+              tool_use_id: toolUseID,
+            },
+          ],
+          toolUseResult: errorContent,
+          sourceToolAssistantUUID: assistantMessage.uuid,
+        }),
+      },
+    ]
+  }
+
   // Validate input types with zod (surprisingly, the model is not great at generating valid input)
   const parsedInput = tool.inputSchema.safeParse(input)
   if (!parsedInput.success) {
