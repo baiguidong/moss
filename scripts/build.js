@@ -7,6 +7,7 @@ import { RECOMMENDED, EXPERIMENTAL, NATIVE_REQUIRED, INTERNAL_ONLY } from './fea
 import { spawnSync } from 'child_process'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import { sanitizeBundledPaths } from './sanitize-build-paths.mjs'
 
 /**
  * 清理打包产物中由 bun build 内联的绝对路径。
@@ -16,10 +17,7 @@ import { resolve } from 'path'
 function sanitizePaths(outfile) {
   const fullPath = resolve(outfile)
   const content = readFileSync(fullPath, 'utf8')
-  const replaced = content.replace(
-    /(["'])\/[^"']*?\/node_modules\//g,
-    (match, quote) => quote + './node_modules/'
-  )
+  const replaced = sanitizeBundledPaths(content)
   if (replaced !== content) {
     writeFileSync(fullPath, replaced, 'utf8')
     console.log(`  Sanitized absolute paths in ${outfile}`)
