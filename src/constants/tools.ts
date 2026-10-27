@@ -1,5 +1,6 @@
 import { feature } from 'bun:bundle'
 import { TASK_OUTPUT_TOOL_NAME } from '../tools/TaskOutputTool/constants.js'
+import { MONITOR_TOOL_NAME } from '../tools/MonitorTool/constants.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
 import { ENTER_PLAN_MODE_TOOL_NAME } from '../tools/EnterPlanModeTool/constants.js'
 import {
@@ -60,6 +61,7 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   TASK_GET_TOOL_NAME,
   TASK_LIST_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
+  MONITOR_TOOL_NAME,
   GREP_TOOL_NAME,
   WEB_FETCH_TOOL_NAME,
   GLOB_TOOL_NAME,

@@ -54,6 +54,7 @@ import { TaskCreateTool } from './tools/TaskCreateTool/TaskCreateTool.js'
 import { TaskGetTool } from './tools/TaskGetTool/TaskGetTool.js'
 import { TaskUpdateTool } from './tools/TaskUpdateTool/TaskUpdateTool.js'
 import { TaskListTool } from './tools/TaskListTool/TaskListTool.js'
+import { MonitorTool } from './tools/MonitorTool/MonitorTool.js'
 import { SaveSessionSummaryTool } from './tools/SaveSessionSummaryTool/SaveSessionSummaryTool.js'
 import uniqBy from 'lodash-es/uniqBy.js'
 import { isToolSearchEnabledOptimistic } from './utils/toolSearch.js'
@@ -134,6 +135,7 @@ export function getAllBaseTools(): Tools {
   return [
     AgentTool,
     TaskOutputTool,
+    MonitorTool,
     BashTool,
     ...(hasEmbeddedSearchTools() ? [] : [GlobTool, GrepTool]),
     ExitPlanModeV2Tool,

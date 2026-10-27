@@ -51,6 +51,8 @@ export type TaskStateBase = {
   outputFile: string
   outputOffset: number
   notified: boolean
+  /** Model-facing background task kind. Shell tasks omit this field. */
+  kind?: 'shell' | 'monitor'
 }
 
 export type LocalShellSpawnInput = {
