@@ -16,8 +16,8 @@ import {
 } from 'src/services/analytics/metadata.js'
 import {
   addToToolDuration,
-  getSessionEngineDir,
   getSessionId,
+  isSessionPersistenceDisabled,
   getCodeEditToolDecisionCounter,
   getStatsStore,
 } from '../../bootstrap/state.js'
@@ -85,6 +85,7 @@ import {
 import { jsonStringify } from '../../utils/slowOperations.js'
 import {
   classifyDeferredPermission,
+  getDeferredPermissionStorageDir,
   persistDeferredPermission,
 } from '../../utils/permissions/deferredPermission.js'
 import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
@@ -951,16 +952,45 @@ async function checkPermissionsAndCallTool(
   // upstream `permissionDecision=defer` boundary and prevents an unattended
   // tool call from disappearing after the current turn.
   if (permissionDecision.behavior === 'defer') {
+    const hasSiblingToolUse =
+      Array.isArray(assistantMessage.message.content) &&
+      assistantMessage.message.content.some(
+        block => block.type === 'tool_use' && block.id !== toolUseID,
+      )
+    const deferredStorageDir = isSessionPersistenceDisabled()
+      ? undefined
+      : getDeferredPermissionStorageDir()
+    const isServedSession =
+      toolUseContext.options.querySource === 'remote' ||
+      getSessionRuntimeContext()?.executionEnvironment === 'server'
     const classified = classifyDeferredPermission(permissionDecision, {
       isNonInteractiveSession: toolUseContext.options.isNonInteractiveSession,
-      isServedSession:
-        toolUseContext.options.querySource === 'remote' ||
-        getSessionRuntimeContext()?.executionEnvironment === 'server',
-      hasResumeCapability: Boolean(getSessionEngineDir()),
+      isServedSession,
+      // The local sidecar is enough for `-p --resume`. Served sessions need
+      // an explicit host resume endpoint; Moss does not advertise one here,
+      // so they fail closed instead of persisting an unreachable request.
+      hasResumeCapability: !isServedSession && Boolean(deferredStorageDir),
     })
-    if (classified.kind === 'unchanged') {
-      const storageDir = getSessionEngineDir()
-      if (!storageDir) {
+    if (
+      classified.kind === 'unchanged' &&
+      toolUseContext.options.isNonInteractiveSession &&
+      hasSiblingToolUse
+    ) {
+      // A single assistant turn may contain several sibling tool calls. A
+      // deferred decision cannot safely pause just one of them and resume the
+      // rest later, so fail closed and leave the turn consistent.
+      permissionDecision = {
+        behavior: 'deny',
+        message:
+          `${permissionDecision.message}\nDeferred permission was ignored because the assistant turn contains multiple tool calls.`,
+        decisionReason: {
+          type: 'other',
+          reason: 'deferred permission cannot split sibling tool calls',
+        },
+        toolUseID,
+      }
+    } else if (classified.kind === 'unchanged') {
+      if (!deferredStorageDir) {
         permissionDecision = {
           behavior: 'deny',
           message:
@@ -974,7 +1004,7 @@ async function checkPermissionsAndCallTool(
       } else {
         try {
           const record = await persistDeferredPermission({
-            storageDir,
+            storageDir: deferredStorageDir,
             decision: permissionDecision,
             toolUseID,
             toolName: tool.name,

@@ -110,9 +110,11 @@ import {
 /* eslint-enable @typescript-eslint/no-require-imports */
 import {
   handleOrphanedPermission,
+  handleDeferredPermission,
   isResultSuccessful,
   normalizeMessage,
 } from './utils/queryHelpers.js'
+import type { DeferredPermissionResume } from './utils/permissions/deferredPermission.js'
 
 // Dead code elimination: conditional import for coordinator mode
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -153,6 +155,7 @@ export type QueryEngineConfig = {
   setSDKStatus?: (status: SDKStatus) => void
   abortController?: AbortController
   orphanedPermission?: OrphanedPermission
+  deferredPermissions?: DeferredPermissionResume[]
   /** Callback for MossTool to emit app-related events to main process. */
   emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
   /** Optional callback to get the latest tools, including dynamically connected MCP tools. */
@@ -331,6 +334,7 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
+      deferredPermissions,
       refreshTools: baseRefreshTools,
     } = this.config
     const prepared = new Set(options?.preparedTools || [])
@@ -524,6 +528,21 @@ export class QueryEngine {
         processUserInputContext,
       )) {
         yield message
+      }
+    }
+
+    if (deferredPermissions && deferredPermissions.length > 0) {
+      for (const deferred of deferredPermissions) {
+        for await (const message of handleDeferredPermission(
+          deferred.record,
+          deferred.assistantMessage,
+          tools,
+          this.mutableMessages,
+          processUserInputContext,
+          wrappedCanUseTool,
+        )) {
+          yield message
+        }
       }
     }
 
@@ -1436,6 +1455,7 @@ export async function* ask({
   agents = [],
   setSDKStatus,
   orphanedPermission,
+  deferredPermissions,
 }: {
   commands: Command[]
   prompt: string | Array<ContentBlockParam>
@@ -1467,6 +1487,7 @@ export async function* ask({
   agents?: AgentDefinition[]
   setSDKStatus?: (status: SDKStatus) => void
   orphanedPermission?: OrphanedPermission
+  deferredPermissions?: DeferredPermissionResume[]
 }): AsyncGenerator<SDKMessage, void, unknown> {
   const engine = new QueryEngine({
     cwd,
@@ -1495,6 +1516,7 @@ export async function* ask({
     setSDKStatus,
     abortController,
     orphanedPermission,
+    deferredPermissions,
   })
 
   try {

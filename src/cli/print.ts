@@ -29,7 +29,11 @@ import {
   isBuiltInAgent,
   parseAgentsFromJson,
 } from 'src/tools/AgentTool/loadAgentsDir.js'
-import type { Message, NormalizedUserMessage } from 'src/types/message.js'
+import type {
+  AssistantMessage,
+  Message,
+  NormalizedUserMessage,
+} from 'src/types/message.js'
 import type { QueuedCommand } from 'src/types/textInputTypes.js'
 import {
   dequeue,
@@ -75,6 +79,12 @@ import {
 } from 'src/utils/fileStateCache.js'
 import { expandPath } from 'src/utils/path.js'
 import { extractReadFilesFromMessages } from 'src/utils/queryHelpers.js'
+import {
+  consumeDeferredPermission,
+  getDeferredPermissionStorageDir,
+  listDeferredPermissions,
+  type DeferredPermissionResume,
+} from 'src/utils/permissions/deferredPermission.js'
 import { registerHookEventHandler } from 'src/utils/hooks/hookEvents.js'
 import { finalizePendingAsyncHooks } from 'src/utils/hooks/AsyncHookRegistry.js'
 import {
@@ -241,6 +251,7 @@ import {
 import { ensureModelStringsInitialized } from 'src/utils/model/modelStrings.js'
 import {
   getSessionId,
+  getSessionEngineDir,
   setMainLoopModelOverride,
   setMainThreadAgentType,
   switchSession,
@@ -597,6 +608,7 @@ export async function runHeadless(
     messages: initialMessages,
     turnInterruptionState,
     agentSetting: resumedAgentSetting,
+    deferredPermissions,
   } = await loadInitialMessages(setAppState, {
     continue: options.continue,
     resume: options.resume,
@@ -776,6 +788,7 @@ export async function runHeadless(
     [...commands, ...appState.mcp.commands],
     filteredTools,
     initialMessages,
+    deferredPermissions,
     canUseTool,
     sdkMcpConfigs,
     getAppState,
@@ -888,6 +901,7 @@ function runHeadlessStreaming(
   commands: Command[],
   tools: Tools,
   initialMessages: Message[],
+  deferredPermissions: DeferredPermissionResume[] | undefined,
   canUseTool: CanUseToolFn,
   sdkMcpConfigs: Record<string, McpSdkServerConfig>,
   getAppState: () => AppState,
@@ -926,6 +940,7 @@ function runHeadlessStreaming(
   let inputClosed = false
   let shutdownPromptInjected = false
   let heldBackResult: StdoutMessage | null = null
+  let pendingDeferredPermissions = deferredPermissions ?? []
   let abortController: AbortController | undefined
   // Same queue sendRequest() enqueues to — one FIFO for everything.
   const output = structuredIO.outbound
@@ -1816,6 +1831,8 @@ function runHeadlessStreaming(
           // const-capture: TS loses `while ((command = dequeue()))` narrowing
           // inside the closure.
           const cmd = command
+          const deferredForTurn = pendingDeferredPermissions
+          pendingDeferredPermissions = []
           await runWithWorkload(cmd.workload ?? options.workload, async () => {
             for await (const message of ask({
               commands: uniqBy(
@@ -1834,6 +1851,7 @@ function runHeadlessStreaming(
               maxBudgetUsd: options.maxBudgetUsd,
               taskBudget: options.taskBudget,
               canUseTool,
+              deferredPermissions: deferredForTurn,
               userSpecifiedModel: activeUserSpecifiedModel,
               fallbackModel: options.fallbackModel,
               jsonSchema: getInitJsonSchema() ?? options.jsonSchema,
@@ -3937,6 +3955,45 @@ type LoadInitialMessagesResult = {
   messages: Message[]
   turnInterruptionState?: TurnInterruptionState
   agentSetting?: string
+  deferredPermissions?: DeferredPermissionResume[]
+}
+
+/**
+ * Claim deferred tool calls that belong to the resumed transcript. A record
+ * without a matching unresolved tool_use is left in place so a later resume
+ * can recover it; a claimed token cannot be replayed a second time.
+ */
+async function claimDeferredPermissions(
+  messages: Message[],
+): Promise<DeferredPermissionResume[]> {
+  const storageDirs = [getDeferredPermissionStorageDir()]
+  // Read sidecars written by older Moss builds, which used the engine root
+  // instead of the per-session directory. Only records matching this
+  // transcript are ever claimed, so another session cannot be consumed.
+  const legacyDir = getSessionEngineDir()
+  if (legacyDir && !storageDirs.includes(legacyDir)) storageDirs.push(legacyDir)
+
+  const claimed: DeferredPermissionResume[] = []
+  for (const storageDir of storageDirs) {
+    const records = await listDeferredPermissions(storageDir)
+    for (const record of records) {
+      const assistantMessage = messages.find(
+        (message): message is AssistantMessage =>
+          message.type === 'assistant' &&
+          Array.isArray(message.message.content) &&
+          message.message.content.some(
+            block => block.type === 'tool_use' && block.id === record.toolUseID,
+          ),
+      )
+      if (!assistantMessage) continue
+      const consumed = await consumeDeferredPermission(
+        storageDir,
+        record.resumeToken,
+      )
+      if (consumed) claimed.push({ record: consumed, assistantMessage })
+    }
+  }
+  return claimed
 }
 
 async function loadInitialMessages(
@@ -4023,6 +4080,9 @@ async function loadInitialMessages(
           messages: result.messages,
           turnInterruptionState: result.turnInterruptionState,
           agentSetting: result.agentSetting,
+          deferredPermissions: options.forkSession
+            ? []
+            : await claimDeferredPermissions(result.messages),
         }
       }
     } catch (error) {
@@ -4162,6 +4222,9 @@ async function loadInitialMessages(
         messages: result.messages,
         turnInterruptionState: result.turnInterruptionState,
         agentSetting: result.agentSetting,
+        deferredPermissions: options.forkSession
+          ? []
+          : await claimDeferredPermissions(result.messages),
       }
     } catch (error) {
       logError(error)

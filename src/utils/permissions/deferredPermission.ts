@@ -1,6 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import {
+  getOriginalCwd,
+  getSessionEngineDir,
+  getSessionId,
+} from '../../bootstrap/state.js'
+import { getProjectDir } from '../sessionStorage.js'
+import type { AssistantMessage } from '../../types/message.js'
 import type {
   PermissionDecision,
   PermissionDenyDecision,
@@ -9,6 +16,32 @@ import type {
 
 const DEFAULT_DEFER_TTL_MS = 15 * 60 * 1000
 const DEFERRED_PERMISSION_FILE = 'deferred-permissions.json'
+const storageLocks = new Map<string, Promise<void>>()
+
+async function withStorageLock<T>(
+  storageDir: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = storageLocks.get(storageDir)
+  let release!: () => void
+  const current = new Promise<void>(resolve => {
+    release = resolve
+  })
+  storageLocks.set(storageDir, current)
+  if (previous) await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (storageLocks.get(storageDir) === current) storageLocks.delete(storageDir)
+  }
+}
+
+/** Storage location for the active session's pending permissions. */
+export function getDeferredPermissionStorageDir(): string {
+  const engineDir = getSessionEngineDir() ?? getProjectDir(getOriginalCwd())
+  return join(engineDir, getSessionId())
+}
 
 export type DeferredPermissionEnvironment = {
   isNonInteractiveSession: boolean
@@ -23,10 +56,16 @@ export type DeferredPermissionRecord = {
   toolUseID: string
   toolName: string
   toolInput: Record<string, unknown>
+  message?: string
   hookSnapshot?: unknown
   permissionMode: string
   createdAt: number
   expiresAt: number
+}
+
+export type DeferredPermissionResume = {
+  record: DeferredPermissionRecord
+  assistantMessage: AssistantMessage
 }
 
 export type DeferredPermissionOutcome =
@@ -158,50 +197,57 @@ export async function persistDeferredPermission(params: {
   now?: number
   ttlMs?: number
 }): Promise<DeferredPermissionRecord> {
-  const now = params.now ?? Date.now()
-  const records = await readRecords(params.storageDir)
-  const resumeToken = params.decision.resumeToken ?? randomUUID()
-  const record: DeferredPermissionRecord = {
-    version: 1,
-    resumeToken,
-    toolUseID: params.toolUseID,
-    toolName: params.toolName,
-    toolInput: params.toolInput,
-    ...(params.hookSnapshot === undefined
-      ? {}
-      : { hookSnapshot: params.hookSnapshot }),
-    permissionMode: params.permissionMode,
-    createdAt: now,
-    expiresAt:
-      params.decision.expiresAt ?? now + (params.ttlMs ?? DEFAULT_DEFER_TTL_MS),
-  }
-  await writeRecords(
-    params.storageDir,
-    [...records.filter(item => item.toolUseID !== params.toolUseID), record],
-  )
-  return record
+  return withStorageLock(params.storageDir, async () => {
+    const now = params.now ?? Date.now()
+    const records = await readRecords(params.storageDir)
+    const resumeToken = params.decision.resumeToken ?? randomUUID()
+    const record: DeferredPermissionRecord = {
+      version: 1,
+      resumeToken,
+      toolUseID: params.toolUseID,
+      toolName: params.toolName,
+      toolInput: params.toolInput,
+      message: params.decision.message,
+      ...(params.hookSnapshot === undefined
+        ? {}
+        : { hookSnapshot: params.hookSnapshot }),
+      permissionMode: params.permissionMode,
+      createdAt: now,
+      expiresAt:
+        params.decision.expiresAt ?? now + (params.ttlMs ?? DEFAULT_DEFER_TTL_MS),
+    }
+    await writeRecords(
+      params.storageDir,
+      [...records.filter(item => item.toolUseID !== params.toolUseID), record],
+    )
+    return record
+  })
 }
 
 export async function listDeferredPermissions(
   storageDir: string,
 ): Promise<DeferredPermissionRecord[]> {
-  const records = await readRecords(storageDir)
-  await writeRecords(storageDir, records)
-  return records
+  return withStorageLock(storageDir, async () => {
+    const records = await readRecords(storageDir)
+    await writeRecords(storageDir, records)
+    return records
+  })
 }
 
 export async function consumeDeferredPermission(
   storageDir: string,
   resumeToken: string,
 ): Promise<DeferredPermissionRecord | undefined> {
-  const records = await readRecords(storageDir)
-  const found = records.find(record => record.resumeToken === resumeToken)
-  if (!found) return undefined
-  await writeRecords(
-    storageDir,
-    records.filter(record => record.resumeToken !== resumeToken),
-  )
-  return found
+  return withStorageLock(storageDir, async () => {
+    const records = await readRecords(storageDir)
+    const found = records.find(record => record.resumeToken === resumeToken)
+    if (!found) return undefined
+    await writeRecords(
+      storageDir,
+      records.filter(record => record.resumeToken !== resumeToken),
+    )
+    return found
+  })
 }
 
 export { DEFAULT_DEFER_TTL_MS, DEFERRED_PERMISSION_FILE }

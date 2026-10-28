@@ -16,7 +16,7 @@ import {
   FILE_UNCHANGED_STUB,
 } from '../tools/FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../tools/FileWriteTool/prompt.js'
-import type { Message } from '../types/message.js'
+import type { AssistantMessage, Message } from '../types/message.js'
 import type { OrphanedPermission } from '../types/textInputTypes.js'
 import { logForDebugging } from './debug.js'
 import { isFsInaccessible } from './errors.js'
@@ -33,6 +33,7 @@ import type {
   outputSchema as permissionToolOutputSchema,
 } from './permissions/PermissionPromptToolResultSchema.js'
 import type { ProcessUserInputContext } from './processUserInput/processUserInput.js'
+import type { PermissionMode } from '../types/permissions.js'
 import { recordTranscript } from './sessionStorage.js'
 
 export type PermissionPromptTool = Tool<
@@ -221,6 +222,10 @@ export async function* handleOrphanedPermission(
   tools: Tools,
   mutableMessages: Message[],
   processUserInputContext: ProcessUserInputContext,
+  options: {
+    canUseTool?: CanUseToolFn
+    toolInput?: Record<string, unknown>
+  } = {},
 ): AsyncGenerator<SDKMessage, void, unknown> {
   const persistSession = !isSessionPersistenceDisabled()
   const { permissionResult, assistantMessage } = orphanedPermission
@@ -246,7 +251,7 @@ export async function* handleOrphanedPermission(
   }
 
   const toolName = toolUseBlock.name
-  const toolInput = toolUseBlock.input
+  const toolInput = options.toolInput ?? toolUseBlock.input
 
   const toolDefinition = findToolByName(tools, toolName)
   if (!toolDefinition) {
@@ -270,13 +275,15 @@ export async function* handleOrphanedPermission(
     input: finalInput,
   }
 
-  const canUseTool: CanUseToolFn = async () => ({
-    ...permissionResult,
-    decisionReason: {
-      type: 'mode',
-      mode: 'default' as const,
-    },
-  })
+  const effectiveCanUseTool: CanUseToolFn =
+    options.canUseTool ??
+    (async () => ({
+      ...permissionResult,
+      decisionReason: {
+        type: 'mode',
+        mode: 'default' as const,
+      },
+    }))
 
   // Add the assistant message with tool_use to messages BEFORE executing
   // so the conversation history is complete (tool_use -> tool_result).
@@ -317,7 +324,7 @@ export async function* handleOrphanedPermission(
   for await (const update of runTools(
     [finalToolUseBlock],
     [assistantMessage],
-    canUseTool,
+    effectiveCanUseTool,
     processUserInputContext,
   )) {
     if (update.message) {
@@ -335,6 +342,54 @@ export async function* handleOrphanedPermission(
       yield sdkMessage
     }
   }
+}
+
+/**
+ * Resume a persisted headless defer. The original permission result is only
+ * used as a placeholder; the supplied canUseTool runs the complete current
+ * PreToolUse and permission chain again.
+ */
+export async function* handleDeferredPermission(
+  record: {
+    toolUseID: string
+    toolName: string
+    toolInput: Record<string, unknown>
+    permissionMode: string
+    message?: string
+  },
+  assistantMessage: AssistantMessage,
+  tools: Tools,
+  mutableMessages: Message[],
+  processUserInputContext: ProcessUserInputContext,
+  canUseTool: CanUseToolFn,
+): AsyncGenerator<SDKMessage, void, unknown> {
+  const toolUse = Array.isArray(assistantMessage.message.content)
+    ? assistantMessage.message.content.find(
+        block => block.type === 'tool_use' && block.id === record.toolUseID,
+      )
+    : undefined
+  if (!toolUse || toolUse.type !== 'tool_use' || toolUse.name !== record.toolName) {
+    return
+  }
+
+  const permissionResult: OrphanedPermission['permissionResult'] = {
+    behavior: 'ask',
+    message:
+      record.message ??
+      'Permission was deferred and is being re-evaluated after session resume.',
+    decisionReason: {
+      type: 'mode',
+      mode: record.permissionMode as PermissionMode,
+    },
+    toolUseID: record.toolUseID,
+  }
+  yield* handleOrphanedPermission(
+    { permissionResult, assistantMessage },
+    tools,
+    mutableMessages,
+    processUserInputContext,
+    { canUseTool, toolInput: record.toolInput },
+  )
 }
 
 // Create a function to extract read files from messages

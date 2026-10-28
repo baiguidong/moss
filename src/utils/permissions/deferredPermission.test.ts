@@ -80,3 +80,23 @@ test('expired deferred records are removed when listed', async () => {
   // record is already expired by the time it is inspected.
   expect(await listDeferredPermissions(storageDir)).toEqual([])
 })
+
+test('concurrent resume claims consume a token exactly once', async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), 'moss-deferred-race-'))
+  const record = await persistDeferredPermission({
+    storageDir,
+    decision: defer,
+    toolUseID: 'tool-race',
+    toolName: 'Bash',
+    toolInput: { command: 'true' },
+    permissionMode: 'default',
+  })
+
+  const claims = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      consumeDeferredPermission(storageDir, record.resumeToken),
+    ),
+  )
+  expect(claims.filter(Boolean)).toHaveLength(1)
+  expect(await listDeferredPermissions(storageDir)).toEqual([])
+})
