@@ -29,14 +29,13 @@ import {
 } from '../../utils/permissions/PermissionResult.js'
 import { checkRuleBasedPermissions } from '../../utils/permissions/permissions.js'
 import { formatError } from '../../utils/toolErrors.js'
-import { isMcpTool } from '../mcp/utils.js'
 import type { McpServerType, MessageUpdateLazy } from './toolExecution.js'
 import { validateRewrittenInput } from './validateRewrittenInput.js'
 import { isDeepStrictEqual } from 'node:util'
 
 export type PostToolUseHooksResult<Output> =
   | MessageUpdateLazy<AttachmentMessage | ProgressMessage<HookProgress>>
-  | { updatedMCPToolOutput: Output }
+  | { updatedToolOutput: Output }
 
 export async function* runPostToolUseHooks<Input extends AnyObject, Output>(
   toolUseContext: ToolUseContext,
@@ -144,11 +143,13 @@ export async function* runPostToolUseHooks<Input extends AnyObject, Output>(
           }
         }
 
-        // If hooks provided updatedMCPToolOutput, yield it if this is an MCP tool
-        if (result.updatedMCPToolOutput && isMcpTool(tool)) {
-          toolOutput = result.updatedMCPToolOutput as Output
+        // PostToolUse hooks can replace output for every tool. Keep the
+        // previous MCP-only behavior only as a compatibility concern at the
+        // type boundary; execution must honor the replacement for all tools.
+        if ('updatedToolOutput' in result) {
+          toolOutput = result.updatedToolOutput as Output
           yield {
-            updatedMCPToolOutput: toolOutput,
+            updatedToolOutput: toolOutput,
           }
         }
       } catch (error) {

@@ -340,7 +340,7 @@ export interface HookResult {
   additionalContext?: string
   initialUserMessage?: string
   updatedInput?: Record<string, unknown>
-  updatedMCPToolOutput?: unknown
+  updatedToolOutput?: unknown
   permissionRequestResult?: PermissionRequestResult
   elicitationResponse?: ElicitationResponse
   watchPaths?: string[]
@@ -360,7 +360,7 @@ export type AggregatedHookResult = {
   additionalContexts?: string[]
   initialUserMessage?: string
   updatedInput?: Record<string, unknown>
-  updatedMCPToolOutput?: unknown
+  updatedToolOutput?: unknown
   permissionRequestResult?: PermissionRequestResult
   watchPaths?: string[]
   elicitationResponse?: ElicitationResponse
@@ -635,10 +635,10 @@ function processHookJSONOutput({
         break
       case 'PostToolUse':
         result.additionalContext = json.hookSpecificOutput.additionalContext
-        // Extract updatedMCPToolOutput if provided
-        if (json.hookSpecificOutput.updatedMCPToolOutput) {
-          result.updatedMCPToolOutput =
-            json.hookSpecificOutput.updatedMCPToolOutput
+        // Extract updatedToolOutput if provided. Use an own-property check so
+        // hooks can intentionally replace a result with null, false, or ''.
+        if ('updatedToolOutput' in json.hookSpecificOutput) {
+          result.updatedToolOutput = json.hookSpecificOutput.updatedToolOutput
         }
         break
       case 'PostToolUseFailure':
@@ -2698,13 +2698,13 @@ async function* executeHooks({
       }
     }
 
-    // Yield updatedMCPToolOutput if provided (from PostToolUse hooks)
-    if (result.updatedMCPToolOutput) {
+    // Yield updatedToolOutput if provided (from PostToolUse hooks)
+    if ('updatedToolOutput' in result) {
       logForDebugging(
-        `Hook ${hookEvent} (${getHookDisplayText(result.hook)}) replaced MCP tool output`,
+        `Hook ${hookEvent} (${getHookDisplayText(result.hook)}) replaced tool output`,
       )
       yield {
-        updatedMCPToolOutput: result.updatedMCPToolOutput,
+        updatedToolOutput: result.updatedToolOutput,
       }
     }
 
