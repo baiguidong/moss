@@ -125,6 +125,7 @@ import {
 } from '../mcp/utils.js'
 import {
   resolveHookPermissionDecision,
+  runPermissionDeniedHooks,
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
@@ -137,6 +138,24 @@ export const HOOK_TIMING_DISPLAY_THRESHOLD_MS = 500
 /** Log a debug warning when hooks/permission-decision block for this long. Matches
  * BashTool's PROGRESS_THRESHOLD_MS — the collapsed view feels stuck past this. */
 const SLOW_PHASE_LOG_THRESHOLD_MS = 2000
+
+/**
+ * PermissionDenied is intended for automated rejections (the upstream
+ * auto-mode classifier path), rather than an explicit user's rejection or a
+ * PreToolUse/PermissionRequest hook denial. Moss has no separate classifier
+ * result type, so these decision sources are the equivalent automatic paths.
+ */
+export function shouldRunPermissionDeniedHooks(
+  permissionDecision: PermissionResult,
+): boolean {
+  if (permissionDecision.behavior !== 'deny') return false
+  const reasonType = permissionDecision.decisionReason?.type
+  return (
+    reasonType === 'safetyCheck' ||
+    reasonType === 'asyncAgent' ||
+    reasonType === 'mode'
+  )
+}
 
 /**
  * Classify a tool execution error into a telemetry-safe string.
@@ -1064,7 +1083,28 @@ async function checkPermissionsAndCallTool(
       }),
       ...mcpToolDetailsForAnalytics(tool.name, mcpServerType, mcpServerBaseUrl),
     })
+    const permissionDeniedHookMessages: MessageUpdateLazy[] = []
+    let permissionDeniedRetry = false
+    if (shouldRunPermissionDeniedHooks(permissionDecision)) {
+      for await (const hookResult of runPermissionDeniedHooks(
+        toolUseContext,
+        tool,
+        toolUseID,
+        processedInput,
+        permissionDecision.message,
+      )) {
+        if ('retry' in hookResult) {
+          permissionDeniedRetry = true
+        } else {
+          permissionDeniedHookMessages.push(hookResult)
+        }
+      }
+    }
+
     let errorMessage = permissionDecision.message
+    if (permissionDeniedRetry) {
+      errorMessage = `${errorMessage}\nThe PermissionDenied hook indicates that retrying this tool call may succeed.`
+    }
     // Only use generic "Execution stopped" message if we don't have a detailed hook message
     if (shouldPreventContinuation && !errorMessage) {
       errorMessage = `Execution stopped by PreToolUse hook${stopReason ? `: ${stopReason}` : ''}`
@@ -1114,6 +1154,7 @@ async function checkPermissionsAndCallTool(
       }),
     })
 
+    resultingMessages.push(...permissionDeniedHookMessages)
     return resultingMessages
   }
   logEvent('tengu_tool_use_can_use_tool_allowed', {

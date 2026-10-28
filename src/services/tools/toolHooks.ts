@@ -18,6 +18,7 @@ import { logForDebugging } from '../../utils/debug.js'
 import {
   executePostToolHooks,
   executePostToolUseFailureHooks,
+  executePermissionDeniedHooks,
   executePreToolHooks,
   getPreToolHookBlockingMessage,
 } from '../../utils/hooks.js'
@@ -318,6 +319,65 @@ export async function* runPostToolUseFailureHooks<Input extends AnyObject>(
     }
   } catch (outerError) {
     logError(outerError)
+  }
+}
+
+/**
+ * Run PermissionDenied hooks after an automatic permission rejection.
+ *
+ * The hook may return `retry:true`; that signal is kept separate from
+ * transcript messages so the caller can add a model-visible retry hint to the
+ * rejected tool result. Other hook output follows the same attachment
+ * handling as PostToolUseFailure.
+ */
+export async function* runPermissionDeniedHooks<Input extends AnyObject>(
+  toolUseContext: ToolUseContext,
+  tool: Tool<Input, unknown>,
+  toolUseID: string,
+  toolInput: z.infer<Input>,
+  reason: string,
+): AsyncGenerator<
+  | MessageUpdateLazy<AttachmentMessage | ProgressMessage<HookProgress>>
+  | { retry: true }
+> {
+  const permissionMode = toolUseContext.getAppState().toolPermissionContext.mode
+  for await (const result of executePermissionDeniedHooks(
+    tool.name,
+    toolUseID,
+    toolInput,
+    reason,
+    toolUseContext,
+    permissionMode,
+    toolUseContext.abortController.signal,
+  )) {
+    if (result.retry) {
+      yield { retry: true }
+    }
+    if (result.message) {
+      yield { message: result.message }
+    }
+    if (result.blockingError) {
+      yield {
+        message: createAttachmentMessage({
+          type: 'hook_blocking_error',
+          hookName: `PermissionDenied:${tool.name}`,
+          toolUseID,
+          hookEvent: 'PermissionDenied',
+          blockingError: result.blockingError,
+        }),
+      }
+    }
+    if (result.additionalContexts && result.additionalContexts.length > 0) {
+      yield {
+        message: createAttachmentMessage({
+          type: 'hook_additional_context',
+          content: result.additionalContexts,
+          hookName: `PermissionDenied:${tool.name}`,
+          toolUseID,
+          hookEvent: 'PermissionDenied',
+        }),
+      }
+    }
   }
 }
 
