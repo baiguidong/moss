@@ -163,6 +163,43 @@ import {
 const TOOL_HOOK_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
+ * Hook output is untrusted model context. Escape every system-reminder tag
+ * before it is wrapped as a system reminder, including tags with attributes
+ * and case variations. This keeps hook text from creating a second trusted
+ * system context block.
+ */
+const SYSTEM_REMINDER_TAG = /<\/?system-reminder\b[^>]*>/gi
+
+export function escapeHookSystemReminderTags(content: string): string {
+  return content.replace(SYSTEM_REMINDER_TAG, tag =>
+    tag.replace('<', '&lt;').replace('>', '&gt;'),
+  )
+}
+
+function sanitizeHookMessage(message: HookResultMessage): HookResultMessage {
+  if (message.type !== 'attachment') return message
+  const attachment = message.attachment as Record<string, unknown>
+  const sanitized = { ...attachment }
+  if (typeof sanitized.content === 'string') {
+    sanitized.content = escapeHookSystemReminderTags(sanitized.content)
+  }
+  if (
+    sanitized.type === 'hook_blocking_error' &&
+    sanitized.blockingError &&
+    typeof sanitized.blockingError === 'object'
+  ) {
+    const blockingError = sanitized.blockingError as Record<string, unknown>
+    if (typeof blockingError.blockingError === 'string') {
+      sanitized.blockingError = {
+        ...blockingError,
+        blockingError: escapeHookSystemReminderTags(blockingError.blockingError),
+      }
+    }
+  }
+  return { ...message, attachment: sanitized } as HookResultMessage
+}
+
+/**
  * SessionEnd hooks run during shutdown/clear and need a much tighter bound
  * than TOOL_HOOK_EXECUTION_TIMEOUT_MS. This value is used by callers as both
  * the per-hook default timeout AND the overall AbortSignal cap (hooks run in
@@ -2655,7 +2692,7 @@ async function* executeHooks({
     }
 
     if (result.message) {
-      yield { message: result.message }
+      yield { message: sanitizeHookMessage(result.message) }
     }
 
     // Yield system message separately if present
@@ -2663,7 +2700,7 @@ async function* executeHooks({
       yield {
         message: createAttachmentMessage({
           type: 'hook_system_message',
-          content: result.systemMessage,
+          content: escapeHookSystemReminderTags(result.systemMessage),
           hookName,
           toolUseID,
           hookEvent,
@@ -2673,8 +2710,11 @@ async function* executeHooks({
 
     // Collect additional context from hooks
     if (result.additionalContext) {
-      const additionalContext = await persistLargeHookOutput(
+      const safeAdditionalContext = escapeHookSystemReminderTags(
         result.additionalContext,
+      )
+      const additionalContext = await persistLargeHookOutput(
+        safeAdditionalContext,
         hookEvent,
         toolUseID,
       )
@@ -2691,7 +2731,9 @@ async function* executeHooks({
         `Hook ${hookEvent} (${getHookDisplayText(result.hook)}) provided initialUserMessage (${result.initialUserMessage.length} chars)`,
       )
       yield {
-        initialUserMessage: result.initialUserMessage,
+        initialUserMessage: escapeHookSystemReminderTags(
+          result.initialUserMessage,
+        ),
       }
     }
 
