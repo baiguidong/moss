@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile, writeFile, stat, symlink, link, readdir, mkdir }
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { persistBoundedOutput } from './boundedToolOutput'
-import { persistToolResult, buildLargeToolResultMessage, generatePreview, getToolResultPath, processPreMappedToolResultBlock } from './toolResultStorage'
+import { persistToolResult, buildLargeToolResultMessage, generatePreview, getToolResultPath, processPreMappedToolResultBlock, persistLargeHookOutput } from './toolResultStorage'
 import { getLargeOutputInstructions } from './mcpOutputStorage'
 import { runWithSessionIdContext } from './sessionIdContext'
 import { asSessionId } from '../types/ids'
@@ -72,6 +72,17 @@ test('complete output stays readable, traversal IDs are contained, and disk fail
   expect(String(output.content)).toContain('could not be saved')
   expect(String(output.content).length).toBeLessThan(3000)
   expect(String(output.content)).not.toContain('Full output saved')
+}))
+
+test('oversized hook output is persisted with a bounded model preview', () => isolated(async root => {
+  const content = 'hook output '.repeat(2_000)
+  const modelContent = await persistLargeHookOutput(content, 'UserPromptSubmit', 'hook-use')
+  expect(modelContent).toContain('<persisted-output>')
+  expect(modelContent).toContain('Full output saved to:')
+  expect(modelContent).toContain('Preview (first 2000 characters):')
+  expect(modelContent).not.toContain(content)
+  const files = await readdir(join(root, 'fixture-session', 'tool-results'))
+  expect(files.some(file => file.startsWith('hook-UserPromptSubmit-hook-use'))).toBe(true)
 }))
 
 test('Bash and PowerShell adapters retain snapshot completeness in model-facing results', async () => {

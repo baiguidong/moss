@@ -135,6 +135,7 @@ import {
 } from './hooks/hookEvents.js'
 import { createAttachmentMessage } from './attachments.js'
 import { all } from './generators.js'
+import { persistLargeHookOutput } from './toolResultStorage.js'
 import { findToolByName, type Tools, type ToolUseContext } from '../Tool.js'
 import { execPromptHook } from './hooks/execPromptHook.js'
 import type { Message, AssistantMessage } from '../types/message.js'
@@ -2672,11 +2673,16 @@ async function* executeHooks({
 
     // Collect additional context from hooks
     if (result.additionalContext) {
+      const additionalContext = await persistLargeHookOutput(
+        result.additionalContext,
+        hookEvent,
+        toolUseID,
+      )
       logForDebugging(
         `Hook ${hookEvent} (${getHookDisplayText(result.hook)}) provided additionalContext (${result.additionalContext.length} chars)`,
       )
       yield {
-        additionalContexts: [result.additionalContext],
+        additionalContexts: [additionalContext],
       }
     }
 

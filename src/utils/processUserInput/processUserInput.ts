@@ -50,6 +50,7 @@ import {
   createSystemMessage,
   createUserMessage,
 } from '../messages.js'
+import { persistLargeHookOutput } from '../toolResultStorage.js'
 import { queryCheckpoint } from '../queryProfiler.js'
 import { parseSlashCommand } from '../slashCommandParsing.js'
 import { processTextPrompt } from './processTextPrompt.js'
@@ -229,7 +230,7 @@ export async function processUserInput({
       result.messages.push(
         createAttachmentMessage({
           type: 'hook_additional_context',
-          content: hookResult.additionalContexts.map(applyTruncation),
+          content: hookResult.additionalContexts,
           hookName: 'UserPromptSubmit',
           toolUseID: `hook-${randomUUID()}`,
           hookEvent: 'UserPromptSubmit',
@@ -249,7 +250,11 @@ export async function processUserInput({
             ...hookResult.message,
             attachment: {
               ...hookResult.message.attachment,
-              content: applyTruncation(hookResult.message.attachment.content),
+              content: await persistLargeHookOutput(
+                hookResult.message.attachment.content,
+                hookResult.message.attachment.hookEvent,
+                hookResult.message.attachment.toolUseID,
+              ),
             },
           })
           break
@@ -265,15 +270,6 @@ export async function processUserInput({
   // so it resolves in the same frame as deferredMessages (no flicker gap).
   // Error paths are handled by handlePromptSubmit's finally block.
   return result
-}
-
-const MAX_HOOK_OUTPUT_LENGTH = 10000
-
-function applyTruncation(content: string): string {
-  if (content.length > MAX_HOOK_OUTPUT_LENGTH) {
-    return `${content.substring(0, MAX_HOOK_OUTPUT_LENGTH)}… [output truncated - exceeded ${MAX_HOOK_OUTPUT_LENGTH} characters]`
-  }
-  return content
 }
 
 async function processUserInputBase(

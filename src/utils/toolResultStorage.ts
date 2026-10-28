@@ -122,6 +122,33 @@ export function getToolResultsDir(): string {
 // Preview size in bytes for the reference message
 export const PREVIEW_SIZE_BYTES = 2000
 
+/** Hook output is kept out of the prompt once it exceeds this limit. */
+export const MAX_HOOK_OUTPUT_LENGTH = 10_000
+
+/**
+ * Persist a hook's additional context when it is too large for the model
+ * prompt. Hooks use the same session-scoped result directory as tool output,
+ * so the full value remains available through the normal Read tool path.
+ */
+export async function persistLargeHookOutput(
+  content: string,
+  hookEvent: string,
+  toolUseID: string,
+): Promise<string> {
+  if (content.length <= MAX_HOOK_OUTPUT_LENGTH) return content
+
+  const result = await persistToolResult(
+    content,
+    `hook-${hookEvent}-${toolUseID}`,
+  )
+  if (isPersistError(result)) {
+    const preview = content.slice(0, PREVIEW_SIZE_BYTES)
+    return `${PERSISTED_OUTPUT_TAG}\nHook output exceeded ${MAX_HOOK_OUTPUT_LENGTH} characters and could not be saved: ${result.error}\nPreview (first ${PREVIEW_SIZE_BYTES} characters):\n${preview}${content.length > PREVIEW_SIZE_BYTES ? '\n...' : ''}\n${PERSISTED_OUTPUT_CLOSING_TAG}`
+  }
+
+  return `${PERSISTED_OUTPUT_TAG}\nHook output exceeded ${MAX_HOOK_OUTPUT_LENGTH} characters. Full output saved to: ${result.filepath}\n\nPreview (first ${PREVIEW_SIZE_BYTES} characters):\n${content.slice(0, PREVIEW_SIZE_BYTES)}${content.length > PREVIEW_SIZE_BYTES ? '\n...' : ''}\n${PERSISTED_OUTPUT_CLOSING_TAG}`
+}
+
 /**
  * Get the filepath where a tool result would be persisted.
  */
