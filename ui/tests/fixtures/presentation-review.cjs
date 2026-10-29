@@ -20,6 +20,10 @@ app.whenReady().then(async () => {
       }
       await win.webContents.executeJavaScript('window.showCompactPreviewExample(320, true)');
       await fs.writeFile(path.join(output, 'compact-preview-dark.png'), (await win.webContents.capturePage()).toPNG());
+      for (const [isMacOS, dark] of [[true, false], [true, true], [false, false]]) {
+        await win.webContents.executeJavaScript(`window.showWindowToolbarExample(${isMacOS}, ${dark})`);
+        await fs.writeFile(path.join(output, `window-toolbar-${isMacOS ? 'mac' : 'windows'}-${dark ? 'dark' : 'light'}.png`), (await win.webContents.capturePage()).toPNG());
+      }
       win.setSize(520, 420);
       await win.webContents.executeJavaScript('window.showRetryExample()');
       await fs.writeFile(path.join(output, 'retry-status.png'), (await win.webContents.capturePage()).toPNG());

@@ -124,6 +124,70 @@ describe('connector credential store', () => {
     });
   });
 
+  it('restores encrypted WebSearch keys after restart and unrelated credential updates', () => {
+    const { storagePath, store } = createStore();
+    const webSearchCredentials = {
+      tavilyApiKey: { value: 'tvly-private-value', field: 'tavilyApiKey', updatedAt: '2026-10-29T00:00:00.000Z' },
+      braveApiKey: { value: 'brave-private-value', field: 'braveApiKey' },
+    };
+    store.update((current) => ({ ...current, webSearchCredentials }));
+
+    const serialized = fs.readFileSync(storagePath, 'utf8');
+    const document = JSON.parse(serialized);
+    expect(serialized).not.toContain('tvly-private-value');
+    expect(serialized).not.toContain('brave-private-value');
+    expect(document.webSearchCredentials?.tavilyApiKey).toMatchObject({
+      field: 'tavilyApiKey', updatedAt: '2026-10-29T00:00:00.000Z',
+    });
+    expect(document.webSearchCredentials.tavilyApiKey.value).toBeUndefined();
+    expect(document.webSearchCredentials.tavilyApiKey.ct).toBeString();
+
+    const reopened = createConnectorCredentialStore({
+      storagePath, primaryKeyPath: store.primaryKeyPath, backupKeyPath: store.backupKeyPath,
+    });
+    expect(reopened.read().webSearchCredentials).toEqual(webSearchCredentials);
+    reopened.update((current) => ({
+      ...current,
+      remoteDirectCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
+    }));
+    expect(store.read().webSearchCredentials).toEqual(webSearchCredentials);
+  });
+
+  it('deletes only the selected WebSearch key and preserves other credentials', () => {
+    const { store } = createStore();
+    store.write({
+      webSearchCredentials: {
+        tavilyApiKey: { value: 'tvly-private-value', field: 'tavilyApiKey' },
+        braveApiKey: { value: 'brave-private-value', field: 'braveApiKey' },
+      },
+      remoteDirectCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
+    });
+    store.update((current) => {
+      delete current.webSearchCredentials.tavilyApiKey;
+      return current;
+    });
+    expect(store.read().webSearchCredentials).toEqual({
+      braveApiKey: { value: 'brave-private-value', field: 'braveApiKey' },
+    });
+    expect(store.read().remoteDirectCredentials.server.apiKey.value).toBe('server-secret');
+    store.update((current) => ({ ...current, webSearchCredentials: {} }));
+    expect(store.read().webSearchCredentials || {}).toEqual({});
+  });
+
+  it('rejects WebSearch ciphertext moved to another provider', () => {
+    const { storagePath, store } = createStore();
+    store.write({ webSearchCredentials: {
+      tavilyApiKey: { value: 'tvly-private-value', field: 'tavilyApiKey' },
+    } });
+    const document = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
+    expect(document.webSearchCredentials?.tavilyApiKey).toBeDefined();
+    document.webSearchCredentials.braveApiKey = document.webSearchCredentials.tavilyApiKey;
+    delete document.webSearchCredentials.tavilyApiKey;
+    fs.writeFileSync(storagePath, JSON.stringify(document));
+
+    expect(() => store.read()).toThrow('authentication failed');
+  });
+
   it('updates against the latest encrypted document while holding the lock', () => {
     const { store } = createStore();
     store.update((credentials) => ({

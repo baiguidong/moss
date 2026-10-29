@@ -1,4 +1,8 @@
 import { afterEach, expect, test } from 'bun:test'
+import { normalizeAppToolName } from '../../../packages/app-sdk/src/tool-names.mjs'
+import { assembleToolPool } from '../../tools.js'
+import { matchesToolSelector } from '../../utils/appToolNames.js'
+import { findToolByName } from '../../Tool.js'
 import { getEmptyToolPermissionContext, type Tool, type ToolUseContext } from '../../Tool.js'
 import { createMcpAuthTool } from '../../tools/McpAuthTool/McpAuthTool.js'
 import { ToolSearchTool } from '../../tools/ToolSearchTool/ToolSearchTool.js'
@@ -16,28 +20,27 @@ import { excludeToolsByServer, filterToolsByServer } from './utils.js'
 
 const appId = 'moss.sequential-thinking'
 const serverName = 'moss_sequential_thinking'
-const expectedName = `${serverName}__sequentialthinking`
+const expectedName = 'sequentialthinking_sequentialthinking'
 const originalSkipPrefix = process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX
 afterEach(() => {
   if (originalSkipPrefix === undefined) delete process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX
   else process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX = originalSkipPrefix
 })
 
-function inApp<T>(owner: string | undefined, name: string, action: () => T): T {
-  return runWithSessionIdContext(asSessionId(crypto.randomUUID()), null, action, undefined, undefined, {
+function inApp<T>(owner: string | undefined, name: string, action: () => T, environment?: Record<string, string>): T {
+  return runWithSessionIdContext(asSessionId(crypto.randomUUID()), null, action, undefined, environment, {
     executionEnvironment: 'desktop',
     appToolPolicy: { appIds: owner ? [owner] : [], mcpServers: owner ? { [name]: { appId: owner } } : {} },
   })
 }
 
-async function convert(owner: string | undefined = appId, name = serverName) {
-  delete process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX
+async function convert(owner: string | undefined = appId, name = serverName, toolNames = ['sequentialthinking', 'reset']) {
   const calls: unknown[] = []
   const tools = await inApp(owner, name, () => fetchToolsForClient({
     type: 'connected', name, capabilities: { tools: {} },
     config: { type: 'sdk', name, scope: 'dynamic' },
     client: {
-      request: async () => ({ tools: ['sequentialthinking', 'reset'].map(name => ({
+      request: async () => ({ tools: toolNames.map(name => ({
         name, description: name, inputSchema: { type: 'object', properties: {} },
       })) }),
       callTool: async (params: unknown) => {
@@ -49,14 +52,14 @@ async function convert(owner: string | undefined = appId, name = serverName) {
   return { tools, calls }
 }
 
-test('App MCP names reach the API directly and still call the original upstream tool', async () => {
+test('App MCP names use the App prefix in the API and call the original upstream tool', async () => {
   const { tools, calls } = await convert()
   const tool = tools[0]!
   expect(tool.name).toBe(expectedName)
-  expect(tool.name.length).toBe(44)
+  expect(tool.name.length).toBeLessThanOrEqual(64)
   expect(tool.aliases).toBeUndefined()
   expect(getMcpToolInfo(tool)).toEqual({ appId, serverName, toolName: 'sequentialthinking' })
-  expect(getMcpDisplayName(tool.name, serverName)).toBe('sequentialthinking')
+  expect(getMcpDisplayName(tool.name, serverName)).toBe(expectedName)
   const schema = await toolToAPISchema(tool, {
     tools, agents: [], getToolPermissionContext: async () => getEmptyToolPermissionContext(),
   })
@@ -72,9 +75,11 @@ test('App MCP names reach the API directly and still call the original upstream 
   expect(calls).toMatchObject([{ name: 'sequentialthinking', arguments: { thought: 'demo' } }])
 })
 
-test('ordinary MCP and manager services keep their namespace, and App authentication follows the new name', async () => {
+test('only builtin Apps omit prefixes; ordinary MCP and Host authentication remain namespaced', async () => {
+  const builtin = await convert('moss.spreadsheets', 'sheets', ['read_sheet'])
+  expect(builtin.tools[0]!.name).toBe('read_sheet')
   const managed = await convert('moss.mcp', 'sequential-thinking')
-  expect(managed.tools[0]!.name).toBe('mcp__sequential-thinking__sequentialthinking')
+  expect(managed.tools[0]!.name).toBe('mcp_sequentialthinking')
   const ordinary = await inApp(undefined, serverName, () => fetchToolsForClient({
     type: 'connected', name: serverName, capabilities: { tools: {} },
     config: { type: 'stdio', command: 'fixture', args: [], scope: 'dynamic' },
@@ -84,15 +89,57 @@ test('ordinary MCP and manager services keep their namespace, and App authentica
   const auth = inApp(appId, serverName, () => createMcpAuthTool(serverName, {
     type: 'http', url: 'https://example.invalid/mcp', scope: 'dynamic',
   }))
-  expect(auth.name).toBe(`${serverName}__authenticate`)
+  expect(auth.name).toBe(normalizeAppToolName(`${serverName}_authenticate`, appId))
   expect(auth.mcpInfo?.appId).toBe(appId)
+})
+
+test('QQ Mail SendMessage coexists with Core, uses isolated permissions and dispatches upstream unchanged', async () => {
+  // SDK's opt-in builtin override must not remove an App's namespace.
+  process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX = 'true'
+  const { tools, calls } = await convert('moss.qq-mail', 'qq-mail', ['SendMessage'])
+  const mail = tools[0]!
+  expect(mail.name).toBe('qqmail_SendMessage')
+  const pool = inApp('moss.qq-mail', 'qq-mail', () => assembleToolPool(getEmptyToolPermissionContext(), [mail]), { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 'true' })
+  const core = findToolByName(pool, 'SendMessage')!
+  expect(core).toBeDefined()
+  expect(core.mcpInfo).toBeUndefined()
+  expect(findToolByName(pool, mail.name)).toBeDefined()
+  expect(findToolByName([core, mail], 'SendMessage')).toBe(core)
+  expect(findToolByName([core, mail], 'qqmail_SendMessage')).toBe(mail)
+  expect(matchesToolSelector(mail, ['SendMessage'])).toBe(false)
+  expect(matchesToolSelector(mail, ['qq-mail__SendMessage'])).toBe(true)
+  expect(matchesToolSelector(mail, ['qqmail_SendMessage'])).toBe(true)
+  for (const rule of ['qqmail_SendMessage', 'qq-mail__SendMessage', 'qq-mail__*']) {
+    const permission = { ...getEmptyToolPermissionContext(),
+      alwaysAllowRules: { session: [rule] }, alwaysDenyRules: { session: [rule] }, alwaysAskRules: { session: [rule] },
+    }
+    expect(toolAlwaysAllowedRule(permission, mail)).not.toBeNull()
+    expect(getDenyRuleForTool(permission, mail)).not.toBeNull()
+    expect(getAskRuleForTool(permission, mail)).not.toBeNull()
+    expect(toolAlwaysAllowedRule(permission, core)).toBeNull()
+    expect(getDenyRuleForTool(permission, core)).toBeNull()
+    expect(getAskRuleForTool(permission, core)).toBeNull()
+  }
+  const permission = { ...getEmptyToolPermissionContext(), alwaysAllowRules: { session: ['SendMessage'] }, alwaysDenyRules: { session: ['SendMessage'] }, alwaysAskRules: { session: ['SendMessage'] } }
+  expect(toolAlwaysAllowedRule(permission, mail)).toBeNull()
+  expect(getDenyRuleForTool(permission, mail)).toBeNull()
+  expect(getAskRuleForTool(permission, mail)).toBeNull()
+  const schema = await toolToAPISchema(mail, { tools: pool, agents: [], getToolPermissionContext: async () => getEmptyToolPermissionContext() })
+  expect(schema.name).toBe('qqmail_SendMessage')
+  expect(await mail.checkPermissions({}, {} as ToolUseContext)).toMatchObject({ suggestions: [{ rules: [{ toolName: 'qqmail_SendMessage' }] }] })
+  const context = { options: { tools: pool }, getAppState: () => ({ mcp: { clients: [] } }), abortController: new AbortController(), setAppState: () => {} } as unknown as ToolUseContext
+  expect((await ToolSearchTool.call({ query: 'select:qqmail_SendMessage', max_results: 1 }, context)).data.matches).toEqual(['qqmail_SendMessage'])
+  await mail.call({ subject: 'fixture' }, context, async () => ({ behavior: 'allow', updatedInput: {} }), {
+    message: { content: [{ type: 'tool_use', name: mail.name, id: 'mail-fixture', input: {} }] },
+  } as AssistantMessage)
+  expect(calls).toMatchObject([{ name: 'SendMessage', arguments: { subject: 'fixture' } }])
 })
 
 test('exact and server permission rules use App names while SDK builtin overrides remain isolated', async () => {
   const { tools } = await convert()
   const tool = tools[0]!
   expect(getToolNameForPermissionCheck(tool)).toBe(expectedName)
-  for (const rule of [expectedName, serverName, `${serverName}__*`]) {
+  for (const rule of [expectedName, serverName, `${serverName}__*`, `${serverName}__sequentialthinking`]) {
     const permission = { ...getEmptyToolPermissionContext(),
       alwaysAllowRules: { session: [rule] }, alwaysDenyRules: { session: [rule] }, alwaysAskRules: { session: [rule] },
     }
@@ -126,7 +173,7 @@ test('permission settings accept App tool names and service wildcards without ca
 
 test('ToolSearch discovers and activates App MCP tools using the new names', async () => {
   const { tools } = await convert()
-  const nested = (await convert(appId, `${serverName}__secondary`)).tools
+  const nested = (await convert(appId, `${serverName}__secondary`, ['secondary_thinking'])).tools
   const context = {
     options: { tools: [...tools, ...nested] }, getAppState: () => ({ mcp: { clients: [] } }),
   } as unknown as ToolUseContext

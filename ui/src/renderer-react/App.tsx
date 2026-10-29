@@ -1,3 +1,4 @@
+import { confirmAppViewLeave } from '@/lib/app-view-guard';
 import { connectorIdFromApp } from '../../../packages/app-sdk/src/discovery.mjs';
 import { appendSessionRuntimeEvent } from '../shared/assistant-usage-reconcile.mjs';
 import { AppToolSelectionContext, canSelectToolApp, toolAppId, getAppToolServices, parseAppServiceKey } from '@/lib/app-tool-selection';
@@ -15,11 +16,13 @@ import { ComputerUseControl } from '@/components/computer-use';
 import { AppSidebar, type MainView } from '@/components/app-sidebar';
 import { AppsPanel } from '@/components/apps-panel';
 import { authorizeAppConnector } from '@/lib/connector-auth-flow';
-import { appPageUnavailableReason, getAppPrimaryEntry, getAppSettingsEntries } from '@/lib/app-navigation';
+import { appPageUnavailableReason, getAppPrimaryEntry, getAppSettingsEntries, isAppSharedSettingsRoute } from '@/lib/app-navigation';
 import { CronView } from '@/components/cron-view';
 import { OverviewView } from '@/components/overview-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
+import { WindowChrome } from '@/components/window-chrome';
+import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
 import { firstMessageTitle, historyWithPendingFirstMessage, type PendingFirstMessage } from '@/lib/pending-first-message';
@@ -32,8 +35,11 @@ import {
   type ToolDisplayMode,
 } from '@/components/chat/tool-display-settings';
 import { AppComposerContext, resourceContext, type AppComposerResource } from '@/lib/app-composer';
+import { normalizeVisualizationAnnotation, type VisualizationAnnotation } from '../shared/visualization-annotation.mjs';
 import { reconcileComposerIntent, restoreComposerIntent, type ComposerIntent, type ComposerIntentState } from '@/lib/composer-intent';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
+import { AppDetailsView } from '@/components/app-details-view';
+import { AppWorkspaceView } from '@/components/app-workspace-view';
 import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { UpdateModal } from '@/components/update-modal';
@@ -51,8 +57,9 @@ import { NotificationCenter, NotificationToast } from '@/components/notification
 import {
   buildMainChatRenderMessagesFromHistory,
 } from '@/lib/agent-transcript';
-import { PRESET_THEMES } from '@/theme/presets';
-import { applyCssTheme, getStoredThemeId, setStoredThemeId } from '@/theme/cssTheme';
+import { normalizeAppearance } from '../appearance-settings.mjs';
+import { applyAppearanceTheme, readCachedAppearance } from '@/theme/appearance';
+import { setStoredThemeId } from '@/theme/cssTheme';
 import {
   appendAppNotification,
   cleanIpcErrorMessage,
@@ -62,7 +69,6 @@ import {
   type AppNotificationSeverity,
   type NewAppNotification,
 } from '@/lib/app-notifications';
-import { readInstalledAppCount, writeInstalledAppCount } from '@/lib/installed-app-count';
 import {
   excludeRemovedSessions,
   isSessionAlreadyRemovedError,
@@ -72,7 +78,6 @@ import type {
   AskUserQuestionRequest,
   AgentEvent,
   AgentTeamsSessionState,
-  AppVersion,
   BackgroundTaskInfo,
   ComposerResourceRef,
   DesktopAgentDefinition,
@@ -331,10 +336,10 @@ export default function App() {
   const [permissionNoticeSeverity, setPermissionNoticeSeverity] = React.useState<AppNotificationSeverity>('info');
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
-  const [activeView, setActiveView] = React.useState<MainView>('chat');
+  const [activeView, setActiveViewRaw] = React.useState<MainView>('chat');
+  const setActiveView = React.useCallback((view: MainView) => { if (confirmAppViewLeave()) setActiveViewRaw(view); }, []);
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
   const [settingsInitialAppId, setSettingsInitialAppId] = React.useState<string | null>(null);
-  const [appManagementName, setAppManagementName] = React.useState<string | null>(null);
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [toolFocusTarget, setToolFocusTarget] = React.useState<{
     sessionId: string;
@@ -384,29 +389,10 @@ export default function App() {
     });
   }, []);
 
-  const [themeMode, setThemeMode] = React.useState<ThemeMode>(() => {
-    try {
-      const stored = localStorage.getItem('ui.themeMode');
-      if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
-    } catch {}
-    return 'light';
-  });
-  const [cssThemeId, setCssThemeId] = React.useState<DesktopSettings['appearance']['cssThemeId']>(() => {
-    const stored = getStoredThemeId();
-    return stored === 'default' || stored === 'grid-theme' || stored === 'dot-theme' || stored === 'gradient-theme'
-      ? stored
-      : 'grid-theme';
-  });
-  const appearanceRef = React.useRef<DesktopSettings['appearance']>({
-    themeMode,
-    cssThemeId,
-    toolDisplayMode: 'expanded',
-    chatFontSize: 14,
-    chatLineHeight: 1.55,
-    chatMessageSpacing: 10,
-    showAssistantMessageBorder: false,
-    showAssistantAvatar: true,
-  });
+  const [startupAppearance] = React.useState(readCachedAppearance);
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>(startupAppearance.themeMode);
+  const [cssThemeId, setCssThemeId] = React.useState(startupAppearance.cssThemeId);
+  const appearanceRef = React.useRef<DesktopSettings['appearance']>(startupAppearance);
   const committedAppearanceRef = React.useRef(appearanceRef.current);
   const appearanceSaveRequestRef = React.useRef(0);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
@@ -433,12 +419,14 @@ export default function App() {
   const [projectRefreshSignal, setProjectRefreshSignal] = React.useState(0);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
   const [appsLoaded, setAppsLoaded] = React.useState(false);
-  const [cachedAppsCount, setCachedAppsCount] = React.useState<number | null>(() => readInstalledAppCount(window.localStorage));
-  const [versionsByApp, setVersionsByApp] = React.useState<Record<string, AppVersion[]>>({});
+  const [appHubTab, setAppHubTab] = React.useState<'marketplace' | 'installed'>('marketplace');
   const [appSelection, setAppSelection] = React.useState<AppComposerResource | null>(null);
   const [appDraftWorkspace, setAppDraftWorkspace] = React.useState<string>();
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
+  const [appInfoName, setAppInfoName] = React.useState('');
+  const [appInfoSettings, setAppInfoSettings] = React.useState(false);
   const [embeddedAppRoute, setEmbeddedAppRoute] = React.useState('');
+  const appDetailsReturnView = React.useRef<MainView>('common');
   const [embeddedAppRevision, setEmbeddedAppRevision] = React.useState(0);
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const composerIntentStatesRef = React.useRef(new Map<string, ComposerIntentState>());
@@ -611,9 +599,7 @@ export default function App() {
   const refreshApps = React.useCallback(async () => {
     const nextApps = await window.agentDesktop.listApps();
     setApps(nextApps);
-    setCachedAppsCount(nextApps.length);
     setAppsLoaded(true);
-    writeInstalledAppCount(window.localStorage, nextApps.length);
     return nextApps;
   }, []);
 
@@ -647,7 +633,6 @@ export default function App() {
 
   const loadAppVersions = React.useCallback(async (name: string) => {
     const versions = await window.agentDesktop.listAppVersions({ name });
-    setVersionsByApp((prev) => ({ ...prev, [name]: versions }));
     return versions;
   }, []);
 
@@ -782,6 +767,7 @@ export default function App() {
   }, [activeDetail?.history]);
 
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
+    if (!confirmAppViewLeave()) return false;
     setActiveView('chat');
     setDraftProject(null);
     activeSessionIdRef.current = null;
@@ -800,7 +786,8 @@ export default function App() {
     return true;
   }, [clearSessionWorkspaceState, refreshAssistants]);
 
-  const openSession = React.useCallback(async (sessionId: string) => {
+  const openSession = React.useCallback(async (sessionId: string, signal?: AbortSignal) => {
+    if (!confirmAppViewLeave()) return false;
     const requestId = ++openSessionRequestIdRef.current;
     let detail;
     try {
@@ -814,7 +801,7 @@ export default function App() {
       // 会话可能已被删除或后端出错; 忽略并保持当前视图
       return false;
     }
-    if (requestId !== openSessionRequestIdRef.current) {
+    if (signal?.aborted || requestId !== openSessionRequestIdRef.current) {
       return false;
     }
     const workspaceChanged = activeDetailRef.current?.id !== sessionId
@@ -1019,18 +1006,23 @@ export default function App() {
     return () => mq.removeEventListener('change', handler);
   }, [themeMode]);
 
-  // Apply CSS theme when cssThemeId changes
+
   React.useEffect(() => {
-    const theme = PRESET_THEMES.find((t) => t.id === cssThemeId);
-    applyCssTheme(theme?.css || null);
+    const appearance = normalizeAppearance(desktopSettings?.appearance || appearanceRef.current);
+    applyAppearanceTheme(appearance);
+    try { localStorage.setItem('ui.appearance', JSON.stringify(appearance)); } catch {}
     setStoredThemeId(cssThemeId);
-  }, [cssThemeId]);
+  }, [cssThemeId, desktopSettings?.appearance]);
 
   React.useEffect(() => {
     return () => {
       document.body.classList.remove('layout-resizing');
     };
   }, []);
+
+  React.useEffect(() => {
+    if (appsLoaded && activeView === 'app-info' && !apps.some(app => app.name === appInfoName)) setActiveView('apps');
+  }, [appsLoaded, apps, activeView, appInfoName]);
 
   React.useEffect(() => {
     if (embeddedAppName && !apps.some((entry) => entry.name === embeddedAppName || entry.id === embeddedAppName)) {
@@ -1303,7 +1295,7 @@ export default function App() {
     });
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
-      if (removedSessionIdsRef.current.has(summary.id)) return;
+      if (removedSessionIdsRef.current.has(summary.id) || summary.archivedAt) return;
       setSummaries((prev) => upsertSummary(prev, summary));
       if (summary.id === activeSessionIdRef.current) {
         setComposerIntent(reconcileComposerIntent(summary, composerIntentStatesRef.current));
@@ -1319,6 +1311,7 @@ export default function App() {
     const offSessionHistory = window.agentDesktop.onSessionHistory((payload) => {
       if (!payload?.sessionId || !Array.isArray(payload.history)) return;
       if (removedSessionIdsRef.current.has(payload.sessionId)) return;
+      if (payload.summary?.archivedAt) return;
       if (payload.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary!));
       }
@@ -1359,6 +1352,14 @@ export default function App() {
       }
     });
 
+    const offArchives = window.agentDesktop.storage.onArchivesChanged(({ ids, archived }) => {
+      if (archived) {
+        setSummaries(previous => previous.filter(entry => !ids.includes(entry.id)));
+        if (ids.includes(activeSessionIdRef.current)) navigateToHome();
+      }
+      void refreshSummaries();
+    });
+
     const offAppsChanged = window.agentDesktop.onAppsChanged((payload) => {
       const changedName = payload?.appId || payload?.app?.id || payload?.app?.name;
       if (changedName && changedName === embeddedAppName && payload?.action !== 'runtime') {
@@ -1392,6 +1393,7 @@ export default function App() {
       offMeta();
       offSessionHistory();
       offRemoved();
+      offArchives();
       offAppsChanged();
       offSettingsChanged();
       offProjectsChanged();
@@ -1812,6 +1814,7 @@ export default function App() {
     skills?: Array<{ name: string; displayName?: string; source?: string }>,
     agentType?: string,
     selectedResource?: AppComposerResource | null,
+    visualizationAnnotation?: VisualizationAnnotation,
   ) => {
     // Show activity during IPC/runtime startup, before the first busy event.
     const request = Symbol();
@@ -1832,6 +1835,7 @@ export default function App() {
         sessionId,
         prompt,
         appContext: selectedResource ? resourceContext(selectedResource) : undefined,
+        visualizationAnnotation,
         skills,
         agentType,
         mode: intent,
@@ -1876,8 +1880,12 @@ export default function App() {
               : item));
             return;
           }
+          if (detail.busy) {
+            updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'queued' } : item));
+            return;
+          }
           if (next.workspace !== undefined && next.workspace !== detail.workspace) throw new Error('工作区已变化，请切回原工作区后编辑。');
-          await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection);
+          await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection, next.visualizationAnnotation);
           if (epoch !== (queueEpochs.current.get(sessionId) ?? 0) || stoppingSessions.current.has(sessionId)) {
             updateQueue(sessionId, items => items.map(item => item.id === next.id
               ? { ...item, status: 'queued', notice: undefined }
@@ -2185,6 +2193,14 @@ export default function App() {
 
   const handleEditQueuedMessage = React.useCallback((id: string) => {
     const sessionId = activeSessionIdRef.current || 'home';
+    const annotation = queuedMessagesRef.current[sessionId]?.find(item => item.id === id && item.visualizationAnnotation);
+    if (annotation) {
+      if (annotation.status === 'draft') {
+        updateQueue(sessionId, items => items.map(item => item.id === id ? { ...item, status: 'queued', notice: undefined } : item));
+        flushQueuedMessagesRef.current(sessionId);
+      }
+      return;
+    }
     const result = withdrawMessage(queuedMessagesRef.current[sessionId] ?? [], id,
       { text: inputDraftRef.current, files: composerAttachmentsRef.current, choices: composerChoicesRef.current,
         appSelection: appSelectionDraftRef.current }, activeSessionIdRef.current ? activeDetailRef.current?.workspace : appDraftWorkspace);
@@ -2279,40 +2295,92 @@ export default function App() {
   }, [activeSessionId, openPreviewWindow]);
 
   const handleLaunchApp = React.useCallback(async (name: string, options?: { settings?: boolean; route?: string }) => {
+    if (!confirmAppViewLeave()) return;
     try {
       const app = apps.find(item => item.name === name);
       if (!app) throw new Error('App 未安装');
       const entry = getAppPrimaryEntry(app);
-      if (options?.settings || entry?.location === 'settings') {
-        const setting = getAppSettingsEntries([app]).find(item => options?.route ? item.route === options.route : entry?.location !== 'settings' || item.id === entry.settingsId);
-        if (!setting) throw new Error('App 未声明设置页');
-        if (setting.unavailableReason) throw new Error(setting.unavailableReason);
-        if (app.navigation?.location === 'settings') {
-          setSettingsInitialAppId(setting.id);
-          setActiveView('settings');
-        } else {
-          setEmbeddedAppName(name);
-          setEmbeddedAppRoute(setting.route);
-          setActiveView('embedded-app');
-        }
+      if (!options?.settings || !options.route || isAppSharedSettingsRoute(options.route) || entry?.location === 'info') {
+        if (['common', 'skills', 'experts', 'apps'].includes(activeView)) appDetailsReturnView.current = activeView;
+        setAppInfoName(name);
+        setAppInfoSettings(Boolean(options?.settings));
+        setActiveView('app-info');
         return;
       }
-      const reason = entry?.unavailableReason || appPageUnavailableReason(app);
-      if (reason) throw new Error(reason);
-      if (!app.hasUi || (!entry && app.navigation?.location !== 'none')) throw new Error('App 没有可用页面');
-      setEmbeddedAppName(name);
-      setEmbeddedAppRoute(entry?.route || '');
-      setActiveView('embedded-app');
+      const setting = getAppSettingsEntries([app]).find(item => options.route ? item.route === options.route : entry?.location !== 'settings' || item.id === entry.settingsId);
+      if (!setting) throw new Error('App 未声明设置页');
+      if (setting.unavailableReason) throw new Error(setting.unavailableReason);
+      if (app.navigation?.location === 'settings') {
+        setSettingsInitialAppId(setting.id);
+        setActiveView('settings');
+      } else {
+        setEmbeddedAppName(name);
+        setEmbeddedAppRoute(setting.route);
+        setActiveView('embedded-app');
+      }
     } catch (error: any) {
       showPermissionNotice(`App 打开失败：${cleanIpcErrorMessage(error?.message || String(error))}`, 'error', 6000);
     }
-  }, [apps, showPermissionNotice]);
+  }, [apps, activeView, showPermissionNotice]);
 
   const handleOpenEmbeddedApp = React.useCallback((name: string, route = '') => {
+    if (!confirmAppViewLeave()) return;
+    if (isAppSharedSettingsRoute(route)) {
+      setAppInfoName(name);
+      setAppInfoSettings(true);
+      setActiveView('app-info');
+      return;
+    }
     setEmbeddedAppName(name);
     setEmbeddedAppRoute(route);
     setActiveView('embedded-app');
   }, []);
+
+  const navigationEntry = React.useMemo<NavigationEntry>(() => ({
+    view: activeView,
+    ...(activeView === 'chat' ? { sessionId: activeSessionId } : {}),
+    ...(activeView === 'projects' ? { projectId: activeProjectId } : {}),
+    ...(activeView === 'embedded-app' ? { appName: embeddedAppName, appRoute: embeddedAppRoute } : {}),
+    ...(activeView === 'app-info' ? { appName: appInfoName, ...(appInfoSettings ? { appRoute: '#/settings' } : {}) } : {}),
+    ...(activeView === 'settings' ? { settingsSection: settingsInitialSection, settingsAppId: settingsInitialAppId } : {}),
+  }), [activeView, activeSessionId, activeProjectId, embeddedAppName, embeddedAppRoute, appInfoName, appInfoSettings, settingsInitialSection, settingsInitialAppId]);
+  const navigationHistory = useNavigationHistory(navigationEntry, async (entry, signal) => {
+    if (!confirmAppViewLeave()) return false;
+    if (entry.view === 'chat') {
+      setToolFocusTarget(null);
+      setMessageFocusTarget(null);
+      if (!entry.sessionId) return navigateToHome();
+      const opened = await openSession(entry.sessionId, signal);
+      if (!opened && !signal.aborted) showPermissionNotice('该会话已删除或暂时无法打开。', 'error', 5000);
+      return opened;
+    }
+    if (entry.view === 'app-info') {
+      if (!apps.some(app => app.name === entry.appName)) {
+        showPermissionNotice('该应用已卸载。', 'error', 5000);
+        return false;
+      }
+      setAppInfoName(entry.appName!);
+      setAppInfoSettings(entry.appRoute === '#/settings');
+      setActiveView('app-info');
+      return true;
+    }
+    if (entry.view === 'embedded-app') {
+      const app = apps.find(app => app.name === entry.appName);
+      if (!app || appPageUnavailableReason(app)) {
+        showPermissionNotice('该应用当前不可用。', 'error', 5000);
+        return false;
+      }
+      handleOpenEmbeddedApp(entry.appName!, entry.appRoute);
+      return true;
+    }
+    if (entry.view === 'projects') setActiveProjectId(entry.projectId || null);
+    if (entry.view === 'settings') {
+      setSettingsInitialSection(entry.settingsSection || 'basic-info');
+      setSettingsInitialAppId(entry.settingsAppId || null);
+    }
+    setActiveView(entry.view);
+    return true;
+  });
 
   React.useEffect(() => {
     const openRoute = (event: Event) => {
@@ -2455,27 +2523,17 @@ export default function App() {
 
   const handleDeleteApp = React.useCallback(async (name: string, options: { deleteData?: boolean; deleteCredentials?: boolean } = {}) => {
     const result = await window.agentDesktop.deleteApp({ name, ...options });
-    if (!result?.ok) {
-      showPermissionNotice(`App 卸载失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`, 'error', 6000);
-      return;
-    }
-    setVersionsByApp((prev) => {
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
+    if (!result?.ok) throw new Error(`App 卸载失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`);
     await refreshApps();
-  }, [refreshApps, showPermissionNotice]);
+    setAppHubTab('installed');
+    setActiveView('apps');
+  }, [refreshApps]);
 
   const handleRollbackApp = React.useCallback(async (name: string, versionId: string) => {
     const result = await window.agentDesktop.rollbackApp({ name, versionId });
-    if (!result?.ok) {
-      showPermissionNotice(`App 回滚失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`, 'error', 6000);
-      return;
-    }
+    if (!result?.ok) throw new Error(`App 回滚失败：${cleanIpcErrorMessage(result?.error || '未知错误')}`);
     await refreshApps();
-    await loadAppVersions(name);
-  }, [loadAppVersions, refreshApps, showPermissionNotice]);
+  }, [refreshApps]);
 
   const autoSaveSettings = React.useCallback(async (key: keyof DesktopSettings, value: any) => {
     try {
@@ -2611,7 +2669,7 @@ export default function App() {
         : undefined}
       initialSection={settingsInitialSection}
       initialAppSettingId={settingsInitialAppId}
-      onOpenAppManagement={(name) => { setAppManagementName(apps.find(app => app.name === name)?.id || name); setActiveView('apps'); }}
+      onOpenAppManagement={name => { void handleLaunchApp(name); }}
     />
   );
 
@@ -2648,7 +2706,15 @@ export default function App() {
 
   return (
     <AppToolSelectionContext.Provider value={{ apps: (activeSessionId ? activeDetail?.agentMode === 'remote-direct' : newSessionAgentMode === 'remote-direct') ? apps.filter(app => app.connectorApp) : apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: true, pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
-    <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource }}>
+    <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource, submitVisualizationAnnotation: async (sessionId, input) => {
+      if (sessionId !== activeSessionIdRef.current || activeDetailRef.current?.agentMode === 'remote-direct' || activeDetailRef.current?.isSubAgent) throw new Error('请在原本地主会话提交标注');
+      const annotation = normalizeVisualizationAnnotation(input);
+      const queued: QueuedMessage = { id: annotation.id, prompt: '1 处标注', intent: 'chat', visualizationAnnotation: annotation,
+        workspace: activeDetailRef.current?.workspace, status: 'queued' };
+      updateQueue(sessionId, items => items.some(item => item.id === annotation.id) ? items : [...items, queued]);
+      setActiveView('chat');
+      if (!activeDetailRef.current?.busy) flushQueuedMessagesRef.current(sessionId);
+    } }}>
     <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
       toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
@@ -2679,18 +2745,21 @@ export default function App() {
             return [...items, ...recoverQueuedMessages(draft.queued).filter(item => !ids.has(item.id))];
           });
         }} />}
-      {!window.mossWeb && <div className={`moss-window-chrome ${isMacOS ? '' : 'moss-window-chrome-native'} relative shrink-0`}>
-        <div
-          className="moss-window-drag h-9"
-          style={{ paddingLeft: isMacOS ? 84 : 0 }}
-        />
-        <div
-          className="absolute top-1"
-          style={{ right: isMacOS ? 8 : 144 }}
-        >
-          {notificationCenter}
-        </div>
-      </div>}
+      <WindowChrome
+        desktop={!window.mossWeb}
+        isMacOS={isMacOS}
+        sidebarWidth={effectiveLeftCollapsed ? 68 : layout.leftWidth}
+        rightWidth={layout.rightWidth}
+        sessionActive={activeView === 'chat' && Boolean(activeSessionId)}
+        leftCollapsed={effectiveLeftCollapsed}
+        rightCollapsed={layout.rightCollapsed}
+        onToggleLeft={() => toggleSidebar('left')}
+        canGoBack={navigationHistory.canGoBack}
+        canGoForward={navigationHistory.canGoForward}
+        onBack={() => { void navigationHistory.back(); }}
+        onForward={() => { void navigationHistory.forward(); }}
+        notifications={notificationCenter}
+      >
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
@@ -2704,7 +2773,6 @@ export default function App() {
             apps={apps}
             activeSessionId={activeSessionId}
             activeView={activeView}
-            appsCount={appsLoaded ? apps.length : cachedAppsCount}
             serverAccount={serverAccount}
             projectsCount={projects.length}
             themeMode={themeMode}
@@ -2720,13 +2788,16 @@ export default function App() {
             onLogoutServer={handleServerLogout}
             onChangeView={(view) => {
               if (view === 'settings') { setSettingsInitialSection('basic-info'); setSettingsInitialAppId(null); }
-              if (view === 'apps') setAppManagementName(null);
               setActiveView(view);
             }}
             onChangeTheme={handleThemeModeChange}
             onSelectSession={handleSelectSession}
             onLaunchApp={handleOpenEmbeddedApp}
             onNewSession={handleNewSession}
+            onArchiveSession={async sessionId => {
+              try { await window.agentDesktop.storage.setArchived({ sessionId, archived: true }); }
+              catch (error) { showPermissionNotice(error instanceof Error ? error.message : String(error), 'error', 6000); }
+            }}
             onDeleteSession={handleDeleteSession}
             onRenameSession={handleRenameSession}
             onTogglePin={handleTogglePin}
@@ -2766,7 +2837,16 @@ export default function App() {
               ) : null}
             </div>
           )}
-          {embeddedAppName ? (
+          {embeddedAppName && apps.find(app => app.name === embeddedAppName)?.navigation?.location === 'details' ? (
+            activeView === 'embedded-app' && <AppWorkspaceView
+              key={`${embeddedAppName}:${embeddedAppRevision}`}
+              app={apps.find(app => app.name === embeddedAppName)!}
+              workspace={activeDetail?.workspace}
+              route={embeddedAppRoute}
+              onNavigate={route => handleOpenEmbeddedApp(embeddedAppName, route)}
+              onBack={() => { void handleLaunchApp(embeddedAppName); }}
+            />
+          ) : embeddedAppName ? (
             <div
               className={activeView === 'embedded-app' ? 'h-full min-h-0' : 'hidden'}
               aria-hidden={activeView === 'embedded-app' ? undefined : true}
@@ -2777,10 +2857,22 @@ export default function App() {
                 app={apps.find(app => app.name === embeddedAppName)}
                 workspace={activeDetail?.workspace}
                 route={embeddedAppRoute}
+                onBack={() => { void handleLaunchApp(embeddedAppName); }}
               />
             </div>
           ) : null}
-          {activeView === 'embedded-app' ? null : activeView === 'chat' ? (
+          {activeView === 'app-info' ? (() => {
+            const app = apps.find(item => item.name === appInfoName);
+            return app ? <AppDetailsView key={`${app.name}:${appInfoSettings}`} app={app} installedApps={apps} onRefresh={refreshApps} onAuthorize={handleAuthorizeApp} initialSettingsOpen={appInfoSettings}
+              onDelete={handleDeleteApp} onIterate={handleIterateExistingApp} onLoadVersions={loadAppVersions} onRollback={handleRollbackApp}
+              onOpenApp={route => handleOpenEmbeddedApp(app.name, route)}
+              onBack={() => setActiveView(appDetailsReturnView.current)}
+              onTry={prompt => {
+                if (app.toolScope !== 'global' && !selectedToolAppIds.includes(app.id || app.name)) handleToggleToolApp(app.id || app.name);
+                setActiveView('chat');
+                if (prompt) setInput(previous => previous.trim() ? `${previous}\n\n${prompt}` : prompt);
+              }} /> : null;
+          })() : activeView === 'embedded-app' ? null : activeView === 'chat' ? (
             activeSessionId ? (
               <ChatArea
                 messages={chatMessages}
@@ -2927,10 +3019,16 @@ export default function App() {
               enabled={agentMailEnabled}
               onOpenSettings={() => { setSettingsInitialAppId(null); setActiveView('settings'); }}
             />
-          ) : activeView === 'skills' || activeView === 'experts' ? (
+          ) : activeView === 'common' || activeView === 'skills' || activeView === 'experts' || activeView === 'apps' ? (
             <ResourceHubView
               activeTab={activeView}
               onChangeTab={setActiveView}
+              apps={apps}
+              onOpenApp={handleLaunchApp}
+              appsContent={
+                <AppsPanel apps={apps} loading={!appsLoaded} onLaunch={handleLaunchApp} onRefresh={refreshApps} initialTab={appHubTab} onTabChange={setAppHubTab}
+                />
+              }
             />
           ) : activeView === 'projects' ? (
             <ProjectWorkspace
@@ -2941,21 +3039,6 @@ export default function App() {
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
               onNewSession={handleNewProjectSession}
-            />
-          ) : activeView === 'apps' ? (
-            <AppsPanel
-              onAuthorize={handleAuthorizeApp}
-              apps={apps}
-              loading={!appsLoaded}
-              onUseApp={app => { if (navigateToHome({ resetInput: true })) setDraftAppIds([app.id || app.name]); }}
-              versionsByApp={versionsByApp}
-              initialExpandedApp={appManagementName}
-              onLaunch={handleLaunchApp}
-              onDelete={handleDeleteApp}
-              onIterate={handleIterateExistingApp}
-              onLoadVersions={loadAppVersions}
-              onRollback={handleRollbackApp}
-              onRefresh={refreshApps}
             />
           ) : (
             renderSettingsView()
@@ -3036,6 +3119,7 @@ export default function App() {
         />
         <UpdateModal />
       </div>
+      </WindowChrome>
     </div>
     </ToolDisplaySettingsProvider>
     </UserAvatarContext.Provider>

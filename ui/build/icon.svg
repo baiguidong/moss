@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#FAFBF6"/><stop offset="1" stop-color="#EEF1E7"/>
+    </linearGradient>
+    <linearGradient id="stem" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#0E553D"/><stop offset="1" stop-color="#063F2D"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#126044"/><stop offset="1" stop-color="#28815B"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop stop-color="#39855C"/><stop offset="1" stop-color="#7BB477"/>
+    </linearGradient>
+    <linearGradient id="tip" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#A7CD8C"/><stop offset="1" stop-color="#8FBE7A"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="135%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dy="10"/><feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- The 824 px tile leaves the transparent margins expected by the macOS Dock. -->
+  <path d="M360 100H664C754 100 799 100 835 118C867 134 890 157 906 189C924 225 924 270 924 360V664C924 754 924 799 906 835C890 867 867 890 835 906C799 924 754 924 664 924H360C270 924 225 924 189 906C157 890 134 867 118 835C100 799 100 754 100 664V360C100 270 100 225 118 189C134 157 157 134 189 118C225 100 270 100 360 100Z" fill="url(#surface)" filter="url(#shadow)"/>
+  <!-- Moss's folded M, drawn as paths so every icon size stays crisp. -->
+  <g transform="translate(41 41) scale(.92)">
+    <path d="M305 294H381C414 294 438 310 453 339L568 570C585 604 573 644 541 662C508 680 469 668 451 635L361 461V655C361 689 339 712 305 712C271 712 249 689 249 655V351C249 319 273 294 305 294Z" fill="url(#fold)"/>
+    <path d="M719 294H644C611 294 587 310 572 339L457 570C440 604 452 644 484 662C517 680 556 668 574 635L664 461V655C664 689 687 712 720 712C753 712 776 689 776 655V351C776 319 752 294 719 294Z" fill="url(#leaf)"/>
+    <path d="M305 294C336 294 361 319 361 351V655C361 689 339 712 305 712C271 712 249 689 249 655V351C249 319 273 294 305 294Z" fill="url(#stem)"/>
+    <path d="M719 294C751 294 776 319 776 351V655C776 689 753 712 720 712C687 712 664 689 664 655V351C664 319 688 294 719 294Z" fill="url(#tip)"/>
+    <path d="M249 351C249 382 274 407 305 407H314C334 407 350 414 361 429V351C361 319 336 294 305 294C273 294 249 319 249 351Z" fill="#125C42"/>
+    <path d="M776 351C776 382 751 407 720 407H711C691 407 675 414 664 429V351C664 319 688 294 719 294C751 294 776 319 776 351Z" fill="#A7CD8C"/>
+    <path d="M512 459L568 570C585 604 573 644 541 662C523 672 501 672 484 662C452 644 440 604 457 570Z" fill="#32815A"/>
+  </g>
+</svg>

@@ -22,6 +22,7 @@ import type { DeepImmutable } from 'src/types/utils.js'
 import stripAnsi from 'strip-ansi'
 import { createAssistantMessage } from '../messages.js'
 import { getPlan } from '../plans.js'
+import { toolSourceMetadata } from '../../../shared/tool-source.mjs'
 
 export function toInternalMessages(
   messages: readonly DeepImmutable<SDKMessage>[],
@@ -32,6 +33,7 @@ export function toInternalMessages(
         return [
           {
             type: 'assistant',
+            ...toolSourceMetadata(message),
             message: message.message,
             uuid: message.uuid,
             requestId: undefined,
@@ -121,6 +123,7 @@ export function toSDKMessages(messages: Message[]): SDKMessage[] {
         return [
           {
             type: 'assistant',
+            ...toolSourceMetadata(message),
             message: normalizeAssistantMessageForSDK(message),
             session_id: getSessionId(),
             parent_tool_use_id: null,

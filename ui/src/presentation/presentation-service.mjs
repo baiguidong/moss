@@ -221,7 +221,7 @@ export function createPresentationService({ storageRoot, getSessionRecord, resol
         const current = await resolveItem(getSessionRecord(id), resource.source.type === 'file' ? { path: resource.source.path } : { resource_uri: resource.source.uri }, { origin: 'manual' });
         if (current.revision !== resource.revision) {
           if ((await session(id)).epoch !== epoch) throw new Error('Workspace changed while loading');
-          value.resources.set(artifactId, { ...resource, ...current, id: artifactId }); await persist(value); notify(value);
+          value.resources.set(artifactId, { ...resource, ...current, location: resource.location, id: artifactId }); await persist(value); notify(value);
           throw new Error('文件已更新，正在重新读取');
         }
       }
@@ -250,19 +250,24 @@ export function createPresentationService({ storageRoot, getSessionRecord, resol
         if (changed) { value.state = transitionPresentation(value.state, { type: 'dirty', value: [...value.resources.values()].some(resource => resource.dirty) }); await persist(value); notify(value); }
       }
     },
-    async refresh(id) {
+    async refresh(id, { activeOnly = false } = {}) {
       const value = await session(id), epoch = value.epoch, refreshSeq = (value.refreshSeq || 0) + 1;
+      if (activeOnly && (foreground !== id || !value.state.visible)) return snapshot(value);
       value.refreshSeq = refreshSeq;
+      let changed = false;
       for (const [artifactId, resource] of value.resources) {
         if (!['file', 'provider'].includes(resource.source.type)) continue;
+        if (activeOnly && (value.state.activeId !== artifactId || resource.source.type !== 'provider')) continue;
         try {
           const next = await resolveItem(getSessionRecord(id), resource.source.type === 'file' ? { path: resource.source.path } : { resource_uri: resource.source.uri }, { origin: 'manual' });
           if ((await session(id)).epoch !== epoch || value.refreshSeq !== refreshSeq) return;
           if (value.resources.get(artifactId) !== resource) continue;
-          value.resources.set(artifactId, { ...resource, ...next, title: resource.title, id: artifactId });
-        } catch { if ((await session(id)).epoch === epoch && value.refreshSeq === refreshSeq && value.resources.get(artifactId) === resource) value.resources.set(artifactId, { ...resource, availability: 'unavailable' }); }
+          const updated = { ...resource, ...next, location: resource.location, title: resource.title, id: artifactId };
+          if (JSON.stringify(updated) !== JSON.stringify(resource)) { value.resources.set(artifactId, updated); changed = true; }
+        } catch { if ((await session(id)).epoch === epoch && value.refreshSeq === refreshSeq && value.resources.get(artifactId) === resource && resource.availability !== 'unavailable') { value.resources.set(artifactId, { ...resource, availability: 'unavailable' }); changed = true; } }
       }
-      await persist(value); notify(value); return snapshot(value);
+      if (changed) { await persist(value); notify(value); }
+      return snapshot(value);
     },
     async flush() { await Promise.all([...sessions.values()].map(value => value.writes)); },
   };

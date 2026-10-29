@@ -1,4 +1,7 @@
+import { CreationStatus, type CreationInfo } from './creation-status';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
+import { WindowToolbarContext } from '@/components/window-chrome';
 import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ExternalLink, ListChecks, ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -28,6 +31,7 @@ export function PresentationToolbar({
   onSelectTasks,
   onSelectPresentation,
 }: PresentationToolbarProps) {
+  const { presentation: toolbarTarget } = React.useContext(WindowToolbarContext);
   const state = snapshot?.state;
   const activeResource = snapshot?.resources.find(item => item.id === state?.activeId);
   const activeView = tasksActive ? 'tasks' : !state || state.activeId === 'workspace' ? 'workspace'
@@ -47,8 +51,8 @@ export function PresentationToolbar({
   };
   const iconButton = 'flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40';
 
-  return <div className="presentation-navigation min-w-0 shrink-0 border-b border-border/70" aria-label="内容导航">
-    <div className={cn('presentation-navigation-row flex min-w-0 items-center gap-1 px-2 py-1.5 text-xs', sessionTasks.length > 0 && 'has-tasks')}>
+  const toolbar = <div className={cn('presentation-navigation min-w-0 shrink-0', toolbarTarget ? 'presentation-navigation-chrome h-9' : 'border-b border-border/70')} aria-label="内容导航">
+    <div className={cn('presentation-navigation-row flex min-w-0 items-center gap-1 px-2 text-xs', toolbarTarget ? 'h-full' : 'py-1.5', sessionTasks.length > 0 && 'has-tasks')}>
       <button type="button" className={iconButton} aria-label="返回上一个内容" disabled={!state?.back.length} onClick={() => { onSelectPresentation?.(); action({ type: 'back' }); }}><ArrowLeft size={14}/></button>
       <div className="presentation-navigation-tabs min-w-0 flex-1 items-center gap-0.5">
         {views.map(({ id, title, icon: Icon, count }) => <button key={id} type="button"
@@ -76,12 +80,13 @@ export function PresentationToolbar({
         </DropdownMenu>
       </div>
       <label className="flex h-7 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded px-1 text-muted-foreground hover:bg-muted" title={followHelp}>
-        <input className="h-3 w-3 accent-primary" type="checkbox" checked={state?.autoFollow ?? true} onChange={e => action({ type: 'follow', value: e.target.checked })}/>
-        <span>跟随新结果</span>
+        <input aria-label="跟随新结果" className="h-3 w-3 accent-primary" type="checkbox" checked={state?.autoFollow ?? true} onChange={e => action({ type: 'follow', value: e.target.checked })}/>
+        <span className="presentation-follow-label">跟随新结果</span>
       </label>
       <button type="button" className={iconButton} aria-label={state?.pinnedId ? '取消固定内容' : '固定当前内容'} title={state?.pinnedId ? '取消固定' : '固定当前内容'} disabled={!state || tasksActive} onClick={() => action({ type: 'pin', value: !state?.pinnedId })}>{state?.pinnedId ? <PinOff size={14}/> : <Pin size={14}/>}</button>
     </div>
   </div>;
+  return toolbarTarget ? createPortal(toolbar, toolbarTarget) : toolbar;
 }
 
 function ResourceNavigation({ resource, snapshot, action }: { resource: PresentationResource; snapshot: PresentationSnapshot; action: Action }) {
@@ -124,7 +129,7 @@ function Results({ snapshot, action, resource, onReady }: Partial<RendererProps>
 
 function FileResource({ resource, snapshot, action, onReady, onError }: RendererProps) {
   const [file, setFile] = React.useState<WorkspacePreviewData | null>(null), [error, setError] = React.useState('');
-  const loadKey = JSON.stringify([snapshot.epoch, resource.id, resource.revision, resource.view, resource.location]);
+  const loadKey = JSON.stringify([snapshot.epoch, resource.id, resource.revision, resource.view, resource.location, resource.sequence]);
   const [loadedKey, setLoadedKey] = React.useState('');
   const fileRef = React.useRef(file); fileRef.current = file;
   React.useEffect(() => {
@@ -135,10 +140,14 @@ function FileResource({ resource, snapshot, action, onReady, onError }: Renderer
       setFile(result.file); setLoadedKey(loadKey); setError('');
     }).catch(reason => { if (active) { setError(String(reason)); onError(String(reason)); } });
     return () => { active = false; };
-  }, [snapshot.sessionId, snapshot.epoch, resource.id, resource.revision, resource.view, resource.location?.line, resource.location?.column, file?.metadata?.dirty, onError]);
+  }, [snapshot.sessionId, loadKey, file?.metadata?.dirty, onError]);
   if (!file) return <div className="p-4 text-sm text-muted-foreground">{error || '正在加载内容…'}</div>;
+  const loadedCreation = file.metadata?.creation as CreationInfo | undefined;
+  // Status-only changes must not reload the PDF or reset its scroll/annotation state.
+  const creation = loadedCreation?.quality?.state === 'stale' ? loadedCreation : (resource.creation as CreationInfo | undefined) || loadedCreation;
   return <div className="flex h-full min-h-0 flex-col">
     {error && <div role="status" className="px-3 py-2 text-xs text-amber-600">{error}</div>}
+    {creation && !file.metadata?.documentComparison && <CreationStatus creation={creation} sessionId={snapshot.sessionId} source={typeof file.metadata?.resourceUri === 'string' ? file.metadata.resourceUri : file.path} onError={setError} />}
     <div className="min-h-0 flex-1"><PreviewDrawer
       navigation={<ResourceNavigation resource={resource} snapshot={snapshot} action={action}/>}
       headerActions={<button type="button" className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}><ExternalLink size={14}/></button>}

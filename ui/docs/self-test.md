@@ -1,6 +1,6 @@
 # Moss 独立实例 AI 自测
 
-安装 `moss.self-test` App 后，打开「设置 → Apps → AI 自测」，勾选测试项后开始。也可以先在当前会话选择 AI 自测 App，再让 AI 使用 `app__moss_self_test__self_test`：`list` 查看项目、`start` 启动、`status` 查看结果、`stop` 停止。App 显式声明 `toolScope: "session"`，未选择的会话没有自测工具。
+安装 `moss.self-test` App 后，打开「设置 → Apps → AI 自测」，勾选测试项后开始。也可以先在当前会话选择 AI 自测 App，再让 AI 使用 `self_test`：`list` 查看项目、`start` 启动、`status` 查看结果、`stop` 停止。App 显式声明 `toolScope: "session"`，未选择的会话没有自测工具。
 
 需要支持 Host API 3.7 的 Moss、已配置的文本模型和已启用的 AI 自测 App。App 内置 Playwright MCP，无需另外安装 Browser Use。Host 为自测 App 管理一个使用独立数据目录的测试实例，每批最多 3 项创建一个关联该 App 的新控制会话负责验收。从设置内启动不依赖当前聊天的 App 选择。被测窗口标有「测试实例」。主 Moss 无需开启 CDP；CDP 在测试进程启动时打开。
 

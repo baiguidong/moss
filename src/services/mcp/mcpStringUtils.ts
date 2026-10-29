@@ -5,6 +5,7 @@
  */
 
 import { normalizeNameForMCP } from './normalization.js'
+import { normalizeAppToolName } from '../../../packages/app-sdk/src/tool-names.mjs'
 import type { Tool } from '../../Tool.js'
 
 /*
@@ -45,13 +46,13 @@ export function getMcpPrefix(serverName: string, appId?: string): string {
 
 /**
  * Builds a fully qualified MCP tool name from server and tool names.
- * App-owned servers already include the App ID in their namespace.
+ * Non-builtin App tools use an App prefix; ownership remains in mcpInfo.
  * @param serverName Name of the MCP server (unnormalized)
  * @param toolName Name of the tool (unnormalized)
  * @returns The fully qualified name, e.g., "mcp__server__tool"
  */
 export function buildMcpToolName(serverName: string, toolName: string, appId?: string): string {
-  return `${getMcpPrefix(serverName, appId)}${normalizeNameForMCP(toolName)}`
+  return appId ? normalizeAppToolName(toolName, appId) : `${getMcpPrefix(serverName)}${normalizeNameForMCP(toolName)}`
 }
 
 /** Read MCP identity from metadata, including App and unprefixed SDK tools. */

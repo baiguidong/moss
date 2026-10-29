@@ -48,10 +48,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     braveApiKey: '',
   },
   image: {
-    provider: 'minimax',
-    url: 'https://api.minimaxi.com/v1/image_generation',
-    apiKey: '',
-    model: '',
+    model: 'gpt-image-2',
   },
   toolLoading: {
     ...DEFAULT_MOSS_TOOL_LOADING,
@@ -401,39 +398,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
   const existingImage = result.image && typeof result.image === 'object' ? result.image : {};
   const existingModelImage = objectField(existingModels, 'image');
   result.image = {
-    provider:
-      typeof sourceImage.provider === 'string'
-        ? sourceImage.provider.trim()
-        : typeof existingImage.provider === 'string'
-          ? existingImage.provider
-          : typeof existingModelImage.provider === 'string'
-            ? existingModelImage.provider
-          : DEFAULT_DESKTOP_SETTINGS.image.provider,
-    url:
-      typeof sourceImage.baseUrl === 'string'
-        ? sourceImage.baseUrl.trim()
-        : typeof sourceImage.url === 'string'
-          ? sourceImage.url.trim()
-        : typeof existingModelImage.baseUrl === 'string'
-          ? existingModelImage.baseUrl
-          : typeof existingImage.url === 'string'
-            ? existingImage.url
-          : DEFAULT_DESKTOP_SETTINGS.image.url,
-    apiKey:
-      typeof sourceImage.apiKey === 'string'
-        ? sourceImage.apiKey.trim()
-        : typeof existingImage.apiKey === 'string'
-          ? existingImage.apiKey
-          : typeof existingModelImage.apiKey === 'string'
-            ? existingModelImage.apiKey
-          : DEFAULT_DESKTOP_SETTINGS.image.apiKey,
     model:
       typeof sourceImage.model === 'string'
-        ? sourceImage.model.trim()
+        ? sourceImage.model.trim() || 'gpt-image-2'
         : typeof existingImage.model === 'string'
-          ? existingImage.model
+          ? existingImage.model || 'gpt-image-2'
           : typeof existingModelImage.model === 'string'
-            ? existingModelImage.model
+            ? existingModelImage.model || 'gpt-image-2'
           : DEFAULT_DESKTOP_SETTINGS.image.model,
   };
 
@@ -978,17 +949,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   const existingTextThinking = existingText.thinking && typeof existingText.thinking === 'object'
     ? existingText.thinking
     : {};
-  const existingImage = existingModels.image && typeof existingModels.image === 'object'
-    ? existingModels.image
-    : {};
-  const imageModel = {
-    ...existingImage,
-    provider: normalizedSettings.image?.provider ?? DEFAULT_DESKTOP_SETTINGS.image.provider,
-    baseUrl: normalizedSettings.image?.url ?? DEFAULT_DESKTOP_SETTINGS.image.url,
-    apiKey: normalizedSettings.image?.apiKey ?? DEFAULT_DESKTOP_SETTINGS.image.apiKey,
-    model: normalizedSettings.image?.model ?? DEFAULT_DESKTOP_SETTINGS.image.model,
-  };
-  delete imageModel.url;
+  const imageModel = { model: normalizedSettings.image?.model?.trim() || 'gpt-image-2' };
 
   const existingRemoteDirect = existingFile.remoteDirect && typeof existingFile.remoteDirect === 'object'
     ? existingFile.remoteDirect

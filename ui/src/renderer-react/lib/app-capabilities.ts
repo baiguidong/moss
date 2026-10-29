@@ -2,8 +2,12 @@ import type { AppMcpServiceTools, StoredApp } from '../types';
 
 export const hasMcpCatalog = (service: AppMcpServiceTools) => service.catalogSource === 'cache' || service.catalogSource === 'live' || service.status === 'connected' || service.tools.length > 0;
 
+export function appConnectorStatus(app: StoredApp) {
+  return !app.enabled ? '已停用' : !app.grants?.includes('connector:use') ? '待授权' : app.connectorApp?.connection?.connected ? '已就绪' : '待连接';
+}
+
 export function appCapabilitySummary(app: StoredApp) {
-  if (app.connectorApp) return `${app.connectorApp.capabilities.map(kind => kind === 'skills' ? '技能' : kind.toUpperCase()).join(' · ')} · ${!app.enabled ? '已停用' : !app.grants?.includes('connector:use') ? '待授权' : app.connectorApp.connection?.connected ? '已就绪' : '待连接'}`;
+  if (app.connectorApp) return `${app.connectorApp.capabilities.map(kind => kind === 'skills' ? '技能' : kind.toUpperCase()).join(' · ')} · ${appConnectorStatus(app)}`;
   const native = app.agentTools?.length || 0;
   const skills = app.contributes?.skills?.length || 0;
   const services = app.mcpServices || [];

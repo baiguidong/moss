@@ -6,9 +6,9 @@ export const TEST_APP_ID = 'moss.self-test';
 export const TEST_BROWSER_SERVER = 'moss_test_browser';
 // Test controllers need evidence reading, browser observation and result tools.
 // Unrelated tools and their descriptions used to dominate every model request.
-export const TEST_ALLOWED_TOOLS = ['Read', 'ToolSearch', 'app__moss_self_test__*',
-  'mcp__moss_test_browser__*', 'moss_test_browser__*'];
-export const TEST_REVIEW_ALLOWED_TOOLS = ['app__moss_self_test__self_test'];
+export const TEST_ALLOWED_TOOLS = ['Read', 'ToolSearch', 'self_test',
+  'mcp__moss_test_browser__*', 'moss_test_browser__*', 'browser_*'];
+export const TEST_REVIEW_ALLOWED_TOOLS = ['self_test'];
 export const TEST_REVIEW_SYSTEM_PROMPT = '你负责独立的界面验收。初始消息已包含本批全部截图、程序实际检查和预期。'
   + '逐张核对截图的内容与布局、以及与检查结果的矛盾。程序负责交互和持久化断言，你负责视觉复核；两者缺一不可。'
   + '已验证的非视觉状态不需要重新点击证明。图文一致就提交简短结论；截图矛盾或缺少必要视觉证据，用 inspect 请求针对该项的诊断。'
@@ -25,7 +25,7 @@ export function validateTestToolUse(record, active, name) {
   if (record.appTestEvidenceReview && !TEST_REVIEW_ALLOWED_TOOLS.includes(name)) {
     return { behavior: 'deny', message: '图片验收阶段只提交结论或 inspect 补查请求。' };
   }
-  if (name.startsWith(`mcp__${TEST_BROWSER_SERVER}__`) &&
+  if ((name.startsWith(`mcp__${TEST_BROWSER_SERVER}__`) || name.startsWith('browser_')) &&
     !active) {
     return { behavior: 'deny', message: '本轮测试实例已关闭，无法继续使用其浏览器连接。' };
   }

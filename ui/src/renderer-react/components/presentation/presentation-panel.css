@@ -10,6 +10,42 @@
   display: block;
 }
 
+/* Native caption controls reduce the toolbar's available width on Windows/Linux. */
+@container presentation-navigation (max-width: 499px) {
+  .presentation-navigation-chrome .presentation-follow-label {
+    display: none;
+  }
+}
+
+@container presentation-navigation (min-width: 320px) {
+  .presentation-navigation-chrome .presentation-navigation-row:not(.has-tasks) .presentation-navigation-tabs {
+    display: flex;
+  }
+  .presentation-navigation-chrome .presentation-navigation-row:not(.has-tasks) .presentation-navigation-select {
+    display: none;
+  }
+}
+
+@container presentation-navigation (min-width: 390px) {
+  .presentation-navigation-chrome .presentation-navigation-tabs {
+    display: flex;
+  }
+  .presentation-navigation-chrome .presentation-navigation-select {
+    display: none;
+  }
+}
+
+@container presentation-navigation (max-width: 239px) {
+  .presentation-navigation-chrome .presentation-navigation-select button {
+    justify-content: center;
+    padding-inline: 4px;
+  }
+  .presentation-navigation-chrome .presentation-navigation-select button span,
+  .presentation-navigation-chrome .presentation-navigation-select button svg:last-child {
+    display: none;
+  }
+}
+
 /* Use the panel width, so dragging the divider also changes the navigation. */
 @container presentation-navigation (min-width: 420px) {
   .presentation-navigation-row:not(.has-tasks) .presentation-navigation-tabs {

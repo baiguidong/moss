@@ -32,7 +32,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
       },
       activeProvider: 'tavily',
     },
-    image: { provider: 'minimax', url: '', apiKey: '', model: '' },
+    image: { model: 'gpt-image-2' },
     appearance: {
       themeMode: 'system',
       cssThemeId: 'default',
@@ -64,7 +64,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
     settingsParseError: '',
   } as DesktopSettings;
 
-  const html = renderToStaticMarkup(
+  const view = (
     <SettingsView
       settingsDraft={settings}
       setSettingsDraft={() => {}}
@@ -81,6 +81,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
     />,
   );
 
+  const html = renderToStaticMarkup(view);
   expect(html).not.toContain('回复会话');
   expect(html).toContain('按发件人固定会话');
   expect(html).toContain('新会话');
@@ -94,7 +95,8 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
   expect(html).toContain('已检测到当前 endpoint 原生搜索可用');
   expect(html).toContain('aria-label="重新检测原生搜索"');
   expect(html).toContain('<option value="chinese" selected="">中文</option>');
-  expect(html).toContain('type="password"');
+  const modelHtml = renderToStaticMarkup(React.cloneElement(view, { initialSection: 'model' }));
+  expect(modelHtml).toContain('type="password"');
   expect(html).not.toContain('固定会话按邮件线程继承纯文本结论');
   expect(html).not.toContain('通过浏览器登录 Moss Server');
   expect(html).not.toContain('飞书');

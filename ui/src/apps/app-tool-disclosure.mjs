@@ -1,16 +1,11 @@
 import { describeAppPermission, formatAppPermission } from '../shared/app-capability-descriptions.mjs'
 
-// Keep this formatter local to the disclosure module so the renderer does not
-// pull the Node-only App Runtime bundle into the App settings UI.
-function appToolName(appId, localId) {
-  const normalize = value => String(value).replace(/[^a-zA-Z0-9_]/g, '_')
-  return `app__${normalize(appId)}__${normalize(localId)}`.slice(0, 64)
-}
+import { normalizeAppToolName } from '../../../packages/app-sdk/src/tool-names.mjs'
 
 export function describeAppTools(manifest) {
   return (manifest?.contributes?.tools || []).map(tool => ({
     id: tool.id,
-    name: appToolName(manifest.id, tool.id),
+    name: normalizeAppToolName(tool.id, manifest.id),
     title: tool.title,
     description: tool.description,
     effect: tool.effect,
@@ -24,7 +19,7 @@ const effectLabels = { read: '只读', write: '可修改数据', destructive: '�
 function toolAvailability(manifest) {
   return manifest.toolSelection === 'services'
     ? (manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择具体子服务后，其工具常驻。' : '以下工具仅在会话选择对应子服务后常驻提供。')
-    : manifest.toolScope === 'global' ? '以下工具在所有会话按需提供，选择此 App 后常驻。' : '以下工具仅在会话选择此 App 后常驻提供（包括 App 接入的 MCP 工具）。'
+    : manifest.toolScope === 'global' ? manifest.toolLoading === 'always' ? '以下工具在所有会话常驻加载，无需选择此 App。' : '以下工具在所有会话按需提供，选择此 App 后常驻。' : '以下工具仅在会话选择此 App 后常驻提供（包括 App 接入的 MCP 工具）。'
 }
 
 export function describeAppInstallation(manifest, permissions = [], details = '') {

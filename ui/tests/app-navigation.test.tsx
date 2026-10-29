@@ -3,7 +3,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { validateAppManifest } from '../../packages/app-sdk/src/index.mjs';
 import { collectManifestContributions } from '../../packages/app-runtime/src/contributions/index.mjs';
-import { getAppPrimaryEntry, getAppSettingsEntries, getVisibleAppSettingsEntries } from '../src/renderer-react/lib/app-navigation';
+import { getAppPrimaryEntry, getAppSettingsEntries, getVisibleAppSettingsEntries, isAppSharedSettingsRoute } from '../src/renderer-react/lib/app-navigation';
 import { getSidebarMoreApps } from '../src/renderer-react/components/app-sidebar';
 import { SettingsView } from '../src/renderer-react/components/settings-view';
 import { normalizeDesktopSettings } from '../src/desktop-settings.mjs';
@@ -69,6 +69,27 @@ describe('App navigation contract', () => {
 });
 
 describe('App navigation projection', () => {
+  test('retires injected shared settings while keeping declared business settings and legacy workspaces', () => {
+    const app = stored({ navigation: { location: 'more', viewId: 'home' }, contributes: {
+      views: [
+        { id: 'home', title: '资料', route: '#/' },
+        { id: 'moss-settings', title: '通用设置', route: '#/moss-settings', order: -1000 },
+        { id: 'engine', title: '检索引擎', route: '#/engine-settings', permission: 'engine:manage' },
+      ],
+      settings: [
+        { id: 'shared-settings', title: '通用设置', viewId: 'moss-settings', group: 'apps', order: -1000 },
+        { id: 'engine', title: '检索引擎', viewId: 'engine', group: 'apps' },
+      ],
+    } });
+    expect(getAppSettingsEntries([app])).toMatchObject([{ settingId: 'engine', route: '#/engine-settings', unavailableReason: expect.any(String) }]);
+    expect(getAppPrimaryEntry(app)).toMatchObject({ location: 'more', route: '#/' });
+    expect(getAppPrimaryEntry({ ...app, navigation: undefined })).toMatchObject({ location: 'more', route: '#/' });
+    expect(getAppPrimaryEntry({ ...app, navigation: { location: 'settings', viewId: 'moss-settings' } })).toMatchObject({ location: 'info' });
+    expect(isAppSharedSettingsRoute('#/moss-settings?tab=tools')).toBe(true);
+    expect(isAppSharedSettingsRoute('#/engine-settings')).toBe(false);
+    expect(isAppSharedSettingsRoute('#/settings')).toBe(false);
+  });
+
   test('More uses only explicit operational pages and never falls back from a restricted view', () => {
     const app = stored();
     expect(getSidebarMoreApps([app, stored({ navigation: { location: 'none' }, contributes: undefined })])).toEqual([]);
@@ -99,19 +120,31 @@ describe('App navigation projection', () => {
     expect(entries.find(entry => entry.appId === b.id)?.group).toBe('apps');
     expect(getAppPrimaryEntry(a)).toMatchObject({ location: 'settings', route: '#/settings', settingsId: 'app:test.navigation/preferences' });
   });
-  test('Core-hosted MCP Apps expose their editor from the top settings route', () => {
+  test('Core-hosted MCP Apps open plugin details and keep their editor out of global settings', () => {
     const app = stored({ id: 'moss.drawio', name: 'moss.drawio', uiBuiltin: 'mcp' });
     expect(getAppSettingsEntries([app])[0].route).toBe('#/settings');
+    expect(getAppPrimaryEntry(app)).toMatchObject({ location: 'info', unavailableReason: null });
+    expect(getVisibleAppSettingsEntries([app])).toEqual([]);
+    expect(getSidebarMoreApps([app])).toEqual([]);
+    for (const patch of [{ enabled: false }, { packageStatus: 'invalid' }, { packageStatus: 'incompatible' }]) {
+      expect(getAppPrimaryEntry({ ...app, ...patch } as StoredApp)).toMatchObject({ location: 'info', unavailableReason: null });
+    }
   });
   test('Settings embeds only the selected App and retains navigation and recovery access', () => {
     const props = { settingsDraft: normalizeDesktopSettings({}) as DesktopSettings, setSettingsDraft: () => {}, settingsNotice: '',
       autoSaveSettings: async () => {}, autoSaveImageSettings: async () => {}, themeMode: 'light' as const, setThemeMode: () => {},
       cssThemeId: 'default', setCssThemeId: () => {}, onToolDisplayModeChange: () => {}, onAppearancePreview: () => {},
       onAppearanceCommit: () => {}, onOpenAppManagement: () => {} };
-    const a = stored();
+    const a = stored({ agentTools: [{ id: 'query', title: 'Query', description: '', effect: 'read' }], contributes: {
+      ...base.contributes,
+      views: [...base.contributes.views, { id: 'appearance', title: '外观偏好', route: '#/appearance' }],
+      settings: [...base.contributes.settings, { id: 'appearance', title: '外观偏好', viewId: 'appearance', group: 'apps' }],
+    } });
     const html = renderToStaticMarkup(<SettingsView {...props} apps={[a]} initialAppSettingId="app:test.navigation/preferences" />);
     expect(html).toContain('data-selected-app-setting="app:test.navigation/preferences"');
     expect(html).toContain('应用管理');
+    expect(html).not.toContain('data-app-settings=');
+    expect(html).toContain('data-app-setting="app:test.navigation/appearance"');
     expect(html).not.toContain('Moss 内置工具');
     expect(html).toMatch(/data-settings-nav="apps" aria-current="page"/);
     expect(html).not.toMatch(/data-settings-nav="tools" aria-current="page"/);

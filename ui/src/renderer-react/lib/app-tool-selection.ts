@@ -36,7 +36,7 @@ export function canSelectToolApp(app: StoredApp) {
 
 export type ToolPickerItem = {
   id: string; app: StoredApp; service?: AppToolService; title: string; description: string;
-  selected: boolean; available: boolean; expandable: boolean; discoveryGroup?: string;
+  selected: boolean; resident?: boolean; available: boolean; expandable: boolean; discoveryGroup?: string;
 };
 
 export function getToolPickerItems(apps: StoredApp[], query: string, selectedIds: string[] = [], selectedServiceIds: string[] = [], parentId?: string | null, category = 'all'): ToolPickerItem[] {
@@ -52,11 +52,12 @@ export function getToolPickerItems(apps: StoredApp[], query: string, selectedIds
       if (ref?.appId === appId && !services.some(service => service.id === id)) services.push({ id, ...ref, title: '已移除的服务', description: ref.serviceId, available: false, toolCount: 0, status: 'removed' });
     }
     const selectedCount = services.filter(service => selectedServiceIds.includes(service.id)).length;
+    const resident = app.enabled && app.toolScope === 'global' && app.toolLoading === 'always';
     const expandable = app.toolSelection === 'services';
     if (!parentId && (canSelectToolApp(app) || selectedIds.includes(appId) || selectedCount > 0)
       && filterApps([app], query).length) result.push({ id: appId, app, title: toolAppTitle(app),
         description: expandable ? `已选 ${selectedCount} / ${services.length} 个服务 · ${app.description || '选择具体服务'}` : toolAppDescription(app),
-        selected: selectedIds.includes(appId), available: canSelectToolApp(app), expandable });
+        selected: resident || selectedIds.includes(appId), resident, available: canSelectToolApp(app), expandable });
     if (expandable && (parentId || terms.length)) for (const service of services) {
       const selected = selectedServiceIds.includes(service.id);
       if (!service.available && !selected) continue;
@@ -65,7 +66,7 @@ export function getToolPickerItems(apps: StoredApp[], query: string, selectedIds
       const state = !service.available ? '不可用' : ['unchecked', 'authorized'].includes(service.status) && (!catalog || !hasMcpCatalog(catalog)) ? '连接时加载工具' : `${service.toolCount} 个工具`;
       result.push({ id: service.id, app, service, title: service.title,
         description: `${toolAppTitle(app)} · ${state}${service.description ? ` · ${service.description}` : ''}`,
-        selected, available: service.available, expandable: false });
+        selected: (resident && service.available) || selected, resident, available: service.available, expandable: false });
     }
   }
   return result;
@@ -80,7 +81,7 @@ export function toolAppDescription(app: StoredApp) {
   const status = !app.enabled ? 'App 已停用'
     : unavailable ? needsGrant ? '工具需要授权' : '工具服务已停用或未配置'
     : waiting ? (count ? `至少 ${count} 个工具` : '连接时加载工具') : app.contributes?.skills?.length ? `${app.contributes.skills.length} 个 CLI skill${count ? ` · ${count} 个工具` : ''}` : `${count} 个工具`;
-  return `${app.toolScope === 'global' ? '全局' : '指定'} · ${status}${app.description ? ` · ${app.description}` : ''}`;
+  return `${app.toolScope === 'global' ? app.toolLoading === 'always' ? '全局常驻，无需选择' : '全局按需，无需选择' : '按会话选择'} · ${status}${app.description ? ` · ${app.description}` : ''}`;
 }
 export function filterToolApps(apps: StoredApp[], query: string, selectedIds: string[] = [], category = 'all') {
   return groupApps(filterApps(apps.filter(app => canSelectToolApp(app) || selectedIds.includes(toolAppId(app))), query, category))

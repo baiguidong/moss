@@ -653,9 +653,9 @@ export type Tool<
    * Present on all MCP tools, including App names without mcp__ and unprefixed SDK tools.
    * appId is supplied by the host for App-owned services.
    */
-  mcpInfo?: { serverName: string; toolName: string; appId?: string }
+  mcpInfo?: { serverName: string; toolName: string; appId?: string; appDisplayName?: string }
   /** Host-provided App identity, used to activate sibling contribution tools together. */
-  appInfo?: { appId: string; toolScope?: 'global' | 'session'; toolSelection?: 'app' | 'services'; serviceId?: string }
+  appInfo?: { appId: string; appDisplayName?: string; contributionId?: string; toolScope?: 'global' | 'session'; toolLoading?: 'always' | 'on-demand'; toolSelection?: 'app' | 'services'; serviceId?: string }
   readonly name: string
   /**
    * Maximum size in characters for tool result before it gets persisted to disk.

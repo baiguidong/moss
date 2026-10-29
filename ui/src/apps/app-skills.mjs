@@ -32,7 +32,7 @@ export async function resolveAppSkills(runtime, selectedAppIds = []) {
     }
     directories.push(root, dataDir)
   }
-  const prompt = skills.length ? 'Available App skills (CLI capabilities). Read the relevant SKILL.md before use. Invoke nodeExecutable with nodeArgs, env and its CLI path, using the supplied --data-dir so results appear in the App. These entries do not grant permission for unrelated filesystem operations.\n'
+  const prompt = skills.length ? 'Available App skills (CLI capabilities). Read the relevant SKILL.md at its skillPath with the Read tool before use. These App entries are not commands registered with the Skill tool; do not pass their names to Skill. Invoke nodeExecutable with nodeArgs, env and its CLI path, using the supplied --data-dir so results appear in the App. These entries do not grant permission for unrelated filesystem operations.\n'
     + skills.map(skill => JSON.stringify(skill)).join('\n') : ''
   return { skills, directories: [...new Set(directories)], prompt }
 }

@@ -322,8 +322,9 @@ export function ComposerResourceSelectionArea({
         </>}
       >
         <div className="space-y-1">
+          {displayedTab === 'apps' && filteredToolItems.some(item => item.app.toolScope === 'global') && <p className="px-3 pb-2 text-xs leading-5 text-muted-foreground">全局按需会在需要时加载，勾选可在本会话常驻。全局常驻已直接可用，可在 App 详情中调整。</p>}
           {displayedTab === 'apps' ? filteredToolItems.map((item, i) => <React.Fragment key={item.id}>
-            <ResourceRow selected={item.selected} expandable={item.expandable} disabled={toolApps.pending || (!item.available && !item.selected && !item.expandable)}
+            <ResourceRow selected={item.selected} expandable={item.expandable} disabled={toolApps.pending || (item.resident && !item.expandable) || (!item.available && !item.selected && !item.expandable)}
               icon={<AppIcon icon={item.app.icon} className="h-5 w-5" />} title={item.title} description={item.description}
               onSelect={() => item.expandable ? (setServiceAppId(toolAppId(item.app)), setQuery('')) : item.service ? toolApps.toggleService?.(item.id) : toolApps.toggle(item.id)} />
           </React.Fragment>) : displayedTab === 'workflows' ? <>

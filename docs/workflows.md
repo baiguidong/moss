@@ -14,7 +14,7 @@ Workflow 位于相邻 `moss-apps/apps/workflow` 的独立 App，要求 Host API 
 
 ## 使用入口与工具
 
-安装工作流 App 后即可使用；启停统一由 App 管理控制，没有独立的 Workflow 设置开关。App 提供 `workflow_read/create/edit/manage/run/remove` 六个工具，使用时带 `app__moss_workflow__` 前缀。创建、修改、使用分别按需准备 read/create、read/edit、read/run 两个工具。
+安装工作流 App 后即可使用；启停统一由 App 管理控制，没有独立的 Workflow 设置开关。App 声明 `workflow_read/create/edit/manage/run/remove` 六个工具；工作流不是内置 App，模型调用名称增加 `workflow_` 前缀（例如 `workflow_workflow_read`）。创建、修改、使用分别按需准备 read/create、read/edit、read/run 两个工具。
 
 App 提供目录、只读画布、流程与运行详情和低频管理菜单。创建、修改及运行输入通过普通会话完成；App 只准备未发送的会话草稿，用户发送后才开始执行。默认使用已发布快照，明确要求试跑时可执行草稿。
 

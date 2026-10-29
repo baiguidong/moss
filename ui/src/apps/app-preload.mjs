@@ -9,6 +9,7 @@ function on(channel, callback) {
 const request = (channel, payload) => ipcRenderer.invoke(channel, payload)
 
 contextBridge.exposeInMainWorld('mossApp', {
+  view: { setState: state => request('app-ui:view-state', state) },
   app: {
     getInfo: () => ipcRenderer.invoke('app-ui:get-info'),
     getStatus: () => ipcRenderer.invoke('app-ui:get-status'),

@@ -1,161 +1,165 @@
-import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
+// TypeScript port of Codex 9ef9cb1d9f ext/image-generation/src/tool.rs.
+// Moss adapters: filesystem permissions, Messages image blocks and workspace artifacts.
+import { randomUUID } from 'node:crypto'
+import { link, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { z } from 'zod/v4'
 import { buildTool, type ToolUseContext } from '../../Tool.js'
-import type { PermissionDecision } from '../../utils/permissions/PermissionResult.js'
-import { imageMediaType, requestImage, supportsImageOperation } from '../../services/imageGeneration.js'
+import { getSessionId } from '../../bootstrap/state.js'
+import type { PermissionResult } from '../../utils/permissions/PermissionResult.js'
+import { imageMediaType, MAX_IMAGE_BYTES, requestImage, resolveImageConnection, supportsImageOperation } from '../../services/imageGeneration.js'
 import { getCwd } from '../../utils/cwd.js'
 import { checkReadPermissionForTool, checkWritePermissionForTool, matchingRuleForInput } from '../../utils/permissions/filesystem.js'
-import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
+import { getPathsForPermissionCheck } from '../../utils/fsOperations.js'
+import { maybeResizeAndDownsampleImageBuffer } from '../../utils/imageResizer.js'
+import { getImageProcessor } from '../FileReadTool/imageProcessor.js'
+import { recentImages } from './imageReferences.js'
 
-const aspectRatio = z.enum(['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9'])
-const outputPath = z.string().min(1).describe('Output image path inside the current workspace. Use a new file path.')
-const generateSchema = z.strictObject({
-  prompt: z.string().min(1).describe('Description of the image to synthesize.'),
-  out_path: outputPath,
-  aspect_ratio: aspectRatio.optional(),
-  subject_reference: z.array(z.strictObject({
-    type: z.literal('character'), image_file: z.string().url(),
-  })).optional().describe('Optional character reference images (MiniMax only).'),
+// Keep this contract aligned with Codex ImagegenArgs (tool.rs:87).
+const inputSchema = z.strictObject({
+  prompt: z.string().min(1).describe('Detailed description of the image to generate or the edit to apply.'),
+  transparent_background: z.boolean().default(false).describe('Whether the output should have a transparent background. Defaults to false.'),
+  referenced_image_paths: z.array(z.string().refine(isAbsolute, 'Use an absolute image path')).max(5).nullable().optional(),
+  num_last_images_to_include: z.number().int().min(1).max(5).nullable().optional(),
 })
-const editSchema = z.strictObject({
-  prompt: z.string().min(1).describe('Requested image edit.'),
-  source_path: z.string().min(1).describe('Source image path inside the current workspace.'),
-  out_path: outputPath,
-  aspect_ratio: aspectRatio.optional(),
-})
-const outputSchema = z.object({
-  ok: z.boolean(),
-  fileKind: z.literal('image').optional(),
-  filePath: z.string().optional(),
-  filePaths: z.array(z.string()).optional(),
-  mediaType: z.string().optional(),
-  error: z.string().optional(),
-})
-type ImageOutput = z.infer<typeof outputSchema>
-type ImageInput = z.infer<typeof generateSchema> & { source_path?: string }
+type ImageInput = z.input<typeof inputSchema>
+type ImageOutput = {
+  ok: boolean
+  status: 'completed' | 'failed'
+  fileKind?: 'image'
+  filePath?: string
+  filePaths?: string[]
+  mediaType?: 'image/png' | 'image/jpeg' | 'image/webp'
+  image?: { base64: string; mediaType: 'image/png' | 'image/jpeg' | 'image/webp' }
+  transparentBackground?: boolean
+  generationId?: string
+  requestId?: string
+  error?: string
+}
 
 function isInside(root: string, path: string): boolean {
   const rel = relative(root, path)
   return Boolean(rel) && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
 
-/** Check existing ancestors too, so a workspace symlink cannot redirect image I/O outside it. */
 export async function resolveWorkspaceImagePath(input: string): Promise<string> {
-  const cwd = resolve(getCwd())
-  const path = resolve(cwd, input)
-  const root = await realpath(cwd)
-  if (!isInside(cwd, path) && !isInside(root, path)) {
-    throw new Error('Image paths must be files inside the current workspace')
-  }
+  const cwd = resolve(getCwd()), path = resolve(cwd, input), root = await realpath(cwd)
+  if (!isInside(cwd, path) && !isInside(root, path)) throw new Error('生成图片必须保存在当前工作区')
   let ancestor = path
   while (true) {
-    try {
-      await lstat(ancestor)
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      ancestor = dirname(ancestor)
-    }
+    try { await lstat(ancestor); break }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; ancestor = dirname(ancestor) }
   }
   const resolved = resolve(await realpath(ancestor), relative(ancestor, path))
-  if (!isInside(root, resolved)) throw new Error('Image paths must be files inside the current workspace')
+  if (!isInside(root, resolved)) throw new Error('生成图片目录不能通过符号链接指向工作区外')
   return resolved
 }
 
-async function validatePaths(input: ImageInput, context: ToolUseContext) {
-  try {
-    const paths: Array<[string, 'read' | 'edit']> = [[input.out_path, 'edit']]
-    if (input.source_path) paths.push([input.source_path, 'read'])
-    for (const [path, operation] of paths) {
-      const resolved = await resolveWorkspaceImagePath(path)
-      // Like Read/Write, enforce explicit path denials even if a blanket tool
-      // allow rule would otherwise skip checkPermissions().
-      for (const candidate of [resolve(getCwd(), path), resolved]) {
-        if (matchingRuleForInput(candidate, context.getAppState().toolPermissionContext, operation, 'deny')) {
-          throw new Error(`Permission to ${operation} ${path} has been denied`)
-        }
-      }
-    }
-    return { result: true as const }
-  } catch (error) {
-    return { result: false as const, message: (error as Error).message, errorCode: 1 }
-  }
+const callIds = new WeakMap<ToolUseContext, string>()
+function artifactPath(context: ToolUseContext): string {
+  const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180) || 'image'
+  if (!context.toolUseId && !callIds.has(context)) callIds.set(context, randomUUID())
+  return resolve(getCwd(), 'generated_images', sanitize(getSessionId()), `${sanitize(context.toolUseId || callIds.get(context)!)}.png`)
 }
 
-async function createImage(input: ImageInput, context: ToolUseContext): Promise<{ data: ImageOutput }> {
-  try {
-    const settings = getSessionRuntimeContext()?.image
-    if (!settings) throw new Error('Image provider is not configured for this session')
-    const filePath = await resolveWorkspaceImagePath(input.out_path)
-    const sourcePath = input.source_path ? await resolveWorkspaceImagePath(input.source_path) : undefined
-    // Avoid spending a model request on a path that would overwrite an existing file.
-    try {
-      await lstat(filePath)
-      throw new Error('out_path already exists; choose a new image path')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+async function validate(input: ImageInput, context: ToolUseContext) {
+  const args = inputSchema.parse(input)
+  if (args.referenced_image_paths?.length && args.num_last_images_to_include != null) throw new Error('referenced_image_paths 与 num_last_images_to_include 只能选择一个')
+  const output = await resolveWorkspaceImagePath(artifactPath(context))
+  const permissions = context.getAppState().toolPermissionContext
+  const paths: Array<[string, 'read' | 'edit']> = [[output, 'edit'], ...(args.referenced_image_paths || []).map(path => [path, 'read'] as [string, 'read'])]
+  for (const [path, operation] of paths) {
+    for (const candidate of getPathsForPermissionCheck(path)) {
+      if (matchingRuleForInput(candidate, permissions, operation, 'deny')) throw new Error(`Permission to ${operation} ${path} has been denied`)
     }
-    const bytes = await requestImage(settings, { ...input, sourcePath }, context.abortController.signal)
-    context.abortController.signal.throwIfAborted()
-    await resolveWorkspaceImagePath(input.out_path)
-    await mkdir(dirname(filePath), { recursive: true })
-    await writeFile(filePath, bytes, { flag: 'wx', signal: context.abortController.signal })
-    return { data: { ok: true, fileKind: 'image', filePath, filePaths: [filePath], mediaType: imageMediaType(bytes) } }
-  } catch (error) {
-    if (context.abortController.signal.aborted) throw error
-    return { data: { ok: false, error: (error as Error).message } }
   }
+  return { args, output }
 }
 
-const common = {
+export const ImageGenTool = buildTool({
+  name: 'image_gen',
+  searchHint: 'generate edit images photos illustrations transparent reference 图片生成 编辑',
+  inputSchema,
   maxResultSizeChars: 10_000,
-  outputSchema,
   isConcurrencySafe: () => false,
   isReadOnly: () => false,
   interruptBehavior: () => 'cancel' as const,
-  renderToolUseMessage: () => null,
-  getPath: (input: { out_path: string }) => resolve(getCwd(), input.out_path),
-  validateInput: validatePaths,
-  call: createImage,
-  mapToolResultToToolResultBlockParam: (data: ImageOutput, tool_use_id: string) => ({
-    type: 'tool_result' as const, tool_use_id, content: JSON.stringify(data), is_error: !data.ok,
-  }),
-}
-
-export const ImageGenerateTool = buildTool({
-  ...common,
-  name: 'image_generate',
-  searchHint: 'generate create synthetic image',
-  inputSchema: generateSchema,
-  isEnabled: (runtime = getSessionRuntimeContext()) => supportsImageOperation(runtime?.image),
+  isEnabled: supportsImageOperation,
   userFacingName: () => '图片生成',
-  async description() { return 'Synthesize a new image from a prompt and save it in the current workspace.' },
-  async prompt() {
-    return 'Use only for synthesizing a new image. Never use this tool to recreate or approximate a browser or application screenshot. Saves directly in the current workspace. Reference the returned filePath to show the result.'
+  getActivityDescription: () => '正在生成图片',
+  renderToolUseMessage: () => null,
+  async description() { return 'Generate or edit an image in the conversation. With no references, generate a new image. With up to five absolute image paths OR the last 1–5 conversation images, edit using those references. Automatically saves and returns the image for visual inspection. Uses the main session connection and configured image model (default gpt-image-2).' },
+  async prompt() { return 'Use image_gen for raster image generation and editing. Provide prompt, optional transparent_background, and at most one reference method: referenced_image_paths OR num_last_images_to_include. Never invent out_path, aspect_ratio, mask, quality or model parameters. Size and quality are automatic; describe composition in the prompt. Inspect the returned image. It is already displayed in the main conversation: do not duplicate it in your final response. Use the returned absolute path for precise follow-up edits or copy it into a project, preserving the original. Never replace real screenshots with generated images.' },
+  async validateInput(input, context) {
+    try { await validate(input, context); return { result: true as const } }
+    catch (error) { return { result: false as const, message: (error as Error).message, errorCode: 1 } }
   },
-  async checkPermissions(input, context): Promise<PermissionDecision> {
-    return checkWritePermissionForTool(ImageGenerateTool, input, context.getAppState().toolPermissionContext)
-  },
-})
-
-export const ImageEditTool = buildTool({
-  ...common,
-  name: 'image_edit',
-  searchHint: 'edit transform workspace image',
-  inputSchema: editSchema,
-  isEnabled: (runtime = getSessionRuntimeContext()) => supportsImageOperation(runtime?.image, true),
-  userFacingName: () => '图片编辑',
-  async description() { return 'Edit an existing workspace image and save the result to a new workspace path.' },
-  async prompt() { return 'Edit source_path according to the prompt. Both source_path and out_path must stay inside the current workspace. Reference the returned filePath to show the result.' },
-  async checkPermissions(input, context): Promise<PermissionDecision> {
+  async checkPermissions(input: ImageInput, context): Promise<PermissionResult> {
+    const args = inputSchema.parse(input)
     const permissions = context.getAppState().toolPermissionContext
-    const read = checkReadPermissionForTool({ ...ImageEditTool, getPath: () => resolve(getCwd(), input.source_path) }, input, permissions)
-    const write = checkWritePermissionForTool(ImageEditTool, input, permissions)
-    if (read.behavior === 'deny') return read
-    if (write.behavior !== 'allow') return write
-    return read.behavior === 'allow' ? { behavior: 'allow', updatedInput: input } : read
+    const decisions = [checkWritePermissionForTool({ ...ImageGenTool, getPath: () => artifactPath(context) }, args, permissions),
+      ...(args.referenced_image_paths || []).map(path => checkReadPermissionForTool({ ...ImageGenTool, getPath: () => path }, args, permissions))]
+    const denied = decisions.find(decision => decision.behavior === 'deny')
+    if (denied) return denied
+    const ask = decisions.find(decision => decision.behavior !== 'allow')
+    return ask ? { behavior: 'ask', message: `生成图片并读取参考图：${(args.referenced_image_paths || []).join('、') || '当前会话图片'}。${ask.message || ''}` } : { behavior: 'allow', updatedInput: args }
+  },
+  async call(input, context) {
+    try {
+      const { args, output } = await validate(input, context)
+      try { await lstat(output); throw new Error('本次调用的图片已经保存，请使用新的工具调用，避免覆盖原图') }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      const images = args.num_last_images_to_include != null ? recentImages(context.messages, args.num_last_images_to_include) : []
+      for (const path of args.referenced_image_paths || []) {
+        if ((await stat(path)).size > MAX_IMAGE_BYTES) throw new Error('参考图超过 32 MB')
+        let bytes: Buffer = await readFile(path, { signal: context.abortController.signal })
+        let mediaType: ImageOutput['mediaType']
+        try { mediaType = imageMediaType(bytes) }
+        catch {
+          const sharp = await getImageProcessor()
+          bytes = await sharp(bytes).png().toBuffer()
+          mediaType = 'image/png'
+        }
+        if (bytes.length > MAX_IMAGE_BYTES) throw new Error('参考图超过 32 MB')
+        images.push({ image_url: `data:${mediaType};base64,${bytes.toString('base64')}` })
+      }
+      const result = await requestImage(resolveImageConnection(), { ...args, images }, context.abortController.signal)
+      // Decode and normalize once, so invalid bytes never become saved artifacts.
+      const sharp = await getImageProcessor()
+      const metadata = await sharp(result.bytes).metadata()
+      if (metadata.width * metadata.height > 64_000_000) throw new Error('生成图片超过 6400 万像素')
+      const bytes = await sharp(result.bytes).png().toBuffer()
+      if (bytes.length > MAX_IMAGE_BYTES) throw new Error('生成图片超过 32 MB')
+      const preview = await maybeResizeAndDownsampleImageBuffer(bytes, bytes.length, 'png')
+      context.abortController.signal.throwIfAborted()
+      await resolveWorkspaceImagePath(output)
+      await mkdir(dirname(output), { recursive: true })
+      // Publish only a complete image. An aborted write leaves no broken artifact;
+      // link also refuses to overwrite a previous call's result.
+      const temporary = `${output}.${randomUUID()}.tmp`
+      try {
+        await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600, signal: context.abortController.signal })
+        context.abortController.signal.throwIfAborted()
+        await resolveWorkspaceImagePath(output)
+        await link(temporary, output)
+      } finally { await rm(temporary, { force: true }) }
+      const data: ImageOutput = { ok: true, status: 'completed', fileKind: 'image', filePath: output, filePaths: [output], mediaType: 'image/png',
+        image: { base64: preview.buffer.toString('base64'), mediaType: `image/${preview.mediaType}` as ImageOutput['mediaType'] & string },
+        transparentBackground: result.transparentBackground, generationId: result.generationId, requestId: result.requestId }
+      return { data }
+    } catch (error) {
+      if (context.abortController.signal.aborted) throw error
+      return { data: { ok: false, status: 'failed', error: (error as Error).message } as ImageOutput }
+    }
+  },
+  mapToolResultToToolResultBlockParam(data: ImageOutput, tool_use_id: string) {
+    const { image, ...metadata } = data
+    return { type: 'tool_result' as const, tool_use_id, is_error: !data.ok,
+      content: image ? [
+        { type: 'image' as const, source: { type: 'base64' as const, data: image.base64, media_type: image.mediaType } },
+        { type: 'text' as const, text: JSON.stringify(metadata) },
+      ] : JSON.stringify(metadata) }
   },
 })
 
-export const ImageTools = [ImageGenerateTool, ImageEditTool] as const
+export const ImageTools = [ImageGenTool] as const

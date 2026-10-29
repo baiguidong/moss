@@ -1,3 +1,7 @@
+export type AppearanceProfile = {
+  themeId: string; accent: string; background: string; foreground: string;
+  uiFontSize: number; codeFontSize: number; uiFont: string; contentFont: string; codeFont: string; contrast: number;
+};
 export type PreviewDocumentState = { id: string; path: string; content: string; originalContent: string; dirty: boolean; owner: string | null; client?: string; generation: number; sequence: number };
 export type MemoryDreamStatus = {
   phase: 'idle' | 'running' | 'stopping' | 'completed' | 'failed' | 'canceled';
@@ -14,6 +18,25 @@ export type ComputerUseStatus = {
   active: { sessionId: string; title: string; app?: { name: string; bundleId: string }; action?: string; foreground: boolean } | null;
   requests: Array<{ id: string; sessionId: string; sessionTitle: string; app: { name: string; bundleId: string }; foreground: boolean }>;
 };
+
+export type StorageOverview = {
+  root: string;
+  totalBytes: number;
+  categories: Array<{ id: string; label: string; bytes: number; complete: boolean; entries: Array<{ path: string; bytes: number; complete: boolean }> }>;
+  complete: boolean;
+  errorCount: number;
+  sizeKind: 'allocated' | 'logical';
+  measuredAt: number;
+};
+export type StorageReview = {
+  token: string;
+  days: number;
+  items: Array<{ id: string; title: string; updatedAt: number; bytes: number; subagents: number }>;
+  skipped: number;
+  hasMore: boolean;
+};
+export type ArchivedChat = { id: string; title: string; updatedAt: number; archivedAt: number; subagents: number };
+export type StorageCleanupResult = { deleted: number; skipped: number; failed: number };
 import type {
   SendRequest, SendResult, SessionRequest, AbortRequest, ControlResult, PlanDecisionResult,
   AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
@@ -74,6 +97,7 @@ export type AgentMailRuntimeStatus = {
 export type PermissionMode = 'plan' | 'acceptEdits' | 'default' | 'dontAsk' | 'bypassPermissions';
 
 export type SessionSummary = {
+  archivedAt?: number | null;
   id: string;
   title: string;
   agentMode?: 'local' | 'remote-direct';
@@ -761,9 +785,6 @@ export type DesktopSettings = {
     activeProvider?: 'tavily' | 'brave' | 'native' | null;
   };
   image: {
-    provider: string;
-    url: string;
-    apiKey: string;
     model: string;
   };
   toolLoading: Record<string, 'always' | 'deferred'>;
@@ -817,7 +838,12 @@ export type DesktopSettings = {
   };
   appearance: {
     themeMode: 'dark' | 'light' | 'system';
-    cssThemeId: 'default' | 'grid-theme' | 'dot-theme' | 'gradient-theme' | 'takt-theme';
+    cssThemeId: string;
+    uiFontSize?: number; codeFontSize?: number; uiFont?: string; contentFont?: string; codeFont?: string; contrast?: number;
+    lightProfile?: AppearanceProfile; darkProfile?: AppearanceProfile; separateLightDark?: boolean;
+    reduceMotion?: 'system' | 'always' | 'never'; translucentSidebar?: boolean;
+    diffMarkers?: 'colors' | 'markers' | 'both'; pointerCursors?: boolean; fontSmoothing?: boolean;
+    dockIcon?: 'default' | 'graphite' | 'inverted';
     toolDisplayMode: 'expanded' | 'collapsed' | 'merged';
     chatFontSize: number;
     chatLineHeight: number;
@@ -891,7 +917,14 @@ export type ManagedRuntimeStatus = {
 export type AppDiscoveryPreferences = { sections: { installed: string; marketplace: string } };
 export type AppDiscoveryPreferenceUpdate = { action?: 'section'; surface?: 'installed' | 'marketplace'; section?: string };
 
+export type BuiltinApp = { id: string; version: string; displayName: string; description: string; installed: boolean; installedVersion?: string | null; error: string | null };
+
 export type StoredApp = {
+  overview?: { description?: string; examples?: string[] };
+  mcpPresentation?: { headline?: string; examples?: string[]; usage?: string };
+  publisher?: { id: string; name: string };
+  declaredSkills?: NonNullable<StoredApp['contributes']>['skills'];
+  builtin?: boolean;
   discovery?: import('../../../packages/app-sdk/src/discovery.mjs').AppDiscoveryMetadata;
   connectorApp?: { id: string; capabilities: Array<'mcp' | 'cli' | 'skills'>; connection?: InstalledConnector | null };
   category?: string;
@@ -938,6 +971,7 @@ export type StoredApp = {
   } | null;
   permissions?: string[];
   toolScope?: 'global' | 'session';
+  toolLoading?: 'always' | 'on-demand';
   toolSelection?: 'app' | 'services';
   navigation?: import('../../../packages/app-sdk/src/index.mjs').AppNavigation;
   agentTools?: Array<{
@@ -1144,12 +1178,14 @@ export type PreviewOpenPayload =
     };
 
 export type PresentationResource = {
+  creation?: Record<string, unknown>;
   bindings?: Array<{ turnId?: string; sourceToolUseId?: string; role?: string }>;
   isResult?: boolean;
   id: string; kind: string; title: string; revision: string; view?: string;
   source: { type: string; path?: string; workspacePath?: string; uri?: string; appId?: string; route?: string; tabId?: string; memberIds?: string[]; observationId?: string };
   capabilities: { preview: boolean; edit: boolean; popout: boolean };
-  location?: { line?: number; column?: number };
+  location?: { line?: number; column?: number; page?: number; text?: string; occurrence?: number; sheet?: string; range?: string };
+  sequence?: number;
   availability?: string; updatedAt?: number;
 };
 export type PresentationSnapshot = {
@@ -1353,6 +1389,14 @@ declare global {
       ensureManagedRuntimes: (payload?: { node?: boolean; python?: boolean; git?: boolean }) => Promise<Record<string, unknown>>;
       getAuthDebug: () => Promise<any>;
       getSettings: () => Promise<DesktopSettings>;
+      storage: {
+        listArchives: () => Promise<ArchivedChat[]>;
+        setArchived: (payload: { sessionId: string; archived: boolean }) => Promise<{ ok: boolean }>;
+        onArchivesChanged: (callback: (payload: { ids: string[]; archived: boolean }) => void) => () => void;
+        getOverview: () => Promise<StorageOverview>;
+        reviewChats: (payload: { days?: number; archivedOnly?: boolean; archivedIds?: string[] }) => Promise<StorageReview>;
+        deleteChats: (payload: { token: string; ids: string[] }) => Promise<StorageCleanupResult>;
+      };
       testModel: (payload: Pick<DesktopSettings, 'model' | 'url' | 'apiKey' | 'thinkingMode' | 'thinkingBudgetTokens'>) => Promise<{
         ok: boolean; status: number | null; durationMs: number; message: string;
         thinking: string;
@@ -1524,14 +1568,20 @@ declare global {
         }>;
       };
       listApps: () => Promise<StoredApp[]>;
+      listBuiltinApps: () => Promise<BuiltinApp[]>;
+      restoreBuiltinApp: (payload: { id: string }) => Promise<{ ok: boolean; error?: string }>;
       importLegacyBuddy: (payload: { name: string; personality: string; hatchedAt: number; userId?: string }) => Promise<unknown>;
       inspectAppMcpTools: (payload: { appId: string; instanceId: string; name: string; revision: string }) => Promise<AppMcpServiceTools>;
+      manageAppMcp: <Method extends 'servers.list' | 'servers.save' | 'servers.inspect' | 'auth.start' | 'auth.clear'>(payload: {
+        appId: string; instanceId: string; version: string; method: Method;
+        input: import('../../../packages/app-sdk/src/mcp/index.mjs').McpHostInputMap[Method];
+      }) => Promise<import('../../../packages/app-sdk/src/mcp/index.mjs').McpHostOutputMap[Method]>;
       resourceMonitor: {
         getSnapshot: (payload?: { since?: number; active?: boolean }) => Promise<import('./lib/resource-monitor-types').ResourceMonitorSnapshot>;
       };
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;
-      openEmbeddedApp: (payload: { name: string; previewRef?: string; sessionId?: string; workspace?: string }) => Promise<{
+      openEmbeddedApp: (payload: { settingId?: string; version?: string; name: string; previewRef?: string; sessionId?: string; workspace?: string }) => Promise<{
         ok: boolean;
         error?: string;
         embedId?: string;
@@ -1553,6 +1603,9 @@ declare global {
       onAppInstallProgress: (callback: (progress: AppInstallProgress) => void) => () => void;
       openAppResource: (uri: string) => Promise<{ opened: boolean }>;
       getAppRuntimeState: (payload: { appId: string }) => Promise<any>;
+      readAppSkill: (payload: { appId: string; skillId: string }) => Promise<{ title: string; content: string }>;
+      appSettingsForm: (payload: { appId: string; version: string; settingId: string; operation: 'read' | 'save'; values?: Record<string, unknown> }) => Promise<{ schema: Record<string, any>; values: Record<string, any>; configuredFields?: string[] }>;
+      setAppToolScope: (payload: { appId: string; scope: 'global' | 'session' | null; loading?: 'always' | 'on-demand' | null }) => Promise<{ scope: 'global' | 'session' }>;
       listAppResources: (payload: {sessionId?:string;workspace?:string;query?:string;offset?:number}) => Promise<{items:import('./lib/app-composer').AppComposerResource[];providers:Array<{id:string;title:string}>}>;
       getAppAuthoring: () => Promise<{available:boolean;reason:string|null;provider:{id:string;appId:string}|null}>;
       prepareAppAuthoring: (appId:string) => Promise<{ok:boolean}>;
@@ -1616,11 +1669,11 @@ declare global {
       };
       presentation: {
         onResult(callback: (payload: { sessionId: string; result: PresentationResult }) => void): () => void;
-        refresh(input: { sessionId: string }): Promise<PresentationSnapshot>;
+        refresh(input: { sessionId: string; activeOnly?: boolean }): Promise<PresentationSnapshot>;
         resolve: (payload: { sessionId: string; references: string[] }) => Promise<Array<{ reference: string; available: boolean; kind?: string }>>;
         snapshot: (payload: { sessionId?: string | null; activate?: boolean }) => Promise<PresentationSnapshot | null>;
         action: (payload: { sessionId: string; action: { type: string; id?: string; value?: boolean } }) => Promise<PresentationSnapshot>;
-        open: (payload: { sessionId: string; input: { items: Array<{ path?: string; resource_uri?: string; artifact_id?: string; role?: string; view?: string }>; mode?: string } }) => Promise<PresentationResult>;
+        open: (payload: { sessionId: string; input: { items: Array<{ path?: string; resource_uri?: string; artifact_id?: string; title?: string; role?: string; view?: string }>; mode?: string } }) => Promise<PresentationResult>;
         load: (payload: { sessionId: string; artifactId: string }) => Promise<{ resource: PresentationResource; file: WorkspacePreviewData | null; epoch: string }>;
         acknowledge: (payload: { sessionId: string; requestId: string; revision: string; epoch: string; state: 'shown' | 'error'; error?: string }) => Promise<{ accepted: boolean }>;
         popout: (payload: { sessionId: string; artifactId: string }) => Promise<{ ok: boolean }>;

@@ -23,9 +23,9 @@ export const APP_AUTH_METHODS = Object.freeze([
 // Compatibility metadata for published packages that predate discovery fields.
 // Unknown delivery shapes remain discoverable in the application section.
 const localApps = new Set(['moss.app-builder', 'moss.audit', 'moss.backup', 'moss.browser-use', 'moss.buddy', 'moss.code-map',
-  'moss.computer-use', 'moss.data-workbench', 'moss.database', 'moss.devtools', 'moss.document-converter', 'moss.drawio', 'moss.excel',
+  'moss.computer-use', 'moss.data-workbench', 'moss.database', 'moss.devtools', 'moss.document', 'moss.document-converter', 'moss.drawio', 'moss.excel',
   'moss.file-cleaner', 'moss.filesystem', 'moss.git', 'moss.image-tools', 'moss.knowledge-rag', 'moss.library',
-  'moss.markitdown', 'moss.mcp', 'moss.media-tools', 'moss.memory', 'moss.pdf-tools', 'moss.self-test', 'moss.sequential-thinking',
+  'moss.markitdown', 'moss.mcp', 'moss.media-tools', 'moss.memory', 'moss.pdf', 'moss.pdf-tools', 'moss.self-test', 'moss.sequential-thinking',
   'moss.takt', 'moss.trace', 'moss.transcription', 'moss.workflow'])
 const onlineApps = new Set(['moss.drive', 'moss.feishu', 'moss.openim'])
 const mcpTools = new Set(['moss.dbx', 'moss.drawio', 'moss.excel', 'moss.filesystem', 'moss.git', 'moss.markitdown', 'moss.sequential-thinking'])

@@ -1,0 +1,10 @@
+{
+  "name": "imagegen",
+  "display_name": "图片生成",
+  "description": "在主会话生成或编辑照片、插画、产品图、海报和其他位图素材，支持参考图与连续修改。现有 SVG、简单图形或交互图表优先修改源码或使用可视化能力。",
+  "emoji": "🎨",
+  "category": "AI 增强",
+  "source_type": "builtin",
+  "installed_version": "1.0.0",
+  "enabled": true
+}

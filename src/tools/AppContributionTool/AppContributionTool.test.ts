@@ -21,7 +21,7 @@ function descriptor(
 ): AppToolContributionDescriptor {
   return {
     id: 'example.catalog/search',
-    name: 'app__example_catalog__search',
+    name: 'search',
     title: 'Search Catalog',
     description: 'Search the example catalog.',
     appId: 'example.catalog',
@@ -116,7 +116,7 @@ describe('App Contribution Tool', () => {
     const destructiveTool = createAppContributionTool({
       ...descriptor('destructive'),
       id: 'example.catalog/delete',
-      name: 'app__example_catalog__delete',
+      name: 'delete',
       title: 'Delete Catalog Entry',
     })
 
@@ -219,26 +219,35 @@ describe('App Contribution Tool', () => {
     }])).toThrow(/Duplicate App Tool name/)
   })
 
-  it.each([
-    ['normalization', ['example-a', 'example.a']],
-    ['truncation', [`example.${'a'.repeat(70)}b`, `example.${'a'.repeat(70)}c`]],
-  ] as const)('rejects tool name collisions caused by %s', (_reason, appIds) => {
-    const descriptors = appIds.map(appId => ({
-      ...descriptor(),
-      id: `${appId}/search`,
-      appId,
-      name: appToolName(appId, 'search'),
-    }))
-    expect(() => createAppContributionTools(descriptors)).toThrow(
-      `Duplicate App Tool name: ${descriptors[0]!.name}`,
-    )
+  it('prefixes external App names in the API and retains internal routing without aliases', async () => {
+    const tool = createAppContributionTool({ ...descriptor(), name: appToolName('example.catalog', 'search') })
+    expect(tool.name).toBe('catalog_search')
+    expect(tool.aliases).toBeUndefined()
+    expect(tool.appInfo).toMatchObject({ appId: 'example.catalog', contributionId: 'example.catalog/search' })
+    const schema = await toolToAPISchema(tool, { tools: [tool], agents: [], getToolPermissionContext: async () => getEmptyToolPermissionContext() })
+    expect(schema.name).toBe('catalog_search')
+    expect(createAppContributionTools([descriptor(), descriptor()])).toHaveLength(1)
+  })
+
+  it('separates Apps with the same local tool name and rejects normalized collisions', () => {
+    const separate = ['example.one', 'example.two'].map(appId => ({ ...descriptor(), appId, id: `${appId}/search`, name: appToolName(appId, 'search') }))
+    expect(createAppContributionTools(separate).map(tool => tool.name)).toEqual(['one_search', 'two_search'])
+    for (const ids of [['example.one/search.data', 'example.one/search_data'], ['example.one/search', 'another.one/search']]) {
+      const descriptors = ids.map(id => {
+        const [appId, localId] = id.split('/')
+        return { ...descriptor(), id, appId: appId!, name: appToolName(appId!, localId!) }
+      })
+      expect(() => createAppContributionTools(descriptors)).toThrow('Duplicate App Tool name')
+    }
+    expect(appToolName('example.' + 'a'.repeat(80), 'visualize_create')).toHaveLength(64)
+    expect(appToolName('moss.visualize', 'visualize_create')).toBe('visualize_create')
   })
 
   it('requests destructive confirmation through the Host permission pipeline without persistent allow suggestions', async () => {
     const tool = createAppContributionTool({
       ...descriptor('destructive'),
       id: 'example.catalog/delete',
-      name: 'app__example_catalog__delete',
+      name: 'delete',
       title: 'Delete Catalog Entry',
     })
     const decide = (overrides: Partial<ToolPermissionContext> = {}) => {

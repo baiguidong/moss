@@ -1,3 +1,4 @@
+import { mergeBuiltinSkills } from './skills/mergeBuiltinSkills.js'
 import addDir from './commands/add-dir/index.js'
 import btw from './commands/btw/index.js'
 import clear from './commands/clear/index.js'
@@ -204,8 +205,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
   const { skillDirCommands, bundledSkills } = await getSkills(cwd)
 
   return [
-    ...bundledSkills,
-    ...skillDirCommands,
+    ...mergeBuiltinSkills(bundledSkills, skillDirCommands),
     ...COMMANDS(),
   ]
 })

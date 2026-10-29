@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import SyntaxHighlighter from "react-syntax-highlighter";
-import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { mossSyntaxTheme } from "@/theme/syntax";
 import { CopyButton } from "@/components/shared/copy-button";
 import { inferLanguage } from "@/components/chat/tool-utils";
-import { replDarkSyntaxTheme } from "@/components/chat/repl-syntax-theme";
 import { cn } from "@/lib/utils";
 
 type DiffLine = {
@@ -261,20 +260,7 @@ export function DiffViewer({
   variant?: "card" | "transcript";
 }) {
   const [expanded, setExpanded] = React.useState(false);
-  const [dark, setDark] = React.useState(
-    () => document.documentElement.getAttribute("data-theme") === "dark",
-  );
 
-  React.useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(document.documentElement.getAttribute("data-theme") === "dark");
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
   const diffLines = React.useMemo(
     () => structuredPatch?.length
       ? buildStructuredDiffLines(structuredPatch)
@@ -292,7 +278,7 @@ export function DiffViewer({
 
   if (variant === "transcript") {
     return (
-      <div className="mt-1.5 min-w-0 overflow-hidden font-mono text-[12px] leading-[1.65] select-text">
+      <div data-code-viewer className="mt-1.5 min-w-0 overflow-hidden font-mono text-[12px] leading-[1.65] select-text">
         <div className="max-h-[420px] overflow-auto">
           {visibleLines.map((line, index) => {
             const lineNumber = line.type === "removed" ? line.oldNumber : line.newNumber;
@@ -305,7 +291,7 @@ export function DiffViewer({
                 <span className="select-none px-2 text-right text-[color:var(--color-repl-muted)] opacity-75">{lineNumber ?? ""}</span>
                 <span
                   className={cn(
-                    "select-none",
+                    "select-none moss-diff-marker",
                     line.type === "added" && "text-[color:var(--color-repl-diff-added-fg)]",
                     line.type === "removed" && "text-[color:var(--color-repl-diff-removed-fg)]",
                   )}
@@ -317,7 +303,7 @@ export function DiffViewer({
                 ) : (
                   <SyntaxHighlighter
                     language={language}
-                    style={dark ? replDarkSyntaxTheme : atomOneLight}
+                    style={mossSyntaxTheme}
                     PreTag="span"
                     CodeTag="span"
                     customStyle={{
@@ -379,7 +365,7 @@ export function DiffViewer({
             <div className="select-none border-r border-black/5 px-2 py-0.5 text-right text-[10px] text-[var(--color-text-tertiary)]">
               {line.newNumber ?? ""}
             </div>
-            <pre className="overflow-x-auto px-3 py-0.5 whitespace-pre-wrap break-words">{line.text || " "}</pre>
+            <pre className="overflow-x-auto px-3 py-0.5 whitespace-pre-wrap break-words"><span className="moss-diff-marker select-none">{line.type === "added" ? "+ " : line.type === "removed" ? "− " : "  "}</span>{line.text || " "}</pre>
           </div>
         ))}
       </div>

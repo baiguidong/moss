@@ -3,6 +3,7 @@ import type { AppMcpServiceTools, StoredApp } from '../types';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { ToolDescription } from '@/components/tool-description';
 import { hasMcpCatalog } from '@/lib/app-capabilities';
+import { normalizeAppToolName } from '../../../../packages/app-sdk/src/tool-names.mjs';
 
 const statusLabels = {
   'app-disabled': 'App 已停用', 'instance-disabled': '实例已停用', unauthorized: '未授权',
@@ -35,9 +36,9 @@ export function AppMcpToolRows({ app, service, onDiscovered }: { app: StoredApp;
   const current = result?.sourceStatus === status && result.sourceCheckedAt === checkedAt && result.sourceStale === catalogStale ? result.value : service;
   const available = ['unchecked', 'authorized', 'connected', 'failed', 'needs-auth'].includes(current.status);
   const label = !app.enabled ? 'App 已停用' : !available ? statusLabels[current.status] : loading ? '正在加载工具…' : error ? '加载失败' : current.catalogStale ? '目录待刷新' : statusLabels[current.status];
-  const tools = current.tools;
+  const tools = current.tools.map(tool => ({ ...tool, name: normalizeAppToolName(tool.name, app.id || app.name) }));
   const serviceHeader = <th scope="rowgroup" rowSpan={Math.max(tools.length, 1)} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-middle text-xs font-normal">
-    <span className="block break-words font-semibold text-foreground">{app.displayName || app.title || app.name}</span>
+    <span className="block break-words font-semibold text-foreground">{app.displayName || app.title || app.name} · MCP</span>
     <code className="mt-1 block break-all text-[11px] text-muted-foreground">{app.id || app.name}.{name}</code>
     <div className="mt-2 text-muted-foreground">
       <span>{current.truncated ? `仅展示前 ${tools.length} 个工具` : !hasMcpCatalog(current) ? '首次连接后显示清单' : `${tools.length} 个工具`}</span>
@@ -64,7 +65,7 @@ export function AppMcpToolRows({ app, service, onDiscovered }: { app: StoredApp;
     <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">
       <ToolDescription description={tool.description || '此工具未提供描述。'} toolName={tool.name} />
     </td>
-    <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? '全局 · 按需' : '指定 · 选择后常驻'}</td>
+    <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? app.toolLoading === 'always' ? '全局常驻' : '全局按需' : '指定 · 选择后常驻'}</td>
     <td className="px-3 py-3 text-xs text-muted-foreground">{current.status !== 'connected' || !app.enabled || current.catalogStale ? label : tool.disabled ? '已排除' : '可用'}</td>
   </tr>)}</tbody>;
 }

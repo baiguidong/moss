@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readBuiltinManifest, verifyBuiltinArchive } from '../src/apps/builtin-apps.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -393,12 +394,19 @@ async function main() {
     path.join(paths.resourcesDir, 'app-market', 'bundled-apps.lock.json'),
   ]) {
     if (fs.existsSync(bundledPath)) {
-      throw new Error(`Packaged Moss must not include bundled Apps: ${bundledPath}`);
+      throw new Error(`Packaged Moss includes retired App resource layout: ${bundledPath}`);
     }
   }
+  const builtinDir = path.join(paths.resourcesDir, 'builtin-apps');
+  requireFile(path.join(builtinDir, 'manifest.json'), 'Builtin App manifest');
+  const builtins = await readBuiltinManifest(builtinDir, `${platform}-${arch}`);
+  for (const entry of builtins.apps) await verifyBuiltinArchive(builtinDir, entry);
   requireFile(path.join(paths.resourcesDir, 'packages', 'host-contracts', 'src', 'generated-validators.mjs'), 'Host contracts');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'index.mjs'), 'App SDK');
   requireFile(path.join(paths.resourcesDir, 'packages', 'app-sdk', 'src', 'host', 'public-contracts.json'), 'public developer contracts');
+  for (const file of ['skill-creator/SKILL.md', 'skill-creator/scripts/skill.py', 'skill-installer/SKILL.md', 'skill-installer/scripts/install.py', 'imagegen/SKILL.md', 'imagegen/references/prompting.md']) {
+    requireFile(path.join(paths.resourcesDir, 'skills', file), 'Builtin skill resource');
+  }
   for (const retired of ['assistants/app-builder', 'skills/convert-skill-to-app']) {
     if (fs.existsSync(path.join(paths.resourcesDir, retired))) throw new Error(`Retired authoring resource is still packaged: ${retired}`);
   }

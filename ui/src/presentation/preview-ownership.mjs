@@ -138,6 +138,9 @@ export function createPreviewOwnership({ storageRoot, getSessionRecord, readFile
       retiredSenders.add(prefix);
       for (const doc of documents.values()) if (doc.owner?.startsWith(prefix + ':')) await this.release({ id: doc.id, generation: doc.generation }, doc.owner);
     },
+    hasSessionEdits(sessionId) {
+      return [...documents.values()].some(doc => doc.ownerSessionId === sessionId && (doc.owner || doc.content !== doc.originalContent));
+    },
     async assertUnowned(sessionId, filePath) {
       const { id } = await resolve(sessionId, filePath), doc = documents.get(id);
       if (doc && (doc.owner || doc.content !== doc.originalContent)) throw new Error('请在持有编辑权的预览中保存，已有草稿已保留');

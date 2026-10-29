@@ -25,6 +25,11 @@ const clickText = text => evaluate(text => {
   const button = [...document.querySelectorAll('button')].find(item => item.offsetParent && item.textContent.trim() === text);
   if (!button) throw new Error(`Missing button: ${text}`); button.click();
 }, text);
+const clickNavigation = id => evaluate(id => {
+  const button = [...document.querySelectorAll('[data-settings-nav]')].find(item => item.offsetParent && item.dataset.settingsNav === id);
+  if (!button) throw new Error(`Missing navigation: ${id}`);
+  button.click();
+}, id);
 const capture = async name => {
   if (!process.env.APP_NAVIGATION_SCREENSHOTS) return;
   await new Promise(resolve => setTimeout(resolve, 250));
@@ -36,7 +41,8 @@ async function run() {
 try {
   const preload = path.join(temp, 'preload.cjs'); await fs.writeFile(preload, '');
   server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), cacheDir: path.join(temp, 'vite'),
-    server: { host: '127.0.0.1', port: 0, hmr: false },
+    server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false },
+    optimizeDeps: { entries: ['tests/fixtures/app-navigation.html'] },
     plugins: [{ name: 'navigation-fixture', configureServer(vite) {
       vite.middlewares.use((req, res, next) => {
         if (req.url === '/navigation-fixture-config') {
@@ -56,7 +62,7 @@ try {
   await evaluate(() => document.querySelector('webview').executeJavaScript('document.querySelector("input").value="saved configuration";document.querySelector("button").click()'));
   // App settings stay inside Apps even when their manifest group is "tools".
   for (let index = 0; index < 3; index++) {
-    await clickText('工具');
+    await clickNavigation('tools');
     await until(() => document.querySelector('#tools') && !document.querySelector('webview'), 'Built-in Tools did not return');
     assert.equal(await evaluate(() => document.querySelector('[data-settings-nav="tools"]').getAttribute('aria-current')), 'page');
     assert.equal(await evaluate(() => document.querySelectorAll('[data-app-settings-group]').length), 0, 'App settings leaked into Tools');
@@ -72,11 +78,12 @@ try {
     assert.equal(await evaluate(() => document.querySelector('[data-settings-nav="tools"]').getAttribute('aria-current')), null);
     assert.equal(await evaluate(() => document.querySelectorAll('[data-app-settings-header]').length), 1);
     assert.equal(await evaluate(() => document.querySelectorAll('[data-selected-app-setting] [data-app-toolbar-actions]').length), 1, 'App settings need one shared toolbar');
+    assert.equal(await evaluate(() => document.querySelectorAll('[data-selected-app-setting] [data-app-settings]').length), 0, 'App settings must not repeat generic settings');
     assert.equal(await evaluate(() => [...document.querySelectorAll('[data-selected-app-setting] button')].filter(button => button.textContent.trim() === '刷新').length), 1, 'Refresh must appear once in the shared header');
     assert.equal(await evaluate(() => [...document.querySelectorAll('[data-selected-app-setting] button')].some(button => button.textContent.trim() === '迭代')), false, 'Authoring added a duplicate App toolbar');
   }
   await capture('browser-desktop');
-  await clickText('工具');
+  await clickNavigation('tools');
   await until(() => document.querySelector('#tools') && !document.querySelector('webview'), 'Tools did not remain accessible');
   if (process.env.APP_NAVIGATION_SCREENSHOTS) {
     // Repaint the hidden native window after detaching the guest webview.
@@ -84,7 +91,7 @@ try {
     await capture('tools-desktop');
     win.setSize(1320, 850);
   }
-  assert.equal(await evaluate(() => document.querySelector('h1').textContent), '工具');
+  assert.equal(await evaluate(() => document.querySelector('h1').textContent), '工具与性能');
   await clickText('Apps');
   await clickText('电脑操控');
   await until(() => document.querySelector('[data-selected-app-setting]')?.getAttribute('data-selected-app-setting') === 'app:computer/preferences', 'Tool settings were not selected');
@@ -106,7 +113,7 @@ try {
   await until(() => document.querySelector('webview')?.getURL?.().includes('app=feishu'), 'Re-enabled App did not recover');
   await clickText('应用管理');
   await until(() => document.querySelector('[data-app-open="feishu"]'), 'Management view did not open');
-  assert.match(await evaluate(() => document.querySelector('[data-app-open="feishu"]').textContent), /打开/);
+  assert.equal(await evaluate(() => document.querySelector('[data-app-open="feishu"]').getAttribute('aria-label')), '查看 飞书');
   await evaluate(() => document.querySelector('[data-app-open="feishu"]').click());
   await until(() => document.querySelector('webview')?.getURL?.().includes('app=feishu'), 'App card did not open settings');
   await until(() => document.querySelector('webview') && !document.querySelector('[data-selected-app-setting]')?.textContent.includes('正在打开 App'), 'App page stayed behind the loading overlay');
@@ -133,7 +140,7 @@ try {
   assert.equal(await evaluate(() => document.querySelector('[data-settings-nav="apps"]').getAttribute('aria-current')), 'page');
   await clickText('应用管理');
   await until(() => document.querySelector('[data-app-open="sequential-thinking"]'), 'Thinking management did not open');
-  assert.match(await evaluate(() => document.querySelector('[data-app-open="sequential-thinking"]').textContent), /打开/);
+  assert.equal(await evaluate(() => document.querySelector('[data-app-open="sequential-thinking"]').getAttribute('aria-label')), '查看 分步思考');
   await evaluate(() => document.querySelector('[data-app-open="sequential-thinking"]').click());
   await until(() => document.querySelector('webview')?.getURL?.().includes('app=sequential-thinking'), 'Thinking card did not open settings');
   await clickText('Apps');
@@ -161,7 +168,7 @@ try {
   await until(() => document.querySelectorAll('[data-app-settings-group]').length === 6 && !document.querySelector('webview'), 'Back navigation did not restore the App groups');
 
   win.setSize(700, 800); await delay();
-  await clickText('工具');
+  await clickNavigation('tools');
   await until(() => document.querySelector('#tools') && !document.querySelector('webview'), 'Narrow layout did not return to Tools');
   assert.equal(await evaluate(() => document.querySelector('input[aria-label="connector_cli_setup 常驻"]').checked), true);
   await clickText('Apps'); await clickText('电脑操控');

@@ -1904,6 +1904,7 @@ export function mergeAssistantMessages(
 ): AssistantMessage {
   return {
     ...a,
+    ...((a.tool_sources || b.tool_sources) ? { tool_sources: { ...a.tool_sources, ...b.tool_sources } } : {}),
     message: {
       ...a.message,
       content: [...a.message.content, ...b.message.content],

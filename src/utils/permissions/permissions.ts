@@ -185,7 +185,7 @@ export function getAskRules(context: ToolPermissionContext): PermissionRule[] {
  * This also matches MCP tools with a server name, e.g. the rule "mcp__server1"
  */
 function toolMatchesRule(
-  tool: Pick<Tool, 'name' | 'mcpInfo'>,
+  tool: Pick<Tool, 'name' | 'mcpInfo' | 'appInfo'>,
   rule: PermissionRule,
 ): boolean {
   // Rule must not have content to match the entire tool
@@ -204,7 +204,18 @@ function toolMatchesRule(
     return true
   }
 
+  // Previously saved App grants/denials remain scoped to their owner. These
+  // are permission aliases only, never duplicate model-facing registrations.
+  if (tool.appInfo) {
+    const normalize = (value: string) => value.replace(/[^a-zA-Z0-9_]/g, '_')
+    const localId = tool.appInfo.contributionId?.split('/').at(-1) || tool.name
+    const prefix = `app__${normalize(tool.appInfo.appId)}__`
+    if (rule.ruleValue.toolName === (prefix + normalize(localId)).slice(0, 64)
+      || rule.ruleValue.toolName === prefix + '*') return true
+  }
   if (tool.mcpInfo) {
+    const legacyName = getMcpPrefix(tool.mcpInfo.serverName, tool.mcpInfo.appId) + tool.mcpInfo.toolName.replace(/[^a-zA-Z0-9_-]/g, '_')
+    if (tool.mcpInfo.appId && rule.ruleValue.toolName === legacyName) return true
     const server = getMcpPrefix(tool.mcpInfo.serverName, tool.mcpInfo.appId).slice(0, -2)
     return rule.ruleValue.toolName === server || rule.ruleValue.toolName === `${server}__*`
   }
@@ -228,7 +239,7 @@ function toolMatchesRule(
  */
 export function toolAlwaysAllowedRule(
   context: ToolPermissionContext,
-  tool: Pick<Tool, 'name' | 'mcpInfo'>,
+  tool: Pick<Tool, 'name' | 'mcpInfo' | 'appInfo'>,
 ): PermissionRule | null {
   return (
     getAllowRules(context).find(rule => toolMatchesRule(tool, rule)) || null
@@ -240,7 +251,7 @@ export function toolAlwaysAllowedRule(
  */
 export function getDenyRuleForTool(
   context: ToolPermissionContext,
-  tool: Pick<Tool, 'name' | 'mcpInfo'>,
+  tool: Pick<Tool, 'name' | 'mcpInfo' | 'appInfo'>,
 ): PermissionRule | null {
   return getDenyRules(context).find(rule => toolMatchesRule(tool, rule)) || null
 }
@@ -250,7 +261,7 @@ export function getDenyRuleForTool(
  */
 export function getAskRuleForTool(
   context: ToolPermissionContext,
-  tool: Pick<Tool, 'name' | 'mcpInfo'>,
+  tool: Pick<Tool, 'name' | 'mcpInfo' | 'appInfo'>,
 ): PermissionRule | null {
   return getAskRules(context).find(rule => toolMatchesRule(tool, rule)) || null
 }

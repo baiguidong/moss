@@ -8,6 +8,11 @@ const root = process.env.MOSS_PRESENTATION_SMOKE_ROOT;
 assert.ok(root && root === process.env.MOSS_HOME);
 assert.equal(await readFile(path.join(root, '.presentation-smoke'), 'utf8'), 'isolated');
 const { app, ipcMain } = electron, handlers = new Map();
+// Isolate Chromium's profile and single-instance lock as well as MOSS_HOME.
+// Otherwise a running development desktop prevents this test from opening.
+const userData = path.join(root, 'chromium');
+await mkdir(userData, { recursive: true });
+app.setPath('userData', userData);
 const originalHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (name, callback) => { handlers.set(name, callback); return originalHandle(name, callback); };
 const windows = [];

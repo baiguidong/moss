@@ -1,12 +1,16 @@
 # App 创建、展示位置与工具范围
 
+非内置 App 的原生工具和 MCP 工具统一以 `appname_` 开头。`appname` 从 App ID 最后一段去掉分隔符生成，例如 `moss.qq-mail` 的 `SendMessage` 对模型注册为 `qqmail_SendMessage`；包内声明、贡献 ID 和 MCP 上游调用仍使用原名称。内置 App 清单在 `packages/app-sdk/src/builtin-apps.json`，其工具保持原名。
+
 App 创建使用独立的 `moss.app-builder`，在普通本地会话完成需求分析、源码修改、构建、预览和安装。现行契约由运行中的 Core `info.get`、`contracts.list/get` 和导出的 SDK 提供。不要引用已删除的旧内置创建助手。
 
 应用构建首页可以直接描述需求，也可以通过 `@` 或“选择资源”选择已安装的技能和助手作为创建来源。仅提供这两类资源：技能多选、助手单选，选择状态与需求草稿共同保存。资源来自新会话使用的同一安装目录，停用资源不进入候选列表；提交时 Core 再核对资源状态并补齐源码位置，用户无需手填路径。已安装 App 的迭代从该 App 内的“迭代”入口进入；构建首页保留“继续项目”，不再列出所有已安装 App。
 
+技能创建、技能安装和图片生成分别由内置 skill-creator、skill-installer、imagegen 承接。应用构建本身作为内置 App，全局按需提供工具，并贡献 app-creator 技能；不创建另一套 App 创建器。随项目导出的完整规则见 [SDK 创建指南](../../packages/app-sdk/authoring.md)。
+
 ## App 页面布局
 
-Moss 外框负责 App 名称、简介、迭代、AI 能力入口和整页刷新；App 内页负责业务内容。新建、迭代和 Skill 转换都直接从文件输入、列表、状态或业务工具栏开始，不再生成一套 App 名称、Logo 与简介。SDK 不会自动去除重复标题；不得用全局 `h1/header` 隐藏或文字匹配删除 DOM 来补救。
+Moss 通用详情负责 App 身份、介绍、配置与能力目录；用户主要在主会话使用 App。仅有真实业务工作台时才编写 UI，并通过详情“打开”进入；App 内页负责业务内容。新建、迭代和 Skill 转换都直接从文件输入、列表、状态或业务工具栏开始，不再生成一套 App 名称、Logo 与简介。SDK 不会自动去除重复标题；不得用全局 `h1/header` 隐藏或文字匹配删除 DOM 来补救。
 
 业务分区和当前对象的标题保留，例如“输入文件”“记忆图谱”和文档名。业务按钮放在对应区域，刷新明确标注范围（“刷新任务”“刷新项目”“重新连接”）；环境准备状态放到状态区或失败提示里，不单独占一个开场头部。同一任务数量、状态、功能介绍不在多个区块重复展示。
 
@@ -47,7 +51,8 @@ Apps 与应用市场使用紧凑的分类 Tab（含“全部”与数量）展�
 | 页面用途 | 应选择的位置 | 示例 |
 | --- | --- | --- |
 | 日常查看、编辑、处理业务或检查结果 | 更多 | 工作流、网盘、即时消息、调用追踪 |
-| 仅配置账户、连接、权限、目录或查看能力状态 | 设置 → Apps | 飞书、分步思考、电脑操控、网页操控 |
+| 通用工具说明、连接配置和工具目录 | 无独立页面，由 Core 插件详情承接 | 分步思考、DBX、网页操控 |
+| 尚未声明化的独立配置或授权流程 | 设置 → Apps | 飞书、电脑操控 |
 | 只提供后台工具，没有交互页面 | 无导航入口 | 不需要设置页的后台服务 |
 | 同时有日常操作与配置功能 | 更多放操作页，设置放独立配置页 | 文件浏览页与账户配置页分别登记 |
 
@@ -57,7 +62,11 @@ App 分类回答“提供什么能力”，展示位置回答“用户在哪里�
 
 Host API 3.4 已支持根级 `navigation.location: "more" | "settings" | "none"`，有入口时由 `navigation.viewId` 引用页面；设置页复用 `contributes.settings`，并通过 `group: "integrations" | "tools" | "apps"` 选择分组。显式使用位置或设置分组要求 `hostApi` 至少为 3.4.0 及同版 SDK。新建构建必须声明位置；旧包缺省保留原有入口。完整校验、兼容与 Builder 要求见 [展示位置方案](app-navigation-plan.md)。
 
-新建模板不能统一默认 `more` 或 `settings`，旧包的兼容默认值也不是新建规则。Builder 指引、场景模板、仓库校验与实际安装验证必须同步维护，确保操作型、配置型、纯后台 App 生成不同的正确入口。恢复旧源码时先迁移固定 SDK，避免新字段在构建中丢失。
+工具 App 优先使用 Core 通用详情页。普通 MCP 使用内置 MCP 声明；需要额外配置的 Backend App 可在 Host API 3.21.0 起声明 `contributes.settings: [{ id: "connection", title: "连接设置", form: { readAction: "settings.read", saveAction: "settings.save" } }]`，并使用 `navigation.location: "none"`，无需 App UI。两个 Action 都必须在 Backend 中声明；保存 Action 的 `inputSchema` 定义字段，读取 Action 返回 `{ values, configuredFields? }`。`form` 与旧 `viewId` 互斥。设置以带右箭头的行进入 Core 右侧面板，字段、枚举、条件分支和密钥显示由 Schema 驱动；保存不得顺带启动或检查 MCP。字段支持范围和凭据约定见 [通用插件详情](../../docs/app-details.md)。
+
+Host API 3.22.0 新增 `navigation.location: "details"`，适用于仍需业务页面的工具/设置 App。`contributes.settings[].viewId` 指向 `contributes.views` 中的页面；Core 在详情顶部的“试用”旁提供唯一的“打开”入口，点击后创建隔离视图并进入整页 App 工作区；多个声明页面在工作区内切换，不在详情逐项列出启动行。`presentation.width` 保留兼容，整页布局不依赖此字段。App 页不重复通用信息、授权、范围或工具列表；用 SDK `view.setState({ dirty, busy })` 上报草稿和提交状态，并订阅 `appearance` 事件以实时跟随主题。打开页面及保存配置不得隐式检查 MCP。详见 [自带 UI 迁移实现](../../docs/app-details-embedded-ui-plan.md)。
+
+主会话工具模板默认 `none` 并提供可运行 Backend；有页面时按实际用途选择。新建模板不能统一默认 `more` 或 `settings`，旧包的兼容默认值也不是新建规则。Builder 指引、场景模板、仓库校验与实际安装验证必须同步维护，确保操作型、配置型、纯后台 App 生成不同的正确入口。恢复旧源码时先迁移固定 SDK，避免新字段在构建中丢失。
 
 ## 工具范围
 
@@ -66,11 +75,12 @@ Host API 3.1 引入 App 根级 `toolScope`，唯一合法值为 `session` 和 `g
 | 配置 | 未选择 App | 在会话选择 App 后 |
 | --- | --- | --- |
 | `session`（默认） | 工具不可见、不可搜索或调用 | 全部可用工具常驻 |
-| `global` | 按需搜索和加载 | 全部可用工具常驻 |
+| `global` + `toolLoading: "on-demand"` | 按需搜索和加载 | 全部可用工具常驻 |
+| `global` + `toolLoading: "always"` | 全部可用工具常驻 | 全部可用工具常驻 |
 
 创建时根据工具用途显式选择范围：分步思考这类面向任意会话、希望启用后即可使用的通用辅助能力，应声明 `toolScope: "global"`；需要用户为当前会话选择的业务或专用能力使用 `session`。没有明确的跨会话使用需求时仍默认 session。无 UI、放在设置或进程常驻，都不能单独作为全局工具的依据。
 
-分步思考的配置为“设置 → Apps + global”：现有 Manifest 已可通过根级 `toolScope: "global"` 配置工具范围，并要求 `hostApi: "^3.1.0"` 或更高兼容范围。全局表示启用、授权和连接正常后无需会话选择即可按需使用，不表示所有工具定义永久常驻，也不绕过停用或权限检查；导航位置使用 `navigation: {"location":"settings","viewId":"settings"}`，设置页提供连接状态、工具目录和重连操作。
+分步思考使用 Core 通用详情页和根级 `toolScope: "global"`。全局表示启用、授权和连接正常后无需会话选择即可按需使用，不表示所有工具定义永久常驻，也不绕过停用或权限检查。工具目录读取当前版本缓存，服务行进入右侧连接设置与主动检查；兼容旧 Host 的内置 MCP 路由由新 Core 接管，不需要独立前端。
 
 通过输入框 `@` 或“选择资源 → App”添加 App。选择工作流、创建/编辑项目等具体资源时，资源 provider 所属 App 自动加入会话。选择对整个会话有效，重启后恢复；移除后不通过历史资源上下文自动加回。
 
@@ -82,7 +92,7 @@ Host API 3.8 新增根级 `toolSelection: "app" | "services"`，缺省 `app`。�
 
 - 原生工具：在 `contributes.services` 声明 `{ id, title, description? }`，每个 `contributes.tools` 条目必须通过 `serviceId` 引用其中一个服务。稳定 id 不随标题修改；不存在的引用在构建时拒绝。
 - MCP 工具：Host 自动从 App 注册的服务生成子项，绑定 App、实例和持久化服务 ID。客户后续追加 MCP 无需重建 App；改名保留选择，删除再建不复用旧选择。原生服务和 MCP 服务可以共存。
-- `toolSelection` 与 App 级 `toolScope` 独立；上表的“全部工具”只适用于整体选择。services + session 只加载已选服务，services + global 仍全局按需发现，选中服务才常驻。不要创建逐服务范围或授权覆盖。
+- `toolSelection` 与 App 级 `toolScope` 独立；上表的“全部工具”只适用于整体选择。services + session 只加载已选服务，services + global/on-demand 全局按需发现，选中服务常驻；global/always 的全部可用子服务常驻。不要创建逐服务范围或授权覆盖。
 - 全选保存当前服务集合；之后新增服务不会自动选中。旧会话的父 App 选择在首次打开或恢复运行时转换为当时服务的固定集合。资源自动加入父 App 同样展开成当前服务集合，不保存未来服务的通配选择。
 - 搜索直接命中子服务；标签显示所属 App 和服务名。忙碌会话沿用本轮策略，新选择在下次安全启动生效；停用、授权和服务状态继续约束可用性。
 - Builder 新建时依据需求决定选择方式；普通编辑保留已有 `toolSelection` 和稳定服务 ID。源码恢复、构建和安装后验证字段保留及同一 App 内服务隔离。普通 App 不因为使用多个 MCP transport 就自动拆分。

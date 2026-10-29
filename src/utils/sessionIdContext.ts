@@ -13,6 +13,8 @@ export type SessionRuntime = {
   presentationTurn?: { id: string; sessionId: string; epoch?: string }
   executionEnvironment: SessionExecutionEnvironment
   image?: ImageSettings
+  /** Main session connection, also used by image_gen. Never image-specific credentials. */
+  modelConnection?: { url?: string; apiKey?: string }
   desktopCronHostId?: string
   cron?: CronProvider
   unattended?: boolean

@@ -7,9 +7,15 @@ export class AppToolScopeStore {
   constructor(file) {
     this.file = file
     this.values = Object.create(null)
+    this.loadings = Object.create(null)
     try {
       const document = JSON.parse(fs.readFileSync(file, 'utf8'))
       if (document.version !== 1 || !document.scopes || typeof document.scopes !== 'object' || Array.isArray(document.scopes)) throw new Error('Invalid App tool scope settings')
+      if (document.loadings !== undefined && (!document.loadings || typeof document.loadings !== 'object' || Array.isArray(document.loadings))) throw new Error('Invalid App tool loading settings')
+      for (const [key, value] of Object.entries(document.loadings || {})) {
+        if (value !== 'always' && value !== 'on-demand') throw new Error('Invalid App tool loading')
+        this.loadings[key] = value
+      }
       for (const [key, value] of Object.entries(document.scopes)) {
         if (value !== 'session' && value !== 'global') throw new Error('Invalid App tool scope')
         this.values[key] = value
@@ -17,18 +23,24 @@ export class AppToolScopeStore {
     } catch (error) { if (error.code !== 'ENOENT') throw error }
   }
   get(key) { return this.values[key] }
-  set(key, scope) {
+  getLoading(key) { return this.loadings[key] }
+  set(key, scope, loading = undefined) {
     if (scope !== null && scope !== 'session' && scope !== 'global') throw new Error('Invalid App tool scope')
-    if ((this.values[key] ?? null) === scope) return false
+    if (loading !== undefined && loading !== null && loading !== 'always' && loading !== 'on-demand') throw new Error('Invalid App tool loading')
+    if ((this.values[key] ?? null) === scope && (loading === undefined || (this.loadings[key] ?? null) === loading)) return false
+    const nextLoadings = Object.assign(Object.create(null), this.loadings)
+    if (loading === null) delete nextLoadings[key]
+    else if (loading !== undefined) nextLoadings[key] = loading
     const next = Object.assign(Object.create(null), this.values)
     if (scope === null) delete next[key]
     else next[key] = scope
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
     const temporary = `${this.file}.${randomUUID()}.tmp`
     try {
-      fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, scopes: next }, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
+      fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, scopes: next, loadings: nextLoadings }, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
       fs.renameSync(temporary, this.file)
       this.values = next
+      this.loadings = nextLoadings
     } finally { fs.rmSync(temporary, { force: true }) }
     return true
   }

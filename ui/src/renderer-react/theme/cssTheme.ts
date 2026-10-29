@@ -15,19 +15,12 @@ export const applyCssTheme = (css: string | null): void => {
     return;
   }
 
-  // Add !important to all properties to ensure they override existing styles
-  const processedCss = css.replace(/([a-zA-Z-]+)\s*:\s*([^;!}]+)(;?)/g, (match, property, value, semicolon) => {
-    const trimmedValue = value.trim();
-    if (trimmedValue.endsWith('!important')) return match;
-    return `${property}: ${trimmedValue} !important;`;
-  });
-
   if (existing) {
-    existing.textContent = processedCss;
+    existing.textContent = css;
   } else {
     const style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent = processedCss;
+    style.textContent = css;
     document.head.appendChild(style);
   }
 };

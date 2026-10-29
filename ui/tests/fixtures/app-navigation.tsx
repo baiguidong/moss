@@ -59,13 +59,13 @@ function Fixture() {
       themeMode="light" setThemeMode={() => {}} cssThemeId="default" setCssThemeId={() => {}}
       onToolDisplayModeChange={() => {}} onAppearancePreview={() => {}} onAppearanceCommit={() => {}} initialAppSettingId={initialId}
       onOpenAppManagement={() => setView('apps')} />
-      : <AppsPanel apps={apps} versionsByApp={{}} onLaunch={(name, options) => {
+      : <AppsPanel initialTab="installed" apps={apps} onLaunch={name => {
         const app = apps.find(item => item.name === name)!;
         const entry = getAppPrimaryEntry(app);
-        if (entry?.location === 'settings' || options?.settings) {
+        if (entry?.location === 'settings') {
           setInitialId(getAppSettingsEntries([app])[0].id); setView('settings');
         }
-      }} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />}
+      }} onRefresh={async () => {}} />}
   </main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

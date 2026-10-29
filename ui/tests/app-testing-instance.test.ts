@@ -128,10 +128,10 @@ describe('test target isolation and App browser connection', () => {
     const run = { id: 'run', phase: 'running', sessionId: 'controller' };
     expect(TEST_ALLOWED_TOOLS).toContain('Read');
     expect(TEST_ALLOWED_TOOLS).toContain('moss_test_browser__*');
-    expect(TEST_ALLOWED_TOOLS).toContain('app__moss_self_test__*');
+    expect(TEST_ALLOWED_TOOLS).toContain('self_test');
     expect(TEST_ALLOWED_TOOLS).not.toContain('Bash');
     expect(TEST_ALLOWED_TOOLS).not.toContain('*');
-    for (const name of ['Read', 'Bash', 'Write', 'ToolSearch', 'app__moss_self_test__self_test', 'mcp__moss_test_browser__browser_click']) {
+    for (const name of ['Read', 'Bash', 'Write', 'ToolSearch', 'self_test', 'mcp__moss_test_browser__browser_click']) {
       expect(validateTestToolUse(record, true, name)).toBeNull();
     }
     const browser = 'mcp__moss_test_browser__browser_click';

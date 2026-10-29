@@ -204,9 +204,6 @@ export interface RagflowCredentials {
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
 
 export interface SystemSettingsImage {
-  provider: string
-  url: string
-  apiKey: string
   model: string
 }
 
@@ -261,9 +258,6 @@ export interface UpdateSystemSettingsRequest {
       }
     }
     image?: {
-      provider?: string
-      baseUrl?: string
-      apiKey?: string
       model?: string
     }
   }

@@ -292,6 +292,10 @@
     -webkit-app-region: no-drag;
   }
 
+  .moss-window-chrome :is(button, input, select, textarea, a, label, dialog, [role='button']) {
+    -webkit-app-region: no-drag;
+  }
+
   ::selection {
     background: var(--color-selection-bg);
     color: var(--color-selection-fg);

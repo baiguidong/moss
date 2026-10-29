@@ -1,4 +1,4 @@
-import { ImageGenerateTool } from '../ImageTool/ImageTool.js'
+import { ImageGenTool } from '../ImageTool/ImageTool.js'
 import { describe, expect, test } from 'bun:test'
 import type { MossAppEvent, ToolUseContext } from '../../Tool.js'
 import { MOSS_RUNTIME_ADVANCED_SETTINGS_ENV } from '../../services/advancedSettings.js'
@@ -49,8 +49,8 @@ describe('split Moss host tools', () => {
   })
 
   test('uses action-specific schemas with required fields', () => {
-    expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero', out_path: 'hero.png' }).success).toBe(true)
-    expect(ImageGenerateTool.inputSchema.safeParse({ prompt: 'hero' }).success).toBe(false)
+    expect(ImageGenTool.inputSchema.safeParse({ prompt: 'hero', transparent_background: true }).success).toBe(true)
+    expect(ImageGenTool.inputSchema.safeParse({}).success).toBe(false)
     expect(MossBrowserOpenTool.inputSchema.safeParse({}).success).toBe(false)
     expect(
       MossBrowserOpenTool.inputSchema.safeParse({ url: 'https://example.com' }).success,
@@ -164,7 +164,7 @@ describe('split Moss host tools', () => {
   })
 
   test('keeps generated-image intents separate from screenshots', async () => {
-    expect(await ImageGenerateTool.prompt()).toContain('Never use this tool to recreate or approximate')
+    expect(await ImageGenTool.prompt()).toContain('Never replace real screenshots with generated images')
   })
 
   test.each(['moss_browser_open', 'browser_open'])('applies defaults and per-session loading overrides from %s', browserSettingName => {

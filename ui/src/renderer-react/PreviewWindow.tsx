@@ -2,19 +2,10 @@ import * as React from 'react';
 import { PreviewDrawer } from '@/components/preview-drawer';
 import { previewIpc } from '@/ipc/preview.ipc';
 import { previewFileFromPayload, syncPreviewTabs, upsertPreviewTab } from '@/lib/preview-window-state';
-import { PRESET_THEMES } from '@/theme/presets';
-import { applyCssTheme, getStoredThemeId } from '@/theme/cssTheme';
+import { applyAppearanceTheme, readCachedAppearance } from '@/theme/appearance';
 import type { WorkspacePreviewData } from '@/types';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-
-function getInitialThemeMode(): ThemeMode {
-  try {
-    const stored = localStorage.getItem('ui.themeMode');
-    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
-  } catch {}
-  return 'light';
-}
 
 function applyTheme(mode: ThemeMode) {
   const resolved = mode === 'system'
@@ -39,26 +30,26 @@ export default function PreviewWindow() {
   }, []);
 
   React.useEffect(() => {
-    let themeMode = getInitialThemeMode();
+    let live = true;
+    const initial = readCachedAppearance();
+    let themeMode = initial.themeMode;
     applyTheme(themeMode);
-
-    const cssThemeId = getStoredThemeId();
-    const preset = PRESET_THEMES.find((theme) => theme.id === cssThemeId);
-    applyCssTheme(preset?.css || null);
-
-    void window.agentDesktop.getSettings().then((settings) => {
+    applyAppearanceTheme(initial);
+    const update = settings => {
+      if (!live) return;
       themeMode = settings.appearance?.themeMode || themeMode;
       applyTheme(themeMode);
-      const currentPreset = PRESET_THEMES.find((theme) => theme.id === settings.appearance?.cssThemeId);
-      applyCssTheme(currentPreset?.css || null);
-    }).catch(() => undefined);
+      applyAppearanceTheme(settings.appearance);
+    };
+    const off = window.agentDesktop.onSettingsChanged(update);
+    void window.agentDesktop.getSettings().then(update).catch(() => undefined);
 
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const handleSystemTheme = () => {
       if (themeMode === 'system') applyTheme(themeMode);
     };
     media.addEventListener('change', handleSystemTheme);
-    return () => media.removeEventListener('change', handleSystemTheme);
+    return () => { live = false; off(); media.removeEventListener('change', handleSystemTheme); };
   }, []);
 
   React.useEffect(() => {

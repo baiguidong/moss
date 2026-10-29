@@ -254,3 +254,19 @@ test('Stop while a new session copies attachments prevents its first model reque
   expect(state.queueKey).toBe('created');
   expect(state.queue[0].files).toEqual([{ name: 'a.txt', path: '/created/a.txt' }]);
 });
+
+test('annotation queue waits while busy and dispatches its structured context once idle', async () => {
+  const annotation = { id: 'mark-1', resourceUri: 'moss-visualize://works/one', comment: '放大标题', selection: {
+    kind: 'text' as const, selector: '#heading', text: '标题', nearbyText: '', rect: { x: 0, y: 0, width: 100, height: 20 },
+  }, state: { rate: 8 } };
+  let busy = true;
+  const calls: any[][] = [];
+  const state = dispatchHarness([{ id: annotation.id, prompt: '1 处标注', intent: 'chat', visualizationAnnotation: annotation }],
+    { getSession: async () => ({ workspace: '/work', busy }) }, async (...args: any[]) => { calls.push(args); });
+  state.flush('session'); await settle();
+  expect(calls).toHaveLength(0);
+  expect(state.queuedMessagesRef.current.session[0]).toMatchObject({ status: 'queued', visualizationAnnotation: annotation });
+  busy = false; state.flush('session'); state.flush('session'); await settle();
+  expect(calls).toHaveLength(1); expect(calls[0][7]).toEqual(annotation);
+  expect(state.queuedMessagesRef.current.session).toEqual([]);
+});

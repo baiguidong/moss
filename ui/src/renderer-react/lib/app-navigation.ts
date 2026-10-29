@@ -15,6 +15,7 @@ export type AppSettingsEntry = {
   title: string;
   group: AppSettingsGroup;
   viewId: string;
+  settingId: string;
   route: string;
   order: number;
   keywords: string[];
@@ -22,8 +23,13 @@ export type AppSettingsEntry = {
   version: string;
 };
 
-function usesBuiltinMcpUi(app: StoredApp) {
+export function usesBuiltinMcpUi(app: StoredApp) {
   return app.uiBuiltin === 'mcp' || (app as StoredApp & { manifest?: { ui?: { builtin?: string } } }).manifest?.ui?.builtin === 'mcp';
+}
+
+/** Reserved route injected by older @moss/app-settings bundles. */
+export function isAppSharedSettingsRoute(route: string) {
+  return route.split('?', 1)[0] === '#/moss-settings';
 }
 
 export function appPageUnavailableReason(app: StoredApp, ...permissions: Array<string | undefined>) {
@@ -40,16 +46,14 @@ export function getAppSettingsEntries(apps: StoredApp[]): AppSettingsEntry[] {
     if (!app.hasUi || app.navigation?.location === 'none') return [];
     const appId = app.id || app.name;
     return (app.contributes?.settings || []).flatMap(setting => {
+      if (!setting.viewId) return [];
       const view = app.contributes?.views?.find(item => item.id === setting.viewId);
-      if (!view) return [];
+      if (!view || isAppSharedSettingsRoute(view.route || '')) return [];
       return [{
         id: `app:${encodeURIComponent(appId)}/${encodeURIComponent(setting.id)}`,
         appId, appName: app.name, appTitle: app.displayName || app.title || app.name, appIcon: app.icon,
-        title: setting.title, group: setting.group || 'apps', viewId: view.id,
-        // The Core-hosted MCP page keeps the service workspace at #/ and
-        // exposes its editor from the Host toolbar at a separate route. This
-        // lets the top-level Settings button open the editor instead of
-        // navigating to the same page again.
+        title: setting.title, group: setting.group || 'apps', viewId: view.id, settingId: setting.id,
+        // Built-in MCP configuration is rendered by Core in plugin details.
         route: usesBuiltinMcpUi(app) ? '#/settings' : view.route || '#/', order: setting.order || 0,
         keywords: app.keywords || [],
         unavailableReason: appPageUnavailableReason(app, setting.permission, view.permission),
@@ -60,24 +64,41 @@ export function getAppSettingsEntries(apps: StoredApp[]): AppSettingsEntry[] {
 }
 
 export function getVisibleAppSettingsEntries(apps: StoredApp[]): AppSettingsEntry[] {
-  return getAppSettingsEntries(apps.filter(app => app.enabled && app.navigation?.location === 'settings'))
+  return getAppSettingsEntries(apps.filter(app => app.enabled && app.navigation?.location === 'settings' && !usesBuiltinMcpUi(app)))
     .filter(entry => !entry.unavailableReason);
 }
 
-export function getAppToolbarSettingsEntry(app: StoredApp): AppSettingsEntry | undefined {
-  // MCP tools can be discovered after connection, so use the declared capability.
-  const hasTools = Boolean(app.contributes?.skills?.length || app.agentTools?.length || app.contributes?.tools?.length
-    || app.permissions?.some(permission => permission === 'mcp:connect' || permission === 'mcp:manage'));
-  return hasTools ? getAppSettingsEntries([app])[0] : undefined;
+/** Resolve the actual App UI separately from its Core details entry. */
+export function getAppUiEntry(app: StoredApp) {
+  if (!app.hasUi || usesBuiltinMcpUi(app) || app.navigation?.location === 'none') return null;
+  if (app.navigation?.location === 'details') {
+    const entries = getAppWorkspacePages(app);
+    const entry = entries.find(item => !item.unavailableReason) || entries[0];
+    return entry ? { route: entry.route, unavailableReason: entry.unavailableReason } : null;
+  }
+  const entry = getAppPrimaryEntry(app);
+  return entry && entry.location !== 'info' ? entry : null;
+}
+
+/** Page order inside one App follows its declaration, not global Settings ranking. */
+export function getAppWorkspacePages(app: StoredApp) {
+  const entries = getAppSettingsEntries([app]);
+  return (app.contributes?.settings || []).flatMap(setting => {
+    const entry = entries.find(item => item.settingId === setting.id);
+    return entry ? [entry] : [];
+  });
 }
 
 export function getAppPrimaryEntry(app: StoredApp) {
-  if (!app.hasUi || app.navigation?.location === 'none') return null;
+  if (!app.hasUi || usesBuiltinMcpUi(app) || app.navigation?.location === 'details') return { location: 'info' as const, route: '', unavailableReason: null };
+  if (app.navigation?.location === 'none') return null;
   if (app.navigation?.location === 'settings') {
+    const primary = app.contributes?.views?.find(view => view.id === app.navigation?.viewId);
+    if (primary && isAppSharedSettingsRoute(primary.route || '')) return { location: 'info' as const, route: '', unavailableReason: null };
     const entry = getAppSettingsEntries([app]).find(item => item.viewId === app.navigation?.viewId);
     return entry ? { location: 'settings' as const, route: entry.route, settingsId: entry.id, unavailableReason: entry.unavailableReason } : null;
   }
-  const views = app.contributes?.views || [];
+  const views = (app.contributes?.views || []).filter(view => !isAppSharedSettingsRoute(view.route || ''));
   const view = app.navigation
     ? views.find(item => item.id === app.navigation?.viewId)
     : [...views].filter(item => !item.permission || app.grants?.includes(item.permission))

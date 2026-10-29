@@ -1,3 +1,4 @@
+import { registerCreationSkills } from './creation.js'
 import { registerBatchSkill } from './batch.js'
 import { registerDebugSkill } from './debug.js'
 import { registerLoopSkill } from './loop.js'
@@ -17,6 +18,7 @@ import { registerVerifySkill } from './verify.js'
  * 3. Import and call that function here
  */
 export function initBundledSkills(): void {
+  registerCreationSkills()
   registerUpdateConfigSkill()
   registerVerifySkill()
   registerDebugSkill()

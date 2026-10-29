@@ -1,14 +1,17 @@
+import { toolSourceLabel } from '../../../../../shared/tool-source.mjs';
+import { ImageGenerationCard } from './image-generation-card';
 import { handleMarkdownLinkClick } from '@/lib/markdown-links';
 import { PresentationToolStatus, usePresentationToolResult, presentationResultLabel } from '@/components/presentation/presentation-tool-status';
 "use client";
 
 import * as React from "react";
 import {
+  ArrowUpRight,
   ChevronDown,
   Wrench,
 } from "lucide-react";
 import SyntaxHighlighter from "react-syntax-highlighter";
-import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { mossSyntaxTheme } from "@/theme/syntax";
 import { cn } from "@/lib/utils";
 import {
   DiffViewer,
@@ -17,7 +20,6 @@ import {
   getStructuredDiffStats,
   type StructuredPatchLike,
 } from "@/components/chat/diff-viewer";
-import { replDarkSyntaxTheme } from "@/components/chat/repl-syntax-theme";
 import {
   getToolExecutionState,
   shouldAutoCollapseToolCall,
@@ -93,26 +95,12 @@ function InlineSyntax({
   language: string;
   singleLine?: boolean;
 }) {
-  const [dark, setDark] = React.useState(
-    () => typeof document !== "undefined"
-      && document.documentElement.getAttribute("data-theme") === "dark",
-  );
 
-  React.useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(document.documentElement.getAttribute("data-theme") === "dark");
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <SyntaxHighlighter
       language={language}
-      style={dark ? replDarkSyntaxTheme : atomOneLight}
+      style={mossSyntaxTheme}
       PreTag="span"
       CodeTag="span"
       customStyle={{
@@ -333,15 +321,7 @@ function hasExpandedInput(toolCall: ToolUseRenderMessage, kind: ToolKind) {
   return kind !== "bash" && Boolean(toolCall.inputText);
 }
 
-export function ToolCallBlock({
-  toolCall,
-  result,
-  children,
-  focused = false,
-  expandForFocus = false,
-  defaultCollapsed = false,
-  chrome = "card",
-}: {
+type ToolCallBlockProps = {
   toolCall: ToolUseRenderMessage;
   result?: ToolResultRenderMessage;
   children?: React.ReactNode;
@@ -349,7 +329,24 @@ export function ToolCallBlock({
   expandForFocus?: boolean;
   defaultCollapsed?: boolean;
   chrome?: "card" | "row";
-}) {
+};
+
+export function ToolCallBlock(props: ToolCallBlockProps) {
+  const { sessionId } = useToolDisplaySettings();
+  // Do not stringify image bytes through generic tool text/diff processing.
+  if (props.toolCall.toolName === 'image_gen') return <ImageGenerationCard toolCall={props.toolCall} result={props.result} sessionId={sessionId} />;
+  return <StandardToolCallBlock {...props} />;
+}
+
+function StandardToolCallBlock({
+  toolCall,
+  result,
+  children,
+  focused = false,
+  expandForFocus = false,
+  defaultCollapsed = false,
+  chrome = "card",
+}: ToolCallBlockProps) {
   const { toolDisplayMode, disclosureOverrides, sessionId } = useToolDisplaySettings();
   const isRow = chrome === "row";
   const kind = getToolKind(toolCall.toolName, toolCall.input);
@@ -503,7 +500,6 @@ export function ToolCallBlock({
           !isRow && hasResponse && !collapsed && "border-b border-[color:var(--color-repl-border)]",
         )}
       >
-        {sessionId && getToolFilePath(toolCall) ? <button type="button" title="打开文件" aria-label="打开工具操作的文件" className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:text-primary" onClick={event => void handleMarkdownLinkClick(event, getToolFilePath(toolCall), window.agentDesktop, sessionId).catch(error => window.alert(String(error)))}>↗</button> : null}
         {isRow ? (
           <RowToolIcon active={executionState === "running"} />
         ) : (
@@ -529,6 +525,7 @@ export function ToolCallBlock({
             )}>
               {isRow ? toolCall.displayName || toolCall.toolName : buildHeadline(toolCall, kind)}
             </span>
+            <span className="ml-2 text-[11px] font-normal text-muted-foreground" aria-label={`来源：${toolSourceLabel(toolCall.source)}`} title={[toolCall.source?.appId, toolCall.source?.serverName, toolCall.source?.contributionId].filter(Boolean).join(' · ')}>{toolSourceLabel(toolCall.source)}</span>
             {headerSubject ? (
               <span className={cn(
                 "ml-1",
@@ -564,6 +561,17 @@ export function ToolCallBlock({
             )}>
               {durationSummary}
             </span>
+          ) : null}
+          {sessionId && getToolFilePath(toolCall) ? (
+            <button
+              type="button"
+              title="打开文件"
+              aria-label="打开工具操作的文件"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted/45 hover:text-primary group-hover/tool-call:opacity-100 focus:opacity-100"
+              onClick={event => void handleMarkdownLinkClick(event, getToolFilePath(toolCall), window.agentDesktop, sessionId).catch(error => window.alert(String(error)))}
+            >
+              <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
           ) : null}
           <CopyButton
             text={copyText}

@@ -13,7 +13,7 @@
 | App 选择、停用、权限撤销、升级、卸载和退出时的取消 | Core |
 | 通用多模态工具结果转换 | Core |
 
-App ID 为 `moss.computer-use`，版本 `0.1.0`，最低 Host API `3.2.0`，平台为 macOS 14+ arm64。模型工具名称为 `app__moss_computer_use__computer_use`，App 内 ID 保留 `computer_use`。采用 `toolScope: "session"`，在会话中选择后提供工具。
+App ID 为 `moss.computer-use`，版本 `0.1.0`，最低 Host API `3.2.0`，平台为 macOS 14+ arm64。模型工具名称和 App 内 ID 均为 `computer_use`。采用 `toolScope: "session"`，在会话中选择后提供工具。
 
 App 源码位于 [独立 Apps 仓库](../../../moss-apps/apps/computer-use/README.md)。输入保留 `{ "request": { "action": "…" } }`，12 种动作由单一 Zod 定义生成 JSON Schema。完整指引通过包内 `instructions` 文件提供，避免工具短描述的 2000 字符限制。
 

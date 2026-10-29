@@ -1317,9 +1317,18 @@ export const SDKRateLimitInfoSchema = lazySchema(() =>
     .describe('Rate limit information.'),
 )
 
+const SDKToolSourcesSchema = lazySchema(() => z.record(z.string(), z.object({
+  kind: z.enum(['app', 'mcp', 'builtin']),
+  appId: z.string().optional(),
+  appName: z.string().optional(),
+  serverName: z.string().optional(),
+  contributionId: z.string().optional(),
+})))
+
 export const SDKAssistantMessageSchema = lazySchema(() =>
   z.object({
     type: z.literal('assistant'),
+    tool_sources: SDKToolSourcesSchema().optional(),
     message: APIAssistantMessagePlaceholder(),
     parent_tool_use_id: z.string().nullable(),
     error: SDKAssistantMessageErrorSchema().optional(),
@@ -1457,6 +1466,7 @@ export const SDKSystemMessageSchema = lazySchema(() =>
 export const SDKPartialAssistantMessageSchema = lazySchema(() =>
   z.object({
     type: z.literal('stream_event'),
+    tool_sources: SDKToolSourcesSchema().optional(),
     event: RawMessageStreamEventPlaceholder(),
     parent_tool_use_id: z.string().nullable(),
     uuid: UUIDPlaceholder(),

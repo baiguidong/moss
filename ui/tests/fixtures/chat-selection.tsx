@@ -332,7 +332,7 @@ api.runAppearanceChecks = async () => {
     const [settings, setSettings] = React.useState<DesktopSettings>({
       agentMode: "local", localEnabled: true, remoteEnabled: false, model: "", maxTurns: 100,
       language: "chinese", thinkingMode: "adaptive", thinkingBudgetTokens: 16000,
-      image: { provider: "minimax", url: "", apiKey: "", model: "" },
+      image: { model: "gpt-image-2" },
       appearance: { ...DEFAULT_APPEARANCE },
     } as DesktopSettings);
     const commit = (patch: Partial<DesktopSettings["appearance"]>) => {

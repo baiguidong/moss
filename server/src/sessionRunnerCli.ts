@@ -57,10 +57,7 @@ export function readBackendSystemSettings(
     url: typeof value.url === 'string' ? value.url.trim() : '',
     apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : '',
     image: isRecord(value.image) ? {
-      provider: typeof value.image.provider === 'string' ? value.image.provider.trim() : '',
-      url: typeof value.image.url === 'string' ? value.image.url.trim() : '',
-      apiKey: typeof value.image.apiKey === 'string' ? value.image.apiKey.trim() : '',
-      model: typeof value.image.model === 'string' ? value.image.model.trim() : '',
+      model: (typeof value.image.model === 'string' ? value.image.model.trim() : '') || 'gpt-image-2',
     } : undefined,
   }
 }

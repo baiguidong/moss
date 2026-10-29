@@ -6,8 +6,6 @@ import * as React from "react";
 import { ArrowLeft, CircleAlert, Loader2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppToolbarActions } from '@/components/app-settings';
-import { useAppAuthoring } from '@/lib/app-authoring';
-import { AppCapabilityButton } from '@/components/app-capabilities';
 import type { StoredApp } from '@/types';
 
 type EmbeddedAppSession = {
@@ -22,6 +20,7 @@ export function EmbeddedAppView({
   app,
   route = '',
   sessionId, workspace, previewRef, compact = false, widget = false, miniWidget = false,
+  settingId, version, onViewState, onBack,
 }: {
   appName: string;
   app?: StoredApp;
@@ -32,29 +31,24 @@ export function EmbeddedAppView({
   compact?: boolean;
   widget?: boolean;
   miniWidget?: boolean;
+  settingId?: string;
+  version?: string;
+  onBack?: () => void;
+  onViewState?: (state: { dirty: boolean; busy: boolean }) => void;
 }) {
   const webviewRef = React.useRef<any>(null);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [reloadKey, setReloadKey] = React.useState(0);
-  const [settingsRoute, setSettingsRoute] = React.useState<string | null>(null);
-  const authoring = useAppAuthoring();
-  const [capabilityApp, setCapabilityApp] = React.useState<StoredApp | undefined>(app);
+  const viewStateCallback = React.useRef(onViewState); viewStateCallback.current = onViewState;
   React.useEffect(() => {
-    let active = true;
-    setCapabilityApp(app);
-    const refresh = () => {
-      if (session && window.agentDesktop.listApps) void window.agentDesktop.listApps().then(apps => {
-        const found = apps.find(candidate => candidate.name === appName || candidate.id === appName || candidate.id === session.app?.id);
-        if (active && found) setCapabilityApp(found);
-      }).catch(() => {});
-    };
-    refresh();
-    const off = window.agentDesktop.onAppsChanged?.(refresh);
-    return () => { active = false; off?.(); };
-  }, [app, appName, session]);
-  React.useEffect(() => { setSettingsRoute(null); }, [appName, route]);
+    if (!session || !settingId) return;
+    const handler = window.agentDesktop.ipcOn('app:embedded-state', (event: any) => {
+      if (event.embedId === session.embedId) viewStateCallback.current?.({ dirty: event.dirty === true, busy: event.busy === true });
+    });
+    return () => { window.agentDesktop.ipcOff('app:embedded-state', handler); viewStateCallback.current?.({ dirty: false, busy: false }); };
+  }, [session, settingId]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -69,7 +63,7 @@ export function EmbeddedAppView({
       return;
     }
 
-    window.agentDesktop.openEmbeddedApp({ name: appName, sessionId, workspace, previewRef }).then((result) => {
+    window.agentDesktop.openEmbeddedApp({ name: appName, sessionId, workspace, previewRef, settingId, version }).then((result) => {
       if (!result?.ok || !result.embedId || !result.url || !result.preload) {
         if (!cancelled) {
           setError(result?.error || "App 加载失败");
@@ -101,7 +95,7 @@ export function EmbeddedAppView({
         void window.agentDesktop.closeEmbeddedApp({ embedId: embedIdToClose }).catch(() => {});
       }
     };
-  }, [appName, reloadKey, sessionId, workspace, previewRef]);
+  }, [appName, reloadKey, sessionId, workspace, previewRef, settingId, version]);
 
   React.useEffect(() => {
     const reconnect = () => setReloadKey(value => value + 1);
@@ -134,13 +128,14 @@ export function EmbeddedAppView({
 
   // Keep the guest's requested URL in sync even while a previous navigation is
   // loading. Comparing getURL() would miss a quick return to the current route.
-  const activeRoute = settingsRoute ?? route;
+  const activeRoute = settingId ? '' : route;
   const viewUrl = session && activeRoute ? `${session.url.split('#', 1)[0]}${activeRoute}` : session?.url;
-  const title = session?.app?.displayName || appName;
+  const title = app?.displayName || app?.title || session?.app?.displayName || appName;
 
   return (
     <div className={`flex h-full min-h-0 flex-col ${widget ? 'bg-transparent' : 'bg-background'}`}>
       {!widget && !compact && <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 px-4">
+        {onBack && <Button variant="ghost" size="icon" aria-label="返回应用详情" className="h-8 w-8 shrink-0" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button>}
         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <MonitorPlay className="h-4 w-4" />
         </div>
@@ -150,10 +145,7 @@ export function EmbeddedAppView({
             {session?.app?.description || "App"}
           </div>
         </div>
-        {(authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} variant="outline" size="sm" onClick={() => { void window.agentDesktop.prepareAppAuthoring(appName).catch(error => setError(error.message)); }}>迭代</Button>}
-        {settingsRoute !== null && <Button variant="ghost" size="sm" onClick={() => setSettingsRoute(null)}><ArrowLeft className="h-3.5 w-3.5" />返回应用</Button>}
-        {capabilityApp && <AppCapabilityButton app={capabilityApp} discover />}
-        <AppToolbarActions app={app} onRefresh={() => setReloadKey(value => value + 1)} onOpenSettings={setSettingsRoute} />
+        <AppToolbarActions onRefresh={() => setReloadKey(value => value + 1)} />
       </div>
       }
       <div className={`relative min-h-0 flex-1 ${widget ? 'bg-transparent' : 'bg-background'}`}>

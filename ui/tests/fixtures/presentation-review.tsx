@@ -15,6 +15,9 @@ import { PresentationToolbar, PresentationContent } from '@/components/presentat
 import { AssistantOutputFileCard } from '@/components/chat/assistant-output-file-card';
 import { usePresentation } from '@/lib/use-presentation';
 import { usePreviewDocument } from '@/lib/use-preview-document';
+import { WindowChrome } from '@/components/window-chrome';
+import { SessionTabBar } from '@/components/chat-area';
+import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import '@/globals.css';
 
 const api = window as any, root = createRoot(document.getElementById('root')!);
@@ -246,6 +249,101 @@ const type = (content: string) => {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, content);
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
 };
+function WindowToolbarExample({ desktop = true, isMacOS = true, rightWidth = 440 }: { desktop?: boolean; isMacOS?: boolean; rightWidth?: number }) {
+  const [entry, setEntry] = React.useState<NavigationEntry>({ view: 'chat', sessionId: 'one' });
+  const [leftCollapsed, setLeftCollapsed] = React.useState(false);
+  const [rightCollapsed, setRightCollapsed] = React.useState(false);
+  const [current, setCurrent] = React.useState(snapshot);
+  const [tasksActive, setTasksActive] = React.useState(false);
+  const [toolMode, setToolMode] = React.useState<'expanded' | 'collapsed' | 'merged'>('expanded');
+  const history = useNavigationHistory(entry, async (next, signal) => {
+    if (api.historyDelay) await delay(api.historyDelay);
+    if (signal.aborted || api.historyFail) return false;
+    setEntry(next); return true;
+  });
+  const sessionActive = entry.view === 'chat';
+  const action = (event: any) => setCurrent((value: any) => ({ ...value, state: { ...value.state,
+    ...(event.type === 'select' ? { activeId: event.id } : {}), ...(event.type === 'follow' ? { autoFollow: event.value } : {}) } }));
+  return <div className="flex h-screen flex-col bg-background">
+    <WindowChrome desktop={desktop} isMacOS={isMacOS} sidebarWidth={leftCollapsed ? 68 : 224} rightWidth={rightWidth}
+      sessionActive={sessionActive} leftCollapsed={leftCollapsed} rightCollapsed={rightCollapsed} onToggleLeft={() => setLeftCollapsed(value => !value)}
+      canGoBack={history.canGoBack} canGoForward={history.canGoForward} onBack={() => void history.back()} onForward={() => void history.forward()}
+      notifications={<button aria-label="通知" className="h-7 w-7">铃</button>}>
+      <div className="flex min-h-0 flex-1">
+        <aside style={{ width: leftCollapsed ? 68 : 224 }} className="shrink-0 bg-sidebar p-2">
+          <div className="mb-5 p-2">Moss</div>
+          {(['common', 'apps', 'projects', 'settings'] as const).map((view, i) => <button key={view} className="block p-2" aria-label={`访问 ${view}`} onClick={() => setEntry({ view })}>{['插件', 'Apps', '项目', '设置'][i]}</button>)}
+          <button className="block p-2" aria-label="访问第二个会话" onClick={() => setEntry({ view: 'chat', sessionId: 'two' })}>第二个会话</button>
+        </aside>
+        <div className="hidden w-3 shrink-0 lg:block" />
+        <main className="min-w-0 flex-1" data-test-page={`${entry.view}:${entry.sessionId || ''}`}>
+          {sessionActive && <SessionTabBar title={`会话 ${entry.sessionId} · 检查顶部导航布局`} leftCollapsed={leftCollapsed} rightCollapsed={rightCollapsed}
+            leftPanelName="会话侧栏" rightPanelName="工作区" onToggleLeft={() => setLeftCollapsed(value => !value)} onToggleRight={() => setRightCollapsed(value => !value)}
+            toolDisplayMode={toolMode} sessionToolDisplayMode={toolMode} globalToolDisplayMode="expanded" onToolDisplayModeChange={mode => setToolMode(mode || 'expanded')}
+            toolDisplaySettingBusy={false} outline={[{ messageId: 'q1', question: '检查顶部导航', answerPreview: '检查成功' }]} onJumpToOutlineItem={noop} messages={[]} childSessions={[]}
+            onOpenWorkers={noop} onSelectWorker={noop} terminalActions={<button className="h-8 w-8" aria-label="终端菜单">终</button>} sessionInfo={<button className="h-8 w-8" aria-label="查看会话信息">ⓘ</button>} />}
+          <div className="p-6">{sessionActive ? '会话正文' : entry.view}</div>
+        </main>
+        {sessionActive && <><div className="hidden w-3 shrink-0 lg:block" /><aside data-test-workspace className="shrink-0 border-l" style={{ width: rightCollapsed ? 0 : rightWidth }}>
+          {!rightCollapsed && <><PresentationToolbar snapshot={current} action={action} sessionTasks={[{ id: 'task', subject: '检查导航', description: '', status: 'pending', blockedBy: [] }]}
+            tasksActive={tasksActive} onSelectTasks={() => setTasksActive(true)} onSelectPresentation={() => setTasksActive(false)} />
+            <div className="p-4" data-test-view={tasksActive ? 'tasks' : current.state.activeId}>工作区内容</div></>}
+        </aside></>}
+      </div>
+    </WindowChrome>
+  </div>;
+}
+
+async function reviewWindowToolbars() {
+  const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+  const click = async (label: string) => { assert(button(label), `Missing ${label}`); button(label).click(); await delay(); };
+  for (const isMacOS of [true, false]) for (const rightWidth of [320, 440, 560]) {
+    render(<WindowToolbarExample key={`${isMacOS}:${rightWidth}`} isMacOS={isMacOS} rightWidth={rightWidth} />); await delay();
+    const chrome = document.querySelector<HTMLElement>('.moss-window-chrome')!;
+    const navigation = chrome.querySelector<HTMLElement>('[aria-label="内容导航"]')!;
+    assert(navigation && chrome.querySelector('[aria-label^="会话操作"]'), 'Both toolbars must move into the native title bar');
+    assert(document.querySelectorAll('[aria-label="内容导航"]').length === 1 && document.querySelectorAll('[aria-label^="会话操作"]').length === 1, 'Duplicate toolbar remains');
+    assert(chrome.getBoundingClientRect().height === 36, 'Toolbar added an extra header row');
+    assert(getComputedStyle(chrome).getPropertyValue('-webkit-app-region') === 'drag', 'Title bar no longer drags');
+    assert(getComputedStyle(button('后退')).getPropertyValue('-webkit-app-region') === 'no-drag', 'Navigation button consumes window dragging');
+    assert(navigation.getBoundingClientRect().left === document.querySelector('[data-test-workspace]')!.getBoundingClientRect().left + 1, 'Workspace toolbar drifted from its panel');
+    const pin = button('固定当前内容').getBoundingClientRect();
+    assert(pin.right <= navigation.getBoundingClientRect().right + 1, `Workspace controls overflow at ${rightWidth}, Mac=${isMacOS}`);
+    assert(pin.right <= button('通知').getBoundingClientRect().left, 'Workspace pin overlaps notifications');
+    await clickView('会话任务'); assert(document.querySelector('[data-test-view="tasks"]'), 'Task switch broke after moving navigation');
+    await clickView('结果'); assert(document.querySelector('[data-test-view="results"]'), 'Result switch broke after moving navigation');
+    await click('查看会话大纲'); assert(document.querySelector('input[placeholder="搜索对话轮次..."]'), 'Outline does not open below title bar');
+    await click('查看会话大纲');
+    await openMenu('工具展示：展开');
+    ([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent === '折叠'))!.click(); await delay();
+    assert(button('工具展示：折叠'), 'Tool display setting no longer works');
+    await click('收起工作区'); assert(!document.querySelector('[aria-label="内容导航"]'), 'Collapsed workspace leaves its toolbar visible');
+    await click('展开工作区'); assert(document.querySelector('.moss-window-chrome [aria-label="内容导航"]'), 'Expanded workspace lost its top toolbar');
+    await click('收起会话侧栏'); assert(button('展开会话侧栏')?.querySelector('.lucide-panel-left-open'), 'Left collapse icon did not change');
+    await click('展开会话侧栏');
+  }
+  render(<WindowToolbarExample key="history" />); await delay();
+  assert(button('后退').disabled && button('前进').disabled, 'Empty history should disable both arrows');
+  await click('访问 common'); await click('访问 apps'); await click('后退');
+  assert(document.querySelector('[data-test-page="common:"]') && !button('前进').disabled, 'Back did not restore plugin page');
+  await click('前进'); assert(document.querySelector('[data-test-page="apps:"]'), 'Forward did not restore Apps');
+  await click('后退'); await click('访问 projects'); assert(button('前进').disabled, 'New navigation did not discard the forward branch');
+  await click('后退'); await click('后退'); assert(document.querySelector('[data-test-page="chat:one"]'), 'History lost the session identity');
+  await click('访问第二个会话'); await click('后退'); assert(document.querySelector('[data-test-page="chat:one"]'), 'Back between sessions failed');
+  await click('前进'); api.historyFail = true; await click('后退'); api.historyFail = false;
+  assert(document.querySelector('[data-test-page="chat:two"]') && !button('后退').disabled, 'Failed navigation changed history or left it busy');
+  api.historyDelay = 180; await click('后退'); await click('访问 settings'); await delay(200); api.historyDelay = 0;
+  assert(document.querySelector('[data-test-page="settings:"]'), 'Late session response overwrote a newer navigation');
+  render(<WindowToolbarExample key="web" desktop={false} />); await delay();
+  assert(!document.querySelector('.moss-window-chrome'), 'Web host gained a native title bar');
+  assert(document.querySelector('main [aria-label^="会话操作"]') && document.querySelector('[data-test-workspace] [aria-label="内容导航"]'), 'Web lost its inline toolbars');
+}
+api.showWindowToolbarExample = async (isMacOS = true, dark = false) => {
+  document.documentElement.classList.toggle('dark', dark);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  render(<WindowToolbarExample key={`screenshot:${isMacOS}:${dark}`} isMacOS={isMacOS} />); await delay(200);
+};
+
 api.runPresentationReview = async () => {
   const passed: string[] = [];
   render(<Example />);
@@ -311,6 +409,8 @@ api.runPresentationReview = async () => {
   passed.push('single filename header; file dropdown switches and closes; responsive navigation keeps all views reachable at 280–560px');
   await reviewOpenFromTasks();
   passed.push('image eye button exits tasks, including reopening the same image with follow off; refreshes and background events preserve tasks');
+  await reviewWindowToolbars();
+  passed.push('title bar toolbars at 320/440/560px on Mac/Windows; drag regions, menus, collapse, history branches, failed/aborted navigation and web fallback');
   return passed;
 };
 api.showPresentationExample = async (mode: string) => { render(<Example key={mode} initialView={mode === 'workspace' ? 'workspace' : 'results'} mode={mode === 'expanded' ? 'expanded' : mode === 'diff' ? 'diff' : 'collapsed'} />); await delay(); await clickView(mode === 'workspace' ? '工作区' : '结果'); await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Example not ready'); await delay(200); };

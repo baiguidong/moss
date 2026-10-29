@@ -1588,9 +1588,9 @@ export const fetchToolsForClient = memoizeWithLRU(
           const fullyQualifiedName = buildMcpToolName(client.name, tool.name, appId)
           return {
             ...MCPTool,
-            // In skip-prefix mode, use the original name for model invocation so MCP tools
-            // can override builtins by name. mcpInfo is used for permission checking.
-            name: skipPrefix ? tool.name : fullyQualifiedName,
+            // Only standalone SDK tools may explicitly override builtins by name.
+            // App tools always follow App naming; mcpInfo retains upstream identity.
+            name: skipPrefix && !appId ? tool.name : fullyQualifiedName,
             mcpInfo: { serverName: client.name, toolName: tool.name, ...(appId && { appId }) },
             isMcp: true,
             // Collapse whitespace: _meta is open to external MCP servers, and

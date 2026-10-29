@@ -1,159 +1,199 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getEmptyToolPermissionContext, type ToolUseContext } from '../../Tool.js'
+import sharp from 'sharp'
+import { getEmptyToolPermissionContext, type Tool, type ToolUseContext } from '../../Tool.js'
 import { asSessionId } from '../../types/ids.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
 import { runWithSessionIdContext, type SessionRuntime } from '../../utils/sessionIdContext.js'
-import { ImageEditTool, ImageGenerateTool, resolveWorkspaceImagePath } from './ImageTool.js'
+import { runWithSessionApiOverrides } from '../../utils/sessionApiOverrides.js'
+import { normalizeToolImagesForModel } from '../../services/api/toolImageCompatibility.js'
+import { imageEndpoint, resolveImageConnection } from '../../services/imageGeneration.js'
+import { ImageGenTool, resolveWorkspaceImagePath } from './ImageTool.js'
+import { recentImages } from './imageReferences.js'
 
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ze0AAAAASUVORK5CYII=', 'base64')
-let root: string
+let root: string, png: Buffer
 let server: ReturnType<typeof Bun.serve>
-const requests: Array<{ path: string; token: string | null; body?: unknown }> = []
+const requests: Array<{ path: string; token: string | null; body: any; multipart: boolean }> = []
 beforeAll(async () => {
-  root = await realpath(await mkdtemp(join(tmpdir(), 'moss-native-image-')))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'moss-codex-image-')))
+  png = await sharp({ create: { width: 64, height: 48, channels: 4, background: { r: 30, g: 100, b: 220, alpha: 0.5 } } }).png().toBuffer()
   server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
     const path = new URL(req.url).pathname
-    const entry = { path, token: req.headers.get('authorization'), body: undefined as unknown }
+    const entry = { path, token: req.headers.get('authorization'), body: null as any, multipart: req.headers.get('content-type')?.startsWith('multipart/') || false }
     requests.push(entry)
-    if (path === '/download') return new Response(png)
-    if (path === '/v1/images/edits') {
+    if (path === '/download') return new Response(new Uint8Array(png))
+    if (entry.multipart) {
       const form = await req.formData()
-      entry.body = { prompt: form.get('prompt'), model: form.get('model'), size: form.get('size'), image: Buffer.from(await (form.get('image') as File).arrayBuffer()) }
-      return Response.json({ data: [{ url: `${server.url}download` }] })
-    }
-    entry.body = await req.json()
-    if (path === '/error/images/generations') return Response.json({ error: { message: 'model rejected request' } }, { status: 400 })
-    if (path === '/invalid/images/generations') return Response.json({ data: [{ b64_json: Buffer.from('not an image').toString('base64') }] })
-    if (path === '/slow/images/generations') await new Promise(resolve => setTimeout(resolve, 150))
-    return Response.json(path === '/minimax' ? { data: { image_base64: [png.toString('base64')] } } : { data: [{ b64_json: png.toString('base64') }] })
+      entry.body = { prompt: form.get('prompt'), model: form.get('model'), background: form.get('background'), images: await Promise.all(form.getAll('image[]').map(async file => Buffer.from(await (file as File).arrayBuffer()))) }
+    } else entry.body = await req.json()
+    const prompt = entry.body.prompt
+    if (prompt === 'multipart' && !entry.multipart) return Response.json({ error: { message: 'multipart/form-data required' } }, { status: 415 })
+    if (prompt === 'failure') return Response.json({ error: { message: 'provider unavailable' } }, { status: 503 })
+    if (prompt === 'auth') return Response.json({ error: { message: 'invalid key ' + req.headers.get('authorization') } }, { status: 401 })
+    if (prompt === 'invalid') return Response.json({ data: [{ b64_json: Buffer.from('not an image').toString('base64') }] })
+    if (prompt === 'empty') return Response.json({ data: [] })
+    if (prompt === 'slow') await new Promise(resolve => setTimeout(resolve, 150))
+    return Response.json({ background: entry.body.background, data: [prompt === 'url' ? { url: `${server.url}download` } : { b64_json: png.toString('base64'), generation_id: 'generation-test' }] }, { headers: { 'x-request-id': 'request-test' } })
   } })
 })
-afterAll(async () => {
-  server.stop(true)
-  await rm(root, { recursive: true, force: true })
-})
+afterAll(async () => { server.stop(true); await rm(root, { recursive: true, force: true }) })
 
-function context(controller = new AbortController()): ToolUseContext {
-  return {
-    abortController: controller,
-    emitAppEvent: () => { throw new Error('Images must not use the desktop bridge') },
+function context(id: string, messages: unknown[] = [], controller = new AbortController()): ToolUseContext {
+  return { toolUseId: id, messages, abortController: controller,
+    getAppState: () => ({ toolPermissionContext: getEmptyToolPermissionContext() }),
+    emitAppEvent: () => { throw new Error('Images must not depend on desktop-only bridges') },
   } as unknown as ToolUseContext
 }
 async function session<T>(id: string, fn: () => T, options: Partial<SessionRuntime> = {}): Promise<Awaited<T>> {
-  const cwd = join(root, id)
-  await mkdir(cwd, { recursive: true })
+  const cwd = join(root, id); await mkdir(cwd, { recursive: true })
   return await runWithCwdOverride(cwd, () => runWithSessionIdContext(asSessionId(id), null, fn, undefined, undefined, {
-    executionEnvironment: 'server',
-    image: { provider: 'openai', url: `${server.url}v1`, model: id, apiKey: `${id}-key` },
-    ...options,
+    executionEnvironment: 'server', modelConnection: { url: `${server.url}gateway/v1`, apiKey: `${id}-main-key` },
+    image: { model: '' }, ...options,
   }))
 }
+function invoke(input: Record<string, unknown>, ctx: ToolUseContext) {
+  return ImageGenTool.call(input, ctx, undefined as never, undefined as never)
+}
 
-describe('native image tools', () => {
-  test('the tool catalog can evaluate image availability without an active session', () => {
-    const runtime: SessionRuntime = { executionEnvironment: 'desktop', image: { provider: 'openai', url: '', apiKey: 'catalog-key', model: 'catalog-model' } }
-    expect(ImageGenerateTool.isEnabled(runtime)).toBe(true)
-    expect(ImageEditTool.isEnabled(runtime)).toBe(true)
-    expect(ImageGenerateTool.isEnabled()).toBe(false)
+const imageBlock = (data: string) => ({ type: 'image', source: { type: 'base64', data, media_type: 'image/png' } })
+
+describe('Codex image_gen port', () => {
+  test('default generation uses main-session credentials, auto size/quality and returns a real image block', async () => {
+    await session('generate', async () => {
+      const result = await invoke({ prompt: 'cat' }, context('first'))
+      expect(result.data.ok).toBe(true)
+      expect(result.data.filePath).toBe(join(root, 'generate/generated_images/generate/first.png'))
+      expect((await sharp(await readFile(result.data.filePath!)).metadata()).width).toBe(64)
+      expect(requests.at(-1)).toMatchObject({ path: '/gateway/v1/images/generations', token: 'Bearer generate-main-key', body: { model: 'gpt-image-2', prompt: 'cat', size: 'auto', quality: 'auto', background: 'opaque' } })
+      expect(requests.at(-1)?.body).not.toHaveProperty('images')
+      const mapped = ImageGenTool.mapToolResultToToolResultBlockParam(result.data, 'first')
+      expect((mapped.content as any[])[0].type).toBe('image')
+      expect((mapped.content as any[])[1].text).not.toContain(result.data.image!.base64)
+      const wire = normalizeToolImagesForModel([{ role: 'user', content: [mapped] }], 'gpt-5.5')
+      expect((wire[0]!.content as any[]).at(-1).type).toBe('image')
+      expect(JSON.stringify(result)).not.toContain('main-key')
+    })
   })
 
-  test('concurrent desktop/server sessions call their own model and write their own workspace without a bridge', async () => {
-    const results = await Promise.all([
-      session('desktop', () => ImageGenerateTool.call({ prompt: 'desktop', out_path: 'images/result.png', aspect_ratio: '16:9' }, context()), { executionEnvironment: 'desktop' }),
-      session('server', () => ImageGenerateTool.call({ prompt: 'server', out_path: 'images/result.png' }, context())),
-    ])
-    for (const [i, id] of ['desktop', 'server'].entries()) {
-      expect(results[i]!.data).toEqual({ ok: true, fileKind: 'image', filePath: join(root, id, 'images/result.png'), filePaths: [join(root, id, 'images/result.png')], mediaType: 'image/png' })
-      expect(await readFile(results[i]!.data.filePath!)).toEqual(png)
-      expect(requests.find(req => req.token === `Bearer ${id}-key`)?.body).toMatchObject({ model: id, prompt: id })
-      expect(JSON.stringify(results[i])).not.toContain(`${id}-key`)
-    }
-  })
-
-  test('editing uploads the source from this workspace and downloads the result without forwarding credentials', async () => {
+  test('a restored history image can be edited without a user-supplied output path', async () => {
     await session('edit', async () => {
-      await writeFile(join(root, 'edit/source.png'), png)
-      const result = await ImageEditTool.call({ prompt: 'make blue', source_path: 'source.png', out_path: 'edited.png', aspect_ratio: '9:16' }, context())
+      const first = await invoke({ prompt: 'cat' }, context('first'))
+      const history = JSON.parse(JSON.stringify([{ type: 'user', message: { content: [ImageGenTool.mapToolResultToToolResultBlockParam(first.data, 'first')] } }]))
+      const result = await invoke({ prompt: 'blue', num_last_images_to_include: 1, transparent_background: true }, context('second', history))
       expect(result.data.ok).toBe(true)
-      expect(await readFile(result.data.filePath!)).toEqual(png)
-      expect(requests.find(req => req.path === '/v1/images/edits')?.body).toEqual({ prompt: 'make blue', model: 'edit', size: '1024x1536', image: png })
-      expect(requests.find(req => req.path === '/download')?.token).toBeNull()
+      expect(result.data.transparentBackground).toBe(true)
+      expect(requests.at(-1)?.path).toBe('/gateway/v1/images/edits')
+      expect(requests.at(-1)?.body.images).toEqual([{ image_url: `data:image/png;base64,${first.data.image!.base64}` }])
+      expect(requests.at(-1)?.body.background).toBe('transparent')
+      expect(result.data.filePath).not.toBe(first.data.filePath)
+      expect(await readFile(first.data.filePath!)).toBeDefined()
     })
   })
 
-  test('MiniMax only exposes generation; unconfigured sessions expose neither operation', async () => {
-    await session('minimax', async () => {
-      expect(ImageGenerateTool.isEnabled()).toBe(true)
-      expect(ImageEditTool.isEnabled()).toBe(false)
-      const result = await ImageGenerateTool.call({ prompt: 'cat', out_path: 'cat.png' }, context())
+  test('supports five local references, preserves order and accepts permitted paths outside workspace', async () => {
+    const paths = await Promise.all(Array.from({ length: 5 }, async (_, i) => { const path = join(root, `ref-${i}.png`); await writeFile(path, png); return path }))
+    await session('refs', async () => {
+      const result = await invoke({ prompt: 'combine', referenced_image_paths: paths }, context('five'))
       expect(result.data.ok).toBe(true)
-    }, { image: { provider: 'minimax', url: `${server.url}minimax`, apiKey: 'minimax-key', model: 'minimax' } })
-    await session('unconfigured', () => {
-      expect(ImageGenerateTool.isEnabled()).toBe(false)
-      expect(ImageEditTool.isEnabled()).toBe(false)
-    }, { image: undefined })
+      expect(requests.at(-1)?.body.images).toHaveLength(5)
+      expect(requests.at(-1)?.body.images[4].image_url).toBe(`data:image/png;base64,${png.toString('base64')}`)
+    })
   })
 
-  test('rejects traversal, symlink escapes and overwrites before contacting the model', async () => {
-    await session('boundaries', async () => {
-      await symlink(root, join(root, 'boundaries/escape'))
-      await writeFile(join(root, 'boundaries/existing.png'), png)
+  test('recent image selection includes uploaded and tool images in chronological order, not text paths', () => {
+    const history = [{ type: 'user', message: { content: [imageBlock('one'), { type: 'text', text: '/fake.png' }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', content: [imageBlock('two'), imageBlock('three')] }] } }]
+    expect(recentImages(history, 2)).toEqual(['two', 'three'].map(data => ({ image_url: `data:image/png;base64,${data}` })))
+    expect(() => recentImages(history, 4)).toThrow('只有 3 张')
+  })
+
+  test('invalid reference combinations and legacy arguments fail before a network call', async () => {
+    await session('validation', async () => {
       const before = requests.length
-      for (const out_path of ['../outside.png', 'escape/outside.png', 'existing.png']) {
-        const result = await ImageGenerateTool.call({ prompt: 'cat', out_path }, context())
-        expect(result.data.ok).toBe(false)
-      }
-      const result = await ImageEditTool.call({ prompt: 'cat', source_path: '../desktop/images/result.png', out_path: 'new.png' }, context())
-      expect(result.data.ok).toBe(false)
+      for (const args of [
+        { referenced_image_paths: [join(root, 'ref-0.png')], num_last_images_to_include: 1 },
+        { referenced_image_paths: Array(6).fill(join(root, 'ref-0.png')) },
+        { referenced_image_paths: ['relative.png'] }, { num_last_images_to_include: 0 },
+        { num_last_images_to_include: 1 }, { out_path: 'result.png' },
+      ]) expect((await invoke({ prompt: 'cat', ...args } as any, context('invalid'))).data.ok).toBe(false)
       expect(requests.length).toBe(before)
-      expect(await readFile(join(root, 'boundaries/existing.png'))).toEqual(png)
     })
   })
 
-  test('provider errors and invalid output leave no result files', async () => {
-    for (const endpoint of ['error', 'invalid']) {
-      await session(endpoint, async () => {
-        const result = await ImageGenerateTool.call({ prompt: 'cat', out_path: 'result.png' }, context())
+  test('concurrent sessions and scoped API overrides cannot use another session or old image credentials', async () => {
+    await Promise.all(['alpha', 'beta'].map(id => session(id, () => runWithSessionApiOverrides({ mossBaseUrl: `${server.url}${id}`, mossAuthToken: `${id}-override` }, async () => {
+      const result = await invoke({ prompt: id }, context(id))
+      expect(result.data.ok).toBe(true)
+      expect(resolveImageConnection().model).toBe(`${id}-image-model`)
+      expect(requests.find(item => item.body?.prompt === id)).toMatchObject({ path: `/${id}/v1/images/generations`, token: `Bearer ${id}-override`, body: { model: `${id}-image-model` } })
+    }), { image: { model: `${id}-image-model` } })))
+  })
+
+  test('explicit multipart rejection adapts once, but provider errors are never retried', async () => {
+    await session('transport', async () => {
+      const source = join(root, 'ref-0.png')
+      const result = await invoke({ prompt: 'multipart', referenced_image_paths: [source, source] }, context('multipart'))
+      expect(result.data.ok).toBe(true)
+      expect(requests.at(-1)).toMatchObject({ multipart: true, body: { images: [png, png], model: 'gpt-image-2' } })
+      const before = requests.length
+      const failure = await invoke({ prompt: 'failure', referenced_image_paths: [source] }, context('failure'))
+      expect(failure.data.error).toContain('503')
+      expect(requests.length).toBe(before + 1)
+    })
+  })
+
+  test('supports URL responses without forwarding the main key to downloads', async () => {
+    await session('download', async () => {
+      expect((await invoke({ prompt: 'url' }, context('url'))).data.ok).toBe(true)
+      expect(requests.at(-1)).toMatchObject({ path: '/download', token: null })
+    })
+  })
+
+  test('invalid output, provider errors and cancellation leave no artifacts', async () => {
+    await session('errors', async () => {
+      for (const prompt of ['invalid', 'empty', 'failure', 'auth']) {
+        const result = await invoke({ prompt }, context(prompt))
         expect(result.data.ok).toBe(false)
-        await expect(lstat(join(root, endpoint, 'result.png'))).rejects.toThrow()
-      }, { image: { provider: 'openai', url: `${server.url}${endpoint}`, apiKey: 'test', model: 'test' } })
-    }
-  })
-
-  test('canonical result paths can be reused when the workspace itself is a symlink', async () => {
-    await session('canonical', async () => {
-      const alias = join(root, 'workspace-alias')
-      await symlink(join(root, 'canonical'), alias)
-      await runWithCwdOverride(alias, async () => {
-        const output = await resolveWorkspaceImagePath('image.png')
-        expect(output).toBe(join(root, 'canonical/image.png'))
-        expect(await resolveWorkspaceImagePath(output)).toBe(output)
-      })
-    })
-  })
-
-  test('uses filesystem read/write permission rules for both image paths', async () => {
-    await session('permissions', async () => {
-      for (const rule of ['Read(**)', 'Edit(**)']) {
-        const permissions = { ...getEmptyToolPermissionContext(), alwaysDenyRules: { session: [rule] } }
-        const ctx = { getAppState: () => ({ toolPermissionContext: permissions }) } as ToolUseContext
-        const result = await ImageEditTool.checkPermissions({ prompt: 'cat', source_path: 'source.png', out_path: 'output.png' }, ctx)
-        expect(result.behavior).toBe('deny')
-        expect((await ImageEditTool.validateInput({ prompt: 'cat', source_path: 'source.png', out_path: 'output.png' }, ctx)).result).toBe(false)
+        expect(JSON.stringify(result)).not.toContain('errors-main-key')
+        await expect(readFile(join(root, 'errors/generated_images/errors', `${prompt}.png`))).rejects.toThrow()
       }
+      const controller = new AbortController()
+      const pending = invoke({ prompt: 'slow' }, context('cancel', [], controller))
+      const timer = setTimeout(() => controller.abort(), 25)
+      try { await expect(pending).rejects.toThrow() } finally { clearTimeout(timer) }
+      await expect(readFile(join(root, 'errors/generated_images/errors/cancel.png'))).rejects.toThrow()
     })
   })
 
-  test('cancellation stops the request and does not write an output', async () => {
-    await session('cancel', async () => {
-      const controller = new AbortController()
-      const pending = ImageGenerateTool.call({ prompt: 'cat', out_path: 'result.png' }, context(controller))
-      const timer = setTimeout(() => controller.abort(), 30)
-      try { await expect(pending).rejects.toThrow() } finally { clearTimeout(timer) }
-      await expect(lstat(join(root, 'cancel/result.png'))).rejects.toThrow()
-    }, { image: { provider: 'openai', url: `${server.url}slow`, apiKey: 'test', model: 'test' } })
+  test('denied paths and output symlinks fail before billing; existing artifacts are preserved', async () => {
+    await session('boundaries', async () => {
+      const ctx = context('denied')
+      ctx.getAppState = () => ({ toolPermissionContext: { ...getEmptyToolPermissionContext(), alwaysDenyRules: { session: ['Read(**)'] } } }) as any
+      const source = join(root, 'boundaries/source.png'); await writeFile(source, png)
+      const input = { prompt: 'cat', referenced_image_paths: [source] }
+      expect((await ImageGenTool.checkPermissions(input, ctx)).behavior).toBe('deny')
+      const before = requests.length
+      expect((await invoke(input, ctx)).data.ok).toBe(false)
+      await mkdir(join(root, 'outside'), { recursive: true })
+      await symlink(join(root, 'outside'), join(root, 'boundaries/generated_images'))
+      expect((await invoke({ prompt: 'cat' }, context('escape'))).data.ok).toBe(false)
+      expect(requests.length).toBe(before)
+    })
+    await session('overwrite', async () => {
+      const ctx = context('same'), first = await invoke({ prompt: 'cat' }, ctx)
+      const original = await readFile(first.data.filePath!), before = requests.length
+      expect((await invoke({ prompt: 'cat' }, ctx)).data.ok).toBe(false)
+      expect(requests.length).toBe(before)
+      expect(await readFile(first.data.filePath!)).toEqual(original)
+    })
+  })
+
+  test('catalog uses main connection with default model and endpoints retain gateway prefixes', () => {
+    expect((ImageGenTool as Tool).isEnabled({ executionEnvironment: 'desktop', modelConnection: { url: 'https://gateway.test', apiKey: 'key' } })).toBe(true)
+    for (const base of ['https://gateway.test/prefix', 'https://gateway.test/prefix/v1', 'https://gateway.test/prefix/v1/messages'])
+      expect(imageEndpoint(base, true)).toBe('https://gateway.test/prefix/v1/images/edits')
+    expect(imageEndpoint('https://chatgpt.com/backend-api/codex', false)).toBe('https://chatgpt.com/backend-api/codex/images/generations')
   })
 })

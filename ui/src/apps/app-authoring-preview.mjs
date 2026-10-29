@@ -23,8 +23,12 @@ export function createAuthoringPreview({ root, getRuntime, nodeExecutable, openW
       await fs.rm(previewRoot, { recursive: true, force: true })
     }
     try {
-      runtime = await createAppRuntime({ mossHome: previewRoot, appsDir: path.join(previewRoot, 'apps'), nodeExecutable,
-        hostProtocols: protocols })
+      runtime = await createAppRuntime({ mossHome: previewRoot, appsDir: path.join(previewRoot, 'apps'), nodeExecutable })
+      // Runtime-owned protocols must keep their new preview identity. Register
+      // only additional protocols after the runtime has installed its own.
+      for (const protocol of protocols) {
+        if (!runtime.hostCapabilities.protocols.has(protocol.protocol)) runtime.registerHostProtocol(protocol)
+      }
       // Built-in handlers capture the new runtime's identity and state. Copy
       // only additional Desktop handlers, never handlers from the parent runtime.
       for (const [protocol, methods] of host.handlers) {

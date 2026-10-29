@@ -214,7 +214,7 @@ export class AppMcpHost {
     const provider = { ...context,
       installationIncarnationId: runtime.installations.get(context.appId)?.incarnationId,
       instanceIncarnationId: runtime.instances.get(context.instanceId)?.incarnationId,
-      toolScope: getAppToolScope(pkg.manifest.toolScope), toolSelection: pkg.manifest.toolSelection || 'app', mcpIdleTimeoutMs: pkg.manifest.mcpApp?.runtime?.state === 'stateless' ? pkg.manifest.mcpApp.runtime.idleTimeoutMs || 3_600_000 : 0, signal: undefined, document, file, secrets }
+      toolScope: getAppToolScope(pkg.manifest.toolScope), toolLoading: pkg.manifest.toolLoading || 'on-demand', toolSelection: pkg.manifest.toolSelection || 'app', mcpIdleTimeoutMs: pkg.manifest.mcpApp?.runtime?.state === 'stateless' ? pkg.manifest.mcpApp.runtime.idleTimeoutMs || 3_600_000 : 0, signal: undefined, document, file, secrets }
     this.providers.set(key(context), provider)
     if (pkg.manifest.mcpApp && this.active(provider)) {
       const definition = await readMcpAppConfig(pkg.root, pkg.manifest)
@@ -313,7 +313,7 @@ export class AppMcpHost {
         if (!pkg?.manifest.host?.protocols?.includes(MCP_PROTOCOL) || !pkg.manifest.permissions?.includes('mcp:manage') || !pkg.manifest.permissions?.includes('mcp:connect')) continue
         for (const instance of runtime.instances.list(installation.appId)) {
           if (!instance.enabled) continue
-          const context = { appId: installation.appId, instanceId: instance.id, owner, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope),
+          const context = { appId: installation.appId, instanceId: instance.id, owner, version: installation.activeVersion, toolScope: getAppToolScope(pkg.manifest.toolScope), toolLoading: pkg.manifest.toolLoading || 'on-demand',
             dataDir: runtime.appDataPath(runtime.dataDir, installation.appId, 'instances', instance.id) }
           current.add(key(context))
           const provider = await this.load(context)
@@ -338,7 +338,7 @@ export class AppMcpHost {
     await this.refresh(null, { notify: false })
   }
   serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
-  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) } }
+  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolLoading: this.getRuntime()?.getToolLoading?.(provider.appId, provider.toolLoading) ?? provider.toolLoading, toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) } }
   enabledServers(appIds, workspace, appServiceIds = []) {
     const result = {}
     for (const provider of this.providers.values()) {
@@ -603,6 +603,19 @@ export class AppMcpHost {
     }
     try { await pending } finally { if (this.inspections.get(inspectionKey) === pending) this.inspections.delete(inspectionKey) }
     return this.toolCatalog(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
+  }
+  /** Core's configuration-driven MCP page. No App UI or guest context is needed. */
+  async manage(input) {
+    record(input, ['appId', 'instanceId', 'version', 'method', 'input'])
+    if (!['servers.list', 'servers.save', 'servers.inspect', 'auth.start', 'auth.clear'].includes(input.method)) throw new Error('不支持的 MCP 管理操作。')
+    for (const field of ['appId', 'instanceId', 'version']) if (typeof input[field] !== 'string' || !input[field]) throw new Error('App 标识不完整。')
+    const provider = [...this.providers.values()].find(item => this.sameOwner(item) && item.appId === input.appId && item.instanceId === input.instanceId)
+    if (!provider || provider.version !== input.version || !this.current(provider)) throw new Error('App 状态已变化，请重新打开详情页。')
+    const pkg = await this.getRuntime().getActivePackage(input.appId)
+    if (!pkg.manifest.mcpApp || pkg.manifest.ui?.entry || !pkg.manifest.host?.protocols?.includes(MCP_PROTOCOL)) throw new Error('此 App 未声明通用 MCP 配置。')
+    const permission = permissions[input.method] || 'mcp:manage'
+    if (!pkg.manifest.permissions?.includes(permission)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, '此 App 未声明所需的 MCP 权限。')
+    return this.handle(input.method, input.input, { ...provider, signal: AbortSignal.timeout(300_000) })
   }
   list(provider, extra = {}, focusName = '') {
     let budget = 400 * 1024

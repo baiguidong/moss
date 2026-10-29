@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import SyntaxHighlighter from "react-syntax-highlighter";
-import { vs, vs2015 } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { mossSyntaxTheme } from "@/theme/syntax";
 import { CopyButton } from "@/components/shared/copy-button";
 
 export function CodeViewer({
@@ -19,18 +19,7 @@ export function CodeViewer({
   showLineNumbers?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
-  const [dark, setDark] = React.useState(() => document.documentElement.getAttribute("data-theme") === "dark");
 
-  React.useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(document.documentElement.getAttribute("data-theme") === "dark");
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
 
   const allLines = React.useMemo(() => code.split("\n"), [code]);
   const lineCount = allLines.length;
@@ -57,7 +46,7 @@ export function CodeViewer({
       <div className="max-h-[420px] overflow-auto bg-[var(--color-code-bg)] select-text">
         <SyntaxHighlighter
           language={language}
-          style={dark ? vs2015 : vs}
+          style={mossSyntaxTheme}
           PreTag="div"
           wrapLongLines
           showLineNumbers={showLineNumbers && language !== "text" && language !== "plaintext"}
@@ -66,7 +55,8 @@ export function CodeViewer({
             borderRadius: 0,
             background: "transparent",
             padding: "12px",
-            fontSize: "12px",
+            fontSize: "var(--moss-code-size, 12px)",
+            fontFamily: "var(--font-mono)",
             lineHeight: "1.55",
           }}
           lineNumberStyle={{

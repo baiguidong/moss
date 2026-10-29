@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createAppUiRequestScope } from '../apps/app-ui-requests.mjs';
 import { defaultInstanceId } from '../../../packages/app-runtime/src/state/index.mjs';
+import { resolveAppSettingsView, validateAppViewState } from '../apps/app-view-binding.mjs';
 
 const rpcMethods = new Set(['app-ui:actions:invoke', 'app-ui:actions:cancel', 'app-ui:host:request', 'app-ui:host:cancel', 'app-ui:host:subscribe', 'app-ui:host:unsubscribe']);
 export function createWebApps({ registry, resources, resolveApp, appearance = () => ({}), listVersions, storage, prepareComposer, assertWorkAllowed = () => {} }) {
@@ -34,6 +35,10 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
   function validate(page) {
     const current = page.state.runtime.installations.get(page.state.id);
     if (!current?.enabled || current.activeVersion !== page.version) { dispose(page.id); throw new Error('App 已停用或版本已变化，请重新打开。'); }
+    if (page.view) {
+      try { resolveAppSettingsView(page.state.manifest, current, page.view); }
+      catch (error) { dispose(page.id); throw error; }
+    }
     return page.state;
   }
   function entry(context, id) {
@@ -54,7 +59,8 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
     if (!installation?.enabled) throw new Error('请先启用此 App。');
     if (!state.manifest.ui || !state.entryPath) throw new Error('此 App 没有页面。');
     const id = randomUUID();
-    const page = { id, state, userId: context.principal.userId, connectionId: context.connectionId, version: installation.activeVersion };
+    const view = resolveAppSettingsView(state.manifest, installation, input);
+    const page = { id, state, view, userId: context.principal.userId, connectionId: context.connectionId, version: installation.activeVersion };
     handle = await resources.create({ root: state.bundleRoot || path.dirname(state.entryPath), entryPath: state.entryPath, htmlPrefix: await bootstrap(), ownerId: page.userId, validate: () => validate(page) });
     if (pending.canceled || (offer && offers.get(input.previewRef) !== offer)) throw new Error('App 页面已关闭，请重新打开。');
     validate(page);
@@ -62,7 +68,7 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
       invocation: () => ({ surface: 'app', origin: state.preview ? 'preview' : 'ui', sessionId: state.sessionId, workspace: state.workspace }),
       send: (method, payload) => registry.publish('web:app-event', { embedId: id, method, payload }) });
     Object.assign(page, { handle, scope }); pages.set(id, page);
-    return { ok: true, embedId: id, url: handle.url, preload: 'web', app: { id: state.id, name: state.name || state.id, displayName: state.manifest.displayName || state.id, description: state.manifest.description || '' } };
+    return { ok: true, embedId: id, url: view ? handle.url.split('#')[0] + view.route : handle.url, preload: 'web', app: { id: state.id, name: state.name || state.id, displayName: state.manifest.displayName || state.id, description: state.manifest.description || '' } };
     } catch (error) { handle?.revoke(); throw error; }
     finally { opening.delete(pending); }
   }
@@ -81,6 +87,7 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
       const page = entry(context, embedId), state = page.state, runtime = state.runtime;
       if (rpcMethods.has(method)) return page.scope.request(method, input);
       switch (method) {
+        case 'app-ui:view-state': registry.publish('app:embedded-state', { embedId, ...validateAppViewState(input) }); return;
         case 'app-ui:get-info': return { id: state.id, name: state.name || state.id, kind: 'app', version: page.version, displayName: state.manifest.displayName, description: state.manifest.description, hasUi: true, hasBackend: !!state.manifest.backend, backend: state.manifest.backend || null, permissions: state.manifest.permissions || [], appearance: appearance() };
         case 'app-ui:get-status': return runtime.getInstanceStatus(state.id, defaultInstanceId(state.id));
         case 'app-ui:list-versions': return state.preview ? [] : listVersions(state.id);

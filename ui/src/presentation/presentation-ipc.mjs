@@ -7,7 +7,7 @@ export function registerPresentationIpcHandlers({ ipcMain, service, openPreviewW
       catch { return { reference, available: false }; }
     }));
   });
-  ipcMain.handle('presentation:refresh', (_event, input) => service.refresh(input.sessionId));
+  ipcMain.handle('presentation:refresh', (_event, input) => service.refresh(input.sessionId, { activeOnly: input.activeOnly === true }));
   ipcMain.handle('presentation:snapshot', (_event, input = {}) => service.snapshot(input.sessionId, { activate: input.activate === true }));
   ipcMain.handle('presentation:action', (_event, input) => service.action(input.sessionId, input.action));
   ipcMain.handle('presentation:open', (_event, input) => service.present(input.sessionId, input.input, { origin: 'manual' }));

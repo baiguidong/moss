@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Check, ChevronRight, Cloud, Eye, EyeOff, KeyRound, LayoutGrid, LoaderCircle, LockKeyhole, LogOut, Monitor, Settings, UserRound } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, Cloud, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, LogOut, Monitor, Settings, UserRound } from 'lucide-react';
 import appPackage from '../../package.json';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import './globals.css';
@@ -83,7 +83,7 @@ export function showWebLogin(mode: string, onLogin: (values: Record<string, Form
 }
 
 const connectionLabels: Record<string, string> = {
-  connected: '已连接 Moss Server', connecting: '正在连接 Moss Server…', disconnected: '正在重连 Moss Server…',
+  connected: '已连接', connecting: '正在连接 Moss Server…', disconnected: '正在重连 Moss Server…',
   unauthenticated: '登录已失效', incompatible: '版本已更新', 'environment-changed': '环境已恢复，请刷新',
 };
 
@@ -109,7 +109,7 @@ function WebSessionControls({ status, account, onLogout }: { status: string; acc
       setPending(false);
     }
   };
-  const navigate = (view: 'apps' | 'settings') => window.dispatchEvent(new CustomEvent('moss:account-navigate', { detail: view }));
+  const navigate = (view: 'settings') => window.dispatchEvent(new CustomEvent('moss:account-navigate', { detail: view }));
   const accountName = account?.userName || account?.userEmail || '个人中心';
   return <>
     <DropdownMenu>
@@ -121,12 +121,11 @@ function WebSessionControls({ status, account, onLogout }: { status: string; acc
           <span className={`moss-web-dot ${status === 'connected' ? 'is-connected' : ''}`} aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
+      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-(--radix-dropdown-menu-trigger-width) min-w-44">
         <DropdownMenuLabel className="space-y-1 text-xs">
-          <span role="status" className="block truncate text-sm font-medium" title={accountName}>{accountName}<span className="font-normal text-muted-foreground"> · {connectionLabels[status] || status}</span></span>
+          <span role="status" className="block truncate text-sm font-medium" title={accountName}>{accountName}<span className="font-normal text-muted-foreground"> {connectionLabels[status] || status}</span></span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => navigate('apps')}><LayoutGrid aria-hidden="true" />Apps</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate('settings')}><Settings aria-hidden="true" />设置</DropdownMenuItem>
         <DropdownMenuSeparator />
         {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <DropdownMenuItem onSelect={() => location.reload()}>刷新连接</DropdownMenuItem>}

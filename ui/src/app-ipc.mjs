@@ -126,8 +126,7 @@ const MossAppEventTypes = [
   'browser_open',
   'connector_cli_setup',
   'connector_mcp_authenticate',
-  'image_generate',
-  'image_edit',
+  'image_gen',
 ]
 
 export function buildConnectorMcpAuthToolResult(result) {

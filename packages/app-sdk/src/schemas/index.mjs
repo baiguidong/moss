@@ -9,7 +9,7 @@ import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 import { getAppCategoryMinimumHostVersion } from '../categories.mjs'
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.21.0'
+export const APP_HOST_API_VERSION = '3.22.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -104,14 +104,22 @@ function normalizeContributes(contributes, manifest) {
   }
   const viewIds = new Set(views.map((view) => view.id))
   const settings = normalizeContributionList(contributes.settings, 'settings', (setting) => {
-    if (!viewIds.has(setting.viewId)) {
+    if (setting.presentation && !semver.subset(manifest.hostApi, '>=3.22.0')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Settings presentation requires hostApi >=3.22.0')
+    if (setting.form) {
+      requireAction(setting.form.readAction, `settings ${setting.id}`)
+      if (!requireAction(setting.form.saveAction, `settings ${setting.id}`).inputSchema) {
+        throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `settings ${setting.id} saveAction requires an inputSchema`)
+      }
+      if (!semver.subset(manifest.hostApi, '>=3.21.0')) throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Settings forms require hostApi >=3.21.0')
+    } else if (!viewIds.has(setting.viewId)) {
       throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `settings ${setting.id} references unknown view: ${setting.viewId}`)
     }
     return {
       id: setting.id,
       title: setting.title.trim(),
-      viewId: setting.viewId,
+      ...(setting.form ? { form: { ...setting.form } } : { viewId: setting.viewId }),
       ...(setting.group ? { group: setting.group } : {}),
+      ...(setting.presentation ? { presentation: { ...setting.presentation } } : {}),
       order: Number(setting.order) || 0,
       ...normalizeContributionPermission(setting, requestedPermissions, `settings ${setting.id}`),
     }
@@ -330,13 +338,19 @@ function validateNavigation(manifest, contributes, required) {
   const settingsRoutes = new Set()
   for (const setting of settings) {
     if (navigation && !setting.group) invalid(`settings ${setting.id} must declare a group`)
+    if (setting.form) continue
     const route = views.get(setting.viewId)?.route
     if (settingsRoutes.has(route)) invalid('A settings page must not be registered more than once')
     settingsRoutes.add(route)
   }
   if (!navigation) return
+  if (navigation.location === 'details') {
+    if (!semver.subset(manifest.hostApi, '>=3.22.0')) invalid('Details navigation requires hostApi >=3.22.0')
+    if (navigation.viewId !== undefined) invalid('Details navigation opens Core, not a primary App view')
+    return
+  }
   if (navigation.location === 'none') {
-    if (navigation.viewId !== undefined || settings.length) invalid('navigation none must not declare viewId or settings contributions')
+    if (navigation.viewId !== undefined || settings.some(setting => !setting.form)) invalid('navigation none must not declare viewId or view-based settings contributions')
     return
   }
   const view = views.get(navigation.viewId)
@@ -450,6 +464,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     version: candidate.version,
     displayName: candidate.displayName.trim(),
     description: String(candidate.description || '').trim(),
+    ...(candidate.overview ? { overview: structuredClone(candidate.overview) } : {}),
     category: candidate.category || 'other',
     ...(candidate.discovery ? { discovery: structuredClone(candidate.discovery) } : {}),
     ...(candidate.connectorApp ? { connectorApp: structuredClone(candidate.connectorApp) } : {}),
@@ -460,6 +475,7 @@ export function validateAppManifest(rawManifest, options = {}) {
     ...(candidate.platforms ? { platforms: [...candidate.platforms] } : {}),
     ...(candidate.toolSelection ? { toolSelection: candidate.toolSelection } : {}),
     ...(candidate.toolScope ? { toolScope: candidate.toolScope } : {}),
+    ...(candidate.toolLoading ? { toolLoading: candidate.toolLoading } : {}),
     ...(candidate.navigation ? { navigation: { ...candidate.navigation } } : {}),
     ...(!candidate.connectorApp ? { host: { protocols: [...(candidate.host?.protocols || [])] } } : {}),
     ...(candidate.publisher ? { publisher: { id: candidate.publisher.id, name: candidate.publisher.name.trim() } } : {}),

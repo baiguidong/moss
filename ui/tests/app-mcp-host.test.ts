@@ -42,6 +42,38 @@ backend: { }, permissions: ['mcp:manage', 'mcp:connect'] } }),
 }
 const config = { type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer fixture-secret' }, disabledTools: ['remove'], oauth: { clientId: 'client', callbackPort: 4444 } }
 
+test('Core MCP management reads cached configuration without connecting and enforces owner, version and grants', async () => {
+  const f = await fixture(), originalPackage = f.runtime.getActivePackage
+  let customUi = false
+  await fs.writeFile(path.join(f.root, 'mcp.json'), JSON.stringify({ mcpServers: { remote: config } }))
+  f.runtime.getActivePackage = async () => ({ root: f.root, manifest: { ...(await originalPackage()).manifest,
+    permissions: ['mcp:read', 'mcp:manage', 'mcp:connect', 'mcp:auth'], mcpApp: { config: 'mcp.json' },
+    ui: customUi ? { entry: 'index.html' } : { builtin: 'mcp' } } })
+  await f.host.refresh()
+  const input = { appId: f.context.appId, instanceId: f.context.instanceId, version: f.context.version }
+  const manage = (method: string, value = {}) => f.host.manage({ ...input, method, input: value })
+  const catalog = await manage('servers.list')
+  expect(f.calls).toEqual([])
+  expect(catalog.servers[0].config.headers.Authorization).toBe('')
+  expect(JSON.stringify(catalog)).not.toContain('fixture-secret')
+  await manage('servers.inspect', { name: 'remote' })
+  expect(f.host.toolCatalog(input.appId)[0].tools[0].name).toBe('search')
+  await manage('servers.save', { name: 'remote', previousName: 'remote', enabled: true, config: catalog.servers[0].config })
+  expect(f.calls).toHaveLength(1)
+  expect(f.host.enabledServers(['moss.mcp']).remote.headers.Authorization).toBe('Bearer fixture-secret')
+  await expect(f.host.manage({ ...input, version: 'old', method: 'servers.list', input: {} })).rejects.toThrow('状态已变化')
+  await expect(f.host.manage({ ...input, method: 'servers.list', input: {}, dataDir: '/tmp' })).rejects.toThrow('不支持')
+  await expect(manage('servers.remove', { name: 'remote' })).rejects.toThrow('不支持')
+  f.runtime.currentOwner = () => ({ key: 'other-user' })
+  await expect(manage('servers.list')).rejects.toThrow('状态已变化')
+  delete f.runtime.currentOwner
+  f.installations.get(input.appId).grants = ['mcp:read']
+  await expect(manage('servers.inspect', { name: 'remote' })).rejects.toThrow('权限')
+  await expect(manage('servers.save', { name: 'remote', enabled: true, config })).rejects.toThrow('权限')
+  customUi = true
+  await expect(manage('servers.list')).rejects.toThrow('通用 MCP 配置')
+})
+
 test('configuration updates preserve directory settings, disabled tools, secrets, enablement and identity', async () => {
   const f = await fixture(), getPackage = f.runtime.getActivePackage
   const roots = { directories: [], includeWorkspace: true, delivery: 'arguments' }

@@ -24,7 +24,7 @@ export function usePresentation(sessionId: string | null, workspace: string | un
       if (live && enabled && value.state.visible && (newRequest || selectionChanged)) {
         setOpenSignal(signal => signal + 1);
       }
-      if (live && enabled && value.state.visible && (value.request || value.state.activeOrigin === 'manual')) reveal.current();
+      if (live && enabled && value.state.visible && (newRequest || selectionChanged)) reveal.current();
     };
     const off = window.agentDesktop.presentation.onChanged(value => accept(value, true));
     void window.agentDesktop.presentation.snapshot({ sessionId: enabled ? sessionId : null, activate: true })
@@ -36,7 +36,20 @@ export function usePresentation(sessionId: string | null, workspace: string | un
       if (event.sessionId !== sessionId) return;
       clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { void window.agentDesktop.presentation.refresh({ sessionId }).catch(() => {}); }, 350);
     });
-    return () => { active = false; off(); offFiles(); clearTimeout(refreshTimer); window.removeEventListener('moss:reconnected', reconnect); };
+    // Providers keep verification state outside the original file. Poll only the
+    // visible resource, with no overlapping requests and no work in hidden tabs.
+    let statusTimer: ReturnType<typeof setTimeout>;
+    const refreshStatus = async () => {
+      if (!active) return;
+      const value = current.current;
+      if (enabled && sessionId && document.visibilityState !== 'hidden' && value?.state.visible
+        && value.resources.some(item => item.id === value.state.activeId && item.source.type === 'provider')) {
+        await window.agentDesktop.presentation.refresh({ sessionId, activeOnly: true }).catch(() => {});
+      }
+      if (active) statusTimer = setTimeout(refreshStatus, 2000);
+    };
+    statusTimer = setTimeout(refreshStatus, 2000);
+    return () => { active = false; off(); offFiles(); clearTimeout(refreshTimer); clearTimeout(statusTimer); window.removeEventListener('moss:reconnected', reconnect); };
   }, [sessionId, workspace, enabled]);
   const action = React.useCallback((action: { type: string; id?: string; value?: boolean }) => {
     if (!sessionId) return;

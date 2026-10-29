@@ -59,3 +59,12 @@ test('cached MCP counts stay visible in App and service pickers without changing
   expect(canSelectToolApp({ ...value, mcpServices: [{ ...cached, status: 'unauthorized' }] })).toBe(false);
   expect(toolAppDescription({ ...value, mcpServices: [service('unchecked')] })).toContain('连接时加载工具');
 });
+
+test('global resident tools are already selected while on-demand tools can be pinned per session', () => {
+  const app: any = { id: 'visual', name: 'visual', title: '可视化', enabled: true, toolScope: 'global', toolLoading: 'always', agentTools: [{ id: 'create' }] };
+  expect(getToolPickerItems([app], '', [])[0]).toMatchObject({ selected: true, resident: true });
+  expect(toolAppDescription(app)).toContain('全局常驻');
+  const demand = { ...app, toolLoading: 'on-demand' };
+  expect(getToolPickerItems([demand], '', [])[0]).toMatchObject({ selected: false, resident: false });
+  expect(toolAppDescription(demand)).toContain('全局按需');
+});

@@ -63,7 +63,7 @@ Runtime hash:
 - [本地安装包](../../../moss-apps/artifacts/moss.computer-use/0.1.0/moss.computer-use-0.1.0.zip)：49,213,305 字节，约 47 MiB，包含可重建源码、锁文件、全部运行依赖及第三方许可证。
 - [设置页实测截图](../../../moss-apps/artifacts/moss.computer-use/0.1.0/verification/settings.png)；[原生窗口截图](../../../moss-apps/artifacts/moss.computer-use/0.1.0/verification/native-window.png)；[Electron 验证日志](../../../moss-apps/artifacts/moss.computer-use/0.1.0/verification/electron.log)。
 
-工具本地 ID 为 `computer_use`，模型名称为 `app__moss_computer_use__computer_use`。先在会话中选择 App，再调用 `{"request":{"action":"list_apps"}}`。详细 Schema 与指引随 App 提供。
+工具本地 ID 和模型名称均为 `computer_use`。先在会话中选择 App，再调用 `{"request":{"action":"list_apps"}}`。详细 Schema 与指引随 App 提供。
 
 Cua 驱动、版本与哈希、SDK、策略、快照和操作映射已移出 Core。Core 不再注册静态 `computer_use`，不再打包 `@trycua/*`、`@ubjs/*` 或 Cua 资源。Core 中保留通用受信原生入口、会话/目标授权、停止机制与多模态结果映射。旧设置自动迁移到 `desktopControl`。
 

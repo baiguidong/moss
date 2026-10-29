@@ -32,7 +32,6 @@ import type {
 } from '@/lib/api/types'
 import {
   Copy,
-  Image as ImageIcon,
   MessageSquare,
   Server,
   Sparkles,
@@ -59,16 +58,6 @@ type SettingsFieldProps = {
   children: ReactNode
 }
 
-const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
-  minimax: 'https://api.minimaxi.com/v1/image_generation',
-  openai: 'https://api.openai.com/v1',
-}
-
-const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  minimax: 'image-01',
-  openai: 'gpt-image-1',
-}
-
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
     webui: { snapshots: normalizeSnapshotPolicy(settings.webui?.snapshots) },
@@ -77,9 +66,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     url: settings.url,
     apiKey: settings.apiKey,
     image: {
-      provider: settings.image.provider,
-      url: settings.image.url,
-      apiKey: settings.image.apiKey,
       model: settings.image.model,
     },
     serverRuntime: {
@@ -120,15 +106,6 @@ function buildSystemSettingsPatch(
   const imagePatch: NonNullable<
     NonNullable<UpdateSystemSettingsRequest['models']>['image']
   > = {}
-  if (draft.image.provider !== settings.image.provider) {
-    imagePatch.provider = draft.image.provider
-  }
-  if (draft.image.url !== settings.image.url) {
-    imagePatch.baseUrl = draft.image.url
-  }
-  if (draft.image.apiKey !== settings.image.apiKey) {
-    imagePatch.apiKey = draft.image.apiKey
-  }
   if (draft.image.model !== settings.image.model) {
     imagePatch.model = draft.image.model
   }
@@ -408,7 +385,7 @@ export default function SystemSettingsPage() {
         <SettingSection
           icon={Sparkles}
           title="文本模型"
-          description="设置服务端默认使用的文本模型、API 地址和认证信息。"
+          description="设置默认模型、快速模型、图片模型及共用的 API 地址和 Key。"
         >
           <SettingField label="默认模型" description="新的本地会话会默认使用这个模型。">
             <Input
@@ -447,7 +424,24 @@ export default function SystemSettingsPage() {
             />
           </SettingField>
 
-          <SettingField label="API URL" description="文本模型接口地址，保存到 models.text.baseUrl。">
+          <SettingField label="图片模型" description="用于图片生成与编辑，复用主会话地址和 Key；留空使用 gpt-image-2。">
+            <Input
+              value={draft.image.model}
+              onChange={(event) =>
+                setDraft(current =>
+                  current
+                    ? {
+                        ...current,
+                        image: { model: event.target.value },
+                      }
+                    : current,
+                )
+              }
+              placeholder="gpt-image-2"
+            />
+          </SettingField>
+
+          <SettingField label="API URL" description="默认模型、快速模型及图片模型共用的接口地址。">
             <Input
               value={draft.url}
               onChange={(event) =>
@@ -466,7 +460,7 @@ export default function SystemSettingsPage() {
 
           <SettingField
             label="API Key"
-            description="文本模型认证信息，保存到 models.text.apiKey。"
+            description="默认模型、快速模型及图片模型共用的认证信息。"
           >
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
@@ -497,130 +491,6 @@ export default function SystemSettingsPage() {
                 </Button>
               ) : null}
             </div>
-          </SettingField>
-        </SettingSection>
-
-        <SettingSection
-          icon={ImageIcon}
-          title="图片模型"
-          description="设置图片生成的供应商、接口地址和默认模型。"
-        >
-          <SettingField label="图片厂商" description="支持 MiniMax 和 OpenAI 兼容图片接口。">
-            <Select
-              value={draft.image.provider}
-              onValueChange={(value) =>
-                setDraft(current => {
-                  if (!current) return current
-                  const previousDefaultUrl =
-                    IMAGE_PROVIDER_DEFAULT_URLS[current.image.provider]
-                  const previousDefaultModel =
-                    IMAGE_PROVIDER_DEFAULT_MODELS[current.image.provider]
-                  return {
-                    ...current,
-                    image: {
-                      ...current.image,
-                      provider: value,
-                      url:
-                        !current.image.url ||
-                        current.image.url === previousDefaultUrl
-                          ? IMAGE_PROVIDER_DEFAULT_URLS[value] ?? current.image.url
-                          : current.image.url,
-                      model:
-                        !current.image.model ||
-                        current.image.model === previousDefaultModel
-                          ? IMAGE_PROVIDER_DEFAULT_MODELS[value] ?? current.image.model
-                          : current.image.model,
-                    },
-                  }
-                })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="选择图片厂商" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="minimax">MiniMax</SelectItem>
-                <SelectItem value="openai">OpenAI</SelectItem>
-              </SelectContent>
-            </Select>
-          </SettingField>
-
-          <SettingField label="API URL" description="图片生成接口地址。">
-            <Input
-              value={draft.image.url}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        image: {
-                          ...current.image,
-                          url: event.target.value,
-                        },
-                      }
-                    : current,
-                )
-              }
-              placeholder={IMAGE_PROVIDER_DEFAULT_URLS[draft.image.provider] ?? 'https://api.openai.com/v1'}
-            />
-          </SettingField>
-
-          <SettingField
-            label="API Key"
-            description="图片模型的供应商认证信息。"
-          >
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.image.apiKey}
-                className="font-mono text-xs"
-                onChange={(event) =>
-                  setDraft(current =>
-                    current
-                      ? {
-                          ...current,
-                          image: {
-                            ...current.image,
-                            apiKey: event.target.value,
-                          },
-                        }
-                      : current,
-                  )
-                }
-                placeholder="sk-..."
-              />
-              {draft.image.apiKey ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="sm:shrink-0"
-                  onClick={() => void handleCopy(draft.image.apiKey, '图片模型 API Key')}
-                >
-                  <Copy className="mr-2 size-4" />
-                  复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
-
-          <SettingField label="图片模型" description="默认图片模型名称。">
-            <Input
-              value={draft.image.model}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        image: {
-                          ...current.image,
-                          model: event.target.value,
-                        },
-                      }
-                    : current,
-                )
-              }
-              placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[draft.image.provider] ?? 'gpt-image-1'}
-            />
           </SettingField>
         </SettingSection>
 

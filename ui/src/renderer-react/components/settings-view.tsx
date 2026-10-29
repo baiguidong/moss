@@ -1,10 +1,12 @@
 import { CloudSnapshots } from './cloud-snapshots';
+import { StorageSettings } from './storage-settings';
+import './settings-view.css';
 import * as React from 'react';
 import { AppMcpToolRows } from '@/components/app-mcp-tool-rows';
 import { AppIcon } from '@/components/app-icon';
 import { EmbeddedAppView } from '@/components/embedded-app-view';
 import { AppToolbarActions } from '@/components/app-settings';
-import { getAppToolbarSettingsEntry, getVisibleAppSettingsEntries, type AppSettingsEntry } from '@/lib/app-navigation';
+import { getVisibleAppSettingsEntries, type AppSettingsEntry } from '@/lib/app-navigation';
 import { ToolDescription } from '@/components/tool-description';
 import { MemoryDreamControl } from '@/components/memory-dream-control';
 import {
@@ -13,16 +15,15 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  HardDrive,
   LogIn,
   Monitor,
-  MoonStar,
   Palette,
   RefreshCw,
   Save,
   Search,
   SlidersHorizontal,
   Sparkles,
-  SunMedium,
   Trash2,
   TriangleAlert,
   Wrench,
@@ -38,7 +39,7 @@ import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
-import { PRESET_THEMES } from '@/theme/presets';
+import { AppearanceSettings } from './appearance-settings';
 import { PermissionModeSelector } from '@/components/permission-mode-selector';
 import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 import {
@@ -53,8 +54,8 @@ import { UserMessage } from '@/components/chat/user-message';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type NavigationGroupId = 'basic' | 'ai' | 'agents' | 'tools' | 'memory' | 'advanced' | 'apps';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type NavigationGroupId = 'basic' | 'appearance' | 'ai' | 'agents' | 'tools' | 'memory' | 'storage' | 'advanced' | 'apps';
+type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'storage' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   settingsDraft: DesktopSettings | null;
@@ -86,7 +87,6 @@ type SettingsNavigationGroup = {
   id: NavigationGroupId;
   title: string;
   icon: LucideIcon;
-  iconGradientClassName: string;
   keywords: string[];
   sections: SettingsSectionDefinition[];
 };
@@ -126,25 +126,8 @@ type NavigationGroupButtonProps = {
   compact?: boolean;
 };
 
-type ThemeModeButtonProps = {
-  active: boolean;
-  icon: LucideIcon;
-  label: string;
-  onClick: () => void;
-};
-
-type ThemePresetButtonProps = {
-  selected: boolean;
-  themeId: string;
-  themeName: string;
-  onClick: () => void;
-};
-
 const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
-  provider: 'minimax',
-  url: '',
-  apiKey: '',
-  model: '',
+  model: 'gpt-image-2',
 };
 
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
@@ -160,16 +143,6 @@ const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
     reasonCode: 'not-detected',
   },
   activeProvider: null,
-};
-
-const IMAGE_PROVIDER_DEFAULT_URLS: Record<string, string> = {
-  minimax: 'https://api.minimaxi.com/v1/image_generation',
-  openai: 'https://api.openai.com/v1',
-};
-
-const IMAGE_PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  minimax: 'image-01',
-  openai: 'gpt-image-1',
 };
 
 const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
@@ -216,15 +189,19 @@ const DEFAULT_ADVANCED_SETTINGS: NonNullable<DesktopSettings['advanced']> = {
 
 const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
   {
-    id: 'basic', title: '通用', icon: Monitor, iconGradientClassName: 'from-sky-400 to-blue-600',
-    keywords: ['通用', 'general', '基础', '基本', '常规', '外观'],
+    id: 'basic', title: '通用', icon: Monitor,
+    keywords: ['通用', 'general', '基础', '基本', '常规'],
     sections: [
       { id: 'basic-info', title: '基本信息', keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'] },
-      { id: 'appearance', title: '外观', keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距', 'AI', '回复', '边框', '图标', '头像', 'border', 'avatar'] },
     ],
   },
   {
-    id: 'ai', title: '模型与搜索', icon: Sparkles, iconGradientClassName: 'from-amber-400 to-orange-600',
+    id: 'appearance', title: '外观', icon: Palette,
+    keywords: ['外观', 'appearance', 'theme'],
+    sections: [{ id: 'appearance', title: '外观', keywords: ['appearance', 'theme', 'background', 'collapse', 'density', 'font', 'spacing', '主题', '工具', '折叠', '字体', '行间距', '消息间距', 'AI', '回复', '边框', '图标', '头像', 'border', 'avatar'] }],
+  },
+  {
+    id: 'ai', title: '模型与搜索', icon: Sparkles,
     keywords: ['模型', '搜索', 'model', 'web search', 'ai', 'provider', 'api', 'key', 'thinking', '思考'],
     sections: [
       { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', 'thinking', '思考模式', '测试'] },
@@ -232,7 +209,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
-    id: 'agents', title: 'Agents', icon: Bot, iconGradientClassName: 'from-indigo-400 to-violet-600',
+    id: 'agents', title: 'Agents', icon: Bot,
     keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证'],
     sections: [
       { id: 'agents', title: 'Agents', keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用'] },
@@ -240,7 +217,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
-    id: 'tools', title: '工具与性能', icon: Wrench, iconGradientClassName: 'from-cyan-400 to-blue-600',
+    id: 'tools', title: '工具与性能', icon: Wrench,
     keywords: ['工具', 'tool', 'performance', '权限', 'permission', 'streaming', '结果', 'mcp', 'read'],
     sections: [
       { id: 'tools', title: '工具', keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
@@ -249,12 +226,17 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     ],
   },
   {
-    id: 'memory', title: '记忆与上下文', icon: Bot, iconGradientClassName: 'from-emerald-400 to-teal-600',
+    id: 'memory', title: '记忆与上下文', icon: Bot,
     keywords: ['memory', '记忆', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'],
     sections: [{ id: 'memory', title: '记忆与上下文', keywords: ['memory', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'] }],
   },
   {
-    id: 'advanced', title: '系统与服务', icon: SlidersHorizontal, iconGradientClassName: 'from-violet-400 to-fuchsia-600',
+    id: 'storage', title: '存储', icon: HardDrive,
+    keywords: ['storage', '存储', '空间', '磁盘', '数据', '清理'],
+    sections: [{ id: 'storage', title: '存储', keywords: ['storage', '空间', '磁盘', '数据', '清理', '目录'] }],
+  },
+  {
+    id: 'advanced', title: '系统与服务', icon: SlidersHorizontal,
     keywords: ['高级', 'advanced', 'prompt', '系统提示', 'service', '服务', 'skillhub', 'expert'],
     sections: [
       { id: 'prompt', title: '系统提示', keywords: ['prompt', '系统提示', 'append', 'instruction', '归因', 'attribution'] },
@@ -268,41 +250,15 @@ const SECTION_GROUP_IDS = Object.fromEntries(
 ) as Record<SectionId, NavigationGroupId>;
 
 const FIELD_CLASS_NAME =
-  'h-9 rounded-xl border-sidebar-border bg-sidebar-accent/70 text-[13px] text-sidebar-foreground shadow-none placeholder:text-sidebar-foreground/45';
+  'h-9 rounded-lg border-border bg-background text-[13px] text-foreground shadow-none placeholder:text-muted-foreground';
 const SELECT_CLASS_NAME =
-  'h-9 w-full rounded-xl border border-sidebar-border bg-sidebar-accent/70 px-3 text-[13px] text-sidebar-foreground shadow-none outline-none transition focus:border-sidebar-ring focus:ring-4 focus:ring-sidebar-ring/15';
-
-const THEME_PREVIEW_STYLES: Record<string, React.CSSProperties> = {
-  default: {
-    background: 'linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)',
-  },
-  'grid-theme': {
-    backgroundColor: '#f8fafc',
-    backgroundImage:
-      'linear-gradient(rgba(15, 23, 42, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(15, 23, 42, 0.08) 1px, transparent 1px)',
-    backgroundSize: '14px 14px',
-  },
-  'dot-theme': {
-    backgroundColor: '#f8fafc',
-    backgroundImage: 'radial-gradient(rgba(15, 23, 42, 0.14) 1.1px, transparent 1.1px)',
-    backgroundSize: '12px 12px',
-  },
-  'gradient-theme': {
-    background: 'linear-gradient(135deg, #eefaf5 0%, #d8ebe7 100%)',
-  },
-  'takt-theme': {
-    backgroundColor: '#fbfcfa',
-    backgroundImage: 'radial-gradient(#b6c8b9 1px, transparent 1px)',
-    backgroundSize: '11px 11px',
-    boxShadow: 'inset 0 -8px 0 #f0f5ef',
-  },
-};
+  'h-9 w-full rounded-lg border border-border bg-background px-3 text-[13px] text-foreground shadow-none outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/15';
 
 function Surface({ children, className }: SettingsGroupProps) {
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-[20px] border border-sidebar-border bg-sidebar-accent/58 text-sidebar-foreground shadow-none backdrop-blur-xl',
+        'overflow-hidden rounded-lg border border-border bg-background text-foreground shadow-none',
         className,
       )}
     >
@@ -313,9 +269,9 @@ function Surface({ children, className }: SettingsGroupProps) {
 
 function SettingsSection({ id, title, children, sectionRef }: SettingsSectionProps) {
   return (
-    <section id={id} ref={sectionRef} className="scroll-mt-6">
-      <div className="mb-4 px-1">
-        <h2 className="text-[15px] font-semibold text-foreground">
+    <section id={id} ref={sectionRef} className="scroll-mt-6 settings-section">
+      <div className="settings-section-heading mb-1">
+        <h2 className="text-sm font-semibold text-foreground">
           {title}
         </h2>
       </div>
@@ -326,9 +282,9 @@ function SettingsSection({ id, title, children, sectionRef }: SettingsSectionPro
 
 function SettingsGroup({ children, className }: SettingsGroupProps) {
   return (
-    <Surface className={cn('divide-y divide-sidebar-border', className)}>
+    <div className={cn('divide-y divide-border', className)}>
       {children}
-    </Surface>
+    </div>
   );
 }
 
@@ -355,15 +311,15 @@ function AppSettingsNavigationButton({ app, active, onClick, compact = false }: 
     <button type="button" data-app-settings-nav={app.appId} aria-current={active ? 'page' : undefined}
       onClick={onClick} title={app.title}
       className={cn(
-        'flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
+        'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
         compact ? 'min-w-max flex-none' : 'w-full min-w-0',
         active
-          ? 'bg-sidebar-accent text-sidebar-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--sidebar-border)_90%,transparent)]'
+          ? 'bg-sidebar-accent text-sidebar-foreground'
           : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground',
       )}
     >
-      <AppIcon icon={app.icon} className="h-8 w-8 rounded-xl" />
-      <span className="truncate text-sm font-medium">{app.title}</span>
+      <AppIcon icon={app.icon} className="h-5 w-5 rounded-md" />
+      <span className="truncate text-[13px]">{app.title}</span>
     </button>
   );
 }
@@ -517,7 +473,7 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
             </colgroup>
             <thead>
               <tr className="border-b border-sidebar-border bg-sidebar-accent/45 text-xs text-muted-foreground">
-                <th className="px-4 py-3 text-center font-medium">App</th>
+                <th className="px-4 py-3 text-center font-medium">来源</th>
                 <th className="px-4 py-3 font-medium">工具</th>
                 <th className="px-4 py-3 font-medium">简短说明</th>
                 <th className="px-3 py-3 font-medium">加载方式</th>
@@ -530,7 +486,7 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
                   {app.agentTools!.map((tool, index) => (
                     <tr key={tool.id} className="border-t border-sidebar-border first:border-t-0">
                       {index === 0 && <th scope="rowgroup" rowSpan={app.agentTools!.length} className="border-r border-sidebar-border bg-sidebar/45 px-4 py-3 text-center align-middle text-xs font-semibold text-foreground">
-                        <span className="block break-words">{app.displayName || app.title || app.name}</span>
+                        <span className="block break-words">{app.displayName || app.title || app.name} · App</span>
                         <code className="mt-1 block break-all text-[11px] font-normal text-muted-foreground">{app.id || app.name}</code>
                       </th>}
                       <td className="px-4 py-3 text-xs">
@@ -540,7 +496,7 @@ export function AppToolSettingsTable({ apps }: { apps: StoredApp[] }) {
                       <td className="break-words px-4 py-3 text-xs leading-5 text-muted-foreground">
                         <ToolDescription description={tool.description} toolName={tool.id} />
                       </td>
-                      <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? '全局 · 按需' : '指定 · 选择后常驻'}</td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">{app.toolScope === 'global' ? app.toolLoading === 'always' ? '全局常驻' : '全局按需' : '指定 · 选择后常驻'}</td>
                       <td className="px-3 py-3 text-xs text-muted-foreground">{tool.permission && !app.grants?.includes(tool.permission) ? '未授权' : '已注册'}</td>
                     </tr>
                   ))}
@@ -593,7 +549,7 @@ function SettingsRow({
 }: SettingsRowProps) {
   if (stacked) {
     return (
-      <div className={cn('px-4 py-4', className)}>
+      <div className={cn('py-3.5', className)}>
         <div className="space-y-3">
           <div>
             <div className="text-[13px] font-medium text-foreground">{title}</div>
@@ -608,15 +564,15 @@ function SettingsRow({
   }
 
   return (
-    <div className={cn('px-4 py-3.5', className)}>
+    <div className={cn('py-3.5', className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <div className="min-w-0 sm:max-w-[320px]">
+        <div className="min-w-0 flex-1">
           <div className="text-[13px] font-medium text-foreground">{title}</div>
           {description ? (
-            <div className="mt-1 text-xs leading-6 text-muted-foreground">{description}</div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
           ) : null}
         </div>
-        <div className={cn('w-full sm:shrink-0', controlClassName)}>{children}</div>
+        <div className={cn('w-full sm:w-[220px] sm:max-w-[50%] sm:shrink-0', controlClassName)}>{children}</div>
       </div>
     </div>
   );
@@ -638,7 +594,7 @@ function Toggle({ checked, onCheckedChange, label, disabled = false }: TogglePro
       />
       <span
         className={cn(
-          'h-full w-full rounded-full bg-black/[0.12] transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(0,0,0,0.18)] after:transition-transform peer-focus-visible:ring-4 peer-focus-visible:ring-sky-500/20 peer-checked:bg-[#34c759] peer-checked:after:translate-x-5 dark:bg-white/[0.12] dark:peer-focus-visible:ring-primary/25 dark:peer-checked:bg-emerald-500',
+          'h-full w-full rounded-full bg-foreground/15 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-background after:shadow-sm after:transition-transform peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-checked:bg-foreground peer-checked:after:translate-x-5',
         )}
       />
     </label>
@@ -654,74 +610,15 @@ function NavigationGroupButton({ group, active, onClick, compact = false }: Navi
       aria-current={active ? 'page' : undefined}
       onClick={onClick}
       className={cn(
-        'group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors',
+        'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         compact ? 'min-w-max flex-none' : 'w-full',
         active
-          ? 'bg-sidebar-accent text-sidebar-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--sidebar-border)_90%,transparent)]'
+          ? 'bg-sidebar-accent text-sidebar-foreground'
           : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/80 hover:text-sidebar-foreground',
       )}
     >
-      <span
-        className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-[0_10px_20px_-12px_rgba(15,23,42,0.6)]',
-          group.iconGradientClassName,
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
-      <span className="text-sm font-medium">{group.title}</span>
-    </button>
-  );
-}
-
-function ThemeModeButton({ active, icon: Icon, label, onClick }: ThemeModeButtonProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex min-w-0 flex-1 flex-col items-center gap-2 rounded-[18px] border px-3 py-3 text-center text-xs font-medium transition-colors',
-        active
-          ? 'border-sky-500 bg-sky-50 text-sky-700 shadow-[0_18px_30px_-26px_rgba(14,116,244,0.7)] dark:border-primary dark:bg-primary/10 dark:text-primary'
-          : 'border-sidebar-border bg-sidebar-accent/65 text-sidebar-foreground/70 hover:bg-sidebar-accent/85 hover:text-sidebar-foreground',
-      )}
-    >
-      <span
-        className={cn(
-          'flex h-9 w-9 items-center justify-center rounded-full',
-          active
-            ? 'bg-gradient-to-br from-amber-300 to-orange-400 text-white dark:from-emerald-300 dark:to-teal-500'
-            : 'bg-sidebar/90 text-sidebar-foreground',
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
-      <span className="truncate">{label}</span>
-    </button>
-  );
-}
-
-function ThemePresetButton({ selected, themeId, themeName, onClick }: ThemePresetButtonProps) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn(
-        'flex min-w-max flex-auto items-center gap-3 rounded-[18px] border px-3 py-3 text-left transition-colors',
-        selected
-          ? 'border-primary bg-primary/10 text-primary'
-          : 'border-sidebar-border bg-sidebar-accent/65 text-sidebar-foreground hover:bg-sidebar-accent/85',
-      )}
-    >
-      <span
-        className="block h-9 w-14 shrink-0 rounded-xl border border-black/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:border-white/10"
-        style={THEME_PREVIEW_STYLES[themeId] || THEME_PREVIEW_STYLES.default}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block whitespace-nowrap text-[13px] font-medium">{themeName}</span>
-      </span>
-      {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={1.6} />
+      <span className="text-[13px] font-medium">{group.title}</span>
     </button>
   );
 }
@@ -904,7 +801,7 @@ function RuntimeSettings({
 
       {notice || error ? (
         <div className={cn(
-          'rounded-[18px] border px-4 py-3 text-xs leading-6',
+          'rounded-lg border px-4 py-3 text-xs leading-6',
           error
             ? 'border-rose-200/80 bg-rose-50/90 text-rose-950 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100'
             : 'border-emerald-200/80 bg-emerald-50/90 text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100',
@@ -947,7 +844,6 @@ export function SettingsView({
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSectionValue]);
   const [activeSection, setActiveSection] = React.useState<SectionId>(initialSectionValue);
-  const [showAllSettings, setShowAllSettings] = React.useState(initialSection === undefined);
   const [selectedAppSettingId, setSelectedAppSettingId] = React.useState(initialAppSettingId);
   const [appRefreshKey, setAppRefreshKey] = React.useState(0);
   const appSettingsEntries = React.useMemo(() => getVisibleAppSettingsEntries(apps), [apps]);
@@ -958,10 +854,9 @@ export function SettingsView({
     [entry.appTitle, entry.title, ...entry.keywords].join(' ').toLowerCase().includes(deferredSearchQuery)) : appSettingsEntries;
   const appNavigationItems = groupAppSettingsEntries(visibleAppEntries);
   const selectedAppEntries = appSettingsEntries.filter(entry => entry.appId === selectedAppSetting?.appId);
-  const toolbarSettingsEntry = selectedApp && getAppToolbarSettingsEntry(selectedApp);
   const navigationGroups: SettingsNavigationGroup[] = [...SETTINGS_NAVIGATION_GROUPS];
   if (appSettingsEntries.length) navigationGroups.push({
-    id: 'apps', title: 'Apps', icon: Blocks, iconGradientClassName: 'from-teal-400 to-cyan-600',
+    id: 'apps', title: 'Apps', icon: Blocks,
     keywords: ['apps', '应用设置'], sections: [],
   });
   const mobileNavigationRef = React.useRef<HTMLDivElement | null>(null);
@@ -975,6 +870,7 @@ export function SettingsView({
     appearance: null,
     permission: null,
     memory: null,
+    storage: null,
     'agent-execution': null,
     'tool-performance': null,
     prompt: null,
@@ -1002,9 +898,7 @@ export function SettingsView({
     ?? SETTINGS_NAVIGATION_GROUPS[0];
   const visibleSections = selectedAppSetting ? [] : deferredSearchQuery
     ? visibleNavigationGroups.flatMap((group) => group.sections)
-    : showAllSettings
-      ? navigationGroups.flatMap((group) => group.sections)
-      : activeGroup.sections;
+    : activeGroup.sections;
   const visibleSectionKey = visibleSections.map((section) => section.id).join('|');
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
@@ -1035,7 +929,6 @@ export function SettingsView({
     setSelectedAppSettingId(null);
     setActiveSection(initialSectionValue);
     setActiveGroupId(SECTION_GROUP_IDS[initialSectionValue]);
-    setShowAllSettings(initialSection === undefined);
     scrollRef.current?.scrollTo({ top: 0 });
   }, [initialSection, initialSectionValue, initialAppSettingId]);
 
@@ -1138,7 +1031,6 @@ export function SettingsView({
     const targetSection = group.sections[0]?.id;
     setSearchQuery('');
     setSelectedAppSettingId(null);
-    setShowAllSettings(false);
     setActiveGroupId(group.id);
     if (targetSection) setActiveSection(targetSection);
     window.requestAnimationFrame(() => {
@@ -1281,24 +1173,6 @@ export function SettingsView({
     void autoSaveImageSettings(nextImage);
   };
 
-  const updateImageProvider = (provider: string) => {
-    const previousDefaultUrl = IMAGE_PROVIDER_DEFAULT_URLS[imageDraft.provider ?? 'minimax'];
-    const nextDefaultUrl = IMAGE_PROVIDER_DEFAULT_URLS[provider] ?? '';
-    const previousDefaultModel = IMAGE_PROVIDER_DEFAULT_MODELS[imageDraft.provider ?? 'minimax'];
-    const nextDefaultModel = IMAGE_PROVIDER_DEFAULT_MODELS[provider] ?? '';
-    updateImageSettings({
-      provider,
-      url:
-        !imageDraft.url || imageDraft.url === previousDefaultUrl
-          ? nextDefaultUrl
-          : imageDraft.url,
-      model:
-        !imageDraft.model || imageDraft.model === previousDefaultModel
-          ? nextDefaultModel
-          : imageDraft.model,
-    });
-  };
-
   const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
     const nextSessionMemory = {
       ...sessionMemoryDraft,
@@ -1362,21 +1236,21 @@ export function SettingsView({
   }
 
   return (
-    <div className="h-full overflow-hidden bg-sidebar/96 text-sidebar-foreground">
+    <div className="moss-settings h-full overflow-hidden bg-background text-foreground">
       <div className="flex h-full">
-          <aside className="hidden h-full min-h-0 w-[232px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar/96 lg:flex">
+          <aside className="hidden h-full min-h-0 w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/50 lg:flex">
             <div className="shrink-0 p-4 pb-3">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={(event) => { setSearchQuery(event.target.value); setSelectedAppSettingId(null); }}
-                  className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
+                  className={cn(FIELD_CLASS_NAME, 'h-9 pl-9')}
                   placeholder="搜索设置"
                 />
               </div>
             </div>
-            <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-4 pb-4 [scrollbar-gutter:stable]">
+            <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 pb-4 [scrollbar-gutter:stable]">
               {visibleNavigationGroups.map((group) => {
                 const groupActive = group.id === activeGroup.id;
                 return (
@@ -1398,16 +1272,16 @@ export function SettingsView({
             </nav>
           </aside>
 
-          <div className="min-w-0 flex-1 overflow-hidden bg-sidebar/96">
+          <div className="min-w-0 flex-1 overflow-hidden bg-background">
             <div className="flex h-full flex-col">
-              <div className="border-b border-sidebar-border bg-sidebar/96 px-4 py-4 lg:hidden">
+              <div className="border-b border-border bg-background px-4 py-3 lg:hidden">
                 <div className="space-y-3">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       value={searchQuery}
                       onChange={(event) => { setSearchQuery(event.target.value); setSelectedAppSettingId(null); }}
-                      className={cn(FIELD_CLASS_NAME, 'h-10 rounded-2xl pl-9')}
+                      className={cn(FIELD_CLASS_NAME, 'h-9 pl-9')}
                       placeholder="搜索设置"
                     />
                   </div>
@@ -1443,14 +1317,11 @@ export function SettingsView({
                       <h1 className="min-w-0 truncate text-base font-semibold text-foreground" title={selectedAppSetting.appTitle}>{selectedAppSetting.appTitle}</h1>
                     </div>
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <AppToolbarActions app={selectedApp} onRefresh={() => setAppRefreshKey(value => value + 1)} onOpenSettings={route => {
-                        const entry = selectedAppEntries.find(item => item.route === route);
-                        if (entry) selectAppSetting(entry);
-                      }} />
+                      <AppToolbarActions onRefresh={() => setAppRefreshKey(value => value + 1)} />
                       {onOpenAppManagement && <Button variant="outline" size="sm" className="h-8 shrink-0 rounded-xl text-xs" onClick={() => onOpenAppManagement(selectedAppSetting.appName)}>应用管理</Button>}
                     </div>
                   </div>
-                  {!toolbarSettingsEntry && selectedAppEntries.length > 1 && <nav className="flex gap-1 overflow-x-auto" aria-label={`${selectedAppSetting.appTitle} 设置页面`}>
+                  {selectedAppEntries.length > 1 && <nav className="flex gap-1 overflow-x-auto" aria-label={`${selectedAppSetting.appTitle} 设置页面`}>
                     {selectedAppEntries.map(entry => <button key={entry.id} type="button" data-app-setting={entry.id}
                       aria-current={entry.id === selectedAppSetting.id ? 'page' : undefined} onClick={() => selectAppSetting(entry)}
                       className={cn('shrink-0 rounded-xl px-3 py-2 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring',
@@ -1461,33 +1332,11 @@ export function SettingsView({
                 </div>
                 <div className="min-h-0 flex-1"><EmbeddedAppView key={`${selectedAppSetting.id}:${selectedAppSetting.version}:${selectedAppSetting.route}:${appRefreshKey}`} appName={selectedAppSetting.appName} app={selectedApp} route={selectedAppSetting.route} compact /></div>
               </section> : <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-                <div className="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10 lg:p-6 lg:pb-12">
-                  <div className="px-1">
-                    <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-                      {deferredSearchQuery ? '搜索设置' : showAllSettings ? '设置' : activeGroup.title}
+                <div className={cn("mx-auto max-w-3xl space-y-6 px-5 py-7 pb-16 sm:px-8 lg:px-10", visibleSections.length === 1 && "[&_.settings-section-heading]:hidden")}>
+                  <div>
+                    <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                      {deferredSearchQuery ? '搜索设置' : activeGroup.title}
                     </h1>
-                    {!deferredSearchQuery && !showAllSettings && visibleSections.length > 1 ? (
-                      <nav className="mt-4 -mx-1 flex gap-1 overflow-x-auto pb-1" aria-label={`${activeGroup.title}设置分区`}>
-                        {visibleSections.map((section) => (
-                          <button
-                            key={section.id}
-                            type="button"
-                            className={cn(
-                              'shrink-0 rounded-xl px-3 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
-                              activeSection === section.id
-                                ? 'bg-sidebar-accent font-medium text-sidebar-foreground'
-                                : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
-                            )}
-                            onClick={() => {
-                              setActiveSection(section.id);
-                              sectionRefs.current[section.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            }}
-                          >
-                            {section.title}
-                          </button>
-                        ))}
-                      </nav>
-                    ) : null}
                   </div>
 
                   {isWebUI() && activeGroup.id === 'basic' && (window.mossWeb?.managed ? <CloudSnapshots /> : <Surface className="p-4 text-sm">当前 Web Host 未接入 Docker 环境控制器，无法创建环境快照。其他功能可正常使用。</Surface>)}
@@ -1542,7 +1391,7 @@ export function SettingsView({
                       sectionRefs.current['basic-info'] = element;
                     }}
                   >
-                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                    <div className="mb-1 text-[13px] font-medium text-muted-foreground">
                       对话
                     </div>
                     <SettingsGroup>
@@ -1578,10 +1427,10 @@ export function SettingsView({
                       </SettingsRow>
                     </SettingsGroup>
 
-                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
+                    <div className="mb-1 mt-8 text-[13px] font-medium text-muted-foreground">
                       Moss Server
                     </div>
-                    <div className="space-y-3">
+                    <div className="divide-y divide-border">
                       {/* 本地模式 */}
                       <SettingsGroup>
                         <SettingsRow
@@ -2325,12 +2174,10 @@ export function SettingsView({
                       sectionRefs.current['service-address'] = element;
                     }}
                   >
-                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
-                      SkillHub
-                    </div>
                     <SettingsGroup>
                       <SettingsRow
-                        title="API 地址"
+                        title="SkillHub"
+                        description="技能服务 API 地址"
                         controlClassName="sm:w-[360px]"
                       >
                         <Input
@@ -2345,15 +2192,10 @@ export function SettingsView({
                           placeholder="https://api.skillhub.cn"
                         />
                       </SettingsRow>
-                    </SettingsGroup>
-
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      专家中心
-                    </div>
-                    <SettingsGroup>
                       <SettingsRow
-                        title="根地址"
-                        controlClassName="sm:w-[520px]"
+                        title="专家中心"
+                        description="专家资源服务地址"
+                        controlClassName="sm:w-[360px]"
                       >
                         <Input
                           className={FIELD_CLASS_NAME}
@@ -2405,6 +2247,20 @@ export function SettingsView({
                           value={settingsDraft.fastModel || ''}
                           onChange={(event) => updateSetting('fastModel', event.target.value)}
                           placeholder="your-fast-model-name"
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="图片模型"
+                        description="用于图片生成与编辑，复用主会话地址和 Key；留空使用 gpt-image-2。"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <Input
+                          className={FIELD_CLASS_NAME}
+                          value={imageDraft.model || ''}
+                          onChange={(event) => updateImageSettings({ model: event.target.value })}
+                          aria-label="图片模型名称"
+                          placeholder="gpt-image-2"
                         />
                       </SettingsRow>
 
@@ -2493,73 +2349,6 @@ export function SettingsView({
                       </SettingsRow>
                     </SettingsGroup>
 
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      图片模型
-                    </div>
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="图片厂商"
-                        controlClassName="sm:w-[180px]"
-                      >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={imageDraft.provider ?? 'minimax'}
-                          onChange={(event) => updateImageProvider(event.target.value)}
-                        >
-                          <option value="minimax">MiniMax</option>
-                          <option value="openai">OpenAI</option>
-                        </select>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="API URL"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={imageDraft.url || ''}
-                          onChange={(event) => updateImageSettings({ url: event.target.value })}
-                          placeholder={IMAGE_PROVIDER_DEFAULT_URLS[imageDraft.provider ?? 'minimax'] ?? 'https://api.openai.com/v1'}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="API Key"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <div className="flex w-full gap-2">
-                          <Input
-                            type="password"
-                            className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
-                            value={imageDraft.apiKey || ''}
-                            onChange={(event) => updateImageSettings({ apiKey: event.target.value })}
-                            placeholder="sk-..."
-                          />
-                          {imageDraft.apiKey ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-9 rounded-xl border-black/10 bg-white/90 px-3 dark:border-white/10 dark:bg-background/75"
-                              onClick={() => copyText(imageDraft.apiKey || '')}
-                            >
-                              复制
-                            </Button>
-                          ) : null}
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="图片模型"
-                        controlClassName="sm:w-[280px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={imageDraft.model || ''}
-                          onChange={(event) => updateImageSettings({ model: event.target.value })}
-                          placeholder={IMAGE_PROVIDER_DEFAULT_MODELS[imageDraft.provider ?? 'minimax'] ?? 'gpt-image-1'}
-                        />
-                      </SettingsRow>
-                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 
@@ -2718,21 +2507,13 @@ export function SettingsView({
                       sectionRefs.current.prompt = element;
                     }}
                   >
-                    <Surface className="p-0">
-                      <SettingsRow
-                        title="追加系统提示"
-                        stacked
-                      >
-                        <Textarea
-                          className={cn(
-                            'min-h-[180px] rounded-[18px] border-black/10 bg-[#fafafc] text-[13px] shadow-none dark:border-white/10 dark:bg-background/[0.55]',
-                          )}
+                    <p className="mb-3 text-xs leading-5 text-muted-foreground">在默认提示后追加指令，应用到新的对话请求。</p>
+                        <Textarea aria-label="追加系统提示"
+                          className="min-h-[140px] rounded-lg border-input bg-background text-[13px] shadow-none"
                           value={settingsDraft.appendSystemPrompt || ''}
                           onChange={(event) => updateSetting('appendSystemPrompt', event.target.value)}
                           placeholder="例如：默认使用中文回复；修改代码前先解释关键影响；避免自动删除用户未要求的文件。"
                         />
-                      </SettingsRow>
-                    </Surface>
                     <SettingsGroup className="mt-3">
                       <SettingsRow
                         title="发送请求归因信息"
@@ -2753,6 +2534,12 @@ export function SettingsView({
 
 
 
+                {visibleSections.some(section => section.id === 'storage') && (
+                  <SettingsSection id="storage" title="存储" sectionRef={element => { sectionRefs.current.storage = element; }}>
+                    <StorageSettings />
+                  </SettingsSection>
+                )}
+
                 {visibleSections.some((section) => section.id === 'appearance') ? (
                   <SettingsSection
                     id="appearance"
@@ -2761,52 +2548,9 @@ export function SettingsView({
                       sectionRefs.current.appearance = element;
                     }}
                   >
+                    <AppearanceSettings value={settingsDraft.appearance} onPreview={onAppearancePreview} onCommit={onAppearanceCommit} />
+                    <h2 className="mb-1 mt-7 text-xs font-medium text-muted-foreground">聊天显示</h2>
                     <SettingsGroup>
-                      <SettingsRow
-                        title="主题"
-                        description="选择浅色、暗色或跟随系统的主题模式。"
-                        stacked
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row">
-                          <ThemeModeButton
-                            active={themeMode === 'light'}
-                            icon={SunMedium}
-                            label="浅色"
-                            onClick={() => setThemeMode('light')}
-                          />
-                          <ThemeModeButton
-                            active={themeMode === 'system'}
-                            icon={Monitor}
-                            label="跟随系统"
-                            onClick={() => setThemeMode('system')}
-                          />
-                          <ThemeModeButton
-                            active={themeMode === 'dark'}
-                            icon={MoonStar}
-                            label="暗色"
-                            onClick={() => setThemeMode('dark')}
-                          />
-                        </div>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="背景样式"
-                        description="选择预设的背景纹理或渐变。"
-                        stacked
-                      >
-                        <div className="flex flex-wrap gap-3">
-                          {PRESET_THEMES.map((theme) => (
-                            <ThemePresetButton
-                              key={theme.id}
-                              selected={cssThemeId === theme.id}
-                              themeId={theme.id}
-                              themeName={theme.name}
-                              onClick={() => setCssThemeId(theme.id)}
-                            />
-                          ))}
-                        </div>
-                      </SettingsRow>
-
                       <SettingsRow
                         title="聊天显示"
                         stacked
@@ -2902,7 +2646,7 @@ export function SettingsView({
                             timestamp: new Date(0),
                             type: 'assistant_text',
                             role: 'assistant',
-                            content: '这是一条 AI 回复预览。\n\n边框和图标会随上方的设置即时变化。',
+                            content: '这是一条 AI 回复预览。\n\n边框、图标、字体和配色会即时变化。\n\n```ts\nconst greeting = "Hello, Moss";\n```',
                           }} />
                         </div>
                       </SettingsRow>

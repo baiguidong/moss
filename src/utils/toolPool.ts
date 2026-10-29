@@ -1,3 +1,4 @@
+import { assertUniqueAppToolNames } from './appToolNames.js'
 import { feature } from 'bun:bundle'
 import partition from 'lodash-es/partition.js'
 import uniqBy from 'lodash-es/uniqBy.js'
@@ -86,8 +87,10 @@ export function mergeAndFilterTools(
   // overlap with assembled tools. uniqBy handles this deduplication.
   // Partition-sort for prompt-cache stability (same as assembleToolPool):
   // built-ins must stay a contiguous prefix for the server's cache policy.
+  const available = filterToolsForSession([...initialTools, ...assembled])
+  assertUniqueAppToolNames(available)
   const [mcp, builtIn] = partition(
-    uniqBy(filterToolsForSession([...initialTools, ...assembled]), 'name'),
+    uniqBy(available, 'name'),
     isMcpTool,
   )
   const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)

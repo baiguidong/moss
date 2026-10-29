@@ -17,7 +17,7 @@ const SETTINGS_EXAMPLES_DOCS = `## Settings File Locations
 ### Moss Desktop and Buddy
 
 In Moss Desktop, first discover the installed Buddy tools with ToolSearch:
-\`app__moss_buddy__settings_read\`, \`app__moss_buddy__settings_apply\`, and \`app__moss_buddy__settings_undo\`.
+\`settings_read\`, \`settings_apply\`, and \`settings_undo\`.
 Use settings_read(operation="catalog") to find the current Desktop, Agent/project/local,
 session, App, MCP, assistant, and general-preference fields. Then read the exact
 domain/scope/target and apply only the requested changes with that revision and a

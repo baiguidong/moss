@@ -214,3 +214,28 @@ test('ZIP installation rejects changed reviewed content or grants and accepts on
     assert.equal(sawPrompt, true); assert.equal(nativePick, 0);
   }
 });
+
+test('declared settings bind the route and view state to one owner; revoked grants dispose the page', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'web-settings-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Settings</h1>');
+  let installation = { enabled: true, activeVersion: '1.0.0', grants: ['app:settings'] };
+  const manifest = { version: '1.0.0', ui: { entry: 'index.html' }, contributes: {
+    views: [{ id: 'connection', route: '#/connection', permission: 'app:settings' }],
+    settings: [{ id: 'manage', viewId: 'connection' }],
+  } };
+  const registry = createRequestRegistry(), events = [];
+  registry.subscribe((name, payload) => events.push({ name, payload }));
+  const apps = createWebApps({ registry, resources: createWebResources(), resolveApp: async () => ({ id: 'test.app',
+    runtime: { installations: { get: () => installation } }, manifest, entryPath: path.join(root, 'index.html') }) });
+  t.after(() => apps.close());
+  const opened = await apps.handlers.get('app:embedded-open')(owner, { name: 'test.app', settingId: 'manage', version: '1.0.0', route: '#/injected' });
+  assert.equal(opened.url.split('#')[1], '/connection');
+  await apps.handlers.get('web:app-request')(owner, { embedId: opened.embedId, method: 'app-ui:view-state', input: { dirty: true, busy: false, embedId: 'forged' } });
+  assert.deepEqual(events.find(event => event.name === 'app:embedded-state').payload, { embedId: opened.embedId, dirty: true, busy: false });
+  await assert.rejects(apps.handlers.get('web:app-request')({ ...owner, connectionId: 'other' }, { embedId: opened.embedId, method: 'app-ui:view-state', input: { dirty: false, busy: false } }), /失效/);
+  installation = { ...installation, grants: [] };
+  registry.publish('app:changed', {});
+  assert(events.some(event => event.name === 'web:app-closed' && event.payload.embedId === opened.embedId));
+  await assert.rejects(apps.handlers.get('web:app-request')(owner, { embedId: opened.embedId, method: 'app-ui:get-info' }), /失效/);
+  await assert.rejects(apps.handlers.get('app:embedded-open')(owner, { name: 'test.app', settingId: 'manage', version: '1.0.0' }), /授权/);
+});

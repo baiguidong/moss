@@ -22,7 +22,8 @@ const denied = [
   'connector_cli_setup', 'connector_mcp_authenticate', 'example_app_action',
   ...workflowNames,
 ]
-const image = { provider: 'openai', url: 'https://image.test', apiKey: 'test-key', model: 'image-model' }
+const image = { model: 'image-model' }
+const modelConnection = { url: 'https://main.test', apiKey: 'test-key' }
 const appTools = createAppContributionTools([{
   id: 'example/action', name: 'example_app_action', title: 'App action', description: 'Test contribution',
   appId: 'example', effect: 'read', inputSchemaDocument: { type: 'object' },
@@ -33,7 +34,7 @@ const assembleMain = () => mergeAndFilterTools(
   [...MossTools, MossMailTool, ...appTools], assembleWorker(), state.toolPermissionContext.mode,
 )
 const scope = <T>(environment: SessionRuntime['executionEnvironment'], fn: () => T) =>
-  runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image })
+  runWithSessionIdContext(asSessionId(environment), null, fn, undefined, undefined, { executionEnvironment: environment, image, modelConnection })
 
 describe('session tool availability', () => {
   test('CLI cannot discover presentation tools without a host capability', async () => {
@@ -80,8 +81,7 @@ describe('session tool availability', () => {
         expect(names.filter(name => denied.includes(name))).toEqual([])
         expect(names).toContain('moss_browser_open')
         expect(names).toContain('Read')
-        expect(names).toContain('image_generate')
-        expect(names).toContain('image_edit')
+        expect(names).toContain('image_gen')
       }
       expect(assembleMain().map(tool => tool.name)).toContain(MossMailTool.name)
     })
@@ -124,7 +124,7 @@ describe('session tool availability', () => {
             .toBe(executionEnvironment === 'server' ? 0 : 1)
           yield assembleWorker().some(tool => tool.name === 'connector_cli_setup')
         })
-      }, undefined, undefined, { executionEnvironment, image })
+      }, undefined, undefined, { executionEnvironment, image, modelConnection })
     }
     const server = iterator('server')
     const desktop = iterator('desktop')
@@ -142,12 +142,12 @@ test('unattended cloud sessions and workers exclude desktop-dependent tools', as
   await runWithSessionIdContext(asSessionId('cloud-cron'), null, async () => {
     for (const pool of [assembleMain(), assembleWorker()]) {
       expect(pool.map(tool => tool.name).filter(name => ['moss_browser_open','MossMail'].includes(name))).toEqual([])
-      expect(pool.map(tool => tool.name)).toContain('image_generate')
+      expect(pool.map(tool => tool.name)).toContain('image_gen')
     }
     const worker = runWithSessionContextOverridesGenerator({ environment: {} }, async function* () {
       yield assembleMain().some(tool => tool.name === 'moss_browser_open')
     })
     expect((await worker.next()).value).toBe(false)
     await worker.next()
-  }, undefined, undefined, { executionEnvironment:'server', unattended:true, image })
+  }, undefined, undefined, { executionEnvironment:'server', unattended:true, image, modelConnection })
 })

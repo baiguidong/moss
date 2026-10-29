@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import SyntaxHighlighter from "react-syntax-highlighter";
-import { atomOneDark, atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { mossSyntaxTheme } from "@/theme/syntax";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function CodeViewer({
@@ -18,30 +18,20 @@ export function CodeViewer({
 }) {
   const container = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => { if (line) container.current?.querySelector('[data-source-line="' + line + '"]')?.scrollIntoView({ block: 'center' }); }, [content, line, column]);
-  const [dark, setDark] = React.useState(() => document.documentElement.classList.contains("dark"));
 
-  React.useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(document.documentElement.classList.contains("dark"));
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <div ref={container} className="h-full min-h-0"><ScrollArea className="h-full bg-background/70">
       <SyntaxHighlighter
         language={language || "text"}
-        style={dark ? atomOneDark : atomOneLight}
+        style={mossSyntaxTheme}
         customStyle={{
           margin: 0,
           minHeight: "100%",
           background: "transparent",
           padding: "1.25rem",
-          fontSize: "12px",
+          fontSize: "var(--moss-code-size, 12px)",
+            fontFamily: "var(--font-mono)",
         }}
         wrapLongLines
         showLineNumbers

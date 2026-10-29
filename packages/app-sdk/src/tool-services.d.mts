@@ -3,7 +3,7 @@ export interface AppToolService {
   available: boolean; toolCount: number; status: string;
 }
 export interface ToolSource {
-  appId: string; toolScope?: 'global' | 'session'; toolSelection?: 'app' | 'services'; serviceId?: string;
+  appId: string; toolScope?: 'global' | 'session'; toolLoading?: 'always' | 'on-demand'; toolSelection?: 'app' | 'services'; serviceId?: string;
 }
 export function appServiceKey(appId: string, serviceId: string): string
 export function parseAppServiceKey(value: string): { appId: string; serviceId: string } | null

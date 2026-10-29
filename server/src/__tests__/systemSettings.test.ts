@@ -107,13 +107,11 @@ describe('system settings model layout', () => {
       url: 'https://model.initial.test',
       apiKey: 'model-key-initial',
       image: {
-        provider: 'openai',
-        url: 'https://image.initial.test',
-        apiKey: 'image-key-initial',
         model: 'image-initial',
       },
     })
     expect(mod.getSystemSettings()).not.toHaveProperty('skillStore')
+    expect(mod.getSystemSettings().image).toEqual({ model: 'image-initial' })
     expect(mod.getSystemSettings().serverRuntime).toEqual({
       dockerImage: 'moss-runtime:latest',
     })
@@ -166,9 +164,6 @@ describe('system settings model layout', () => {
       url: 'https://model.updated.test',
       apiKey: 'model-key-updated',
       image: {
-        provider: 'openai',
-        url: 'https://image.updated.test',
-        apiKey: 'image-key-updated',
         model: 'image-updated',
       },
       openIM: {
@@ -180,6 +175,7 @@ describe('system settings model layout', () => {
     const persisted = JSON.parse(
       await readFile(join(serverHome, 'settings.json'), 'utf8'),
     )
+    expect(updated.image).toEqual({ model: 'image-updated' })
     expect(persisted.models.text).toEqual({
       baseUrl: 'https://model.updated.test',
       apiKey: 'model-key-updated',
@@ -191,12 +187,7 @@ describe('system settings model layout', () => {
         budgetTokens: 8192,
       },
     })
-    expect(persisted.models.image).toEqual({
-      provider: 'openai',
-      baseUrl: 'https://image.updated.test',
-      apiKey: 'image-key-updated',
-      model: 'image-updated',
-    })
+    expect(persisted.models.image).toEqual({ model: 'image-updated' })
     expect(persisted.model).toBeUndefined()
     expect(persisted.fastModel).toBeUndefined()
     expect(persisted.maxTurns).toBeUndefined()

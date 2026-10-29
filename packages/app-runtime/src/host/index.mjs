@@ -16,6 +16,7 @@ import { AppActionBroker } from '../actions/index.mjs'
 import { AppCapabilityBroker, APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
 import { AppToolScopeStore } from '../tool-scope/index.mjs'
 import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
+import builtinApps from '../../../app-sdk/src/builtin-apps.json' with { type: 'json' }
 import { HostRequests } from './requests.mjs'
 import { AppHostCapabilityRegistry } from '../capabilities/index.mjs'
 import {
@@ -322,17 +323,21 @@ export class AppRuntimeHost {
   }
 
   getToolScope(appId, manifestScope) {
-    return getAppToolScope(this.toolScopes?.get(this.storageAppId(appId)) ?? manifestScope)
+    return getAppToolScope(this.toolScopes?.get(this.storageAppId(appId)) ?? builtinApps.toolDefaults?.[appId]?.scope ?? manifestScope)
   }
 
-  async toolScopeSettings(context, scope = undefined) {
+  getToolLoading(appId, manifestLoading) {
+    return this.toolScopes?.getLoading(this.storageAppId(appId)) ?? builtinApps.toolDefaults?.[appId]?.loading ?? (manifestLoading === 'always' ? 'always' : 'on-demand')
+  }
+
+  async toolScopeSettings(context, scope = undefined, loading = undefined) {
     const pkg = await this.getActivePackage(context.appId)
     context.assertCurrent()
     if (scope !== undefined) {
       if (scope !== null && scope !== 'global' && scope !== 'session') throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid App tool scope')
-      if (this.toolScopes.set(this.storageAppId(context.appId), scope)) this.publishRuntimeEvent({ type: 'tool-scope-changed', appId: context.appId })
+      if (this.toolScopes.set(this.storageAppId(context.appId), scope, loading)) this.publishRuntimeEvent({ type: 'tool-scope-changed', appId: context.appId })
     }
-    return { scope: this.getToolScope(context.appId, pkg.manifest.toolScope), defaultScope: getAppToolScope(pkg.manifest.toolScope), overridden: this.toolScopes.get(this.storageAppId(context.appId)) !== undefined }
+    return { scope: this.getToolScope(context.appId, pkg.manifest.toolScope), defaultScope: getAppToolScope(builtinApps.toolDefaults?.[context.appId]?.scope ?? pkg.manifest.toolScope), overridden: this.toolScopes.get(this.storageAppId(context.appId)) !== undefined }
   }
 
   withOwner(owner, operation) {
@@ -570,6 +575,7 @@ export class AppRuntimeHost {
       installation,
       manifest: packageInfo.manifest,
       toolScope: this.getToolScope(appId, packageInfo.manifest.toolScope),
+      toolLoading: this.getToolLoading(appId, packageInfo.manifest.toolLoading),
       trust: packageInfo.trust,
       configuration: configuration ? structuredClone(configuration) : null,
       instances: publicInstances,
@@ -609,6 +615,7 @@ export class AppRuntimeHost {
       const enabled = Boolean(installation.enabled)
       const contributions = collectManifestContributions(packageInfo.manifest, {
         toolScope: this.getToolScope(installation.appId, packageInfo.manifest.toolScope),
+        toolLoading: this.getToolLoading(installation.appId, packageInfo.manifest.toolLoading),
         grants: installation.grants || [],
         enabled,
         includeUnavailable: options.includeUnavailable === true,

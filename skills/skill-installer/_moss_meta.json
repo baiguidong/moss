@@ -1,0 +1,10 @@
+{
+  "name": "skill-installer",
+  "display_name": "技能安装",
+  "description": "查找、查看并安装已有 Moss 技能，支持 Moss SkillHub、本地技能目录或 ZIP、公开 GitHub 仓库中的技能。创建新技能用 skill-creator；不要把技能安装成 App。",
+  "emoji": "📦",
+  "category": "AI 增强",
+  "source_type": "builtin",
+  "installed_version": "1.0.0",
+  "enabled": true
+}

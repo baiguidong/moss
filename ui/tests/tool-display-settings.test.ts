@@ -12,6 +12,24 @@ import {
 } from '../src/renderer-react/components/chat/tool-display-settings';
 
 describe('tool display settings', () => {
+  it('shows independent source labels in card and row modes without changing tool names', () => {
+    for (const chrome of ['card', 'row'] as const) {
+      for (const [source, label] of [
+        [{ kind: 'app', appId: 'moss.visualize', appName: '可视化' }, '可视化 · App'],
+        [{ kind: 'mcp', appId: 'moss.browser-use', appName: '浏览器', serverName: 'playwright-cdp' }, '浏览器 · MCP'],
+        [{ kind: 'builtin' }, 'Moss 内置'],
+        [undefined, '来源未记录'],
+      ] as const) {
+        const html = renderToStaticMarkup(React.createElement(ToolCallBlock, { chrome, toolCall: {
+          type: 'tool_use', role: 'assistant', id: 'tool', toolUseId: 'call', timestamp: new Date(),
+          toolName: 'visualize_create', displayName: 'visualize_create', status: 'success', source,
+        } }));
+        expect(html).toContain(`aria-label="来源：${label}"`);
+        expect(html).toContain('visualize_create');
+        expect(html).not.toContain('app__');
+      }
+    }
+  });
   it('uses the session setting before the global default', () => {
     expect(resolveToolDisplayMode('merged', 'expanded')).toBe('merged');
     expect(resolveToolDisplayMode('collapsed', 'merged')).toBe('collapsed');

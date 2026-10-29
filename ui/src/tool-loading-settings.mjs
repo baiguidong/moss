@@ -26,8 +26,7 @@ export const MOSS_TOOL_GROUPS = Object.freeze([
     id: 'image',
     label: '图片',
     tools: [
-      { name: 'image_generate', description: '根据提示词生成图片', defaultMode: 'deferred' },
-      { name: 'image_edit', description: '编辑工作区中的图片', defaultMode: 'deferred' },
+      { name: 'image_gen', description: '在主会话生成或编辑图片，支持多图参考与透明背景', defaultMode: 'always' },
     ],
   },
 ]);

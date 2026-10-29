@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
+import { readInteractiveAppResource } from './apps/app-resources.mjs';
 import { parseRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
 
 import { resolveUserPath } from './file-path-utils.mjs';
@@ -89,9 +90,14 @@ export function registerFileSystemIpcHandlers({
       sessionId = reference.sessionId;
       filePath = reference.filePath;
     }
+    let appReference;
     if (isAppResourceUri(filePath)) {
+      appReference = { resourceUri: filePath, sessionId };
       if (!resolveResourceFile) throw new Error('App 文件暂不可用');
-      filePath = (await resolveResourceFile(filePath)).path;
+      const resource = await resolveResourceFile(filePath);
+      const interactive = await readInteractiveAppResource(resource);
+      if (interactive) return interactive;
+      filePath = resource.path;
       sessionId = undefined;
     }
     const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
@@ -114,7 +120,7 @@ export function registerFileSystemIpcHandlers({
     }, targetPath);
     return {
       ...preview,
-      metadata: { ...preview.metadata, previewEditable: false, previewSaveable: false },
+      metadata: { ...preview.metadata, ...appReference, previewEditable: false, previewSaveable: false },
     };
   });
 

@@ -7,6 +7,7 @@ export type SessionRequest = { sessionId: string };
 export type AbortRequest = SessionRequest & { terminateSession?: boolean };
 export type ControlResult = { ok: true };
 export type SendRequest = SessionRequest & {
+  visualizationAnnotation?: import('../../shared/visualization-annotation.mjs').VisualizationAnnotation;
   appContext?: {providerId:string;intent:string;ref?:unknown};
   prompt: string;
   skills?: Array<{ name: string; displayName?: string; source?: string }>;

@@ -180,7 +180,7 @@ moss-apps/apps/workflow/
 | `run.cancel/resume` | 显式停止或恢复 | Action + 对应写操作工具 |
 | `export.*` | Definition、Mermaid、Graph、Run JSON | 页面 Action |
 
-保留创建、编辑、运行、管理四类用户能力；具体 AI 工具按 `read/write/destructive` 分开声明。当前 App Tool 的 effect 是静态属性，不能把 `delete` 放进标记为只读或普通写入的通用工具。工具名称使用标准 `app__...` 命名，安装和管理页展示效果。
+保留创建、编辑、运行、管理四类用户能力；具体 AI 工具按 `read/write/destructive` 分开声明。当前 App Tool 的 effect 是静态属性，不能把 `delete` 放进标记为只读或普通写入的通用工具。工具直接使用声明名称，内部 contribution ID 保留 App 归属；安装和管理页展示名称与效果。
 
 `run.start` 只完成校验、持久化及任务登记，不等待完整流程。调度循环脱离 Action 生命周期运行，并使用 Backend 级 Host 客户端；不能继续持有已结束 Action 的请求上下文。查询/取消 Actions 不等待节点结束。事件先落盘，再推送，页面重连可用游标补齐。
 

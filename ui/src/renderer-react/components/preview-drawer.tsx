@@ -2,6 +2,7 @@ import { usePreviewDocument } from '@/lib/use-preview-document';
 "use client";
 
 import * as React from "react";
+import type { DocumentLocation } from "../../shared/document-location.mjs";
 import {
   ExternalLink,
   Eye,
@@ -30,10 +31,12 @@ import { shellIpc } from "@/ipc/shell.ipc";
 import { workspaceIpc } from "@/ipc/workspace.ipc";
 import { MarkdownViewer } from "@/components/preview/viewers/MarkdownViewer";
 import { HTMLViewer } from "@/components/preview/viewers/HTMLViewer";
+import { VisualizationSurface } from './visualization/visualization-surface';
 import { CodeViewer } from "@/components/preview/viewers/CodeViewer";
 import { TextViewer } from "@/components/preview/viewers/TextViewer";
 import { ImageViewer } from "@/components/preview/viewers/ImageViewer";
 import { PDFViewer } from "@/components/preview/viewers/PDFViewer";
+import { DocumentComparisonViewer } from "@/components/preview/viewers/DocumentComparisonViewer";
 import { WordViewer } from "@/components/preview/viewers/WordViewer";
 import { ExcelViewer } from "@/components/preview/viewers/ExcelViewer";
 import { PPTViewer } from "@/components/preview/viewers/PPTViewer";
@@ -131,21 +134,24 @@ export function PreviewViewer({ file, toolbarContainer, onReady, onError }: { fi
     ? metadata.localPreviewPath
     : file.path;
   const fileVersion = typeof metadata.modifiedAt === "number" ? metadata.modifiedAt : undefined;
+  const annotation = { resourceUri: typeof metadata.resourceUri === 'string' ? metadata.resourceUri : undefined, sessionId: metadata.sessionId, documentLocation: metadata.documentLocation as DocumentLocation | undefined, locationRequest: typeof metadata.locationRequest === 'number' ? metadata.locationRequest : undefined };
+  if (metadata.documentComparison) return <DocumentComparisonViewer content={file.content} sessionId={metadata.sessionId} onReady={onReady} onError={onError} />;
   switch (file.contentType) {
     case "image":
       return <ImageViewer onReady={onReady} onError={onError} filePath={previewPath} alt={file.relativePath} />;
     case "pdf":
-      return <PDFViewer onReady={onReady} onError={onError} filePath={previewPath} title={file.relativePath} />;
+      return <PDFViewer {...annotation} fileVersion={fileVersion} onReady={onReady} onError={onError} filePath={previewPath} title={file.relativePath} />;
     case "markdown":
       return <MarkdownViewer content={file.content} />;
     case "html":
+      if (metadata.interactiveVisualization && typeof metadata.resourceUri === 'string') return <VisualizationSurface content={file.content} resourceUri={metadata.resourceUri} sessionId={typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined} title={file.relativePath} panel onReady={onReady} onError={onError} />;
       return <HTMLViewer onReady={onReady} content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
-      return <WordViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <WordViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "excel":
-      return <ExcelViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <ExcelViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "ppt":
-      return <PPTViewer onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <PPTViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
     case "diff":
       return <DiffViewer content={file.content} />;
     case "url":
@@ -538,7 +544,7 @@ export function PreviewDrawer({
         </Button>
       </div>
 
-      <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
+      {!activeMetadata.interactiveVisualization && <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
         <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <div className="flex w-max items-center gap-1 px-2">
             <div ref={setViewerToolbarContainer} className="flex shrink-0 items-center gap-1 empty:hidden" />
@@ -554,6 +560,7 @@ export function PreviewDrawer({
               <ExternalLink className="h-3.5 w-3.5" />
               打开
             </Button>
+            {(editable || persistable) && <>
             <Button
               variant={activeDirty ? "default" : "ghost"}
               size="sm"
@@ -620,9 +627,10 @@ export function PreviewDrawer({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            </>}
           </div>
         </div>
-      </div>
+      </div>}
 
       {document.recovery && <details className="border-b p-3 text-xs" open><summary>恢复未同步草稿</summary><div className="grid grid-cols-2 gap-2 py-2"><label>当前 Host 草稿<textarea readOnly className="h-32 w-full border bg-background" value={document.recovery.host} /></label><label>本页未同步草稿<textarea readOnly className="h-32 w-full border bg-background" value={document.recovery.local} /></label></div><button disabled={!!document.readOnly} className="mr-3 underline" onClick={document.restoreRecovery}>使用本页草稿继续编辑</button><button className="underline" onClick={document.dismissRecovery}>保留副本并关闭比较</button></details>}
       {document.notice || document.readOnly ? <div role="status" className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground"><span>{document.notice || "此文件正在其他视图中编辑。"}</span>{document.readOnly ? <button className="ml-auto shrink-0 underline" onClick={() => void document.takeOwnership()}>在此编辑</button> : null}</div> : null}

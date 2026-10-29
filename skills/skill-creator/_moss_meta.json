@@ -1,0 +1,10 @@
+{
+  "name": "skill-creator",
+  "display_name": "技能创建",
+  "description": "创建或修改 Moss 技能，把稳定流程整理为 SKILL.md、参考资料和必要脚本。适用于新增技能或维护既有技能；从当前会话提炼流程也可用 skillify，安装已有技能用 skill-installer。",
+  "emoji": "🛠️",
+  "category": "AI 增强",
+  "source_type": "builtin",
+  "installed_version": "1.0.0",
+  "enabled": true
+}

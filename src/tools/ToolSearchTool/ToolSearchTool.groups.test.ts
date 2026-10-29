@@ -22,16 +22,16 @@ const search = (tools: Tool[], query: string, max_results = 1) => ToolSearchTool
   options: { tools }, getAppState: () => ({ mcp: { clients: [] } }),
 } as unknown as ToolUseContext)
 const appTools = createAppContributionTools([
-  { appId: 'example.catalog', id: 'example.catalog/search', name: 'app__example_catalog__search', title: 'Search Catalog', description: 'Find records in catalog' },
-  { appId: 'example.catalog', id: 'example.catalog/lookup', name: 'app__example_catalog__lookup', title: 'Lookup Catalog', description: 'Retrieve a record' },
+  { appId: 'example.catalog', id: 'example.catalog/search', name: 'search', title: 'Search Catalog', description: 'Find records in catalog' },
+  { appId: 'example.catalog', id: 'example.catalog/lookup', name: 'lookup', title: 'Lookup Catalog', description: 'Retrieve a record' },
   // A different App may have the same normalized prefix, so grouping must use its actual ID.
-  { appId: 'example-catalog', id: 'example-catalog/import', name: 'app__example_catalog__import', title: 'Import', description: 'Upload a file' },
+  { appId: 'example-catalog', id: 'example-catalog/import', name: 'import', title: 'Import', description: 'Upload a file' },
 ].map(tool => ({ ...tool, effect: 'read' as const, inputSchemaDocument: { type: 'object' } })))
 
 describe('provider tool group activation', () => {
   test('native child services expand independently within the same App', async () => {
     const children = createAppContributionTools(['sales', 'sales', 'support'].map((serviceId, index) => ({
-      appId: 'customer.services', id: `customer.services/tool-${index}`, name: `app__customer_services__tool_${index}`,
+      appId: 'customer.services', id: `customer.services/tool-${index}`, name: `tool_${index}`,
       title: `Tool ${index}`, description: `Read ${serviceId}`, effect: 'read' as const,
       toolSelection: 'services' as const, serviceId, inputSchemaDocument: { type: 'object' },
     })))
@@ -57,7 +57,7 @@ describe('provider tool group activation', () => {
     expect(result.data.matches).not.toContain(other.name)
   })
 
-  test.each(['select:app__example_catalog__search', 'find records'])('App query %s activates only tools from the same actual App ID', async query => {
+  test.each(['select:search', 'find records'])('App query %s activates only tools from the same actual App ID', async query => {
     expect(appTools[0]!.appInfo).toMatchObject({ appId: 'example.catalog', toolScope: 'session' })
     const result = await search([...appTools, ...browser], query)
     expect(result.data.matches).toEqual(names(appTools.slice(0, 2)))

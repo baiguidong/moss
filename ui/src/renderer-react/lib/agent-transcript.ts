@@ -1,4 +1,5 @@
 import { buildCompactionRecords, type CompactionRecord } from './compaction';
+import { normalizeToolSource, type ToolSource } from '../../../../shared/tool-source.mjs';
 import { formatApiRetry } from './api-retry';
 import { interactionTurnOwners } from '../../shared/session-interactions.mjs';
 import { isAppResourceUri } from '../../shared/app-resource-uri.mjs';
@@ -54,6 +55,7 @@ type TranscriptRenderMessageBase = {
 };
 
 export type UserTextRenderMessage = TranscriptRenderMessageBase & {
+  visualizationAnnotation?: import('../../shared/visualization-annotation.mjs').VisualizationAnnotation;
   type: 'user_text';
   role: 'user';
   content: string;
@@ -76,6 +78,7 @@ export type ThinkingRenderMessage = TranscriptRenderMessageBase & {
 };
 
 export type ToolUseRenderMessage = TranscriptRenderMessageBase & {
+  source?: ToolSource;
   type: 'tool_use';
   role: 'assistant';
   toolUseId: string;
@@ -738,11 +741,13 @@ function ensureToolUseMessage(
   turn: AssistantTurnState,
   timestamp: Date,
   block: any,
+  source?: ToolSource,
 ): ToolUseRenderMessage {
   const toolUseId = String(block?.id || block?.tool_use_id || block?.toolCallId || '').trim()
     || nextRenderId(state, 'tool-use-generated');
   const existing = state.toolUsesById.get(toolUseId);
   if (existing && (turn.items.includes(existing) || isAskUserQuestionToolName(existing.toolName))) {
+    if (source) existing.source = source;
     if (timestamp.getTime() < existing.timestamp.getTime()) existing.timestamp = timestamp;
     if (typeof block?.tool_name === 'string' && block.tool_name.trim()) {
       existing.toolName = block.tool_name.trim();
@@ -775,6 +780,7 @@ function ensureToolUseMessage(
         : undefined,
     toolName,
     displayName: humanizeToolName(String(block?.display_name || toolName).trim() || toolName),
+    source,
     input: block?.input,
     inputText: buildToolInputText(block?.input),
     status: 'running',
@@ -862,6 +868,7 @@ function addUserRenderMessage(
   attachments?: TranscriptAttachment[],
   turnId?: string,
   sourceMessageId?: string,
+  visualizationAnnotation?: UserTextRenderMessage['visualizationAnnotation'],
 ) {
   state.items.push({
     id: nextRenderId(state, 'user'),
@@ -870,6 +877,7 @@ function addUserRenderMessage(
     content: String(content || ''),
     timestamp,
     attachments,
+    visualizationAnnotation,
     turnId,
     sourceMessageIds: sourceMessageId ? [sourceMessageId] : undefined,
   });
@@ -1252,7 +1260,7 @@ export function buildTranscriptRenderMessages(
         ? event.uuid.trim()
         : undefined);
       state.activeTurnId = turnId;
-      addUserRenderMessage(state, timestamp, userText, userAttachments, turnId, sourceMessageId);
+      addUserRenderMessage(state, timestamp, userText, userAttachments, turnId, sourceMessageId, event.visualizationAnnotation);
       continue;
     }
 
@@ -1322,6 +1330,7 @@ export function buildTranscriptRenderMessages(
           turn,
           timestamp,
           streamEvent.content_block,
+          normalizeToolSource(event.tool_sources?.[streamEvent.content_block.id]),
         );
         toolUse.status = 'running';
         toolUse.statusText = '进行中';
@@ -1537,7 +1546,7 @@ export function buildTranscriptRenderMessages(
               );
             }
           } else if (block.type === 'tool_use') {
-            const toolUse = ensureToolUseMessage(state, turn, timestamp, block);
+            const toolUse = ensureToolUseMessage(state, turn, timestamp, block, normalizeToolSource(event.tool_sources?.[block.id]));
             if (toolUse.status === 'running' || toolUse.status === 'pending') {
               toolUse.status = 'running';
               toolUse.statusText = '进行中';

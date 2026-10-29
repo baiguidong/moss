@@ -1,18 +1,20 @@
 # Moss App SDK
 
+从 [创建与迭代指南](authoring.md) 开始：按用途选择主会话工具、共享详情、设置表单或业务 UI，查询实时契约后再实现。SDK 随项目导出时也包含本指南。
+
 ## App 页面与宿主头部
 
-Moss 容器负责显示 App 名称、简介、迭代、AI 能力入口与整页刷新。嵌入页面只绘制业务内容，从输入、列表、状态或业务工具栏开始；不要再次绘制 App 名称、Logo、宣传简介或另一组整页管理按钮。SDK 是通信层，不会自动删除页面中的标题。
+Moss 通用详情负责 App 介绍、基本信息、设置、技能、MCP、工具及资源能力；大部分能力直接在主会话使用，无需独立页面。仅有业务工作台时才声明 UI，详情通过“打开”进入。嵌入页面只绘制业务内容，从输入、列表、状态或业务工具栏开始；不要再次绘制 App 名称、Logo、宣传简介或另一组整页管理按钮。SDK 是通信层，不会自动删除页面中的标题。
 
 保留具体页面、对象和分区标题（例如“输入文件”“记忆图谱”、文档名），业务刷新要写明范围（例如“刷新项目”“重新连接”）。同一状态、任务数量和说明只在最相关的区域展示一次。无障碍名称用 `main[aria-label]` 或视觉隐藏的标题提供，不能用全局 CSS 隐藏所有 `h1/header`，也不能通过文字匹配自动删除 DOM。独立网页若需要品牌头部，应显式使用独立布局；不要用 `window.mossApp` 是否存在推断页面是否有外框。
 
-创建与 Skill 转 App 都遵守这条规则。验收必须查看带 Moss 外框的页面，并检查窄窗口、加载、空状态和错误状态，确保应用身份仅显示一次、业务操作仍可见。此约定不增加 Manifest 字段或最低 Host API 版本。完整创建规则见 [App 页面布局](../../ui/docs/app-authoring.md#app-页面布局)。
+创建与 Skill 转 App 都遵守这条规则。验收必须查看带 Moss 外框的页面，并检查窄窗口、加载、空状态和错误状态，确保应用身份仅显示一次、业务操作仍可见。此约定不增加 Manifest 字段或最低 Host API 版本。完整创建规则见 [App 页面布局](authoring.md)。
 
 空间利用与 Moss 风格同样是创建约定：主要输入、数据、编辑器和结果优先占据首屏；设置、帮助等次要操作并入现有工具栏或分区标题行，不能单独占一行。使用紧凑间距、可伸缩工作区和 Moss 语义颜色，保留可读字号与可访问操作。具体尺寸、主题接入、模板和验收要求见 SDK 随包文档 [布局与视觉约定](ui-layout.md)。
 
-App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](../../ui/docs/app-authoring.md#分类与搜索)。
+App 根级 `category` 声明单一主分类，`keywords` 提供搜索关键词。`@moss/app-sdk/categories` 导出可在浏览器使用的 `APP_CATEGORIES` 和 `getAppCategory(value)`，分类名称和顺序来自 Manifest Schema；缺失或未知展示值归入 `other`。Manifest 校验拒绝非法分类，兼容省略字段的旧包。字段约束与完整分类表见 [分类与搜索](authoring.md)。
 
-当前 SDK 对应 Host API `3.21.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
+当前 SDK 对应 Host API `3.22.0`；App 按所需能力声明最低 Host 版本。不提供旧 UI 调用签名兼容层。
 
 Host 兼容范围在安装、更新和启动加载时检查，例如 `^3.1.0` 接受 `>=3.1.0` 且 `<4.0.0`。运行时 Host 注册表和共享类型化客户端不执行返回值 Schema 校验，直接保留 Host 的扩展响应；参数、方法、身份、权限、生命周期、载荷限制和取消检查不变。生成类型与 Schema 仍用于开发和输入验证，显式领域数据验证函数仍可按业务需要调用。同一 Host 主版本必须保留既有字段的类型与含义，旧 App 不需要跟随每次 Host 次版本更新。
 
@@ -24,7 +26,7 @@ Host API 3.21 起，纯 UI App 可通过 `createAppCapabilitiesClient(createAppC
 
 `toolScope: "global"` 只控制会话可用范围，MCP 连接仍按会话运行时隔离并回收。配置型 App 默认保留服务状态到运行时关闭；只有可安全重启的服务才声明 `mcpApp.runtime: { state: "stateless" }`，启用空闲回收，默认 1 小时。App 可提供 `idleTimeoutMs` 建议值（1000–3600000 毫秒）；Desktop 统一采用用户在“设置 → 高级设置 → Agent 与执行”中的 MCP 回收时间（1–1440 分钟）。未声明可安全重启的服务不会被此设置强制重启，并阻止所属会话运行时自动回收。
 
-App 根级 `toolScope` 为 `session`（默认）或 `global`。App 原生及 MCP 工具全部继承该设置；选择 App 后在整个会话常驻。未选择的 session App 不提供工具，global App 按需提供。显式声明此字段要求最低 Host API 3.1.0。创建/编辑规则和完整示例见 [App 创建文档](../../ui/docs/app-authoring.md)。
+App 根级 `toolScope` 为 `session`（默认）或 `global`。App 原生及 MCP 工具全部继承该设置；选择 App 后在整个会话常驻。未选择的 session App 不提供工具；global App 使用 `toolLoading: "on-demand"` 按需提供，使用 `"always"` 全局常驻。范围和加载均为 App 级配置，用户可在 Core 详情覆盖。显式声明此字段要求最低 Host API 3.1.0。创建/编辑规则和完整示例见 [App 创建文档](authoring.md)。
 
 App 安装后自动启用。`host.protocols` 是 App 的 UI 与 Backend 共用的 Host 协议字符串数组，例如：
 
@@ -105,4 +107,4 @@ Host API 3.8 支持根级 `toolSelection: "app" | "services"`（缺省 `app`）�
 
 原生工具通过 `contributes.services: [{id, title, description?}]` 声明子服务，并在每个 `contributes.tools` 条目填写 `serviceId`。MCP 服务由 Host 根据 App、实例和持久化服务 ID 自动提供动态子项；不需要为每个服务修改 Manifest。两种来源可以共存。显式字段需要 `hostApi: "^3.8.0"` 和支持该字段的固定 SDK。
 
-`toolScope` 仍由整个 App 控制：session 只提供已选子服务；global 保持按需发现，只有已选子服务常驻。子服务选择不改变权限或 Backend 生命周期。“全选”保存当前列表的快照；新增服务不自动被选择。MCP 改名保留 ID，删除重建产生新 ID。
+`toolScope` 仍由整个 App 控制：session 只提供已选子服务；global + on-demand 按需发现且已选子服务常驻；global + always 的可用子服务全局常驻。子服务选择不改变权限或 Backend 生命周期。“全选”保存当前列表的快照；新增服务不自动被选择。MCP 改名保留 ID，删除重建产生新 ID。

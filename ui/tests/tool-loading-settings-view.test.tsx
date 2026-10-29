@@ -39,9 +39,9 @@ test('tool loading settings renders grouped resident and deferred radio choices'
   expect(html).toContain('rowSpan="2"');
   expect(html.match(/>内置浏览器</g)).toHaveLength(1);
   expect(html.match(/>App 管理</g)).toBeNull();
-  expect(html.match(/type="radio"/g)).toHaveLength(18);
+  expect(html.match(/type="radio"/g)).toHaveLength(15);
   expect(html).toMatch(/aria-label="connector_cli_setup 常驻"[^>]*checked=""[^>]*value="always"/);
-  expect(html).toMatch(/aria-label="image_generate 按需"[^>]*checked=""[^>]*value="deferred"/);
+  expect(html).toMatch(/aria-label="image_gen 常驻"[^>]*checked=""[^>]*value="always"/);
 });
 
 const toolApps = [

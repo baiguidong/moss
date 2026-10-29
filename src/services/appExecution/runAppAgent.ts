@@ -151,11 +151,10 @@ export async function runAppAgent(
 
   // App Agents use the same permission context as the owning session.
   // An App request itself is not permission to edit files or run commands.
-  const appPrefix = 'app__' + appId.replace(/[^a-zA-Z0-9_]/g, '_') + '__'
   const basePool = toolUseContext.options.tools.filter(
     (tool) =>
       !NESTED_ORCHESTRATION_TOOLS.some((name) => toolMatchesName(tool, name)) &&
-      !tool.name.startsWith(appPrefix),
+      tool.appInfo?.appId !== appId && tool.mcpInfo?.appId !== appId,
   )
   // A parent StructuredOutput (from --json-schema) carries a different schema;
   // leaving it in would let the agent satisfy the wrong contract.

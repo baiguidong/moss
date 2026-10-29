@@ -64,7 +64,7 @@ export async function handleMarkdownLinkClick(
     if (!detail.handled) throw new Error('此会话中的 App 页面不可用');
   } else if (target && isAppResourceUri(target)) {
     event.preventDefault();
-    if (typeof window !== 'undefined' && window.mossWeb && sessionId && host.presentation) {
+    if (sessionId && host.presentation) {
       const result = await host.presentation.open({ sessionId, input: { items: [{ resource_uri: target }] } });
       if (!result.ok) throw new Error(result.error || 'App 文件不可用');
     } else await host.openAppResource(target);

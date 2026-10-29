@@ -43,3 +43,13 @@ describe('App tool scope', () => {
     expect((await b).map(t => t.name)).toEqual(['global'])
   })
 })
+
+test('global resident tools are in the initial tool set without selecting an App', () => {
+  const resident = { ...global, appInfo: { ...global.appInfo!, toolLoading: 'always' as const } }
+  const result = applyAppToolPolicy([resident, global], { appIds: [], mcpServers: {} })
+  expect(result.filter(tool => !isDeferredTool(tool)).map(tool => tool.appInfo?.toolLoading)).toEqual(['always'])
+  expect(resident.alwaysLoad).toBeUndefined()
+  const sessionOnly = { ...resident, appInfo: { ...resident.appInfo, toolScope: 'session' as const } }
+  expect(applyAppToolPolicy([sessionOnly], { appIds: [], mcpServers: {} })).toEqual([])
+  expect(isDeferredTool(applyAppToolPolicy([sessionOnly], { appIds: ['global'], mcpServers: {} })[0]!)).toBe(false)
+})

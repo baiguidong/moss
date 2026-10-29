@@ -1,23 +1,20 @@
 "use client";
 
-import { AppDiscoveryFilter } from '@/components/app-discovery-filter';
-import { AppDiscoveryBadges } from '@/components/app-discovery-badges';
-import { AppConnectorSettings, canAuthenticateConnector } from '@/components/app-connector-settings';
-import { getAppKind, useAppDiscoveryPreferences } from '@/lib/app-discovery';
+import { AppHubToolbar, type AppHubTab } from '@/components/app-hub-toolbar';
+import { AppHubCard } from '@/components/app-hub-card';
+import { AppBuiltinDetails } from '@/components/app-builtin-details';
+import { useResourceDetail } from '@/lib/use-resource-detail';
 export { AppAgentTools } from '@/components/app-capabilities';
-import { AppAgentTools, AppCapabilityButton } from '@/components/app-capabilities';
 
 import * as React from "react";
 import { AppIcon } from "@/components/app-icon";
-import { AppSettingsButton } from '@/components/app-settings';
 import { AppCategoryTabs } from '@/components/app-category-tabs';
 import { filterApps, groupApps } from '@/lib/app-categories';
-import { appPageUnavailableReason, getAppPrimaryEntry } from '@/lib/app-navigation';
 import { supportsHostFeature } from '@/lib/host-environment';
 import {
-  AlertCircle, Download, ExternalLink, History,
-  KeyRound, Pencil, RefreshCw, RotateCcw,
-  Settings2, ShieldCheck, ShoppingBag, SquareTerminal, Trash2,
+  AlertCircle, Upload,
+  KeyRound, RefreshCw,
+  Settings2, SquareTerminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +23,7 @@ import { cleanIpcErrorMessage } from "@/lib/app-notifications";
 import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
 import { AppInstallProgressView } from '@/components/app-install-progress';
 import { isAppInstallActive, useAppInstallProgress } from '@/lib/app-install-progress';
-import { describeAppPermission, describeBackendAction } from '../../shared/app-capability-descriptions.mjs';
-import { useAppAuthoring } from '@/lib/app-authoring';
-import type { AppInstance, AppVersion, StoredApp } from "../types";
-
-function formatTimestamp(timestamp: number) {
-  return new Date(timestamp).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
+import type { AppInstance, StoredApp, BuiltinApp } from "../types";
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }) {
   // Keep the hidden focus target inside the list's scrollable content.
@@ -102,7 +92,7 @@ export async function setAppEnabled(app: StoredApp, enabled: boolean) {
   }
 }
 
-function isAppEnabled(app: StoredApp) {
+export function isAppEnabled(app: StoredApp) {
   if (!app.enabled || !app.backend) return Boolean(app.enabled);
   const defaultInstance = app.instances?.[0];
   if (defaultInstance && usesAppSettings(app) && missingRequiredConfiguration(app, defaultInstance).length) return true;
@@ -233,7 +223,7 @@ function SchemaFields({ schema, value, secrets, configured, onChange }: {
   );
 }
 
-function statusLabel(state: string, app: StoredApp) {
+export function statusLabel(state: string, app: StoredApp) {
   const instance = app.instances?.[0];
   if (state === "stopped" && app.backend?.lifecycle === "on-demand"
     && app.enabled && instance?.enabled && !app.runtimeStatus?.error
@@ -247,11 +237,12 @@ function errorMessage(error: unknown) {
   return cleanIpcErrorMessage(error);
 }
 
-export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }: {
+export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings, onBusyChange }: {
   app: StoredApp;
   instance: AppInstance;
   onChanged: () => Promise<unknown>;
   onOpenSettings?: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const appId = app.id || app.name;
   const configuration = app.configuration;
@@ -263,7 +254,9 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
   const [secrets, setSecrets] = React.useState<Record<string, any>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
-  const runtimeError = instance.status?.lastError || "";
+  const runtimeError = instance.status?.lastError || app.runtimeStatus?.error || "";
+  React.useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  React.useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
@@ -285,7 +278,7 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1 text-xs font-medium">运行管理</span>
-        {appSettings && onOpenSettings && <Button variant="outline" size="sm" className="h-8" disabled={!app.enabled} title={app.enabled ? "打开应用设置" : "请先启用 App"} onClick={onOpenSettings}><Settings2 className="h-4 w-4" />打开设置</Button>}
+        {appSettings && onOpenSettings && <Button variant="outline" size="sm" className="h-8" disabled={busy || !app.enabled} title={app.enabled ? "打开应用设置" : "请先启用 App"} onClick={onOpenSettings}><Settings2 className="h-4 w-4" />打开设置</Button>}
         <Button variant="ghost" size="icon" className="h-8 w-8" title="重启" disabled={busy || !instance.enabled || !app.enabled} onClick={() => run(() => window.agentDesktop.restartAppInstance({ appId, instanceId: instance.id }))}><RefreshCw className="h-4 w-4" /></Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="日志" onClick={openLogs}><SquareTerminal className="h-4 w-4" /></Button>
       </div>
@@ -310,40 +303,40 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings }:
 }
 
 
-export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, onIterate, onLoadVersions, onRollback, onRefresh, initialExpandedApp, onUseApp, onAuthorize }: {
-  onAuthorize?: (app: StoredApp) => ReturnType<Window['agentDesktop']['connectorApp']>;
-  onUseApp?: (app: StoredApp) => void;
+export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'marketplace', onTabChange }: {
+  initialTab?: AppHubTab;
+  onTabChange?: (tab: AppHubTab) => void;
   apps: StoredApp[];
   loading?: boolean;
-  versionsByApp: Record<string, AppVersion[]>;
-  onLaunch: (name: string, options?: { settings?: boolean; route?: string }) => void;
-  initialExpandedApp?: string | null;
-  onDelete: (name: string, options?: { deleteData?: boolean; deleteCredentials?: boolean }) => void;
-  onIterate: (name: string) => void;
-  onLoadVersions: (name: string) => void;
-  onRollback: (name: string, versionId: string) => void;
+  onLaunch: (name: string) => void;
   onRefresh: () => Promise<unknown>;
 }) {
-  const [expanded, setExpanded] = React.useState<string | null>(initialExpandedApp || null);
-  React.useEffect(() => { if (initialExpandedApp) setExpanded(initialExpandedApp); }, [initialExpandedApp]);
-  const authoring = useAppAuthoring();
-  const [versionsOpen, setVersionsOpen] = React.useState<string | null>(null);
-  const [marketOpen, setMarketOpen] = React.useState(false);
+  const [builtins, setBuiltins] = React.useState<BuiltinApp[]>([]);
+  const [builtinsOpen, setBuiltinsOpen] = React.useState(false);
+  const [builtinsError, setBuiltinsError] = React.useState('');
+  React.useEffect(() => { let active = true; void window.agentDesktop.listBuiltinApps?.().then(items => { if (active) { setBuiltins(items); setBuiltinsError(''); } }).catch(error => { if (active) setBuiltinsError(String(error)); }); return () => { active = false; }; }, [apps]);
+  const [tab, setTab] = React.useState<AppHubTab>(initialTab);
+  const changeTab = (value: AppHubTab) => { setTab(value); setBuiltinsOpen(false); onTabChange?.(value); };
   const [category, setCategory] = React.useState('all');
   const [query, setQuery] = React.useState('');
-  const { preferences, update: updatePreference } = useAppDiscoveryPreferences();
-  const expandedSection = initialExpandedApp ? getAppKind(apps.find(app => (app.id || app.name) === initialExpandedApp)) : null;
-  const [sectionOverride, setSectionOverride] = React.useState<string | null>(expandedSection);
-  React.useEffect(() => { if (expandedSection) setSectionOverride(expandedSection); }, [initialExpandedApp, expandedSection]);
-  const section = sectionOverride || preferences.sections.installed;
+  const { detail: builtinId, open: openBuiltin, close: closeBuiltin } = useResourceDetail<string>();
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
   const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
-  const [authNotice, setAuthNotice] = React.useState<{ appId: string; message: string } | null>(null);
-  const searchedApps = filterApps(apps, query, 'all', { kind: section });
+  const installedById = new Map(apps.map(app => [app.id || app.name, app]));
+  const builtinCatalog = builtins.map(item => {
+    const app = installedById.get(item.id);
+    return { ...app, id: item.id, name: app?.name || item.id, displayName: app?.displayName || item.displayName, description: app?.description || item.description, builtin: true };
+  });
+  const searchedApps = filterApps(builtinsOpen ? builtinCatalog : apps, query);
   const matchedApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(matchedApps).flatMap(group => group.apps);
-  const changeSection = (value: string) => { setSectionOverride(value); setCategory('all'); void updatePreference({ action: 'section', surface: 'installed', section: value }).catch(reason => setError(reason.message)); };
+  const selectedBuiltin = builtins.find(item => item.id === builtinId);
+  const openApp = (id: string, name: string) => {
+    const builtin = builtinsOpen && builtins.find(item => item.id === id);
+    if (builtin && !builtin.installed && !installedById.has(id)) openBuiltin(id);
+    else onLaunch(name);
+  };
 
   const run = async (key: string, operation: () => Promise<unknown>) => {
     setBusy(key);
@@ -361,152 +354,48 @@ export function AppsPanel({ apps, loading, versionsByApp, onLaunch, onDelete, on
     });
   };
 
-  if (loading && apps.length === 0) {
-    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground" role="status">正在加载 Apps…</div>;
-  }
-
-  if (marketOpen || apps.length === 0) {
-    return <AppMarketplacePanel installedApps={apps} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;
+  if (tab === 'marketplace') {
+    return <AppMarketplacePanel installedApps={apps} onBack={() => changeTab('installed')} onInstalled={onRefresh} hub />;
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div data-app-header className="shrink-0 border-b border-border/70">
-      <div className="mx-auto flex min-h-12 w-full max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 sm:px-5">
-        <div className="order-1 flex shrink-0 items-baseline gap-2"><h1 className="text-sm font-semibold">Apps</h1><span className="hidden text-xs text-muted-foreground sm:inline">{apps.length} 个已安装</span></div>
-        <div className="order-3 w-full min-[480px]:order-2 min-[480px]:w-auto min-[480px]:min-w-[194px] min-[480px]:flex-1"><AppDiscoveryFilter value={section} onChange={changeSection} query={query} onQuery={setQuery} /></div>
-        <Button size="sm" variant="ghost" className="order-2 h-8 shrink-0 px-2.5 text-xs sm:order-3" title="应用市场" aria-label="应用市场" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-3.5 w-3.5" /><span className="hidden sm:inline">应用市场</span></Button>
-        <Button size="sm" variant="ghost" className="order-4 h-8 shrink-0 px-2.5 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={busy === 'install' || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void installArchive()}><Download className="h-3.5 w-3.5" />{busy === 'install' ? '安装中…' : '本地安装 ZIP'}</Button>
-      </div>
-      </div>
+    <>
+    <div className={`${selectedBuiltin ? 'hidden' : 'flex'} h-full min-h-0 flex-col bg-background`}>
+      <AppHubToolbar tab="installed" installedCount={apps.length} onChangeTab={changeTab} query={query} onQuery={setQuery} searchPlaceholder={builtinsOpen ? '搜索内置应用' : undefined}
+        busy={busy === 'install'} actions={<>
+          {builtins.length > 0 && <Button size="sm" variant={builtinsOpen ? 'secondary' : 'outline'} aria-pressed={builtinsOpen} className="h-8 rounded-lg px-3 text-xs" onClick={() => { setBuiltinsOpen(value => !value); setCategory('all'); }}>内置应用</Button>}
+          <Button size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={busy === 'install' || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void installArchive()}><Upload className="h-4 w-4" />{busy === 'install' ? '安装中…' : '添加应用'}</Button>
+          <Button size="icon-sm" variant="outline" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || busy === 'refresh'} onClick={() => void run('refresh', async () => {})}><RefreshCw className={`h-4 w-4 ${loading || busy === 'refresh' ? 'animate-spin' : ''}`} /></Button>
+        </>} />
       <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-[1180px] px-4 pb-5 pt-1.5 sm:px-5">
+      <div className="mx-auto w-full max-w-[1180px] px-4 py-2.5 sm:px-5">
+        {builtinsError && <p role="alert" className="py-3 text-sm text-destructive">内置应用列表加载失败：{builtinsError}</p>}
         {archiveProgress.local && <div className="mb-3"><AppInstallProgressView progress={archiveProgress.local} /></div>}
         <AppCategoryTabs apps={searchedApps} value={category} onChange={setCategory} panelId="installed-apps" />
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
-        <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-2">
-        {visibleApps.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">{apps.length ? '没有匹配的 App，可切换到全部或调整筛选' : '暂无 App，请从应用市场安装'}</div>
+        <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-3">
+        {loading ? <div role="status" className="flex h-44 items-center justify-center text-sm text-muted-foreground">正在加载 Apps…</div> : visibleApps.length === 0 ? (
+          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{apps.length || builtinsOpen ? '没有匹配的 App，可切换到全部或调整筛选' : '暂无 App，请从应用市场安装'}</div>
         ) : (
-          <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
-            {visibleApps.map((app) => {
-              const appId = app.id || app.name;
-              const isExpanded = expanded === appId;
-              const state = app.runtimeStatus?.state || "stopped";
-              const displayedBackend = app.backend;
-              const trust = app.trust;
-              const permissions = app.permissions || [];
-              const enabled = isAppEnabled(app);
-              const packageUnavailable = app.packageStatus === "incompatible" || app.packageStatus === "invalid";
-              const primaryEntry = getAppPrimaryEntry(app);
-              const auxiliaryUi = app.hasUi && app.navigation?.location === 'none';
-              const openReason = primaryEntry?.unavailableReason || appPageUnavailableReason(app);
-              const connector = app.connectorApp?.connection;
-              const directAuth = canAuthenticateConnector(connector) && !connector?.credentialSchema && !connector?.hasCli && !connector?.requiresCliSetup;
-              const packageNotice = app.packageStatus === "incompatible"
-                ? `当前安装的 v${app.currentVersion || "-"}${app.requiredHostApi ? ` 需要 Host API ${app.requiredHostApi}` : ""}，与此版本 Moss 不兼容，请更新到兼容版本。`
-                : app.packageStatus === "invalid"
-                  ? "当前安装包不可用，请重新安装或更新版本。"
-                  : "";
-              return (
-                <section key={appId} data-app-category={app.category || 'other'} className={`flex min-w-0 flex-col rounded-lg border border-border/70 bg-card/80 p-3 transition-colors hover:border-border ${isExpanded ? "lg:col-span-2 2xl:col-span-3" : ""}`}>
-                  <div className="flex items-start gap-2.5">
-                    <AppIcon icon={app.icon} className="h-9 w-9 rounded-lg" />
-                    <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold">{app.displayName || app.title || app.name}</h3><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{app.description || "未填写描述"}</p></div>
-                    <div className="grid justify-items-end gap-2">
-                      <Toggle checked={enabled} disabled={busy === appId || packageUnavailable} label={enabled ? "已启用" : "已停用"} onChange={(nextEnabled) => void run(appId, () => setAppEnabled(app, nextEnabled))} />
-                    </div>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                    <span title={app.currentVersion}>v{(app.currentVersion || "-").replace(/-local\..*$/, " · 本地版")}</span>
-                    <AppDiscoveryBadges app={app} />
-                    <AppCapabilityButton app={app} compact />
-                    {isExpanded && <span>{trust?.status === "trusted" ? `可信发布者${trust.publisher?.name ? ` · ${trust.publisher.name}` : ""}` : trust?.status === "untrusted" ? "签名未受信任" : trust?.status === "unsigned" ? "未签名" : "使用时校验"}</span>}
-                    {app.hasBackend && <span className={state === "error" || state === "crash-loop" ? "text-destructive" : state === "running" ? "text-emerald-600" : ""}>{statusLabel(state, app)}</span>}
-                    {isExpanded && <span>{formatTimestamp(app.updatedAt)}</span>}
-                  </div>
-                  {packageUnavailable && <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{packageNotice}</div>}
-                  {!packageUnavailable && app.runtimeStatus?.error && <div className="mt-2 text-xs text-destructive">{app.runtimeStatus.error}</div>}
-                  {authNotice?.appId === appId && <p role="status" className="mt-2 text-xs text-muted-foreground">{authNotice.message}</p>}
-                  <div className="mt-auto flex flex-wrap gap-1.5 pt-2.5">
-                    {app.connectorApp?.connection?.connected && app.grants?.includes('connector:use') && enabled && onUseApp && <Button size="sm" className="h-8" onClick={() => onUseApp(app)}>在会话中使用</Button>}
-                    {!packageUnavailable && directAuth && <Button size="sm" variant="outline" className="h-8" disabled={busy === appId || !enabled || !app.grants?.includes('connector:use') || !onAuthorize} onClick={() => {
-                      setAuthNotice(null);
-                      void run(appId, async () => {
-                        const result = await onAuthorize!(app);
-                        if (result.auth?.status === 'authorization_url_opened') setAuthNotice({ appId, message: '授权页面已打开，请在浏览器中完成登录。' });
-                      });
-                    }}><KeyRound className="h-4 w-4" />{app.connectorApp?.connection?.connected ? '重新授权' : '连接 / 授权'}</Button>}
-                    {!packageUnavailable && app.connectorApp && !directAuth && <Button size="sm" variant="outline" className="h-8" onClick={() => setExpanded(appId)}><KeyRound className="h-4 w-4" />认证 / 配置</Button>}
-                    {(primaryEntry || auxiliaryUi) && <Button
-                      size="sm"
-                      className="h-8"
-                      data-app-open={appId}
-                      disabled={Boolean(openReason)}
-                      title={!app.enabled && !packageUnavailable ? '请先启用 App' : openReason || (primaryEntry?.location === 'settings' ? '打开应用设置' : '打开 App')}
-                      onClick={() => onLaunch(app.name)}
-                    ><ExternalLink className="h-4 w-4" />{packageUnavailable ? "不可用" : !app.enabled ? "请先启用" : '打开'}</Button>}
-                    {!packageUnavailable && <AppSettingsButton app={app} onOpenSettings={route => onLaunch(app.name, { settings: true, route })} />}
-                    {packageUnavailable && <Button size="sm" className="h-8" onClick={() => setMarketOpen(true)}><ShoppingBag className="h-4 w-4" />更新版本</Button>}
-                    {!packageUnavailable && <Button size="sm" variant={app.hasBackend && !app.hasUi ? "default" : "outline"} className="h-8" onClick={() => setExpanded(isExpanded ? null : appId)}><Settings2 className="h-4 w-4" />管理</Button>}
-                    {!app.connectorApp && (authoring.available || authoring.reason === 'backend-failed') && <Button disabled={!authoring.available} title={authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试'} size="sm" variant="outline" className="h-8" onClick={() => onIterate(app.name)}><Pencil className="h-4 w-4" />迭代</Button>}
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="版本" onClick={() => { const open = versionsOpen === appId ? null : appId; setVersionsOpen(open); if (open) onLoadVersions(app.name); }}><History className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="卸载" onClick={() => {
-                      if (!window.confirm(`卸载“${app.displayName || app.name}”？`)) return;
-                      const deleteData = window.confirm("同时删除 App 数据？");
-                      const deleteCredentials = window.confirm("同时删除 App 密钥？");
-                      onDelete(app.name, { deleteData, deleteCredentials });
-                    }}><Trash2 className="h-4 w-4" /></Button>
-                  </div>
-                  {isExpanded && (
-                    <div className="mt-4 border-t border-border pt-3">
-                      {app.connectorApp && <AppConnectorSettings app={app} onChanged={onRefresh} onAuthorize={onAuthorize} />}
-                      {app.hasBackend && (app.instances?.[0]
-                        ? <AppRuntimeControls app={app} instance={app.instances[0]} onChanged={onRefresh} onOpenSettings={() => onLaunch(app.name, { settings: true })} />
-                        : <div className="py-3 text-xs text-muted-foreground">后台服务尚未就绪</div>)}
-                      {permissions.length ? (
-                        <div className="mt-3 border-t border-border pt-3">
-                          <div className="mb-2 flex items-center gap-2 text-xs font-medium"><ShieldCheck className="h-3.5 w-3.5" />权限授权</div>
-                          <div className="grid gap-1.5">
-                            {permissions.map((permission) => {
-                              const checked = (app.grants || []).includes(permission);
-                              const detail = describeAppPermission(permission);
-                              return <label key={permission} className="flex items-start gap-2.5 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs">
-                                <input type="checkbox" className="mt-0.5 shrink-0" checked={checked} disabled={busy === appId} onChange={() => void run(appId, () => window.agentDesktop.setAppGrants({ appId, grants: checked ? (app.grants || []).filter((item) => item !== permission) : [...(app.grants || []), permission] }))} />
-                                <span className="min-w-0"><span className="block font-medium text-foreground">{detail.label}</span><span className="mt-0.5 block leading-5 text-muted-foreground">{detail.description}</span><code className="mt-1 block break-all text-[10px] text-muted-foreground/80">{permission}</code></span>
-                              </label>;
-                            })}
-                          </div>
-                        </div>
-                      ) : null}
-                      <AppAgentTools app={app} />
-                      {displayedBackend?.actions?.length ? (
-                        <div className="mt-3 border-t border-border pt-3">
-                          <div className="mb-2 text-xs font-medium">应用能力</div>
-                          <div className="grid gap-2 sm:grid-cols-2">{displayedBackend.actions.map((action) => {
-                            const detail = describeBackendAction(action.name);
-                            return <div key={action.name} className="min-w-0 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs"><div className="font-medium text-foreground">{detail.label}</div><p className="mt-0.5 leading-5 text-muted-foreground">{detail.description}</p><code className="mt-1 block break-all text-[10px] text-muted-foreground/80">{action.name}</code></div>;
-                          })}</div>
-                        </div>
-                      ) : null}
-                      {!permissions.length && <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" />无额外权限</div>}
-                    </div>
-                  )}
-                  {versionsOpen === appId && (
-                    <div className="mt-4 border-t border-border pt-3">
-                      {(versionsByApp[app.name] || []).map((version) => (
-                        <div key={version.id} className="flex items-center justify-between border-b border-border/60 py-2 last:border-b-0"><div><div className="text-xs font-medium">{version.version}{version.isCurrent ? " · 当前" : ""}</div><div className="text-[11px] text-muted-foreground">{formatTimestamp(version.createdAt)} · {version.reason}</div></div><Button size="sm" variant="ghost" disabled={version.isCurrent} onClick={() => onRollback(app.name, version.id)}><RotateCcw className="h-3.5 w-3.5" />回滚</Button></div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+            {visibleApps.map(app => <AppHubCard key={app.id || app.name} id={app.id || app.name} category={app.category}
+              title={app.displayName || app.title || app.name} description={app.description}
+              publisher={app.publisher?.name || app.trust?.publisher?.name || (app.builtin ? 'Moss' : '本地应用')}
+              icon={<AppIcon icon={app.icon} className="h-9 w-9 shrink-0 rounded-lg" />} onOpen={() => openApp(app.id || app.name, app.name)} />)}
           </div>
         )}
         </div>
       </div>
       </div>
     </div>
+    {selectedBuiltin && <AppBuiltinDetails key={selectedBuiltin.id} app={selectedBuiltin} installed={selectedBuiltin.installed || installedById.has(selectedBuiltin.id)} onBack={closeBuiltin}
+      onOpen={() => onLaunch(installedById.get(selectedBuiltin.id)?.name || selectedBuiltin.id)}
+      onRestore={async () => {
+        const result = await window.agentDesktop.restoreBuiltinApp({ id: selectedBuiltin.id });
+        if (!result.ok) throw new Error(result.error || '恢复失败');
+        await onRefresh();
+        setBuiltins(await window.agentDesktop.listBuiltinApps());
+      }} />}
+    </>
   );
 }

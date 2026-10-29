@@ -36,7 +36,7 @@ export function createAppClient(bridge) {
     }
   }
   return {
-    app: bridge.app, instances: bridge.instances, storage: bridge.storage,
+    app: bridge.app, instances: bridge.instances, storage: bridge.storage, view: bridge.view,
     events: { on(name, listener) {
       if (closed) throw cancelled()
       const off = bridge.events.on(name, listener)

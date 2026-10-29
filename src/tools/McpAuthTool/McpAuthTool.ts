@@ -56,15 +56,18 @@ export function createMcpAuthTool(
   const location = url ? `${transport} at ${url}` : transport
   const appId = getSessionRuntimeContext()?.appToolPolicy?.mcpServers[serverName]?.appId
 
+  // Authentication is a Host-created tool, with an explicit service-specific
+  // name so several unauthenticated Apps can coexist.
+  const toolName = appId ? `${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}_authenticate` : 'authenticate'
   const description =
     `The \`${serverName}\` MCP server (${location}) is installed but requires authentication. ` +
     `Call this tool to start the OAuth flow. In Moss desktop, the authorization URL is opened automatically in the browser panel; otherwise you'll receive an authorization URL to share with the user. ` +
     `Once the user completes authorization in their browser, the server's real tools will become available automatically.`
 
   return {
-    name: buildMcpToolName(serverName, 'authenticate', appId),
+    name: buildMcpToolName(serverName, toolName, appId),
     isMcp: true,
-    mcpInfo: { serverName, toolName: 'authenticate', ...(appId && { appId }) },
+    mcpInfo: { serverName, toolName, ...(appId && { appId }) },
     isEnabled: () => true,
     isConcurrencySafe: () => false,
     isReadOnly: () => false,

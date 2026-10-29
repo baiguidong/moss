@@ -227,3 +227,40 @@ test('App results reveal the workbench entry without claiming the business page 
   expect(delivery).toBeDefined();
   expect(await service.acknowledge('a', { ...delivery.request, state: 'shown' })).toEqual({ accepted: false });
 });
+
+test('visible provider status refresh preserves content revision, reading location and pin; unchanged polling is silent', async () => {
+  let reviewedPages = 0, reads = 0;
+  const { service, events } = await setup(async (_session: any, item: any) => {
+    reads++;
+    return { kind: 'file', title: '演示文稿', revision: 'original-file', source: { type: 'provider', uri: item.resource_uri }, creation: { quality: { state: 'pending', reviewedPages, totalPages: 12 } }, availability: 'ready' };
+  });
+  await service.present('a', { items: [{ resource_uri: 'moss-presentations://works/test' }] }, { origin: 'manual' });
+  await service.action('a', { type: 'pin', value: true });
+  const before = await service.snapshot('a'), count = events.length;
+  await service.refresh('a', { activeOnly: true });
+  expect(events.length).toBe(count); expect((await service.snapshot('a')).version).toBe(before.version);
+  reviewedPages = 8; await service.refresh('a', { activeOnly: true });
+  const after = await service.snapshot('a');
+  expect(after.resources[0].creation.quality.reviewedPages).toBe(8);
+  expect(after.resources[0].revision).toBe('original-file'); expect(after.resources[0].sequence).toBe(before.resources[0].sequence);
+  expect(after.state).toEqual(before.state);
+  const changedEvents = events.length;
+  await service.snapshot('b', { activate: true }); const readCount = reads;
+  await service.refresh('a', { activeOnly: true }); expect(reads).toBe(readCount); expect(events.length).toBe(changedEvents);
+  await service.snapshot('a', { activate: true }); await service.action('a', { type: 'close' });
+  const closedReads = reads; await service.refresh('a', { activeOnly: true }); expect(reads).toBe(closedReads);
+});
+
+test('older status refreshes cannot overwrite a newer provider response', async () => {
+  let mode = 'initial', release: () => void, entered: () => void;
+  const pending = new Promise<void>(resolve => { entered = resolve; });
+  const { service } = await setup(async (_session: any, item: any) => {
+    const status = mode;
+    if (status === 'old') { entered(); await new Promise<void>(resolve => { release = resolve; }); }
+    return { kind: 'file', revision: '1', source: { type: 'provider', uri: item.resource_uri }, creation: { status } };
+  });
+  await service.present('a', { items: [{ resource_uri: 'moss-pdf://works/test' }] }, { origin: 'manual' });
+  mode = 'old'; const old = service.refresh('a', { activeOnly: true }); await pending;
+  mode = 'new'; await service.refresh('a', { activeOnly: true }); release!(); await old;
+  expect((await service.snapshot('a')).resources[0].creation.status).toBe('new');
+});

@@ -1,3 +1,4 @@
+import { normalizeAppToolName } from '../../../app-sdk/src/tool-names.mjs'
 import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
 import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/index.mjs'
 
@@ -15,9 +16,7 @@ export function contributionId(appId, localId) {
 }
 
 export function appToolName(appId, localId) {
-  const normalize = (value) => String(value).replace(/[^a-zA-Z0-9_]/g, '_')
-  // Core rejects duplicate names before registering the model's tool set.
-  return `app__${normalize(appId)}__${normalize(localId)}`.slice(0, 64)
+  return normalizeAppToolName(localId, appId)
 }
 
 export function collectManifestContributions(manifest, options = {}) {
@@ -34,6 +33,7 @@ export function collectManifestContributions(manifest, options = {}) {
         localId: item.id,
         appId: manifest.id,
         toolScope: getAppToolScope(options.toolScope ?? manifest.toolScope),
+        toolLoading: options.toolLoading ?? manifest.toolLoading ?? 'on-demand',
         toolSelection: manifest.toolSelection || 'app',
         appVersion: manifest.version,
         appDisplayName: manifest.displayName,

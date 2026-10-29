@@ -41,7 +41,7 @@ async function run(){
    w.webContents.send=(channel,...args)=>{
     if(channel==='agent:question-request'){
      const question=args[0],input=question.input||question,meta=input.metadata||question.metadata||{}
-     const allow=/^app__moss_buddy__(settings_read|settings_apply|help_search)$/.test(meta.toolName||'')
+     const allow=/^(settings_read|settings_apply|help_search)$/.test(meta.toolName||'')
      const payload=allow?{...question,answers:Object.fromEntries((input.questions||[]).map(q=>[q.question,q.options.find(o=>/允许一次/.test(o.label))?.label||q.options[0].label]))}:question
      setTimeout(()=>void handlers.get(allow?'agent:answer-question':'agent:reject-question')({sender:w.webContents},payload).catch(()=>{}),0)
     }

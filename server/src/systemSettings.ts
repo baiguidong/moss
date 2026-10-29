@@ -6,9 +6,6 @@ import { getMossServerHomeDir } from './lib/env.js'
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
 
 export type SystemSettingsImage = {
-  provider: string
-  url: string
-  apiKey: string
   model: string
 }
 
@@ -76,10 +73,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   url: '',
   apiKey: '',
   image: {
-    provider: 'minimax',
-    url: 'https://api.minimaxi.com/v1/image_generation',
-    apiKey: '',
-    model: '',
+    model: 'gpt-image-2',
   },
   webui: { snapshots: { ...DEFAULT_SNAPSHOT_POLICY } },
   serverRuntime: {
@@ -249,39 +243,13 @@ function normalizeSystemSettings(
   const existingImage = isRecord(result.image) ? result.image : {}
   const existingModelImage = recordField(existingModels, 'image')
   result.image = {
-    provider:
-      typeof sourceImage.provider === 'string'
-        ? sourceImage.provider.trim()
-        : typeof existingImage.provider === 'string'
-          ? existingImage.provider
-          : typeof existingModelImage.provider === 'string'
-            ? existingModelImage.provider
-          : DEFAULT_SYSTEM_SETTINGS.image.provider,
-    url:
-      typeof sourceImage.baseUrl === 'string'
-        ? sourceImage.baseUrl.trim()
-        : typeof sourceImage.url === 'string'
-          ? sourceImage.url.trim()
-        : typeof existingModelImage.baseUrl === 'string'
-          ? existingModelImage.baseUrl
-          : typeof existingImage.url === 'string'
-            ? existingImage.url
-          : DEFAULT_SYSTEM_SETTINGS.image.url,
-    apiKey:
-      typeof sourceImage.apiKey === 'string'
-        ? sourceImage.apiKey.trim()
-        : typeof existingImage.apiKey === 'string'
-          ? existingImage.apiKey
-          : typeof existingModelImage.apiKey === 'string'
-            ? existingModelImage.apiKey
-          : DEFAULT_SYSTEM_SETTINGS.image.apiKey,
     model:
       typeof sourceImage.model === 'string'
-        ? sourceImage.model.trim()
+        ? sourceImage.model.trim() || 'gpt-image-2'
         : typeof existingImage.model === 'string'
-          ? existingImage.model
+          ? existingImage.model || 'gpt-image-2'
           : typeof existingModelImage.model === 'string'
-            ? existingModelImage.model
+            ? existingModelImage.model || 'gpt-image-2'
           : DEFAULT_SYSTEM_SETTINGS.image.model,
   }
 
@@ -471,17 +439,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   const existingTextThinking = isRecord(existingText.thinking)
     ? existingText.thinking
     : {}
-  const existingImage = isRecord(existingModels.image)
-    ? existingModels.image
-    : {}
-  const imageModel: Record<string, unknown> = {
-    ...existingImage,
-    provider: nextSettings.image.provider,
-    baseUrl: nextSettings.image.url,
-    apiKey: nextSettings.image.apiKey,
-    model: nextSettings.image.model,
-  }
-  delete imageModel.url
+  const imageModel = { model: nextSettings.image.model.trim() || 'gpt-image-2' }
 
   const models = {
     ...existingModels,

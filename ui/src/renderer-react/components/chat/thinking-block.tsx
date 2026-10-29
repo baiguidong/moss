@@ -20,6 +20,7 @@ function cleanThinkingLines(content: string) {
       .replace(/^[-*+]\s+/, "")
       .replace(/^>\s*/, "")
       .replace(/^\d+\.\s+/, "")
+      .replace(/^(\*\*|__|\*|_|`)(.+)\1$/, "$2")
       .trim();
     return !line || line === "---" ? [] : [line];
   });
@@ -98,7 +99,7 @@ export function ThinkingBlock({
           {isActive ? "思考中" : "已思考"}
           {isActive ? <span className="ml-0.5 inline-block animate-pulse">...</span> : null}
         </span>
-        {preview ? (
+        {!expanded && preview ? (
           <span className="min-w-0 flex-1 truncate text-[12.5px] italic leading-[1.7] text-muted-foreground">
             {preview}
           </span>
@@ -112,6 +113,7 @@ export function ThinkingBlock({
         <div
           ref={contentRef}
           data-thinking-content="expanded"
+          style={{ marginLeft: "calc(var(--assistant-content-inset, 36px) * var(--ui-font-scale, 1))" }}
           className="relative mb-2 mt-1 max-h-[300px] overflow-y-auto rounded-md border border-border/70 bg-muted/20 px-3 py-2.5 text-[11px] text-muted-foreground"
         >
           <MarkdownRenderer

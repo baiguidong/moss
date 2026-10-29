@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppAgentTools, AppRuntimeControls, AppsPanel, setAppEnabled } from '../src/renderer-react/components/apps-panel';
+import { AppDetailsView } from '../src/renderer-react/components/app-details-view';
+import { AppManagementPanel } from '../src/renderer-react/components/app-details-management';
 import { AppConnectorSettings } from '../src/renderer-react/components/app-connector-settings';
 import { AppMarketplacePanel } from '../src/renderer-react/components/app-marketplace-panel';
 import { AppMcpToolRows } from '../src/renderer-react/components/app-mcp-tool-rows';
@@ -59,17 +61,18 @@ function renderInstance(hasSettings: boolean, enabled = true) {
 describe('Apps management', () => {
   test('labels an unverified cached App without claiming it is unsigned', () => {
     const app = settingsApp();
-    const html = renderToStaticMarkup(<AppsPanel apps={[app]} initialExpandedApp={app.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
-    expect(html).toContain('使用时校验');
+    const html = renderToStaticMarkup(<AppsPanel initialTab="installed" apps={[app]} onLaunch={() => {}} onRefresh={async () => {}} />);
+    expect(html).not.toContain('使用时校验');
+    expect(html.match(/<button/g)).toBeTruthy();
     expect(html).not.toContain('未签名');
   });
 
   test('keeps the Apps page in a loading state before the first list completes', () => {
-    const props = { apps: [], versionsByApp: {}, onLaunch: () => {}, onDelete: () => {}, onIterate: () => {}, onLoadVersions: () => {}, onRollback: () => {}, onRefresh: async () => {} };
-    const loading = renderToStaticMarkup(<AppsPanel {...props} loading />);
+    const props = { apps: [], onLaunch: () => {}, onRefresh: async () => {} };
+    const loading = renderToStaticMarkup(<AppsPanel initialTab="installed" {...props} loading />);
     expect(loading).toContain('正在加载 Apps');
-    expect(loading).not.toContain('应用市场');
-    const empty = renderToStaticMarkup(<AppsPanel {...props} />);
+    expect(loading).toContain('应用市场');
+    const empty = renderToStaticMarkup(<AppsPanel initialTab="installed" {...props} />);
     expect(empty).not.toContain('正在加载 Apps');
   });
 
@@ -87,21 +90,21 @@ describe('Apps management', () => {
         connection: { id: 'baidu-netdisk', hasMcp: true, hasRemoteMcp: true, authMode: 'server-side', connected: true },
       },
     } as StoredApp;
-    const renderPanel = (value: StoredApp) => renderToStaticMarkup(<AppsPanel apps={[value]} initialExpandedApp={value.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    const renderPanel = (value: StoredApp) => renderToStaticMarkup(<AppsPanel initialTab="installed" apps={[value]} onLaunch={() => {}} onRefresh={async () => {}} />);
 
-    expect(renderPanel(app)).toContain('重新授权');
+    expect(renderPanel(app)).not.toContain('重新授权');
     expect(renderToStaticMarkup(<AppConnectorSettings app={app} onChanged={async () => {}} />)).toContain('重新授权');
 
     const disconnected = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, connected: false } } } as StoredApp;
-    expect(renderPanel(disconnected)).toContain('连接 / 授权');
+    expect(renderPanel(disconnected)).not.toContain('连接 / 授权');
     expect(renderToStaticMarkup(<AppConnectorSettings app={disconnected} onChanged={async () => {}} />)).toContain('连接 / 授权');
 
     const cliApp = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, hasMcp: false, hasCli: true } } } as StoredApp;
-    expect(renderPanel(cliApp)).toContain('认证 / 配置');
+    expect(renderPanel(cliApp)).not.toContain('认证 / 配置');
     expect(renderToStaticMarkup(<AppConnectorSettings app={cliApp} onChanged={async () => {}} />)).toContain('安装 / 登录 CLI');
 
     const credentialApp = { ...app, connectorApp: { ...app.connectorApp!, connection: { ...app.connectorApp!.connection!, credentialSchema: { fields: [{ key: 'apiKey', label: 'API Key', type: 'password' }] } } } } as StoredApp;
-    expect(renderPanel(credentialApp)).toContain('认证 / 配置');
+    expect(renderPanel(credentialApp)).not.toContain('认证 / 配置');
     expect(renderToStaticMarkup(<AppConnectorSettings app={credentialApp} onChanged={async () => {}} />)).toContain('保存配置');
   });
 
@@ -111,7 +114,7 @@ describe('Apps management', () => {
       { ...settingsApp(), id: 'legacy.app', name: 'legacy.app', displayName: '旧应用' },
       { ...settingsApp(), id: 'knowledge.app', name: 'knowledge.app', displayName: '知识库', category: 'knowledge' },
     ];
-    const html = renderToStaticMarkup(<AppsPanel apps={apps} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    const html = renderToStaticMarkup(<AppsPanel initialTab="installed" apps={apps} onLaunch={() => {}} onRefresh={async () => {}} />);
     expect([...html.matchAll(/data-app-category="([^"]+)"/g)].map(match => match[1])).toEqual(['knowledge', 'automation', 'other']);
     expect(html.match(/data-app-open="automation.app"/g)).toHaveLength(1);
     expect(html).toContain('aria-label="App 分类"');
@@ -121,20 +124,20 @@ describe('Apps management', () => {
     expect(html).not.toContain('aria-label="搜索 App"');
   });
 
-  test('explains grants and backend actions in App management', () => {
+  test('moves grants and backend actions to details and its runtime panel', () => {
     const app = {
       ...settingsApp(false), id: 'moss.knowledge-rag', name: 'moss.knowledge-rag', displayName: '语义知识库',
       permissions: ['mcp:read', 'mcp:manage', 'mcp:connect', 'local-files:pick'],
       grants: ['mcp:read'],
       backend: { lifecycle: 'persistent', actions: [{ name: 'engine.status' }, { name: 'engine.prepare' }, { name: 'files.pick' }] },
     } as StoredApp;
-    const html = renderToStaticMarkup(<AppsPanel apps={[app]} initialExpandedApp={app.id} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
+    const html = renderToStaticMarkup(<AppDetailsView app={app} onBack={() => {}} onTry={() => {}} onRefresh={async () => {}} />)
+      + renderToStaticMarkup(<AppManagementPanel app={app} page="runtime" onRefresh={async () => {}} onBusyChange={() => {}} onOpenSettings={() => {}} />);
     expect(html).toContain('管理 MCP 服务');
     expect(html).toContain('新增、修改、启停或删除 MCP 服务配置');
     expect(html).toContain('选择本机文件');
     expect(html).toContain('准备运行环境');
     expect(html).toContain('选择文件');
-    expect(html).toContain('mcp:manage');
     expect(html).toContain('engine.prepare');
   });
 
@@ -154,7 +157,7 @@ describe('Apps management', () => {
         tools: [{ id: 'computer_use', title: '电脑操控', description: '读取并操作窗口', effect: 'write' }],
       },
     });
-    expect(prompt.detail).toContain('工具名称：app__moss_computer_use__computer_use');
+    expect(prompt.detail).toContain('工具名称：computer_use');
   });
 
   test('centers the MCP service cell across long tool rows', () => {
@@ -179,7 +182,7 @@ describe('Apps management', () => {
     expect(markup).toContain('查询记录');
     expect(markup).toContain('查找应用中的记录');
     expect(markup).toContain('只读');
-    expect(markup).toContain('已注册');
+    expect(markup).toContain('来源：example.settings · App');
     expect(markup).toContain('破坏性操作');
     expect(markup).toContain('未授权');
     const disabled = renderToStaticMarkup(<AppAgentTools app={{ ...app, enabled: false }} />);
@@ -192,22 +195,22 @@ describe('Apps management', () => {
     const app = {
       ...settingsApp(), enabled: true,
       id: 'moss.computer-use', name: 'moss.computer-use',
-      agentTools: [{ id: 'computer_use', name: 'app__moss_computer_use__computer_use', title: '电脑操控', description: '读取并操作窗口', effect: 'write' as const }],
+      agentTools: [{ id: 'computer_use', name: 'computer_use', title: '电脑操控', description: '读取并操作窗口', effect: 'write' as const }],
     };
     const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
-    expect(markup).toContain('工具名称：app__moss_computer_use__computer_use');
+    expect(markup).toContain('工具名称：computer_use');
   });
 
-  test('makes tool registration visible on the App card before opening management', () => {
+  test('keeps tool registration in details without repeating it on the App card', () => {
     const app = { ...settingsApp(), agentTools: [{ id: 'lookup', title: '查询', description: '查找记录', effect: 'read' as const }] };
-    const markup = renderToStaticMarkup(<AppsPanel apps={[app]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
-    expect(markup).toContain('1 个 AI 工具');
+    const markup = renderToStaticMarkup(<AppsPanel initialTab="installed" apps={[app]} onLaunch={() => {}} onRefresh={async () => {}} />);
+    expect(markup).not.toContain('1 个 AI 工具');
   });
 
   test('does not present UI Backend actions as Agent tools', () => {
     const app = { ...settingsApp(), backend: { lifecycle: 'on-demand' as const, actions: [{ name: 'request.send' }] }, agentTools: [] };
     const markup = renderToStaticMarkup(<AppAgentTools app={app} />);
-    expect(markup).toContain('此 App 当前没有声明供 Agent 调用的工具或 skill');
+    expect(markup).toContain('暂无 AI 工具');
     expect(markup).not.toContain('request.send');
     expect(markup).not.toContain('已注册');
   });
@@ -258,8 +261,8 @@ describe('Apps management', () => {
     await setAppEnabled(app, true);
     expect(calls).toEqual([{ appId: app.id, enabled: true }]);
     app.enabled = true;
-    const markup = renderToStaticMarkup(<AppsPanel apps={[app]} versionsByApp={{}} onLaunch={() => {}} onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => {}} />);
-    expect(markup).toMatch(/role="switch"[^>]*checked=""/);
+    const markup = renderToStaticMarkup(<AppsPanel initialTab="installed" apps={[app]} onLaunch={() => {}} onRefresh={async () => {}} />);
+    expect(markup).not.toContain('role="switch"');
     const openButton = markup.match(/<button[^>]*data-app-open="example\.settings"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
     expect(openButton).toContain('打开');
     expect(openButton).not.toContain('disabled=""');
@@ -293,7 +296,7 @@ describe('Apps management', () => {
     expect(markup).not.toContain('运行中');
   });
 
-  test('prevents opening a disabled App and tells the user to enable it', () => {
+  test('keeps Core details accessible while the App UI is disabled', () => {
     const app = {
       id: 'example.app',
       name: 'example.app',
@@ -306,22 +309,18 @@ describe('Apps management', () => {
       instances: [],
     } as StoredApp;
     const markup = renderToStaticMarkup(
-      <AppsPanel
+      <AppsPanel initialTab="installed"
         apps={[app]}
-        versionsByApp={{}}
+
         onLaunch={() => {}}
-        onDelete={() => {}}
-        onIterate={() => {}}
-        onLoadVersions={() => {}}
-        onRollback={() => {}}
         onRefresh={async () => {}}
       />,
     );
     const openButton = markup.match(/<button[^>]*data-app-open="example\.app"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
 
-    expect(openButton).toContain('disabled=""');
-    expect(openButton).toContain('title="请先启用 App"');
-    expect(openButton).toContain('请先启用');
+    expect(openButton).not.toContain('disabled=""');
+    expect(openButton).toContain('title="打开 App 信息"');
+    expect(openButton).toContain('打开');
   });
 
   test('keeps an incompatible installed App visible and directs the user to update it', () => {
@@ -348,23 +347,24 @@ describe('Apps management', () => {
       instances: [],
     } as StoredApp;
     const markup = renderToStaticMarkup(
-      <AppsPanel
+      <AppsPanel initialTab="installed"
         apps={[app]}
-        versionsByApp={{}}
+
         onLaunch={() => {}}
-        onDelete={() => {}}
-        onIterate={() => {}}
-        onLoadVersions={() => {}}
-        onRollback={() => {}}
         onRefresh={async () => {}}
       />,
     );
 
     expect(markup).toContain('Legacy App');
-    expect(markup).toContain('当前安装的 v1.3.0 需要 Host API ^1.3.0，与此版本 Moss 不兼容，请更新到兼容版本。');
-    expect(markup).toContain('更新版本');
+    expect(markup).not.toContain('v1.3.0');
+    expect(markup).not.toContain('不兼容');
+    expect(markup).not.toContain('更新版本');
+    const details = renderToStaticMarkup(<AppDetailsView app={app} onBack={() => {}} onTry={() => {}} onRefresh={async () => {}} />);
+    const management = details.match(/<button[^>]*data-app-management-menu[^>]*>/)?.[0] || '';
+    expect(management).toContain('aria-label="应用管理"');
+    expect(management).not.toContain('disabled=');
     const openButton = markup.match(/<button[^>]*data-app-open="example\.legacy"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
-    expect(openButton).toContain('disabled=""');
-    expect(openButton).toContain('不可用');
+    expect(openButton).not.toContain('disabled=""');
+    expect(openButton).toContain('title="打开 App 信息"');
   });
 });

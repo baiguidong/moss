@@ -3,6 +3,7 @@
 import * as React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { InlineVisualization } from "./inline-visualization";
 import { cn } from "@/lib/utils";
 import { LocalImage } from "@/components/local-image";
 import { CodeViewer } from "@/components/chat/code-viewer";
@@ -84,6 +85,8 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
         );
       }
 
+      if (language === 'moss-visualization') return <InlineVisualization code={code} sessionId={sessionId} />;
+
       const structured = renderStructuredCodeBlock({ code, language, blockId });
       if (structured) return structured;
 
@@ -137,7 +140,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
     ),
   }), [compact, chatDensity, sourceId, sessionId]);
   return (
-    <div
+    <div data-chat-content
       className={cn(
         "prose prose-sm min-w-0 max-w-none break-words dark:prose-invert [overflow-wrap:anywhere] [&_*]:max-w-full",
         variant === "document" && "prose-headings:scroll-mt-20 prose-pre:my-0",

@@ -465,10 +465,10 @@ export interface NativeDesktopAdapter {
 
 export type AppCategory = 'communication' | 'knowledge' | 'files' | 'creative' | 'development' | 'data' | 'automation' | 'ai' | 'sales' | 'marketing' | 'finance' | 'business' | 'hr' | 'education' | 'legal' | 'life' | 'diagnostics' | 'other'
 export interface AppCategoryDefinition { readonly id: AppCategory; readonly label: string }
-export type AppNavigation = { location: 'more' | 'settings'; viewId: string } | { location: 'none'; viewId?: never }
+export type AppNavigation = { location: 'more' | 'settings'; viewId: string } | { location: 'none' | 'details'; viewId?: never }
 export type AppSettingsGroup = 'integrations' | 'tools' | 'apps'
 export interface AppViewContribution { id: string; title: string; route: string; icon?: string; order?: number; permission?: string }
-export interface AppSettingsContribution { id: string; title: string; viewId: string; group?: AppSettingsGroup; order?: number; permission?: string }
+export interface AppSettingsContribution { id: string; title: string; viewId?: string; form?: { readAction: string; saveAction: string }; presentation?: { width?: 'default' | 'wide' }; group?: AppSettingsGroup; order?: number; permission?: string }
 export const APP_CATEGORIES: readonly AppCategoryDefinition[]
 export function getAppCategory(value?: unknown): AppCategoryDefinition
 export function getAppCategoryForApp(app: { id?: string; name?: string; category?: string }): AppCategoryDefinition
@@ -477,6 +477,8 @@ export function getAppCategoryMinimumHostVersion(value?: unknown): string
 export interface AppDiscovery { group: 'local' | 'online'; kind?: 'app' | 'tool'; capabilities?: Array<'mcp' | 'cli' | 'skills'>; authMethods?: Array<'none' | 'browser' | 'api-key' | 'credentials' | 'moss-session'> }
 
 export interface AppManifestV2 {
+  /** Display-only content for the Core information page; ignored by older hosts. */
+  overview?: { description?: string; examples?: string[] }
   discovery?: AppDiscovery
   /** Core-managed MCP/CLI/skill package. Requires Host API 3.15. */
   connectorApp?: { id: string; capabilities: Array<'mcp' | 'cli' | 'skills'> }
@@ -489,6 +491,7 @@ export interface AppManifestV2 {
   platforms?: Array<'darwin-arm64' | 'darwin-x64' | 'win32-x64' | 'win32-arm64' | 'linux-x64' | 'linux-arm64'>;
   nativeAdapter?: { kind: 'desktop-control'; apiVersion: 1; entry: string }
   toolScope?: 'global' | 'session'
+  toolLoading?: 'always' | 'on-demand'
   /** Independent child selection; requires Host API >=3.8.0. */
   toolSelection?: 'app' | 'services'
   /** Explicit primary entry; requires Host API >=3.4.0. */
@@ -590,6 +593,7 @@ export interface AppUiInfo {
   appearance: AppAppearance
 }
 export interface AppUiApi {
+  view?: { setState(state: { dirty: boolean; busy: boolean }): Promise<void> }
   composer: {
     prepare(input: { providerId: string; intent: "create" | "edit" | "use"; ref?: Record<string, unknown> }): Promise<{ ok: true }>
   }

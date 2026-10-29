@@ -26,7 +26,7 @@ export async function runSelfTestApp({ packageRoot, settings, sourceHome, caseId
         if (request.method === 'GET') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ data: [{ id: 'gpt-5.5', context_window: 200000 }] })); return }
         const chunks = []; for await (const chunk of request) chunks.push(chunk)
         const body = JSON.parse(Buffer.concat(chunks).toString())
-        if (!body.tools?.some(tool => tool.name === 'app__moss_self_test__self_test')) {
+        if (!body.tools?.some(tool => tool.name === 'self_test')) {
           // Auxiliary calls (such as conversation titles) do not use the controller tool set.
           response.setHeader('Content-Type', 'application/json')
           response.end(JSON.stringify({ id: 'auxiliary', type: 'message', role: 'assistant', model: body.model,
@@ -38,7 +38,7 @@ export async function runSelfTestApp({ packageRoot, settings, sourceHome, caseId
         const run = JSON.parse(await fs.readFile(path.join(directory, ids.find(id => id !== 'latest.json'), 'report.json'), 'utf8'))
         const results = (body.messages || []).flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === 'tool_result') : [])
         assert.ok(!results.some(result => result.is_error), 'Agent tool returned an error: ' + JSON.stringify(results).slice(-2000))
-        const record = 'app__moss_self_test__self_test'
+        const record = 'self_test'
         assert.ok(body.tools.some(tool => tool.name === record), 'Selected App result tool must be resident')
         const screenshots = run.results.startup.observation.evidence
         const steps = [
@@ -111,7 +111,7 @@ export async function runSelfTestApp({ packageRoot, settings, sourceHome, caseId
     if (failure) throw failure
     assert.equal(code, 0, `Desktop test failed; see ${root}/desktop.log`)
     assert.ok(passed, `Desktop test did not finish; see ${root}/desktop.log`)
-    if (server) { assert.deepEqual(calls, ['app__moss_self_test__self_test']); assert.equal(awaitingFinal, false, 'A successful result must finish without another model request or user interruption') }
+    if (server) { assert.deepEqual(calls, ['self_test']); assert.equal(awaitingFinal, false, 'A successful result must finish without another model request or user interruption') }
     return root
   } finally {
     clearTimeout(timeout); log.end()

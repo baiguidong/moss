@@ -26,10 +26,12 @@ async function tick() {
 }
 
 describe('App Host Capability API', () => {
-  it('generates readable Agent tool names without hash suffixes', () => {
+  it('generates App-specific prefixes and preserves builtin tool names', () => {
     expect(['search', 'read', 'list'].map(id => appToolName('moss.library', id)))
-      .toEqual(['app__moss_library__search', 'app__moss_library__read', 'app__moss_library__list'])
-    expect(appToolName('example-a', 'search')).toBe('app__example_a__search')
+      .toEqual(['library_search', 'library_read', 'library_list'])
+    expect(appToolName('example-a', 'search')).toBe('examplea_search')
+    expect(appToolName('moss.qq-mail', 'SendMessage')).toBe('qqmail_SendMessage')
+    expect(appToolName('moss.visualize', 'visualize_create')).toBe('visualize_create')
     expect(appToolName('a'.repeat(80), 'b'.repeat(64))).toHaveLength(64)
     expect(appToolName('example.app', 'search')).toMatch(/^[a-zA-Z0-9_]{1,64}$/)
   })
@@ -253,7 +255,7 @@ send('service.hello', { appId: process.env.MOSS_APP_ID, version: process.env.MOS
       effect: 'read',
       inputSchemaDocument: { type: 'object' },
     })
-    expect(tools[0].name).toBe('app__fixture_host_capability__echo')
+    expect(tools[0].name).toBe('hostcapability_echo')
     expect(tools[0].name.length).toBeLessThanOrEqual(64)
     await expect(runtime.invokeToolContribution(`${appId}/echo`, { text: 'tool' }))
       .resolves.toEqual({ echoed: 'tool' })

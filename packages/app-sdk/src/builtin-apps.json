@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    "moss.visualize",
+    "moss.document",
+    "moss.pdf",
+    "moss.spreadsheets",
+    "moss.presentations",
+    "moss.templates",
+    "moss.app-builder",
+    "moss.buddy",
+    "moss.browser-use",
+    "moss.computer-use"
+  ],
+  "downloadLatest": ["moss.buddy", "moss.browser-use", "moss.computer-use"],
+  "toolDefaults": {
+    "moss.buddy": { "scope": "global", "loading": "on-demand" },
+    "moss.browser-use": { "scope": "global", "loading": "on-demand" },
+    "moss.computer-use": { "scope": "global", "loading": "on-demand" }
+  }
+}

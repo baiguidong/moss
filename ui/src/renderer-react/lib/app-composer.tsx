@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { VisualizationAnnotation } from '../../shared/visualization-annotation.mjs';
 
 export type AppComposerResource = {
   providerId: string;
@@ -14,6 +15,7 @@ export type AppComposerResource = {
 export const AppComposerContext = React.createContext<{
   selection: AppComposerResource | null;
   select: (resource: AppComposerResource | null) => void;
+  submitVisualizationAnnotation?: (sessionId: string, annotation: VisualizationAnnotation) => Promise<void>;
 }>({ selection: null, select: () => {} });
 export const resourceContext = (resource: AppComposerResource) => ({ providerId: resource.providerId, intent: resource.intent || 'use', ref: resource.ref });
 export const resourceKey = (resource?: AppComposerResource | null) => resource ? `${resource.providerId}:${JSON.stringify(resource.ref)}:${resource.intent || 'use'}` : '';

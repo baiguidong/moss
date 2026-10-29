@@ -1,3 +1,4 @@
+import { bundledResourcePath } from './bundled-resource-paths.mjs';
 import { hostIpc as ipcMain } from './host/ipc.mjs';
 import electron from 'electron';
 const { dialog } = electron;
@@ -338,38 +339,42 @@ function normalizeInstalledSkill(meta, entryName, skillDir, version) {
 
 async function getInstalledSkills() {
   const skills = [];
-  try {
-    await fsp.access(MOSS_SKILLS_DIR);
-    const entries = await fsp.readdir(MOSS_SKILLS_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const skillDir = path.join(MOSS_SKILLS_DIR, entry.name);
-      const meta = await readSkillMeta(skillDir);
-      const version = await readSkillVersion(skillDir);
-      if (meta) {
-        skills.push(normalizeInstalledSkill(meta, entry.name, skillDir, version));
-        continue;
+  for (const root of [MOSS_SKILLS_DIR, bundledResourcePath('skills')]) {
+    const start = skills.length;
+    try {
+      const entries = await fsp.readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || skills.some(skill => path.basename(skill.source) === entry.name)) continue;
+        const skillDir = path.join(root, entry.name);
+        if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) continue;
+        const meta = await readSkillMeta(skillDir);
+        const version = await readSkillVersion(skillDir);
+        if (meta) {
+          skills.push(normalizeInstalledSkill(meta, entry.name, skillDir, version));
+          continue;
+        }
+        try {
+          const { frontmatter } = parseFrontmatter(await fsp.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8'));
+          skills.push(normalizeInstalledSkill({
+            name: entry.name,
+            display_name: frontmatter.name || frontmatter.displayName || entry.name,
+            description: frontmatter.description || '',
+            icon: frontmatter.icon || '',
+            emoji: frontmatter.emoji || '',
+            category: frontmatter.category || '',
+            categories: frontmatter.category ? [frontmatter.category] : [],
+            installed_version: frontmatter.version || version,
+            source_type: 'local',
+            enabled: true,
+          }, entry.name, skillDir, version));
+        } catch {
+          skills.push(normalizeInstalledSkill({ name: entry.name, enabled: true }, entry.name, skillDir, ''));
+        }
       }
-      try {
-        const { frontmatter } = parseFrontmatter(await fsp.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8'));
-        skills.push(normalizeInstalledSkill({
-          name: entry.name,
-          display_name: frontmatter.name || frontmatter.displayName || entry.name,
-          description: frontmatter.description || '',
-          icon: frontmatter.icon || '',
-          emoji: frontmatter.emoji || '',
-          category: frontmatter.category || '',
-          categories: frontmatter.category ? [frontmatter.category] : [],
-          installed_version: frontmatter.version || version,
-          source_type: 'local',
-          enabled: true,
-        }, entry.name, skillDir, version));
-      } catch {
-        skills.push(normalizeInstalledSkill({ name: entry.name, enabled: true }, entry.name, skillDir, ''));
-      }
+    } catch {
+      // A fresh profile may not have a personal skills directory.
     }
-  } catch {
-    // No local skills yet.
+    for (const skill of skills.slice(start)) skill.isBuiltin = root !== MOSS_SKILLS_DIR;
   }
   return skills;
 }

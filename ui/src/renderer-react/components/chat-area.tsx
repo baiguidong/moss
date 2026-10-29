@@ -6,6 +6,8 @@ import type { StoredApp } from '@/types';
 "use client";
 
 import * as React from "react";
+import { createPortal } from 'react-dom';
+import { WindowToolbarContext } from '@/components/window-chrome';
 import {
   Activity,
   ArrowLeft,
@@ -216,6 +218,7 @@ export function SessionTabBar({
   appWorkbenchAction?: React.ReactNode;
   agentTeamsStatus?: React.ReactNode;
 }) {
+  const { session: toolbarTarget } = React.useContext(WindowToolbarContext);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
   const handleCopyTranscript = React.useCallback(async () => {
@@ -245,16 +248,18 @@ export function SessionTabBar({
         `${entry.question}\n${entry.answerPreview}`.toLowerCase().includes(outlineQuery.trim().toLowerCase()))
     : outline;
 
-  return (
+  const toolbar = (
     <div
-      className="@container/session-header relative z-40 shrink-0 border-b border-border/70 bg-background/88 py-2 backdrop-blur"
+      className={cn('@container/session-header relative z-40 shrink-0', toolbarTarget
+        ? 'h-9 py-0.5 [&_button.h-8.w-8]:h-7 [&_button.h-8.w-8]:w-7 [&_button.h-8.w-8]:rounded-md'
+        : 'border-b border-border/70 bg-background/88 py-2 backdrop-blur')}
       aria-label={title ? `会话操作：${title}` : "会话操作"}
     >
       <div className={cn(
         "mx-auto flex w-full min-w-0 items-center justify-between gap-3",
-        "max-w-[1120px] px-4 @[640px]/session-header:px-6 @[1024px]/session-header:px-12",
+        toolbarTarget ? 'h-full gap-1 px-2' : "max-w-[1120px] px-4 @[640px]/session-header:px-6 @[1024px]/session-header:px-12",
       )}>
-        <Button
+        {!toolbarTarget && <Button
           variant="ghost"
           size="icon"
           className="h-8 w-8 rounded-full"
@@ -262,7 +267,7 @@ export function SessionTabBar({
           aria-label={`${leftCollapsed ? "展开" : "收起"}${leftPanelName}`}
         >
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-        </Button>
+        </Button>}
 
         <div className="@container/worker-summary flex min-w-0 flex-1 items-center justify-center gap-2">
           {onReturnToParentSession ? (
@@ -272,7 +277,7 @@ export function SessionTabBar({
             </Button>
           ) : null}
           <span
-            className="max-w-[40%] truncate text-sm font-medium text-foreground"
+            className={cn(toolbarTarget ? 'min-w-0 flex-1 text-center truncate text-sm font-medium' : 'max-w-[40%] truncate text-sm font-medium', 'text-foreground')}
             title={title || "New Session"}
           >
             {title || "New Session"}
@@ -308,7 +313,7 @@ export function SessionTabBar({
               <TooltipContent>会话大纲</TooltipContent>
             </Tooltip>
             {outlineOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-[420px] max-w-[80vw] overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
+              <div className="moss-no-drag absolute right-0 top-full z-50 mt-1 w-[420px] max-w-[80vw] overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
                 <div className="border-b border-border/50 p-2">
                   <input
                     value={outlineQuery}
@@ -436,6 +441,7 @@ export function SessionTabBar({
       </div>
     </div>
   );
+  return toolbarTarget ? createPortal(toolbar, toolbarTarget) : toolbar;
 }
 
 function PlanApprovalCard({
@@ -908,7 +914,7 @@ export function ComposerPanel({
       onChange(value.replace(/(^|\s)@[^\s@]*$/, '$1@')); setMentionFilter(''); textareaRef.current?.focus(); return;
     }
     if (!item.available && !item.selected) return;
-    if (item.service) toolApps.toggleService?.(item.id); else toolApps.toggle(item.id);
+    if (!item.resident) { if (item.service) toolApps.toggleService?.(item.id); else toolApps.toggle(item.id); }
     onChange(value.replace(/(^|\s)@[^\s@]*$/, '$1'));
     setMentionFilter(null); setMentionIndex(0);
     textareaRef.current?.focus();

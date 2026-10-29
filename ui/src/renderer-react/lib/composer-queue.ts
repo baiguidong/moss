@@ -6,6 +6,7 @@ import type { ComposerIntent } from './composer-intent';
 export type ComposerAttachment = { name: string; path: string; resource?: ComposerResourceRef };
 export type ComposerChoices = { skills: InstalledSkillOption[]; agent: DesktopAgentDefinition | null };
 export type QueuedMessage = {
+  visualizationAnnotation?: import('../../shared/visualization-annotation.mjs').VisualizationAnnotation;
   id: string;
   prompt: string;
   intent: ComposerIntent;

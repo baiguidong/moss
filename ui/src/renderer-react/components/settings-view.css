@@ -1,0 +1,4 @@
+/* Settings share the active palette with the rest of Moss. */
+.moss-settings { font-family: var(--font-sans); }
+.moss-settings input, .moss-settings select, .moss-settings textarea { box-shadow: none; }
+.moss-settings .settings-section + .settings-section { border-top: 1px solid var(--border); padding-top: 24px; }

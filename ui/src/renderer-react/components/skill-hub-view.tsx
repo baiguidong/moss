@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Search,
   Star,
-  Trash2,
   Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,6 +17,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { InstalledResourceDetails } from "@/components/installed-resource-details";
+import { ResourceCardOpenButton } from "@/components/resource-card-open-button";
+import { useResourceDetail } from "@/lib/use-resource-detail";
 
 type SkillTab = "hub" | "installed";
 type SkillSortMode = "score" | "downloads" | "updated_at" | "installs";
@@ -65,11 +67,20 @@ type InstalledSkill = {
   icon?: string;
   category?: string;
   categories?: string[];
+  isBuiltin?: boolean;
   isHubInstalled?: boolean;
   isUploaded?: boolean;
   namespace?: SkillNamespace | null;
   ownerName?: string;
   source: string;
+};
+
+type SkillDetailState = {
+  skill: RemoteSkill | InstalledSkill;
+  origin: SkillTab;
+  remote: boolean;
+  loading?: boolean;
+  error?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,12 +238,14 @@ function RemoteSkillCard({
   installed,
   installing,
   onInstall,
+  onOpen,
   categoryNameByKey,
 }: {
   skill: RemoteSkill;
   installed?: InstalledSkill;
   installing: boolean;
   onInstall: () => void;
+  onOpen: () => void;
   categoryNameByKey: Map<string, string>;
 }) {
   const name = displayText(skill.displayName) || displayText(skill.name) || "Skill";
@@ -245,8 +258,9 @@ function RemoteSkillCard({
   const version = displayText(skill.version);
   const categories = displayCategories(skill, categoryNameByKey);
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5 shadow-[0_16px_48px_-40px_rgba(0,0,0,0.55)]">
-      <div className="flex min-w-0 items-start gap-2.5">
+    <div className="relative min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5 shadow-[0_16px_48px_-40px_rgba(0,0,0,0.55)]">
+      <ResourceCardOpenButton title={name} onOpen={onOpen} />
+      <div className="pointer-events-none relative flex min-w-0 items-start gap-2.5">
         <SkillIcon skill={skill} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-start gap-2">
@@ -261,7 +275,7 @@ function RemoteSkillCard({
             <Button
               size="icon-sm"
               variant={installed ? "secondary" : "outline"}
-              className="h-8 w-8 rounded-lg"
+              className="pointer-events-auto h-8 w-8 rounded-lg"
               disabled={Boolean(installed) || installing}
               onClick={onInstall}
               title={installed ? "已安装" : "安装"}
@@ -306,13 +320,11 @@ function RemoteSkillCard({
 
 function InstalledSkillCard({
   skill,
-  busy,
-  onUninstall,
+  onOpen,
   categoryNameByKey,
 }: {
   skill: InstalledSkill;
-  busy: boolean;
-  onUninstall: () => void;
+  onOpen: () => void;
   categoryNameByKey: Map<string, string>;
 }) {
   const name = displayText(skill.displayName) || displayText(skill.name) || "Skill";
@@ -320,8 +332,9 @@ function InstalledSkillCard({
   const version = displayText(skill.version);
   const categories = displayCategories(skill, categoryNameByKey);
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5">
-      <div className="flex min-w-0 items-start gap-2.5">
+    <div className="relative min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5">
+      <ResourceCardOpenButton title={name} onOpen={onOpen} />
+      <div className="pointer-events-none relative flex min-w-0 items-start gap-2.5">
         <SkillIcon skill={skill} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-start gap-2">
@@ -330,19 +343,9 @@ function InstalledSkillCard({
                 {name}
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {skill.isHubInstalled ? "SkillHub" : skill.isUploaded ? "本地导入" : "本地技能"}
+                {skill.isBuiltin ? "Moss 内置" : skill.isHubInstalled ? "SkillHub" : skill.isUploaded ? "本地导入" : "本地技能"}
               </div>
             </div>
-            <Button
-              size="icon-sm"
-              variant="outline"
-              className="h-8 w-8 rounded-lg"
-              onClick={onUninstall}
-              disabled={busy}
-              title="卸载"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            </Button>
           </div>
           <p className="mt-2 h-9 overflow-hidden text-xs leading-[18px] text-muted-foreground">
             {description}
@@ -379,6 +382,7 @@ export function SkillHubView() {
   const [error, setError] = React.useState("");
   const [notice, setNotice] = React.useState("");
   const [busyKeys, setBusyKeys] = React.useState<Set<string>>(() => new Set());
+  const { detail, setDetail, open: openDetail, close: closeDetail, request: detailRequest } = useResourceDetail<SkillDetailState>();
 
   const installedLookup = React.useMemo(() => {
     const map = new Map<string, InstalledSkill>();
@@ -387,6 +391,24 @@ export function SkillHubView() {
     }
     return map;
   }, [installedSkills]);
+
+  const loadSkillDetail = async (skill: RemoteSkill) => {
+    const revision = ++detailRequest.current;
+    setDetail(current => current && { ...current, loading: true, error: '' });
+    try {
+      const result = await window.agentDesktop.skillHub.fetchDetail({ slug: skill.slug || skill.name, namespace: skill.namespace?.handle });
+      if (!result.success || !result.data?.skill) throw new Error(result.error || '获取技能详情失败');
+      if (detailRequest.current === revision) setDetail(current => current && { ...current, skill: { ...skill, ...result.data!.skill } as RemoteSkill, loading: false });
+    } catch (cause) {
+      if (detailRequest.current === revision) setDetail(current => current && { ...current, loading: false, error: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
+  const openSkillDetail = (skill: RemoteSkill | InstalledSkill, remote: boolean) => {
+    setError('');
+    openDetail({ skill, remote, origin: tab });
+    if (remote) void loadSkillDetail(skill as RemoteSkill);
+  };
 
   const categoryNameByKey = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -488,22 +510,6 @@ export function SkillHubView() {
     }
   }, [flashNotice, loadInstalled, setBusy]);
 
-  const uninstallSkill = React.useCallback(async (skill: InstalledSkill) => {
-    const key = skill.source;
-    setBusy(key, true);
-    setError("");
-    try {
-      const res = await window.agentDesktop.skillHub.uninstall({ sourcePath: skill.source }) as { success?: boolean; error?: string };
-      if (!res?.success) throw new Error(res?.error || "卸载失败");
-      flashNotice(`已卸载 ${displayText(skill.displayName) || displayText(skill.name)}`);
-      await loadInstalled();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(key, false);
-    }
-  }, [flashNotice, loadInstalled, setBusy]);
-
   const importLocal = React.useCallback(async () => {
     setError("");
     try {
@@ -543,9 +549,15 @@ export function SkillHubView() {
     { id: "updated_at", label: "最近更新" },
     { id: "installs", label: "安装量" },
   ];
+  const detailInstalled = detail ? detail.remote
+    ? installedLookup.get(skillKey(detail.skill as RemoteSkill)) || installedLookup.get(detail.skill.slug || '') || installedLookup.get(detail.skill.name)
+    : installedSkills.find(skill => skill.source === detail.skill.source) : undefined;
+  const detailSkill = detail ? { ...detail.skill, ...detailInstalled, source: detailInstalled?.source, isHubInstalled: detailInstalled?.isHubInstalled ?? detail.remote } : null;
+  const detailInstalling = detail ? busyKeys.has(skillKey(detail.skill as RemoteSkill)) : false;
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-background">
+    <>
+    <div className={cn("relative h-full min-h-0 flex-col bg-background", detail ? "hidden" : "flex")}>
       {notice ? (
         <div className="pointer-events-none fixed bottom-4 right-4 z-50 max-w-sm rounded-md border border-border/70 bg-card/95 px-3 py-2 text-xs text-foreground shadow-lg backdrop-blur" role="status">
           {notice}
@@ -674,8 +686,7 @@ export function SkillHubView() {
                     <InstalledSkillCard
                       key={skill.source}
                       skill={skill}
-                      busy={busyKeys.has(skill.source)}
-                      onUninstall={() => void uninstallSkill(skill)}
+                      onOpen={() => openSkillDetail(skill, false)}
                       categoryNameByKey={categoryNameByKey}
                     />
                   ))}
@@ -705,6 +716,7 @@ export function SkillHubView() {
                           installed={installedLookup.get(key) || installedLookup.get(skill.slug) || installedLookup.get(skill.name)}
                           installing={busyKeys.has(key)}
                           onInstall={() => void installSkill(skill)}
+                          onOpen={() => openSkillDetail(skill, true)}
                           categoryNameByKey={categoryNameByKey}
                         />
                       );
@@ -728,5 +740,21 @@ export function SkillHubView() {
         </div>
       </ScrollArea>
     </div>
+    {detail && detailSkill && <InstalledResourceDetails
+      resource={{ kind: 'skill', item: { ...detailSkill, categories: displayCategories(detailSkill, categoryNameByKey), category: undefined } }}
+      backLabel={`技能 · ${tabs.find(item => item.id === detail.origin)?.label}`}
+      onBack={closeDetail}
+      installed={Boolean(detailInstalled)}
+      busy={detailInstalling}
+      onUninstalled={async () => { await loadInstalled(); closeDetail(); }}
+      loading={detail.loading}
+      error={detail.error || error}
+      onRetry={detail.error ? () => void loadSkillDetail(detail.skill as RemoteSkill) : undefined}
+      actions={detail.remote && !detailInstalled && <Button className="rounded-full" disabled={detailInstalling} onClick={() => void installSkill(detail.skill as RemoteSkill)}>
+        {detailInstalling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        {detailInstalling ? '安装中…' : '安装'}
+      </Button>}
+    />}
+    </>
   );
 }

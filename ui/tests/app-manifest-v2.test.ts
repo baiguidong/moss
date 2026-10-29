@@ -47,10 +47,10 @@ describe('App manifest V2', () => {
   })
 
   it('advertises Host API 3 and rejects unpublished older contracts', () => {
-    expect(APP_HOST_API_VERSION).toBe('3.21.0')
+    expect(APP_HOST_API_VERSION).toBe('3.22.0')
     expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.22.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.23.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {

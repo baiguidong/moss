@@ -185,7 +185,7 @@ export async function runChatInteractionChecks(render: (view: React.ReactNode) =
 
   render(<div style={{ width: 240, height: 650 }}><AppSidebar sessions={[]} apps={[{ id: 'example', name: 'example', displayName: '示例应用', enabled: true, hasUi: true,
     icon: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#4678c8"/></svg>') } as any]}
-    activeSessionId={null} activeView="chat" appsCount={1} projectsCount={0} themeMode="light" collapsed={false} searchQuery=""
+    activeSessionId={null} activeView="chat" projectsCount={0} themeMode="light" collapsed={false} searchQuery=""
     onChangeView={() => {}} onChangeTheme={() => {}} onSelectSession={() => {}} onLaunchApp={() => {}} onNewSession={() => {}} onDeleteSession={() => {}}
     onRenameSession={() => {}} onTogglePin={() => {}} onSearchChange={() => {}} /></div>);
   await delay();

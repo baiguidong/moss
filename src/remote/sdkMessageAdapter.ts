@@ -1,3 +1,4 @@
+import { toolSourceMetadata } from '../../shared/tool-source.mjs'
 import type {
   SDKAssistantMessage,
   SDKCompactBoundaryMessage,
@@ -31,6 +32,7 @@ import { createUserMessage } from '../utils/messages.js'
 function convertAssistantMessage(msg: SDKAssistantMessage): AssistantMessage {
   return {
     type: 'assistant',
+    ...toolSourceMetadata(msg),
     message: msg.message,
     uuid: msg.uuid,
     requestId: undefined,
@@ -45,6 +47,7 @@ function convertAssistantMessage(msg: SDKAssistantMessage): AssistantMessage {
 function convertStreamEvent(msg: SDKPartialAssistantMessage): StreamEvent {
   return {
     type: 'stream_event',
+    ...toolSourceMetadata(msg),
     event: msg.event,
   }
 }

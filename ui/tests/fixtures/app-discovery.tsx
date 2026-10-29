@@ -26,12 +26,36 @@ const allApps = definitions.map(([id, title, group, auth, description]) => ({
   } } } : {}),
 })) as StoredApp[];
 let storedApps = new URLSearchParams(location.search).has('empty') ? [] : allApps.slice(0, 5);
+const builtins = new URLSearchParams(location.search).has('builtins') ? [
+  ['moss.visualize', '可视化', '创建和修改交互图表与演示。'],
+  ['moss.document', '文档创作', '创作、修改和转换文档。'],
+  ['moss.pdf', 'PDF 创作', '创建和整理 PDF，提取文字并检查页面。'],
+  ['moss.spreadsheets', '表格', '创建和修改 Excel 表格，计算公式。'],
+  ['moss.presentations', '演示文稿', '创建、预览和导出演示文稿。'],
+  ['moss.templates', '模板', '保存模板并在会话中复用。'],
+  ['moss.app-builder', '应用构建', '创建、预览和迭代自己的 App。'],
+].map(([id, displayName, description]) => ({ id, displayName, description, version: '0.1.0', error: null })) : [];
+const builtinApp = (item: typeof builtins[number]) => ({ ...item, name: item.id, title: item.displayName, builtin: true, enabled: true, currentVersion: '0.1.0' }) as StoredApp;
+if (builtins.length) storedApps = [allApps[0], ...builtins.filter(item => item.id !== 'moss.pdf').map(builtinApp)];
+const restores = { calls: [] as string[], mode: 'fail', finish: () => {} };
+(window as any).__restores = restores;
+(window as any).__opened = [];
 const entries = allApps.map(app => ({
   ...app, summary: app.description, latestVersion: '1.0.0',
   platformCompatible: true, hostCompatible: true, categories: [], publisher: { name: 'Moss', id: 'moss' },
   latest: { version: '1.0.0', hostApi: '^3.15.0', permissions: app.permissions, platformCompatible: true, hostCompatible: true, artifact: { size: 1024, signed: true } },
 }));
+const marketInstalls: any[] = [];
+(window as any).__marketInstalls = marketInstalls;
 (window as any).agentDesktop = {
+  listBuiltinApps: async () => builtins.map(item => ({ ...item, installed: storedApps.some(app => app.id === item.id) })),
+  restoreBuiltinApp: async ({ id }: { id: string }) => {
+    restores.calls.push(id);
+    if (restores.mode === 'fail') return { ok: false, error: '测试恢复失败' };
+    if (restores.mode === 'pending') await new Promise<void>(resolve => { restores.finish = resolve; });
+    storedApps.push(builtinApp(builtins.find(item => item.id === id)!));
+    return { ok: true };
+  },
   onAppInstallProgress: () => () => {}, getAppInstallProgress: async () => [],
   appDiscovery: async (input: any) => {
     if (input.action === 'section') (preferences.sections as any)[input.surface] = input.section;
@@ -42,13 +66,12 @@ const entries = allApps.map(app => ({
   connectorApp: async ({ appId }: any) => ({ connector: storedApps.find(app => app.id === appId)?.connectorApp?.connection }),
   appMarketplace: {
     list: async () => ({ apps: entries, fetchedAt: Date.now(), generatedAt: new Date().toISOString(), hostApiVersion: '3.15.0' }),
-    getDetails: async ({ appId }: any) => { const entry = entries.find(app => app.id === appId)!; return { ...entry, versions: [entry.latest] }; },
-    install: async ({ appId }: any) => { storedApps.push(allApps.find(app => app.id === appId)!); return { ok: true }; },
+    getDetails: async ({ appId }: any) => { const entry = entries.find(app => app.id === appId)!; return { ...entry, versions: [entry.latest, { ...entry.latest, version: '0.9.0' }] }; },
+    install: async (payload: any) => { marketInstalls.push(payload); if (!payload.acceptPermissions) return { requiresPermissionApproval: true, permissions: ['connector:use'] }; storedApps.push({ ...allApps.find(app => app.id === payload.appId)!, currentVersion: payload.version }); return { ok: true }; },
   },
 };
 function Fixture() {
   const [apps, setApps] = React.useState(storedApps);
-  return <main className="h-screen overflow-hidden"><AppsPanel apps={apps} versionsByApp={{}} onLaunch={() => {}} onUseApp={() => {}}
-    onDelete={() => {}} onIterate={() => {}} onLoadVersions={() => {}} onRollback={() => {}} onRefresh={async () => setApps([...storedApps])} /></main>;
+  return <main className="h-screen overflow-hidden"><AppsPanel apps={apps} onLaunch={name => (window as any).__opened.push(name)} onRefresh={async () => setApps([...storedApps])} /></main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

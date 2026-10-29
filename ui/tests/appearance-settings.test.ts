@@ -14,7 +14,7 @@ describe('desktop appearance settings', () => {
   it('accepts supported theme and background values', () => {
     const appearance = {
       themeMode: 'system',
-      cssThemeId: 'dot-theme',
+      cssThemeId: 'catppuccin',
       toolDisplayMode: 'merged',
       chatFontSize: 16,
       chatLineHeight: 1.7,
@@ -23,20 +23,20 @@ describe('desktop appearance settings', () => {
       showAssistantAvatar: false,
     };
 
-    expect(normalizeAppearance(appearance)).toEqual(appearance);
+    expect(normalizeAppearance(appearance)).toMatchObject(appearance);
     expect(hasPersistedAppearance({ appearance })).toBe(true);
     const takt = normalizeAppearance({ ...appearance, cssThemeId: 'takt-theme' });
-    expect(takt.cssThemeId).toBe('takt-theme');
-    expect(normalizeAppearance({ themeMode: 'dark' }, takt).cssThemeId).toBe('takt-theme');
+    expect(takt.cssThemeId).toBe('everforest');
+    expect(normalizeAppearance({ themeMode: 'dark' }, takt).cssThemeId).toBe('everforest');
   });
 
   it('falls back per field when persisted values are invalid', () => {
     expect(normalizeAppearance(
       { themeMode: 'unknown', cssThemeId: 'gradient-theme' },
       { themeMode: 'dark', cssThemeId: 'grid-theme' },
-    )).toEqual({
+    )).toMatchObject({
       themeMode: 'dark',
-      cssThemeId: 'gradient-theme',
+      cssThemeId: 'codex',
       toolDisplayMode: 'expanded',
       chatFontSize: 14,
       chatLineHeight: 1.55,
@@ -82,5 +82,26 @@ describe('desktop appearance settings', () => {
     expect(normalizeAppearance({ showAssistantMessageBorder: 'false', showAssistantAvatar: null }, existing)).toMatchObject({
       showAssistantMessageBorder: true, showAssistantAvatar: false,
     });
+  });
+});
+
+describe('visual profiles', () => {
+  it('migrates decorative backgrounds and retains the old green preference', () => {
+    for (const id of ['default', 'grid-theme', 'dot-theme', 'gradient-theme']) expect(normalizeAppearance({ cssThemeId: id }).cssThemeId).toBe('codex');
+    const migrated = normalizeAppearance({ cssThemeId: 'takt-theme', uiFontSize: 16 });
+    expect(migrated.cssThemeId).toBe('everforest');
+    expect(migrated.darkProfile).toMatchObject({ themeId: 'everforest', uiFontSize: 16 });
+    expect(normalizeAppearance({ separateLightDark: true }, migrated).lightProfile).toMatchObject({ themeId: 'everforest', uiFontSize: 16 });
+  });
+  it('keeps independent light/dark settings and rejects CSS injection', () => {
+    const initial = normalizeAppearance({ separateLightDark: true, lightProfile: { themeId: 'github', uiFontSize: 16 }, darkProfile: { themeId: 'ayu', accent: '#aabbcc', codeFont: 'menlo' } });
+    const next = normalizeAppearance({ darkProfile: { background: '#123456', accent: 'red; color: white', codeFont: 'url(https://invalid)' } }, initial);
+    expect(next.lightProfile).toEqual(initial.lightProfile);
+    expect(next.darkProfile).toMatchObject({ themeId: 'ayu', accent: '#AABBCC', background: '#123456', codeFont: 'menlo' });
+    expect(normalizeAppearance({ darkProfile: { accent: '' } }, next).darkProfile.accent).toBe('');
+  });
+  it('bounds typography and supports system motion preferences', () => {
+    expect(normalizeAppearance({ uiFontSize: 100, codeFontSize: 0, contrast: -10, reduceMotion: 'always' })).toMatchObject({ uiFontSize: 18, codeFontSize: 10, contrast: 0, reduceMotion: 'always' });
+    expect(normalizeAppearance({ reduceMotion: 'invalid', dockIcon: '../../other' })).toMatchObject({ reduceMotion: 'system', dockIcon: 'default' });
   });
 });

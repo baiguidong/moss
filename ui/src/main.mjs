@@ -1,3 +1,4 @@
+import { resolveAppSettingsView, validateAppViewState } from './apps/app-view-binding.mjs';
 import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
 import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
 import { createConnectorAppHost } from './apps/connector-app-host.mjs';
@@ -13,6 +14,9 @@ import { createProjectStore } from './project-store.mjs';
 import { createSessionPaths, normalizeSessionDirName } from './session-paths.mjs';
 import { createSessionPersistence } from './session-persistence.mjs';
 import { createSessionHistoryService } from './session-history-service.mjs';
+import { createStorageService } from './storage-service.mjs';
+import { createSessionArchives } from './session-archives.mjs';
+import { createDockAppearance } from './dock-appearance.mjs';
 import { appendSessionRuntimeEvent } from './shared/assistant-usage-reconcile.mjs';
 import { resolveAppTaskSession, appTaskHistoryEvent, appTasksPromptContext } from './apps/app-task-session.mjs';
 import { createProjectId, normalizeOptionalProjectId, normalizeProjectId, normalizeProjectMemoryIndex, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
@@ -38,6 +42,7 @@ import { registerSessionEffortIpc } from './session-effort.mjs';
 import { createDesktopControlFeature } from './desktop-control/feature.mjs';
 import { AppTraceHost, createTraceProtocolDefinition, TRACE_PROTOCOL } from './apps/app-trace-host.mjs';
 import { resolveAppResourceFile } from './apps/app-resources.mjs';
+import { prepareVisualizationAnnotation } from './apps/visualization-annotations.mjs';
 import { canInvokeSessionAppTool, createSessionApps } from './apps/session-apps.mjs';
 import { createAppComposer } from './apps/app-composer.mjs';
 import { isAppResourceUri } from './shared/app-resource-uri.mjs';
@@ -79,7 +84,7 @@ import { createProjectMemoryService } from './project-memory-service.mjs';
 import { createProjectMemoryQuery } from './project-memory-query.mjs';
 import { createAppTestingHost, TESTING_PROTOCOL } from './app-testing/host.mjs';
 import { isExpectedControllerCancellation } from './app-testing/controller-cancellation.mjs';
-import { configureSelfTestTarget, selfTestRendererUrl } from './app-testing/instance.mjs';
+import { configureSelfTestTarget, selfTestRendererUrl, resizeTestWindow } from './app-testing/instance.mjs';
 import { restoreTestController, closeTestController, validateTestToolUse, TEST_APP_ID, TEST_BROWSER_SERVER, TEST_ALLOWED_TOOLS, TEST_SYSTEM_PROMPT, TEST_REVIEW_ALLOWED_TOOLS, TEST_REVIEW_SYSTEM_PROMPT } from './app-testing/browser.mjs';
 import { synchronizeRemoteSkills } from './remote-profile-sync.mjs';
 import {
@@ -132,6 +137,7 @@ import {
   createMossAppEventHandler,
   listAllStoredApps,
 } from './app-ipc.mjs';
+import { BuiltinApps, publishBuiltinPackage, verifyBuiltinInstallation } from './apps/builtin-apps.mjs';
 import { createAppUninstallHandler } from './apps/app-uninstall.mjs';
 import {
   APPS_DIR,
@@ -440,6 +446,7 @@ if (!hasSingleInstanceLock) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, '..');
+const applyDockIcon = createDockAppearance({ app, nativeImage, uiRoot });
 const repoRoot = path.resolve(uiRoot, '..');
 const sdkPath = app.isPackaged
   ? path.join(uiRoot, 'dist', 'runtime', 'electron-direct.mjs')
@@ -557,6 +564,7 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+let builtinApps = null;
 const appArtifacts = createAppArtifactUrls({ web: isWebHost, webOwnerId: process.env.MOSS_WEB_OWNER_ID || 'owner',
   getWebResources: () => webResources });
 let appRuntimeRestorePending = false;
@@ -773,6 +781,12 @@ let agentMailStatus = {
   pendingManual: 0,
 };
 const sessionStatements = prepareSessionStatements(sessionDb);
+const sessionArchives = createSessionArchives({
+  db: sessionDb,
+  getRecords: () => [...sessions.values(), ...subAgentSessions.values()],
+  isBusy: isStorageSessionBusy,
+  onChanged: payload => emitToRenderer('storage:archives-changed', payload),
+});
 
 const desktopSettingsStore = createDesktopSettingsStore({
   settingsPath: DESKTOP_SETTINGS_PATH,
@@ -1019,13 +1033,7 @@ const { buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePen
 const presentationResolver = createPresentationResolver({
   readWorkspaceFile,
   async resolveResourceFile(uri, sessionRecord) {
-    if (sessionRecord) {
-      const scheme = new URL(uri).protocol.slice(0, -1);
-      const { resourceProviders = [] } = await appRuntime.listContributions({ kinds: ['resourceProviders'] });
-      const provider = resourceProviders.find(provider => provider.schemes.includes(scheme));
-      if (!provider || !sessionRecord.appIds?.includes(provider.appId)) throw new Error('The resource App is not enabled in this session');
-    }
-    return resolveAppResourceFile(appRuntime, uri);
+    return resolveAppResourceFile(appRuntime, uri, sessionRecord);
   },
 });
 const presentationService = createPresentationService({
@@ -1712,7 +1720,7 @@ async function getAgentChannelCatalog() {
       : Promise.resolve({ tools: [] }),
   ]);
   const builtInTools = typeof runtime.listDesktopTools === 'function'
-    ? runtime.listDesktopTools(desktopSettings.image)
+    ? runtime.listDesktopTools(desktopSettings)
     : [];
   const appTools = Array.isArray(contributions?.tools)
     ? contributions.tools.map((tool) => ({
@@ -2530,6 +2538,11 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     Object.keys(getConnectorMcpServers([getStoredConnectorId(appId)], connectorRuntimeCredentials))
       .map(name => [name, { appId, toolScope: 'session', toolSelection: 'app' }])));
   const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: { ...(appMcpHost?.serverOwners() || {}), ...connectorOwners } };
+  const appNames = new Map(listAllStoredApps().map(app => [app.id || app.name, app.displayName || app.title || app.name]));
+  for (const owner of Object.values(appToolPolicy.mcpServers)) {
+    const name = appNames.get(owner.appId);
+    if (name) owner.appDisplayName = name;
+  }
   if (sessionRecord?.appTestRunId) appToolPolicy.mcpServers[TEST_BROWSER_SERVER] = { appId: TEST_APP_ID, toolScope: 'session' };
   if (sessionRecord) {
     sessionRecord.runtimeAppToolIds = new Set(appTools.map(tool => tool.id));
@@ -2752,6 +2765,7 @@ function refreshDesktopSettings(payload = {}) {
       clearBraveApiKey: webSearchPayload.clearBraveApiKey === true,
     });
   }
+  if (Object.hasOwn(payload, 'appearance')) applyDockIcon(nextSettings.appearance?.dockIcon);
   saveDesktopSettings(nextSettings);
   if (
     Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
@@ -3021,6 +3035,7 @@ function getSessionSummary(sessionRecord) {
   const busy = isSessionBusyForRenderer(sessionRecord);
   return {
     id: sessionRecord.id,
+    archivedAt: sessionArchives.archivedAt(sessionRecord),
     title: sessionRecord.title,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
     permissionMode: normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
@@ -3261,6 +3276,7 @@ async function runSessionPromptObserved({
   runtimeSystemPrompt = '',
   preparedTools = [],
   composerContext,
+  visualizationAnnotation,
   failOnApiError = false,
   controllerSignal,
   retryEncryptedContentOnce = false,
@@ -3305,6 +3321,7 @@ async function runSessionPromptObserved({
   if (trimmedUserPrompt || attachments.length > 0 || resources.length > 0) {
     const userEvent = buildVisibleUserEvent(trimmedUserPrompt, attachments, resources);
     if (composerContext) userEvent.appContext = composerContext;
+    if (visualizationAnnotation) userEvent.visualizationAnnotation = visualizationAnnotation;
     activeVisibleUserEvent = userEvent;
     await bindVisibleUser(userEvent);
     appendVisibleUserEvent(sessionRecord, sender, userEvent);
@@ -3509,6 +3526,7 @@ async function runSessionPromptObserved({
           attachments,
           resources,
         );
+        if (visualizationAnnotation) activeVisibleUserEvent.visualizationAnnotation = visualizationAnnotation;
         appendVisibleUserEvent(sessionRecord, sender, activeVisibleUserEvent);
       }
       return runRuntimePromptOnce(runtimePrompt, {
@@ -3793,6 +3811,9 @@ function getBootStatus() {
 
 function emitToRenderer(channel, payload) {
   ipcMain.publish(channel, payload);
+  if (channel === 'agent:settings-changed' && previewWindow && !previewWindow.isDestroyed() && !previewWindow.webContents.isDestroyed()) {
+    try { previewWindow.webContents.send(channel, payload); } catch {}
+  }
   if (appQuitting || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   try {
     if (mainWindow.webContents.mainFrame.isDestroyed()) return;
@@ -4446,6 +4467,7 @@ function getAppWindowStateBySender(sender) {
   if (!state) {
     throw new Error('App runtime is not available for this window.');
   }
+  if (state.source?.settingId) resolveAppSettingsView(state.manifest, state.runtime.getInstallation(state.id), { settingId: state.source.settingId, version: state.version });
   return state;
 }
 
@@ -4474,6 +4496,7 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
   const state = createAppWebContentsState(pending.appEntry, targetWebContents, {
     mode: 'embedded',
     embedId,
+    settingId: pending.view?.settingId,
   });
   state.sessionId = pending.sessionId;
   state.workspace = pending.sessionId ? getSessionRecord(pending.sessionId).workspace : pending.workspace;
@@ -4774,12 +4797,6 @@ function launchAppWindow(appEntry, source = {}) {
     appWindows.set(windowKey, appWindow);
     const state = createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
     configureAppWebContents(appWindow.webContents, bundleToken);
-    if (source.mode !== 'preview') appWindow.webContents.on('context-menu', async () => {
-      const authoring = await appAuthoring?.availability().catch(() => null);
-      if (appWindow.isDestroyed() || (!authoring?.available && authoring?.reason !== 'backend-failed')) return;
-      Menu.buildFromTemplate([{ label: authoring.available ? '迭代此 App' : '创作 App 启动失败，请在应用管理中重试', enabled: authoring.available,
-        click: () => { void prepareAppAuthoring(appId).catch(error => dialog.showErrorBox('无法准备迭代', error.message)); } }]).popup({ window: appWindow });
-    });
     appWindow.on('closed', () => {
       disposeAppWebContentsState(appWindow.webContents.id);
       appWindows.delete(windowKey);
@@ -6735,6 +6752,7 @@ const {
 });
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  try { applyDockIcon(desktopSettings.appearance?.dockIcon); } catch (error) { console.warn('[appearance]', error.message); }
   appRuntimeRestorePending = !isWebHost;
   setRemoteDirectFetchImplementation(remoteDirectNetFetch);
 
@@ -7173,6 +7191,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentChannelController?.onReady({ appId: event.appId, instanceId: event.instanceId });
       }
       const appLifecycleChanged = event.type === 'installation-changed' || event.type === 'app-uninstalled';
+      if (appLifecycleChanged) {
+        for (const pending of [...pendingEmbeddedApps.values()]) {
+          if (!pending.view || pending.appEntry.id !== event.appId) continue;
+          try { resolveAppSettingsView(pending.appEntry.manifest, appRuntime.getInstallation(event.appId), pending.view); }
+          catch {
+            if (pending.webContentsId) {
+              const target = webContents.fromId(Number(pending.webContentsId));
+              if (target && !target.isDestroyed()) void target.loadURL('about:blank');
+              disposeAppWebContentsState(pending.webContentsId);
+            } else revokeAppUiBundleRoot(pending.bundleToken);
+            pendingEmbeddedApps.delete(pending.embedId);
+            pendingEmbeddedAppsByToken.delete(pending.bundleToken);
+          }
+        }
+      }
       if (!appRuntimeRestorePending && event.appId === 'moss.trace' && (appLifecycleChanged || event.type === 'instance-changed')) {
         void appTraceHost?.refresh().catch(error => mossLog('error', 'trace', error.message));
       }
@@ -7442,8 +7475,35 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return { ok: true, id };
     },
   });
-  // Installations come exclusively from the App marketplace or an explicit
-  // archive import. Never adopt old connectors during Host startup.
+  // Bundled archives use the same package validation and runtime as other Apps.
+  if (!isWebHost) {
+    builtinApps = await new BuiltinApps({
+      directory: app.isPackaged ? path.join(process.resourcesPath, 'builtin-apps') : path.join(__dirname, '../dist/builtin-apps'),
+      statePath: path.join(MOSS_HOME, 'builtin-apps.json'),
+      runtime: appRuntime,
+      getInstalled: id => listAllStoredApps().find(item => item.id === id),
+      getRevision: getAppInstallationRevision,
+      verifyInstalled: installed => verifyBuiltinInstallation(installed, listAppVersions(installed.id)),
+      installPackage: (root, options) => publishBuiltinPackage(root, options, {
+        runtime: appRuntime, publish: installAppPackage,
+        activate: (installed, grants) => emitAppsChanged({ action: 'install', app: installed, ...(grants ? { grants } : {}) }),
+        rollback: rollbackAppInstallationIfCurrent, getRevision: getAppInstallationRevision,
+        getInstalled: id => listAllStoredApps().find(item => item.id === id),
+      }),
+    }).initialize().catch(error => { mossLog('error', 'builtin-apps', '无法加载内置应用清单', { error: String(error) }); return null; });
+    const results = await builtinApps?.sync() || [];
+    for (const item of results.filter(item => item.error)) mossLog('error', 'builtin-apps', item.error, { appId: item.id });
+  }
+  ipcMain.handle('app:list-builtins', () => builtinApps?.list() || []);
+  updateGuardedAppIpc.handle('app:restore-builtin', async (_event, { id } = {}) => {
+    try {
+      if (!builtinApps) throw new Error('当前客户端没有内置应用包');
+      await builtinApps.restore(id);
+      await emitAppsChanged({ action: 'builtin-restored', appId: id });
+      return { ok: true };
+    } catch (error) { return { ok: false, error: error.message }; }
+  });
+  // Never adopt old connector folders during Host startup.
   if (isWebHost) await connectorAppHost.refresh();
   registerAppMarketplaceIpc({
     ipcMain: updateGuardedAppIpc,
@@ -8581,6 +8641,12 @@ const appTestingHost = createAppTestingHost({
   openSession: sessionId => emitToRenderer('app:open-session', { sessionId }),
 });
 process.on('message', message => {
+  if (selfTestTarget && message?.type === 'moss-self-test-resize' && message.id === selfTestTarget.id && mainWindow) {
+    const reply = { type: 'moss-self-test-resized', id: selfTestTarget.id, requestId: message.requestId };
+    try { reply.result = resizeTestWindow(mainWindow, screen, message.size); }
+    catch (error) { reply.error = error.message; }
+    process.send?.(reply);
+  }
   if (selfTestTarget && message?.type === 'moss-self-test-focus' && message.id === selfTestTarget.id && mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show(); mainWindow.focus();
@@ -8740,7 +8806,7 @@ function listVisibleSessionSummaries() {
   const remoteEnabled = desktopSettings.remoteEnabled ?? false;
   const showAll = localEnabled && remoteEnabled;
   return [...sessions.values(), ...subAgentSessions.values()]
-    .filter(s => !s.deleted)
+    .filter(s => !s.deleted && !sessionArchives.archivedAt(s))
     .filter(s => s.agentMode !== 'remote-direct' || !remoteSessionDeletions.has(s.underlyingSessionId))
     .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
     .map(getSessionSummary)
@@ -9362,13 +9428,15 @@ async function removeSubAgentSessionRecords(parentSessionId) {
     closeWorkspaceWatcher(record);
     subAgentSessions.delete(record.id);
     deletePersistedSession(record.id);
+    sessionArchives.forget(record.id);
     await fsp.rm(getLocalSessionDir(record.id), { recursive: true, force: true });
     emitToRenderer('agent:session-removed', { sessionId: record.id });
   }));
   return children.length;
 }
 
-async function deleteSessionRecordById(sessionId) {
+async function deleteSessionRecordById(sessionId, guard) {
+  if (guard && !guard()) return false;
   appExecutionHost?.cancelSession(sessionId);
   const sessionRecord = sessions.get(sessionId) || subAgentSessions.get(sessionId);
   if (!sessionRecord || sessionRecord.deleted) {
@@ -9471,6 +9539,7 @@ async function deleteSessionRecordById(sessionId) {
   sessions.delete(sessionId);
   if (sessionRecord.projectId) void projectMemoryService.consider(sessionRecord.projectId).catch(() => {});
   deletePersistedSession(sessionId);
+  sessionArchives.forget(sessionId);
   if (!activeProjectTaskRun) projectTaskCancellationRequests.delete(sessionId);
   try {
     await fsp.rm(getLocalSessionDir(sessionRecord.id), { recursive: true, force: true });
@@ -9489,6 +9558,44 @@ async function deleteSessionRecordById(sessionId) {
 ipcMain.handle('agent:delete-session', async (_event, { sessionId }) => (
   deleteSessionRecordById(sessionId)
 ));
+
+function isStorageSessionBusy(record) {
+  return Boolean(record.busy || record.preparingPrompt || record.syncingLocalTranscript
+    || record.persistTimer || record.pendingPlanApproval || sessionPromptQueues.has(record.id)
+    || sessionSendQueues.has(record.id) || sessionForksInProgress.has(record.id)
+    || projectCoordinatorTaskRuns.has(record.id) || hasActiveAgentTeam(record)
+    || snapshotBackgroundTasks(record).some(task => task.status === 'running')
+    || appExecutionHost?.listSession(record.id).some(task => task.status === 'running')
+    || [...pendingQuestionRequests.values()].some(request => request.sessionId === record.id)
+    || previewOwnership.hasSessionEdits(record.id) || workspaceVersionService.isActive(record.workspace)
+    || workspaceVersionBusyReason(record.workspace));
+}
+const storageService = createStorageService({
+  root: MOSS_HOME,
+  getRecords: () => [...sessions.values(), ...subAgentSessions.values()],
+  isBusy: isStorageSessionBusy,
+  isArchived: record => Boolean(sessionArchives.archivedAt(record)),
+  removeSession: deleteSessionRecordById,
+});
+ipcMain.handle('storage:list-archives', async () => {
+  await interruptedSessionRecoveryPromise;
+  return sessionArchives.list();
+});
+ipcMain.handle('storage:set-archived', async (_event, payload) => {
+  assertUpdateWorkAllowed();
+  await interruptedSessionRecoveryPromise;
+  return sessionArchives.set(payload);
+});
+ipcMain.handle('storage:get-overview', () => storageService.overview());
+ipcMain.handle('storage:review-chats', async (_event, payload) => {
+  await interruptedSessionRecoveryPromise;
+  return storageService.review(payload);
+});
+ipcMain.handle('storage:delete-chats', async (_event, payload) => {
+  assertUpdateWorkAllowed();
+  await interruptedSessionRecoveryPromise;
+  return storageService.remove(payload);
+});
 
 ipcMain.handle('agent:list-workspaces', (_event, payload = {}) => (
   workspaceCatalog.list(payload)
@@ -9683,6 +9790,11 @@ async function listAppsForRenderer() {
               : 'stopped';
     results.push({
       ...appEntry,
+      builtin: builtinApps?.has(stored.id) || false,
+      overview: manifest?.overview,
+      mcpPresentation: manifest?.mcpApp?.presentation,
+      publisher: manifest?.publisher,
+      declaredSkills: manifest?.contributes?.skills || [],
       discovery: getAppDiscovery({ ...appEntry, discovery: manifest?.discovery }),
       connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connectorRecords.get(manifest.connectorApp.id) || null } : undefined,
       hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
@@ -9701,6 +9813,7 @@ async function listAppsForRenderer() {
       navigation: manifest?.navigation || appEntry.navigation,
       toolSelection: manifest?.toolSelection || 'app',
       toolScope: runtimeState?.toolScope || appRuntime?.getToolScope(stored.id, manifest?.toolScope) || 'session',
+      toolLoading: appRuntime?.getToolLoading(stored.id, manifest?.toolLoading) || 'on-demand',
       agentTools: describeAppTools(runtimeState?.manifest || manifest),
       mcpServices: appMcpHost?.toolCatalog(stored.id) || [],
       enabled: packageReady && Boolean(runtimeState?.installation?.enabled),
@@ -9734,7 +9847,7 @@ updateGuardedAppIpc.handle('app:launch', async (_event, { name, route }) => {
   }
 });
 
-updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId, workspace }) => {
+updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId, workspace, settingId, version }) => {
   try {
     if (sessionId) getSessionRecord(sessionId);
     const registryEntry = listAllStoredApps().find(app => app.name === name || app.id === name);
@@ -9745,10 +9858,12 @@ updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId
       appId: appEntry.id || appEntry.name,
       displayName: appEntry.displayName || appEntry.title || appEntry.id || appEntry.name,
     });
+    const view = resolveAppSettingsView(appEntry.manifest, appRuntime.getInstallation(appEntry.id), { settingId, version });
     const { bundleToken, entryUrl } = prepareAppEntry(appEntry);
     const embedId = randomUUID();
     const pending = {
       embedId,
+      view,
       sessionId,
       workspace,
       appEntry: { ...appEntry, bundleToken },
@@ -9762,7 +9877,7 @@ updateGuardedAppIpc.handle('app:embedded-open', async (_event, { name, sessionId
     return {
       ok: true,
       embedId,
-      url: entryUrl,
+      url: view ? entryUrl.split('#')[0] + view.route : entryUrl,
       preload: appUiPreloadPath(appEntry.id || appEntry.name),
       app: {
         id: appEntry.id || appEntry.name,
@@ -9897,6 +10012,12 @@ async function getAppUiInstance(state, instanceId) {
   return instances.find((instance) => instance.id === instanceId) || null;
 }
 
+ipcMain.handle('app-ui:view-state', (event, input) => {
+  const state = getAppWindowStateBySender(event.sender);
+  const value = validateAppViewState(input);
+  if (state.source?.embedId) emitToRenderer('app:embedded-state', { embedId: state.source.embedId, ...value });
+});
+
 ipcMain.handle('app-ui:get-info', async (event) => {
   const state = getAppWindowStateBySender(event.sender);
   return {
@@ -10022,6 +10143,7 @@ async function sendAgentPromptNow(event, {
   agentType,
   coordinatorMode,
   appContext,
+  visualizationAnnotation,
 }, {
   allowBusyQueue = false,
   sourceChannel = 'desktop',
@@ -10032,6 +10154,13 @@ async function sendAgentPromptNow(event, {
   controllerSignal?.throwIfAborted();
   const sender = event?.sender || mainWindow?.webContents || null;
   const sessionRecord = getSessionRecord(sessionId);
+  const preparedAnnotation = visualizationAnnotation ? await prepareVisualizationAnnotation(visualizationAnnotation, {
+    session: sessionRecord, resolveResourceFile: uri => resolveAppResourceFile(appRuntime, uri),
+  }) : null;
+  if (preparedAnnotation) {
+    if (sessionRecord.history.some(item => item.type === 'user' && item.visualizationAnnotation?.id === preparedAnnotation.annotation.id)) return { ok: true, sessionId };
+    prompt = '1 处标注';
+  }
   assertWorkspaceVersionIdle(sessionRecord);
   if (sessionRecord.isSubAgent) {
     throw new Error('子会话记录为只读；请返回主会话继续协调或重新发起任务。');
@@ -10205,6 +10334,7 @@ async function sendAgentPromptNow(event, {
       bashContextPrefix.trim(),
       selectedSkillsInstruction,
       preparedApp?.instruction || '',
+      preparedAnnotation?.instruction || '',
       explicitAgentInstruction,
       agentTeamRecovery?.instruction || '',
       effectivePrompt + attachmentSuffix,
@@ -10216,6 +10346,7 @@ async function sendAgentPromptNow(event, {
   const turn = await runSessionPrompt({ sessionRecord, sender, runtimePrompt, visibleUserPrompt,
     attachments: visibleAttachments, resources: appResources,
     preparedTools: isPlanOnly ? [] : preparedApp?.tools || [], composerContext: appContext,
+    visualizationAnnotation: preparedAnnotation?.annotation,
     runtimeSystemPrompt, controllerSignal,
   });
   if (controllerSignal?.aborted || turn.interrupted) return { ok: true, sessionId, interrupted: true };

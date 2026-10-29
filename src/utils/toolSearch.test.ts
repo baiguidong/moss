@@ -137,9 +137,9 @@ describe('generic ToolSearch', () => {
       MossTools,
     )).toEqual(['connector_cli_setup', 'connector_mcp_authenticate'])
     expect(expandMatchesWithConfiguredGroups(
-      ['image_edit'],
+      ['image_gen'],
       ImageTools,
-    )).toEqual(['image_generate', 'image_edit'])
+    )).toEqual(['image_gen'])
   })
 
   test('only activates group members present in the permitted tool pool', () => {

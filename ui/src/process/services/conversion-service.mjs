@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import TurndownService from 'turndown';
 import * as XLSX from 'xlsx-republish';
 import * as yauzl from 'yauzl';
@@ -22,6 +23,7 @@ class ConversionService {
       codeBlockStyle: 'fenced',
     });
     this.libreOfficeQueue = Promise.resolve();
+    this.officePreviewCache = new Map();
     void this.cleanupStaleTempDirs();
   }
 
@@ -76,16 +78,35 @@ class ConversionService {
       if (isDelimitedText) {
         workbook = XLSX.read(buffer.toString('utf-8'), { type: 'string' });
       } else {
-        workbook = XLSX.read(buffer, { type: 'buffer' });
+        workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true, sheetStubs: true });
         sheetImages = await this.extractExcelImages(buffer);
       }
 
       const sheets = workbook.SheetNames.map((name) => {
         const sheet = workbook.Sheets[name];
-        const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) || [];
+        // Read actual cell coordinates and cached values. sheet_to_json converts
+        // formatted date numbers to local Dates and drops error cells.
+        const data = [], displayData = [];
+        const cells = {};
+        for (const [address, cell] of Object.entries(sheet)) {
+          if (!/^[A-Z]+[1-9]\d*$/.test(address)) continue;
+          const { r, c } = XLSX.utils.decode_cell(address);
+          if (cell.f || (cell.z && cell.z !== 'General')) cells[address] = { ...(cell.f ? { formula: cell.f } : {}), ...(cell.z ? { format: cell.z } : {}) };
+          if (cell.v != null) {
+            (data[r] ||= [])[c] = cell.v;
+            (displayData[r] ||= [])[c] = cell.w ?? XLSX.utils.format_cell(cell);
+          }
+          // A formula without a cached result is unknown, not zero or blank.
+          if (cell.f && cell.v == null) {
+            (data[r] ||= [])[c] = null;
+            (displayData[r] ||= [])[c] = '=' + cell.f;
+          }
+        }
         return {
           name,
           data,
+          displayData,
+          cells,
           merges: sheet['!merges'] || [],
           images: sheetImages[name] || [],
         };
@@ -279,6 +300,26 @@ class ConversionService {
   }
 
   async libreOfficeToPdf(filePath, outputDir) {
+    if (outputDir) return this.performLibreOfficeToPdf(filePath, outputDir);
+    try {
+      const resolved = await fs.realpath(filePath), stat = await fs.stat(resolved);
+      if (!stat.isFile() || stat.size > MAX_FALLBACK_PARSE_BYTES) throw new Error('Office 文件无效或超过 100 MiB');
+      const key = [resolved, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+      const cached = this.officePreviewCache.get(key);
+      if (cached && Date.now() - cached.at < 5 * 60_000) {
+        const result = await cached.promise;
+        if (result.success && await fs.stat(result.data).then(s => s.size > 0, () => false)) return result;
+      }
+      const promise = this.performLibreOfficeToPdf(resolved);
+      const entry = { at: Date.now(), promise }; this.officePreviewCache.set(key, entry);
+      if (this.officePreviewCache.size > 64) this.officePreviewCache.delete(this.officePreviewCache.keys().next().value);
+      const result = await promise;
+      if (!result.success && this.officePreviewCache.get(key) === entry) this.officePreviewCache.delete(key);
+      return result;
+    } catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
+  }
+
+  async performLibreOfficeToPdf(filePath, outputDir) {
     let tempDir;
     let ownsTempDir = false;
     try {
@@ -313,14 +354,6 @@ class ConversionService {
         await fs.copyFile(filePath, tempFile);
         sourcePath = tempFile;
         baseName = 'input';
-      }
-
-      if (['.xls', '.xlsx', '.ods'].includes(ext)) {
-        const preparedPath = await this.prepareExcelForPdf(sourcePath, tempDir);
-        if (preparedPath !== sourcePath) {
-          sourcePath = preparedPath;
-          baseName = path.basename(preparedPath, path.extname(preparedPath));
-        }
       }
 
       const result = await new Promise((resolve) => {
@@ -456,21 +489,22 @@ class ConversionService {
     else if (['.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt'].includes(ext)) pdfFilter = 'writer_pdf_Export';
     else if (['.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp'].includes(ext)) pdfFilter = 'impress_pdf_Export';
 
-    await execFileAsync(
-      libreOfficePath,
-      ['--headless', '--norestore', '--nofirststartwizard', '--convert-to', `pdf:${pdfFilter}`, '--outdir', tempDir, sourcePath],
-      { timeout: 120000, maxBuffer: 10 * 1024 * 1024 },
-    );
-
-    const files = await fs.readdir(tempDir);
+    // A private profile prevents an open user LibreOffice session from swallowing
+    // headless jobs. Only accept this conversion's exact, nonempty PDF output.
+    const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-office-profile-'));
     const directPath = path.join(tempDir, `${baseName}.pdf`);
     try {
-      await fs.access(directPath);
+      await fs.rm(directPath, { force: true });
+      await execFileAsync(libreOfficePath,
+        ['-env:UserInstallation=' + pathToFileURL(profile).href, '--headless', '--norestore', '--nofirststartwizard', '--convert-to', `pdf:${pdfFilter}`, '--outdir', tempDir, sourcePath],
+        { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
+      const handle = await fs.open(directPath, 'r');
+      try {
+        const header = Buffer.alloc(5); await handle.read(header, 0, 5, 0);
+        if (header.toString() !== '%PDF-' || (await handle.stat()).size < 50) throw new Error('LibreOffice 未生成有效 PDF');
+      } finally { await handle.close(); }
       return { success: true, data: await fs.realpath(directPath) };
-    } catch {}
-    const fallback = files.find((file) => file.toLowerCase().endsWith('.pdf'));
-    if (!fallback) return { success: false, error: 'PDF file was not created by LibreOffice' };
-    return { success: true, data: await fs.realpath(path.join(tempDir, fallback)) };
+    } finally { await fs.rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {}); }
   }
 
   async findLibreOffice() {

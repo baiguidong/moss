@@ -17,7 +17,7 @@ test('ordinary composer uses attested workspace, bounded resources and only owni
   const calls = []
   const provider = { id:'example/flows', appId:'example', title:'工作流', listAction:'list', resolveAction:'resolve' }
   const runtime = {
-    listContributions: async ({kinds}) => kinds[0] === 'tools' ? {tools:[{localId:'read',name:'app__example__read'}]} : {resourceProviders:[provider]},
+    listContributions: async ({kinds}) => kinds[0] === 'tools' ? {tools:[{localId:'read',name:'read'}]} : {resourceProviders:[provider]},
     requireContribution: async (_, id) => { assert.equal(id,provider.id); return provider },
     resolveContributionInstance: () => ({id:'default'}),
     invoke: async (app, instance, action, input, options) => { calls.push({app,action,input,options}); return action==='list' ? [{title:'测试',ref:{id:'one'},route:'javascript:bad'}] : {title:'测试',instruction:'read selected resource',tools:['read','foreign'],route:'#/flow/one'} },
@@ -27,7 +27,7 @@ test('ordinary composer uses attested workspace, bounded resources and only owni
   assert.equal(calls[0].options.invocation.workspace,'/draft')
   const resolved = await composer.resolve({providerId:provider.id,intent:'use',ref:{id:'one'}},{sessionId:'session',workspace:'/spoof'})
   assert.equal(calls[1].options.invocation.workspace,'/trusted')
-  assert.deepEqual(resolved.tools,['app__example__read'])
+  assert.deepEqual(resolved.tools,['read'])
   assert.equal(calls.length,2) // no session creation or execution while preparing
   await assert.rejects(()=>composer.resolve({providerId:provider.id,intent:'execute'}), /无效/)
 })
@@ -41,7 +41,7 @@ test('service-selected Apps can resolve their resources without reselecting a wh
     requireContribution: async () => provider,
     resolveContributionInstance: () => ({ id: 'default' }),
     invoke: async () => { calls++; return { instruction: 'Use this resource', tools: ['read'] } },
-    listContributions: async () => ({ tools: [{ localId: 'read', name: 'app__example__read' }] }),
+    listContributions: async () => ({ tools: [{ localId: 'read', name: 'read' }] }),
   }
   const composer = createAppComposer({ getRuntime: () => runtime, getSession: () => session })
   await composer.resolve({ providerId: provider.id, intent: 'use' }, { sessionId: 'session', requireSelected: true })

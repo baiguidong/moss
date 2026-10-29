@@ -16,7 +16,7 @@
 | 不注册 | App 扩展贡献的动态工具 |
 | 不注册 | WorkflowCreate、WorkflowEdit、WorkflowManage、WorkflowRun |
 | 保留原条件和回调 | moss_browser_open、MossMail、library_list/search/read |
-| 按图片配置注册 | image_generate；OpenAI 配置还可注册 image_edit |
+| 主会话连接可用时常驻 | image_gen；统一生成与编辑，默认 gpt-image-2，复用主会话 URL/Key |
 | 保留原条件和实现 | 文件、Bash、网络、Agent、任务、团队、Skill、ToolSearch、通用 MCP 工具 |
 
 主 Agent 和新建/恢复 worker 使用同一个工具组装入口。ToolSearch 从当前已过滤的工具池检索，组展开也只激活池内成员。现有桌面处理端拒绝规则继续作为兜底。
@@ -29,14 +29,12 @@
 
 ## 图片执行
 
-`src/services/imageGeneration.ts` 直接请求图片 provider，`src/tools/ImageTool/ImageTool.ts` 负责工具定义、权限及工作区文件。图片执行已从桌面事件处理器移除，不依赖 emitAppEvent、Moss Desktop 或 Moss Server API。
+`image_gen` 是唯一的原生图片工具。`src/services/imageGeneration.ts` 实现从 Codex 移植的 Images 请求，`src/tools/ImageTool/ImageTool.ts` 负责参数、权限及工作区文件，不依赖桌面事件处理器。
 
-- 桌面注入桌面图片配置；服务端注入服务端 image 配置。Docker 配置快照及 runner manifest 解析也传递该配置。桌面图片凭据不通过远端 runtimeOptions 上传。
-- 缺少图片模型或凭据时不注册；MiniMax 只支持生成，OpenAI 支持生成及编辑。
-- OpenAI 编辑上传当前工作区的源图；结果支持 base64 或下载 URL。请求与下载支持取消及 180 秒总超时。
-- 输出写入当前 Agent 工作区，检查目录穿越和符号链接，使用现有文件读写权限规则。out_path 必须是新文件，避免覆盖已有文件。
-- 单次请求保存一张图片，返回 ok、fileKind、filePath、filePaths、mediaType；不返回图片字节或服务凭据。UI 使用已有文件附件逻辑展示，不由 Agent 构造 moss-media 地址。
-- 图片配置在会话启动/恢复时注入；配置更改在新建或重新恢复运行时生效。
+- 图片模型默认 `gpt-image-2`，在文本模型设置中配置；运行时与持久化配置只包含模型名称。地址和 Key 复用主会话，连接可用时默认常驻，不再有独立厂商分支。
+- 无参考图时生成，有参考图时编辑，最多 5 张；支持绝对文件路径或会话最近图片。JSON 编辑请求遇到明确格式拒绝时允许一次 multipart 适配。
+- 输出自动保存到当前工作区，不覆盖旧图；沿用文件权限与符号链接检查。图片块回传模型，主会话图片卡展示状态和成品，并可在右侧预览。
+- 图片配置在会话启动/恢复时注入；配置更改在新建或重新恢复运行时生效。实现与测试见 [image-generation.md](./image-generation.md)。
 
 ## 验证
 

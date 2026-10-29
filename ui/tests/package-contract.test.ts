@@ -136,7 +136,7 @@ describe('desktop package contract', () => {
     expect(verifierSource).toContain('verifyUnsignedPackage(platform, paths, installerFiles)');
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
     expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
-    expect(verifierSource).toContain('Packaged Moss must not include bundled Apps');
+    expect(verifierSource).toContain('verifyBuiltinArchive(builtinDir, entry)');
     expect(verifierSource).toContain("path.join(paths.resourcesDir, 'connectors')");
     expect(desktopPackage.build.extraResources.some(
       (entry: { from?: string; to?: string }) => entry.from === 'resources/connectors' || entry.to === 'connectors',
@@ -190,7 +190,7 @@ describe('desktop package contract', () => {
     expect(entries.get('/src/main.mjs')).toBe('src/main.mjs');
   });
 
-  test('ships marketplace access without pinning or bundling Apps', () => {
+  test('keeps marketplace access and bundles selected Apps from the separate source repository', () => {
     const desktopDev = readFileSync(path.join(repoRoot, 'ui', 'scripts', 'dev.mjs'), 'utf8');
     const desktopMain = readFileSync(path.join(uiRoot, 'src', 'main.mjs'), 'utf8');
     const serverPrepare = readFileSync(path.join(repoRoot, 'scripts', 'server-prepare.mjs'), 'utf8');
@@ -203,7 +203,8 @@ describe('desktop package contract', () => {
     expect(existsSync(path.join(uiRoot, 'resources', 'app-market', 'publishers', 'moss', 'release-1.pem'))).toBe(true);
     expect(existsSync(path.join(repoRoot, 'config', 'bundled-apps.lock.json'))).toBe(false);
     expect(existsSync(path.join(repoRoot, 'scripts', 'bundled-apps.mjs'))).toBe(false);
-    expect(desktopPackage.scripts['prepare:bundled-apps']).toBeUndefined();
+    expect(desktopPackage.build.beforePack).toBe('scripts/prepare-builtin-apps.mjs');
+    expect(desktopPackage.build.extraResources).toContainEqual({ from: 'dist/builtin-apps', to: 'builtin-apps', filter: ['**/*'] });
     expect(desktopPackage.scripts.start).not.toContain('build-adapters.mjs');
     expect(desktopPackage.scripts['dist:win']).not.toContain('bundled-apps');
     expect(desktopPackage.scripts['dist:mac']).not.toContain('bundled-apps');

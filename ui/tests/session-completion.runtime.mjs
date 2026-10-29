@@ -11,7 +11,7 @@ process.env.MOSS_CONFIG_DIR = path.join(root, 'profile');
 globalThis.MACRO = { VERSION: 'test', BUILD_TIME: '', PACKAGE_URL: 'moss', FEEDBACK_CHANNEL: '', ISSUES_EXPLAINER: '', VERSION_CHANGELOG: '' };
 const output = process.stdout.write.bind(process.stdout);
 let requests = 0, session;
-const toolName = 'app__moss_self_test__self_test', executed = [];
+const toolName = 'self_test', executed = [];
 const server = createServer(async (request, response) => {
   if (request.method === 'GET') { response.end(JSON.stringify({ data: [{ id: 'gpt-5.5', context_window: 200000 }] })); return; }
   const chunks = []; for await (const chunk of request) chunks.push(chunk);

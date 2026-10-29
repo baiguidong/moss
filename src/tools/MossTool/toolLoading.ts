@@ -10,8 +10,7 @@ export const MOSS_TOOL_GROUPS = {
     'connector_mcp_authenticate',
   ],
   image: [
-    'image_generate',
-    'image_edit',
+    'image_gen',
   ],
 } as const
 
@@ -20,8 +19,7 @@ export const DEFAULT_MOSS_TOOL_LOADING = {
   moss_browser_open: 'always',
   connector_cli_setup: 'deferred',
   connector_mcp_authenticate: 'deferred',
-  image_generate: 'deferred',
-  image_edit: 'deferred',
+  image_gen: 'always',
 } as const satisfies Record<string, MossToolLoadingMode>
 
 export type MossToolName = keyof typeof DEFAULT_MOSS_TOOL_LOADING

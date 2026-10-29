@@ -106,6 +106,33 @@
       "type": "string",
       "maxLength": 2000
     },
+    "overview": {
+      "type": "object",
+      "description": "Optional display-only content for the Core App information page. Older hosts may ignore it.",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "examples": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      }
+    },
+    "toolLoading": {
+      "enum": [
+        "always",
+        "on-demand"
+      ],
+      "description": "Whether available App tools are included in the model's initial tool set. Availability and permissions still apply."
+    },
     "category": {
       "type": "string",
       "description": "One primary category for App discovery. Omitted legacy values are displayed as other.",
@@ -191,13 +218,14 @@
       "required": [
         "location"
       ],
-      "description": "Primary App entry. Choose by purpose: an operational page in more, configuration in settings, or none for background/auxiliary Apps. Requires Host API >=3.4.0.",
+      "description": "Primary App entry: more for a workspace, details for Core details with declared settings, settings for legacy settings pages, none for background Apps. Details requires Host API >=3.22.0.",
       "properties": {
         "location": {
           "enum": [
             "more",
             "settings",
-            "none"
+            "none",
+            "details"
           ]
         },
         "viewId": {
@@ -306,8 +334,7 @@
             "additionalProperties": true,
             "required": [
               "id",
-              "title",
-              "viewId"
+              "title"
             ],
             "properties": {
               "id": {
@@ -342,8 +369,62 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 160
+              },
+              "form": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "readAction",
+                  "saveAction"
+                ],
+                "properties": {
+                  "readAction": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "saveAction": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                }
+              },
+              "presentation": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "width": {
+                    "enum": [
+                      "default",
+                      "wide"
+                    ]
+                  }
+                }
               }
-            }
+            },
+            "oneOf": [
+              {
+                "required": [
+                  "viewId"
+                ],
+                "not": {
+                  "required": [
+                    "form"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "form"
+                ],
+                "not": {
+                  "required": [
+                    "viewId"
+                  ]
+                }
+              }
+            ]
           }
         },
         "commands": {
@@ -450,10 +531,21 @@
               "host": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["protocol", "method"],
+                "required": [
+                  "protocol",
+                  "method"
+                ],
                 "properties": {
-                  "protocol": { "type": "string", "minLength": 1, "maxLength": 100 },
-                  "method": { "type": "string", "minLength": 1, "maxLength": 128 }
+                  "protocol": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "method": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
                 }
               },
               "instructions": {
@@ -783,9 +875,16 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["protocol", "methods"],
+            "required": [
+              "protocol",
+              "methods"
+            ],
             "properties": {
-              "protocol": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$" },
+              "protocol": {
+                "type": "string",
+                "maxLength": 100,
+                "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$"
+              },
               "methods": {
                 "type": "array",
                 "minItems": 1,
@@ -793,13 +892,34 @@
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["name", "action", "permission", "effect"],
+                  "required": [
+                    "name",
+                    "action",
+                    "permission",
+                    "effect"
+                  ],
                   "properties": {
-                    "name": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$" },
-                    "action": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$" },
-                    "permission": { "type": "string", "pattern": "^[a-z][a-z0-9:._-]*$" },
-                    "effect": { "const": "read" },
-                    "resourceReadMethod": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$" }
+                    "name": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+                    },
+                    "action": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                    },
+                    "permission": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9:._-]*$"
+                    },
+                    "effect": {
+                      "const": "read"
+                    },
+                    "resourceReadMethod": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+                    }
                   }
                 }
               }
@@ -812,10 +932,18 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["protocol"],
+            "required": [
+              "protocol"
+            ],
             "properties": {
-              "protocol": { "type": "string", "maxLength": 100, "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$" },
-              "optional": { "type": "boolean" }
+              "protocol": {
+                "type": "string",
+                "maxLength": 100,
+                "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,94}[a-z0-9])?/v[1-9][0-9]*$"
+              },
+              "optional": {
+                "type": "boolean"
+              }
             }
           }
         },
@@ -825,15 +953,27 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["appId", "tools"],
+            "required": [
+              "appId",
+              "tools"
+            ],
             "properties": {
-              "appId": { "type": "string", "maxLength": 80, "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$" },
+              "appId": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$"
+              },
               "tools": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 128,
                 "uniqueItems": true,
-                "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f*?]+$" }
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f*?]+$"
+                }
               }
             }
           }
@@ -919,12 +1059,21 @@
       ],
       "properties": {
         "kind": {
-          "enum": ["app", "tool"]
+          "enum": [
+            "app",
+            "tool"
+          ]
         },
         "capabilities": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["mcp", "cli", "skills"] }
+          "items": {
+            "enum": [
+              "mcp",
+              "cli",
+              "skills"
+            ]
+          }
         },
         "group": {
           "enum": [

@@ -4,6 +4,7 @@ import { installAppArchive } from './app-runtime.mjs'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
+import { loadJsonSchema } from '../../../packages/app-sdk/src/index.mjs'
 import { appCapabilityDeclarationChanged, confirmAppInstallation, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_PERMISSION_CANCELLED = 'MOSS_APP_INSTALL_PERMISSION_CANCELLED'
@@ -190,10 +191,81 @@ export function registerAppRuntimeIpc(options) {
     return { opened: true }
   })
   ipcMain.handle('app:get-runtime-state', (_event, { appId }) => runtime().getApp(appId))
+  ipcMain.handle('app:read-skill', async (_event, { appId, skillId }) => {
+    const pkg = await runtime().getActivePackage(appId)
+    const skill = pkg.manifest.contributes?.skills?.find(item => item.id === skillId)
+    if (!skill) throw new Error('App 未提供此技能')
+    const root = await fs.realpath(pkg.root)
+    const file = await fs.realpath(path.resolve(root, skill.path))
+    const relative = path.relative(root, file)
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('技能文件超出 App 目录')
+    const handle = await fs.open(file, 'r')
+    try {
+      const stat = await handle.stat()
+      if (!stat.isFile() || stat.size > 256 * 1024) throw new Error('技能文件不可用或超过 256 KiB')
+      const buffer = Buffer.alloc(256 * 1024 + 1)
+      let bytesRead = 0
+      while (bytesRead < buffer.length) {
+        const next = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
+        if (!next.bytesRead) break
+        bytesRead += next.bytesRead
+      }
+      if (bytesRead > 256 * 1024) throw new Error('技能文件超过 256 KiB')
+      return { title: skill.title, content: buffer.subarray(0, bytesRead).toString('utf8') }
+    } finally { await handle.close() }
+  })
+  ipcMain.handle('app:settings-form', async (_event, { appId, version, settingId, operation, values }) => {
+    if (!['read', 'save'].includes(operation)) throw new Error('无效的设置操作。')
+    const host = runtime(), pkg = await host.getActivePackage(appId)
+    const setting = pkg.manifest.contributes?.settings?.find(item => item.id === settingId && item.form)
+    if (!setting) throw new Error('App 未声明此设置表单。')
+    const assertCurrent = () => {
+      const installation = host.getInstallation(appId)
+      if (!installation?.enabled || installation.activeVersion !== version || pkg.manifest.version !== version) throw new Error('App 状态或版本已变化，请重新打开设置。')
+      if (setting.permission && !installation.grants?.includes(setting.permission)) throw new Error('请先授予此设置所需的权限。')
+    }
+    assertCurrent()
+    const action = pkg.manifest.backend.actions.find(item => item.name === setting.form.saveAction)
+    const schema = loadJsonSchema(pkg.root, action.inputSchema, 'settings form')
+    const instance = await host.ensureDefaultInstance(appId)
+    const invoke = (name, input) => host.invoke(appId, instance.id, name, input, { authorizeDispatch: assertCurrent, invocation: { surface: 'app', origin: 'settings' } })
+    if (operation === 'save') {
+      await invoke(setting.form.saveAction, values)
+      assertCurrent()
+      await emitChanged?.({ action: 'settings-saved', appId })
+    }
+    const result = await invoke(setting.form.readAction, {})
+    assertCurrent()
+    if (!result?.values || typeof result.values !== 'object' || Array.isArray(result.values)) throw new Error('App 返回的设置格式无效。')
+    const publicValues = { ...result.values }
+    // A declared secret never reaches the renderer, even if an App returns it.
+    const redact = node => {
+      for (const [key, field] of Object.entries(node?.properties || {})) if (field.writeOnly) delete publicValues[key]
+      for (const branch of [...(node?.allOf || []), ...(node?.oneOf || []), node?.then, node?.else].filter(Boolean)) redact(branch)
+    }
+    redact(schema)
+    return { schema, values: publicValues, configuredFields: (result.configuredFields || []).filter(key => typeof key === 'string') }
+  })
+  ipcMain.handle('app:set-tool-scope', async (_event, { appId, scope, loading }) => {
+    if (scope !== null && scope !== 'global' && scope !== 'session') throw new Error('无效的工具使用范围')
+    const host = runtime()
+    const pkg = await host.getActivePackage(appId)
+    if (pkg.manifest.connectorApp || pkg.manifest.nativeAdapter) throw new Error('此 App 的使用范围由宿主固定')
+    const version = host.getInstallation(appId)?.activeVersion
+    const result = host.toolScopeSettings({ appId, assertCurrent() {
+      if (!version || host.getInstallation(appId)?.activeVersion !== version) throw new Error('App 已更新，请重试')
+    } }, scope, loading)
+    return changed('tool-scope', appId, result)
+  })
   ipcMain.handle('app:inspect-mcp-tools', (_event, input) => {
     const host = options.getMcpHost?.()
     if (!host) throw new Error('MCP 工具目录尚未就绪。')
     return host.inspectTools(input)
+  })
+  ipcMain.handle('app:manage-mcp', (_event, input) => {
+    const host = options.getMcpHost?.()
+    if (!host) throw new Error('MCP 服务尚未就绪。')
+    return host.manage(input)
   })
   ipcMain.handle('app:list-contributions', (_event, options = {}) => runtime().listContributions(options))
   ipcMain.handle('app:invoke-contribution', (_event, { kind, id, input, ...invokeOptions }) => {

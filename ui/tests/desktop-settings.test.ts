@@ -158,7 +158,7 @@ describe('desktop settings', () => {
     expect(defaults).toMatchObject({
       moss_browser_open: 'always',
           connector_cli_setup: 'deferred',
-      image_generate: 'deferred',
+      image_gen: 'always',
     });
 
     const customized = normalizeDesktopSettings({
@@ -167,13 +167,13 @@ describe('desktop settings', () => {
         browser_snapshot: 'always',
         browser_click: 'always',
         connector_cli_setup: 'always',
-        image_generate: 'invalid',
+        image_gen: 'invalid',
         unknown_tool: 'always',
       },
     }).toolLoading;
     expect(customized.moss_browser_open).toBe('deferred');
     expect(customized.connector_cli_setup).toBe('always');
-    expect(customized.image_generate).toBe('deferred');
+    expect(customized.image_gen).toBe('always');
     expect(customized).not.toHaveProperty('unknown_tool');
     expect(customized).not.toHaveProperty('browser_snapshot');
     expect(customized).not.toHaveProperty('browser_click');
@@ -315,9 +315,6 @@ describe('desktop settings', () => {
       url: 'https://models.example.com/v1/',
       apiKey: 'secret',
       image: {
-        provider: 'provider-a',
-        url: 'https://images.example.com',
-        apiKey: 'image-secret',
         model: 'image-a',
       },
       remoteDirectServerUrl: 'https://remote.example.com/',
@@ -326,6 +323,27 @@ describe('desktop settings', () => {
     });
     expect(settings).not.toHaveProperty('remoteDirectProfileMode');
     expect(settings.remoteDirect).not.toHaveProperty('profileMode');
+    expect(settings.image).toEqual({ model: 'image-a' });
+  });
+
+  it.each(['openai', 'minimax'])('drops legacy %s image credentials on save and restart', provider => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-image-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const text = { model: 'main-model', baseUrl: 'https://main.test/v1', apiKey: 'main-key' };
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text, image: {
+      provider, baseUrl: 'https://obsolete.test', apiKey: 'obsolete-key', model: 'custom-image',
+    } } }));
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.getPayload().image).toEqual({ model: 'custom-image' });
+    store.save({ language: 'chinese' });
+    const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(saved.models.image).toEqual({ model: 'custom-image' });
+    expect(saved.models.text).toMatchObject(text);
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    expect(restarted.value.image).toEqual({ model: 'custom-image' });
+    restarted.save({ image: { model: ' ' } });
+    expect(createDesktopSettingsStore({ settingsPath }).value.image).toEqual({ model: 'gpt-image-2' });
   });
 
   it('preserves the complete model base URL while trimming outer whitespace', () => {
@@ -611,13 +629,13 @@ describe('desktop settings', () => {
     const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     expect(persisted.toolLoading.moss_browser_open).toBe('deferred');
     expect(persisted.toolLoading.connector_cli_setup).toBe('always');
-    expect(persisted.toolLoading.image_generate).toBe('deferred');
+    expect(persisted.toolLoading.image_gen).toBe('always');
 
     const reloaded = createDesktopSettingsStore({ settingsPath });
     expect(reloaded.value.toolLoading).toMatchObject({
       moss_browser_open: 'deferred',
       connector_cli_setup: 'always',
-      image_generate: 'deferred',
+      image_gen: 'always',
     });
   });
 

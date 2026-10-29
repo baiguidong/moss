@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import net from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inheritTestApps, inheritTestResources } from './profile.mjs';
@@ -32,6 +33,31 @@ export function selfTestRendererUrl(value, target) {
   const url = new URL(value);
   url.searchParams.set(TEST_QUERY, target.id);
   return url.href;
+}
+
+// CDP device emulation changes the layout viewport without resizing Electron's
+// native content area. Resize the isolated window itself so screenshots and
+// what the person at the desktop sees cover the same controls.
+export function resizeTestWindow(window, screen, size) {
+  if (![size?.width, size?.height].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('Invalid test window size');
+  }
+  const previous = window.getBounds();
+  const workArea = screen.getDisplayMatching(previous).workArea;
+  const minimum = window.getMinimumSize();
+  const minWidth = Math.min(minimum[0], workArea.width);
+  const minHeight = Math.min(minimum[1], workArea.height);
+  const width = Math.min(workArea.width, Math.max(minWidth, Math.round(size.width)));
+  const height = Math.min(workArea.height, Math.max(minHeight, Math.round(size.height)));
+  window.webContents.disableDeviceEmulation();
+  if (window.isMinimized()) window.restore();
+  if (window.isMaximized()) window.unmaximize();
+  window.setMinimumSize(minWidth, minHeight);
+  window.setBounds({ width, height,
+    x: Math.max(workArea.x, Math.min(previous.x, workArea.x + workArea.width - width)),
+    y: Math.max(workArea.y, Math.min(previous.y, workArea.y + workArea.height - height)),
+  });
+  return { bounds: window.getBounds(), contentBounds: window.getContentBounds(), workArea };
 }
 
 export function targetSettings(settings, includeConfiguration = true) {
@@ -108,13 +134,32 @@ export async function launchTestInstance({ run, executable, args = [], cwd, sett
       if (!exited) { child.kill('SIGKILL'); await Promise.race([exit, delay(1500)]); }
       if (!exited) throw new Error('测试实例未能退出。');
     })();
+    const resize = size => new Promise((resolve, reject) => {
+      if (exited || !child.connected) { reject(new Error('测试实例已退出。')); return; }
+      const requestId = randomUUID();
+      const finish = (error, value) => {
+        clearTimeout(timer);
+        child.off('message', receive);
+        child.off('exit', stopped);
+        if (error) reject(error); else resolve(value);
+      };
+      const receive = message => {
+        if (message?.type !== 'moss-self-test-resized' || message.id !== run.id || message.requestId !== requestId) return;
+        finish(message.error ? new Error(message.error) : null, message.result);
+      };
+      const stopped = () => finish(new Error('测试实例已退出。'));
+      const timer = setTimeout(() => finish(new Error('调整测试窗口超时。')), 5000);
+      child.on('message', receive);
+      child.once('exit', stopped);
+      child.send({ type: 'moss-self-test-resize', id: run.id, requestId, size }, error => { if (error) finish(error); });
+    });
     try {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         signal.throwIfAborted();
         if (exited) throw failure;
         const page = await probeTarget(endpoint, run.id, signal).catch(() => null);
-        if (page) return { id: run.id, endpoint, page, pid: child.pid, close, exited: exit, isAlive: () => !exited,
+        if (page) return { id: run.id, endpoint, page, pid: child.pid, close, resize, exited: exit, isAlive: () => !exited,
           focus: () => { if (child.connected) child.send({ type: 'moss-self-test-focus', id: run.id }, () => {}); },
         };
         await delay(200, undefined, { signal });

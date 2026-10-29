@@ -10,7 +10,11 @@ process.env.MOSS_HOME = root; process.env.MOSS_CONFIG_DIR = path.join(root, 'pro
 globalThis.MACRO = { VERSION: 'test', BUILD_TIME: '', PACKAGE_URL: 'moss', FEEDBACK_CHANNEL: '', ISSUES_EXPLAINER: '', VERSION_CHANGELOG: '' };
 const output = process.stdout.write.bind(process.stdout);
 const requests = [], sessions = [], executions = [];
-const toolName = 'app__moss_self_test__self_test';
+const toolName = 'self_test';
+const descriptor = { id: 'moss.self-test/self_test', appId: 'moss.self-test', name: toolName,
+  appDisplayName: 'AI 自测',
+  toolScope: 'global', toolLoading: 'always', title: 'fixture tool', description: 'Test a tool boundary', effect: 'write',
+  inputSchemaDocument: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } };
 let releaseTool, toolStarted;
 const toolGate = new Promise(resolve => { releaseTool = resolve; });
 const started = new Promise(resolve => { toolStarted = resolve; });
@@ -49,10 +53,10 @@ try {
   async function createSession(name) {
     const cwd = path.join(root, name); await mkdir(cwd);
     const session = new ClaudeSession({ cwd, projectDir: cwd, model: 'gpt-5.5', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'fixture-key',
-      permissionMode: 'bypassPermissions', allowedTools: [toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
+      permissionMode: 'bypassPermissions', allowedTools: [name === 'b' ? 'app__moss_self_test__self_test' : toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
       appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
-      appTools: [{ id: 'moss.self-test/self_test', appId: 'moss.self-test', name: toolName, title: 'fixture tool', description: 'Test a tool boundary', effect: 'write', inputSchemaDocument: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }],
-      onAppEvent: async event => { const n = event.input.input.n; executions.push(n); if (n === 1) { toolStarted(); await toolGate; } return { ok: true, result: { actualResult: n } }; },
+      appTools: [descriptor, { ...descriptor }],
+      onAppEvent: async event => { assert.equal(event.input.contributionId, descriptor.id); const n = event.input.input.n; executions.push(n); if (n === 1) { toolStarted(); await toolGate; } return { ok: true, result: { actualResult: n } }; },
       environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
     }); sessions.push(session); return session;
   }
@@ -62,6 +66,7 @@ try {
   let finished = false;
   const main = drain(a, 'SESSION_A_ONLY: invoke both fixture tools.', mainId).then(result => { finished = true; return result; });
   await started;
+  assert.deepEqual(requests[0].tools.map(tool => tool.name), [toolName], 'A globally available and selected App tool reaches the model once, without a prefix');
   const { createSupplementPreparation } = await import('../src/session-supplement.mjs');
   const attachment = path.join(root, 'a', 'input.txt'); await writeFile(attachment, 'real attachment fixture');
   const prepare = createSupplementPreparation({ localizeFiles: async (_record, paths) => paths, resolveResource: async () => {}, isResourceUri: () => false, getAgentCatalog: async () => ({ agents: [] }) });
@@ -76,8 +81,16 @@ try {
   const cancellation = new AbortController(); cancellation.abort(new Error('cancel side only'));
   await assert.rejects(a.askSideQuestion('cancel this', cancellation.signal));
   await drain(b, 'SESSION_B_ONLY', randomUUID());
-  assert(!JSON.stringify(requests.find(body => JSON.stringify(body.messages).includes('SESSION_B_ONLY'))).includes('SUPPLEMENT_A'));
+  const bRequest = requests.find(body => JSON.stringify(body.messages).includes('SESSION_B_ONLY'));
+  assert(!JSON.stringify(bRequest).includes('SUPPLEMENT_A'));
+  assert.deepEqual(bRequest.tools.map(tool => tool.name), [toolName], 'A saved legacy allowlist still exposes only the new tool name');
   releaseTool(); const messages = await main;
+  const expectedSource = { kind: 'app', appId: 'moss.self-test', appName: 'AI 自测', contributionId: descriptor.id };
+  for (const id of ['call_1', 'call_2']) {
+    assert.deepEqual(messages.find(message => message.type === 'assistant' && message.message.content.some(block => block.id === id))?.tool_sources?.[id], expectedSource);
+    assert.deepEqual(messages.find(message => message.type === 'stream_event' && message.event.content_block?.id === id)?.tool_sources?.[id], expectedSource);
+  }
+  assert(!requests.some(request => JSON.stringify(request.messages).includes('tool_sources')), 'Display ownership must not enter model messages');
   assert.deepEqual(executions, [1, 2]); assert.deepEqual(states, ['consumed']);
   const injected = messages.findIndex(message => message.type === 'user' && message.uuid === inputId);
   assert(injected >= 0);
@@ -93,6 +106,7 @@ try {
   await a.prepareForIdleDispose();
   const snapshot = await loadClaudeSessionSnapshot(a.sessionId, { cwdHint: path.join(root, 'a'), sourceJsonlFile: path.join(root, 'a', `${a.sessionId}.jsonl`) });
   assert.equal(snapshot.messages.filter(message => message.uuid === inputId).length, 1);
+  for (const id of ['call_1', 'call_2']) assert.deepEqual(snapshot.messages.find(message => message.type === 'assistant' && message.message.content.some(block => block.id === id))?.tool_sources?.[id], expectedSource, 'Source survives transcript reload');
   assert(!JSON.stringify(snapshot.messages).includes('The tool is still pending.'));
   await a.dispose();
   const resumed = await resumeClaudeSession(a.sessionId, {
@@ -100,7 +114,7 @@ try {
     model: 'gpt-5.5', url: `http://127.0.0.1:${server.address().port}`, apiKey: 'fixture-key',
     permissionMode: 'bypassPermissions', allowedTools: [toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
     appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
-    appTools: [{ id: 'moss.self-test/self_test', appId: 'moss.self-test', name: toolName, title: 'fixture tool', description: 'Test a tool boundary', effect: 'write', inputSchemaDocument: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }],
+    appTools: [descriptor],
     onAppEvent: async () => ({ ok: true, result: { actualResult: 1 } }),
     environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
   });
@@ -108,6 +122,6 @@ try {
   const resumedSide = await resumed.session.askSideQuestion('What was the last request?');
   assert.equal(resumedSide.status, 'completed');
   await resumed.session.dispose();
-  output('PASS: side answer during held tool; no side tools; independent cancellation; two sessions isolated; two receipts before one supplement; next model request sees prepared file and skill supplement; canonical transcript preserves it once; side question restores after runtime disposal.\n');
+  output('PASS: unprefixed App tool schema registered once and dispatched by contribution ID; legacy allowlist compatibility; side answer during held tool; no side tools; independent cancellation; two sessions isolated; two receipts before one supplement; next model request sees prepared file and skill supplement; canonical transcript preserves it once; side question restores after runtime disposal.\n');
 } catch (error) { output(String(error.stack || error) + '\n'); process.exitCode = 1; }
 finally { clearTimeout(timeout); releaseTool(); releaseSide(); for (const session of sessions) await session.dispose(); server.closeAllConnections(); await new Promise(r => server.close(r)); await rm(root, { recursive: true, force: true }); }

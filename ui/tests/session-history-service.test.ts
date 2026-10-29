@@ -155,3 +155,18 @@ it('reloads old compaction summaries for details without turning them into visib
   expect(rendered.filter(message => message.type === 'user_text')).toHaveLength(1);
   expect((rendered.find(message => message.type === 'system') as any).compaction.entries[0].content).toBe('original summary');
 });
+
+it('recovers annotation cards from engine JSONL without showing hidden model context', async () => {
+  const { paths, service, record } = await fixture();
+  const annotation = { id: 'mark-one', resourceUri: 'moss-visualize://works/one', comment: '放大标题', selection: {
+    kind: 'element', selector: '#heading', text: '标题', nearbyText: '', rect: { x: 1, y: 1, width: 100, height: 20 },
+  }, state: { rate: 8 } };
+  record.history = [{ ...user('1 处标注', 'stable'), visualizationAnnotation: annotation }];
+  record.underlyingSessionId = 'engine';
+  await writeFile(paths.sessionTranscriptPath('session', 'engine'), jsonl([
+    user('hidden model instruction with moss-visualize://works/one', 'stable'), assistant('已修改标题'),
+  ]));
+  const restored = await service.loadSessionHistoryFromSource(record);
+  expect(restored[0]).toMatchObject({ visualizationAnnotation: annotation, prompt: '1 处标注', message: { content: '1 处标注' } });
+  expect(buildMainChatRenderMessagesFromHistory(restored)[0]).toMatchObject({ type: 'user_text', content: '1 处标注', visualizationAnnotation: annotation });
+});

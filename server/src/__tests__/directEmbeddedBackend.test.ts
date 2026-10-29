@@ -125,7 +125,7 @@ describe('direct embedded backend model settings', () => {
     // These fields may still exist in old persisted manifests or old clients.
     const legacyOptions = {
       executionEnvironment: 'desktop',
-      image: { provider: 'openai', url: 'https://desktop.test', apiKey: 'desktop-image-key', model: 'desktop-image' },
+      image: { model: 'desktop-image' },
       model: 'desktop-model', fastModel: 'desktop-fast',
       url: 'https://desktop.test', apiKey: 'desktop-key',
       maxTurns: 1, thinkingConfig: { type: 'disabled' },
@@ -143,7 +143,7 @@ describe('direct embedded backend model settings', () => {
           transcriptDir: join(tempRoot, 'transcripts'),
         },
         systemSettings: makeSettings({
-          image: { provider: 'openai', url: 'https://image.server.test', apiKey: 'server-image-key', model: 'server-image' },
+          image: { model: 'server-image' },
           model: 'server-model', fastModel: 'server-fast',
           url: 'https://server-model.test', apiKey: 'server-key',
           maxTurns: 55, thinkingMode: 'enabled', thinkingBudgetTokens: 8192,
@@ -156,7 +156,7 @@ describe('direct embedded backend model settings', () => {
     for (const options of createdOptions) {
       expect(options).toMatchObject({
         executionEnvironment: 'server',
-        image: { provider: 'openai', url: 'https://image.server.test', apiKey: 'server-image-key', model: 'server-image' },
+        image: { model: 'server-image' },
         model: 'server-model', fastModel: 'server-fast',
         url: 'https://server-model.test', apiKey: 'server-key',
         maxTurns: 55, thinkingConfig: { type: 'enabled', budgetTokens: 8192 },
@@ -712,9 +712,6 @@ function makeSettings(
     url: '',
     apiKey: '',
     image: {
-      provider: 'openai',
-      url: 'https://image.default.test',
-      apiKey: 'image-key',
       model: 'image-model',
     },
     serverRuntime: {

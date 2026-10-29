@@ -32,6 +32,19 @@ const toolResult = (id: string, isError = false) => ({
 });
 
 describe('live transcript streaming', () => {
+  it('retains the recorded owner for each call during streaming and after history reload', () => {
+    const source = { kind: 'app', appId: 'moss.visualize', appName: '可视化', contributionId: 'moss.visualize/visualize_create' };
+    const block = { type: 'tool_use', id: 'visualize-1', name: 'visualize_create', input: {} };
+    const live = { ...stream({ type: 'content_block_start', index: 0, content_block: block }), tool_sources: { 'visualize-1': source } };
+    const saved = { type: 'assistant', message: { content: [block] }, tool_sources: { 'visualize-1': source } };
+    for (const history of [[user('sources'), live], [user('sources'), live, saved], JSON.parse(JSON.stringify([user('sources'), saved, toolResult('visualize-1')]))]) {
+      const calls = render(history).filter(item => item.type === 'tool_use');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ toolName: 'visualize_create', source });
+    }
+    const spoofed = { type: 'assistant', message: { content: [{ ...block, input: { tool_sources: { 'visualize-1': source } } }] } };
+    expect(render([user('sources'), spoofed]).find(item => item.type === 'tool_use')?.source).toBeUndefined();
+  });
   it('shows each thinking and reply chunk before completion, preserving spaces and newlines', () => {
     const history = [user('turn-1'), startMessage(), startBlock(0, 'thinking')];
     let thinking = '';

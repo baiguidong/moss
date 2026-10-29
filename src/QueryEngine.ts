@@ -1,5 +1,7 @@
 import { runAppAgent, type AppAgentRunParams } from './services/appExecution/runAppAgent.js'
 import { TurnInputQueue, type TurnInputState } from './utils/turnInputQueue.js'
+import { attachToolSources } from './utils/toolSources.js'
+import { toolSourceMetadata } from '../shared/tool-source.mjs'
 import { createUserMessage } from './utils/messages.js'
 import type { CacheSafeParams } from './utils/forkedAgent.js'
 import { runSideQuestion } from './utils/sideQuestion.js'
@@ -860,6 +862,7 @@ export class QueryEngine {
       maxTurns,
       taskBudget,
     })) {
+      attachToolSources(message, processUserInputContext.options.tools)
       // Record assistant, user, and compact boundary messages
       if (
         message.type === 'assistant' ||
@@ -1013,6 +1016,7 @@ export class QueryEngine {
           if (includePartialMessages) {
             yield {
               type: 'stream_event' as const,
+              ...toolSourceMetadata(message),
               event: message.event.type === 'message_start'
                 ? { ...message.event, message: { ...message.event.message, usage: currentMessageUsage } }
                 : message.event.type === 'message_delta'

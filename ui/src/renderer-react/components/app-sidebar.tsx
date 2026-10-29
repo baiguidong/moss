@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import {
+  Archive,
   BookOpen,
   Cloud,
-  LayoutGrid,
   Monitor,
   MessageSquareText,
   Mail,
@@ -77,7 +77,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "overview" | "mail" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app";
+export type MainView = "chat" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
@@ -123,7 +123,6 @@ interface AppSidebarProps {
   apps: StoredApp[];
   activeSessionId: string | null;
   activeView: MainView;
-  appsCount: number | null;
   projectsCount: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
@@ -137,6 +136,7 @@ interface AppSidebarProps {
   onLaunchApp: (name: string, route?: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
+  onArchiveSession?: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onTogglePin: (sessionId: string) => void;
   onSearchChange: (query: string) => void;
@@ -155,6 +155,7 @@ function SessionItem({
   isActive,
   onClick,
   onDelete,
+  onArchive,
   onRename,
   onTogglePin,
 }: {
@@ -162,6 +163,7 @@ function SessionItem({
   isActive: boolean;
   onClick: () => void;
   onDelete: () => void;
+  onArchive?: () => void;
   onRename: (newTitle: string) => void;
   onTogglePin: () => void;
 }) {
@@ -260,6 +262,9 @@ function SessionItem({
               <PenSquare className="mr-2 h-4 w-4" />
               重命名
             </DropdownMenuItem>
+            {onArchive && session.agentMode !== 'remote-direct' && !session.projectId && <DropdownMenuItem onClick={onArchive}>
+              <Archive className="mr-2 h-4 w-4" />归档会话
+            </DropdownMenuItem>}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onClick={onDelete}>
               <Trash2 className="mr-2 h-4 w-4" />
@@ -305,7 +310,6 @@ export function AppSidebar({
   apps,
   activeSessionId,
   activeView,
-  appsCount,
   themeMode,
   collapsed,
   searchQuery,
@@ -318,6 +322,7 @@ export function AppSidebar({
   onLaunchApp,
   onNewSession,
   onDeleteSession,
+  onArchiveSession,
   onRenameSession,
   onTogglePin,
   onSearchChange,
@@ -418,7 +423,7 @@ export function AppSidebar({
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
+    <div data-sidebar-shell className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
         <div className={cn("flex items-center", collapsed ? "flex-col gap-2" : "justify-between gap-3")}>
             <div className={cn("min-w-0", !collapsed && "ml-1.5")}>
@@ -487,20 +492,13 @@ export function AppSidebar({
             {!collapsed && "项目"}
           </Button>
           <Button
-            variant={activeView === "skills" || activeView === "experts" ? "secondary" : "ghost"}
+            variant={activeView === "common" || activeView === "skills" || activeView === "experts" || activeView === "apps" || activeView === "app-info" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("skills")}
-            title="技能·专家"
+            onClick={() => onChangeView("common")}
+            title="插件"
           >
             <Plug className="h-4 w-4" />
-            {!collapsed && (
-              <span className="flex min-w-0 items-center">
-                <span>技能</span>
-                <span className="mx-px text-[8px] text-muted-foreground" aria-hidden="true" data-resource-nav-separator>·</span>
-                <span>专家</span>
-
-              </span>
-            )}
+            {!collapsed && "插件"}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -626,6 +624,7 @@ export function AppSidebar({
                               isActive={activeHistorySessionId === node.session.id}
                               onClick={() => onSelectSession(node.session.id)}
                               onDelete={() => onDeleteSession(node.session.id)}
+                              onArchive={onArchiveSession ? () => onArchiveSession(node.session.id) : undefined}
                               onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
                               onTogglePin={() => onTogglePin(node.session.id)}
                             />
@@ -663,6 +662,7 @@ export function AppSidebar({
                               isActive={activeHistorySessionId === node.session.id}
                               onClick={() => onSelectSession(node.session.id)}
                               onDelete={() => onDeleteSession(node.session.id)}
+                              onArchive={onArchiveSession ? () => onArchiveSession(node.session.id) : undefined}
                               onRename={(newTitle) => onRenameSession(node.session.id, newTitle)}
                               onTogglePin={() => onTogglePin(node.session.id)}
                             />
@@ -683,7 +683,7 @@ export function AppSidebar({
         </>
       )}
 
-      <div className="border-t border-sidebar-border px-2.5 py-2.5">
+      <div className={cn("border-t border-sidebar-border py-2.5", collapsed ? "px-2.5" : "px-3")}>
         {typeof window !== 'undefined' && window.mossWeb ? (
           <div id="moss-web-account-slot" data-collapsed={collapsed} />
         ) : (
@@ -691,18 +691,17 @@ export function AppSidebar({
             <DropdownMenuTrigger asChild>
               <button type="button" className={cn("flex h-10 w-full items-center gap-2 rounded-xl px-1.5 text-left text-xs hover:bg-sidebar-accent", collapsed && "h-8 w-8 justify-center p-0 mx-auto")} aria-label="个人中心" title="个人中心">
                 <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent"><UserRound className="h-4 w-4" /><span className={cn('absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-sidebar', serverAccount ? 'bg-emerald-500' : 'bg-muted-foreground/45')} aria-hidden="true" /></span>
-                {!collapsed && <><span className="min-w-0 flex-1 truncate" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>{serverAccount?.userName || serverAccount?.userEmail || '个人中心'}</span>{!serverAccount ? <span className="sr-only">Apps<span>{appsCount ?? '…'}</span></span> : null}<ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></>}
+                {!collapsed && <><span className="min-w-0 flex-1 truncate" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>{serverAccount?.userName || serverAccount?.userEmail || '个人中心'}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></>}
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-64">
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-(--radix-dropdown-menu-trigger-width) min-w-44">
               <DropdownMenuLabel className="space-y-1 text-xs">
                 <span role="status" className="block truncate text-sm font-medium" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>
-                  {serverAccount?.userName || serverAccount?.userEmail || '个人中心'}<span className="font-normal text-muted-foreground"> · {serverAccount ? '已连接 Moss Server' : serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? 'Moss Server 已配置，尚未登录' : '请先配置 Moss Server'}</span>
+                  {serverAccount?.userName || serverAccount?.userEmail || '个人中心'}<span className="font-normal text-muted-foreground"> {serverAccount ? '已连接' : serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? 'Moss Server 已配置，尚未登录' : '请先配置 Moss Server'}</span>
                 </span>
                 {serverAuthError ? <span className="block pt-1 font-normal text-destructive">{serverAuthError}</span> : null}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => onChangeView('apps')}><LayoutGrid className="h-4 w-4" />Apps{!serverAccount ? <span className="ml-auto text-xs text-muted-foreground">{appsCount ?? '…'}</span> : null}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onChangeView('settings')}><Settings className="h-4 w-4" />设置</DropdownMenuItem>
               {serverAccount ? <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLogoutServer?.()}>
                 <LogOut className="h-4 w-4" />{serverAuthState === 'loading' ? '正在退出 Moss Server…' : '退出登录'}

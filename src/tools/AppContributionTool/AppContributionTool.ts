@@ -23,6 +23,7 @@ export type AppToolContributionDescriptor = {
   hostPermissionManaged?: boolean
   appId: string
   toolScope?: 'global' | 'session'
+  toolLoading?: 'always' | 'on-demand'
   toolSelection?: 'app' | 'services'
   serviceId?: string
   appDisplayName?: string
@@ -90,7 +91,7 @@ export function createAppContributionTool(
 
   return buildTool({
     name: descriptor.name,
-    appInfo: { appId: descriptor.appId, toolScope: descriptor.toolScope || 'session', toolSelection: descriptor.toolSelection, serviceId: descriptor.serviceId },
+    appInfo: { appId: descriptor.appId, appDisplayName: descriptor.appDisplayName, contributionId: descriptor.id, toolScope: descriptor.toolScope || 'session', toolLoading: descriptor.toolLoading, toolSelection: descriptor.toolSelection, serviceId: descriptor.serviceId },
     supportedEnvironments: ['desktop'],
     requiresDesktop: descriptor.hostPermissionManaged === true,
     requiresInteractiveMainSession: descriptor.hostPermissionManaged === true,
@@ -185,12 +186,14 @@ export function createAppContributionTool(
 export function createAppContributionTools(
   descriptors: readonly AppToolContributionDescriptor[] = [],
 ): Tool[] {
-  const names = new Set<string>()
-  return descriptors.map((descriptor) => {
-    if (names.has(descriptor.name)) {
+  const names = new Map<string, AppToolContributionDescriptor>()
+  return descriptors.flatMap((descriptor) => {
+    const previous = names.get(descriptor.name)
+    if (previous?.id === descriptor.id && previous.appId === descriptor.appId) return []
+    if (previous) {
       throw new Error(`Duplicate App Tool name: ${descriptor.name}`)
     }
-    names.add(descriptor.name)
+    names.set(descriptor.name, descriptor)
     return createAppContributionTool(descriptor)
   })
 }

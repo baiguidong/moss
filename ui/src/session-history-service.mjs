@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { preserveVisualizationAnnotations } from './apps/visualization-annotations.mjs';
 import { preserveAppTaskHistory } from './apps/app-task-session.mjs';
 import { createLocalTranscriptSync, readTranscriptHistory } from './local-transcript-sync.mjs';
 import { normalizeSessionDirName } from './session-paths.mjs';
@@ -78,7 +79,7 @@ export function createSessionHistoryService({
     const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
     if (!transcriptPath) return null;
     const history = await readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
-    return restoreAppTestScreenshotAttachments(sessionRecord, history);
+    return restoreAppTestScreenshotAttachments(sessionRecord, preserveVisualizationAnnotations(sessionRecord.history, history));
   }
 
   const localTranscriptSync = createLocalTranscriptSync({
@@ -180,7 +181,7 @@ export function createSessionHistoryService({
   }
 
   function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
-    const nextHistory = preserveAppTaskHistory(sessionRecord.history, history);
+    const nextHistory = preserveAppTaskHistory(sessionRecord.history, preserveVisualizationAnnotations(sessionRecord.history, history));
     if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
       const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, nextHistory);
       if (enrichedHistory !== sessionRecord.history) {

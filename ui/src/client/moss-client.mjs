@@ -77,6 +77,18 @@ export function createMossClient(transport, platform = {}) {
   ensureManagedRuntimes: (payload) => transport.invoke('agent:ensure-managed-runtimes', payload),
   getAuthDebug: () => transport.invoke('agent:get-auth-debug'),
   getSettings: () => transport.invoke('agent:get-settings'),
+  storage: {
+    listArchives: () => transport.invoke('storage:list-archives'),
+    setArchived: (payload) => transport.invoke('storage:set-archived', payload),
+    onArchivesChanged: (callback) => {
+      const handler = payload => callback(payload);
+      transport.on('storage:archives-changed', handler);
+      return () => transport.off('storage:archives-changed', handler);
+    },
+    getOverview: () => transport.invoke('storage:get-overview'),
+    reviewChats: (payload) => transport.invoke('storage:review-chats', payload),
+    deleteChats: (payload) => transport.invoke('storage:delete-chats', payload),
+  },
   testModel: (payload) => transport.invoke('agent:test-model', payload),
   updateSettings: (payload) => transport.invoke('agent:update-settings', payload),
   probeWebSearch: () => transport.invoke('agent:probe-web-search'),
@@ -205,8 +217,11 @@ export function createMossClient(transport, platform = {}) {
     install: (payload) => transport.invoke('app-market:install', payload),
   },
   listApps: () => transport.invoke('app:list'),
+  listBuiltinApps: () => transport.invoke('app:list-builtins'),
+  restoreBuiltinApp: (payload) => transport.invoke('app:restore-builtin', payload),
   importLegacyBuddy: (payload) => transport.invoke('app:import-legacy-buddy', payload),
   inspectAppMcpTools: (payload) => transport.invoke('app:inspect-mcp-tools', payload),
+  manageAppMcp: (payload) => transport.invoke('app:manage-mcp', payload),
   resourceMonitor: {
     getSnapshot: (payload) => transport.invoke('resource-monitor:snapshot', payload),
   },
@@ -226,6 +241,9 @@ export function createMossClient(transport, platform = {}) {
   },
   openAppResource: (uri) => transport.invoke('app:open-resource', { uri }),
   getAppRuntimeState: (payload) => transport.invoke('app:get-runtime-state', payload),
+  readAppSkill: (payload) => transport.invoke('app:read-skill', payload),
+  appSettingsForm: (payload) => transport.invoke('app:settings-form', payload),
+  setAppToolScope: (payload) => transport.invoke('app:set-tool-scope', payload),
   listAppResources: (payload) => transport.invoke('app:composer:list', payload),
   getAppAuthoring: () => transport.invoke('app:authoring:get'),
   prepareAppAuthoring: (appId) => transport.invoke('app:authoring:prepare', { appId }),

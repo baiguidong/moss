@@ -14,18 +14,16 @@ function renderSidebar({
   collapsed = false,
   searchQuery = '',
   activeSessionId = null,
-  appsCount = 0,
   serverAccount = null,
 }: {
   remoteEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
   apps?: any[];
-  activeView?: 'chat' | 'overview' | 'skills' | 'experts';
+  activeView?: 'chat' | 'overview' | 'common' | 'skills' | 'experts' | 'apps';
   collapsed?: boolean;
   searchQuery?: string;
   activeSessionId?: string | null;
-  appsCount?: number | null;
   serverAccount?: { userName: string; userEmail: string } | null;
 } = {}) {
   return renderToStaticMarkup(
@@ -34,7 +32,6 @@ function renderSidebar({
       apps={apps}
       activeSessionId={activeSessionId}
       activeView={activeView}
-      appsCount={appsCount}
       serverAccount={serverAccount}
       projectsCount={0}
       themeMode="system"
@@ -56,7 +53,7 @@ function renderSidebar({
 }
 
 describe('app sidebar more menu', () => {
-  test('shows a server account entry and moves Apps and settings into it after connection', () => {
+  test('shows a server account entry after connection', () => {
     const account = { userName: 'Server Alice', userEmail: 'alice@example.test' };
     const expanded = renderSidebar({ serverAccount: account });
     const collapsed = renderSidebar({ serverAccount: account, collapsed: true });
@@ -66,10 +63,6 @@ describe('app sidebar more menu', () => {
     expect(collapsed).toContain('aria-label="个人中心"');
     expect(collapsed).toContain('alt="Moss"');
     expect(collapsed).not.toContain('Apps<span');
-  });
-  test('shows the cached App count and a placeholder when no count is cached', () => {
-    expect(renderSidebar({ appsCount: 142 })).toMatch(/Apps<span[^>]*>142<\/span>/);
-    expect(renderSidebar({ appsCount: null })).toMatch(/Apps<span[^>]*>…<\/span>/);
   });
 
   test('keeps secondary destinations behind one compact trigger', () => {
@@ -163,21 +156,23 @@ describe('app sidebar resource navigation', () => {
     }
   });
 
-  test('shows one combined resource entry instead of separate entries', () => {
+  test('shows one plugin entry for skills, experts and Apps', () => {
     const html = renderSidebar();
-    expect(html).toContain('title="技能·专家"');
-    expect(html.match(/data-resource-nav-separator/g)).toHaveLength(1);
-    expect(html).toContain('text-[8px]');
+    expect(html).toContain('title="插件"');
+    expect(html).toContain('>插件</button>');
+    expect(html).not.toContain('title="Apps"');
+    expect(html).not.toContain('data-resource-nav-separator');
     expect(html).not.toContain('title="技能"');
     expect(html).not.toContain('title="专家"');
   });
 
-  test('highlights the combined entry for each resource view', () => {
-    for (const activeView of ['skills', 'experts'] as const) {
+  test('highlights the plugin entry for each resource view', () => {
+    for (const activeView of ['common', 'skills', 'experts', 'apps'] as const) {
       const html = renderSidebar({ activeView });
-      expect(html).toMatch(/class="[^"]*bg-secondary[^"]*"[^>]*title="技能·专家"/);
+      expect(html).toMatch(/class="[^"]*bg-secondary[^"]*"[^>]*title="插件"/);
     }
   });
+
 });
 
 describe('app sidebar child sessions', () => {

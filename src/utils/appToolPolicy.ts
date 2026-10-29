@@ -4,7 +4,7 @@ import type { Tool } from '../Tool.js'
 export type AppToolPolicy = {
   appIds: string[]
   appServiceIds?: string[]
-  mcpServers: Record<string, ToolSource & { mcpIdleTimeoutMs?: number }>
+  mcpServers: Record<string, ToolSource & { mcpIdleTimeoutMs?: number; appDisplayName?: string }>
 }
 
 /** Project cached tools into this session; never mutate shared MCP objects. */
@@ -15,6 +15,6 @@ export function applyAppToolPolicy<T extends Pick<Tool, 'appInfo' | 'isMcp' | 'm
       : tool.appInfo
     if (!owner) return [tool]
     if (!isToolSourceAvailable(owner, policy.appIds, policy.appServiceIds)) return []
-    return [{ ...tool, alwaysLoad: isToolSourceSelected(owner, policy.appIds, policy.appServiceIds), deferLoading: true }]
+    return [{ ...tool, alwaysLoad: owner.toolLoading === 'always' || isToolSourceSelected(owner, policy.appIds, policy.appServiceIds), deferLoading: true }]
   })
 }

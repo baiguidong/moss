@@ -480,7 +480,9 @@ export class AppPackageStore {
     const stagingDir = path.join(stagingRoot, randomUUID())
     await fsp.mkdir(stagingRoot, { recursive: true })
     try {
-      await fsp.cp(sourceDir, stagingDir, { recursive: true, errorOnExist: true, force: false })
+      // Copy-on-write on supported filesystems avoids doubling large builtin
+      // packages during upgrades. Node falls back to a regular independent copy.
+      await fsp.cp(sourceDir, stagingDir, { recursive: true, errorOnExist: true, force: false, mode: fs.constants.COPYFILE_FICLONE })
       const staged = await validateAppPackage(stagingDir, validationOptions)
       if (staged.manifest.id !== manifest.id || staged.manifest.version !== manifest.version) {
         throw new AppServiceError(APP_ERROR_CODES.integrityFailed, 'App package identity changed during installation')

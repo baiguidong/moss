@@ -1,0 +1,25 @@
+.moss-pdf { container-type: inline-size; }
+.moss-pdf-page { position: relative; flex: none; background: white; color: black; box-shadow: 0 2px 12px #0002; }
+.moss-pdf-page canvas { display: block; }
+.moss-pdf-page .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; transform-origin: 0 0; text-size-adjust: none; forced-color-adjust: none; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.moss-pdf-page .textLayer :is(span,br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0 0; }
+.moss-pdf-page .textLayer > :not(.markedContent), .moss-pdf-page .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.moss-pdf-page .textLayer ::selection { background: #3b82f65c; }
+.moss-pdf-page .textLayer br::selection { background: transparent; }
+.moss-pdf-page[data-selecting=true] { cursor: crosshair; touch-action: none; user-select: none; }
+.moss-pdf-page[data-selecting=true] .textLayer { pointer-events: none; }
+.moss-pdf-links { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.moss-pdf-page .annotationLayer { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; --scale-round-x: 1px; --scale-round-y: 1px; }
+.moss-pdf-page .annotationLayer section { position: absolute; text-align: initial; pointer-events: auto; box-sizing: border-box; transform-origin: 0 0; user-select: none; }
+.moss-pdf-page .annotationLayer .linkAnnotation > a { position: absolute; inset: 0; width: 100%; height: 100%; }
+.moss-pdf-page .annotationLayer .linkAnnotation > a:hover { background: #3b82f633; }
+.moss-pdf-page .annotationLayer .linkAnnotation > a:focus-visible { outline: 2px solid #2563eb; }
+.moss-pdf-page .annotationLayer .overlaidText { position: absolute; width: 0; height: 0; overflow: hidden; }
+.moss-pdf-page .annotationLayer svg.quadrilateralsContainer { contain: strict; width: 0; height: 0; position: absolute; top: 0; left: 0; z-index: -1; }
+.moss-pdf-page .annotationLayer[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
+.moss-pdf-page .annotationLayer[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.moss-pdf-page .annotationLayer[data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
+.moss-pdf-page[data-selecting=true] .annotationLayer section { pointer-events: none; }
+@container (max-width: 480px) { .moss-pdf-rail { width: 76px; } .moss-pdf-toolbar { gap: 2px; padding-inline: 6px; } }
+.moss-pdf-page[data-citation-page="true"] { outline: 2px solid var(--primary); outline-offset: 3px; }
+.moss-pdf .textLayer span[data-citation-highlight="true"] { background: #facc1570; border-radius: 2px; }

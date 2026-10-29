@@ -4,6 +4,7 @@ import * as React from "react";
 import { FilePreview } from "@/components/file-preview";
 import { UserAvatar } from "@/components/user-avatar";
 import type { UserTextRenderMessage } from "@/lib/agent-transcript";
+import { VisualizationAnnotationCard } from '@/components/visualization/annotation-card';
 
 export const UserMessage = React.memo(function UserMessage({ message, sessionId }: { message: UserTextRenderMessage; sessionId?: string }) {
   const hasText = message.content.trim().length > 0;
@@ -33,7 +34,8 @@ export const UserMessage = React.memo(function UserMessage({ message, sessionId 
           </div>
         )}
 
-        {hasText && (
+        {message.visualizationAnnotation && <VisualizationAnnotationCard annotation={message.visualizationAnnotation} />}
+        {hasText && !message.visualizationAnnotation && (
           <div
             data-message-body="user"
             className="max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tr-[4px] bg-[var(--color-surface-user-msg)] px-3 text-foreground select-text"

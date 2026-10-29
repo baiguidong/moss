@@ -17,6 +17,8 @@
     "test": "node scripts/run-tests.mjs",
     "test:presentation": "node scripts/test-presentation.mjs",
     "test:presentation-ui": "node scripts/test-presentation-ui.mjs",
+    "test:visualization": "node --max-old-space-size=6144 scripts/test-visualization.mjs",
+    "test:app-details": "node scripts/test-app-details.mjs",
     "test:main-services": "node scripts/test-main-services.mjs",
     "test:self-test": "node scripts/test-self-test.mjs",
     "test:self-test-runtime": "node tests/self-test.runtime.mjs",
@@ -34,7 +36,15 @@
     "build:mcp-app": "node scripts/build-mcp-app.mjs",
     "start:web": "node scripts/start-web.mjs",
     "build:web": "node scripts/build-direct.mjs && node scripts/build-renderer.mjs",
-    "test:web": "node --test tests/web-*.test.mjs"
+    "test:web": "node --test tests/web-*.test.mjs",
+    "apps:bundle": "node scripts/prepare-builtin-apps.mjs",
+    "test:creation-apps": "node scripts/test-creation-apps.mjs",
+    "test:creation-desktop": "node scripts/test-creation-desktop-cdp.mjs",
+    "test:creation-exports": "node scripts/test-creation-exports.mjs",
+    "test:office-preview": "node scripts/test-office-preview-cdp.mjs",
+    "test:pdf-preview": "node scripts/test-pdf-preview.mjs",
+    "test:office-workflow": "node scripts/test-office-preview-cdp.mjs --workflow",
+    "test:office-delivery": "node scripts/test-office-delivery.mjs"
   },
   "build": {
     "appId": "com.moss.ai",
@@ -186,6 +196,13 @@
           "package.json",
           "src/**/*"
         ]
+      },
+      {
+        "from": "dist/builtin-apps",
+        "to": "builtin-apps",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
@@ -226,7 +243,8 @@
       "provider": "github",
       "owner": "baiguidong",
       "repo": "moss"
-    }
+    },
+    "beforePack": "scripts/prepare-builtin-apps.mjs"
   },
   "dependencies": {
     "@codemirror/lang-html": "^6.4.11",
@@ -270,6 +288,7 @@
     "mermaid": "^11.14.0",
     "node-pty": "^1.1.0",
     "papaparse": "^5.5.4",
+    "pdfjs-dist": "5.4.624",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-json-view-lite": "^2.5.0",
@@ -282,10 +301,10 @@
     "tailwind-merge": "^3.3.1",
     "turndown": "^7.2.4",
     "tw-animate-css": "1.3.3",
+    "ws": "8.20.0",
     "xlsx-republish": "^0.20.3",
     "xml-formatter": "^3.7.0",
-    "yauzl": "^3.2.1",
-    "ws": "8.20.0"
+    "yauzl": "^3.2.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.0",

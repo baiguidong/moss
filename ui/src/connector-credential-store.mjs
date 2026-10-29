@@ -87,6 +87,19 @@ function decryptDocument(document, cipher) {
       recordPath('mcpAccessTokens', key),
     );
   }
+  const webSearchCredentials = isPlainObject(document.webSearchCredentials)
+    ? document.webSearchCredentials
+    : {};
+  if (Object.keys(webSearchCredentials).length > 0) {
+    result.webSearchCredentials = {};
+    for (const [field, record] of Object.entries(webSearchCredentials)) {
+      result.webSearchCredentials[field] = decryptRecord(
+        cipher,
+        record,
+        recordPath('webSearchCredentials', field),
+      );
+    }
+  }
   const remoteDirectCredentials = isPlainObject(document.remoteDirectCredentials)
     ? document.remoteDirectCredentials
     : {};
@@ -134,6 +147,19 @@ function encryptDocument(data, cipher, header) {
       record,
       recordPath('mcpAccessTokens', key),
     );
+  }
+  const webSearchCredentials = isPlainObject(data?.webSearchCredentials)
+    ? data.webSearchCredentials
+    : {};
+  if (Object.keys(webSearchCredentials).length > 0) {
+    document.webSearchCredentials = {};
+    for (const [field, record] of Object.entries(webSearchCredentials)) {
+      document.webSearchCredentials[field] = encryptRecord(
+        cipher,
+        record,
+        recordPath('webSearchCredentials', field),
+      );
+    }
   }
   const remoteDirectCredentials = isPlainObject(data?.remoteDirectCredentials)
     ? data.remoteDirectCredentials

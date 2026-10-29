@@ -1,3 +1,4 @@
+import { assertUniqueAppToolNames } from './utils/appToolNames.js'
 import { type Tool, type Tools } from './Tool.js'
 import { AgentTool } from './tools/AgentTool/AgentTool.js'
 import { SkillTool } from './tools/SkillTool/SkillTool.js'
@@ -259,6 +260,7 @@ export function assembleToolPool(
   // preserves insertion order, so built-ins win on name conflict.
   // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
   // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
+  assertUniqueAppToolNames([...builtInTools, ...allowedMcpTools])
   const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)
   return uniqBy(
     [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),

@@ -62,7 +62,7 @@ export async function runDirectReference({ packageRoot, settingsFile, caseIds, p
   await fs.mkdir(process.env.MOSS_CONFIG_DIR);
   globalThis.MACRO ||= { VERSION: 'test', BUILD_TIME: '', PACKAGE_URL: 'moss', FEEDBACK_CHANNEL: '', ISSUES_EXPLAINER: '', VERSION_CHANGELOG: '' };
   const { ClaudeSession } = await import('../../electron-direct.mjs');
-  const tool = manifest.contributes.tools[0], toolName = 'app__moss_self_test__self_test';
+  const tool = manifest.contributes.tools[0], toolName = 'self_test';
   const descriptor = { ...tool, appId: manifest.id, id: manifest.id + '/' + tool.id, name: toolName, inputSchemaDocument: JSON.parse(await fs.readFile(path.join(packageRoot, tool.inputSchema))) };
   const save = () => fs.writeFile(path.join(root, 'report.json'), JSON.stringify(run, null, 2));
   const reconnect = async () => { browser = await chromium.connectOverCDP(target.endpoint); page = browser.contexts().flatMap(context => context.pages()).find(page => page.url().includes('moss-self-test=' + run.id)); };

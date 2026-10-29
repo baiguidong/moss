@@ -3,6 +3,7 @@ import electron from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { conversionService } from '../services/conversion-service.mjs';
+import { allowMediaFile } from '../../media-protocol.mjs';
 
 
 
@@ -54,7 +55,11 @@ export function registerDocumentIpcHandlers() {
         }
       case 'libreoffice-pdf':
         if (!ensureExtension(filePath, LIBREOFFICE_EXTENSIONS)) return unsupportedResult(to, 'Only Office documents can be converted to PDF via LibreOffice');
-        return { to, result: await conversionService.libreOfficeToPdf(filePath) };
+        {
+          const result = await conversionService.libreOfficeToPdf(filePath);
+          if (result.success && result.data) allowMediaFile(result.data);
+          return { to, result };
+        }
       default:
         return unsupportedResult(to, `Unsupported target format: ${to}`);
     }

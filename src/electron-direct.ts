@@ -1,3 +1,4 @@
+import { matchesToolSelector } from './utils/appToolNames.js'
 import { releaseMcpLifetime, releaseMcpServers, getMcpLifetimeStats, updateMcpLifetimeIdle } from './services/mcp/client.js'
 export { getMcpRuntimeStats } from './services/mcp/client.js'
 import type { AppToolPolicy } from './utils/appToolPolicy.js'
@@ -354,13 +355,13 @@ export type DesktopToolCatalogEntry = {
 }
 
 /** A credential-free catalog suitable for App configuration screens. */
-export function listDesktopTools(image?: ImageSettings): DesktopToolCatalogEntry[] {
+export function listDesktopTools(settings?: { url?: string; apiKey?: string; image?: ImageSettings }): DesktopToolCatalogEntry[] {
   initLocalAgentRuntimeOnce()
   return getAllBaseTools().map(tool => ({
     id: tool.name,
     aliases: [...(tool.aliases ?? [])],
     searchHint: tool.searchHint ?? '',
-    enabled: tool.isEnabled({ executionEnvironment: 'desktop', image }),
+    enabled: tool.isEnabled({ executionEnvironment: 'desktop', image: settings?.image, modelConnection: { url: settings?.url, apiKey: settings?.apiKey } }),
     source: 'built-in' as const,
   }))
 }
@@ -477,7 +478,7 @@ export interface ClaudeSessionOptions {
   desktopCronHostId?: string
   cron?: import('../shared/cron-provider.js').CronProvider
   unattended?: boolean
-  /** Image provider configuration for this runtime, independent of the desktop bridge. */
+  /** Image model override; URL and credentials always come from the main session. */
   image?: ImageSettings
   /** 已配置的文本模型名称；未配置时拒绝创建会话。 */
   model?: string
@@ -872,7 +873,8 @@ export class ClaudeSession {
         executionEnvironment: opts.executionEnvironment ?? 'desktop',
         presentationEnabled: opts.presentationEnabled === true && Boolean(opts.onAppEvent),
         mcpLifetime: { id: this.#mcpLifetime.id, signal: this.#mcpLifetime.controller.signal, revokedServers: this.#mcpLifetime.revokedServers },
-        image: opts.image ? { ...opts.image } : undefined,
+        image: { model: opts.image?.model?.trim() || 'gpt-image-2' },
+        modelConnection: { url: opts.url, apiKey: opts.apiKey },
         desktopCronHostId: opts.desktopCronHostId,
         cron: opts.cron,
         unattended: opts.unattended,
@@ -1207,11 +1209,7 @@ export class ClaudeSession {
         const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)
         const selectors = this.#opts.allowedTools
         if (selectors === null || selectors.includes('*')) return merged
-        const allowed = new Set(selectors)
-        const matches = (name: string) => allowed.has(name) || selectors.some(
-          selector => selector.endsWith('*') && name.startsWith(selector.slice(0, -1)),
-        )
-        return merged.filter(tool => matches(tool.name) || tool.aliases?.some(matches))
+        return merged.filter(tool => matchesToolSelector(tool, selectors))
       },
       this.#opts.taskScope,
       this.#opts.environment,

@@ -1,5 +1,6 @@
 import type { ToolUseBlock } from '@anthropic-ai/sdk/resources/index.mjs'
 import last from 'lodash-es/last.js'
+import { toolSourceMetadata } from '../../shared/tool-source.mjs'
 import {
   getSessionId,
   isSessionPersistenceDisabled,
@@ -109,6 +110,7 @@ export function* normalizeMessage(message: Message): Generator<SDKMessage> {
         }
         yield {
           type: 'assistant',
+          ...toolSourceMetadata(message),
           message: _.message,
           parent_tool_use_id: null,
           session_id: getSessionId(),
@@ -131,6 +133,7 @@ export function* normalizeMessage(message: Message): Generator<SDKMessage> {
               }
               yield {
                 type: 'assistant',
+                ...toolSourceMetadata(message.data.message),
                 message: _.message,
                 parent_tool_use_id: message.parentToolUseID,
                 session_id: getSessionId(),
