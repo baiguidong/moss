@@ -14,7 +14,6 @@ ui/tests
 ui/docs
 ui/bun.lockb
 bin/cli.js
-skills
 assistants
 apps
 config

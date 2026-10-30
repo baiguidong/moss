@@ -14,6 +14,7 @@ RUN bun install --frozen-lockfile
 COPY ui/package.json ui/bun.lock ./ui/
 RUN cd ui && bun install --frozen-lockfile --ignore-scripts && node node_modules/electron/install.js
 COPY src ./src
+COPY skills ./skills
 COPY shared ./shared
 COPY packages ./packages
 COPY tsconfig.json ./
