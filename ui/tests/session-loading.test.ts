@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 const mainSource = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
 
@@ -10,15 +11,15 @@ function handlerSource(name: string, nextName: string) {
 }
 
 describe('desktop session loading', () => {
-  test('returns cached sessions before local reconciliation or remote synchronization finishes', () => {
+  test('returns cached sessions synchronously without waiting for reconciliation', () => {
     const source = handlerSource('agent:list-sessions', 'agent:search-sessions');
-
-    expect(source).toContain('const summaries = listVisibleSessionSummaries();');
-    expect(source).toContain('setImmediate(() => {');
-    expect(source).toContain('void reconcileLocalSessionSourcesBestEffort();');
-    expect(source).toContain('void synchronizeRemoteSessionsBestEffort();');
-    expect(source).toContain('return summaries;');
-    expect(source).not.toContain('await ');
+    const summaries = [{ id: 'cached-session' }];
+    let handler!: () => unknown;
+    runInNewContext(source, {
+      ipcMain: { handle: (_name: string, callback: () => unknown) => { handler = callback; } },
+      listVisibleSessionSummaries: () => summaries,
+    });
+    expect(handler()).toBe(summaries);
   });
 
   test('keeps explicit remote synchronization awaitable', () => {

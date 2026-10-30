@@ -229,9 +229,21 @@ describe('session deletion', () => {
   test('does not list or publish final state for deletion-pending sessions', () => {
     const listStart = mainSource.indexOf('function listVisibleSessionSummaries');
     const listEnd = mainSource.indexOf("ipcMain.handle('agent:list-sessions'", listStart);
-    expect(mainSource.slice(listStart, listEnd)).toContain(
-      '.filter(s => !s.deleted)',
-    );
+    const visible = { id: 'visible', updatedAt: 1 };
+    const list = runInNewContext(`${mainSource.slice(listStart, listEnd)}; listVisibleSessionSummaries;`, {
+      sessions: new Map([
+        ['visible', visible],
+        ['deleted', { id: 'deleted', deleted: true }],
+        ['archived', { id: 'archived', archivedAt: 1 }],
+      ]),
+      subAgentSessions: new Map(),
+      getDesktopAgentMode: () => 'local',
+      desktopSettings: { localEnabled: true },
+      sessionArchives: { archivedAt: (record: any) => record.archivedAt },
+      remoteSessionDeletions: { has: () => false },
+      getSessionSummary: (record: any) => record,
+    });
+    expect(list()).toEqual([visible]);
 
     const runSource = functionSource('runSessionPromptObserved', 'runSessionPrompt');
     expect(runSource).toContain('if (!sessionRecord.deleted) {');
@@ -322,6 +334,7 @@ function deletionHarness(deleteRemote: () => Promise<void>) {
     agentTeamsService: null,
     disposeRuntime: () => {},
     localTranscriptSync: { forget: () => {} },
+    sessionArchives: { forget: () => {} },
     computerUseService: { disposeSession: async () => {} },
     browserViewManager: null,
     removeSubAgentSessionRecords: async () => 0,

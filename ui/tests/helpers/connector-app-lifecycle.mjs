@@ -69,7 +69,9 @@ try {
       if (failActivation) { failActivation = false; throw new Error('injected activation failure') }
     } }),
     emitChanged: ({ appId }) => host.refresh(appId),
-    rollbackPackage: ({ appId, previousVersion }) => previousVersion ? platform.rollbackAppToVersion(appId, previousVersion) : platform.deleteApp(appId),
+    rollbackPackage: ({ appId, previousVersion, failedVersion, expectedInstallationRevision }) => platform.rollbackAppInstallationIfCurrent(appId, {
+      previousVersion, expectedVersion: failedVersion, expectedInstallationRevision,
+    }),
   })
   await release('1.0.0')
   assert.equal((await market.list()).apps.length, 1)

@@ -17,6 +17,7 @@ test('reopening the active session does not clear its loaded root directory', as
   let clears = 0;
   const open = runInNewContext(compile(`${statement.getText(ast)}\nopenSession;`), {
     React: { useCallback: (callback: unknown) => callback },
+    confirmAppViewLeave: () => true,
     openSessionRequestIdRef: { current: 0 },
     window: { agentDesktop: { getSession: async ({ sessionId }: { sessionId: string }) => ({ ...active.current, id: sessionId }) } },
     activeDetailRef: active, activeSessionIdRef: sessionId,

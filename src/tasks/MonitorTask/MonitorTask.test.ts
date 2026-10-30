@@ -14,6 +14,13 @@ afterEach(() => {
   dequeueAll();
 });
 
+async function waitForMonitor(getState: () => AppState, taskId: string) {
+  const deadline = Date.now() + 4_000;
+  while (getState().tasks[taskId]?.status === "running" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 test("consumeMonitorLines keeps partial stdout chunks until a newline", () => {
   expect(consumeMonitorLines("one\ntwo\npar")).toEqual({
     lines: ["one", "two"],
@@ -60,7 +67,7 @@ test("startMonitorTask streams lines and records a terminal task notification", 
     setAppState,
   });
   expect(handle.taskId).toMatch(/^b/);
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await waitForMonitor(() => state, handle.taskId);
   const task = state.tasks[handle.taskId] as
     { status: string; kind?: string } | undefined;
   expect(task?.status).toBe("completed");
@@ -86,7 +93,7 @@ test("max_events ends a monitor after the requested number of events", async () 
     maxEvents: 1,
     setAppState,
   });
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await waitForMonitor(() => state, handle.taskId);
   const task = state.tasks[handle.taskId] as { status: string } | undefined;
   expect(task?.status).toBe("completed");
   const queued = dequeueAll().map((command) => String(command.value));
@@ -109,7 +116,7 @@ test("a monitor deadline produces one timeout completion notification", async ()
     timeoutMs: 100,
     setAppState,
   });
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  await waitForMonitor(() => state, handle.taskId);
   expect(
     (state.tasks[handle.taskId] as { status: string } | undefined)?.status,
   ).toBe("failed");

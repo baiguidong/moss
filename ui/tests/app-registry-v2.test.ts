@@ -152,7 +152,7 @@ describe('App V2 registry hydration', () => {
     expect(result.status).toBe(0)
   })
 
-  it('lists only installed V2 packages and hydrates their manifest and UI entry', async () => {
+  it('lists installed V2 manifests and resolves their UI entry on demand', async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-app-registry-'))
     roots.push(home)
     const packageRoot = path.join(home, '.moss', 'apps', 'fixture.registry-v2', 'versions', '1.0.0')
@@ -186,13 +186,14 @@ describe('App V2 registry hydration', () => {
 
     const modulePath = path.resolve(import.meta.dir, '../src/app-platform.mjs')
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
-      import { listAppsFromRegistry } from ${JSON.stringify(modulePath)};
+      import { listAppsFromRegistry, getPublishedApp } from ${JSON.stringify(modulePath)};
       const apps = listAppsFromRegistry();
       console.log(JSON.stringify(apps.map((app) => ({
         id: app.id,
         hasManifest: Boolean(app.manifest),
         hasUi: Boolean(app.manifest?.ui),
         filePath: app.filePath,
+        launchFilePath: getPublishedApp(app.id).filePath,
         currentVersion: app.currentVersion,
         category: app.category,
         keywords: app.keywords,
@@ -209,7 +210,8 @@ describe('App V2 registry hydration', () => {
       id: 'fixture.registry-v2',
       hasManifest: true,
       hasUi: true,
-      filePath: await fs.realpath(path.join(packageRoot, 'dist', 'ui', 'index.html')),
+      filePath: null,
+      launchFilePath: await fs.realpath(path.join(packageRoot, 'dist', 'ui', 'index.html')),
       currentVersion: '1.0.0',
       category: 'knowledge',
       keywords: ['资料', '文档'],

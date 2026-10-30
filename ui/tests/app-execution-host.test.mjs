@@ -40,7 +40,7 @@ test('task and execution idempotency, owner isolation and chunked structured res
   } finally { await f.close() }
 })
 
-test('typed helpers validate real Host summaries, preserve structured results and use stable errors', async () => {
+test('typed helpers preserve Host outputs, validate events and use stable errors', async () => {
   const f = setup()
   const host = { request: f.call, on: () => () => {} }
   const tasks = createTasksClient(host), executions = createExecutionClient(host)
@@ -62,13 +62,13 @@ test('typed helpers validate real Host summaries, preserve structured results an
     const result = { nested: [{ answer: 42, emoji: '🌱' }], empty: null }
     const finished = await tasks.request('task.finish', { taskId: task.id, revision: task.revision, status: 'completed', result })
     expect(finished.result).toEqual(result)
-    for (const invalid of [{ ...finished, owner: context.owner }, { ...finished, status: 'unknown' }, { ...finished, revision: '1' }]) {
-      expect(() => validateExecutionHostOutput(T, 'task.get', invalid)).toThrow(expect.objectContaining({ code: APP_ERROR_CODES.hostProtocol }))
-    }
+    // Host outputs pass through unchanged; input and event contracts remain validated.
+    const extended = { ...finished, futureField: { value: 42 } }
+    expect(validateExecutionHostOutput(T, 'task.get', extended)).toBe(extended)
     expect(() => validateExecutionHostEvent(E, 'execution.changed', { taskId: task.id, execution, event: { ...events[0], sequence: -1 } })).toThrow()
     expect(() => validateExecutionHostOutput(T, 'toString', {})).toThrow()
-    const broken = createTasksClient({ ...host, request: async () => ({ id: 'incomplete' }) })
-    await expect(broken.request('task.get', { taskId: task.id })).rejects.toMatchObject({ code: APP_ERROR_CODES.hostProtocol })
+    const future = createTasksClient({ ...host, request: async () => extended })
+    expect(await future.request('task.get', { taskId: task.id })).toBe(extended)
   } finally { await f.close() }
 })
 test('same context serializes; different contexts respect task concurrency', async () => {

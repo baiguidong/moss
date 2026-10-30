@@ -23,6 +23,7 @@ env:
   BUN_VERSION: '1.3.10'
   NODE_VERSION: '22.22.2'
   SERVER_NODE_VERSION: '22.23.1'
+  BUILTIN_APPS_REF: '4fe807b3e5905dcec5f2df7071d9c3dd665a397e'
 
 jobs:
   prepare:
@@ -124,11 +125,22 @@ jobs:
   build-macos-arm64:
     runs-on: macos-latest
     needs: [prepare, create-release]
+    env:
+      MOSS_APPS_ROOT: ${{ github.workspace }}/.ci/moss-apps
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Checkout builtin Apps
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: baiguidong/moss-apps
+          ref: ${{ env.BUILTIN_APPS_REF }}
+          path: .ci/moss-apps
+          submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -148,6 +160,7 @@ jobs:
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
           bun install --frozen-lockfile --cwd ui
+          bun install --frozen-lockfile --cwd .ci/moss-apps
 
       - name: Build and verify macOS package
         run: bun run --cwd ui release:mac
@@ -172,11 +185,22 @@ jobs:
     # node-pty's node-gyp requires Visual Studio 2022; latest now uses VS 2026.
     runs-on: windows-2022
     needs: [prepare, create-release]
+    env:
+      MOSS_APPS_ROOT: ${{ github.workspace }}/.ci/moss-apps
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Checkout builtin Apps
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: baiguidong/moss-apps
+          ref: ${{ env.BUILTIN_APPS_REF }}
+          path: .ci/moss-apps
+          submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -196,6 +220,7 @@ jobs:
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd admin
           bun install --frozen-lockfile --cwd ui
+          bun install --frozen-lockfile --cwd .ci/moss-apps
 
       - name: Build and verify Windows package
         run: bun run --cwd ui release:win

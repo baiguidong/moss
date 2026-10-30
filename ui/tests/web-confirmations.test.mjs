@@ -91,7 +91,7 @@ test('Desktop installation waits for structured review and binds the full disclo
   const item = f.service.snapshot().requests[0];
   assert.equal(shown, 1);
   assert.equal(native, 0);
-  assert.equal(item.disclosure.tools[0].name, 'render');
+  assert.equal(item.disclosure.tools[0].name, 'video_render');
   assert.equal(item.disclosure.tools[0].permission, 'local-files:pick');
   assert.equal(item.disclosure.tools[0].serviceId, 'video');
   assert.equal(item.disclosure.permissions[0].label, '选择本机文件');
