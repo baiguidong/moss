@@ -13,12 +13,12 @@
     "moss.computer-use"
   ],
   "versions": {
-    "moss.visualize": "0.1.2",
-    "moss.document": "0.4.3",
-    "moss.pdf": "0.3.3",
-    "moss.spreadsheets": "0.2.3",
-    "moss.presentations": "0.3.2",
-    "moss.templates": "0.2.2",
+    "moss.visualize": "0.1.3",
+    "moss.document": "0.4.4",
+    "moss.pdf": "0.3.4",
+    "moss.spreadsheets": "0.2.4",
+    "moss.presentations": "0.3.3",
+    "moss.templates": "0.2.3",
     "moss.app-builder": "0.1.7",
     "moss.buddy": "0.1.6",
     "moss.browser-use": "0.1.9",
