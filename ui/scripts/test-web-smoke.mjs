@@ -48,9 +48,12 @@ try {
   await page.getByRole('button', { name: /^消息中心/ }).click();
   await page.getByRole('dialog', { name: '消息中心', exact: true }).waitFor();
   await page.keyboard.press('Escape');
-  const logoutTrigger = page.locator('.moss-web-session').getByRole('button', { name: '退出登录', exact: true });
+  const openLogout = async () => {
+    await page.getByRole('button', { name: '个人中心', exact: true }).click();
+    await page.getByRole('menuitem', { name: '退出登录', exact: true }).click();
+  };
   const logoutDialog = page.getByRole('dialog', { name: '退出当前登录？' });
-  await logoutTrigger.click();
+  await openLogout();
   await logoutDialog.waitFor();
   await page.screenshot({ path: path.join(output, 'logout-confirm.png') });
   await logoutDialog.getByRole('button', { name: '取消', exact: true }).click();
@@ -114,7 +117,7 @@ try {
   await page.screenshot({ path: path.join(output, 'browser.png') });
   await page.evaluate(settings => window.agentDesktop.updateSettings(settings), previousSettings);
   previousSettings = null;
-  await logoutTrigger.click();
+  await openLogout();
   await logoutDialog.getByRole('button', { name: '退出登录', exact: true }).click();
   await page.getByRole('heading', { name: '登录你的云电脑' }).waitFor();
   assert.equal(await page.evaluate(async () => (await (await fetch('/api/auth')).json()).authenticated), false);
