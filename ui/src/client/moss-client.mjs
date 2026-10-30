@@ -90,6 +90,7 @@ export function createMossClient(transport, platform = {}) {
     deleteChats: (payload) => transport.invoke('storage:delete-chats', payload),
   },
   testModel: (payload) => transport.invoke('agent:test-model', payload),
+  listModels: (payload) => transport.invoke('agent:list-models', payload),
   updateSettings: (payload) => transport.invoke('agent:update-settings', payload),
   probeWebSearch: () => transport.invoke('agent:probe-web-search'),
   usage: {

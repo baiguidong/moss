@@ -82,6 +82,7 @@ import {
   trackClientControlRequest,
 } from './sessionWebSocketBridge.js'
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
+import { fetchModelList } from '../../shared/model-list.mjs'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { createTraceRoutes, TraceRouteError } from './traceRoutes.js'
 import type { ServerConfig, SessionRecord } from './types.js'
@@ -1932,6 +1933,21 @@ export function startServer(
       if (req.method === 'GET' && pathname === '/api/v1/settings/system') {
         authService.requireScope(auth, 'admin:settings')
         writeJson(res, 200, getSystemSettings())
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/settings/models') {
+        authService.requireScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        try {
+          const models = await fetchModelList({
+            url: typeof body.url === 'string' ? body.url : '',
+            apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
+          })
+          writeJson(res, 200, models)
+        } catch (error) {
+          throw new HttpError(502, error instanceof Error ? error.message : String(error))
+        }
         return
       }
 

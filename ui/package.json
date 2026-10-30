@@ -104,6 +104,7 @@
           "security/**/*.mjs",
           "cron-task-store.mjs",
           "message-context.mjs",
+          "model-list.mjs",
           "workspace-preview.mjs",
           "retired-app-authoring-resources.mjs",
           "retired-app-authoring-resources.json"

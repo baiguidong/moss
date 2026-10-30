@@ -59,7 +59,7 @@ const named = {
   'remoteDirectUserEmail':['远端用户邮箱','设置远端账户邮箱。'],
   'url':['模型服务地址','设置模型 API 的服务地址。'],
   'webSearch.mode':['联网搜索方式','选择搜索服务的使用方式。'],
-  'image.model':['图片模型','用于图片生成与编辑，复用主会话地址和 Key；留空使用 gpt-image-2。'],
+  'image.model':['图片模型',''],
   'agentMail.enabled':['Agent 消息接收','接收发给 Agent 的消息。'],
   'logRotationMaxSize':['单个日志文件大小','达到此大小后切换新的日志文件，单位为字节。'],
   'logRotationMaxFiles':['日志文件保留数','保留多少个轮换日志文件。'],
@@ -78,7 +78,8 @@ export function settingPresentation(domain, field) {
   else if(/notif|mail/i.test(key))group='通知与消息'
   const title=field.schema?.title
   const label=definition?.[0]||(/[\u4e00-\u9fff]/.test(title||'')?title:null)
-  return {...field,label:label||roots[key.split('.')[0]]||'扩展设置',group,common:Boolean(label),description:definition?.[1]||(/[\u4e00-\u9fff]/.test(field.description)?field.description:'可向伙伴描述你的需求，由它查询并调整。')}
+  const description = definition?.[1] ?? (/[\u4e00-\u9fff]/.test(field.description) ? field.description : '可向伙伴描述你的需求，由它查询并调整。')
+  return {...field,label:label||roots[key.split('.')[0]]||'扩展设置',group,common:Boolean(label),description}
 }
 
 export const settingsAreaNames={desktop:'桌面设置',agent:'Agent 与项目设置',session:'会话设置',apps:'应用设置',mcp:'工具服务设置',assistants:'助手规则',preferences:'终端与通用偏好'}

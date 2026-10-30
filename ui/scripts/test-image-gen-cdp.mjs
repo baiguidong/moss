@@ -22,6 +22,12 @@ const png = await sharp(Buffer.from('<svg width="800" height="500" xmlns="http:/
 const calls = [], checks = [], errors = []; let modelImages = 0, serial = 0;
 const server = createServer(async (req, res) => {
   try {
+    if (req.method === 'GET' && req.url?.endsWith('/models')) {
+      assert.equal(req.headers.authorization, 'Bearer cdp-main-key');
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [{ id: 'gpt-image-2' }, { id: 'custom-image-model' }, { id: 'gpt-image-test-chat' }] }));
+      return;
+    }
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     if (!chunks.length) { res.statusCode = 204; res.end(); return; }
     const body = JSON.parse(Buffer.concat(chunks).toString());
@@ -119,16 +125,15 @@ try {
   await page.getByRole('button', { name: '个人中心', exact: true }).click();
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   await page.getByRole('button', { name: '模型与搜索', exact: true }).click();
-  await page.getByPlaceholder('gpt-image-2', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '获取模型列表', exact: true }).click();
+  await page.getByText('已获取 3 个模型', { exact: true }).waitFor();
   assert.equal(await page.getByText('图片厂商', { exact: true }).count(), 0);
   assert.equal(await page.locator('#model').getByText('图片模型', { exact: true }).count(), 1);
-  const modelGroup = page.locator('#model .divide-y').filter({ has: page.getByPlaceholder('your-model-name', { exact: true }) });
-  assert.equal(await modelGroup.count(), 1);
-  assert.equal(await modelGroup.getByPlaceholder('gpt-image-2', { exact: true }).count(), 1);
-  assert.equal(await modelGroup.getByPlaceholder('your-fast-model-name', { exact: true }).count(), 1);
-  await page.getByPlaceholder('gpt-image-2', { exact: true }).scrollIntoViewIfNeeded(); await capture('settings');
-  const field = page.getByPlaceholder('gpt-image-2', { exact: true });
-  await field.fill('custom-image-model'); await field.blur();
+  assert.equal(await page.locator('#model select[aria-label="图片模型名称"]').count(), 1);
+  assert.equal(await page.locator('#model select').count(), 4, 'three model selectors plus thinking mode');
+  const field = page.locator('#model select[aria-label="图片模型名称"]');
+  await field.scrollIntoViewIfNeeded(); await capture('settings');
+  await field.selectOption('custom-image-model');
   await page.waitForFunction(async () => (await window.agentDesktop.getSettings()).image.model === 'custom-image-model');
   const saved = JSON.parse(await fs.readFile(path.join(home, 'settings.json'), 'utf8'));
   assert.deepEqual(saved.models.image, { model: 'custom-image-model' });

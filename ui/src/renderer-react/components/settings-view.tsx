@@ -841,6 +841,9 @@ export function SettingsView({
   const [braveApiKeyDraft, setBraveApiKeyDraft] = React.useState('');
   const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
   const [webSearchError, setWebSearchError] = React.useState('');
+  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [modelListState, setModelListState] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [modelListError, setModelListError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSectionValue]);
   const [activeSection, setActiveSection] = React.useState<SectionId>(initialSectionValue);
@@ -923,6 +926,43 @@ export function SettingsView({
     ...DEFAULT_MOSS_TOOL_LOADING,
     ...(settingsDraft?.toolLoading || {}),
   };
+
+  const modelOptions = React.useMemo(() => {
+    const values = [
+      ...availableModels,
+      settingsDraft?.model || '',
+      settingsDraft?.fastModel || '',
+      imageDraft.model || '',
+    ];
+    return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+  }, [availableModels, imageDraft.model, settingsDraft?.fastModel, settingsDraft?.model]);
+
+  const fetchModels = React.useCallback(async () => {
+    if (!settingsDraft?.url?.trim()) {
+      setModelListState('error');
+      setModelListError('请先填写 API URL。');
+      return;
+    }
+    setModelListState('loading');
+    setModelListError('');
+    try {
+      const models = await window.agentDesktop.listModels({
+        url: settingsDraft.url,
+        apiKey: settingsDraft.apiKey || '',
+      });
+      setAvailableModels(models);
+      setModelListState('success');
+    } catch (error) {
+      setModelListState('error');
+      setModelListError(cleanIpcErrorMessage(error));
+    }
+  }, [settingsDraft?.apiKey, settingsDraft?.url]);
+
+  React.useEffect(() => {
+    setAvailableModels([]);
+    setModelListState('idle');
+    setModelListError('');
+  }, [settingsDraft?.apiKey, settingsDraft?.url]);
 
   React.useEffect(() => {
     if (initialAppSettingId) return;
@@ -2221,49 +2261,7 @@ export function SettingsView({
                       sectionRefs.current.model = element;
                     }}
                   >
-                    <div className="mb-3 px-1 text-[13px] font-medium text-muted-foreground">
-                      文本模型
-                    </div>
                     <SettingsGroup>
-                      <SettingsRow
-                        title="默认模型"
-                        controlClassName="sm:w-[280px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={settingsDraft.model || ''}
-                          onChange={(event) => updateSetting('model', event.target.value)}
-                          placeholder="your-model-name"
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="快速模型"
-                        description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
-                        controlClassName="sm:w-[280px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={settingsDraft.fastModel || ''}
-                          onChange={(event) => updateSetting('fastModel', event.target.value)}
-                          placeholder="your-fast-model-name"
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="图片模型"
-                        description="用于图片生成与编辑，复用主会话地址和 Key；留空使用 gpt-image-2。"
-                        controlClassName="sm:w-[280px]"
-                      >
-                        <Input
-                          className={FIELD_CLASS_NAME}
-                          value={imageDraft.model || ''}
-                          onChange={(event) => updateImageSettings({ model: event.target.value })}
-                          aria-label="图片模型名称"
-                          placeholder="gpt-image-2"
-                        />
-                      </SettingsRow>
-
                       <SettingsRow
                         title="API URL"
                         controlClassName="sm:w-[380px]"
@@ -2299,6 +2297,76 @@ export function SettingsView({
                             </Button>
                           ) : null}
                         </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="模型列表"
+                        description="从当前 API 获取可用模型，下面的模型选项会同步更新。"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <div className="flex w-full flex-col items-start gap-2 sm:items-end">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={modelListState === 'loading' || !settingsDraft.url.trim()}
+                            onClick={() => void fetchModels()}
+                          >
+                            <RefreshCw className={cn('mr-2 size-4', modelListState === 'loading' && 'animate-spin')} />
+                            {modelListState === 'loading' ? '获取中…' : '获取模型列表'}
+                          </Button>
+                          {modelListState === 'success' ? (
+                            <span className="text-xs text-muted-foreground">已获取 {availableModels.length} 个模型</span>
+                          ) : null}
+                          {modelListState === 'error' ? (
+                            <span role="alert" className="text-xs text-destructive">{modelListError}</span>
+                          ) : null}
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="默认模型"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.model || ''}
+                          aria-label="默认模型"
+                          onChange={(event) => updateSetting('model', event.target.value)}
+                        >
+                          <option value="">请选择模型</option>
+                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="快速模型"
+                        description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.fastModel || ''}
+                          aria-label="快速模型"
+                          onChange={(event) => updateSetting('fastModel', event.target.value)}
+                        >
+                          <option value="">留空，使用默认模型</option>
+                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="图片模型"
+                        controlClassName="sm:w-[280px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={imageDraft.model || ''}
+                          onChange={(event) => updateImageSettings({ model: event.target.value })}
+                          aria-label="图片模型名称"
+                        >
+                          <option value="">请选择模型</option>
+                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
                       </SettingsRow>
                       <SettingsRow
                         title="思考模式"

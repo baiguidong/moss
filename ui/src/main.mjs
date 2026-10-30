@@ -21,6 +21,7 @@ import { appendSessionRuntimeEvent } from './shared/assistant-usage-reconcile.mj
 import { resolveAppTaskSession, appTaskHistoryEvent, appTasksPromptContext } from './apps/app-task-session.mjs';
 import { createProjectId, normalizeOptionalProjectId, normalizeProjectId, normalizeProjectMemoryIndex, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
 import { normalizeStringList } from './shared/string-list.mjs';
+import { fetchModelList } from '../../shared/model-list.mjs';
 import { runInKeyedQueue } from './shared/keyed-queue.mjs';
 import { readJsonFile, readJsonFileAsync, writeTextFileAtomicAsync, writeJsonFileAtomicAsync } from './shared/json-files.mjs';
 import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode } from './shared/session-normalization.mjs';
@@ -8018,6 +8019,10 @@ ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
     model: settings.model, url: settings.url, apiKey: settings.apiKey,
     thinkingConfig: buildThinkingConfig(settings),
   });
+});
+ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
+  const settings = normalizeDesktopSettings(payload, desktopSettings);
+  return fetchModelList({ url: settings.url, apiKey: settings.apiKey });
 });
 ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());
 ipcMain.handle('agent:update-settings', (_event, payload = {}) => {

@@ -39,15 +39,19 @@ async function run() {
 try {
   await import('../src/main.mjs'); await ready;
   const js = source => window.webContents.executeJavaScript(source);
-  await waitFor(() => js(`Boolean(Array.from(document.querySelectorAll('button')).find(el => el.textContent.trim() === '设置' || el.getAttribute('aria-label') === '设置'))`), 'settings button');
-  await waitFor(async () => {
-    if (await js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent === '测试当前配置'))`)) return true;
-    await js(`Array.from(document.querySelectorAll('button')).find(el => el.textContent.trim() === '设置' || el.getAttribute('aria-label') === '设置')?.click()`);
-    return false;
-  }, 'model settings');
+  await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent.trim() === '个人中心' || el.getAttribute('aria-label') === '个人中心'))`), 'profile button');
+  await js(`document.querySelector('[aria-label="个人中心"]')?.click() || [...document.querySelectorAll('button')].find(el => el.textContent.trim() === '个人中心')?.click()`);
+  await waitFor(() => js(`Boolean([...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent.trim() === '设置'))`), 'settings menu item');
+  await js(`[...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent.trim() === '设置')?.click()`);
+  await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent.trim() === '模型与搜索'))`), 'settings view');
+  await js(`[...document.querySelectorAll('button')].find(el => el.textContent.trim() === '模型与搜索')?.click()`);
+  await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent === '测试当前配置'))`), 'model settings');
   const sessionCount = await js(`window.agentDesktop.listSessions().then(value => JSON.stringify(value))`);
   await js(`window.probeSelect = [...document.querySelectorAll('select')].find(el => [...el.options].some(o => o.value === 'adaptive')); void 0;`);
   assert(await js(`window.probeSelect.closest('section').textContent.includes('默认模型')`), 'Thinking belongs in model settings');
+  assert(await js(`!window.probeSelect.closest('section').textContent.includes('文本模型')`), 'Model settings no longer show the redundant text-model heading');
+  assert.equal(await js(`document.querySelectorAll('#model select').length`), 4, 'three model selectors plus thinking mode');
+  assert(await js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent.trim() === '获取模型列表'))`), 'Model list button is present');
   const clickTest = () => js(`[...document.querySelectorAll('button')].find(el => el.textContent === '测试当前配置').click()`);
   await clickTest();
   await waitFor(() => js(`document.body.textContent.includes('测试成功')`), 'successful probe');

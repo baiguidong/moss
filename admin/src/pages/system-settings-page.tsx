@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
+import { getSystemModels, getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import type {
   SystemSettings,
   UpdateSystemSettingsRequest,
@@ -33,6 +33,7 @@ import type {
 import {
   Copy,
   MessageSquare,
+  RefreshCw,
   Server,
   Sparkles,
   TriangleAlert,
@@ -225,6 +226,9 @@ export default function SystemSettingsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [modelListState, setModelListState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [modelListError, setModelListError] = useState('')
   const settingsRef = useRef<SystemSettings | null>(null)
   const draftRef = useRef<EditableSystemSettings | null>(null)
   const lastFailedSnapshotRef = useRef<string | null>(null)
@@ -277,6 +281,40 @@ export default function SystemSettingsPage() {
       toast.error(`复制 ${label} 失败`)
     }
   }
+
+  const modelOptions = useMemo(() => {
+    const values = [
+      ...availableModels,
+      draft?.model || '',
+      draft?.fastModel || '',
+      draft?.image.model || '',
+    ]
+    return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+  }, [availableModels, draft?.fastModel, draft?.image.model, draft?.model])
+
+  const handleFetchModels = async () => {
+    if (!draft?.url.trim()) {
+      setModelListState('error')
+      setModelListError('请先填写 API URL。')
+      return
+    }
+    setModelListState('loading')
+    setModelListError('')
+    try {
+      const models = await getSystemModels({ url: draft.url, apiKey: draft.apiKey })
+      setAvailableModels(models)
+      setModelListState('success')
+    } catch (error) {
+      setModelListState('error')
+      setModelListError(error instanceof Error ? error.message : '获取模型列表失败')
+    }
+  }
+
+  useEffect(() => {
+    setAvailableModels([])
+    setModelListState('idle')
+    setModelListError('')
+  }, [draft?.apiKey, draft?.url])
 
   useEffect(() => {
     if (!settings || !draft) {
@@ -384,113 +422,80 @@ export default function SystemSettingsPage() {
 
         <SettingSection
           icon={Sparkles}
-          title="文本模型"
-          description="设置默认模型、快速模型、图片模型及共用的 API 地址和 Key。"
+          title="模型"
+          description="配置共用的 API 地址和 Key，并选择默认、快速和图片模型。"
         >
-          <SettingField label="默认模型" description="新的本地会话会默认使用这个模型。">
+          <SettingField label="API URL">
             <Input
-              value={draft.model}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        model: event.target.value,
-                      }
-                    : current,
-                )
-              }
-              placeholder="填写模型服务支持的模型名称"
+              value={draft.url}
+              onChange={(event) => setDraft(current => current ? { ...current, url: event.target.value } : current)}
+              placeholder="https://model.example.com"
             />
+          </SettingField>
+
+          <SettingField label="API Key">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                type="password"
+                value={draft.apiKey}
+                className="font-mono text-xs"
+                onChange={(event) => setDraft(current => current ? { ...current, apiKey: event.target.value } : current)}
+                placeholder="your-model-api-key"
+              />
+              {draft.apiKey ? (
+                <Button variant="outline" size="sm" className="sm:shrink-0" onClick={() => void handleCopy(draft.apiKey, '模型 API Key')}>
+                  <Copy className="mr-2 size-4" />
+                  复制
+                </Button>
+              ) : null}
+            </div>
+          </SettingField>
+
+          <SettingField label="模型列表" description="从当前 API 获取可用模型，下面的模型选项会同步更新。">
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <Button variant="outline" size="sm" disabled={modelListState === 'loading' || !draft.url.trim()} onClick={() => void handleFetchModels()}>
+                <RefreshCw className={`mr-2 size-4 ${modelListState === 'loading' ? 'animate-spin' : ''}`} />
+                {modelListState === 'loading' ? '获取中…' : '获取模型列表'}
+              </Button>
+              {modelListState === 'success' ? <span className="text-xs text-muted-foreground">已获取 {availableModels.length} 个模型</span> : null}
+              {modelListState === 'error' ? <span role="alert" className="text-xs text-destructive">{modelListError}</span> : null}
+            </div>
+          </SettingField>
+
+          <SettingField label="默认模型" description="新的本地会话会默认使用这个模型。">
+            <Select
+              value={draft.model}
+              onValueChange={(value) => setDraft(current => current ? { ...current, model: value } : current)}
+            >
+              <SelectTrigger className="w-full" aria-label="默认模型"><SelectValue placeholder="请选择模型" /></SelectTrigger>
+              <SelectContent>{modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
+            </Select>
           </SettingField>
 
           <SettingField
             label="快速模型"
             description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
           >
-            <Input
-              value={draft.fastModel}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        fastModel: event.target.value,
-                      }
-                    : current,
-                )
-              }
-              placeholder="your-fast-model-name"
-            />
+            <Select
+              value={draft.fastModel || undefined}
+              onValueChange={(value) => setDraft(current => current ? { ...current, fastModel: value === '__empty_fast_model__' ? '' : value } : current)}
+            >
+              <SelectTrigger className="w-full" aria-label="快速模型"><SelectValue placeholder="留空，使用默认模型" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__empty_fast_model__">留空，使用默认模型</SelectItem>
+                {modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </SettingField>
 
-          <SettingField label="图片模型" description="用于图片生成与编辑，复用主会话地址和 Key；留空使用 gpt-image-2。">
-            <Input
+          <SettingField label="图片模型">
+            <Select
               value={draft.image.model}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        image: { model: event.target.value },
-                      }
-                    : current,
-                )
-              }
-              placeholder="gpt-image-2"
-            />
-          </SettingField>
-
-          <SettingField label="API URL" description="默认模型、快速模型及图片模型共用的接口地址。">
-            <Input
-              value={draft.url}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        url: event.target.value,
-                      }
-                    : current,
-                )
-              }
-              placeholder="https://model.example.com"
-            />
-          </SettingField>
-
-          <SettingField
-            label="API Key"
-            description="默认模型、快速模型及图片模型共用的认证信息。"
-          >
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.apiKey}
-                className="font-mono text-xs"
-                onChange={(event) =>
-                  setDraft(current =>
-                    current
-                      ? {
-                          ...current,
-                          apiKey: event.target.value,
-                        }
-                      : current,
-                  )
-                }
-                placeholder="sk-ant-..."
-              />
-              {draft.apiKey ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="sm:shrink-0"
-                  onClick={() => void handleCopy(draft.apiKey, '文本模型 API Key')}
-                >
-                  <Copy className="mr-2 size-4" />
-                  复制
-                </Button>
-              ) : null}
-            </div>
+              onValueChange={(value) => setDraft(current => current ? { ...current, image: { model: value } } : current)}
+            >
+              <SelectTrigger className="w-full" aria-label="图片模型"><SelectValue placeholder="请选择模型" /></SelectTrigger>
+              <SelectContent>{modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
+            </Select>
           </SettingField>
         </SettingSection>
 
