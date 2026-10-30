@@ -41,8 +41,10 @@ App 可独立扩充 skill、运行说明、HTML/CSS/JS 模板及数据转换功�
 ## 打包和验证
 
 从 `moss-apps` 执行 `node scripts/package-app.mjs --app moss.visualize`。
-从 `moss/ui` 执行 `bun run apps:bundle`；开发时复用刚构建的包可执行 `node scripts/prepare-builtin-apps.mjs --reuse-packages`。
-Electron Builder 的 beforePack 自动执行选定 App 构建和资源暂存，不需要把 App 源码复制到 Core。
+App 在 `moss-apps` 仓库独立提交、构建、签名并发布。发布完成后，在 `packages/app-sdk/src/builtin-apps.json` 的 `versions` 中填写每个内置 App 的精确版本；Moss 打包只下载这些版本的发布 ZIP 并放入安装包，不检出或构建 App 源码，也不自动选择最新版本。下载时验证版本、平台、SHA-256、签名和随包源码；缺少指定版本会使打包失败。
+
+从 `moss/ui` 执行 `bun run apps:bundle` 可按相同规则下载并暂存内置包。Mac 和 Windows Release CI 自动执行此步骤。App 明确不支持目标平台时会记录到内置清单的 `omitted` 中。
+Electron Builder 的 beforePack 自动下载并暂存指定版本的 App 发布包。
 
 从 `moss/ui` 执行 `bun run test:visualization`，需在相邻 moss-apps 安装 Playwright 和 Chromium，或通过 `PLAYWRIGHT_MODULE` 指定 Playwright 模块。
 该验证安装真实 ZIP、运行真实后端、资源解析和成果服务，并构建生产版 React 组件进行浏览器交互；只有传输与会话外框是测试夹具。
@@ -96,7 +98,7 @@ Manifest 用 toolScope 表达 global/session，用 toolLoading 表达 always/on-
 ## 本批验证和演示
 
 - `cd ../moss-apps && node scripts/package-app.mjs --app <App ID>`：独立源码快照安装依赖、check/test/build、后端握手、ZIP 和校验信息。
-- `cd ui && bun run apps:bundle`：自动构建并附带六个包；已有新包可用 `node scripts/prepare-builtin-apps.mjs --reuse-packages` 暂存。
+- `cd ui && bun run apps:bundle`：下载版本清单中已发布的内置 App 包，校验后暂存，供 Moss 安装包内置。
 - `cd ui && bun run test:creation-apps`：安装全部真实 ZIP，调用原生工具，检查跨 App 模板复用、版本、导出、资源、主会话和右侧展示、状态同步、标注、窄屏及详情页。
 - `cd ui && bun run test:creation-desktop`：用独立配置启动真实 Electron，以 CDP 检查六个内置 App、技能、作用域持久化、启停、示例返回主会话及原生 PDF 预览。先运行 `test:creation-apps` 生成测试文件，两个脚本顺序执行。
 - `cd ui && bun run test:creation-exports`：用独立 LibreOffice 配置打开真实 Word/Excel/PPT，转换 PDF 后检查页数、中文和公式结果，Poppler 生成核对图片。需要 LibreOffice 和 `pdftoppm`。

@@ -6,8 +6,6 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import JSZip from 'jszip'
 import { BuiltinApps, readBuiltinManifest, verifyBuiltinArchive, publishBuiltinPackage } from '../src/apps/builtin-apps.mjs'
-import { prepareBuiltinApps } from '../scripts/prepare-builtin-apps.mjs'
-import selection from '../../packages/app-sdk/src/builtin-apps.json' with { type: 'json' }
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-builtins-'))
@@ -55,19 +53,6 @@ test('checksums, identity, platform and missing archives fail without recording 
   assert.match(service.list()[0].error, /checksum/); assert.equal(f.installs, 0)
   await assert.rejects(service.restore('moss.test'), /checksum/)
   await fs.rm(path.join(f.directory, 'app.zip')); await assert.rejects(verifyBuiltinArchive(f.directory, f.entry), /ENOENT/)
-})
-test('source selection stages only compatible archives with a checksum manifest', async t => {
-  const f = await fixture(t), appsRoot = path.join(f.root, 'moss-apps'), output = path.join(f.root, 'output')
-  for (const id of selection.apps) {
-    const app = path.join(appsRoot, 'apps', id); await fs.mkdir(app, { recursive: true })
-    await fs.writeFile(path.join(app, 'app.moss.json'), JSON.stringify({ id, version: '1.0.0', displayName: id, ...(id !== 'moss.visualize' ? { platforms: ['darwin-arm64'] } : {}) }))
-  }
-  const artifact = path.join(appsRoot, 'artifacts/moss.visualize/1.0.0'); await fs.mkdir(artifact, { recursive: true })
-  await fs.copyFile(path.join(f.directory, 'app.zip'), path.join(artifact, 'moss.visualize-1.0.0.zip'))
-  const apps = await prepareBuiltinApps({ appsRoot, output, build: false, useMarketplace: false, platform: 'win32-x64' })
-  assert.deepEqual(apps.map(item => item.id), ['moss.visualize'])
-  assert.equal((await readBuiltinManifest(output, 'win32-x64')).omitted.length, selection.apps.length - 1)
-  await verifyBuiltinArchive(output, apps[0])
 })
 
 test('legacy builtin receipts upgrade only verified packages and preserve disabled state and settings', async t => {

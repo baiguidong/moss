@@ -6,16 +6,19 @@ import os from 'node:os'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import JSZip from 'jszip'
 import { createBuiltinDownloader, selectBuiltinVersion, stageBuiltinArchive } from '../scripts/download-builtin-app.mjs'
+import { prepareBuiltinApps } from '../scripts/prepare-builtin-apps.mjs'
 import { attachSourcePackage } from '../../packages/app-runtime/src/packages/source.mjs'
 import { createAppSignaturePayload, writePackageChecksums } from '../../packages/app-runtime/src/packages/index.mjs'
 
-test('latest stable compatible version is selected per platform; an incompatible Host fails explicitly', () => {
+test('only the pinned version is selected; missing and incompatible releases fail without fallback', () => {
   const version = (value, hostApi = '^3.6.0', platforms = ['darwin-arm64']) => ({ version: value, hostApi, platforms, artifact: {} })
   const detail = { id: 'moss.buddy', versions: [version('1.0.0'), version('3.0.0-beta.1'), version('2.0.0', '^99.0.0'), version('1.2.0'), version('1.3.0', '^3.6.0', ['win32-x64'])] }
-  assert.equal(selectBuiltinVersion(detail, 'darwin-arm64', '3.22.0').version, '1.2.0')
-  assert.equal(selectBuiltinVersion(detail, 'win32-x64', '3.22.0').version, '1.3.0')
-  assert.equal(selectBuiltinVersion(detail, 'linux-x64', '3.22.0'), null)
-  assert.throws(() => selectBuiltinVersion(detail, 'darwin-arm64', '2.0.0'), /No compatible builtin/)
+  assert.equal(selectBuiltinVersion(detail, 'darwin-arm64', '1.0.0', '3.22.0').version, '1.0.0')
+  assert.equal(selectBuiltinVersion(detail, 'win32-x64', '1.3.0', '3.22.0').version, '1.3.0')
+  assert.equal(selectBuiltinVersion(detail, 'linux-x64', '1.0.0', '3.22.0'), null)
+  assert.throws(() => selectBuiltinVersion(detail, 'darwin-arm64', '2.0.0', '3.22.0'), /No compatible builtin/)
+  assert.throws(() => selectBuiltinVersion(detail, 'darwin-arm64', '9.0.0'), /not published/)
+  assert.throws(() => selectBuiltinVersion(detail, 'darwin-arm64', '^1.0.0'), /exact builtin App version/)
 })
 
 async function fixture(t) {
@@ -55,17 +58,42 @@ test('marketplace download validates identity, rebuildable source and trusted si
     return name === '/app.zip' ? f.bytes : Buffer.from(JSON.stringify(name === '/index.json' ? f.index : f.detail))
   }
   const fetch = createBuiltinDownloader({ download, indexUrl: 'https://example.com/index.json', trustedPublishers: f.trustedPublishers })
-  const entry = await fetch('moss.buddy', f.output, 'darwin-arm64')
+  const entry = await fetch('moss.buddy', f.output, 'darwin-arm64', '1.0.0')
   assert.equal(entry.version, '1.0.0')
   assert.equal(entry.sha256, f.sha256)
   assert.deepEqual(await fs.readFile(path.join(f.output, entry.archive)), f.bytes)
   assert.equal(requests.length, 3)
   assert.ok(new URL(requests[0]).searchParams.has('_moss_build'))
   assert.ok(new URL(requests[1]).searchParams.has('_moss_build'))
-  assert.equal(await fetch('moss.buddy', f.output, 'linux-x64'), null)
+  assert.equal(await fetch('moss.buddy', f.output, 'linux-x64', '1.0.0'), null)
   f.detail.latestVersion = '2.0.0'
   f.detail.versions.push({ ...f.detail.versions[0], version: '2.0.0' })
-  await assert.rejects(fetch('moss.buddy', f.output, 'darwin-arm64'), /catalog changed/)
+  assert.equal((await fetch('moss.buddy', f.output, 'darwin-arm64', '1.0.0')).version, '1.0.0')
+  await assert.rejects(fetch('moss.buddy', f.output, 'darwin-arm64', '9.0.0'), /not published/)
+})
+
+test('bundling downloads pinned signed packages without App sources and preserves prior output on failure', async t => {
+  const f = await fixture(t)
+  const selection = { apps: ['moss.buddy'], versions: { 'moss.buddy': '1.0.0' } }
+  let corrupt = false
+  const download = async url => {
+    const name = new URL(url).pathname
+    return name === '/app.zip' ? (corrupt ? Buffer.from('corrupt') : f.bytes)
+      : Buffer.from(JSON.stringify(name.endsWith('/index.json') ? f.index : f.detail))
+  }
+  const options = { output: f.output, platform: 'darwin-arm64', selection, download, trustedPublishers: f.trustedPublishers }
+  const entries = await prepareBuiltinApps(options)
+  assert.equal(entries[0].version, '1.0.0')
+  assert.deepEqual(await fs.readFile(path.join(f.output, entries[0].archive)), f.bytes)
+  const before = await fs.readFile(path.join(f.output, 'manifest.json'), 'utf8')
+  corrupt = true
+  await assert.rejects(prepareBuiltinApps(options), /checksum/)
+  assert.equal(await fs.readFile(path.join(f.output, 'manifest.json'), 'utf8'), before)
+  await assert.rejects(prepareBuiltinApps({ ...options, selection: { apps: ['moss.buddy'] } }), /exact builtin App version/)
+  corrupt = false
+  assert.deepEqual(await prepareBuiltinApps({ ...options, platform: 'win32-x64' }), [])
+  const manifest = JSON.parse(await fs.readFile(path.join(f.output, 'manifest.json'), 'utf8'))
+  assert.equal(manifest.omitted[0].version, '1.0.0')
 })
 
 test('corrupt, mismatched and untrusted downloads are rejected without staging a package', async t => {

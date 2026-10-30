@@ -34,12 +34,14 @@ async function downloadBuiltinBuffer(url, options) {
   }
 }
 
-export function selectBuiltinVersion(detail, platform, hostApiVersion = APP_HOST_API_VERSION) {
-  const supported = detail.versions.filter(version => !semver.prerelease(version.version) && version.platforms.includes(platform))
-  if (!supported.length) return null
-  const version = supported.sort((a, b) => semver.rcompare(a.version, b.version))
-    .find(version => semver.satisfies(hostApiVersion, version.hostApi) && selectMarketplaceArtifact(version, platform))
-  if (!version) throw new Error(`No compatible builtin App: ${detail.id} for Host API ${hostApiVersion} on ${platform}`)
+export function selectBuiltinVersion(detail, platform, requestedVersion, hostApiVersion = APP_HOST_API_VERSION) {
+  if (!semver.valid(requestedVersion)) throw new Error(`An exact builtin App version is required: ${detail.id}`)
+  const version = detail.versions.find(entry => entry.version === requestedVersion)
+  if (!version) throw new Error(`Builtin App version is not published: ${detail.id}@${requestedVersion}`)
+  if (!version.platforms.includes(platform)) return null
+  if (!semver.satisfies(hostApiVersion, version.hostApi) || !selectMarketplaceArtifact(version, platform)) {
+    throw new Error(`No compatible builtin App: ${detail.id}@${requestedVersion} for Host API ${hostApiVersion} on ${platform}`)
+  }
   return version
 }
 
@@ -58,7 +60,7 @@ export async function stageBuiltinArchive({ bytes, directory, id, platform, vers
   } finally { await fs.rm(temporary, { recursive: true, force: true }) }
 }
 
-/** Resolve the current catalog on every build; downloaded signed packages stay unchanged. */
+/** Download the exact pinned release; downloaded signed packages stay unchanged. */
 export function createBuiltinDownloader({ download = downloadBuiltinBuffer, indexUrl, trustedPublishers, hostApiVersion = APP_HOST_API_VERSION } = {}) {
   const resourceDir = fileURLToPath(resources)
   indexUrl ||= loadAppMarketConfiguration(resourceDir).indexUrl
@@ -66,13 +68,13 @@ export function createBuiltinDownloader({ download = downloadBuiltinBuffer, inde
   let index
   const read = async url => JSON.parse((await download(url, { timeoutMs: 30000, maxBytes: 5 * 1024 * 1024 })).toString('utf8'))
   const fresh = url => { const value = new URL(url); value.searchParams.set('_moss_build', String(Date.now())); return value.toString() }
-  return async (id, directory, platform) => {
+  return async (id, directory, platform, requestedVersion) => {
+    if (!semver.valid(requestedVersion)) throw new Error(`An exact builtin App version is required: ${id}`)
     index ||= normalizeMarketplaceIndex(await read(fresh(indexUrl)), indexUrl)
     const summary = index.apps.find(app => app.id === id)
     if (!summary) throw new Error(`Missing builtin App in marketplace: ${id}`)
     const detail = normalizeMarketplaceDetail(await read(fresh(summary.detailUrl)), summary.detailUrl, id)
-    if (detail.latestVersion !== summary.latestVersion) throw new Error(`Builtin catalog changed while resolving ${id}; retry the build`)
-    const version = selectBuiltinVersion(detail, platform, hostApiVersion)
+    const version = selectBuiltinVersion(detail, platform, requestedVersion, hostApiVersion)
     if (!version) return null
     const artifact = selectMarketplaceArtifact(version, platform)
     console.log(`Downloading builtin ${id}@${version.version} for ${platform}`)

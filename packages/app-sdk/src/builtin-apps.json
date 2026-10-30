@@ -12,7 +12,18 @@
     "moss.browser-use",
     "moss.computer-use"
   ],
-  "downloadLatest": ["moss.buddy", "moss.browser-use", "moss.computer-use"],
+  "versions": {
+    "moss.visualize": "0.1.2",
+    "moss.document": "0.4.3",
+    "moss.pdf": "0.3.3",
+    "moss.spreadsheets": "0.2.3",
+    "moss.presentations": "0.3.2",
+    "moss.templates": "0.2.2",
+    "moss.app-builder": "0.1.7",
+    "moss.buddy": "0.1.6",
+    "moss.browser-use": "0.1.9",
+    "moss.computer-use": "0.2.3"
+  },
   "toolDefaults": {
     "moss.buddy": { "scope": "global", "loading": "on-demand" },
     "moss.browser-use": { "scope": "global", "loading": "on-demand" },
