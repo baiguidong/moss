@@ -11,6 +11,7 @@ import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
 import { SpreadsheetGrid } from "./SpreadsheetGrid";
 import { parseCellRange } from "../../../../shared/document-location.mjs";
+import { officeParserFileName } from "./office-file-utils";
 import type { OfficeViewerProps } from "./OfficeDocumentViewer";
 
 const MAX_FALLBACK_ROWS = 500;
@@ -167,5 +168,5 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   }
 
   if (state.dataPending || state.pdfPending) return <div className="flex h-full min-h-0 flex-col">{toolbar}<p role="status" className="p-4 text-sm text-muted-foreground">正在读取工作簿…</p></div>;
-  return <div className="flex h-full min-h-0 flex-col">{toolbar}{notice}<div className="min-h-0 flex-1"><LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" onReady={onReady} onError={onError} /></div></div>;
+  return <div className="flex h-full min-h-0 flex-col">{toolbar}{notice}<div className="min-h-0 flex-1"><LazyOpenFileViewer filePath={filePath} fileName={officeParserFileName(filePath)} capability="basic" onReady={onReady} onError={onError} /></div></div>;
 }
