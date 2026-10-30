@@ -75,7 +75,7 @@ describe('session deletion', () => {
     confirm();
     expect(await pending).toMatchObject({ ok: true });
     expect(harness.actions).toEqual([
-      'remote-request', 'remote-confirmed', 'tombstone', 'abort', 'local-delete', 'removed-event',
+      'remote-request', 'remote-confirmed', 'tombstone', 'close-app-storage', 'abort', 'local-delete', 'removed-event',
     ]);
     expect(harness.sessions.has('desktop-id')).toBe(false);
   });
@@ -118,7 +118,35 @@ describe('session deletion', () => {
     const harness = deletionHarness(async () => { throw new Error('Should not call the server'); });
     harness.record.underlyingSessionId = null;
     expect(await harness.remove()).toMatchObject({ ok: true });
-    expect(harness.actions).toEqual(['abort', 'local-delete', 'removed-event']);
+    expect(harness.actions).toEqual(['close-app-storage', 'abort', 'local-delete', 'removed-event']);
+  });
+
+  test('waits for App storage shutdown before removing local session data', async () => {
+    let finish!: () => void;
+    const harness = deletionHarness(async () => {}, () => new Promise<void>(resolve => { finish = resolve; }));
+    harness.record.agentMode = 'local';
+    const pending = harness.remove();
+    expect(harness.actions).toEqual(['close-app-storage']);
+    expect(harness.sessions.has('desktop-id')).toBe(true);
+    expect(harness.record.deleted).toBe(true);
+    finish();
+    expect(await pending).toMatchObject({ ok: true });
+    expect(harness.actions).toEqual(['close-app-storage', 'abort', 'local-delete', 'removed-event']);
+  });
+
+  test('preserves the record and permits retry if App storage cannot shut down', async () => {
+    let fail = true;
+    const harness = deletionHarness(async () => {}, async () => {
+      if (fail) throw new Error('App still running');
+    });
+    harness.record.agentMode = 'local';
+    await expect(harness.remove()).rejects.toThrow('App still running');
+    expect(harness.record.deleted).toBe(false);
+    expect(harness.sessions.has('desktop-id')).toBe(true);
+    expect(harness.actions).toEqual(['close-app-storage']);
+    fail = false;
+    expect(await harness.remove()).toMatchObject({ ok: true });
+    expect(harness.sessions.size).toBe(0);
   });
 
   test('remembers remote deletions after reopening the database', () => {
@@ -301,7 +329,7 @@ function remoteSyncHarness(fetchContext = async () => ({ context: { messages: []
   return { sync, sessions, deleted, published, persisted };
 }
 
-function deletionHarness(deleteRemote: () => Promise<void>) {
+function deletionHarness(deleteRemote: () => Promise<void>, closeStorage: () => Promise<void> = async () => {}) {
   const actions: string[] = [];
   const record: any = {
     id: 'desktop-id', agentMode: 'remote-direct', underlyingSessionId: 'server-session',
@@ -313,6 +341,14 @@ function deletionHarness(deleteRemote: () => Promise<void>) {
   const end = mainSource.indexOf("ipcMain.handle('agent:delete-session'", start);
   const remove = runInNewContext(`${mainSource.slice(start, end)}; deleteSessionRecordById;`, {
     appExecutionHost: { cancelSession: () => {} },
+    appSessionStorage: {
+      closeSession: async (id: string) => {
+        expect(id).toBe(record.id);
+        actions.push('close-app-storage');
+        await closeStorage();
+      },
+      removeSessionFiles: async (id: string) => { expect(id).toBe(record.id); },
+    },
     sessions, subAgentSessions: new Map(), projectCoordinatorTaskRuns: new Map(),
     projectTaskCancellationRequests: new Set(), subAgentSyncTimers: new Map(),
     browserAutomationSessionOrigins: new Map(), pendingBrowserAutomationGrants: new Map(),
