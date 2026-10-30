@@ -102,7 +102,7 @@ export function createAppContributionTool(
       return descriptor.description
     },
     async prompt() {
-      return `${descriptor.instructionsText || descriptor.description}\n\nThis tool is provided by the installed Moss App "${appLabel}".`
+      return descriptor.instructionsText || descriptor.description
     },
     get inputSchema() {
       return permissiveObjectSchema

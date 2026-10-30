@@ -49,7 +49,7 @@ function contextWith(
 describe('App Contribution Tool', () => {
   it('preserves native image/error results and full instructions through the generic tool', async () => {
     const tool = createAppContributionTool({ ...descriptor('write'), instructionsText: 'Full observation instructions', hostPermissionManaged: true })
-    expect(await tool.prompt({} as any)).toContain('Full observation instructions')
+    expect(await tool.prompt({} as any)).toBe('Full observation instructions')
     expect(await tool.checkPermissions!({ query: 'test' } as any, {} as any)).toMatchObject({ behavior: 'allow' })
     expect(tool.isReadOnly({} as any)).toBe(false)
     expect(applyCoordinatorToolFilter([tool])).toEqual([tool])
@@ -159,6 +159,7 @@ describe('App Contribution Tool', () => {
     })
 
     expect(tool.inputJSONSchema).toBe(declaredSchema)
+    expect(rendered.description).toBe(descriptor().description)
     expect(rendered.input_schema).toBe(declaredSchema)
     expect(declaredSchema).toEqual(originalSchema)
 
