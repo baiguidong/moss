@@ -42,6 +42,8 @@ export async function verifyPackageRuntime(packageRoot, { nodeExecutable, signal
   const logs = []
   const supervisor = new AppProcessSupervisor({ onHostRequest: ({ protocol, method }) => {
     if (protocol === 'moss.runtimes/v1' && method === 'python.get') return { available: false, path: null, version: null }
+    // A fresh isolated verification profile has no user sessions to restore.
+    if (manifest.backend.storage === 'session' && protocol === 'moss.session-storage/v1' && method === 'scopes.pending') return []
     throw new Error(`Host service is unavailable in package verification: ${protocol}/${method}`)
   }, onLog: entry => { if (entry.level === 'error') logs.push(entry.message) }, nodeExecutable, nodeArgs: ['--permission', `--allow-fs-read=${temporary}`, `--allow-fs-write=${temporary}`, `--allow-fs-read=${fileURLToPath(new URL('../process/bootstrap.mjs', import.meta.url))}`, ...networkArgs, '--allow-addons'], processesDir: path.join(temporary, 'processes'), handshakeTimeoutMs: 15000, shutdownTimeoutMs: 1000 })
   const abort = () => { void supervisor.shutdown() }
