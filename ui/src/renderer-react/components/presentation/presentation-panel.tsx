@@ -2,7 +2,7 @@ import { CreationStatus, type CreationInfo } from './creation-status';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { WindowToolbarContext } from '@/components/window-chrome';
-import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ExternalLink, ListChecks, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ListChecks, ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import './presentation-panel.css';
@@ -90,13 +90,15 @@ export function PresentationToolbar({
 }
 
 function ResourceNavigation({ resource, snapshot, action }: { resource: PresentationResource; snapshot: PresentationSnapshot; action: Action }) {
+  const { presentationTabbed } = React.useContext(WindowToolbarContext);
   const openedIds = new Set([...snapshot.state.openedIds, resource.id]);
   const items = snapshot.resources.filter(item => openedIds.has(item.id));
+  if (presentationTabbed && items.length < 2) return null;
   if (items.length < 2) return <span title={resource.title} className="block truncate px-2 text-xs">{resource.title}</span>;
   return <DropdownMenu>
     <DropdownMenuTrigger asChild>
       <button type="button" aria-label="切换已打开内容" title={resource.title} className="flex h-7 w-full min-w-0 items-center gap-2 rounded px-2 text-left text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="min-w-0 flex-1 truncate">{resource.title}</span><ChevronDown size={13} className="shrink-0"/>
+        <span className="min-w-0 flex-1 truncate">{presentationTabbed ? `已打开 ${items.length} 项` : resource.title}</span><ChevronDown size={13} className="shrink-0"/>
       </button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-24px)]" aria-label="已打开内容">
@@ -150,7 +152,7 @@ function FileResource({ resource, snapshot, action, onReady, onError }: Renderer
     {creation && !file.metadata?.documentComparison && <CreationStatus creation={creation} sessionId={snapshot.sessionId} source={typeof file.metadata?.resourceUri === 'string' ? file.metadata.resourceUri : file.path} onError={setError} />}
     <div className="min-h-0 flex-1"><PreviewDrawer
       navigation={<ResourceNavigation resource={resource} snapshot={snapshot} action={action}/>}
-      headerActions={<button type="button" className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}><ExternalLink size={14}/></button>}
+      onPopout={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}
       onReady={loadedKey === loadKey ? onReady : undefined} onError={loadedKey === loadKey ? onError : undefined} visible tabs={[file]} activePath={file.path} standalone onActivate={() => {}} onUpdateTab={(_path, patch) => { setFile(current => ({ ...current, ...patch })); if (file.metadata?.remote && typeof patch.metadata?.dirty === 'boolean') action({ type: 'dirty', id: resource.id, value: patch.metadata.dirty }); }} onCloseTab={() => action({ type: 'dismiss', id: resource.id })} onCloseOthers={() => {}} onCloseAll={() => action({ type: 'dismiss', id: resource.id })} onCloseDrawer={() => action({ type: 'dismiss', id: resource.id })}/></div>
   </div>;
 }

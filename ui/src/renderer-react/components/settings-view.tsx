@@ -145,17 +145,6 @@ const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
   activeProvider: null,
 };
 
-const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
-  enabled: false,
-  compactEnabled: false,
-  minimumMessageTokensToInit: 10000,
-  minimumTokensBetweenUpdate: 5000,
-  toolCallsBetweenUpdates: 3,
-  compactMinTokens: 10000,
-  compactMinTextBlockMessages: 5,
-  compactMaxTokens: 40000,
-};
-
 const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> = {
   enabled: true,
   extractionEnabled: false,
@@ -910,10 +899,6 @@ export function SettingsView({
     ...DEFAULT_WEB_SEARCH_SETTINGS,
     ...(settingsDraft?.webSearch || {}),
   };
-  const sessionMemoryDraft = {
-    ...DEFAULT_SESSION_MEMORY_SETTINGS,
-    ...(settingsDraft?.sessionMemory || {}),
-  };
   const autoMemoryDraft = {
     ...DEFAULT_AUTO_MEMORY_SETTINGS,
     ...(settingsDraft?.autoMemory || {}),
@@ -1062,7 +1047,6 @@ export function SettingsView({
     visibleSectionKey,
     settingsDraft?.remoteEnabled,
     settingsDraft?.thinkingMode,
-    settingsDraft?.sessionMemory,
     settingsDraft?.autoMemory,
     settingsDraft?.advanced,
   ]);
@@ -1211,14 +1195,6 @@ export function SettingsView({
     };
     setSettingsDraft((current) => (current ? { ...current, image: nextImage } : current));
     void autoSaveImageSettings(nextImage);
-  };
-
-  const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
-    const nextSessionMemory = {
-      ...sessionMemoryDraft,
-      ...patch,
-    };
-    updateSetting('sessionMemory', nextSessionMemory);
   };
 
   const updateAutoMemorySettings = (patch: Partial<NonNullable<DesktopSettings['autoMemory']>>) => {
@@ -2086,20 +2062,6 @@ export function SettingsView({
                           <option value="proactive">主动压缩（推荐）</option>
                           <option value="reactive">超限后压缩</option>
                         </select>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="会话摘要"
-                        description="默认关闭。开启后由模型按需调用工具保存当前会话摘要，不按 token 或工具次数自动生成，也不用于上下文压缩。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(sessionMemoryDraft.enabled)}
-                            onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
-                            label="会话摘要"
-                          />
-                        </div>
                       </SettingsRow>
 
                     </SettingsGroup>

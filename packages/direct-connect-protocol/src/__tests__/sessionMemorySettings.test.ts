@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { normalizeSessionMemorySettings, sessionMemorySettingsSchema } from '../index.js'
 
-test('session summaries default off and preserve an explicit opt-in from existing clients', () => {
+test('retains retired session-memory payloads for older clients and persisted records', () => {
   expect(normalizeSessionMemorySettings(undefined)).toMatchObject({ enabled: false, compactEnabled: false })
   expect(normalizeSessionMemorySettings({})).toMatchObject({ enabled: false, compactEnabled: false })
   expect(normalizeSessionMemorySettings({ enabled: true })).toMatchObject({ enabled: true, compactEnabled: false })

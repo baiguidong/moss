@@ -1,4 +1,7 @@
-import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import { XMLSerializer } from '@xmldom/xmldom';
+import { parseOfficeXml, xmlElements, officePartPath } from './office-xml.mjs';
+import { readSpreadsheetAppearance } from './spreadsheet-appearance.mjs';
+import { annotateOfficeModel } from './office-model.mjs';
 import fs from 'node:fs/promises';
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
@@ -74,12 +77,23 @@ class ConversionService {
       const isDelimitedText = /\.(csv|tsv)$/i.test(filePath);
       let workbook;
       let sheetImages = {};
+      let sheetAppearance = {};
 
       if (isDelimitedText) {
         workbook = XLSX.read(buffer.toString('utf-8'), { type: 'string' });
       } else {
         workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true, sheetStubs: true });
-        sheetImages = await this.extractExcelImages(buffer);
+        if (buffer.toString('ascii', 0, 2) === 'PK') {
+          // Optional drawing/style parts must not make otherwise readable cell
+          // data unavailable (legacy and third-party writers vary here).
+          try {
+            const entries = await this.loadExcelZipEntries(buffer);
+            sheetImages = await this.extractExcelImages(buffer, entries);
+            sheetAppearance = readSpreadsheetAppearance(entries, workbook);
+          } catch (error) {
+            console.warn('[preview] Could not read spreadsheet appearance:', error instanceof Error ? error.message : String(error));
+          }
+        }
       }
 
       const sheets = workbook.SheetNames.map((name) => {
@@ -109,10 +123,18 @@ class ConversionService {
           cells,
           merges: sheet['!merges'] || [],
           images: sheetImages[name] || [],
+          appearance: sheetAppearance[name],
         };
       });
 
-      return { success: true, data: { sheets } };
+      return {
+        success: true,
+        data: annotateOfficeModel({ sheets }, {
+          kind: 'spreadsheet',
+          format: path.extname(filePath).slice(1).toLowerCase() || 'xlsx',
+          importer: 'sheetjs-openxml',
+        }),
+      };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
@@ -126,11 +148,14 @@ class ConversionService {
       }
       const zipEntries = await this.loadPptxZipEntries(fileBuffer);
       const mediaResources = {};
+      const contentTypeParts = this.collectImageContentTypeParts(zipEntries);
 
       for (const [entryPath, buffer] of zipEntries.entries()) {
-        if (entryPath.startsWith('ppt/media/')) {
-          const fileName = entryPath.replace('ppt/media/', '');
-          mediaResources[fileName] = `data:${this.getMimeTypeFromName(fileName)};base64,${buffer.toString('base64')}`;
+        if (this.isPptImagePart(entryPath, contentTypeParts)) {
+          // OPC relationships point at the complete ZIP part path. Keep that
+          // path as the resource identity so two folders may contain the same
+          // basename without one image overwriting the other.
+          mediaResources[entryPath] = `data:${this.getMimeTypeFromName(entryPath)};base64,${buffer.toString('base64')}`;
         }
       }
 
@@ -138,12 +163,13 @@ class ConversionService {
       for (const [entryPath, buffer] of zipEntries.entries()) {
         if (!entryPath.match(/^ppt\/slides\/slide\d+\.xml$/i)) continue;
         const slideNumber = parseInt(entryPath.match(/slide(\d+)\.xml$/i)?.[1] || '0', 10);
-        const slideDoc = new DOMParser().parseFromString(buffer.toString('utf-8'), 'text/xml');
+        const slideDoc = parseOfficeXml(buffer);
         const slideRelationships = this.parseRelationships(zipEntries.get(this.getRelsPath(entryPath)));
         const imageRelsMap = new Map();
         for (const [id, relationship] of slideRelationships.entries()) {
           if (relationship.type.includes('/image')) {
-            imageRelsMap.set(id, path.posix.basename(relationship.target));
+            const imagePath = this.resolveZipPath(entryPath, relationship.target);
+            if (imagePath) imageRelsMap.set(id, imagePath);
           }
         }
         slides.push({ slideNumber, content: this.parseSlideXml(slideDoc, imageRelsMap) });
@@ -155,13 +181,17 @@ class ConversionService {
 
       return {
         success: true,
-        data: {
+        data: annotateOfficeModel({
           slides,
           raw: {
             _mediaResources: mediaResources,
             _slideCount: slides.length,
           },
-        },
+        }, {
+          kind: 'presentation',
+          format: path.extname(filePath).slice(1).toLowerCase() || 'pptx',
+          importer: 'openxml-zip',
+        }),
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -213,18 +243,18 @@ class ConversionService {
     return { elements };
   }
 
-  async extractExcelImages(buffer) {
+  async extractExcelImages(buffer, entries) {
     try {
-      const fileMap = await this.loadExcelZipEntries(buffer);
+      const fileMap = entries || await this.loadExcelZipEntries(buffer);
       const workbookXml = fileMap.get('xl/workbook.xml');
       if (!workbookXml) return {};
       const workbookRels = this.parseRelationships(fileMap.get('xl/_rels/workbook.xml.rels'));
-      const workbookDoc = new DOMParser().parseFromString(workbookXml.toString('utf8'), 'text/xml');
-      const sheetNodes = workbookDoc.getElementsByTagName('sheet');
+      const workbookDoc = parseOfficeXml(workbookXml);
+      const sheetNodes = xmlElements(workbookDoc, 'sheet');
       const sheetInfos = [];
 
       for (let i = 0; i < sheetNodes.length; i++) {
-        const sheetNode = sheetNodes.item(i);
+        const sheetNode = sheetNodes[i];
         if (!sheetNode) continue;
         const relId = sheetNode.getAttribute('r:id') || sheetNode.getAttribute('Id') || sheetNode.getAttribute('id');
         const name = sheetNode.getAttribute('name') || `Sheet${i + 1}`;
@@ -235,7 +265,6 @@ class ConversionService {
         if (sheetPath) sheetInfos.push({ name, path: sheetPath });
       }
 
-      const parser = new DOMParser();
       const result = {};
       for (const sheetInfo of sheetInfos) {
         const sheetRelPath = this.getRelsPath(sheetInfo.path);
@@ -248,7 +277,7 @@ class ConversionService {
           if (!drawingPath) continue;
           const drawingXml = fileMap.get(drawingPath);
           if (!drawingXml) continue;
-          const drawingDoc = parser.parseFromString(drawingXml.toString('utf8'), 'text/xml');
+          const drawingDoc = parseOfficeXml(drawingXml);
           const anchors = this.parseDrawingAnchors(drawingDoc);
           const drawingRelMap = this.parseRelationships(fileMap.get(this.getRelsPath(drawingPath)));
           anchors.forEach((anchor) => {
@@ -432,7 +461,7 @@ class ConversionService {
 
   injectPageSetupIntoSheetXml(xmlContent, orientation) {
     try {
-      const doc = new DOMParser().parseFromString(xmlContent, 'text/xml');
+      const doc = parseOfficeXml(xmlContent);
       const worksheet = doc.documentElement;
       if (!worksheet) return xmlContent;
       const ns = worksheet.namespaceURI || 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -537,10 +566,10 @@ class ConversionService {
   parseRelationships(buffer) {
     const map = new Map();
     if (!buffer) return map;
-    const doc = new DOMParser().parseFromString(buffer.toString('utf8'), 'text/xml');
-    const relationships = doc.getElementsByTagName('Relationship');
+    const doc = parseOfficeXml(buffer);
+    const relationships = xmlElements(doc, 'Relationship');
     for (let i = 0; i < relationships.length; i++) {
-      const relationship = relationships.item(i);
+      const relationship = relationships[i];
       if (!relationship) continue;
       const id = relationship.getAttribute('Id');
       const target = relationship.getAttribute('Target');
@@ -559,11 +588,43 @@ class ConversionService {
 
   resolveZipPath(fromPath, target) {
     if (!target) return null;
-    return path.posix.normalize(path.posix.resolve(path.posix.dirname(fromPath), target.replace(/^\/+/, '')));
+    return officePartPath(fromPath, target);
   }
 
   normalizeZipPath(fileName) {
     return fileName.replace(/\\/g, '/').replace(/^\/+/, '');
+  }
+
+  isPptImagePart(entryPath, contentTypeParts = new Set()) {
+    if (!entryPath.startsWith('ppt/') || entryPath.includes('/_rels/')) return false;
+    const extension = path.extname(entryPath).toLowerCase();
+    return ConversionService.PPT_IMAGE_EXTENSIONS.has(extension) || contentTypeParts.has(entryPath);
+  }
+
+  collectImageContentTypeParts(zipEntries) {
+    const parts = new Set();
+    const contentTypes = zipEntries.get('[Content_Types].xml');
+    if (!contentTypes) return parts;
+    try {
+      const doc = parseOfficeXml(contentTypes);
+      for (const node of xmlElements(doc, 'Override')) {
+        const partName = node?.getAttribute('PartName');
+        const contentType = node?.getAttribute('ContentType') || '';
+        if (partName && /^image\//i.test(contentType)) parts.add(this.normalizeZipPath(partName));
+      }
+      for (const node of xmlElements(doc, 'Default')) {
+        const extension = node?.getAttribute('Extension');
+        const contentType = node?.getAttribute('ContentType') || '';
+        if (!extension || !/^image\//i.test(contentType)) continue;
+        for (const entryPath of zipEntries.keys()) {
+          if (entryPath.startsWith('ppt/') && path.extname(entryPath).slice(1).toLowerCase() === extension.toLowerCase()) parts.add(entryPath);
+        }
+      }
+    } catch {
+      // A malformed optional content-types part should not prevent slide text
+      // and relationships from being previewed.
+    }
+    return parts;
   }
 
   async loadPptxZipEntries(buffer) {
@@ -637,6 +698,14 @@ class ConversionService {
       '.webp': 'image/webp',
       '.bmp': 'image/bmp',
       '.svg': 'image/svg+xml',
+      '.emf': 'image/emf',
+      '.wmf': 'image/wmf',
+      '.tif': 'image/tiff',
+      '.tiff': 'image/tiff',
+      '.ico': 'image/x-icon',
+      '.avif': 'image/avif',
+      '.heic': 'image/heic',
+      '.heif': 'image/heif',
     };
     return map[ext] || 'application/octet-stream';
   }
@@ -644,5 +713,9 @@ class ConversionService {
 
 ConversionService.DRAWING_REL_TYPE =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing';
+ConversionService.PPT_IMAGE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.emf', '.wmf',
+  '.tif', '.tiff', '.ico', '.avif', '.heic', '.heif',
+]);
 
 export const conversionService = new ConversionService();

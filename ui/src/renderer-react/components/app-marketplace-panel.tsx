@@ -150,12 +150,13 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
   const activeInstall = pendingAppIds.size > 0 || importing || Object.values(progress).some(isAppInstallActive) || isAppInstallActive(archiveProgress.local);
   const toolbarActions = <>
     <Button size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Upload className="h-4 w-4" />{importing ? '安装中…' : '添加应用'}</Button>
-    <Button size="icon-sm" variant="outline" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || activeInstall} aria-busy={loading} onClick={() => void loadCatalog(true)}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button>
   </>;
   return <>
     <div className={`${selected ? 'hidden' : 'flex'} h-full min-h-0 flex-col bg-background`}>
       <AppHubToolbar tab="marketplace" installedCount={installedApps.length} onChangeTab={tab => { if (tab === 'installed') onBack(); }} busy={activeInstall}
         query={query} onQuery={setQuery} actions={toolbarActions}
+        searchVisible={!selected}
+        refresh={<Button size="icon-sm" variant="ghost" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || activeInstall} aria-busy={loading} onClick={() => void loadCatalog(true)}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
         navigation={hub ? undefined : <><Button variant="ghost" size="sm" title="返回应用详情" disabled={activeInstall} onClick={onBack}><ArrowLeft className="h-4 w-4" />返回</Button><h1 className="text-sm font-semibold">应用市场</h1></>} />
 
       {refreshResult && refreshResult.kind !== 'success' && <div role="alert"

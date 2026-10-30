@@ -13,10 +13,10 @@ export type AutoMemorySettings = {
 }
 
 export type SessionMemorySettings = {
-  /** Expose SaveSessionSummary to the main model. Defaults to false. */
+  /** Legacy compatibility only; session-summary generation has been removed. */
   enabled: boolean
   // Legacy fields are retained for persisted settings and older clients only.
-  // They no longer schedule extraction or affect compaction.
+  // All fields are ignored by the runtime.
   compactEnabled: boolean
   minimumMessageTokensToInit: number
   minimumTokensBetweenUpdate: number

@@ -49,6 +49,7 @@ export type OpenFileViewerProps = {
   mimeType?: string;
   rootPath?: string;
   capability?: "full" | "basic" | "structure";
+  fit?: "contain" | "cover" | "width" | "height" | "actual" | "scale-down";
   content?: string;
   onReady?: () => void;
   onError?: (message: string) => void;
@@ -77,6 +78,7 @@ export function OpenFileViewer({
   mimeType,
   rootPath,
   capability = "full",
+  fit = "contain",
   content,
   onReady,
   onError,
@@ -120,7 +122,7 @@ export function OpenFileViewer({
       height: "100%",
       locale: "zh-CN",
       theme,
-      fit: "contain",
+      fit,
       plugins: OFV_PLUGINS,
       fallback: "inline",
       toolbar: {
@@ -135,7 +137,7 @@ export function OpenFileViewer({
       onError: (viewerError) => { setError(viewerError.message || "文件解析失败。"); onError?.(viewerError.message || "文件解析失败。"); },
     });
     return () => viewer.destroy();
-  }, [fileName, mimeType, source, theme]);
+  }, [fileName, mimeType, source, theme, fit]);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">

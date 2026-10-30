@@ -124,7 +124,7 @@ function buildDirtyMetadata(file: WorkspacePreviewData, content: string): Previe
   };
 }
 
-export function PreviewViewer({ file, toolbarContainer, onReady, onError }: { file: WorkspacePreviewData; toolbarContainer?: HTMLElement | null; onReady?: () => void; onError?: (message: string) => void }) {
+export function PreviewViewer({ file, toolbarContainer, toolbarMenuItems, downloadMenuItems, onDownload, downloadDisabled, onReady, onError }: { file: WorkspacePreviewData; toolbarContainer?: HTMLElement | null; toolbarMenuItems?: React.ReactNode; downloadMenuItems?: React.ReactNode; onDownload?: () => void; downloadDisabled?: boolean; onReady?: () => void; onError?: (message: string) => void }) {
   React.useEffect(() => {
     if (['text', 'code', 'markdown', 'diff'].includes(file.contentType)) onReady?.();
     if (file.contentType === 'unsupported') onError?.('暂不支持该文件格式');
@@ -134,7 +134,7 @@ export function PreviewViewer({ file, toolbarContainer, onReady, onError }: { fi
     ? metadata.localPreviewPath
     : file.path;
   const fileVersion = typeof metadata.modifiedAt === "number" ? metadata.modifiedAt : undefined;
-  const annotation = { resourceUri: typeof metadata.resourceUri === 'string' ? metadata.resourceUri : undefined, sessionId: metadata.sessionId, documentLocation: metadata.documentLocation as DocumentLocation | undefined, locationRequest: typeof metadata.locationRequest === 'number' ? metadata.locationRequest : undefined };
+  const annotation = { artifactId: typeof metadata.artifactId === 'string' ? metadata.artifactId : undefined, revision: typeof metadata.presentationRevision === 'string' ? metadata.presentationRevision : undefined, resourceUri: typeof metadata.resourceUri === 'string' ? metadata.resourceUri : undefined, sessionId: metadata.sessionId, documentLocation: metadata.documentLocation as DocumentLocation | undefined, locationRequest: typeof metadata.locationRequest === 'number' ? metadata.locationRequest : undefined };
   if (metadata.documentComparison) return <DocumentComparisonViewer content={file.content} sessionId={metadata.sessionId} onReady={onReady} onError={onError} />;
   switch (file.contentType) {
     case "image":
@@ -147,11 +147,11 @@ export function PreviewViewer({ file, toolbarContainer, onReady, onError }: { fi
       if (metadata.interactiveVisualization && typeof metadata.resourceUri === 'string') return <VisualizationSurface content={file.content} resourceUri={metadata.resourceUri} sessionId={typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined} title={file.relativePath} panel onReady={onReady} onError={onError} />;
       return <HTMLViewer onReady={onReady} content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
-      return <WordViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <WordViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} toolbarMenuItems={toolbarMenuItems} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled} />;
     case "excel":
-      return <ExcelViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <ExcelViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} toolbarMenuItems={toolbarMenuItems} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled} />;
     case "ppt":
-      return <PPTViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} />;
+      return <PPTViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} toolbarMenuItems={toolbarMenuItems} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled} presentation />;
     case "diff":
       return <DiffViewer content={file.content} />;
     case "url":
@@ -191,6 +191,7 @@ export function PreviewDrawer({
   standalone = false,
   navigation,
   headerActions,
+  onPopout,
   onReady,
   onError,
 }: {
@@ -206,6 +207,7 @@ export function PreviewDrawer({
   standalone?: boolean;
   navigation?: React.ReactNode;
   headerActions?: React.ReactNode;
+  onPopout?: () => void;
   onReady?: () => void;
   onError?: (message: string) => void;
 }) {
@@ -215,6 +217,7 @@ export function PreviewDrawer({
   );
   const document = usePreviewDocument(rawActiveFile, onUpdateTab);
   const activeFile = document.file;
+  const compactOffice = !!activeFile && !getPreviewMetadata(activeFile).documentComparison && ['excel', 'word', 'ppt'].includes(activeFile.contentType);
   const updateTab = document.update;
   const [historyItems, setHistoryItems] = React.useState<PreviewSnapshotInfo[]>([]);
   const [historyBusy, setHistoryBusy] = React.useState(false);
@@ -324,6 +327,7 @@ export function PreviewDrawer({
   if (!visible || !activeFile) return null;
 
   const isVirtualPreview = activeFile.path.startsWith("preview:");
+  const downloadablePath = !isVirtualPreview ? externalOpenPath : null;
 
   const confirmDiscard = (targets: WorkspacePreviewData[], message: string) => {
     if (targets.length === 0) return true;
@@ -342,6 +346,23 @@ export function PreviewDrawer({
       setActionNotice("已打开外部预览。");
     } catch {
       setActionNotice("外部打开失败。");
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!downloadablePath) {
+      setActionNotice("当前文件没有可保存的本地原件。");
+      return;
+    }
+    try {
+      const result = await shellIpc.saveFile({
+        sourcePath: downloadablePath,
+        defaultPath: basename(activeFile.relativePath || activeFile.path),
+      });
+      if (result.ok) setActionNotice("文件已另存为。");
+      else if (!result.canceled) setActionNotice(result.error || "另存为失败。");
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : "另存为失败。");
     }
   };
 
@@ -476,13 +497,13 @@ export function PreviewDrawer({
       "relative flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,color-mix(in_oklab,var(--card)_94%,transparent),color-mix(in_oklab,var(--background)_92%,transparent))]",
       standalone ? "" : "border-r border-border/70",
     )}>
-      <div data-preview-header-row="tabs" className="flex h-10 shrink-0 items-center border-b border-border/70 bg-background/72">
+      <div data-preview-header-row="tabs" className="office-preview-header flex h-10 min-w-0 shrink-0 items-center border-b border-border/70 bg-background/72">
         {navigation ? <div className="flex min-w-0 flex-1 items-center pl-2 pr-1">
           {activeDirty && <span className="shrink-0 text-xs text-primary" aria-label="未保存修改" title="未保存修改">*</span>}
           <div className="min-w-0 flex-1">{navigation}</div>
         </div> : <>
-        <div aria-label="预览标签" className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
-          <div className="flex w-max min-w-full items-center gap-1.5 px-2">
+        <div aria-label="预览标签" className={cn("min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]", compactOffice && tabs.length === 1 && "overflow-hidden")}>
+          <div className={cn("flex min-w-full items-center gap-1.5 px-2", compactOffice && tabs.length === 1 ? "w-full" : "w-max")}>
             {tabs.map((tab) => (
               <button
                 key={tab.path}
@@ -494,15 +515,16 @@ export function PreviewDrawer({
                   "group flex h-7 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border px-2.5 text-xs transition-colors",
                   tab.path === activeFile.path
                     ? "border-primary/60 bg-primary/10 text-primary"
-                    : "border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
+                    : "border-border/70 bg-background/70 text-muted-foreground hover:text-foreground",
+                  compactOffice && tabs.length === 1 && "min-w-0 max-w-full shrink border-transparent bg-transparent text-foreground",
                 )}
               >
-                <span>
+                <span className={compactOffice ? "truncate" : undefined}>
                   {isDirtyPreview(tab)
                     ? `*${basename(tab.relativePath || tab.path)}`
                     : basename(tab.relativePath || tab.path)}
                 </span>
-                <span
+                {!compactOffice && <span
                   onClick={(event) => {
                     event.stopPropagation();
                     handleCloseTabWithConfirm(tab.path);
@@ -511,12 +533,12 @@ export function PreviewDrawer({
                   title="关闭标签"
                 >
                   <X className="h-3 w-3" />
-                </span>
+                </span>}
               </button>
             ))}
           </div>
         </div>
-        <DropdownMenu>
+        {!compactOffice && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" className="mr-1 h-7 w-7 shrink-0 rounded-md" title="标签操作">
               <MoreHorizontal className="h-4 w-4" />
@@ -529,9 +551,11 @@ export function PreviewDrawer({
             <DropdownMenuItem onClick={() => handleCloseOthersWithConfirm(activeFile.path)}>关闭其他</DropdownMenuItem>
             <DropdownMenuItem onClick={handleCloseAllWithConfirm}>关闭全部</DropdownMenuItem>
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu>}
         </>}
         {headerActions}
+        {compactOffice ? <div ref={setViewerToolbarContainer} data-office-toolbar className="flex shrink-0 items-center gap-1 pr-2" /> : <>
+        {onPopout && <Button variant="ghost" size="icon-sm" className="mr-1 h-7 w-7 shrink-0 rounded-md" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={onPopout}><ExternalLink className="h-3.5 w-3.5" /></Button>}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -541,10 +565,10 @@ export function PreviewDrawer({
           aria-label={navigation ? "关闭当前内容" : standalone ? "关闭预览窗口" : "关闭预览"}
         >
           <X className="h-4 w-4" />
-        </Button>
+        </Button></>}
       </div>
 
-      {!activeMetadata.interactiveVisualization && <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
+      {!compactOffice && !activeMetadata.interactiveVisualization && <div data-preview-header-row="actions" className="flex h-9 shrink-0 items-center border-b border-border/70 bg-background/55">
         <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <div className="flex w-max items-center gap-1 px-2">
             <div ref={setViewerToolbarContainer} className="flex shrink-0 items-center gap-1 empty:hidden" />
@@ -651,7 +675,19 @@ export function PreviewDrawer({
             />
           </div>
         ) : (
-          <PreviewViewer onReady={onReady} onError={onError} file={activeFile} toolbarContainer={viewerToolbarContainer} />
+          <PreviewViewer onReady={onReady} onError={onError} file={activeFile} toolbarContainer={viewerToolbarContainer} onDownload={compactOffice ? () => void handleDownload() : undefined} downloadDisabled={!downloadablePath} downloadMenuItems={compactOffice ? <>
+            <DropdownMenuItem onSelect={() => void handleOpenInSystem()} disabled={isVirtualPreview || !externalOpenPath}><ExternalLink className="h-3.5 w-3.5" />用系统应用打开</DropdownMenuItem>
+            <DropdownMenuItem disabled={!externalOpenPath} onSelect={() => void shellIpc.showItemInFolder(externalOpenPath!).catch(() => setActionNotice("无法显示文件位置。"))}>在文件夹中显示</DropdownMenuItem>
+          </> : undefined} toolbarMenuItems={compactOffice ? <>
+            {onPopout && <DropdownMenuItem onSelect={onPopout}><ExternalLink className="h-3.5 w-3.5" />在独立窗口打开</DropdownMenuItem>}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={handleCloseDrawerWithConfirm}><X className="h-3.5 w-3.5" />{navigation ? '关闭当前内容' : standalone ? '关闭预览窗口' : '关闭预览'}</DropdownMenuItem>
+            {!navigation && tabs.length > 1 && <>
+              <DropdownMenuItem onSelect={() => handleCloseTabWithConfirm(activeFile.path)}>关闭当前标签</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => handleCloseOthersWithConfirm(activeFile.path)}>关闭其他标签</DropdownMenuItem>
+              <DropdownMenuItem onSelect={handleCloseAllWithConfirm}>关闭全部标签</DropdownMenuItem>
+            </>}
+          </> : undefined} />
         )}
       </div>
     </div>

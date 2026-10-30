@@ -101,6 +101,10 @@ export async function initializeHostClient() {
     const link = document.createElement('a'); link.href = fileUrl(filePath) + '&download'; link.download = '';
     document.body.append(link); link.click(); link.remove(); return '';
   };
+  client.shell.saveFile = async ({ sourcePath, defaultPath }) => {
+    const link = document.createElement('a'); link.href = fileUrl(sourcePath) + '&download'; link.download = defaultPath || '';
+    document.body.append(link); link.click(); link.remove(); return { ok: true };
+  };
   client.shell.showItemInFolder = async filePath => {
     await browseFiles({ kind: 'browse', revealPath: filePath });
     return { ok: true };

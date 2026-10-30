@@ -12,7 +12,6 @@ import {
   FolderKanban,
   HardDrive,
   Loader2,
-  MessageSquareText,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -27,17 +26,15 @@ import type {
   MemoryGlobalEntry,
   MemoryProjectEntry,
   MemoryProjectHistoryEntry,
-  MemorySessionEntry,
   MemorySource,
 } from "../types";
 
-export type MemoryScope = "global" | "project" | "session";
+export type MemoryScope = "global" | "project";
 
 type MemorySelection =
   | { scope: "global"; path: string; source?: MemorySource }
   | { scope: "project"; projectId: string; kind: "overview" }
-  | { scope: "project"; projectId: string; kind: "history"; sessionId: string }
-  | { scope: "session"; sessionId: string };
+  | { scope: "project"; projectId: string; kind: "history"; sessionId: string };
 
 const TYPE_LABELS: Record<string, string> = {
   index: "记忆索引",
@@ -60,7 +57,6 @@ function entriesForSource(entries: MemoryGlobalEntry[], source: MemorySource): M
 function selectionKey(selection: MemorySelection | null): string {
   if (!selection) return "";
   if (selection.scope === "global") return `global:${selection.source || "local"}:${selection.path}`;
-  if (selection.scope === "session") return `session:${selection.sessionId}`;
   return selection.kind === "overview"
     ? `project:${selection.projectId}:overview`
     : `project:${selection.projectId}:history:${selection.sessionId}`;
@@ -85,8 +81,7 @@ export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope, sou
       ? { scope: "project", projectId: withHistory.id, kind: "history", sessionId: firstHistory.sessionId }
       : null;
   }
-  const first = catalog.sessions.find((session) => session.hasSummary && session.readable !== false);
-  return first ? { scope: "session", sessionId: first.id } : null;
+  return null;
 }
 
 function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope, source: MemorySource): boolean {
@@ -97,11 +92,6 @@ function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | nu
       entry.readable !== false
       && entry.path === selection.path
       && (entry.source || "local") === (selection.source || "local")
-    ));
-  }
-  if (selection.scope === "session") {
-    return catalog.sessions.some((entry) => (
-      entry.id === selection.sessionId && entry.hasSummary && entry.readable !== false
     ));
   }
   const project = catalog.projects.find((entry) => entry.id === selection.projectId);
@@ -384,37 +374,6 @@ function ProjectList({
   );
 }
 
-export function SessionList({
-  sessions,
-  selected,
-  onSelect,
-}: {
-  sessions: MemorySessionEntry[];
-  selected: string;
-  onSelect: (selection: MemorySelection) => void;
-}) {
-  const summaries = sessions.filter((session) => session.hasSummary);
-  if (summaries.length === 0) return <CatalogEmpty icon={<MessageSquareText className="h-4 w-4" />} title="暂无会话摘要" />;
-  return (
-    <div className="space-y-1">
-      {summaries.map((session) => (
-        <MemoryListButton
-          key={session.id}
-          active={selected === `session:${session.id}`}
-          icon={<MessageSquareText className="h-4 w-4" />}
-          title={session.title}
-          description={session.projectName || (session.agentMode === "remote-direct" ? "Moss Server" : "普通会话")}
-          meta={session.readable === false
-            ? "超过大小限制"
-            : formatDateTime(session.summaryUpdatedAt)}
-          disabled={session.readable === false}
-          onClick={() => onSelect({ scope: "session", sessionId: session.id })}
-        />
-      ))}
-    </div>
-  );
-}
-
 function matches(value: string, query: string): boolean {
   return value.toLocaleLowerCase("zh-CN").includes(query.toLocaleLowerCase("zh-CN"));
 }
@@ -471,10 +430,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
     if (!catalog || !selection) return;
 
     const load = async () => {
-      if (selection.scope === "session") {
-        const session = catalog.sessions.find((entry) => entry.id === selection.sessionId);
-        if (!session?.hasSummary) return;
-      }
       setDetailLoading(true);
       try {
         const next = await window.agentDesktop.memory.readEntry(selection);
@@ -515,14 +470,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
       };
     }).filter((project) => matches(project.name, normalizedQuery) || project.history.length > 0);
   }, [catalog, normalizedQuery]);
-  const summarySessions = React.useMemo(() => (
-    catalog?.sessions.filter((entry) => entry.hasSummary) || []
-  ), [catalog]);
-  const sessions = React.useMemo(() => {
-    if (!normalizedQuery) return summarySessions;
-    return summarySessions.filter((entry) => matches(`${entry.title} ${entry.projectName || ""}`, normalizedQuery));
-  }, [summarySessions, normalizedQuery]);
-
   const selectedKey = selectionKey(selection);
   const selectedGlobal = selection?.scope === "global"
     ? catalog?.global.files.find((entry) => (
@@ -536,10 +483,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   const selectedHistory = selection?.scope === "project" && selection.kind === "history"
     ? selectedProject?.history.find((entry) => entry.sessionId === selection.sessionId) || null
     : null;
-  const selectedSession = selection?.scope === "session"
-    ? catalog?.sessions.find((entry) => entry.id === selection.sessionId) || null
-    : null;
-
   const indexedGlobalEntries = sourceGlobalEntries.filter((entry) => entry.indexed && !entry.isIndex);
   const unindexedGlobalEntries = sourceGlobalEntries.filter((entry) => !entry.indexed && !entry.isIndex);
   const globalLatest = latestTimestamp(sourceGlobalEntries.filter((entry) => entry.indexed || entry.isIndex).map((entry) => entry.updatedAt));
@@ -552,33 +495,25 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
     ? catalog.global.remoteStatus === "error" ? "云端记忆加载失败，请刷新重试" : "尚未连接云端记忆，请在设置中连接 Moss Server"
     : undefined;
   const projectLatest = latestTimestamp(catalog?.projects.map((entry) => entry.memoryUpdatedAt) || []);
-  const sessionLatest = latestTimestamp(summarySessions.map((entry) => entry.summaryUpdatedAt));
   const metrics = scope === "global" ? [
     { label: "有效记忆", value: remoteUnavailable ? "—" : String(indexedGlobalEntries.length), detail: "仅统计当前来源 MEMORY.md 已索引内容" },
     { label: "未索引文件", value: remoteUnavailable ? "—" : String(unindexedGlobalEntries.length), detail: "当前来源中未被 MEMORY.md 引用的文件" },
     { label: "最近更新", value: globalLatest ? formatDateTime(globalLatest) : "暂无", detail: globalRootLabel },
-  ] : scope === "project" ? [
+  ] : [
     { label: "已有沉淀的项目", value: String(catalog?.projects.filter((entry) => entry.hasOverview || entry.history.length > 0).length || 0), detail: `${catalog?.projects.length || 0} 个 Moss 项目` },
     { label: "会话沉淀", value: String(catalog?.projects.reduce((sum, entry) => sum + entry.history.length, 0) || 0), detail: "由项目会话完成时生成" },
     { label: "最近更新", value: projectLatest ? formatDateTime(projectLatest) : "暂无", detail: "仅在所属项目中使用" },
-  ] : [
-    { label: "会话摘要", value: String(summarySessions.length), detail: "仅展示已生成摘要的会话" },
-    { label: "项目会话", value: String(summarySessions.filter((entry) => entry.projectId).length), detail: "与项目沉淀相互独立" },
-    { label: "最近更新", value: sessionLatest ? formatDateTime(sessionLatest) : "暂无", detail: "仅用于当前会话上下文" },
   ];
 
   const detailTitle = selectedGlobal?.title
     || (selectedHistory ? selectedHistory.title : selectedProject?.name)
-    || selectedSession?.title
     || "选择一条记忆";
   const detailDescription = selectedGlobal?.description
-    || (selectedHistory ? `${selectedProject?.name || "项目"} · 会话沉淀` : selectedProject ? `项目概览 · 第 ${selectedProject.version} 版` : "")
-    || (selectedSession?.projectName ? `${selectedSession.projectName} · 当前上下文` : selectedSession ? "当前上下文" : "");
+    || (selectedHistory ? `${selectedProject?.name || "项目"} · 会话沉淀` : selectedProject ? `项目概览 · 第 ${selectedProject.version} 版` : "");
   const detailUpdatedAt = detail?.updatedAt
     || selectedGlobal?.updatedAt
     || selectedHistory?.updatedAt
-    || selectedProject?.memoryUpdatedAt
-    || selectedSession?.summaryUpdatedAt;
+    || selectedProject?.memoryUpdatedAt;
 
   if (error) {
     return (
@@ -619,7 +554,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={scope === "global" ? `搜索${SOURCE_LABELS[globalSource]}` : scope === "project" ? "搜索项目沉淀" : "搜索会话摘要"}
+                  placeholder={scope === "global" ? `搜索${SOURCE_LABELS[globalSource]}` : "搜索项目沉淀"}
                   aria-label="搜索记忆"
                   className="bg-background pl-9"
                 />
@@ -636,10 +571,8 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                   emptyTitle={globalEmptyTitle}
                   onSelect={setSelection}
                 />
-              ) : scope === "project" ? (
-                <ProjectList projects={projects} selected={selectedKey} onSelect={setSelection} />
               ) : (
-                <SessionList sessions={sessions} selected={selectedKey} onSelect={setSelection} />
+                <ProjectList projects={projects} selected={selectedKey} onSelect={setSelection} />
               )}
             </div>
           </aside>
@@ -650,18 +583,17 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <h2 className="truncate text-base font-semibold text-foreground">{detailTitle}</h2>
                   <Badge variant="outline">
-                    {scope === "global" ? SOURCE_LABELS[globalSource] : scope === "project" ? "项目记忆" : "会话摘要"}
+                    {scope === "global" ? SOURCE_LABELS[globalSource] : "项目记忆"}
                   </Badge>
                   {selectedGlobal ? <Badge variant="secondary">{TYPE_LABELS[selectedGlobal.type] || selectedGlobal.type}</Badge> : null}
                   {selectedGlobal && !selectedGlobal.indexed ? <Badge variant="outline">未索引</Badge> : null}
-                  {selectedSession?.agentMode === "remote-direct" ? <Badge variant="secondary">Moss Server</Badge> : null}
                 </div>
                 {detailDescription ? <p className="mt-1 truncate text-xs text-muted-foreground">{detailDescription}</p> : null}
                 {selectedGlobal ? <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{selectedGlobal.path}</p> : null}
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-                {detail?.bytes || selectedGlobal?.bytes || selectedHistory?.bytes || selectedSession?.bytes
-                  ? <span>{formatBytes(detail?.bytes || selectedGlobal?.bytes || selectedHistory?.bytes || selectedSession?.bytes || 0)}</span>
+                {detail?.bytes || selectedGlobal?.bytes || selectedHistory?.bytes
+                  ? <span>{formatBytes(detail?.bytes || selectedGlobal?.bytes || selectedHistory?.bytes || 0)}</span>
                   : null}
                 <span>{formatDateTime(detailUpdatedAt)}</span>
                 <Button

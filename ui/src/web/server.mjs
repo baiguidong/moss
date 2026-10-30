@@ -25,7 +25,7 @@ const desktopMethods = new Set([
   'agent:pick-directory', 'agent:pick-files',
   'app:launch', 'app:embedded-open', 'app:embedded-attach', 'app:embedded-close',
   'app:open-resource', 'app:import-legacy-buddy', 'public-skillhub:open-import-dialog',
-  'shell.open-file', 'shell.open-external', 'shell.show-item-in-folder', 'workspace:open',
+  'shell.open-file', 'shell.save-file', 'shell.open-external', 'shell.show-item-in-folder', 'workspace:open',
   'preview.open', 'preview.sync', 'preview.ready', 'preview.close',
   'presentation:popout',
 ]);

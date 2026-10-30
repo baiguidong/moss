@@ -68,3 +68,21 @@ test('Office and PDF annotations resolve the original file and preserve explicit
   for (const pageNumber of [0, -1, 1.2, '2', 100001]) expect(() => normalizeVisualizationAnnotation({ ...selected, selection: { ...selected.selection, pageNumber } })).toThrow();
   await expect(prepareVisualizationAnnotation(annotation, { session: {}, resolveResourceFile })).rejects.toThrow('页码');
 });
+
+test('whole-file requests and spreadsheet cells retain their source and scope without inventing page numbers', async () => {
+  const reference = { artifactId: 'artifact_' + 'a'.repeat(64), revision: 'current' };
+  const whole = { ...annotation, resourceUri: undefined, ...reference, selection: { ...annotation.selection, kind: 'document' } };
+  const resolveArtifact = async (id, revision) => {
+    expect(id).toBe(reference.artifactId); expect(revision).toBe('current');
+    return { path: '/workspace/budget.xlsx' };
+  };
+  const result = await prepareVisualizationAnnotation(whole, { session: { agentMode: 'local' }, resolveArtifact });
+  expect(result.instruction).toContain('/workspace/budget.xlsx');
+  const cell = { ...whole, selection: { ...whole.selection, kind: 'cell', sheet: '预算', range: 'B4' } };
+  const selected = await prepareVisualizationAnnotation(cell, { session: {}, resolveArtifact });
+  expect(selected.annotation.selection).toMatchObject({ kind: 'cell', sheet: '预算', range: 'B4' });
+  expect(selected.annotation.selection.pageNumber).toBeUndefined();
+  for (const range of ['', 'garbage', 'B0']) expect(() => normalizeVisualizationAnnotation({ ...cell, selection: { ...cell.selection, range } })).toThrow();
+  await expect(prepareVisualizationAnnotation(whole, { session: {}, resolveArtifact: async () => null })).rejects.toThrow('不可用');
+  await expect(prepareVisualizationAnnotation(cell, { session: {}, resolveArtifact: async () => ({ path: '/workspace/report.docx' }) })).rejects.toThrow('单元格');
+});

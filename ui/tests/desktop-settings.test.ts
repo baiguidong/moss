@@ -380,42 +380,20 @@ describe('desktop settings', () => {
     });
   });
 
-  it('defaults session summaries off and preserves an explicit opt-in across restarts', () => {
-    expect(normalizeDesktopSettings({}).sessionMemory).toMatchObject({ enabled: false, compactEnabled: false });
-    expect(normalizeDesktopSettings({ sessionMemory: {} }).sessionMemory.enabled).toBe(false);
+  it('ignores retired session-summary settings and removes them on the next save', () => {
+    expect(normalizeDesktopSettings({}).sessionMemory).toBeUndefined();
+    const legacy = { sessionMemory: { enabled: true, compactEnabled: true, minimumMessageTokensToInit: 100 } };
+    expect(normalizeDesktopSettings(legacy).sessionMemory).toBeUndefined();
+    expect(normalizeDesktopSettings({}, legacy).sessionMemory).toBeUndefined();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-session-summary-settings-'));
     temporaryRoots.push(root);
     const settingsPath = path.join(root, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(legacy));
     const store = createDesktopSettingsStore({ settingsPath });
-    expect(store.value.sessionMemory.enabled).toBe(false);
-    store.save({ sessionMemory: { enabled: true } });
-    const restarted = createDesktopSettingsStore({ settingsPath });
-    restarted.save({ language: 'english' });
-    expect(createDesktopSettingsStore({ settingsPath }).value.sessionMemory.enabled).toBe(true);
-  });
-
-  it('keeps legacy session-memory fields compatible with persisted settings', () => {
-    expect(normalizeDesktopSettings({
-      sessionMemory: {
-        enabled: true,
-        compactEnabled: true,
-        minimumMessageTokensToInit: 100,
-        minimumTokensBetweenUpdate: 50,
-        toolCallsBetweenUpdates: 2,
-        compactMinTokens: 4000,
-        compactMinTextBlockMessages: 3,
-        compactMaxTokens: 1000,
-      },
-    }).sessionMemory).toEqual({
-      enabled: true,
-      compactEnabled: true,
-      minimumMessageTokensToInit: 100,
-      minimumTokensBetweenUpdate: 50,
-      toolCallsBetweenUpdates: 2,
-      compactMinTokens: 4000,
-      compactMinTextBlockMessages: 3,
-      compactMaxTokens: 4000,
-    });
+    expect(store.value.sessionMemory).toBeUndefined();
+    store.save({ language: 'english' });
+    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).sessionMemory).toBeUndefined();
+    expect(createDesktopSettingsStore({ settingsPath }).value.sessionMemory).toBeUndefined();
   });
 
   it('keeps advanced setting defaults and normalizes explicit overrides', () => {

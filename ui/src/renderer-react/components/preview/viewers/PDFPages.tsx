@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { ChevronLeft, ChevronRight, PanelLeft, ZoomIn, ZoomOut } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { OfficeEditRequest } from '../OfficeEditRequest';
+import { ChevronLeft, ChevronRight, Play, Minimize2, PanelLeft, ZoomIn, ZoomOut } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { AppComposerContext } from '@/lib/app-composer';
@@ -85,7 +87,7 @@ function PageCanvas({ pdf, number, width, height, thumbnail = false, linkService
   </div>;
 }
 
-export default function PDFPages({ filePath, fileVersion, title, resourceUri, sessionId, sourcePath, onReady, onError, documentLocation, locationRequest }: PDFViewerProps) {
+export default function PDFPages({ filePath, fileVersion, title, presentation = false, office = false, toolbarContainer, resourceUri, artifactId, revision, sessionId, sourcePath, onReady, onError, documentLocation, locationRequest }: PDFViewerProps) {
   const { submitVisualizationAnnotation } = React.useContext(AppComposerContext);
   const root = React.useRef<HTMLDivElement>(null), scroll = React.useRef<HTMLDivElement>(null);
   const pages = React.useRef(new Map<number, HTMLDivElement>());
@@ -95,20 +97,22 @@ export default function PDFPages({ filePath, fileVersion, title, resourceUri, se
   const [citationError, setCitationError] = React.useState('');
   const [citation, setCitation] = React.useState<{ page: number; text?: string; occurrence?: number }>();
   const [page, setPage] = React.useState(1), [pageInput, setPageInput] = React.useState('1');
-  const [rail, setRail] = React.useState(false), [zoom, setZoom] = React.useState('width');
+  const [rail, setRail] = React.useState(false), [zoom, setZoom] = React.useState(presentation ? 'page' : office ? 'auto' : 'width');
   const [viewport, setViewport] = React.useState({ width: 0, height: 0 });
   const [selecting, setSelecting] = React.useState(false), [selection, setSelection] = React.useState<Selection | null>(null);
+  const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [comment, setComment] = React.useState(''), [sending, setSending] = React.useState(false), [sendError, setSendError] = React.useState('');
   const annotationId = React.useRef(''), submitting = React.useRef(false);
   const drag = React.useRef<{ page: number; x: number; y: number } | null>(null);
   const callbacks = React.useRef({ onReady, onError }); callbacks.current = { onReady, onError };
-  const canAnnotate = Boolean(resourceUri && sessionId && submitVisualizationAnnotation);
+  const annotationTarget = resourceUri ? { resourceUri, sessionId } : { artifactId, revision, sessionId };
+  const canAnnotate = Boolean((resourceUri || artifactId) && sessionId && submitVisualizationAnnotation);
   const stateKey = JSON.stringify(['moss.pdf/v1', sessionId || '', resourceUri || sourcePath || filePath]);
   const handledCitation = React.useRef<string | undefined>(undefined);
   const initialPage = React.useRef(1), restored = React.useRef(false), ready = React.useRef(false);
   const requestedPage = React.useRef(1), programmaticScrollUntil = React.useRef(0);
   React.useEffect(() => {
-    try { const state = JSON.parse(localStorage.getItem(stateKey) || '{}'); initialPage.current = Math.max(1, Number(state.page) || 1); handledCitation.current = state.locationKey; if (['width', 'page', '0.5', '0.75', '1', '1.25', '1.5', '2'].includes(state.zoom)) setZoom(state.zoom); setRail(state.rail !== false); } catch {}
+    try { const state = JSON.parse(localStorage.getItem(stateKey) || '{}'); initialPage.current = Math.max(1, Number(state.page) || 1); handledCitation.current = state.locationKey; if (['auto', 'width', 'page', '0.25', '0.5', '0.75', '1', '1.25', '1.5', '2'].includes(state.zoom)) setZoom(state.zoom); setRail(state.rail === true); } catch {}
   }, [stateKey]);
   React.useEffect(() => {
     let active = true; setError(''); setLinkError(''); setPdf(undefined); setSizes([]); ready.current = false; restored.current = false;
@@ -135,9 +139,13 @@ export default function PDFPages({ filePath, fileVersion, title, resourceUri, se
     const next = clamp(Math.round(value) || 1, 1, sizes.length || 1);
     requestedPage.current = next; programmaticScrollUntil.current = performance.now() + 150;
     const node = pages.current.get(next);
-    if (node && scroll.current) scroll.current.scrollTop += node.getBoundingClientRect().top - scroll.current.getBoundingClientRect().top - 20;
+    if (!isFullscreen && node && scroll.current) {
+      const box = node.getBoundingClientRect();
+      const inset = presentation ? Math.max(20, (scroll.current.clientHeight - box.height) / 2) : 20;
+      scroll.current.scrollTop += box.top - scroll.current.getBoundingClientRect().top - inset;
+    }
     setPage(next); setPageInput(String(next)); setSelection(null); if (clearLinkError) setLinkError('');
-  }, [sizes.length]);
+  }, [sizes.length, isFullscreen, presentation]);
   const linkService = React.useMemo(() => pdf ? new PreviewLinkService(pdf, go, () => requestedPage.current, setLinkError) : undefined, [pdf, go]);
   React.useLayoutEffect(() => {
     if (!pdf || !viewport.width || !viewport.height) return;
@@ -183,54 +191,79 @@ export default function PDFPages({ filePath, fileVersion, title, resourceUri, se
   }, [page, zoom, rail, pdf, stateKey, citation]);
   const painted = () => { if (!ready.current) { ready.current = true; callbacks.current.onReady?.(); } };
   const fail = (message: string) => { setError(message); callbacks.current.onError?.(message); };
-  const factor = (size: PageSize) => zoom === 'width' ? Math.max(1, viewport.width - 40) / size.width : zoom === 'page' ? Math.min(Math.max(1, viewport.width - 40) / size.width, Math.max(1, viewport.height - 40) / size.height) : Number(zoom);
+  const factor = (size: PageSize) => isFullscreen ? Math.min(Math.max(1, viewport.width - 32) / size.width, Math.max(1, viewport.height - 32) / size.height) : zoom === 'auto' ? Math.min(4 / 3, Math.max(1, viewport.width - 40) / size.width) : zoom === 'width' ? Math.max(1, viewport.width - 40) / size.width : zoom === 'page' ? Math.min(Math.max(1, viewport.width - 40) / size.width, Math.max(1, viewport.height - 40) / size.height) : Number(zoom);
   const zoomStep = (step: number) => { const current = sizes[page - 1] ? factor(sizes[page - 1]) : 1; setZoom(String(clamp(Math.round((current + step) * 4) / 4, 0.25, 3))); setSelection(null); };
   const choose = (value: Selection) => { annotationId.current = crypto.randomUUID(); setSelection(value); setComment(''); setSendError(''); };
   const point = (event: React.PointerEvent<HTMLDivElement>) => { const box = event.currentTarget.getBoundingClientRect(); return { x: clamp((event.clientX - box.left) / box.width, 0, 1), y: clamp((event.clientY - box.top) / box.height, 0, 1) }; };
   const anchor = (x: number, y: number) => { const box = root.current!.getBoundingClientRect(); return { x: x - box.left, y: y - box.top }; };
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); if (submitting.current || !selection || !resourceUri || !sessionId || !submitVisualizationAnnotation || !comment.trim()) return;
+    event.preventDefault(); if (submitting.current || !selection || !(resourceUri || artifactId) || !sessionId || !submitVisualizationAnnotation || !comment.trim()) return;
     submitting.current = true; setSending(true); setSendError('');
     try {
       const size = sizes[selection.page - 1];
       const selected: VisualizationSelection = { kind: selection.kind, pageNumber: selection.page, selector: `page:${selection.page}`, text: selection.text.slice(0, 2000), nearbyText: `第 ${selection.page} 页`, rect: { x: selection.rect.x * size.width, y: selection.rect.y * size.height, width: selection.rect.width * size.width, height: selection.rect.height * size.height } };
-      await submitVisualizationAnnotation(sessionId, { id: annotationId.current, resourceUri, comment: comment.trim(), selection: selected, state: { pageNumber: selection.page, pageWidth: size.width, pageHeight: size.height, coordinateSpace: 'pdf-points' } });
+      await submitVisualizationAnnotation(sessionId, { ...(resourceUri ? { resourceUri } : { artifactId, revision }), id: annotationId.current, comment: comment.trim(), selection: selected, state: { pageNumber: selection.page, pageWidth: size.width, pageHeight: size.height, coordinateSpace: 'pdf-points' } });
       setSelection(null); setSelecting(false);
     } catch (reason) { setSendError(String(reason instanceof Error ? reason.message : reason)); }
     finally { submitting.current = false; setSending(false); }
   };
+  React.useEffect(() => {
+    if (!presentation) return;
+    const update = () => { setIsFullscreen(document.fullscreenElement === root.current); setSelection(null); setSelecting(false); root.current?.focus(); };
+    document.addEventListener('fullscreenchange', update);
+    return () => document.removeEventListener('fullscreenchange', update);
+  }, [presentation]);
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await root.current?.requestFullscreen();
+    } catch { setLinkError('无法进入全屏，请重试。'); }
+  };
+  const controls = <>
+    {office && <OfficeEditRequest target={annotationTarget} selection={sizes[page - 1] ? { kind: 'region', pageNumber: page, selector: `page:${page}`, text: '', nearbyText: `第 ${page} 页`, rect: { x: 0, y: 0, ...sizes[page - 1] } } : undefined} selectionLabel={`第 ${page} 页`} onSelectRegion={pdf ? () => { setSelecting(true); setSelection(null); } : undefined} />}
+    <select aria-label="页面缩放" className="h-7 max-w-28 shrink-0 rounded bg-transparent text-xs" value={zoom} onChange={event => { setZoom(event.target.value); setSelection(null); }}>
+      <option value="auto">自动{sizes[page - 1] && zoom === 'auto' ? ` ${Math.round(factor(sizes[page - 1]) * 100)}%` : ''}</option><option value="width">适合宽度</option><option value="page">适合页面</option>
+      {Array.from(new Set(['0.25', '0.5', '0.75', '1', '1.25', '1.5', '2', '3', ...(!['auto', 'width', 'page'].includes(zoom) ? [zoom] : [])])).sort((a,b) => Number(a)-Number(b)).map(value => <option key={value} value={value}>{Math.round(Number(value) * 100)}%</option>)}
+    </select>
+    {presentation && <button className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted" aria-label="全屏播放" title="全屏播放" disabled={!pdf} onClick={() => void toggleFullscreen()}><Play size={15} /></button>}
+  </>;
   const control = 'inline-flex h-7 shrink-0 items-center justify-center rounded px-1.5 hover:bg-muted disabled:opacity-30';
-  return <div ref={root} data-pdf-preview className="moss-pdf relative flex h-full min-h-0 flex-col bg-background" aria-label={title} onKeyDown={event => { if (event.key === 'Escape') { setSelecting(false); setSelection(null); } }}>
-    <div className="moss-pdf-toolbar flex shrink-0 flex-wrap items-center gap-1 border-b border-border/70 px-3 py-1.5 text-xs">
-      <button className={control} aria-label="页面缩略图" aria-pressed={rail} onClick={() => setRail(!rail)}><PanelLeft size={15} /></button>
+  return <div ref={root} data-pdf-preview data-presentation={presentation || undefined} tabIndex={-1} className="moss-pdf relative flex h-full min-h-0 flex-col bg-background fullscreen:bg-background" aria-label={title} onKeyDown={event => {
+    if (event.key === 'Escape') { setSelecting(false); setSelection(null); }
+    if (!isFullscreen || (event.target as Element).closest('input,textarea,select')) return;
+    const next = ['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key) ? page + 1 : ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key) ? page - 1 : event.key === 'Home' ? 1 : event.key === 'End' ? sizes.length : null;
+    if (next !== null) { event.preventDefault(); go(next); }
+  }}>
+    {office && toolbarContainer && !isFullscreen ? createPortal(controls, toolbarContainer) : null}
+    <div className={office || isFullscreen ? 'moss-pdf-navigation absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-popover/95 px-2 py-1 text-xs shadow-sm' : 'moss-pdf-toolbar flex shrink-0 flex-wrap items-center gap-1 border-b border-border/70 px-3 py-1.5 text-xs'}>
+      {!isFullscreen && <button className={control} aria-label="页面缩略图" aria-pressed={rail} onClick={() => setRail(!rail)}><PanelLeft size={15} /></button>}
       <button className={control} aria-label="上一页" disabled={!pdf || page <= 1} onClick={() => go(page - 1)}><ChevronLeft size={16} /></button>
       <form onSubmit={event => { event.preventDefault(); go(Number(pageInput)); }} className="flex items-center gap-1"><input aria-label="页码" inputMode="numeric" value={pageInput} disabled={!pdf} onChange={event => setPageInput(event.target.value)} onBlur={() => go(Number(pageInput))} className="h-6 w-9 rounded border border-border bg-background text-center" /><span data-pdf-page-count>/ {sizes.length || '…'}</span></form>
       <button className={control} aria-label="下一页" disabled={!pdf || page >= sizes.length} onClick={() => go(page + 1)}><ChevronRight size={16} /></button>
-      <span className="mx-1 h-4 border-l border-border" />
-      <button className={control} aria-label="缩小" onClick={() => zoomStep(-0.25)}><ZoomOut size={15} /></button>
-      <select aria-label="页面缩放" className="h-7 max-w-24 rounded bg-transparent text-xs" value={zoom} onChange={event => { setZoom(event.target.value); setSelection(null); }}>
-        <option value="width">适合宽度</option><option value="page">整页</option>
-        {Array.from(new Set(['0.25', '0.5', '0.75', '1', '1.25', '1.5', '2', '3', ...(!['width', 'page'].includes(zoom) ? [zoom] : [])])).sort((a,b) => Number(a)-Number(b)).map(value => <option key={value} value={value}>{Math.round(Number(value) * 100)}%</option>)}
-      </select>
-      <button className={control} aria-label="放大" onClick={() => zoomStep(0.25)}><ZoomIn size={15} /></button>
-      {canAnnotate && <button disabled={!pdf} className={`${control} ml-auto`} aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelection(null); }}>{selecting ? '退出标注' : '标注修改'}</button>}
+      {isFullscreen ? <button className={control} aria-label="退出全屏播放" title="退出全屏播放（Esc）" onClick={() => void toggleFullscreen()}><Minimize2 size={15} /></button> : !office && <>
+        <span className="mx-1 h-4 border-l border-border" />
+        <button className={control} aria-label="缩小" onClick={() => zoomStep(-0.25)}><ZoomOut size={15} /></button>
+        {controls}
+        <button className={control} aria-label="放大" onClick={() => zoomStep(0.25)}><ZoomIn size={15} /></button>
+        {canAnnotate && <button disabled={!pdf} className={`${control} ml-auto`} aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelection(null); }}>{selecting ? '退出标注' : '标注修改'}</button>}
+      </>}
     </div>
     {selecting && <p role="status" className="shrink-0 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">在页面上框选需要修改的内容</p>}
     {linkError && <p role="alert" className="shrink-0 border-b border-border/60 px-3 py-1 text-xs text-destructive">{linkError}</p>}
     {citationError && <p role="alert" className="shrink-0 border-b border-border/60 px-3 py-1 text-xs text-destructive">{citationError}</p>}
     {error ? <div role="alert" className="m-auto max-w-sm p-6 text-sm"><p>页面预览失败：{error}</p><button className="mt-3 underline" onClick={() => setAttempt(value => value + 1)}>重试预览</button></div> : !pdf ? <div className="m-auto p-5 text-sm text-muted-foreground">正在渲染页面…</div> : <div className="flex min-h-0 flex-1">
-      {rail && <nav aria-label="页面缩略图" className="moss-pdf-rail w-28 shrink-0 overflow-y-auto border-r border-border/70 bg-muted/30 p-2">
+      {rail && !isFullscreen && <nav aria-label="页面缩略图" className="moss-pdf-rail w-28 shrink-0 overflow-y-auto border-r border-border/70 bg-muted/30 p-2">
         {sizes.map((size, i) => <button key={i} aria-label={`转到第 ${i + 1} 页`} aria-current={page === i + 1 ? 'page' : undefined} className="mb-3 flex w-full flex-col items-center gap-1 rounded p-1 text-[10px] hover:bg-muted aria-[current=page]:bg-primary/15" onClick={() => go(i + 1)}><div className="max-w-full overflow-hidden bg-white shadow-sm"><PageCanvas pdf={pdf} number={i + 1} width={64} height={64 * size.height / size.width} thumbnail onError={fail} /></div>{i + 1}</button>)}
       </nav>}
-      <div ref={scroll} data-pdf-scroll className="min-h-0 min-w-0 flex-1 overflow-auto bg-muted/50" onScroll={() => {
-        if (!scroll.current || performance.now() < programmaticScrollUntil.current) return; const top = scroll.current.getBoundingClientRect().top + 28;
+      <div ref={scroll} data-pdf-scroll className={`min-h-0 min-w-0 flex-1 ${isFullscreen ? 'overflow-hidden bg-black' : 'overflow-auto bg-muted/50'}`} onScroll={() => {
+        if (isFullscreen || !scroll.current || performance.now() < programmaticScrollUntil.current) return; const top = scroll.current.getBoundingClientRect().top + 28;
         let best = 1, distance = Infinity;
         pages.current.forEach((node, number) => { const box = node.getBoundingClientRect(); const d = box.top <= top && box.bottom > top ? 0 : Math.abs(box.top - top); if (d < distance) { distance = d; best = number; } });
         requestedPage.current = best; setPage(best); setPageInput(String(best)); setSelection(null);
       }}>
-        <div className="flex min-w-full w-max flex-col items-center gap-5 p-5">
-          {sizes.map((size, index) => { const number = index + 1, scale = factor(size), width = size.width * scale, height = size.height * scale;
-            return <div key={number} ref={node => { if (node) pages.current.set(number, node); else pages.current.delete(number); }} data-pdf-page={number} data-citation-page={citation?.page === number || undefined} data-selecting={selecting} className="moss-pdf-page" role="region" aria-label={`第 ${number} 页`} style={{ width, height }}
+        <div className={isFullscreen ? "flex h-full w-full items-center justify-center" : "flex min-w-full w-max flex-col items-center gap-5 p-5 pb-16"}>
+          {sizes.map((size, index) => { if (isFullscreen && index + 1 !== page) return null; const number = index + 1, scale = factor(size), width = size.width * scale, height = size.height * scale;
+            return <div key={number} ref={node => { if (node) pages.current.set(number, node); else pages.current.delete(number); }} data-pdf-page={number} data-citation-page={citation?.page === number || undefined} data-selecting={selecting} className="moss-pdf-page" role="region" aria-label={`第 ${number} 页`} style={{ width, height, marginBlock: presentation && !isFullscreen ? Math.max(0, (viewport.height - 40 - height) / 2) : undefined }}
               onPointerDown={event => { if (!selecting || event.button !== 0) return; const p = point(event); drag.current = { page: number, ...p }; event.currentTarget.setPointerCapture(event.pointerId); setSelection(null); event.preventDefault(); }}
               onPointerMove={event => { if (!drag.current || drag.current.page !== number) return; const p = point(event), start = drag.current; setSelection({ page: number, rect: { x: Math.min(start.x,p.x), y: Math.min(start.y,p.y), width: Math.abs(start.x-p.x), height: Math.abs(start.y-p.y) }, text: '', kind: 'region', anchor: anchor(event.clientX,event.clientY) }); }}
               onPointerCancel={() => { drag.current = null; setSelection(null); }}

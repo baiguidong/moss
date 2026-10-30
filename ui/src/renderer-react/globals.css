@@ -258,6 +258,25 @@
     user-select: none;
   }
 
+  body.layout-resizing iframe,
+  body.layout-resizing webview {
+    pointer-events: none;
+  }
+
+  .session-panel-resize-handle::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 5px;
+    width: 2px;
+  }
+
+  .session-panel-resize-handle:hover::before,
+  .session-panel-resize-handle:focus-visible::before,
+  body.layout-resizing .session-panel-resize-handle::before {
+    background: color-mix(in oklab, var(--primary) 65%, transparent);
+  }
+
   .app-shell {
     background-image:
       radial-gradient(circle at left top, color-mix(in oklab, var(--sidebar) 92%, transparent), transparent 24%),

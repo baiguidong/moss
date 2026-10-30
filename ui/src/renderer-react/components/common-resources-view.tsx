@@ -9,7 +9,6 @@ import {
   Loader2,
   PackageOpen,
   RefreshCw,
-  Search,
   UsersRound,
 } from "lucide-react";
 import { AppIcon } from "@/components/app-icon";
@@ -17,7 +16,7 @@ import { ResourceIcon } from "@/components/resource-icon";
 import { InstalledResourceDetails } from "@/components/installed-resource-details";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ResourceHubSearch } from "@/components/resource-hub-search";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -229,33 +228,22 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
   return (
     <>
     <div data-resource-common className={cn("h-full min-h-0 flex-col bg-background", selected ? "hidden" : "flex")}>
-      <div className="shrink-0 border-b border-border/70 bg-background/92 px-4 py-2.5 backdrop-blur sm:px-5">
-        <div className="mx-auto flex w-full max-w-[1180px] items-center gap-2">
-          <div className="relative w-full max-w-[560px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-9 rounded-xl bg-muted/45 pl-9 text-sm"
-              placeholder="搜索资源"
-              aria-label="搜索资源"
-            />
-          </div>
+      <ResourceHubSearch value={query} onChange={setQuery} placeholder="搜索资源" label="搜索资源" visible={!selected} refresh={
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon-sm"
             className="h-8 w-8 shrink-0 rounded-lg"
             onClick={() => void loadInstalled()}
             disabled={loading}
             title="刷新已安装资源"
+            aria-label="刷新已安装资源"
           >
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </Button>
-        </div>
-      </div>
+      } />
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto w-full max-w-[1180px] space-y-6 px-4 py-5 sm:px-5">
+        <div className="mx-auto w-full max-w-[1180px] space-y-5 px-4 py-3 sm:px-5">
           {error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
               {error}

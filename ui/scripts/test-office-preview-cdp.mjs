@@ -132,6 +132,9 @@ try{
  await page.reload();await page.getByText('Office 页面预览验证',{exact:true}).first().click()
  composerChecks.push(await assertComposerVisible(page,geometry))
  const pdf=()=>page.locator('[data-pdf-preview]').filter({visible:true})
+ const selectRegion=async()=>{await page.getByRole('button',{name:'请求修改',exact:true}).click();await page.getByRole('button',{name:'在页面上框选区域',exact:true}).click()}
+ const showThumbnails=async()=>{const toggle=pdf().getByRole('button',{name:'页面缩略图',exact:true});if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click()}
+ const selectMode=async name=>{await page.getByRole('button',{name:'预览模式',exact:true}).click();await page.getByRole('menuitemradio',{name,exact:true}).click()}
  const open=async task=>{await page.evaluate(({sessionId,input})=>window.agentDesktop.presentation.open({sessionId,input}),{sessionId,input:task.result.presentation});await pdf().waitFor();await pdf().locator('canvas[data-painted="true"]').first().waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('[data-pdf-preview] canvas')].some(c=>c.dataset.painted==='true'&&c.width>0))}
  for(const task of [docs,sheets,slides]){await open(task);assert.equal(await pdf().locator('[data-pdf-page]').count(),task.result.visualReview.pageCount);await capture(task.result.title+'-preview');assert.equal(await page.getByText('继续修改',{exact:true}).count(),0)}
  mark('Main-session right pane immediately renders Word, Excel and PPT pages with no separate App UI')
@@ -143,12 +146,12 @@ try{
  await open(slides)
 
  await pdf().getByRole('button',{name:'下一页',exact:true}).click();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'2')
- await pdf().getByRole('combobox',{name:'页面缩放'}).selectOption('1.25');await until(async()=>await pdf().locator('[data-pdf-page="2"] canvas[data-painted="true"]').count(),'zoom repaints')
+ await page.getByRole('combobox',{name:'页面缩放'}).selectOption('1.25');await until(async()=>await pdf().locator('[data-pdf-page="2"] canvas[data-painted="true"]').count(),'zoom repaints')
  assert.ok(await pdf().locator('[data-pdf-page="2"]').evaluate(n=>n.getBoundingClientRect().width)>1000)
- await pdf().getByRole('combobox',{name:'页面缩放'}).selectOption('page');await pdf().getByRole('button',{name:'转到第 3 页'}).click();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'3')
+ await page.getByRole('combobox',{name:'页面缩放'}).selectOption('page');await showThumbnails();await pdf().getByRole('button',{name:'转到第 3 页'}).click();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'3')
  await capture('ppt-navigation');await page.reload();await page.getByText('Office 页面预览验证',{exact:true}).first().click();await pdf().locator('canvas[data-painted="true"]').first().waitFor();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'3')
  mark('Thumbnails, page navigation, zoom and reopening survive a real renderer reload')
- await pdf().getByRole('button',{name:'转到第 2 页'}).click();await pdf().getByRole('button',{name:'标注修改',exact:true}).click()
+ await pdf().getByRole('button',{name:'转到第 2 页'}).click();await selectRegion()
  const box=await pdf().locator('[data-pdf-page="2"]').boundingBox();assert.ok(box)
  await page.mouse.move(box.x+box.width*.12,box.y+box.height*.14);await page.mouse.down();await page.mouse.move(box.x+box.width*.65,box.y+box.height*.42,{steps:8});await page.mouse.up()
  const editor=pdf().locator('[data-annotation-editor]');await editor.waitFor();await editor.getByRole('textbox',{name:'标注内容'}).fill('把第二页图表标题字号调大');await editor.getByRole('button',{name:'发送标注'}).click()
@@ -156,12 +159,12 @@ try{
  const request=requests.find(body=>JSON.stringify(body.messages).includes('把第二页图表标题字号调大')),serialized=JSON.stringify(request.messages)
  assert.ok(serialized.includes('pageNumber'));assert.ok(serialized.includes(slides.artifacts[0].path));await until(async()=>await page.locator('[data-visualization-annotation]').count()===1,'annotation queue settled');await page.locator('[data-visualization-annotation] summary').click();await page.locator('[data-visualization-annotation]').getByText('第 2 页',{exact:true}).waitFor();await capture('page-annotation-in-main-chat')
  mark('Region annotation opens its local editor and sends original App resource + page/coordinates to the main model; conversation displays one annotation')
- await open(sheets);await page.getByRole('button',{name:'工作表',exact:true}).click();await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await page.getByRole('button',{name:'页面版式',exact:true}).click();await pdf().locator('canvas[data-painted="true"]').first().waitFor()
- await page.getByRole('button',{name:'工作表',exact:true}).click();await page.getByRole('button',{name:'预算',exact:true}).click();
- await page.locator('[data-cell="B4"]').getByRole('button').click();assert.equal((await page.locator('[data-cell="B4"]').innerText()).trim(),'42,000');assert.ok((await page.locator('[data-cell-details]').innerText()).includes('=B2-B3'));await capture('excel-formatted-formula');
- await page.getByRole('button',{name:'页面版式',exact:true}).click();await pdf().locator('canvas[data-painted="true"]').first().waitFor();
+ await open(sheets);await selectMode('工作表');await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor()
+ await selectMode('工作表');await page.getByRole('button',{name:'预算',exact:true}).click();
+ await page.getByRole('button',{name:'更多预览操作',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'公式栏',exact:true}).click();await page.locator('[data-cell="B4"]').getByRole('button').click();assert.equal((await page.locator('[data-cell="B4"]').innerText()).trim(),'42,000');assert.ok((await page.locator('[data-cell-details]').innerText()).includes('=B2-B3'));await capture('excel-formatted-formula');
+ await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor();
  mark('Excel switches between page layout and sheets with formatted values and clickable formulas')
- await resize({width:1000,height:800});await pdf().getByRole('combobox',{name:'页面缩放'}).selectOption('width');await capture('narrow-preview')
+ await resize({width:1000,height:800});await page.getByRole('combobox',{name:'页面缩放'}).selectOption('width');await capture('narrow-preview')
  assert.ok(await pdf().evaluate(node=>node.scrollWidth<=node.clientWidth+1))
  await page.evaluate(()=>{document.documentElement.classList.add('dark');document.documentElement.dataset.theme='dark'});await capture('dark-preview')
  await resize({width:1440,height:900});await page.evaluate(()=>{document.documentElement.classList.remove('dark');document.documentElement.dataset.theme='light'})
@@ -198,9 +201,9 @@ try{
   await open(workflow.changedWords);await page.getByRole('button',{name:'查看 2 处修改',exact:true}).click();await comparison.waitFor();assert.equal(await comparison.locator('section').count(),2);assert.ok(await comparison.locator('[data-diff-highlight]').count()>0);await capture('word-aligned-comparison')
   await open(workflow.changedImage);await page.getByRole('button',{name:'查看 1 处修改',exact:true}).click();await comparison.locator('[data-comparison-image]').first().waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('[data-comparison-image]')].length===2&&[...document.querySelectorAll('[data-comparison-image]')].every(i=>i.complete&&i.naturalWidth>0));await capture('image-comparison')
   await open(workflow.issueSlides);await page.locator('[data-creation-status]').getByRole('button',{name:/待逐页核验/}).click();await page.locator('[data-quality-issue]').waitFor();await capture('quality-issues');await page.locator('[data-quality-issue] button').first().click();await pdf().locator('[data-citation-highlight="true"]').first().waitFor();await page.locator('[data-quality-details]').waitFor({state:'detached'});await capture('quality-issue-location')
-  await pdf().getByRole('button',{name:'标注修改',exact:true}).click();const issueBox=await pdf().locator('[data-pdf-page="1"]').boundingBox();await page.mouse.move(issueBox.x+issueBox.width*.1,issueBox.y+issueBox.height*.2);await page.mouse.down();await page.mouse.move(issueBox.x+issueBox.width*.5,issueBox.y+issueBox.height*.45,{steps:6});await page.mouse.up();await pdf().locator('[data-annotation-editor]').waitFor();await capture('quality-issue-annotation');await pdf().locator('[data-annotation-editor]').getByRole('button',{name:'取消',exact:true}).click()
+  await selectRegion();const issueBox=await pdf().locator('[data-pdf-page="1"]').boundingBox();await page.mouse.move(issueBox.x+issueBox.width*.1,issueBox.y+issueBox.height*.2);await page.mouse.down();await page.mouse.move(issueBox.x+issueBox.width*.5,issueBox.y+issueBox.height*.45,{steps:6});await page.mouse.up();await pdf().locator('[data-annotation-editor]').waitFor();await capture('quality-issue-annotation');await pdf().locator('[data-annotation-editor]').getByRole('button',{name:'取消',exact:true}).click()
   await open(workflow.pendingDeck);await page.locator('[data-render-progress]').getByText('页图 8/9',{exact:true}).waitFor();await page.locator('[data-creation-status]').getByRole('button',{name:'待逐页核验 · 0/9 页',exact:true}).click();await capture('partial-pages-progress')
-  await pdf().getByRole('button',{name:'转到第 3 页'}).click();await pdf().locator('[data-pdf-page="3"] canvas[data-painted="true"]').waitFor();
+  await showThumbnails();await pdf().getByRole('button',{name:'转到第 3 页'}).click();await pdf().locator('[data-pdf-page="3"] canvas[data-painted="true"]').waitFor();
   await page.evaluate(()=>{window.officeRetainedCanvas=document.querySelector('[data-pdf-page="3"] canvas')});
   fixtureToolCalls=[{name:'presentation_verify',input:{id:workflow.pendingDeck.id,sourceSha256:workflow.pendingDeck.result.inspection.sourceSha256,render:{startPage:9,count:8}}},{name:'presentation_verify',input:{id:workflow.pendingDeck.id,sourceSha256:workflow.pendingDeck.result.inspection.sourceSha256,pages:[{page:1,observations:'CDP 自动同步测试记录，非真实模型视觉判断',issues:[]}]}}];
   await page.evaluate(({sessionId})=>window.agentDesktop.send({sessionId,prompt:'执行页图续跑和核验状态同步测试。'}),{sessionId});

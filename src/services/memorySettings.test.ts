@@ -11,11 +11,6 @@ import {
   MOSS_RUNTIME_AUTO_MEMORY_SETTINGS_ENV,
 } from './autoMemorySettings.js'
 import {
-  getSessionMemorySettings,
-  MOSS_RUNTIME_SESSION_MEMORY_SETTINGS_ENV,
-  MOSS_SESSION_MEMORY_SETTINGS_ENV,
-} from './sessionMemorySettings.js'
-import {
   persistExtractionState,
   readPersistedExtractionState,
 } from './extractMemories/extractMemories.js'
@@ -25,10 +20,6 @@ const originalEnvironment = {
   [MOSS_AUTO_MEMORY_SETTINGS_ENV]: process.env[MOSS_AUTO_MEMORY_SETTINGS_ENV],
   [MOSS_RUNTIME_AUTO_MEMORY_SETTINGS_ENV]:
     process.env[MOSS_RUNTIME_AUTO_MEMORY_SETTINGS_ENV],
-  [MOSS_SESSION_MEMORY_SETTINGS_ENV]:
-    process.env[MOSS_SESSION_MEMORY_SETTINGS_ENV],
-  [MOSS_RUNTIME_SESSION_MEMORY_SETTINGS_ENV]:
-    process.env[MOSS_RUNTIME_SESSION_MEMORY_SETTINGS_ENV],
 }
 let tempRoot: string | undefined
 
@@ -51,10 +42,6 @@ describe('Moss memory settings', () => {
         extractionEnabled: true,
         dreamEnabled: true,
       }),
-      [MOSS_RUNTIME_SESSION_MEMORY_SETTINGS_ENV]: JSON.stringify({
-        enabled: false,
-        minimumMessageTokensToInit: 100,
-      }),
     }
 
     const runtimeSettings = runWithSessionIdContext(
@@ -62,34 +49,26 @@ describe('Moss memory settings', () => {
       null,
       () => ({
         auto: getAutoMemorySettings(),
-        session: getSessionMemorySettings(),
       }),
       undefined,
       runtimeEnvironment,
     )
     expect(runtimeSettings.auto.extractionEnabled).toBe(true)
     expect(runtimeSettings.auto.dreamEnabled).toBe(true)
-    expect(runtimeSettings.session.enabled).toBe(false)
-    expect(runtimeSettings.session.minimumMessageTokensToInit).toBe(100)
 
     process.env[MOSS_AUTO_MEMORY_SETTINGS_ENV] = JSON.stringify({
       dreamEnabled: false,
-    })
-    process.env[MOSS_SESSION_MEMORY_SETTINGS_ENV] = JSON.stringify({
-      enabled: true,
     })
     const enforced = runWithSessionIdContext(
       asSessionId('memory-settings-session'),
       null,
       () => ({
         auto: getAutoMemorySettings(),
-        session: getSessionMemorySettings(),
       }),
       undefined,
       runtimeEnvironment,
     )
     expect(enforced.auto.dreamEnabled).toBe(false)
-    expect(enforced.session.enabled).toBe(true)
   })
 
   test('persists automatic extraction cursor state across runtime lifetimes', async () => {

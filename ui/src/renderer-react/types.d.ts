@@ -792,16 +792,6 @@ export type DesktopSettings = {
   agentSettings?: {
     disabled?: string[];
   };
-  sessionMemory?: {
-    enabled?: boolean;
-    compactEnabled?: boolean;
-    minimumMessageTokensToInit?: number;
-    minimumTokensBetweenUpdate?: number;
-    toolCallsBetweenUpdates?: number;
-    compactMinTokens?: number;
-    compactMinTextBlockMessages?: number;
-    compactMaxTokens?: number;
-  };
   autoMemory?: {
     enabled?: boolean;
     extractionEnabled?: boolean;
@@ -894,6 +884,7 @@ export type DesktopSettings = {
   settingsLoaded: boolean;
   settingsParseError: string;
   appearancePersisted?: boolean;
+  settingsRevision?: number;
   skippedSessionCount?: number;
   coordinatorMode?: boolean;
 };
@@ -1763,6 +1754,7 @@ declare global {
         openFile: (filePath: string) => Promise<string>;
         openExternal: (url: string) => Promise<{ ok: boolean }>;
         showItemInFolder: (filePath: string) => Promise<{ ok: boolean }>;
+        saveFile: (payload: { sourcePath: string; defaultPath?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
       };
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;

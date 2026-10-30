@@ -320,5 +320,8 @@
     "tailwindcss": "^4.1.14",
     "typescript": "^5.9.3",
     "vite": "^7.1.10"
+  },
+  "patchedDependencies": {
+    "@aiden0z/pptx-renderer@1.3.0": "patches/@aiden0z%2Fpptx-renderer@1.3.0.patch"
   }
 }

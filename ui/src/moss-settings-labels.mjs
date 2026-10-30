@@ -17,8 +17,6 @@ const named = {
   'appearance.chatMessageSpacing':['消息间距','调整不同消息之间的留白。'],
   'appearance.toolDisplayMode':['工具过程展示','选择展开、收起或合并工具执行过程。'],
   'appWidgets.enabled':['桌面宠物与挂件','显示或隐藏 Moss 窗口中的悬浮挂件。'],
-  'sessionMemory.enabled':['会话摘要','允许模型按需保存会话摘要，方便查看和交接。'],
-  'sessionMemory.compactEnabled':['摘要辅助压缩','使用会话摘要辅助整理上下文。'],
   'autoMemory.enabled':['自动记忆','记住长期有用的信息与偏好。'],
   'autoMemory.extractionEnabled':['自动提取记忆','从对话中整理可长期保存的信息。'],
   'autoMemory.pastContextSearchEnabled':['检索历史对话','需要时查找过去的对话内容。'],
@@ -64,7 +62,7 @@ const named = {
   'logRotationMaxSize':['单个日志文件大小','达到此大小后切换新的日志文件，单位为字节。'],
   'logRotationMaxFiles':['日志文件保留数','保留多少个轮换日志文件。'],
 }
-const roots={appearance:'桌面外观',sessionMemory:'会话摘要',autoMemory:'自动记忆',toolLoading:'工具加载',advanced:'高级运行设置',models:'模型',permissions:'权限规则',sandbox:'运行隔离',hooks:'自动执行规则',mcp:'工具服务',agentMail:'Agent 消息',skillHub:'技能目录',expertHub:'助手目录',env:'环境变量'}
+const roots={appearance:'桌面外观',autoMemory:'自动记忆',toolLoading:'工具加载',advanced:'高级运行设置',models:'模型',permissions:'权限规则',sandbox:'运行隔离',hooks:'自动执行规则',mcp:'工具服务',agentMail:'Agent 消息',skillHub:'技能目录',expertHub:'助手目录',env:'环境变量'}
 export function settingPresentation(domain, field) {
   const key=field.key, definition=named[`${domain}.${key}`]||named[key]
   let group='其他设置'

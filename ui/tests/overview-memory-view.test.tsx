@@ -7,23 +7,22 @@ import {
   defaultSelection,
   GlobalList,
   GlobalMemorySourceTabs,
-  SessionList,
 } from '../src/renderer-react/components/memory-overview';
 import type { MemoryCatalog, MemoryGlobalEntry } from '../src/renderer-react/types';
 
 describe('overview memory navigation', () => {
-  test('keeps usage and all three memory scopes in one top tab bar when session summaries are enabled', () => {
+  test('keeps usage, resource monitoring, global and project memories without session summaries', () => {
     const html = renderToStaticMarkup(
-      <OverviewTabs activeTab="project" sessionSummaryEnabled onChange={() => {}} />,
+      <OverviewTabs activeTab="project" onChange={() => {}} />,
     );
 
     expect(html).toContain('aria-label="概览内容"');
     expect(html).toContain('>使用概览<');
     expect(html).toContain('>全局记忆<');
     expect(html).toContain('>项目记忆<');
-    expect(html).toContain('>会话摘要<');
+    expect(html).not.toContain('会话摘要');
     expect(html).toContain('>资源监控<');
-    expect(html.match(/role="tab"/g)).toHaveLength(5);
+    expect(html.match(/role="tab"/g)).toHaveLength(4);
     expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
     expect(html).toMatch(/aria-selected="true"[^>]*>.*项目记忆/s);
   });
@@ -188,11 +187,5 @@ describe('overview memory navigation', () => {
 
     expect(defaultSelection(catalog, 'global', 'remote')).toBeNull();
     expect(defaultSelection(catalog, 'project')).toBeNull();
-    expect(defaultSelection(catalog, 'session')).toBeNull();
-    const html = renderToStaticMarkup(
-      <SessionList sessions={catalog.sessions} selected="" onSelect={() => {}} />,
-    );
-    expect(html).toContain('disabled=""');
-    expect(html).toContain('超过大小限制');
   });
 });

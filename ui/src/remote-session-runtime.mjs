@@ -148,7 +148,6 @@ export function createRemoteRuntimeFactory({
               moss_tool_loading: getSettings().toolLoading,
             },
             autoMemory: getSettings().autoMemory,
-            sessionMemory: getSettings().sessionMemory,
             runtimeOptions,
           });
         }

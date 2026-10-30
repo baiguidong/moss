@@ -56,16 +56,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentSettings: {
     disabled: ['verification'],
   },
-  sessionMemory: {
-    enabled: false,
-    compactEnabled: false,
-    minimumMessageTokensToInit: 10000,
-    minimumTokensBetweenUpdate: 5000,
-    toolCallsBetweenUpdates: 3,
-    compactMinTokens: 10000,
-    compactMinTextBlockMessages: 5,
-    compactMaxTokens: 40000,
-  },
   autoMemory: {
     enabled: true,
     extractionEnabled: false,
@@ -477,66 +467,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
     result.coordinatorMode = DEFAULT_DESKTOP_SETTINGS.coordinatorMode;
   }
 
-  const sourceSessionMemory = source.sessionMemory && typeof source.sessionMemory === 'object' ? source.sessionMemory : {};
-  const existingSessionMemory = result.sessionMemory && typeof result.sessionMemory === 'object' ? result.sessionMemory : {};
   const normalizePositiveInt = (value, fallback, min = 1, max = 1_000_000) => {
     const parsed = Number.parseInt(String(value), 10);
     if (!Number.isFinite(parsed) || parsed < min) return fallback;
     return Math.min(parsed, max);
   };
-  result.sessionMemory = {
-    enabled:
-      sourceSessionMemory.enabled !== undefined
-        ? Boolean(sourceSessionMemory.enabled)
-        : existingSessionMemory.enabled !== undefined
-          ? Boolean(existingSessionMemory.enabled)
-          : DEFAULT_DESKTOP_SETTINGS.sessionMemory.enabled,
-    compactEnabled:
-      sourceSessionMemory.compactEnabled !== undefined
-        ? Boolean(sourceSessionMemory.compactEnabled)
-        : existingSessionMemory.compactEnabled !== undefined
-          ? Boolean(existingSessionMemory.compactEnabled)
-          : DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactEnabled,
-    minimumMessageTokensToInit: normalizePositiveInt(
-      sourceSessionMemory.minimumMessageTokensToInit ?? existingSessionMemory.minimumMessageTokensToInit,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.minimumMessageTokensToInit,
-      1,
-      1_000_000,
-    ),
-    minimumTokensBetweenUpdate: normalizePositiveInt(
-      sourceSessionMemory.minimumTokensBetweenUpdate ?? existingSessionMemory.minimumTokensBetweenUpdate,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.minimumTokensBetweenUpdate,
-      1,
-      1_000_000,
-    ),
-    toolCallsBetweenUpdates: normalizePositiveInt(
-      sourceSessionMemory.toolCallsBetweenUpdates ?? existingSessionMemory.toolCallsBetweenUpdates,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.toolCallsBetweenUpdates,
-      1,
-      10_000,
-    ),
-    compactMinTokens: normalizePositiveInt(
-      sourceSessionMemory.compactMinTokens ?? existingSessionMemory.compactMinTokens,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMinTokens,
-      1,
-      1_000_000,
-    ),
-    compactMinTextBlockMessages: normalizePositiveInt(
-      sourceSessionMemory.compactMinTextBlockMessages ?? existingSessionMemory.compactMinTextBlockMessages,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMinTextBlockMessages,
-      1,
-      10_000,
-    ),
-    compactMaxTokens: normalizePositiveInt(
-      sourceSessionMemory.compactMaxTokens ?? existingSessionMemory.compactMaxTokens,
-      DEFAULT_DESKTOP_SETTINGS.sessionMemory.compactMaxTokens,
-      1,
-      1_000_000,
-    ),
-  };
-  if (result.sessionMemory.compactMaxTokens < result.sessionMemory.compactMinTokens) {
-    result.sessionMemory.compactMaxTokens = result.sessionMemory.compactMinTokens;
-  }
+  // Retired session-summary settings must not return through an old snapshot.
+  delete result.sessionMemory;
 
   const sourceAutoMemory = source.autoMemory && typeof source.autoMemory === 'object' ? source.autoMemory : {};
   const existingAutoMemory = result.autoMemory && typeof result.autoMemory === 'object' ? result.autoMemory : {};
@@ -865,6 +802,7 @@ function loadDesktopSettings(settingsPath, log) {
       ...normalized,
       image: normalized.image || { ...DEFAULT_DESKTOP_SETTINGS.image },
     };
+    delete result.value.sessionMemory;
     deleteLegacyServerSettings(result.value);
     result.loaded = true;
     return result;
@@ -1013,6 +951,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete toSave.url;
   delete toSave.apiKey;
   delete toSave.image;
+  delete toSave.sessionMemory;
   // 删除 undefined 字段
   Object.keys(toSave).forEach(k => toSave[k] === undefined && delete toSave[k]);
   if (!Object.keys(env).length) {

@@ -707,16 +707,6 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
     "dreamMinHours": 24,
     "dreamMinSessions": 5
   },
-  "sessionMemory": {
-    "enabled": true,
-    "compactEnabled": true,
-    "minimumMessageTokensToInit": 10000,
-    "minimumTokensBetweenUpdate": 5000,
-    "toolCallsBetweenUpdates": 3,
-    "compactMinTokens": 10000,
-    "compactMinTextBlockMessages": 5,
-    "compactMaxTokens": 40000
-  },
   "runtimeOptions": {
     "appendSystemPrompt": "Additional session instructions",
     "webSearch": { "mode": "auto" },
@@ -731,7 +721,7 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 
 `autoMemory` 可选，作为该 session 的运行时配置持久化并传给 Docker backend；
 未传时继承运行环境中的 `MOSS_AUTO_MEMORY_SETTINGS`（JSON）。
-`sessionMemory` 同样可选，并可由 `MOSS_SESSION_MEMORY_SETTINGS`（JSON）进行全局覆盖。
+`sessionMemory` 仅保留旧客户端与历史记录的兼容性；会话摘要功能已移除，相关字段和环境变量不再启用摘要生成。
 所有 session 固定使用用户级共享 Memory，因此 `autoMemory.dreamEnabled` 可以直接
 跨同一用户的会话进行聚合。
 

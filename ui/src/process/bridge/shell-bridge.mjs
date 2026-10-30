@@ -1,7 +1,8 @@
 import { hostIpc as ipcMain } from '../../host/ipc.mjs';
 import electron from 'electron';
+import { savePreviewFile } from '../services/save-preview-file.mjs';
 
-const { shell } = electron;
+const { shell, dialog, BrowserWindow } = electron;
 
 export function registerShellIpcHandlers() {
   ipcMain.handle('shell.open-file', async (_event, filePath) => {
@@ -27,4 +28,9 @@ export function registerShellIpcHandlers() {
     shell.showItemInFolder(filePath);
     return { ok: true };
   });
+
+  ipcMain.handle('shell.save-file', (event, input) => savePreviewFile(input, options => {
+    const parent = event?.sender && BrowserWindow.fromWebContents(event.sender);
+    return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options);
+  }));
 }

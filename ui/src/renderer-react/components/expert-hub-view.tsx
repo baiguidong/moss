@@ -8,13 +8,12 @@ import {
   Download,
   Loader2,
   RefreshCw,
-  Search,
   UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ResourceHubSearch } from "@/components/resource-hub-search";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { InstalledResourceDetails } from "@/components/installed-resource-details";
 import { ResourceCardOpenButton } from "@/components/resource-card-open-button";
@@ -751,38 +750,39 @@ export function ExpertHubView() {
               {tab === "installed" ? `${visibleInstalledExperts.length} 个已安装` : `已加载 ${formatCount(displayedExperts.length)} 个`}
             </div>
           )}
-          <div className="relative ml-auto w-full sm:w-[300px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-8 rounded-lg pl-9 text-sm"
-              placeholder={tab === "installed" ? "搜索已安装专家" : "搜索专家名称或描述"}
-            />
-          </div>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            className="h-8 w-8 rounded-lg"
-            onClick={() => {
-              if (tab === "installed") {
-                void loadInstalled();
-              } else if (tab === "recommend") {
-                setFeaturedPage(1);
-                void loadCategories(true);
-                void loadScenes(true);
-                void loadFeatured(1, true);
-              } else {
-                setPage(1);
-                void loadCategories(true);
-                void loadRemote(1, true);
-              }
-            }}
-            disabled={tab === "installed" ? installedLoading : displayedLoading}
-            title="刷新"
-          >
-            <RefreshCw className={cn("h-4 w-4", (tab === "installed" ? installedLoading : displayedLoading) && "animate-spin")} />
-          </Button>
+          <ResourceHubSearch
+            value={query}
+            onChange={setQuery}
+            placeholder={tab === "installed" ? "搜索已安装专家" : "搜索专家名称或描述"}
+            label="搜索专家"
+            visible={!detail}
+            refresh={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="h-8 w-8 rounded-lg"
+                onClick={() => {
+                  if (tab === "installed") {
+                    void loadInstalled();
+                  } else if (tab === "recommend") {
+                    setFeaturedPage(1);
+                    void loadCategories(true);
+                    void loadScenes(true);
+                    void loadFeatured(1, true);
+                  } else {
+                    setPage(1);
+                    void loadCategories(true);
+                    void loadRemote(1, true);
+                  }
+                }}
+                disabled={tab === "installed" ? installedLoading : displayedLoading}
+                title="刷新"
+                aria-label="刷新专家"
+              >
+                <RefreshCw className={cn("h-4 w-4", (tab === "installed" ? installedLoading : displayedLoading) && "animate-spin")} />
+              </Button>
+            }
+          />
         </div>
       </div>
 

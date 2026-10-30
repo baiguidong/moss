@@ -812,6 +812,10 @@ const webSearchCapabilityStore = createWebSearchCapabilityStore({
 const localSettingsAuthConfig = desktopSettingsStore.authConfig;
 let desktopSettingsState = desktopSettingsStore.state;
 let desktopSettings = desktopSettingsStore.value;
+// WebUI requests are handled concurrently. A late get-settings response must
+// not overwrite a newer settings save, so every persisted snapshot gets a
+// process-local monotonic revision.
+let desktopSettingsRevision = 0;
 const computerUseService = createDesktopControlFeature({
   app, ipcMain, shell, powerMonitor, getMainWindow: () => mainWindow,
   getRuntime: () => appRuntime,
@@ -1073,6 +1077,7 @@ function getDesktopSettingsPayload(extra = {}) {
   );
   return {
     ...desktopSettingsStore.getPayload(extra),
+    settingsRevision: desktopSettingsRevision,
     webSearch: toPublicWebSearchSettings(
       desktopSettings.webSearch,
       capability,
@@ -2649,7 +2654,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
         moss_tool_loading: desktopSettings.toolLoading,
       }),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
-      MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify(desktopSettings.sessionMemory),
     },
     projectDir: sessionRecord?.id ? getLocalSessionEngineDir(sessionRecord.id) : undefined,
     taskScope: sessionRecord
@@ -2781,6 +2785,7 @@ function refreshDesktopSettings(payload = {}) {
   }
   if (Object.hasOwn(payload, 'appearance')) applyDockIcon(nextSettings.appearance?.dockIcon);
   saveDesktopSettings(nextSettings);
+  desktopSettingsRevision += 1;
   if (
     Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
     Object.prototype.hasOwnProperty.call(payload, 'remoteEnabled') ||
@@ -10189,6 +10194,12 @@ async function sendAgentPromptNow(event, {
   const sessionRecord = getSessionRecord(sessionId);
   const preparedAnnotation = visualizationAnnotation ? await prepareVisualizationAnnotation(visualizationAnnotation, {
     session: sessionRecord, resolveResourceFile: uri => resolveAppResourceFile(appRuntime, uri),
+    resolveArtifact: async (artifactId, revision) => {
+      const { resource, file } = await presentationService.load(sessionId, artifactId);
+      if (resource.revision !== revision) throw new Error('文件已更新，请重新查看后提交修改要求');
+      if (!file || resource.source.type !== 'file' || resource.source.remote) throw new Error('此文件不支持请求修改');
+      return { path: file.path };
+    },
   }) : null;
   if (preparedAnnotation) {
     if (sessionRecord.history.some(item => item.type === 'user' && item.visualizationAnnotation?.id === preparedAnnotation.annotation.id)) return { ok: true, sessionId };
