@@ -6,6 +6,7 @@ import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/
 import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
+import { createAppSessionStorage } from './apps/app-session-storage.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
 import { AppExecutionHost } from './apps/app-execution-host.mjs';
@@ -565,8 +566,19 @@ let claudeSessionCtorPromise = null;
 let claudeRuntimeModulePromise = null;
 let managedRuntimeInstallPromise = null;
 let appRuntime = null;
+const appSessionStorage = createAppSessionStorage({
+  getSession: id => sessions.get(id) || subAgentSessions.get(id),
+  getRuntime: () => appRuntime,
+  getSessions: () => [...sessions.values(), ...subAgentSessions.values()],
+  createSession: async (appId, title) => {
+    const record = createSessionRecord({ title, agentMode: 'local', appIds: [appId] });
+    await prepareAssistantContextForSessionStart(record);
+    emitToRenderer('app:open-session', { sessionId: record.id });
+    return record;
+  },
+});
 let builtinApps = null;
-const appArtifacts = createAppArtifactUrls({ web: isWebHost, webOwnerId: process.env.MOSS_WEB_OWNER_ID || 'owner',
+const appArtifacts = createAppArtifactUrls({ sessionStorage: appSessionStorage, web: isWebHost, webOwnerId: process.env.MOSS_WEB_OWNER_ID || 'owner',
   getWebResources: () => webResources });
 let appRuntimeRestorePending = false;
 let deferredUiVersions = new Map();
@@ -2615,6 +2627,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     } : undefined,
     appToolPolicy,
     addDirs: [...new Set([...getSessionAddDirs(sessionRecord), ...appSkills.directories])],
+    resourceReadDirs: appSkills.readDirectories || [],
     disabledAgentTypes: desktopSettings.agentSettings?.disabled || ['verification'],
     allowedTools: sessionRecord?.appTestRunId ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_ALLOWED_TOOLS : TEST_ALLOWED_TOOLS) : sessionRecord?.channelRuntimePolicy
       ? resolveAgentChannelToolSelectors(sessionRecord.channelRuntimePolicy, Object.keys(mcpServers))
@@ -7081,8 +7094,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   appRuntime = await createAppRuntime({
     deferRestore: true,
+    prepareAppInvocation: request => appSessionStorage.prepare(request),
+    pendingSessionScopes: (appId, instanceId) => appSessionStorage.pendingScopes(appId, instanceId),
     automaticStartAllowed: () => !webAutomationsPaused,
-    onCreated: (runtime) => { appRuntime = runtime; },
+    onCreated: (runtime) => { appRuntime = runtime; runtime.sessionStorage = appSessionStorage; },
     mossHome: MOSS_HOME,
     appsDir: APPS_DIR,
     nodeExecutable: managedNode.installed ? managedNode.path : process.execPath,
@@ -7122,6 +7137,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createSessionSourceProtocolDefinition(),
       createLocalFilesProtocolDefinition(),
       createAppArtifactProtocolDefinition(),
+      { protocol: 'moss.session-storage/v1', methods: { 'scopes.pending': { surfaces: ['backend'],
+        validateInput: input => { if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('Invalid session storage request'); return {} },
+        validateOutput: value => value,
+      } } },
       createRuntimesProtocolDefinition(),
       createMcpProtocolDefinition(),
       createAccountProtocolDefinition(),
@@ -7152,6 +7171,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ])),
       [TRACE_PROTOCOL]: { status: (_input, context) => appTraceHost.status(context) },
       ...createLocalAppHostHandlers({ dialog: appDialog, shell: appShell, BrowserWindow, getManagedRuntimeStatus, ensurePython: () => ensureManagedRuntimeOnUse('python'), ...(isWebHost ? { preview: async file => { const handle = await webResources.create({ root: path.dirname(file), entryPath: file, ownerId: process.env.MOSS_WEB_OWNER_ID || 'owner' }); if (!await webInteractions.request('link', { title: '打开 App 文件预览', url: (process.env.MOSS_WEB_ORIGIN ? new URL(handle.url, process.env.MOSS_WEB_ORIGIN).href : handle.url) })) throw new Error('文件预览已取消。'); } } : {}) }),
+      'moss.session-storage/v1': { 'scopes.pending': (_input, context) => appSessionStorage.pendingScopes(context.appId, context.instanceId) },
       'moss.artifacts/v1': { 'url.get': (input, context) => appArtifacts.url(input, context) },
       [MCP_PROTOCOL]: Object.fromEntries(MCP_METHODS.map(method => [method, (input, context) => appMcpHost.handle(method, input, context)])),
       [MOSS_CLOUD_STORAGE_PROTOCOL]: Object.fromEntries(CLOUD_STORAGE_HOST_METHODS.map(method => [
@@ -9034,6 +9054,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
           force: true,
         });
       }
+      const rewriteAppReferences = await appSessionStorage.forkSession(sourceSession.id, forked.id);
       const forkSessionId = randomUUID();
       const forkTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(
         normalizeSessionDirName(forked.id),
@@ -9044,17 +9065,19 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
         targetSessionId: forkSessionId,
         title,
       });
-      await fsp.writeFile(forkTranscriptPath, forkJsonl, { encoding: 'utf8', mode: 0o600 });
+      const scopedForkJsonl = forkJsonl.split('\n').map(line => line.trim() ? JSON.stringify(rewriteAppReferences(JSON.parse(line))) : line).join('\n');
+      await fsp.writeFile(forkTranscriptPath, scopedForkJsonl, { encoding: 'utf8', mode: 0o600 });
       forked.underlyingSessionId = forkSessionId;
       forked.historyLoadedFromSource = true;
       const history = await loadDisplayHistoryFromLocalTranscript(forked);
       return finalizeForkedSessionRecord(
         forked,
         sourceSession,
-        Array.isArray(history) ? history : structuredClone(sourceSession.history),
+        Array.isArray(history) ? history : rewriteAppReferences(structuredClone(sourceSession.history)),
       );
     } catch (error) {
       closeWorkspaceWatcher(forked);
+      await appSessionStorage.removeSessionFiles(forked.id);
       sessions.delete(forked.id);
       deletePersistedSession(forked.id);
       await fsp.rm(getLocalSessionDir(forked.id), { recursive: true, force: true });
@@ -9426,6 +9449,8 @@ async function removeSubAgentSessionRecords(parentSessionId) {
     .filter((record) => record.parentSessionId === parentSessionId);
   await Promise.all(children.map(async (record) => {
     record.deleted = true;
+    await appSessionStorage.closeSession(record.id);
+    await appSessionStorage.removeSessionFiles(record.id);
     if (record.persistTimer) {
       clearTimeout(record.persistTimer);
       record.persistTimer = null;
@@ -9486,6 +9511,8 @@ async function deleteSessionRecordById(sessionId, guard) {
   // Mark the record before aborting. Runtime abort completion runs asynchronous
   // cleanup that must not publish a final state for a session being deleted.
   sessionRecord.deleted = true;
+  try { await appSessionStorage.closeSession(sessionId); }
+  catch (error) { sessionRecord.deleted = false; throw error; }
   await computerUseService.disposeSession(sessionRecord.id);
   localTranscriptSync.forget(sessionRecord);
   try {
@@ -9541,6 +9568,7 @@ async function deleteSessionRecordById(sessionId, guard) {
     emitToRenderer('project:changed', { projectId: sessionRecord.projectId, reason: 'session-deleted' });
   }
   const removedSubAgentSessions = await removeSubAgentSessionRecords(sessionRecord.id);
+  await appSessionStorage.removeSessionFiles(sessionId);
   sessions.delete(sessionId);
   if (sessionRecord.projectId) void projectMemoryService.consider(sessionRecord.projectId).catch(() => {});
   deletePersistedSession(sessionId);

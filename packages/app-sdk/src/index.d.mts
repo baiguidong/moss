@@ -517,6 +517,7 @@ export interface AppManifestV2 {
     runtime: 'node'
     apiVersion: 1
     lifecycle: AppBackendLifecycle
+    storage?: 'app' | 'session'
     actions: AppActionManifest[]
     configuration?: { schema?: string; secrets?: string }
   }
@@ -562,7 +563,7 @@ export interface AppBackendContext {
 }
 
 export interface AppActionContext extends AppBackendContext {
-  readonly source?: Readonly<{ surface?: string; workspace?: string; callerAppId?: string; callerInstanceId?: string; protocol?: string; method?: string; traceId?: string }>
+  readonly source?: Readonly<{ surface?: string; workspace?: string; sessionId?: string; storage?: { sessionId: string; workspace: string; directory: string }; callerAppId?: string; callerInstanceId?: string; protocol?: string; method?: string; traceId?: string }>
   principal: AppOwner | null
   signal: AbortSignal
   requestId: string

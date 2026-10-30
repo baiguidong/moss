@@ -610,6 +610,7 @@ export class AppBackendClient {
           signal: controller.signal,
           requestId: payload.submissionId || message.id,
           source: Object.freeze({ surface: payload.source?.surface, workspace: payload.source?.workspace,
+            sessionId: payload.source?.sessionId, storage: payload.source?.storage,
             ...(payload.source?.surface === 'app' ? {
               callerAppId: payload.source.callerAppId,
               callerInstanceId: payload.source.callerInstanceId,

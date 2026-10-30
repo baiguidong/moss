@@ -40,6 +40,7 @@
     "apps:bundle": "node scripts/prepare-builtin-apps.mjs",
     "test:creation-apps": "node scripts/test-creation-apps.mjs",
     "test:creation-desktop": "node scripts/test-creation-desktop-cdp.mjs",
+    "test:session-creation": "node scripts/test-session-creation-cdp.mjs",
     "test:creation-exports": "node scripts/test-creation-exports.mjs",
     "test:office-preview": "node scripts/test-office-preview-cdp.mjs",
     "test:pdf-preview": "node scripts/test-pdf-preview.mjs",

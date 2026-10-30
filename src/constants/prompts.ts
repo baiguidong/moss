@@ -570,6 +570,7 @@ export async function computeSimpleEnvInfo(
     : null
 
   const cwd = getCwd()
+  additionalWorkingDirectories = additionalWorkingDirectories?.filter(directory => directory !== cwd)
   const isWorktree = getCurrentWorktreeSession() !== null
 
   const envItems = [

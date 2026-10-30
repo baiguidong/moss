@@ -9,7 +9,7 @@ import manifestSchema from './app-manifest.schema.json' with { type: 'json' }
 import { getAppCategoryMinimumHostVersion } from '../categories.mjs'
 
 export const APP_MANIFEST_SCHEMA = manifestSchema
-export const APP_HOST_API_VERSION = '3.22.0'
+export const APP_HOST_API_VERSION = '3.23.0'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false, removeAdditional: 'all' })
 const validateManifestSchema = ajv.compile(APP_MANIFEST_SCHEMA)
@@ -249,6 +249,7 @@ function normalizeBackend(backend) {
     runtime: 'node',
     apiVersion: 1,
     lifecycle: backend.lifecycle,
+    ...(backend.storage ? { storage: backend.storage } : {}),
     actions,
     ...(backend.configuration ? {
       configuration: {
@@ -391,6 +392,9 @@ export function validateAppManifest(rawManifest, options = {}) {
   }
   if (!semver.validRange(candidate.hostApi)) {
     throw new AppServiceError(APP_ERROR_CODES.invalidManifest, `Invalid hostApi range: ${candidate.hostApi}`)
+  }
+  if (candidate.backend?.storage === 'session' && !semver.subset(candidate.hostApi, '>=3.23.0')) {
+    throw new AppServiceError(APP_ERROR_CODES.invalidManifest, 'Session storage requires hostApi >=3.23.0')
   }
   const hostApiVersion = options.hostApiVersion || APP_HOST_API_VERSION
   if (!semver.satisfies(hostApiVersion, candidate.hostApi)) {

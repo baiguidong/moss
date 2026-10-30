@@ -174,6 +174,8 @@ export async function createAppRuntime(options) {
     automaticStartAllowed: options.automaticStartAllowed,
     getManifestMetadata: options.getManifestMetadata,
     prepareBackend: options.prepareBackend,
+    prepareAppInvocation: options.prepareAppInvocation,
+    pendingSessionScopes: options.pendingSessionScopes,
     shouldRestoreInstance: options.shouldRestoreInstance,
     rootDir: options.mossHome,
     beforeAppDeactivation: options.beforeAppDeactivation,

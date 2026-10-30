@@ -47,10 +47,17 @@ describe('App manifest V2', () => {
   })
 
   it('advertises Host API 3 and rejects unpublished older contracts', () => {
-    expect(APP_HOST_API_VERSION).toBe('3.22.0')
+    expect(APP_HOST_API_VERSION).toBe('3.23.0')
     expect(validateAppManifest(valid).hostApi).toBe('^3.0.0')
     expect(() => validateAppManifest({ ...valid, hostApi: '^2.9.0' })).toThrow(/Host API/)
-    expect(() => validateAppManifest({ ...valid, hostApi: '^3.23.0' })).toThrow(/Host API/)
+    expect(() => validateAppManifest({ ...valid, hostApi: '^3.24.0' })).toThrow(/Host API/)
+  })
+
+  it('requires session storage support and preserves its manifest declaration', () => {
+    const scoped = { ...valid, hostApi: '^3.23.0', backend: { entry: 'backend.mjs', runtime: 'node', apiVersion: 1, lifecycle: 'on-demand', storage: 'session', actions: [] } }
+    expect(validateAppManifest(scoped).backend?.storage).toBe('session')
+    expect(() => validateAppManifest({ ...scoped, hostApi: '^3.22.0' })).toThrow(/Session storage/)
+    expect(() => validateAppManifest(scoped, { hostApiVersion: '3.22.0' })).toThrow(/Host API/)
   })
 
   it('normalizes a UI-only manifest without inventing a Backend', () => {

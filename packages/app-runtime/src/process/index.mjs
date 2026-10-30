@@ -791,6 +791,7 @@ export class AppProcessSupervisor {
         input,
         submissionId: String(options.requestId || requestId),
         source: { surface: options.invocation?.surface, workspace: options.invocation?.workspace,
+          sessionId: options.invocation?.sessionId, storage: options.invocation?.storage,
           ...(options.invocation?.surface === 'app' ? {
             callerAppId: options.invocation.callerAppId,
             callerInstanceId: options.invocation.callerInstanceId,

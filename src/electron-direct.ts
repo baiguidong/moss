@@ -542,6 +542,8 @@ export interface ClaudeSessionOptions {
   resumeState?: PreparedSessionResume
   /** Desktop-provided MCP servers. These come from ~/.moss/settings.json. */
   mcpServers?: Record<string, McpServerConfig>
+  /** App resource roots granted to Read without adding writable working directories. */
+  resourceReadDirs?: string[]
   /** Additional directories to load .moss/agents and .moss/skills from for this embedded session. */
   addDirs?: string[]
   /** Agent types disabled from the Desktop Agents manager. */
@@ -592,6 +594,7 @@ type ResolvedClaudeSessionOptions = {
   projectDir?: string | null
   resumeState?: PreparedSessionResume
   mcpServers?: Record<string, McpServerConfig>
+  resourceReadDirs: string[]
   addDirs: string[]
   disabledAgentTypes: string[]
   allowedTools: string[] | null
@@ -909,6 +912,7 @@ export class ClaudeSession {
       projectDir: opts.projectDir ?? getProjectDir(cwd),
       resumeState: opts.resumeState,
       mcpServers: opts.mcpServers,
+      resourceReadDirs: Array.isArray(opts.resourceReadDirs) ? opts.resourceReadDirs.filter(Boolean) : [],
       addDirs: Array.isArray(opts.addDirs) ? opts.addDirs.filter(Boolean) : [],
       disabledAgentTypes: Array.isArray(opts.disabledAgentTypes)
         ? [...new Set(opts.disabledAgentTypes.filter(Boolean))]
@@ -1035,7 +1039,7 @@ export class ClaudeSession {
       ? 'bypassPermissions'
       : permissionMode
     const permissionInit = await initializeToolPermissionContext({
-      allowedToolsCli: [],
+      allowedToolsCli: this.#opts.resourceReadDirs.map(directory => `Read(/${directory}/**)`),
       disallowedToolsCli: [],
       permissionMode: normalizedPermissionMode,
       // The desktop selector may switch into bypass mode later. Managed

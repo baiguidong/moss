@@ -108,3 +108,9 @@ Host API 3.8 支持根级 `toolSelection: "app" | "services"`（缺省 `app`）�
 原生工具通过 `contributes.services: [{id, title, description?}]` 声明子服务，并在每个 `contributes.tools` 条目填写 `serviceId`。MCP 服务由 Host 根据 App、实例和持久化服务 ID 自动提供动态子项；不需要为每个服务修改 Manifest。两种来源可以共存。显式字段需要 `hostApi: "^3.8.0"` 和支持该字段的固定 SDK。
 
 `toolScope` 仍由整个 App 控制：session 只提供已选子服务；global + on-demand 按需发现且已选子服务常驻；global + always 的可用子服务全局常驻。子服务选择不改变权限或 Backend 生命周期。“全选”保存当前列表的快照；新增服务不自动被选择。MCP 改名保留 ID，删除重建产生新 ID。
+
+## 会话产物存储（Host API 3.23）
+
+创作 App 可声明 `backend.storage: "session"`，并要求 `hostApi: "^3.23.0"`。Host 在 Action 的 `context.source` 中提供可信的 `sessionId`、`workspace` 和 `storage: { sessionId, workspace, directory }`；输入 schema 不需要输出目录字段。原始 Backend `context.dataDir` 仍是 App 私有缓存目录。
+
+会话 App 需要实现内部 `session.close` Action，等待该会话的任务停止，并声明 `moss.session-storage/v1`。该协议的 `scopes.pending({})` 返回本 App 有待处理任务的有效会话存储目录，用于恢复。产物 URL 使用 `moss.artifacts/v1 url.get({sessionId, relativePath})`，路径相对于 Host 分配的会话 App 目录。完整边界与删除顺序见 [会话创作存储](../../docs/session-creation-storage.md)。

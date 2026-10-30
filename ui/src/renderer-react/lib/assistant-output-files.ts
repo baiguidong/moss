@@ -21,6 +21,17 @@ export type AssistantOutputFile = {
 
 export type OutputEvidence = { resources?: PresentationResource[]; turns?: TurnChangeSummary[] };
 
+// Session-owned App bookkeeping is observable filesystem activity, but is not
+// automatically a deliverable. Explicit presentation references still work.
+function isCreationBookkeeping(filePath: string): boolean {
+  const scoped = filePath.replace(/\\/g, '/').match(/(?:^|\/)artifacts\/moss\.(?:visualize|document|spreadsheets|presentations|templates|pdf)\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\/(.+)$/)?.[1];
+  if (!scoped) return false;
+  if (/^(?:\.moss-session\.json|workspace\.json)(?:\.[a-f0-9-]+(?:\.tmp)?)?$/.test(scoped)) return true;
+  if (/^jobs\/\.[^/]+\//.test(scoped)) return true;
+  const taskFile = scoped.match(/^(?:jobs|creation-review)\/[a-f0-9-]{36}\/(.+)$/)?.[1];
+  return !!taskFile && /^(?:task\.json|cancel|creation-source\.json|content-index\.json|comparison\.json|visual-review\.json|workflow\.json|office-preview\/render-state\.json)(?:\.[a-f0-9-]+(?:\.tmp)?)?$/.test(taskFile);
+}
+
 // File cards consume host evidence only. Tool names, inputs, text and Write/Edit
 // result contracts are deliberately not a fallback for file creation claims.
 export function collectAssistantOutputCandidates(messages: TranscriptRenderMessage[], evidence: OutputEvidence = {}): Map<string, OutputCandidate[]> {
@@ -40,6 +51,7 @@ export function collectAssistantOutputCandidates(messages: TranscriptRenderMessa
     const entries = candidates.get(turn.owner.id) || [];
     for (const file of observation.files) {
       if (file.verified !== true || !['added', 'modified'].includes(file.status || '')) continue;
+      if (isCreationBookkeeping(file.filePath)) continue;
       if (entries.some(entry => entry.target.path === file.filePath)) continue;
       entries.push({ turnId: observation.userMessageId, toolUseId: '', toolName: 'file-observation', operation: file.status === 'added' ? 'create' : 'update', target: { kind: 'local', path: file.filePath } });
     }

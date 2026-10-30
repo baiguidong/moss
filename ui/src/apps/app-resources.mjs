@@ -14,9 +14,13 @@ export async function resolveAppResourceFile(runtime, uri, session = null) {
     throw new Error('The resource App is not enabled in this session')
   }
   const instance = runtime.resolveContributionInstance(provider.appId)
-  const file = await runtime.invokeContribution('resourceProviders', provider.id, { uri })
+  const file = await runtime.invokeContribution('resourceProviders', provider.id, { uri }, { invocation: { surface: 'app', origin: 'resource', ...(session ? { sessionId: session.id, workspace: session.workspace } : {}) } })
   if (file?.kind !== 'file' || typeof file.path !== 'string' || !path.isAbsolute(file.path)) throw new Error('App resource did not return a local file')
-  const root = await fs.realpath(runtime.appDataPath(runtime.dataDir, provider.appId, 'instances', instance.id))
+  const pkg = await runtime.getActivePackage(provider.appId)
+  const sessionId = new URL(uri).searchParams.get('session') || session?.id
+  const root = pkg.manifest.backend?.storage === 'session'
+    ? (await runtime.sessionStorage.scope(provider.appId, instance.id, sessionId)).directory
+    : await fs.realpath(runtime.appDataPath(runtime.dataDir, provider.appId, 'instances', instance.id))
   const resolved = await fs.realpath(file.path), relative = path.relative(root, resolved)
   if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !(await fs.stat(resolved)).isFile()) throw new Error('App resource file is outside its data directory')
   return { ...file, path: resolved, appId: provider.appId }

@@ -15,7 +15,7 @@ export type AppHostCapabilityContext = {
   dataDir: string | null
   runtimeDir: string | null
   requestId: string
-  invocation?: { surface?: string; workspace?: string; callerAppId?: string; callerInstanceId?: string } | null
+  invocation?: { surface?: string; workspace?: string; sessionId?: string; storage?: { sessionId: string; workspace: string; directory: string }; callerAppId?: string; callerInstanceId?: string } | null
   protocol: string
   method: string
   permission: string | null

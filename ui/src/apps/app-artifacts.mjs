@@ -13,10 +13,10 @@ const minSignedUrlLifetimeMs = 12 * 3600_000
 export function createAppArtifactProtocolDefinition() {
   return { protocol: 'moss.artifacts/v1', methods: { 'url.get': { surfaces: ['backend'],
     validateInput(input) {
-      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'relativePath') || !relativeFile(input.relativePath)) {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['relativePath', 'sessionId'].includes(key)) || (input.sessionId !== undefined && (typeof input.sessionId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(input.sessionId))) || !relativeFile(input.relativePath)) {
         throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid App artifact path')
       }
-      return { relativePath: input.relativePath }
+      return { relativePath: input.relativePath, ...(input.sessionId ? { sessionId: input.sessionId } : {}) }
     },
     validateOutput(value) {
       if (!value || typeof value.url !== 'string' || !value.url) throw new AppServiceError(APP_ERROR_CODES.hostProtocol, 'Invalid App artifact URL')
@@ -25,7 +25,7 @@ export function createAppArtifactProtocolDefinition() {
   } } }
 }
 
-export function createAppArtifactUrls({ web = false, getWebResources = () => null,
+export function createAppArtifactUrls({ sessionStorage = null, web = false, getWebResources = () => null,
   webOwnerId = process.env.MOSS_WEB_OWNER_ID || 'owner', now = Date.now } = {}) {
   const desktopResources = web ? null : createWebResources({ env: {}, maxEntries: 2048, now })
   const cache = new Map()
@@ -114,7 +114,13 @@ export function createAppArtifactUrls({ web = false, getWebResources = () => nul
       if (closed) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App artifact service is closed')
       context.assertCurrent()
       if (!relativeFile(input.relativePath) || !context.dataDir) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'Invalid App artifact path')
-      const root = await fs.realpath(context.dataDir)
+      const storage = input.sessionId ? await sessionStorage?.scope(context.appId, context.instanceId, input.sessionId) : null
+      if (input.sessionId && !storage) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Session artifact scope is unavailable')
+      const root = await fs.realpath(storage?.directory || context.dataDir)
+      if (storage) {
+        const priorContext = context, assertAppCurrent = context.assertAppCurrent || context.assertCurrent
+        context = { ...context, assertAppCurrent: () => { assertAppCurrent.call(priorContext); sessionStorage.assertSession(storage.sessionId) } }
+      }
       const target = await fs.realpath(path.join(root, input.relativePath))
       const relative = path.relative(root, target)
       if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !(await fs.stat(target)).isFile()) {

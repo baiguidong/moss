@@ -127,6 +127,8 @@ export class AppRuntimeHost {
   constructor(options) {
     this.getManifestMetadata = options.getManifestMetadata
     this.prepareBackend = options.prepareBackend
+    this.prepareAppInvocation = options.prepareAppInvocation
+    this.pendingSessionScopes = options.pendingSessionScopes
     this.shouldRestoreInstance = options.shouldRestoreInstance
     this.automaticStartAllowed = options.automaticStartAllowed || (() => true)
     this.nativeAdapterHost = options.nativeAdapterHost
@@ -294,7 +296,7 @@ export class AppRuntimeHost {
           if (manifest.backend.lifecycle === 'persistent') eligible.add(installation.appId)
           else if (manifest.host?.protocols?.includes('moss.runtime/v1')) {
             for (const instance of enabledInstances) {
-              if (await hasQueuedTaskMarkers(this.appDataPath(this.dataDir, installation.appId, 'instances', instance.id))) { eligible.add(installation.appId); break }
+              if (await this.hasPendingTasks(installation.appId, instance.id, manifest)) { eligible.add(installation.appId); break }
             }
           }
         }
@@ -358,6 +360,11 @@ export class AppRuntimeHost {
       : path.join(root, 'owners', ownerStorageSegment(owner), appId, ...parts)
   }
 
+  async hasPendingTasks(appId, instanceId, manifest) {
+    if (manifest.backend?.storage === 'session') return Boolean((await this.pendingSessionScopes?.(appId, instanceId))?.length)
+    return hasQueuedTaskMarkers(this.appDataPath(this.dataDir, appId, 'instances', instanceId))
+  }
+
   async canRecoverPendingRuntime(definition) {
     return this.withOwner(definition.owner, async () => {
       if (!this.automaticStartAllowed() || definition.lifecycle !== 'on-demand'
@@ -377,7 +384,7 @@ export class AppRuntimeHost {
           && registered?.installationIncarnationId === definition.installationIncarnationId
           && registered?.instanceIncarnationId === definition.instanceIncarnationId
       }
-      return Boolean(isCurrent() && await hasQueuedTaskMarkers(definition.dataDir) && isCurrent())
+      return Boolean(isCurrent() && await this.hasPendingTasks(definition.appId, definition.instanceId, (await this.getActivePackage(definition.appId)).manifest) && isCurrent())
     })
   }
 
@@ -1019,6 +1026,10 @@ export class AppRuntimeHost {
     if (!this.runtimeForInstance(appId, instanceId)) await this.reconcileApp(appId)
     const runtimeRecord = this.runtimeForInstance(appId, instanceId)
     if (!runtimeRecord) throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, 'App instance runtime is unavailable')
+    if (this.prepareAppInvocation) {
+      const prepared = await this.prepareAppInvocation({ appId, instanceId, actionName, input, options, manifest: (await this.getActivePackage(appId)).manifest })
+      input = prepared.input; options = prepared.options
+    }
     const authorizeDispatch = options.authorizeDispatch
     return this.actions.invoke(runtimeRecord, actionName, input, {
       ...options,
@@ -1374,7 +1385,7 @@ export class AppRuntimeHost {
     // A queued engine task must be reconciled even when no App surface is open.
     const shouldRecoverPending = backend.lifecycle === 'on-demand'
       && packageInfo.manifest.host?.protocols?.includes('moss.runtime/v1')
-      && await hasQueuedTaskMarkers(this.appDataPath(this.dataDir, instance.appId, 'instances', instance.id))
+      && await this.hasPendingTasks(instance.appId, instance.id, packageInfo.manifest)
     if (shouldRun || shouldRecoverPending) {
       await this.prepareRuntime(runtimeRecord)
       await this.supervisor.start(runtimeRecord.key)

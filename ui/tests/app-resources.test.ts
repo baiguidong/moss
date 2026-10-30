@@ -13,7 +13,7 @@ test('App resource resolution validates provider availability and app-owned file
     const file = join(data, 'note.md'), external = join(root, 'private.md'); await writeFile(file, 'note'); await writeFile(external, 'external');
     let result = { kind: 'file', path: file };
     let providers = [{ id: 'notes/provider', appId: 'notes', schemes: ['example-notes'] }];
-    const runtime = { dataDir: data, appDataPath: () => data, listContributions: async () => ({ resourceProviders: providers }), resolveContributionInstance: () => ({ id: 'default' }), invokeContribution: async () => result };
+    const runtime = { getActivePackage: async () => ({ manifest: {} }), dataDir: data, appDataPath: () => data, listContributions: async () => ({ resourceProviders: providers }), resolveContributionInstance: () => ({ id: 'default' }), invokeContribution: async () => result };
     const uri = 'example-notes://document/123';
     expect((await resolveAppResourceFile(runtime, uri)).path).toContain('note.md');
     result = { kind: 'file', path: external }; await expect(resolveAppResourceFile(runtime, uri)).rejects.toThrow('outside');

@@ -25,6 +25,16 @@ test('Write, Bash and Python files use the same verified observation source', as
   expect(html.match(/aria-label="文件：/g)).toHaveLength(3);
 });
 
+test('session App bookkeeping does not become automatic output cards; deliverables and ordinary same-named files remain', async () => {
+  const id = '6e5eb842-6bbb-4ea3-9c77-7ba203410ab0';
+  const root = `/workspace/artifacts/moss.spreadsheets/${id}`;
+  const pdf = `/workspace/artifacts/moss.pdf/${id}`;
+  const kept = [`${root}/jobs/${id}/budget.xlsx`, `${root}/jobs/${id}/data.json`, `${root}/jobs/${id}/office-preview/pages.pdf`, '/workspace/task.json', '/workspace/content-index.json'];
+  const internal = [`${root}/.moss-session.json`, `${root}/jobs/.created/000123-${id}`, `${root}/jobs/${id}/task.json`, `${root}/jobs/${id}/task.json.${id}.tmp`, `${root}/jobs/${id}/office-preview/render-state.json`, `${pdf}/workspace.json`, `${pdf}/creation-review/${id}/content-index.json`, `${pdf}/creation-review/${id}/workflow.json`];
+  const files = (await resolve(history(), acceptFiles, [observation([...kept, ...internal])])).get('final')!;
+  expect(files.map(file => file.path)).toEqual(kept);
+});
+
 test('old structured Write/Edit results, prose, attachments and tool input never create cards', () => {
   for (const name of ['Write', 'Edit', 'Bash', 'moss_present']) {
     const messages: TranscriptRenderMessage[] = [user,

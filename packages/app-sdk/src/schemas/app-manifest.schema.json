@@ -814,6 +814,7 @@
         "apiVersion": {
           "const": 1
         },
+        "storage": { "enum": ["app", "session"] },
         "lifecycle": {
           "enum": [
             "on-demand",
