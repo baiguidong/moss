@@ -147,14 +147,14 @@ export async function requestEnterpriseAuthentication({
     ? authCenterUrl.trim().replace(/\/+$/, '')
     : '';
   if (!normalizedAuthCenterUrl) {
-    throw new Error('Moss server URL is required.');
+    throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
   }
 
   let payload;
   if (credentialMode === 'api-key') {
     const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
     if (!normalizedApiKey) {
-      throw new Error('API Key is required for moss server API-key login.');
+      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
     }
     payload = {
       grant_type: 'api_key',
@@ -165,10 +165,10 @@ export async function requestEnterpriseAuthentication({
       ? loginIdentifier.trim()
       : '';
     if (!normalizedLoginIdentifier) {
-      throw new Error('Username or email is required for moss server password login.');
+      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
     }
     if (typeof password !== 'string' || !password) {
-      throw new Error('User password is required for moss server password login.');
+      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
     }
     payload = {
       grant_type: 'password',
@@ -233,7 +233,7 @@ export async function resolveEnterpriseAccountConnection(settings, options = {})
   const raw = enterpriseAccount.serverUrl;
 
   if (!raw) {
-    throw new Error('Remote Direct server URL is required.');
+    throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
   }
 
   const parsed = parseRemoteDirectServerInput(raw);

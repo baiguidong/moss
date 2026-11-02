@@ -2926,6 +2926,9 @@ export default function App() {
             serverAuthState={serverAuthState}
             serverAuthError={serverAuthError}
             onLoginServer={handleServerLogin}
+            onCloudLoginRequired={resume => serverAuthentication.open(desktopSettings?.enterpriseAccountServerUrl || '', {
+              afterLogin: resume, notice: '请先登录 Moss 账号，登录后将继续连接我的云电脑。',
+            })}
             onLogoutServer={handleServerLogout}
             onChangeView={(view) => {
               if (view === 'settings') { setSettingsInitialSection('basic-info'); setSettingsInitialAppId(null); }

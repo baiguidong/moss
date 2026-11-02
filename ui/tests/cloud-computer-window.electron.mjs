@@ -14,11 +14,13 @@ const timeout = setTimeout(() => { console.error('Cloud window test timed out');
 const handlers = new Map();
 const register = ipcMain.handle.bind(ipcMain);
 const bridge = { handle(name, handler) { handlers.set(name, handler); register(name, handler); } };
-let token = 'alice', pendingLogin, finishLogin;
+let token = 'alice', pendingLogin, finishLogin, connectionFailure;
+let identityStatus = 200, loginStatus = 200;
 const server = http.createServer((req, res) => {
   const user = req.headers.authorization?.replace('Bearer ', '');
-  if (req.url === '/api/v1/auth/me') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ user: { id: user }, organization: { id: 'org' } })); return; }
+  if (req.url === '/api/v1/auth/me') { res.statusCode = identityStatus; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ user: { id: user }, organization: { id: 'org' } })); return; }
   if (req.url === '/api/desktop/login') {
+    if (loginStatus !== 200) { res.writeHead(loginStatus, { 'Content-Type': 'application/json' }); res.end('{"error":"云电脑访问受限"}'); return; }
     const send = () => { res.setHeader('Set-Cookie', `cloud=${user}; Path=/; HttpOnly; SameSite=Strict`); res.end('{"ok":true}'); };
     if (pendingLogin) { finishLogin = send; pendingLogin(); } else send();
     return;
@@ -37,12 +39,30 @@ try {
   let appearance = { themeMode: 'light' };
   const controller = createCloudComputerWindow({ WebContentsView, ipcMain: bridge, session,
     shell: { openExternal: url => external.push(url) }, getLocalWindow: () => local,
-    resolveConnection: () => ({ serverUrl: origin, authToken: token }),
+    resolveConnection: () => { if (connectionFailure) throw connectionFailure; return { serverUrl: origin, authToken: token }; },
     getAppearance: () => appearance, updateAppearance: value => { appearance = value; },
     certificateVerifyProc: (_request, callback) => callback(-3),
     preload: fileURLToPath(new URL('../src/cloud-computer-preload.cjs', import.meta.url)), appVersion: 'test' });
   const open = () => handlers.get('desktop:open-cloud')({ sender: local.webContents, senderFrame: local.webContents.mainFrame });
   const cloud = () => local.contentView.children.find(view => view.webContents && view.webContents !== local.webContents);
+  for (const failure of [Object.assign(new Error('Missing login'), { code: 'MOSS_LOGIN_REQUIRED' }), Object.assign(new Error('Expired login'), { status: 401 })]) {
+    connectionFailure = failure;
+    assert.deepEqual(await open(), { ok: false, reason: 'authentication-required' });
+    assert.equal(cloud(), undefined);
+  }
+  connectionFailure = null;
+  identityStatus = 401;
+  assert.deepEqual(await open(), { ok: false, reason: 'authentication-required' });
+  identityStatus = 403;
+  await assert.rejects(open(), /无权访问/);
+  identityStatus = 503;
+  await assert.rejects(open(), /无法验证/);
+  identityStatus = 200; loginStatus = 401;
+  assert.deepEqual(await open(), { ok: false, reason: 'authentication-required' });
+  loginStatus = 403;
+  await assert.rejects(open(), /访问受限/);
+  assert.equal(cloud(), undefined);
+  loginStatus = 200;
   await open();
   assert.match(await cloud().webContents.executeJavaScript('document.body.innerText'), /cloud=alice/);
   assert.deepEqual(await cloud().webContents.executeJavaScript('({local:!!window.agentDesktop,node:typeof require,shell:Object.keys(window.mossDesktopShell),cookie:document.cookie})'),

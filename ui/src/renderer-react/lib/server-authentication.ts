@@ -15,19 +15,28 @@ export function useServerAuthentication(onAuthenticated: (settings: DesktopSetti
   const [error, setError] = React.useState('');
   const [visible, setVisible] = React.useState(false);
   const [serverUrl, setServerUrl] = React.useState('');
+  const [notice, setNotice] = React.useState('');
+  const continuation = React.useRef<(() => void) | undefined>(undefined);
   const attempt = React.useRef(0);
   const busy = React.useRef(false);
-  const open = (url = '') => {
-    setVisible(true);
-    if (!busy.current) { setServerUrl(url.trim()); setError(''); setState('idle'); }
+  const open = (url = '', options: { afterLogin?: () => void; notice?: string } = {}) => {
+    continuation.current = options.afterLogin;
+    setNotice(options.notice || '');
+    if (busy.current) return;
+    setServerUrl(url.trim()); setError(''); setState('idle');
+    if (url.trim()) {
+      setVisible(false);
+      void authenticate(url, { showProgress: false });
+    } else setVisible(true);
   };
-  const authenticate = async (url: string) => {
-    setVisible(true);
+  const authenticate = async (url: string, { showProgress = true } = {}) => {
+    if (showProgress) setVisible(true);
     if (busy.current) return;
     const id = ++attempt.current;
     setServerUrl(url.trim()); setError('');
     if (!url.trim()) { setState('idle'); setError('请先填写 Moss Server 地址。'); return; }
     busy.current = true; setState('loading');
+    let afterLogin: (() => void) | undefined;
     try {
       // Accept an IP/domain directly in the login page; never downgrade remote TLS.
       const address = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
@@ -36,15 +45,18 @@ export function useServerAuthentication(onAuthenticated: (settings: DesktopSetti
       const settings = await window.agentDesktop.authenticateRemoteServer({ serverUrl: parsed.origin });
       if (attempt.current !== id) return;
       onAuthenticated(settings); setState('success'); setVisible(false);
+      afterLogin = continuation.current; continuation.current = undefined;
     } catch (cause) {
       if (attempt.current !== id) return;
       setState('idle');
       const message = serverAuthenticationError(cause);
-      if (message === '认证已取消。') setVisible(false);
+      if (message === '认证已取消。') { continuation.current = undefined; setVisible(false); }
       else { setError(message); setVisible(true); }
     } finally { if (attempt.current === id) busy.current = false; }
+    afterLogin?.();
   };
   const cancel = async () => {
+    continuation.current = undefined;
     if (!busy.current) { setVisible(false); return; }
     // Do not let a late callback from this attempt overwrite a subsequent login.
     const id = ++attempt.current;
@@ -55,9 +67,9 @@ export function useServerAuthentication(onAuthenticated: (settings: DesktopSetti
       if (attempt.current === id) { setState('idle'); setError(serverAuthenticationError(cause)); setVisible(true); }
     } finally { if (attempt.current === id) busy.current = false; }
   };
-  return { state, error, visible, serverUrl, open, authenticate, cancel,
+  return { state, error, visible, serverUrl, notice, open, authenticate, cancel,
     setServerUrl: (value: string) => { if (!busy.current) { setServerUrl(value); setError(''); } },
-    dismiss: () => setVisible(false), reset: () => { if (!busy.current) { setState('idle'); setError(''); } },
+    dismiss: () => { continuation.current = undefined; setVisible(false); }, reset: () => { if (!busy.current) { setState('idle'); setError(''); } },
   };
 }
 

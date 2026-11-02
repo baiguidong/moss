@@ -2,8 +2,9 @@ import * as React from 'react';
 import { Cloud, Laptop, LoaderCircle, Check } from 'lucide-react';
 import { Button } from './ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { serverAuthenticationError } from '@/lib/server-authentication';
 
-export function WorkComputerSelector() {
+export function WorkComputerSelector({ onLoginRequired }: { onLoginRequired?: (resume: () => void) => void }) {
   const web = Boolean(typeof window !== 'undefined' && window.mossWeb);
   const shell = (typeof window !== 'undefined' ? (window as any).mossDesktopShell : undefined) as { returnToLocal: () => Promise<void> } | undefined;
   const [pending, setPending] = React.useState(false);
@@ -13,9 +14,17 @@ export function WorkComputerSelector() {
   const select = async (cloud: boolean) => {
     setPending(true); setError('');
     try {
-      if (cloud && !web) await window.agentDesktop.ipcInvoke('desktop:open-cloud');
+      if (cloud && !web) {
+        const result = await window.agentDesktop.ipcInvoke('desktop:open-cloud');
+        if (result?.reason === 'authentication-required') {
+          setOpen(false);
+          if (onLoginRequired) onLoginRequired(() => { void select(true); });
+          else { setError('请先登录 Moss 账号，再连接我的云电脑。'); setOpen(true); }
+          return;
+        }
+      }
       if (!cloud && web) await shell?.returnToLocal();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setOpen(true); }
+    } catch (cause) { setError(serverAuthenticationError(cause)); setOpen(true); }
     finally { setPending(false); }
   };
   return <div className="relative shrink-0">

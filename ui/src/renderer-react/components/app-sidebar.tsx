@@ -150,6 +150,7 @@ interface AppSidebarProps {
   serverAuthState?: 'idle' | 'loading' | 'success';
   serverAuthError?: string;
   onLoginServer?: () => void | Promise<void>;
+  onCloudLoginRequired?: (resume: () => void) => void;
   onLogoutServer?: () => void | Promise<void>;
 }
 
@@ -337,6 +338,7 @@ export function AppSidebar({
   serverAuthState = 'idle',
   serverAuthError = '',
   onLoginServer,
+  onCloudLoginRequired,
   onLogoutServer,
 }: AppSidebarProps) {
   const [isSearchOpen, setIsSearchOpen] = React.useState(Boolean(searchQuery));
@@ -445,7 +447,7 @@ export function AppSidebar({
               </div>
             </div>
           <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
-            <WorkComputerSelector />
+            <WorkComputerSelector onLoginRequired={onCloudLoginRequired} />
             {headerActions}
             <Button
               variant="ghost"

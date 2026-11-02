@@ -19,6 +19,7 @@ import {
   parseRemoteDirectServerInput,
   requestEnterpriseAuthentication,
   requestEnterpriseAccessToken,
+  resolveEnterpriseAccountConnection,
   uploadRemoteDirectWorkspaceData,
   uploadRemoteProfileSkills,
   writeRemoteDirectWorkspaceFile,
@@ -28,6 +29,20 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe('enterprise login requirements', () => {
+  it('reports missing server or credentials as a login requirement before making requests', async () => {
+    const fetchImpl = async () => { throw new Error('Unexpected network request'); };
+    for (const settings of [
+      {},
+      { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'api-key' },
+      { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'password' },
+      { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'password', enterpriseAccountUserEmail: 'alice@example.com' },
+    ]) {
+      await expect(resolveEnterpriseAccountConnection(settings, { fetchImpl })).rejects.toMatchObject({ code: 'MOSS_LOGIN_REQUIRED' });
+    }
+  });
 });
 
 describe('cloud usage', () => {

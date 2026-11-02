@@ -16,7 +16,7 @@ export function ServerLoginDialog({ authentication }: { authentication: ServerAu
     className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-2xl backdrop:bg-black/40">
     <form onSubmit={event => { event.preventDefault(); if (!busy) void authentication.authenticate(authentication.serverUrl); }}>
     <h2 id="server-login-title" className="text-base font-semibold">登录 Moss Server</h2>
-    <p className="mt-2 text-sm text-muted-foreground">输入你的服务器地址，继续登录账号。</p>
+    <p className="mt-2 text-sm text-muted-foreground">{authentication.notice || '输入你的服务器地址，继续登录账号。'}</p>
     <label htmlFor="server-login-address" className="mb-2 mt-4 block text-sm font-medium">服务器 IP 或域名</label>
     <Input id="server-login-address" autoFocus autoComplete="url" spellCheck={false} disabled={busy}
       placeholder="例如 10.0.1.181 或 https://moss.example.com" value={authentication.serverUrl}

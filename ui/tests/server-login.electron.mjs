@@ -62,7 +62,51 @@ try {
   await until('loginEvidence.calls === 4');
   await evaluate("loginEvidence.resolve({ enterpriseAccountServerUrl: 'https://moss.example.test', enterpriseAccountApiKey: 'test', enterpriseAccountUserName: 'Test User' })");
   await until("!document.querySelector('dialog[open]') && document.querySelector('[data-auth-state]').textContent === 'success'");
-  console.log('PASS: unconfigured personal center and settings open a login page with an editable address, then show progress, visible errors, retry, cancel, and success');
+  const chooseCloud = async () => {
+    await evaluate("document.querySelector('[aria-label=\"选择工作电脑\"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))");
+    await until("[...document.querySelectorAll('[role=menuitem]')].some(item => item.textContent.trim() === '我的云电脑')");
+    await click('我的云电脑');
+  };
+  // Without an address, cloud switching opens the shared address page.
+  await evaluate("loginEvidence.configure(''); loginEvidence.cloudRequiresLogin = true");
+  await chooseCloud();
+  await until("document.querySelector('dialog[open]')?.textContent.includes('登录后将继续连接我的云电脑')");
+  assert.equal(await evaluate('loginEvidence.calls'), 4);
+  assert.equal(await evaluate('loginEvidence.cloudCalls'), 1);
+  assert.equal(await evaluate("document.querySelector('#server-login-address').value"), '');
+  await click('关闭');
+  // A subsequent personal login must not resume a cancelled cloud switch.
+  await evaluate("loginEvidence.configure('https://moss.example.test')");
+  await evaluate("document.querySelector('[aria-label=\"个人中心\"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))");
+  await until("[...document.querySelectorAll('[role=menuitem]')].some(item => item.textContent.trim() === '登录 Moss Server')");
+  await click('登录 Moss Server');
+  await until('loginEvidence.calls === 5');
+  assert.equal(await evaluate("!!document.querySelector('dialog[open]')"), false);
+  await evaluate("loginEvidence.resolve({ enterpriseAccountServerUrl: 'https://moss.example.test', enterpriseAccountUserName: 'Test User' })");
+  await until("document.querySelector('[data-auth-state]').textContent === 'success'");
+  assert.equal(await evaluate('loginEvidence.cloudCalls'), 1);
+  // Expired credentials with a configured address skip configuration and resume
+  // exactly once after login succeeds.
+  await evaluate('loginEvidence.cloudRequiresLogin = true');
+  await chooseCloud();
+  await until('loginEvidence.calls === 6');
+  assert.equal(await evaluate("!!document.querySelector('dialog[open]')"), false);
+  assert.equal(await evaluate('loginEvidence.cloudCalls'), 2);
+  await evaluate("loginEvidence.resolve({ enterpriseAccountServerUrl: 'https://moss.example.test', enterpriseAccountUserName: 'Test User' })");
+  await until('loginEvidence.cloudCalls === 3');
+  // Settings uses the same shortcut when the address is already saved.
+  await click('重新认证');
+  await until('loginEvidence.calls === 7');
+  assert.equal(await evaluate("!!document.querySelector('dialog[open]')"), false);
+  await click('取消');
+  await until("document.querySelector('[data-auth-state]').textContent === 'idle'");
+  // Connection failures remain connection errors, rather than triggering login.
+  await evaluate("loginEvidence.cloudFailure = \"Error invoking remote method 'desktop:open-cloud': Error: net::ERR_CONNECTION_REFUSED\"");
+  await chooseCloud();
+  await until("[...document.querySelectorAll('[role=alert]')].some(item => item.textContent.includes('无法连接 Moss Server'))");
+  assert.equal(await evaluate('loginEvidence.calls'), 7);
+  assert.equal(await evaluate("document.body.textContent.includes('Error invoking remote method')"), false);
+  console.log('PASS: missing/expired login opens the shared flow, configured addresses skip configuration, login resumes cloud switching, cancellation clears the action, and network errors stay readable');
 } catch (error) { console.error(error); process.exitCode = 1; }
 finally { clearTimeout(timeout); window?.destroy(); await server?.close(); await rm(temp, { recursive: true, force: true }); app.exit(process.exitCode || 0); }
 }

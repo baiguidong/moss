@@ -77,7 +77,7 @@ export function createCloudComputerWindow({ WebContentsView, session, shell, ipc
     const partition = session.fromPartition(`moss-cloud-identity-${randomUUID()}`);
     partition.setCertificateVerifyProc(certificateVerifyProc);
     const response = await partition.fetch(`${origin}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error('请先登录 Moss 账号。');
+    if (!response.ok) throw Object.assign(new Error(response.status === 403 ? '当前账号无权访问云电脑，请联系管理员。' : '无法验证云电脑账号，请稍后重试。'), { status: response.status });
     return response.json();
   }
   async function open() {
@@ -99,7 +99,7 @@ export function createCloudComputerWindow({ WebContentsView, session, shell, ipc
       method: 'POST', credentials: 'include', headers: { Origin: origin, Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
       body: '{}', redirect: 'error', signal: AbortSignal.timeout(330_000),
     });
-    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || '云电脑连接失败，请检查统一入口和账号。'); }
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw Object.assign(new Error(body.error || '云电脑连接失败，请检查统一入口和账号。'), { status: response.status }); }
     const authenticated = await response.json();
     if (current !== generation) { await partition.clearStorageData(); throw new Error('账号已变更，请重新连接。'); }
     if (!authenticated.ok) throw new Error('云电脑连接未完成。');
@@ -140,7 +140,12 @@ export function createCloudComputerWindow({ WebContentsView, session, shell, ipc
   }
   ipcMain.handle('desktop:open-cloud', event => {
     if (event.sender !== getLocalWindow()?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('Forbidden');
-    return opening ||= open().finally(() => { opening = null; });
+    return opening ||= open().catch(error => {
+      // Electron only serializes thrown messages. Return a stable result for
+      // expected account states so the renderer can open the login flow.
+      if (error.code === 'MOSS_LOGIN_REQUIRED' || error.status === 401) return { ok: false, reason: 'authentication-required' };
+      throw error;
+    }).finally(() => { opening = null; });
   });
   return { syncAppearance, close: () => { generation++; dispose(); clearing = cloudPartition?.clearStorageData() || Promise.resolve(); } };
 }
