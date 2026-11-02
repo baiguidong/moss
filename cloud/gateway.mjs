@@ -91,6 +91,13 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     for (const [state, entry] of oauthCallbacks) if (entry.expiresAt < Date.now()) oauthCallbacks.delete(state);
     for (const [ip, attempts] of loginAttempts) if (attempts.until < Date.now()) loginAttempts.delete(ip);
   }, 10000); cleanup.unref();
+  async function checkHostAccess(token, row) {
+    if (!authBase) return;
+    const response = await fetch(`${authBase}/api/v1/hosts`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw Object.assign(new Error('无法验证云电脑访问权限'), { status: response.status });
+    const host = (await response.json()).hosts?.find(host => host.id === row.id);
+    if (host?.access?.allowed === false) throw Object.assign(new Error(host.access.reason || '云电脑已停用'), { status: 403 });
+  }
   async function authenticated(req) {
     store.assertLease();
     const id = getCookie(req), session = sessions.get(id);
@@ -98,12 +105,13 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     const row = store.get(session.environmentId);
     if (!row) { removeSession(id); return null; }
     if (session.checkedAt + 30000 < Date.now()) {
-      try { const identity = await authRequest(authBase, '/api/v1/auth/me', null, session.accessToken); if (!sameIdentity(identity, row)) throw new Error('Identity changed'); session.account = publicAccount(identity); session.checkedAt = Date.now(); }
+      try { const identity = await authRequest(authBase, '/api/v1/auth/me', null, session.accessToken); if (!sameIdentity(identity, row)) throw new Error('Identity changed'); await checkHostAccess(session.accessToken, row); session.account = publicAccount(identity); session.checkedAt = Date.now(); }
       catch (error) { if (error.status === 401 || error.status === 403) { removeSession(id); return null; } }
     }
     return { id, session, row };
   }
   async function grant(session, row) {
+    await checkHostAccess(session.accessToken, row);
     if (row.generation) await computers.control(row, 'generation', { generation: row.generation });
     session.hostCookie = (await computers.control(row, 'login', { accessToken: session.accessToken })).cookie;
     session.hostGeneration = row.generation || 0;
@@ -153,7 +161,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         const row = store.get(String(req.headers['x-moss-environment'] || ''));
         if (!row || !timingSafeEqual(hash(row.controlToken), hash(req.headers['x-moss-host-token']))) return json(res, 403, { error: 'Forbidden' });
         const endpoint = url.pathname.slice('/_moss-auth'.length);
-        if (req.method === 'GET' && endpoint === '/web-config') return json(res, 200, { previewDomain: env.MOSS_WEB_PREVIEW_DOMAIN || null });
+        if (req.method === 'GET' && endpoint === '/web-config') return json(res, 200, { previewDomain: env.MOSS_WEB_PREVIEW_DOMAIN || null, origin });
         if (req.method === 'POST' && endpoint === '/ports/register') {
           const { token, expiresAt } = await readJson(req);
           if (!previewDomain || !/^[a-f0-9]{48}$/.test(token) || !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 25 * 3600_000 || portRoutes.has(token) || portRoutes.size >= 1000) return json(res, 400, { error: 'Invalid port preview' });
@@ -170,6 +178,28 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
           if (typeof state !== 'string' || !/^[\w-]{16,256}$/.test(state) || !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 11 * 60_000 || oauthCallbacks.has(state) || oauthCallbacks.size >= 1000) return json(res, 400, { error: 'Invalid transaction' });
           oauthCallbacks.set(state, { environmentId: row.id, expiresAt });
           return json(res, 200, { ok: true });
+        }
+        // Only this environment may report or enroll itself. The device token
+        // is independently bound to the Host by the control plane.
+        if (authBase && req.method === 'POST' && (['/api/v1/hosts/enroll', '/api/v1/hosts/heartbeat'].includes(endpoint)
+          || endpoint === `/api/v1/hosts/${row.id}/usage` || new RegExp(`^/api/v1/hosts/${row.id}/commands/[a-zA-Z0-9:_-]+$`).test(endpoint))) {
+          const input = await readJson(req);
+          if (['/api/v1/hosts/enroll', '/api/v1/hosts/heartbeat'].includes(endpoint)) {
+            if (input.id !== row.id || input.kind !== 'cloud') return json(res, 403, { error: 'Host ownership mismatch' });
+            if (endpoint.endsWith('/enroll')) {
+              const identity = await authRequest(authBase, '/api/v1/auth/me', null, req.headers.authorization?.replace(/^Bearer /, ''));
+              if (!sameIdentity(identity, row)) return json(res, 403, { error: 'Host ownership mismatch' });
+            }
+          }
+          const response = await fetch(`${authBase}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(15000) });
+          return json(res, response.status, await response.json());
+        }
+        if (authBase && (endpoint.startsWith('/api/v1/agent-mail/') || endpoint === '/api/v1/bootstrap')) {
+          const response = await fetch(`${authBase}${endpoint}${url.search}`, { method: req.method,
+            headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' },
+            ...(['GET','HEAD'].includes(req.method) ? {} : { body: JSON.stringify(await readJson(req)) }),
+            redirect: 'error', signal: AbortSignal.timeout(30000) });
+          return json(res, response.status, await response.json());
         }
         if (!(req.method === 'POST' && endpoint === '/api/v1/auth/login') && !(req.method === 'GET' && endpoint === '/api/v1/auth/me')) return json(res, 404, { error: 'Not found' });
         const result = await authRequest(authBase, endpoint, req.method === 'POST' ? await readJson(req) : null, req.headers.authorization?.replace(/^Bearer /, ''));
@@ -201,15 +231,20 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       }
       if (url.pathname.startsWith('/internal/') || url.pathname.startsWith('/_cloud/')) return json(res, 403, { error: 'Forbidden' });
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin !== origin) return json(res, 403, { error: '请求来源无效。' });
-      if (url.pathname === '/api/login' && req.method === 'POST') {
+      if (['/api/login', '/api/desktop/login'].includes(url.pathname) && req.method === 'POST') {
         const ip = req.socket.remoteAddress; let attempts = loginAttempts.get(ip);
         if (!attempts || attempts.until < Date.now()) { attempts = { count: 0, until: Date.now() + 60000 }; loginAttempts.set(ip, attempts); }
         if (++attempts.count > 100) return json(res, 429, { error: '登录尝试过多。' });
         const input = await readJson(req);
-        const token = await authRequest(authBase, '/api/v1/auth/login', { username: input.username, password: input.password, token: input.token });
+        const desktopToken = url.pathname === '/api/desktop/login' && authBase
+          ? req.headers.authorization?.match(/^Bearer ([^\s]+)$/)?.[1] : null;
+        if (url.pathname === '/api/desktop/login' && !desktopToken) return json(res, 401, { error: '需要企业账号授权。' });
+        const token = desktopToken ? { access_token: desktopToken, expires_in: 3600 }
+          : await authRequest(authBase, '/api/v1/auth/login', { username: input.username, password: input.password, token: input.token });
         if (!token.access_token) throw new Error('认证中心未返回凭据');
         const identity = await authRequest(authBase, '/api/v1/auth/me', null, token.access_token);
         let row = store.ensure(identity);
+        await checkHostAccess(token.access_token, row);
         // The recovery page must authenticate independently of a damaged Host.
         // Only first-time users need provisioning; existing environments stay put.
         if (input.management !== true || !row.containerId) {

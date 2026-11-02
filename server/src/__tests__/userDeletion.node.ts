@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,6 @@ import { createAuthService } from '../auth/service.js'
 import { initializeDatabase, requireSchema } from '../model/index.js'
 import { AuthRepository } from '../model/repositories/auth.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -86,8 +86,7 @@ try {
     dockerStopTimeoutSec: 1, dockerLabels: {}, startupPolicy: 'reattach-or-resume',
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true, logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
-  const server = startServer(config, runtime, auth)
+  const server = startServer(config, serverTestModels(db), auth)
   try {
     const baseUrl = `http://127.0.0.1:${await server.ready}/api/v1`
     const remove = (id: string, token?: string) => fetch(`${baseUrl}/users/${id}`, {

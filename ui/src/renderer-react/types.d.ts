@@ -750,12 +750,13 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  managedPolicy?: Record<string, boolean>;
   appWidgets?: { enabled: boolean };
   desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
-  remoteEnabled: boolean;
+  enterpriseEnabled: boolean;
   agentTeamsEnabled: boolean;
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
@@ -791,16 +792,6 @@ export type DesktopSettings = {
   runtimeLifecycle?: import('../runtime-lifecycle-settings.mjs').RuntimeLifecycleSettings;
   agentSettings?: {
     disabled?: string[];
-  };
-  sessionMemory?: {
-    enabled?: boolean;
-    compactEnabled?: boolean;
-    minimumMessageTokensToInit?: number;
-    minimumTokensBetweenUpdate?: number;
-    toolCallsBetweenUpdates?: number;
-    compactMinTokens?: number;
-    compactMinTextBlockMessages?: number;
-    compactMaxTokens?: number;
   };
   autoMemory?: {
     enabled?: boolean;
@@ -872,7 +863,7 @@ export type DesktopSettings = {
     inboxSessionId?: string;
     inboxSessionIds?: Record<string, string>;
   };
-  remoteDirect?: {
+  enterpriseAccount?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
     userName: string;
@@ -881,19 +872,20 @@ export type DesktopSettings = {
     apiKey: string;
     workspace: string;
   };
-  remoteDirectServerUrl: string;
-  remoteDirectCredentialMode: 'password' | 'api-key';
-  remoteDirectUserName: string;
+  enterpriseAccountServerUrl: string;
+  enterpriseAccountCredentialMode: 'password' | 'api-key';
+  enterpriseAccountUserName: string;
   // Legacy key name; stores either username or email for password login.
-  remoteDirectUserEmail: string;
-  remoteDirectUserPassword: string;
-  remoteDirectApiKey: string;
-  remoteDirectWorkspace: string;
+  enterpriseAccountUserEmail: string;
+  enterpriseAccountUserPassword: string;
+  enterpriseAccountApiKey: string;
+  enterpriseAccountWorkspace: string;
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;
   settingsParseError: string;
   appearancePersisted?: boolean;
+  settingsRevision?: number;
   skippedSessionCount?: number;
   coordinatorMode?: boolean;
 };
@@ -1351,6 +1343,12 @@ export type HostConfirmationSnapshot = { revision: number; requests: HostConfirm
 
 declare global {
   interface Window {
+    mossDesktopShell?: {
+      returnToLocal: () => Promise<void>;
+      getPresentation: () => Promise<{ appearance: DesktopSettings['appearance']; panelLayout: string | null }>;
+      updateAppearance: (appearance: DesktopSettings['appearance']) => Promise<DesktopSettings['appearance']>;
+      onPresentation: (callback: (value: { appearance?: DesktopSettings['appearance']; panelLayout?: string | null }) => void) => () => void;
+    };
     mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any;
       managed?: boolean; generation?: number; pendingBrowserUrl?: string; authorizationWindow?: Window; identity?: { hostId: string; userId: string; generation?: number }; capabilities?: import('../shared/host-capabilities.mjs').HostCapabilities;
     };
@@ -1763,6 +1761,7 @@ declare global {
         openFile: (filePath: string) => Promise<string>;
         openExternal: (url: string) => Promise<{ ok: boolean }>;
         showItemInFolder: (filePath: string) => Promise<{ ok: boolean }>;
+        saveFile: (payload: { sourcePath: string; defaultPath?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
       };
       fs: {
         getImageBase64: (path: string) => Promise<string | null>;

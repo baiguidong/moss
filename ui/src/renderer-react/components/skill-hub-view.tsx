@@ -8,14 +8,13 @@ import {
   Hammer,
   Loader2,
   RefreshCw,
-  Search,
   Star,
   Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ResourceHubSearch } from "@/components/resource-hub-search";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { InstalledResourceDetails } from "@/components/installed-resource-details";
 import { ResourceCardOpenButton } from "@/components/resource-card-open-button";
@@ -618,35 +617,36 @@ export function SkillHubView() {
               </div>
             </>
           ) : null}
-          <div className="relative ml-auto w-full sm:w-[300px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-8 rounded-lg pl-9 text-sm"
-              placeholder={tab === "installed" ? "搜索已安装技能" : "搜索 Skill 名称或描述"}
-            />
-          </div>
-          <Button variant="outline" size="sm" className="h-8 rounded-lg px-3 text-xs" onClick={importLocal}>
+          <Button variant="outline" size="sm" className="ml-auto h-8 rounded-lg px-3 text-xs" onClick={importLocal}>
             <Upload className="h-4 w-4" />
             添加技能
           </Button>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            className="h-8 w-8 rounded-lg"
-            onClick={() => {
-              if (tab === "installed") {
-                void loadInstalled();
-              } else {
-                void loadRemote(page);
-              }
-            }}
-            disabled={tab === "installed" ? installedLoading : loading}
-            title="刷新"
-          >
-            <RefreshCw className={cn("h-4 w-4", (tab === "installed" ? installedLoading : loading) && "animate-spin")} />
-          </Button>
+          <ResourceHubSearch
+            value={query}
+            onChange={setQuery}
+            placeholder={tab === "installed" ? "搜索已安装技能" : "搜索技能名称或描述"}
+            label="搜索技能"
+            visible={!detail}
+            refresh={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="h-8 w-8 rounded-lg"
+                onClick={() => {
+                  if (tab === "installed") {
+                    void loadInstalled();
+                  } else {
+                    void loadRemote(page);
+                  }
+                }}
+                disabled={tab === "installed" ? installedLoading : loading}
+                title="刷新"
+                aria-label="刷新技能"
+              >
+                <RefreshCw className={cn("h-4 w-4", (tab === "installed" ? installedLoading : loading) && "animate-spin")} />
+              </Button>
+            }
+          />
         </div>
       </div>
 

@@ -362,10 +362,11 @@ export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'ma
     <>
     <div className={`${selectedBuiltin ? 'hidden' : 'flex'} h-full min-h-0 flex-col bg-background`}>
       <AppHubToolbar tab="installed" installedCount={apps.length} onChangeTab={changeTab} query={query} onQuery={setQuery} searchPlaceholder={builtinsOpen ? '搜索内置应用' : undefined}
+        searchVisible={!selectedBuiltin}
+        refresh={<Button size="icon-sm" variant="ghost" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || busy === 'refresh'} onClick={() => void run('refresh', async () => {})}><RefreshCw className={`h-4 w-4 ${loading || busy === 'refresh' ? 'animate-spin' : ''}`} /></Button>}
         busy={busy === 'install'} actions={<>
           {builtins.length > 0 && <Button size="sm" variant={builtinsOpen ? 'secondary' : 'outline'} aria-pressed={builtinsOpen} className="h-8 rounded-lg px-3 text-xs" onClick={() => { setBuiltinsOpen(value => !value); setCategory('all'); }}>内置应用</Button>}
           <Button size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={busy === 'install' || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void installArchive()}><Upload className="h-4 w-4" />{busy === 'install' ? '安装中…' : '添加应用'}</Button>
-          <Button size="icon-sm" variant="outline" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || busy === 'refresh'} onClick={() => void run('refresh', async () => {})}><RefreshCw className={`h-4 w-4 ${loading || busy === 'refresh' ? 'animate-spin' : ''}`} /></Button>
         </>} />
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[1180px] px-4 py-2.5 sm:px-5">

@@ -10,7 +10,6 @@ import {
   Flame,
   FolderKanban,
   Gauge,
-  MessageSquareText,
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -61,21 +60,18 @@ const OVERVIEW_TABS: Array<{
   { id: "resources", label: "资源监控", icon: Gauge },
   { id: "global", label: "全局记忆", icon: BookOpenText },
   { id: "project", label: "项目记忆", icon: FolderKanban },
-  { id: "session", label: "会话摘要", icon: MessageSquareText },
 ];
 
 export function OverviewTabs({
   activeTab,
-  sessionSummaryEnabled,
   onChange,
 }: {
   activeTab: OverviewTab;
-  sessionSummaryEnabled: boolean;
   onChange: (tab: OverviewTab) => void;
 }) {
   return (
     <div className="mt-5 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border/70" role="tablist" aria-label="概览内容">
-      {OVERVIEW_TABS.filter(({ id }) => id !== "session" || sessionSummaryEnabled).map(({ id, label, icon: Icon }) => (
+      {OVERVIEW_TABS.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           type="button"
@@ -416,9 +412,8 @@ export function UsageOverviewContent({ local, cloud, cloudEnabled = true, onRefr
   );
 }
 
-export function OverviewView({ sessionSummaryEnabled, cloudEnabled = false }: { sessionSummaryEnabled: boolean; cloudEnabled?: boolean }) {
-  const [selectedTab, setActiveTab] = React.useState<OverviewTab>("usage");
-  const activeTab = selectedTab === "session" && !sessionSummaryEnabled ? "usage" : selectedTab;
+export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean }) {
+  const [activeTab, setActiveTab] = React.useState<OverviewTab>("usage");
   const [local, setLocal] = React.useState<UsageSource<UsageOverview>>({ data: null, loading: true, error: "" });
   const [cloud, setCloud] = React.useState<UsageSource<CloudUsageOverview>>({ data: null, loading: true, error: "" });
   const requestVersion = React.useRef(0);
@@ -486,7 +481,7 @@ export function OverviewView({ sessionSummaryEnabled, cloudEnabled = false }: { 
           ) : null}
         </header>
 
-        <OverviewTabs activeTab={activeTab} sessionSummaryEnabled={sessionSummaryEnabled} onChange={setActiveTab} />
+        <OverviewTabs activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === "resources" ? <ResourceMonitorView /> : activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />

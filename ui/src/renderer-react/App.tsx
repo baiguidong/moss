@@ -22,6 +22,9 @@ import { OverviewView } from '@/components/overview-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
 import { WindowChrome } from '@/components/window-chrome';
+import { PanelResizeHandle } from '@/components/panel-resize-handle';
+import { SessionPanelTabs } from '@/components/session-panel-tabs';
+import { MIN_PRESENTATION_WIDTH, useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
 import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
@@ -140,9 +143,10 @@ function loadPanelLayout(): LayoutState {
     const parsed = JSON.parse(raw);
     return {
       leftWidth: clamp(Number(parsed.leftWidth) || DEFAULT_LAYOUT.leftWidth, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
-      rightWidth: clamp(Number(parsed.rightWidth) || DEFAULT_LAYOUT.rightWidth, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+      rightWidth: Number.isFinite(parsed.rightWidth) ? Math.max(parsed.rightWidth, MIN_PRESENTATION_WIDTH) : DEFAULT_LAYOUT.rightWidth,
       leftCollapsed: Boolean(parsed.leftCollapsed),
       rightCollapsed: Boolean(parsed.rightCollapsed),
+      rightExpanded: Boolean(parsed.rightExpanded),
     };
   } catch {
     return DEFAULT_LAYOUT;
@@ -162,11 +166,9 @@ function toSidebarSessions(summaries: SessionSummary[], pinnedIds: Set<string>) 
 }
 
 type ThemeMode = 'dark' | 'light' | 'system';
-type LayoutState = {
+type LayoutState = SessionPanelLayout & {
   leftWidth: number;
-  rightWidth: number;
   leftCollapsed: boolean;
-  rightCollapsed: boolean;
 };
 
 type PreviewTabMetadata = Record<string, unknown> & {
@@ -187,9 +189,9 @@ const DEFAULT_LAYOUT: LayoutState = {
   rightWidth: 320,
   leftCollapsed: false,
   rightCollapsed: false,
+  rightExpanded: false,
 };
 const LEFT_WIDTH_RANGE = { min: 210, max: 420 };
-const RIGHT_WIDTH_RANGE = { min: 320, max: 560 };
 
 function canEditPreviewType(contentType: WorkspacePreviewData['contentType']): boolean {
   return ['markdown', 'html', 'text', 'code', 'diff', 'url', 'unsupported'].includes(contentType);
@@ -395,6 +397,7 @@ export default function App() {
   const appearanceRef = React.useRef<DesktopSettings['appearance']>(startupAppearance);
   const committedAppearanceRef = React.useRef(appearanceRef.current);
   const appearanceSaveRequestRef = React.useRef(0);
+  const settingsRevisionRef = React.useRef<number | null>(null);
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState('');
   const [globalSearchOpen, setGlobalSearchOpen] = React.useState(false);
   const [messageFocusTarget, setMessageFocusTarget] = React.useState<{
@@ -510,7 +513,7 @@ export default function App() {
   const [serverAuthState, setServerAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [serverAuthError, setServerAuthError] = React.useState('');
   React.useEffect(() => {
-    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl || !desktopSettings.remoteDirectApiKey) {
+    if (window.mossWeb || !desktopSettings?.enterpriseAccountServerUrl || !desktopSettings.enterpriseAccountApiKey) {
       setServerAccount(null);
       return;
     }
@@ -521,21 +524,26 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
+  }, [desktopSettings?.enterpriseAccountServerUrl, desktopSettings?.enterpriseAccountApiKey, desktopSettings?.enterpriseAccountUserEmail, desktopSettings?.enterpriseAccountUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const agentMailEnabled =
-    desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
+    desktopSettings?.enterpriseEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
+  const updateSessionPanelLayout = React.useCallback((patch: Partial<SessionPanelLayout>) => {
+    setLayout(previous => ({ ...previous, ...patch }));
+  }, []);
+  const sessionPanel = useSessionPanelLayout({ enabled: activeView === 'chat' && Boolean(activeSessionId), layout, onChange: updateSessionPanelLayout });
   const activeSessionIdRef = React.useRef<string | null>(null);
   const activeDetailRef = React.useRef<SessionDetail | null>(null);
   const expandedDirsRef = React.useRef<Set<string>>(new Set());
   const previewTabsRef = React.useRef<WorkspacePreviewData[]>([]);
   const presentation = usePresentation(activeSessionId, activeDetail?.workspace, activeView === 'chat', () => {
-    setLayout(previous => ({ ...previous, rightCollapsed: false, rightWidth: clamp(Math.max(previous.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max) }));
+    setLayout(previous => ({ ...previous, rightCollapsed: false, rightWidth: previous.rightCollapsed ? Math.max(previous.rightWidth, 440) : previous.rightWidth }));
+    sessionPanel.selectTab('presentation');
   });
   const openSessionRequestIdRef = React.useRef(0);
   const workspaceDirectoryLoader = React.useMemo(() => createWorkspaceDirectoryLoader({
@@ -659,6 +667,11 @@ export default function App() {
   }, []);
 
   const applyDesktopSettings = React.useCallback((next: DesktopSettings) => {
+    const revision = next.settingsRevision;
+    if (typeof revision === 'number' && Number.isFinite(revision)) {
+      if (settingsRevisionRef.current !== null && revision < settingsRevisionRef.current) return;
+      settingsRevisionRef.current = revision;
+    }
     setDesktopSettings((prev) => {
       const merged = prev ? { ...prev, ...next } : next;
       desktopSettingsRef.current = merged;
@@ -910,6 +923,21 @@ export default function App() {
     layoutRef.current = layout;
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
   }, [layout]);
+
+  React.useEffect(() => {
+    const apply = (value: { panelLayout?: string | null }) => {
+      if (typeof value.panelLayout !== 'string') return;
+      localStorage.setItem(LAYOUT_STORAGE_KEY, value.panelLayout);
+      setLayout(loadPanelLayout());
+    };
+    const listener = (event: Event) => apply((event as CustomEvent).detail);
+    window.addEventListener('moss:desktop-presentation', listener);
+    const handler = !window.mossWeb ? window.agentDesktop.ipcOn('desktop:presentation', apply) : null;
+    return () => {
+      window.removeEventListener('moss:desktop-presentation', listener);
+      if (handler) window.agentDesktop.ipcOff('desktop:presentation', handler);
+    };
+  }, []);
 
   React.useEffect(() => {
     activeDetailRef.current = activeDetail;
@@ -1186,12 +1214,12 @@ export default function App() {
   }, [refreshSummaries, openSession]);
 
   React.useEffect(() => {
-    if (!desktopSettings?.remoteEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
+    if (!desktopSettings?.enterpriseEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
     const timer = window.setInterval(() => {
       void window.agentDesktop.syncRemoteSessions().catch(() => {});
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [desktopSettings?.remoteEnabled, desktopSettings?.agentMode, activeView]);
+  }, [desktopSettings?.enterpriseEnabled, desktopSettings?.agentMode, activeView]);
 
   React.useEffect(() => {
     if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
@@ -1547,7 +1575,7 @@ export default function App() {
       setLayout((prev) => ({
         ...prev,
         rightCollapsed: false,
-        rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+        rightWidth: Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440),
       }));
       setBrowserOpenSignal((value) => value + 1);
     }
@@ -1571,26 +1599,15 @@ export default function App() {
     ));
   }, [presentation.action, presentation.snapshot?.state.activeId]);
 
-  const startResize = React.useCallback((side: 'left' | 'right', clientX: number) => {
+  const startResize = React.useCallback((clientX: number) => {
     const start = layoutRef.current;
-    if (side === 'left' && start.leftCollapsed) return;
-    if (side === 'right' && start.rightCollapsed) return;
+    if (start.leftCollapsed) return;
 
     document.body.classList.add('layout-resizing');
 
     const onMouseMove = (event: MouseEvent) => {
       const delta = event.clientX - clientX;
-      setLayout((prev) => (
-        side === 'left'
-          ? {
-              ...prev,
-              leftWidth: clamp(start.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max),
-            }
-          : {
-              ...prev,
-              rightWidth: clamp(start.rightWidth - delta, RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
-            }
-      ));
+      setLayout((prev) => ({ ...prev, leftWidth: clamp(start.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max) }));
     };
 
     const onMouseUp = () => {
@@ -2546,7 +2563,7 @@ export default function App() {
   }, [applyDesktopSettings]);
 
   const handleServerLogin = React.useCallback(async () => {
-    const serverUrl = desktopSettings?.remoteDirectServerUrl?.trim() || '';
+    const serverUrl = desktopSettings?.enterpriseAccountServerUrl?.trim() || '';
     if (!serverUrl) {
       setSettingsInitialSection('basic-info');
       setSettingsInitialAppId(null);
@@ -2561,8 +2578,8 @@ export default function App() {
       const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
       applyDesktopSettings(next);
       setServerAccount(
-        next.remoteDirectUserName || next.remoteDirectUserEmail
-          ? { userName: next.remoteDirectUserName || '', userEmail: next.remoteDirectUserEmail || '' }
+        next.enterpriseAccountUserName || next.enterpriseAccountUserEmail
+          ? { userName: next.enterpriseAccountUserName || '', userEmail: next.enterpriseAccountUserEmail || '' }
           : null,
       );
       setServerAuthState('success');
@@ -2572,7 +2589,7 @@ export default function App() {
       const message = cleanIpcErrorMessage(error);
       if (message !== '认证已取消。') setServerAuthError(message);
     }
-  }, [applyDesktopSettings, desktopSettings?.remoteDirectServerUrl, serverAuthState, showPermissionNotice]);
+  }, [applyDesktopSettings, desktopSettings?.enterpriseAccountServerUrl, serverAuthState, showPermissionNotice]);
 
   const handleServerLogout = React.useCallback(async () => {
     if (serverAuthState === 'loading') return;
@@ -2580,10 +2597,10 @@ export default function App() {
     setServerAuthError('');
     try {
       const next = await window.agentDesktop.updateSettings({
-        remoteDirectApiKey: '',
-        remoteDirectUserName: '',
-        remoteDirectUserEmail: '',
-        remoteDirectUserPassword: '',
+        enterpriseAccountApiKey: '',
+        enterpriseAccountUserName: '',
+        enterpriseAccountUserEmail: '',
+        enterpriseAccountUserPassword: '',
       });
       applyDesktopSettings(next);
       setServerAccount(null);
@@ -2673,6 +2690,16 @@ export default function App() {
     />
   );
 
+  const activePresentationResource = presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot?.state.activeId);
+  const sessionPanelTabs = sessionPanel.tabbed ? <SessionPanelTabs
+    conversationTitle={activeDetail ? displaySessionTitle(activeDetail) : '会话'}
+    presentationTitle={activePresentationResource?.title || (presentation.snapshot?.state.activeId === 'browser' ? '浏览器' : presentation.snapshot?.state.activeId === 'workspace' ? '工作区' : '结果')}
+    activeTab={sessionPanel.activeTab}
+    onSelect={sessionPanel.selectTab}
+    onRestoreSplit={sessionPanel.restoreSplit}
+    onClosePresentation={() => toggleSidebar('right')}
+  /> : undefined;
+
   const notificationCenter = (
     <NotificationCenter
       placement={window.mossWeb ? 'sidebar' : 'window'}
@@ -2746,10 +2773,11 @@ export default function App() {
           });
         }} />}
       <WindowChrome
-        desktop={!window.mossWeb}
+        desktop={!window.mossWeb || Boolean(window.mossDesktopShell?.getPresentation)}
         isMacOS={isMacOS}
         sidebarWidth={effectiveLeftCollapsed ? 68 : layout.leftWidth}
-        rightWidth={layout.rightWidth}
+        rightWidth={sessionPanel.rightWidth}
+        sessionTabs={sessionPanelTabs}
         sessionActive={activeView === 'chat' && Boolean(activeSessionId)}
         leftCollapsed={effectiveLeftCollapsed}
         rightCollapsed={layout.rightCollapsed}
@@ -2763,12 +2791,12 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
-          className="min-h-0 shrink-0 overflow-hidden"
+          className="relative min-h-0 shrink-0 border-r border-border/70"
           style={{ width: effectiveLeftCollapsed ? 68 : layout.leftWidth }}
         >
           <ComputerUseControl />
           <AppSidebar
-            headerActions={window.mossWeb ? notificationCenter : undefined}
+            headerActions={window.mossWeb && !window.mossDesktopShell?.getPresentation ? notificationCenter : undefined}
             sessions={sidebarSessions}
             apps={apps}
             activeSessionId={activeSessionId}
@@ -2778,10 +2806,10 @@ export default function App() {
             themeMode={themeMode}
             collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
-            localEnabled={desktopSettings?.localEnabled ?? true}
-            remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+            localEnabled={true}
+            enterpriseEnabled={desktopSettings?.enterpriseEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
-            serverConfigured={Boolean(desktopSettings?.remoteDirectServerUrl?.trim())}
+            serverConfigured={Boolean(desktopSettings?.enterpriseAccountServerUrl?.trim())}
             serverAuthState={serverAuthState}
             serverAuthError={serverAuthError}
             onLoginServer={handleServerLogin}
@@ -2804,21 +2832,25 @@ export default function App() {
             onSearchChange={setSessionSearchQuery}
             onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
           />
+          {!effectiveLeftCollapsed && <div
+            role="separator" aria-label="调整左侧栏宽度" aria-orientation="vertical"
+            aria-valuenow={Math.round(layout.leftWidth)} aria-valuemin={LEFT_WIDTH_RANGE.min} aria-valuemax={LEFT_WIDTH_RANGE.max}
+            tabIndex={0}
+            className="session-panel-resize-handle absolute inset-y-0 -right-1.5 z-30 hidden w-3 cursor-col-resize focus-visible:outline-none lg:block"
+            onMouseDown={(event) => { event.preventDefault(); startResize(event.clientX); }}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+              event.preventDefault();
+              const delta = event.key === 'ArrowLeft' ? -16 : 16;
+              setLayout(prev => ({ ...prev, leftWidth: clamp(prev.leftWidth + delta, LEFT_WIDTH_RANGE.min, LEFT_WIDTH_RANGE.max) }));
+            }}
+          />}
         </div>
 
-        <div
-          className={`
-            relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
-            before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
-            hover:before:bg-primary/60 lg:block
-          `}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            startResize('left', event.clientX);
-          }}
-        />
-
-        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {window.mossWeb && sessionPanelTabs && <div className="shrink-0 border-b border-border/70">{sessionPanelTabs}</div>}
+          <div ref={sessionPanel.containerRef} className="flex min-h-0 min-w-0 flex-1">
+        <div className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${sessionPanel.conversationHidden ? 'hidden' : ''}`}>
           {(bootError || permissionNotice) && (
             <div className="pointer-events-none absolute right-4 top-4 z-20 flex max-w-md flex-col items-end gap-2">
               {bootError ? (
@@ -2938,7 +2970,7 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                enterpriseEnabled={false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
                 onEditQueuedMessage={handleEditQueuedMessage}
@@ -3004,16 +3036,15 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                enterpriseEnabled={false}
                 newSessionMode={newSessionAgentMode}
                 onNewSessionModeChange={draftProject ? undefined : handleNewSessionModeChange}
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView sessionSummaryEnabled={desktopSettings?.sessionMemory?.enabled === true}
-              cloudEnabled={desktopSettings?.remoteEnabled === true && Boolean(desktopSettings.remoteDirectServerUrl?.trim())} />
+            <OverviewView cloudEnabled={desktopSettings?.enterpriseEnabled === true && Boolean(desktopSettings.enterpriseAccountServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
-            <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
+            <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}
@@ -3046,23 +3077,12 @@ export default function App() {
         </div>
 
         {activeView === 'chat' && activeSessionId && (
-          <>
             <div
-              className={`
-                relative hidden w-3 shrink-0 cursor-col-resize bg-transparent transition-colors
-                before:absolute before:inset-y-4 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:bg-border/80
-                hover:before:bg-primary/60 lg:block
-              `}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                startResize('right', event.clientX);
-              }}
-            />
-
-            <div
-              className="min-h-0 shrink-0 overflow-hidden border-l border-border/70"
-              style={{ width: layout.rightCollapsed ? 0 : layout.rightWidth, minWidth: layout.rightCollapsed ? 0 : RIGHT_WIDTH_RANGE.min }}
+              className={`relative min-h-0 min-w-0 shrink-0 border-l border-border/70 ${sessionPanel.presentationHidden ? 'hidden' : ''}`}
+              style={{ width: sessionPanel.rightWidth }}
             >
+              {!layout.rightCollapsed && <PanelResizeHandle onBeginResize={sessionPanel.beginResize} onRestoreSplit={sessionPanel.restoreSplit} width={sessionPanel.rightWidth} />}
+              <div className="h-full min-h-0 overflow-hidden">
               <TaskPanel
                 presentationOpenSignal={presentation.openSignal}
                 browserTabId={presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot.state.activeId)?.source.tabId}
@@ -3098,8 +3118,9 @@ export default function App() {
                   setLayout((prev) => ({
                     ...prev,
                     rightCollapsed: false,
-                    rightWidth: clamp(Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440), RIGHT_WIDTH_RANGE.min, RIGHT_WIDTH_RANGE.max),
+                    rightWidth: Math.max(prev.rightWidth || DEFAULT_LAYOUT.rightWidth, 440),
                   }));
+                  sessionPanel.selectTab('presentation');
                 }}
                 workspace={activeDetail?.workspace}
                 workspaceRemote={activeDetail?.agentMode === 'remote-direct'}
@@ -3107,9 +3128,11 @@ export default function App() {
                 hasUnsavedEdits={Boolean(presentation.snapshot?.state.dirty) || previewTabs.some(tab => getPreviewTabMetadata(tab).dirty)}
                 onVersionRestored={handleRefreshWorkspace}
               />
+              </div>
             </div>
-          </>
         )}
+          </div>
+        </div>
 
         <AppWidgetHost apps={apps} enabled={activeView !== 'settings' && activeView !== 'projects' && desktopSettings?.appWidgets?.enabled !== false && !presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot?.state.activeId && resource.kind === 'file')} />
         <GlobalSessionSearch

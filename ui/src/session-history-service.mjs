@@ -72,7 +72,7 @@ export function createSessionHistoryService({
   hasActiveAgentTeam,
   isRemoteDirectSessionNotFoundError,
   mossLog,
-  resolveRemoteDirectConnection,
+  resolveEnterpriseAccountConnection,
   schedulePersistSession,
 }) {
   async function loadDisplayHistoryFromLocalTranscript(sessionRecord, { requireComplete = false } = {}) {
@@ -271,7 +271,7 @@ export function createSessionHistoryService({
     }
 
     if (sessionRecord.agentMode === 'remote-direct') {
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
       let context;
       try {
         context = await fetchRemoteDirectSessionContext({

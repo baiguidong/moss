@@ -24,20 +24,20 @@ export function LibreOfficeInstallPrompt({
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-white/70 text-sm font-semibold tracking-[0.2em] text-amber-700 dark:bg-black/20 dark:text-amber-200">
           {icon}
         </div>
-        <h3 className="mt-4 text-lg font-semibold text-foreground">{title} 预览需要 LibreOffice</h3>
+        <h3 className="mt-4 text-lg font-semibold text-foreground">{title} 高保真页面版式</h3>
         {!installing ? (
           <>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              当前降级预览不可用。可以直接安装 LibreOffice，后续将通过 PDF 转换链打开该文件。
+              浏览器预览可以直接使用。若需要尽量保持原始分页、字体和专有对象，可以选择安装 LibreOffice 生成高保真 PDF。
             </p>
             <Button className="mt-5 rounded-full px-5" onClick={onInstall}>
-              下载安装 LibreOffice
+              安装 LibreOffice（可选）
             </Button>
           </>
         ) : (
           <>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              正在安装 LibreOffice{phase ? ` · ${phase}` : ""}
+              正在准备高保真页面版式{phase ? ` · ${phase}` : ""}
             </p>
             <div className="mt-5 h-2 overflow-hidden rounded-full bg-amber-950/10 dark:bg-white/10">
               <div

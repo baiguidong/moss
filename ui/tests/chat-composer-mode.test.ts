@@ -29,7 +29,7 @@ describe('chat composer mode placement', () => {
     expect(addMenu).toContain('onComposerIntentChange(option.id)');
   });
 
-  test('places the computer selector inside the new-session composer', () => {
+  test('keeps computer selection outside the new-session composer', () => {
     const activeComposer = source.slice(
       source.indexOf('{!isHomeComposer && ('),
       source.indexOf('{isHomeComposer && ('),
@@ -44,13 +44,11 @@ describe('chat composer mode placement', () => {
     );
 
     expect(activeComposer).not.toContain('选择工作电脑');
-    expect(newSessionComposer).toContain('选择工作电脑');
-    expect(newSessionComposer).toContain('本地电脑');
-    expect(newSessionComposer).toContain('云电脑');
+    expect(newSessionComposer).not.toContain('选择工作电脑');
     expect(newSessionComposer).toContain('<WorkspaceSelector');
     expect(newSessionComposer).not.toContain('title="选择文件"');
     expect(newSessionComposer).not.toContain('title="选择目录"');
-    expect(newSessionComposer).toContain("onNewSessionModeChange?.('remote-direct')");
+    expect(newSessionComposer).not.toContain("onNewSessionModeChange?.('remote-direct')");
     expect(homeLanding).not.toContain('rounded-full border px-6 py-3');
   });
 

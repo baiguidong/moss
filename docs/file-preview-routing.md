@@ -7,11 +7,8 @@
 | 条件 | 实际解析方式 |
 |---|---|
 | 文本、代码需要编辑、保存、撤销或历史快照 | Moss 原生 Viewer |
-| Word/PowerPoint 有 LibreOffice | LibreOffice 转 PDF，再由 Moss Chromium PDF Viewer 展示 |
-| Word/PowerPoint 无 LibreOffice，或转换失败 | Open File Viewer（OFV）Office 插件 |
-| Excel 有 LibreOffice且不是宽表 | Moss 解析表格，同时 LibreOffice 转 PDF 展示 |
-| Excel 有 LibreOffice但属于宽表 | Moss HTML 表格，最多 500 行、100 列 |
-| Excel 无 LibreOffice | OFV Office 插件 |
+| Word/PowerPoint | Open File Viewer（OFV）Office 插件在 renderer 内解析；已有高保真 PDF 时使用该 PDF |
+| Excel | Moss `excel-json` + 工作表网格在 renderer 内解析；已有高保真 PDF 时优先展示该 PDF，并可切换到工作表 |
 | `csv/tsv` | 始终使用 Moss 表格，不依赖 LibreOffice |
 | PDF、普通图片、Markdown、常用代码等两边都支持但尚未决定切换 | 暂时保留 Moss |
 | Moss 不支持而 OFV 能完整或基础解析 | OFV |
@@ -26,11 +23,11 @@
 
 | 格式 | 实际路由 | 说明 |
 |---|---|---|
-| `docx/docm/dotx` | 有 LO → Moss PDF；无 LO/转换失败 → OFV | OFV 使用 docx-preview，并带 Mammoth/OpenXML 降级 |
-| `doc/dot/rtf/odt` | 有 LO → Moss PDF；无 LO/转换失败 → OFV 基础 | 旧二进制 Word、RTF、ODF 的浏览器保真有限 |
-| `pptx/pptm/ppsx` | 有 LO → Moss PDF；无 LO/转换失败 → OFV | OFV 使用 pptx-renderer |
-| `ppt/pps/odp` | 有 LO → Moss PDF；无 LO/转换失败 → OFV 基础 | 旧 PPT/ODF 采用基础解析 |
-| `xlsx/xls/xlsm/xlsb/ods` | 有 LO → Moss；无 LO → OFV | Moss 窄表转 PDF，宽表保留可滚动 HTML 表格 |
+| `docx/docm/dotx` | OFV 浏览器解析；若资源已有 `officePreviewPdfPath` 则展示缓存 PDF | OFV 使用 docx-preview，并带 Mammoth/OpenXML 降级 |
+| `doc/dot/rtf/odt` | OFV 基础浏览器解析 | 旧二进制 Word、RTF、ODF 的浏览器保真有限 |
+| `pptx/pptm/ppsx` | OFV 浏览器解析；若资源已有 `officePreviewPdfPath` 则展示缓存 PDF | OFV 使用 pptx-renderer |
+| `ppt/pps/odp` | OFV 基础浏览器解析 | 旧 PPT/ODF 采用基础解析 |
+| `xlsx/xls/xlsm/xlsb/ods` | Moss `excel-json` + 工作表网格；若资源已有 `officePreviewPdfPath` 则优先展示页面版式 | 复杂格式或旧二进制表格的浏览器保真有限 |
 | `csv/tsv` | Moss | 表格预览，保留 Moss 产品操作链路 |
 | `dotm/fodt/wps` | OFV 基础 | Moss 未注册这些格式 |
 | `xlt/xltx/xltm/fods/et` | OFV 基础 | 模板或兼容表格格式 |
@@ -95,6 +92,10 @@ Moss 显式高亮的代码扩展包括：`astro/bash/c/cc/cjs/clj/cljs/cmake/cof
 | `geojson/topojson/kml/kmz/gpx/shp` | OFV | 本地 Leaflet 样式和矢量数据离线可用；离线时不显示在线 OSM 底图 |
 
 ## 离线与打包约束
+
+Office 预览默认不启动本机 LibreOffice，也不要求用户安装它。LibreOffice 仍可作为可选的高保真转换和导出能力；它生成的 PDF 若已随资源保存，Moss 会直接复用，不会在打开普通工作区文件时再次调用转换。
+
+Codex 的 OpenXML/.NET/WASM 导入与 Moss 的差异、资源证据和分阶段迁移方案见 [`codex-office-import-architecture.md`](./codex-office-import-architecture.md)。
 
 - 桌面端固定依赖 `@open-file-viewer/core@0.1.45`，由 Vite 编译进 `dist/renderer/assets`，运行时不依赖相邻源码仓库或 npm。
 - OFV 样式、Leaflet 样式、HLS、Three.js、Mermaid、Office、邮件、压缩和格式解析依赖均作为本地 chunks 打包。当前生产 renderer 约 22 MB。

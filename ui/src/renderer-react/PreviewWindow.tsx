@@ -4,6 +4,7 @@ import { previewIpc } from '@/ipc/preview.ipc';
 import { previewFileFromPayload, syncPreviewTabs, upsertPreviewTab } from '@/lib/preview-window-state';
 import { applyAppearanceTheme, readCachedAppearance } from '@/theme/appearance';
 import type { WorkspacePreviewData } from '@/types';
+import { AppComposerContext } from '@/lib/app-composer';
 
 type ThemeMode = 'dark' | 'light' | 'system';
 
@@ -111,6 +112,10 @@ export default function PreviewWindow() {
   }, [activePath, tabs]);
 
   return (
+    <AppComposerContext.Provider value={{ selection: null, select: () => {}, submitVisualizationAnnotation: async (sessionId, visualizationAnnotation) => {
+      const result = await window.agentDesktop.send({ sessionId, prompt: '1 处标注', visualizationAnnotation });
+      if (!result.ok) throw new Error(('error' in result && result.error) || '修改请求发送失败，请重试。');
+    } }}>
     <div className="app-shell h-screen min-h-0 w-full overflow-hidden bg-background">
       {error && <p role="alert" className="p-4">{error}</p>}
       <PreviewDrawer
@@ -126,5 +131,6 @@ export default function PreviewWindow() {
         standalone
       />
     </div>
+    </AppComposerContext.Provider>
   );
 }

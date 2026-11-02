@@ -42,7 +42,7 @@ import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
+  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'openIM'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
@@ -68,9 +68,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     apiKey: settings.apiKey,
     image: {
       model: settings.image.model,
-    },
-    serverRuntime: {
-      dockerImage: settings.serverRuntime.dockerImage,
     },
     openIM: { ...settings.openIM },
   }
@@ -115,14 +112,6 @@ function buildSystemSettingsPatch(
       ...patch.models,
       image: imagePatch,
     }
-  }
-
-  const serverRuntimePatch: NonNullable<UpdateSystemSettingsRequest['serverRuntime']> = {}
-  if (draft.serverRuntime.dockerImage !== settings.serverRuntime.dockerImage) {
-    serverRuntimePatch.dockerImage = draft.serverRuntime.dockerImage
-  }
-  if (Object.keys(serverRuntimePatch).length > 0) {
-    patch.serverRuntime = serverRuntimePatch
   }
 
   const openIMPatch: NonNullable<UpdateSystemSettingsRequest['openIM']> = {}
@@ -423,7 +412,7 @@ export default function SystemSettingsPage() {
         <SettingSection
           icon={Sparkles}
           title="模型"
-          description="配置共用的 API 地址和 Key，并选择默认、快速和图片模型。"
+          description="设置供工作电脑使用的企业模型。需在工作电脑页启用“使用企业模型配置”策略；调用由电脑执行，个人模型设置保留。"
         >
           <SettingField label="API URL">
             <Input
@@ -650,32 +639,7 @@ export default function SystemSettingsPage() {
           </SettingField>
         </SettingSection>
 
-        <SettingSection
-          icon={Server}
-          title="会话运行时"
-          description="所有服务端会话都在 Docker 容器中运行。"
-        >
-          <SettingField label="Docker Image" description="服务端创建会话时使用的运行时镜像；Compose 部署会在启动时用 .env 中的 MOSS_RUNTIME_IMAGE 同步此值。">
-            <Input
-              value={draft.serverRuntime.dockerImage}
-              onChange={(event) =>
-                setDraft(current =>
-                  current
-                    ? {
-                        ...current,
-                        serverRuntime: {
-                          ...current.serverRuntime,
-                          dockerImage: event.target.value,
-                        },
-                      }
-                    : current,
-                )
-              }
-              placeholder="moss-runtime:latest"
-            />
-          </SettingField>
 
-        </SettingSection>
 
       </div>
     </DashboardLayout>

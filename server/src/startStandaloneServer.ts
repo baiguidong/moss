@@ -4,7 +4,6 @@ import { createModels } from './model/index.js'
 import { acquireDatabaseOwner } from './model/maintenance.js'
 import { OpenIMIntegrationService } from './openim/service.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
-import { RuntimeService } from './runtimeService.js'
 import { startServer } from './server.js'
 import { printBanner } from './serverBanner.js'
 import { createServerLogger } from './serverLog.js'
@@ -31,19 +30,11 @@ export async function startStandaloneDirectConnectServer(
   let activeServer: Awaited<ReturnType<typeof startServer>> | undefined
   try {
     models = await createModels(config.database)
-    const store = models.sessions
     const { service: authService, bootstrap } = await createAuthService({
-      db: store.db,
+      db: models.db,
       tokenTtlSec: config.tokenTtlSec,
       bootstrapAdmin: config.bootstrapAdmin,
     })
-    const instance = await store.registerServerInstance(config.host)
-    const runtime = new RuntimeService({
-      config,
-      store,
-      serverInstanceId: instance.instanceId,
-    })
-    await runtime.reconcileOnStartup()
     const logger = createServerLogger()
     const ragflowIntegration = new RagflowIntegrationService({
       repository: models.ragflow,
@@ -57,7 +48,7 @@ export async function startStandaloneDirectConnectServer(
     })
     const server = await startServer(
       config,
-      runtime,
+      models,
       authService,
       logger,
       ragflowIntegration,
@@ -79,32 +70,12 @@ export async function startStandaloneDirectConnectServer(
       actualPort,
     )
 
-    let heartbeat: Promise<void> | undefined
-    const heartbeatTimer = setInterval(
-      () => {
-        if (heartbeat) return
-        heartbeat = store
-          .heartbeatServerInstance(instance.instanceId)
-          .catch(error =>
-            logger.error(`Database heartbeat failed: ${String(error)}`),
-          )
-          .finally(() => {
-            heartbeat = undefined
-          })
-      },
-      Math.max(5_000, Math.floor(config.heartbeatTimeoutMs / 2)),
-    )
-    heartbeatTimer.unref?.()
-
     let stopped = false
     const stop = async () => {
       if (stopped) return
       stopped = true
-      clearInterval(heartbeatTimer)
       try {
         await server.stop()
-        await heartbeat
-        await store.stopServerInstance(instance.instanceId)
       } finally {
         await models!.close().finally(releaseOwner)
       }

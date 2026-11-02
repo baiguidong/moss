@@ -110,7 +110,7 @@ test('quit suppresses runtime UI events before cleanup starts, during cleanup an
 
 test('new work is rejected while quitting even before update installation begins', () => {
   const guardSource = source.slice(source.indexOf('function assertUpdateWorkAllowed()'), source.indexOf('function shutdownDesktop()'));
-  const context = { appQuitting: false, appQuitPending: false, webServer: null, updateInstallPreparation: { isPreparing: () => false } };
+  const context = { appQuitting: false, appQuitPending: false, hostControlPaused: false, hostAccessDenied: null, webServer: null, updateInstallPreparation: { isPreparing: () => false } };
   const assertAllowed = runInNewContext(`${guardSource}\nassertUpdateWorkAllowed`, context);
   assert.doesNotThrow(assertAllowed);
   context.appQuitting = true;

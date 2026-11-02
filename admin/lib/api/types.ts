@@ -207,10 +207,6 @@ export interface SystemSettingsImage {
   model: string
 }
 
-export interface SystemSettingsServerRuntime {
-  dockerImage: string
-}
-
 export interface SystemSettingsOpenIM {
   enabled: boolean
   instanceId: string
@@ -234,7 +230,6 @@ export interface SystemSettings {
   url: string
   apiKey: string
   image: SystemSettingsImage
-  serverRuntime: SystemSettingsServerRuntime
   openIM: SystemSettingsOpenIM
   settingsPath: string
   settingsExists: boolean
@@ -261,7 +256,6 @@ export interface UpdateSystemSettingsRequest {
       model?: string
     }
   }
-  serverRuntime?: Partial<SystemSettingsServerRuntime>
   openIM?: Partial<SystemSettingsOpenIM>
 }
 

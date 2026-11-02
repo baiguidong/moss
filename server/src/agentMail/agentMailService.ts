@@ -355,6 +355,7 @@ export class AgentMailService {
     auth: AuthContext,
     input: {
       consumerId?: unknown
+      requireMailbox?: () => Promise<void>
       waitMs?: unknown
       limit?: unknown
     },
@@ -392,7 +393,7 @@ export class AgentMailService {
           'Mailbox pull was aborted',
         )
       const consumerLeaseUntil = await this.acquireConsumer(auth, consumerId)
-      const leased = await this.leaseMessages(auth, consumerId, limit)
+      const leased = await this.leaseMessages(auth, consumerId, limit, input.requireMailbox)
       if (leased.messages.length > 0 || now() >= deadline) {
         return { consumerId, consumerLeaseUntil, ...leased }
       }
@@ -588,6 +589,7 @@ export class AgentMailService {
     auth: AuthContext,
     consumerId: string,
     limit: number,
+    requireMailbox?: () => Promise<void>,
   ): Promise<{
     leaseToken: string | null
     leaseUntil: number | null
@@ -599,6 +601,7 @@ export class AgentMailService {
     const tokenHash = hashToken(leaseToken)
     let rows: SqlRow[] = []
     await this.repository.transaction(async () => {
+      await requireMailbox?.()
       await this.requeueExpired(currentTime, auth.orgId, auth.userId)
       rows = (await this.repository.listQueuedMessages(
         auth.orgId,

@@ -10,23 +10,6 @@ function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-export async function recordRunnerUsage(
-  line: string,
-  owner: UsageOwner & { sessionId: string },
-  repository: UsageRepository,
-): Promise<boolean> {
-  let message: unknown
-  try { message = JSON.parse(line) } catch { return false }
-  if (!object(message) || message.type !== 'moss_usage') return false
-  const event = message.event
-  if (!object(event) || typeof event.eventId !== 'string' || !event.eventId || typeof event.occurredAt !== 'number') {
-    throw new Error('Invalid model usage event from runner')
-  }
-  // Identity comes from the runner manifest, never from model output or a client.
-  await repository.record(owner, owner.sessionId, event as ModelUsageEvent)
-  return true
-}
-
 async function transcriptFiles(root: string): Promise<string[]> {
   let entries
   try { entries = await readdir(root, { withFileTypes: true }) }

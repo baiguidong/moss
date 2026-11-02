@@ -14,7 +14,7 @@ import {
   normalizeSessionRuntimeOptions,
   sessionMemorySettingsSchema,
 } from '../../../../packages/direct-connect-protocol/src/index.js'
-import type { SessionRuntimeInfo } from '../../backendTypes.js'
+import type { SessionRuntimeInfo } from '../../../../packages/direct-connect-protocol/src/index.js'
 import type {
   AttemptRecord,
   AttemptRuntimeState,

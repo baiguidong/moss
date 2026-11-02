@@ -9,6 +9,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
   const ownerOrg = env.MOSS_WEB_OWNER_ORG_ID;
   if (serverUrl && !ownerId) throw new Error('MOSS_WEB_OWNER_ID is required with MOSS_WEB_AUTH_SERVER.');
   const sessions = new Map();
+  let hostAccessToken;
   let token = env.MOSS_WEB_TOKEN;
   const tokenPath = path.join(home, 'web', 'access-token');
   if (!serverUrl && !token) {
@@ -34,6 +35,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
   const cookieId = req => /(?:^|;\s*)moss_web=([A-Za-z0-9_-]+)/.exec(req.headers.cookie || '')?.[1];
   return {
     mode: serverUrl ? 'server' : 'token', tokenPath,
+    getHostAccessToken: () => hostAccessToken,
     async login(input, { trustedToken = false } = {}) {
       let accessToken;
       let expiresAt = Date.now() + 12 * 3600_000;
@@ -47,6 +49,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
         accessToken = result.access_token;
         const identity = await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
         checkOwner(identity);
+        hostAccessToken = accessToken;
         const user = identity.user || {};
         account = { userName: [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '', userEmail: typeof user.email === 'string' ? user.email.trim() : '' };
         expiresAt = Math.min(expiresAt, Date.now() + (Number(result.expires_in) || 3600) * 1000);

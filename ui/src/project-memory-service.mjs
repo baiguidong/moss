@@ -208,7 +208,7 @@ export function createProjectMemoryService({
       }
       if (!force && state.nextRunAt > now()) {
         await writeJsonFileAtomicAsync(statePath(id), state);
-        setStatus(id, { phase: 'idle', message: '会话摘要已保存，等待下次项目整合。', error: sourceError, nextRunAt: state.nextRunAt });
+        setStatus(id, { phase: 'idle', message: '项目会话记录已提炼，等待下次项目整合。', error: sourceError, nextRunAt: state.nextRunAt });
         return { skipped: 'cooldown', extractedCount };
       }
       setStatus(id, { phase: 'running', message: '正在整合项目沉淀…', error: '' });

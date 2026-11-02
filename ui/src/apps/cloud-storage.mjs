@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { getRemoteDirectSettings } from '../remote-direct-client.mjs'
+import { getEnterpriseAccountSettings } from '../enterprise-account-client.mjs'
 import { CLOUD_STORAGE_HOST_METHOD_PERMISSIONS } from '../../../packages/app-sdk/src/index.mjs'
 
 class CloudHostError extends Error {
@@ -53,7 +53,7 @@ export class CloudStorageHost {
     this.watchTimer.unref?.()
   }
   fingerprint() {
-    const { workspace: _, ...connection } = getRemoteDirectSettings(this.getSettings())
+    const { workspace: _, ...connection } = getEnterpriseAccountSettings(this.getSettings())
     return createHash('sha256').update(JSON.stringify(connection)).digest('hex')
   }
   persist() {
@@ -87,7 +87,7 @@ export class CloudStorageHost {
   async watch() {
     if (this.closed) return
     const current = this.fingerprint()
-    if (current !== this.lastSettings || this.getSettings().remoteEnabled !== true) {
+    if (current !== this.lastSettings || this.getSettings().enterpriseEnabled !== true) {
       if (current !== this.lastSettings || this.running.size || this.cancellations.size || this.requests.size) this.invalidate('REMOTE_CONNECTION_CHANGED')
       this.lastSettings = current
     }
@@ -110,13 +110,13 @@ export class CloudStorageHost {
     }
     for (const controller of this.requests) controller.abort()
     this.lastSettings = this.fingerprint()
-    this.statusChanged({ state: this.getSettings().remoteEnabled === true ? 'unauthenticated' : 'remote_disabled' })
+    this.statusChanged({ state: this.getSettings().enterpriseEnabled === true ? 'unauthenticated' : 'remote_disabled' })
   }
   async connection(binding) {
-    if (this.closed || this.getSettings().remoteEnabled !== true) error('REMOTE_DISABLED', 'Remote connection is disabled')
+    if (this.closed || this.getSettings().enterpriseEnabled !== true) error('REMOTE_DISABLED', 'Remote connection is disabled')
     const settingsKey = this.fingerprint(), epoch = this.epoch
     if (binding && binding.settingsKey !== settingsKey) error('ACCOUNT_CHANGED', 'Transfer belongs to a different connection')
-    const config = getRemoteDirectSettings(this.getSettings())
+    const config = getEnterpriseAccountSettings(this.getSettings())
     if (!config.serverUrl) error('UNCONFIGURED', 'Remote server is not configured')
     if (!(config.credentialMode === 'api-key' ? config.apiKey : config.userEmail && config.userPassword)) error('UNAUTHENTICATED', 'Sign in to the remote server')
     let conn = this.connectionCache
@@ -127,7 +127,7 @@ export class CloudStorageHost {
       let resolved
       try { resolved = await this.resolveConnection({ signal: controller.signal, fetchImpl: this.fetchImpl, redirect: 'error' }) }
       finally { clearTimeout(timeout); this.requests.delete(controller) }
-      if (epoch !== this.epoch || this.fingerprint() !== settingsKey || this.getSettings().remoteEnabled !== true) error('ACCOUNT_CHANGED', 'Remote connection changed')
+      if (epoch !== this.epoch || this.fingerprint() !== settingsKey || this.getSettings().enterpriseEnabled !== true) error('ACCOUNT_CHANGED', 'Remote connection changed')
       if (!resolved.userId || !resolved.orgId || !resolved.authToken) error('UNAUTHENTICATED', 'Remote authentication did not return an identity')
       let expiry = Date.now() + 60000
       try { expiry = JSON.parse(Buffer.from(resolved.authToken.split('.')[1], 'base64url').toString()).exp * 1000 - 30000 } catch {}
@@ -164,7 +164,7 @@ export class CloudStorageHost {
   async status() {
     this.lastStatusProbe = Date.now()
     let result
-    if (this.getSettings().remoteEnabled !== true) result = { state: 'remote_disabled' }
+    if (this.getSettings().enterpriseEnabled !== true) result = { state: 'remote_disabled' }
     else try { result = await this.request(null, '/status') }
     catch (e) {
       result = { state: ({ REMOTE_DISABLED: 'remote_disabled', UNCONFIGURED: 'unconfigured', UNAUTHENTICATED: 'unauthenticated' })[e.code] || (e.status === 401 ? 'unauthenticated' : e.status === 403 ? 'forbidden' : e.status === 404 ? 'unsupported' : 'unavailable') }
@@ -179,7 +179,7 @@ export class CloudStorageHost {
   }
   async transferAccount() {
     // Local history remains available offline for the unchanged connection.
-    if (this.getSettings().remoteEnabled !== true) return null
+    if (this.getSettings().enterpriseEnabled !== true) return null
     try { return await this.connection() }
     catch { return null } // A different fingerprint still requires a verified identity.
   }

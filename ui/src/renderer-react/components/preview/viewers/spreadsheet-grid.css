@@ -1,0 +1,50 @@
+.spreadsheet-scroll {
+  background: #fff;
+  color: #000;
+  color-scheme: light;
+}
+.spreadsheet-grid {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font: 11pt/1.2 Arial, sans-serif;
+}
+.spreadsheet-grid th {
+  position: sticky;
+  background: #f3f3f3;
+  color: #555;
+  border-right: 1px solid #d4d4d4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 0 2px;
+  font: 12px/1.2 system-ui, sans-serif;
+  text-align: center;
+  user-select: none;
+}
+.spreadsheet-grid thead th { top: 0; z-index: 6; }
+.spreadsheet-grid tbody th { left: 0; z-index: 4; }
+.spreadsheet-grid .spreadsheet-corner { left: 0; z-index: 9; }
+.spreadsheet-grid td {
+  position: relative;
+  padding: 0 2px;
+  vertical-align: bottom;
+  white-space: pre;
+}
+.spreadsheet-grid[data-grid-lines=true] td { border-right: 1px solid #e1e1e1; border-bottom: 1px solid #e1e1e1; }
+.spreadsheet-grid td button {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  white-space: inherit;
+  text-decoration: inherit;
+}
+.spreadsheet-grid td[data-citation-cell=true],
+.spreadsheet-grid td[data-selected-cell=true] { outline: 2px solid #d6a848; outline-offset: -2px; }
+.spreadsheet-grid td button:focus-visible { outline: 2px solid #d6a848; outline-offset: -2px; }
+.spreadsheet-data-bar { position: absolute; top: 1px; bottom: 1px; pointer-events: none; }

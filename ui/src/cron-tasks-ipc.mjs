@@ -17,6 +17,7 @@ export function registerCronIpcHandlers({ ipcMain, mossHome }) {
   ipcMain.handle('cron:update', (_event, { id, updates }) => updateCronTaskStore(filePath, tasks => {
     const task = tasks.find(entry => entry.id === id);
     if (!task) return null;
+    if (task.controlAccount) throw new Error('请在企业管理中修改定时任务。');
     if (task.runId) throw new Error('正在执行的任务不能修改，请等待执行结束。');
     const cronChanged = updates.cron !== undefined && updates.cron !== task.cron;
     Object.assign(task, updates, { id });
@@ -25,6 +26,7 @@ export function registerCronIpcHandlers({ ipcMain, mossHome }) {
   }));
   ipcMain.handle('cron:delete', (_event, { id, taskId }) => updateCronTaskStore(filePath, tasks => {
     const index = tasks.findIndex(task => task.id === (id ?? taskId));
+    if (tasks[index]?.controlAccount) throw new Error('请在企业管理中删除此任务。');
     if (index >= 0) tasks.splice(index, 1);
     return { ok: true };
   }));

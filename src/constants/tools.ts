@@ -24,7 +24,6 @@ import { TASK_CREATE_TOOL_NAME } from '../tools/TaskCreateTool/constants.js'
 import { TASK_GET_TOOL_NAME } from '../tools/TaskGetTool/constants.js'
 import { TASK_LIST_TOOL_NAME } from '../tools/TaskListTool/constants.js'
 import { TASK_UPDATE_TOOL_NAME } from '../tools/TaskUpdateTool/constants.js'
-import { SAVE_SESSION_SUMMARY_TOOL_NAME } from '../tools/SaveSessionSummaryTool/constants.js'
 import { TOOL_SEARCH_TOOL_NAME } from '../tools/ToolSearchTool/prompt.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import { ENTER_WORKTREE_TOOL_NAME } from '../tools/EnterWorktreeTool/constants.js'
@@ -38,7 +37,6 @@ import {
 } from '../tools/ScheduleCronTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
-  SAVE_SESSION_SUMMARY_TOOL_NAME,
   TASK_OUTPUT_TOOL_NAME,
   EXIT_PLAN_MODE_V2_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
@@ -110,7 +108,6 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
  * Tools allowed in coordinator mode - output, user decisions and agent management.
  */
 export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
-  SAVE_SESSION_SUMMARY_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,
   AGENT_TOOL_NAME,
   TASK_STOP_TOOL_NAME,

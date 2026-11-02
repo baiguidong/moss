@@ -688,50 +688,6 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Enable background memory consolidation (auto-dream). When set, overrides the server-side default.',
         ),
-      sessionMemory: z
-        .object({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              'Expose SaveSessionSummary for optional model-authored session notes. Defaults to false.',
-            ),
-          compactEnabled: z
-            .boolean()
-            .optional()
-            .describe(
-              'Deprecated; ignored. Compaction does not consume saved session summaries.',
-            ),
-          minimumMessageTokensToInit: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe(
-              'Deprecated; ignored. Session summaries are saved only through SaveSessionSummary.',
-            ),
-          minimumTokensBetweenUpdate: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe(
-              'Deprecated; ignored. There is no automatic session summary extraction.',
-            ),
-          toolCallsBetweenUpdates: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe(
-              'Deprecated; ignored. Tool counts do not trigger session summaries.',
-            ),
-          compactMinTokens: z.number().int().positive().optional(),
-          compactMinTextBlockMessages: z.number().int().positive().optional(),
-          compactMaxTokens: z.number().int().positive().optional(),
-        })
-        .optional()
-        .describe('Optional model-authored session summaries; legacy thresholds are ignored.'),
       showThinkingSummaries: z
         .boolean()
         .optional()

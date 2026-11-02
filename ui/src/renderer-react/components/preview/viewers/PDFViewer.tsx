@@ -3,6 +3,10 @@ import type { DocumentLocation } from '../../../../shared/document-location.mjs'
 
 export type PDFViewerProps = {
   filePath: string; title: string; fileVersion?: number;
+  presentation?: boolean;
+  toolbarContainer?: HTMLElement | null;
+  artifactId?: string; revision?: string;
+  office?: boolean;
   resourceUri?: string; sessionId?: string; sourcePath?: string;
   documentLocation?: DocumentLocation; locationRequest?: number;
   onReady?: () => void; onError?: (message: string) => void;

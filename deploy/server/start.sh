@@ -40,9 +40,8 @@ if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
     printf '%s' "$registry_token" | docker login "$(env_value MOSS_REGISTRY)" \
       --username "$registry_username" --password-stdin
   fi
-  log 'Pulling Moss Server, runtime, MySQL, and Nginx images'
+  log 'Pulling Moss Server, WebUI, MySQL, and Nginx images'
   compose pull
-  docker pull "$(env_value MOSS_RUNTIME_IMAGE)"
 fi
 
 "$SCRIPT_DIR/scripts/cleanup-legacy.sh"

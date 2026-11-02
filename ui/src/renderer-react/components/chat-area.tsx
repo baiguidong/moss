@@ -504,7 +504,7 @@ export function ComposerPanel({
   readOnlyReason,
   composerIntent,
   hasActiveSession,
-  remoteEnabled = false,
+  enterpriseEnabled = false,
   newSessionMode = 'local',
   sessionAgentMode = 'local',
   onNewSessionModeChange,
@@ -543,7 +543,7 @@ export function ComposerPanel({
   readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   sessionAgentMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1584,56 +1584,6 @@ export function ComposerPanel({
             <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {newSessionAddMenu}
 
-              {remoteEnabled ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors",
-                        newSessionMode === 'remote-direct'
-                          ? "border-green-500/30 bg-green-500/10 text-green-600 hover:bg-green-500/15 dark:text-green-400"
-                          : "border-blue-500/30 bg-blue-500/10 text-blue-600 hover:bg-blue-500/15 dark:text-blue-400",
-                      )}
-                      title="选择工作电脑"
-                      aria-label={`工作电脑：${newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}`}
-                    >
-                      {newSessionMode === 'remote-direct'
-                        ? <Cloud className="h-3.5 w-3.5" />
-                        : <Laptop className="h-3.5 w-3.5" />}
-                      <span>{newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}</span>
-                      <ChevronRight className="h-3 w-3 opacity-60" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" sideOffset={8} className="w-56">
-                    <DropdownMenuItem
-                      className="gap-2 py-2.5"
-                      onSelect={() => onNewSessionModeChange?.('local')}
-                    >
-                      <Laptop className="h-4 w-4" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>工作任务</span>
-                        <span className="h-2 w-2 rounded-full bg-blue-500" aria-hidden="true" />
-                        <span>本地电脑</span>
-                      </span>
-                      {newSessionMode !== 'remote-direct' ? <Check className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="gap-2 py-2.5"
-                      onSelect={() => onNewSessionModeChange?.('remote-direct')}
-                    >
-                      <Cloud className="h-4 w-4" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>工作任务</span>
-                        <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden="true" />
-                        <span>云电脑</span>
-                      </span>
-                      {newSessionMode === 'remote-direct' ? <Check className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-
               <WorkspaceSelector
                 value={workspace}
                 options={workspaceOptions}
@@ -1732,7 +1682,7 @@ function HomeLanding({
   onClearAssistant,
   onOpenExpertHub,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   onOpenAgentManager,
@@ -1760,7 +1710,7 @@ function HomeLanding({
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onOpenAgentManager?: () => void;
@@ -1781,7 +1731,7 @@ function HomeLanding({
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
-        remoteEnabled={remoteEnabled}
+        enterpriseEnabled={enterpriseEnabled}
         newSessionMode={newSessionMode}
         sessionAgentMode={newSessionMode}
         onNewSessionModeChange={onNewSessionModeChange}
@@ -2373,7 +2323,7 @@ export function ChatArea({
   onOpenExpertHub,
   onOpenAgentManager,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   queuedMessages,
@@ -2454,7 +2404,7 @@ export function ChatArea({
   onOpenExpertHub?: () => void;
   onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   queuedMessages?: QueuedMessage[];
@@ -2660,7 +2610,7 @@ export function ChatArea({
           onOpenExpertHub={onOpenExpertHub}
           onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
-          remoteEnabled={remoteEnabled}
+          enterpriseEnabled={enterpriseEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
         />

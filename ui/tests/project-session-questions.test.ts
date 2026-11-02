@@ -26,6 +26,7 @@ function fixture(projectId: string | null = 'project') {
   const events: Array<{ channel: string; payload: any }> = [];
   let requestNumber = 0;
   const api = runInNewContext(`
+    ${section('function getHostPermissionMode(', 'function getRuntimeWebSearchSettings(')}
     ${section('function isPlainObject(', 'async function emitAppsChanged(')}
     ${section('function projectTaskStatusForSession(', 'async function getProjectCoordinatorTask(')}
     ({ requestToolPermission, respondToPendingQuestionRequest,
@@ -33,6 +34,7 @@ function fixture(projectId: string | null = 'project') {
        buildAskUserQuestionUpdatedInput, listProjectCoordinatorTasks, projectTaskStatusForSession });
   `, {
     ...permissionPolicy,
+    hostPolicy: {},
     normalizePermissionMode, normalizeProjectId, normalizeStringList, deriveProjectSessionTaskStatus,
     randomUUID: () => `request-${++requestNumber}`,
     pendingQuestionRequests: pending,

@@ -9,10 +9,6 @@ export type SystemSettingsImage = {
   model: string
 }
 
-export type SystemSettingsServerRuntime = {
-  dockerImage: string
-}
-
 export type SystemSettingsOpenIM = {
   enabled: boolean
   instanceId: string
@@ -36,7 +32,6 @@ export type SystemSettingsPayload = {
   apiKey: string
   image: SystemSettingsImage
   webui?: { snapshots: SnapshotPolicy }
-  serverRuntime: SystemSettingsServerRuntime
   openIM: SystemSettingsOpenIM
   settingsPath: string
   settingsExists: boolean
@@ -76,9 +71,6 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     model: 'gpt-image-2',
   },
   webui: { snapshots: { ...DEFAULT_SNAPSHOT_POLICY } },
-  serverRuntime: {
-    dockerImage: 'moss-runtime:latest',
-  },
   openIM: {
     enabled: false,
     instanceId: 'default',
@@ -253,19 +245,7 @@ function normalizeSystemSettings(
           : DEFAULT_SYSTEM_SETTINGS.image.model,
   }
 
-  const sourceServerRuntime = isRecord(source.serverRuntime)
-    ? source.serverRuntime
-    : {}
-  const existingServerRuntime = isRecord(result.serverRuntime)
-    ? result.serverRuntime
-    : {}
-  result.serverRuntime = {
-    dockerImage:
-      firstNonEmptyString(
-        stringField(sourceServerRuntime, 'dockerImage'),
-        stringField(existingServerRuntime, 'dockerImage'),
-      ) ?? DEFAULT_SYSTEM_SETTINGS.serverRuntime.dockerImage,
-  }
+  delete result.serverRuntime
 
   const sourceOpenIM = isRecord(source.openIM) ? source.openIM : {}
   const existingOpenIM = isRecord(result.openIM) ? result.openIM : {}
@@ -385,7 +365,6 @@ function toSystemSettingsPayload(
     apiKey: state.value.apiKey,
     image: state.value.image,
     webui: state.value.webui,
-    serverRuntime: state.value.serverRuntime,
     openIM: state.value.openIM,
     settingsPath: state.path,
     settingsExists: state.exists,
@@ -464,11 +443,11 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     bypassPermissions: nextSettings.bypassPermissions,
     models,
     webui: nextSettings.webui,
-    serverRuntime: nextSettings.serverRuntime,
     openIM: nextSettings.openIM,
     env,
   }
 
+  delete toSave.serverRuntime
   delete toSave.image
   delete toSave.model
   delete toSave.fastModel
@@ -499,7 +478,6 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     apiKey: nextSettings.apiKey,
     image: nextSettings.image,
     webui: nextSettings.webui,
-    serverRuntime: nextSettings.serverRuntime,
     openIM: nextSettings.openIM,
     settingsPath,
     settingsExists: true,

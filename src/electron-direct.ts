@@ -219,21 +219,6 @@ import { clearProxyCache } from './utils/proxy.js'
 //  so the parallel getCommands() memoized an empty list."
 initBundledSkills()
 
-export {
-  createDirectConnectSession,
-  attachDirectConnectSession,
-  DirectConnectError,
-} from './remote/createDirectConnectSession.js'
-export { setDirectConnectFetchImplementation } from './remote/directConnectFetch.js'
-export {
-  DirectConnectSessionManager,
-  type DirectConnectConfig,
-} from './remote/directConnectManager.js'
-export {
-  buildConnectUrl,
-  parseConnectUrl,
-} from '../packages/direct-connect-protocol/src/index.js'
-
 let localAgentRuntimeInitialized = false
 
 function initLocalAgentRuntimeOnce(): void {

@@ -1,0 +1,11 @@
+.office-preview-header { container-type: inline-size; }
+.office-preview-mode-icon { display: none; }
+@container (max-width: 560px) {
+  .office-request-edit { padding-inline: 6px; }
+  .office-request-edit > span { display: none; }
+}
+@container (max-width: 380px) {
+  .office-formula-toggle { display: none; }
+  .office-preview-mode-label { display: none; }
+  .office-preview-mode-icon { display: block; }
+}

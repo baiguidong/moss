@@ -419,6 +419,7 @@ export function createMossClient(transport, platform = {}) {
     openFile: (filePath) => transport.invoke('shell.open-file', filePath),
     openExternal: (url) => transport.invoke('shell.open-external', url),
     showItemInFolder: (filePath) => transport.invoke('shell.show-item-in-folder', filePath),
+    saveFile: (payload) => transport.invoke('shell.save-file', payload),
   },
   fs: {
     getPathForFile: (file) => platform.getPathForFile?.(file) || '',

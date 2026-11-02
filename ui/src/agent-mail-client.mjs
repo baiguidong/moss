@@ -14,6 +14,8 @@ function normalizeServerUrl(value) {
 async function requestAgentMail({
   serverUrl,
   authToken,
+  deviceToken,
+  headers = {},
   path,
   method = 'GET',
   body,
@@ -27,7 +29,9 @@ async function requestAgentMail({
     response = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
+        ...headers,
         authorization: `Bearer ${authToken}`,
+        ...(deviceToken ? { "X-Moss-Device-Credential": deviceToken } : {}),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

@@ -1,4 +1,5 @@
-// Actual XLSX parsing and React/PDF.js views; only conversion timing is controlled.
+// Actual XLSX parsing and React/PDF.js views; the fixture verifies that opening
+// an ordinary workbook does not request LibreOffice conversion.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -32,18 +33,24 @@ try {
   configureServer(server){server.middlewares.use(async(req,res,next)=>{if(req.url?.startsWith('/delivery.pdf')){res.setHeader('Content-Type','application/pdf');return res.end(pdfBytes)}if(req.url!=='/delivery')return next();res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml('/delivery','<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root"></div><script type="module" src="/delivery.jsx"></script></body></html>'));});}
  }]});await server.listen();browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE}:{})});page=await browser.newPage({viewport:{width:1200,height:800}});page.setDefaultTimeout(60000);page.on('pageerror',e=>errors.push(e.message));page.on('requestfailed',r=>console.log('REQUEST_FAILED',r.url(),r.failure()?.errorText));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/delivery`);
- await page.getByText('页面版式正在后台生成，可先阅读工作表。',{exact:true}).waitFor();
+ await page.locator('[data-cell="A2"]').waitFor();
+ assert.equal(await page.evaluate(()=>window.requests.some(r=>r.to==='libreoffice-pdf')),false);
+ assert.equal(await page.locator('[data-cell-details]').count(),0);
+ await page.getByRole('button',{name:'公式栏',exact:true}).click();
  for(const [cell,text] of Object.entries({A2:'28%',B2:'2026-10-29',C2:'12,345.50',D2:'0.00',B3:'=SUM(C2:D2)'}))assert.equal((await page.locator(`[data-cell="${cell}"]`).innerText()).trim(),text);
  assert.ok(await page.evaluate(()=>window.ready)>0);await page.locator('[data-cell="D2"] button').click();await page.locator('[data-cell-details]').getByText('=1-1',{exact:true}).waitFor();
- await page.screenshot({path:path.join(output,'excel-data-before-pdf.png')});mark('Formatted XLSX and formula details are readable while PDF conversion is still pending');
- await page.evaluate(()=>{window.retainedCell=document.querySelector('[data-cell="D2"]');window.finish('budget.xlsx','libreoffice-pdf')});
- await page.getByText('页面版式已就绪，可随时切换。',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.retainedCell===document.querySelector('[data-cell="D2"]')),true);assert.equal(await page.locator('[data-cell-details]').count(),1);mark('Background PDF completion preserves worksheet selection and DOM');
- await page.getByRole('button',{name:'页面版式',exact:true}).click();await page.locator('canvas[data-painted="true"]').first().waitFor();
+ await page.screenshot({path:path.join(output,'excel-data-browser.png')});mark('Formatted XLSX renders in the browser without a LibreOffice request');
+ await page.evaluate(()=>{window.retainedCell=document.querySelector('[data-cell="D2"]')});
+ assert.equal(await page.evaluate(()=>window.retainedCell===document.querySelector('[data-cell="D2"]')),true);assert.equal(await page.locator('[data-cell-details]').count(),1);
+ await page.getByRole('button',{name:'预览模式',exact:true}).click();await page.getByRole('menuitemradio',{name:'页面版式',exact:true}).click();await page.getByText('当前没有缓存的页面版式，显示工作表',{exact:true}).waitFor();mark('Without a cached PDF, page mode stays on the usable worksheet view');
  await page.evaluate(()=>window.setFile('hold-cached.xlsx'));await page.waitForFunction(()=>window.requests.some(r=>r.filePath==='hold-cached.xlsx'));await page.locator('canvas[data-painted="true"]').first().waitFor();assert.equal(await page.evaluate(()=>window.requests.some(r=>r.filePath==='hold-cached.xlsx'&&r.to==='libreoffice-pdf')),false);mark('A cached PDF opens without waiting for workbook parsing or reconverting');
- await page.evaluate(()=>window.setFile('new.xlsx'));await page.getByText('新版内容',{exact:true}).waitFor();await page.evaluate(()=>window.finish('hold-cached.xlsx','excel-json'));assert.equal(await page.getByText('新版内容',{exact:true}).count(),1);mark('Late workbook responses cannot replace a newly opened file');
- await page.evaluate(()=>window.finish('new.xlsx','libreoffice-pdf',true));assert.equal(await page.getByText('新版内容',{exact:true}).count(),1);
- await page.getByRole('button',{name:'页面版式',exact:true}).click();await page.getByText(/测试转换失败/).waitFor();mark('Conversion failure preserves usable data and displays the cause');
+ await page.evaluate(()=>window.setFile('new.xlsx'));await page.locator('[data-spreadsheet-grid]').getByText('新版内容',{exact:true}).waitFor();await page.evaluate(()=>window.finish('hold-cached.xlsx','excel-json'));assert.equal(await page.locator('[data-spreadsheet-grid]').getByText('新版内容',{exact:true}).count(),1);mark('Late workbook responses cannot replace a newly opened file');
+ assert.equal(await page.evaluate(()=>window.requests.some(r=>r.to==='libreoffice-pdf')),false);mark('Office preview delivery never asks the desktop for LibreOffice');
  await page.evaluate(()=>window.setFile('budget.xlsx'));await page.getByText('28%',{exact:true}).waitFor();await page.setViewportSize({width:620,height:800});await page.evaluate(()=>document.documentElement.dataset.theme='dark');await page.locator('[data-cell="D2"] button').click();await page.screenshot({path:path.join(output,'excel-narrow-dark.png')});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));mark('Narrow dark layout keeps formats and formula details readable');
+ await page.getByRole('button',{name:'公式栏',exact:true}).click();assert.equal(await page.locator('[data-cell-details]').count(),0);
+ await page.reload();await page.locator('[data-cell="A2"]').waitFor();assert.equal(await page.locator('[data-cell-details]').count(),0);
+ await page.getByRole('button',{name:'更多预览操作',exact:true}).click();await page.getByRole('menuitem',{name:'刷新预览',exact:true}).click();await page.waitForFunction(()=>window.requests.filter(r=>r.to==='excel-json').length===2);
+ mark('Formula bar preference survives reload and refresh is available from the compact menu');
  assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'validation.json'),JSON.stringify({ok:true,checks,errors,scope:'Actual XLSX parsing, React viewer and PDF.js; controlled async conversion timing, no model calls.'},null,2));
 } catch(error){console.log('BROWSER_ERRORS',JSON.stringify(errors));console.log('BODY',await page?.locator('body').innerText());await page?.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});throw error}
 finally {await browser?.close();await server?.close();await fs.rm(temporary,{recursive:true,force:true})}

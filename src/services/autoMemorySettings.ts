@@ -3,7 +3,7 @@ import {
   DEFAULT_AUTO_MEMORY_SETTINGS,
   normalizeAutoMemorySettings,
   type AutoMemorySettings,
-} from '../../packages/direct-connect-protocol/src/index.js'
+} from '../../shared/session-settings.js'
 import { getSessionEnvironmentContext } from '../utils/sessionIdContext.js'
 import { getInitialSettings } from '../utils/settings/settings.js'
 

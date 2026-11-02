@@ -1,5 +1,6 @@
 import { createMossClient } from '../client/moss-client.mjs';
 import { createWebTransport } from '../client/web-transport.mjs';
+import { attachDesktopShellPresentation } from '../client/desktop-shell-presentation.mjs';
 
 let environmentGeneration: number | undefined;
 async function jsonFetch(url: string, init?: RequestInit) {
@@ -62,6 +63,7 @@ export async function initializeHostClient() {
     },
   });
   const client = createMossClient(transport) as Window['agentDesktop'];
+  if (window.mossDesktopShell?.getPresentation) await attachDesktopShellPresentation(client, window.mossDesktopShell);
   const browseFiles: typeof import('./components/web-file-browser').showWebFileBrowser = async options => {
     const { showWebFileBrowser } = await import('./components/web-file-browser');
     return showWebFileBrowser(options);
@@ -100,6 +102,10 @@ export async function initializeHostClient() {
   client.shell.openFile = async filePath => {
     const link = document.createElement('a'); link.href = fileUrl(filePath) + '&download'; link.download = '';
     document.body.append(link); link.click(); link.remove(); return '';
+  };
+  client.shell.saveFile = async ({ sourcePath, defaultPath }) => {
+    const link = document.createElement('a'); link.href = fileUrl(sourcePath) + '&download'; link.download = defaultPath || '';
+    document.body.append(link); link.click(); link.remove(); return { ok: true };
   };
   client.shell.showItemInFolder = async filePath => {
     await browseFiles({ kind: 'browse', revealPath: filePath });

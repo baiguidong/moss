@@ -212,6 +212,7 @@ export function createMossCronScheduler({
     const claimed = await updateCronTaskStore(filePath, tasks => {
       const task = tasks.find(entry => entry.id === taskId);
       if (!task) { if (manual) throw new Error('Task not found.'); return null; }
+      if (!canRun(task)) { if (manual) throw new Error('此电脑或任务的企业账号已暂停。'); return null; }
       if (stopped || task.runId) { if (manual) throw new Error('定时任务正在执行或调度器已停止。'); return null; }
       if (task.durable === false && task.desktopHostId !== hostId) return null;
       if (!manual && (task.enabled === false || !Number.isFinite(task.nextRunAt) || task.nextRunAt > now())) return null;
@@ -231,7 +232,7 @@ export function createMossCronScheduler({
       execution = await createExecution(claimed, ownerFor(claimed));
       // Recheck deletion/pause after async session creation, before starting work.
       const current = (await readCronTaskStore(filePath)).find(task => task.id === taskId);
-      if (!current || (!manual && current.enabled === false) || stopped) {
+      if (!current || !canRun(current) || (!manual && current.enabled === false) || stopped) {
         await updateCronTaskStore(filePath, tasks => {
           const task = tasks.find(entry => entry.id === taskId && entry.runId === runId);
           if (task) { delete task.runId; delete task.runHostId; task.status = 'idle'; }
@@ -294,7 +295,7 @@ export function createMossCronScheduler({
           const task = tasks[index];
           if (task.runId) continue;
           const staleSession = task.durable === false && task.desktopHostId !== hostId;
-          const expired = task.enabled !== false && task.recurring && now() - task.createdAt > recurringMaxAge;
+          const expired = !task.controlAccount && task.enabled !== false && task.recurring && now() - task.createdAt > recurringMaxAge;
           if (staleSession || expired || (task.ownerSessionId && !sessions.has(task.ownerSessionId))) {
             tasks.splice(index, 1);
             continue;
@@ -304,7 +305,7 @@ export function createMossCronScheduler({
       });
       for (const task of await readCronTaskStore(filePath)) {
         if (stopped || !canRun()) return;
-        if (task.enabled === false || task.runId || activeRuns.has(task.id)) continue;
+        if (!canRun(task) || task.enabled === false || task.runId || activeRuns.has(task.id)) continue;
         if (Number.isFinite(task.nextRunAt) && task.nextRunAt <= now()) {
           void launch(task.id).catch(error => console.warn('[moss-cron] task run failed:', error?.message || error));
         }
@@ -366,6 +367,7 @@ export function createMossCronScheduler({
     return updateCronTaskStore(filePath, tasks => {
       const index = tasks.findIndex(task => task.id === taskId);
       if (index < 0) return { ok: false, error: 'Task not found.' };
+      if (tasks[index].controlAccount) throw new Error('请在企业工作电脑管理中修改定时任务。');
       tasks.splice(index, 1);
       return { ok: true };
     });
@@ -376,6 +378,7 @@ export function createMossCronScheduler({
     return updateCronTaskStore(filePath, tasks => {
       const task = tasks.find(entry => entry.id === taskId);
       if (!task) return { ok: false, error: 'Task not found.' };
+      if (task.controlAccount) throw new Error('请在企业工作电脑管理中修改定时任务。');
       if (enabled && !task.enabled) {
         task.nextRunAt = task.lastError ? now() : nextRunAt(task, now());
         task.lastError = null;

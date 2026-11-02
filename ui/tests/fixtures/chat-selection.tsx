@@ -330,7 +330,7 @@ api.runAppearanceChecks = async () => {
   const commits: Partial<DesktopSettings["appearance"]>[] = [];
   function SettingsFixture() {
     const [settings, setSettings] = React.useState<DesktopSettings>({
-      agentMode: "local", localEnabled: true, remoteEnabled: false, model: "", maxTurns: 100,
+      agentMode: "local", localEnabled: true, enterpriseEnabled: false, model: "", maxTurns: 100,
       language: "chinese", thinkingMode: "adaptive", thinkingBudgetTokens: 16000,
       image: { model: "gpt-image-2" },
       appearance: { ...DEFAULT_APPEARANCE },

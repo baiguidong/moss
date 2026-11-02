@@ -12,6 +12,7 @@ COPY vendor ./vendor
 COPY scripts ./scripts
 RUN bun install --frozen-lockfile
 COPY ui/package.json ui/bun.lock ./ui/
+COPY ui/patches ./ui/patches
 RUN cd ui && bun install --frozen-lockfile --ignore-scripts && node node_modules/electron/install.js
 COPY src ./src
 COPY skills ./skills

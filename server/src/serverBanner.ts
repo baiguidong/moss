@@ -1,4 +1,3 @@
-import { buildConnectUrl } from '../../packages/direct-connect-protocol/src/index.js'
 
 function displayHost(host: string): string {
   if (host === '0.0.0.0' || host === '::') {
@@ -15,11 +14,6 @@ export function printBanner(
   },
   actualPort: number,
 ): void {
-  const connectUrl = buildConnectUrl({
-    host: displayHost(config.host),
-    port: actualPort,
-    unix: config.unix,
-  })
   const adminUrl = config.unix
     ? null
     : `http://${displayHost(config.host)}:${actualPort}/admin`
@@ -27,12 +21,12 @@ export function printBanner(
   process.stderr.write(
     [
       '',
-      'Moss server started.',
+      'Moss control plane started.',
       config.unix
         ? `Socket: ${config.unix}`
         : `HTTP: http://${displayHost(config.host)}:${actualPort}`,
       adminUrl ? `Admin: ${adminUrl}` : null,
-      `Connect: ${connectUrl}`,
+
       '',
     ].filter(Boolean).join('\n'),
   )

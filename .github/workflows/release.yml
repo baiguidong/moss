@@ -252,9 +252,8 @@ jobs:
           set -euo pipefail
           bash -n deploy/server/prepare-image-context.sh
           bash deploy/server/scripts/validate.sh
-          node --check scripts/docker-build-runtime.mjs
 
-      - name: Build Server and runtime images
+      - name: Build control plane image
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
@@ -262,9 +261,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          RUNTIME_TAG_VERSION="${VERSION//+/_}"
-          RUNTIME_IMAGE="moss-runtime:$RUNTIME_TAG_VERSION-amd64"
-          SERVER_IMAGE="moss-server:$RUNTIME_TAG_VERSION-amd64"
+          SERVER_IMAGE="moss-server:$VERSION-amd64"
           deploy/server/prepare-image-context.sh "$VERSION" amd64 dist/server-image
           docker buildx build \
             --platform linux/amd64 \
@@ -272,18 +269,6 @@ jobs:
             --tag "$SERVER_IMAGE" \
             --load \
             -f docker/server/Dockerfile .
-          bun scripts/docker-build-runtime.mjs \
-            --tag "$RUNTIME_IMAGE" \
-            --platform linux/amd64 \
-            --node-version "$SERVER_NODE_VERSION" \
-            --load
-          docker run --rm "$RUNTIME_IMAGE" node --no-warnings -e \
-            "require('node:sqlite'); require('sharp')"
-          docker run --rm "$RUNTIME_IMAGE" python3 --version
-          docker run --rm "$RUNTIME_IMAGE" git --version
-          docker run --rm "$RUNTIME_IMAGE" rg --version
-          docker run --rm --user 10001:10001 -e HOME=/tmp/moss-home \
-            "$RUNTIME_IMAGE" node --version
           docker run --rm --entrypoint /opt/moss/node/bin/node \
             "$SERVER_IMAGE" --no-warnings -e \
             "require('node:sqlite'); require('sharp')"
@@ -300,19 +285,13 @@ jobs:
           TAG_VERSION="${VERSION//+/_}"
           IMAGE_OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           LOCAL_SERVER_IMAGE="moss-server:$TAG_VERSION-amd64"
-          LOCAL_RUNTIME_IMAGE="moss-runtime:$TAG_VERSION-amd64"
           SERVER_IMAGE="ghcr.io/$IMAGE_OWNER/moss-server"
-          RUNTIME_IMAGE="ghcr.io/$IMAGE_OWNER/moss-runtime"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag "$LOCAL_SERVER_IMAGE" "$SERVER_IMAGE:$TAG_VERSION"
-          docker tag "$LOCAL_RUNTIME_IMAGE" "$RUNTIME_IMAGE:$TAG_VERSION"
           docker push "$SERVER_IMAGE:$TAG_VERSION"
-          docker push "$RUNTIME_IMAGE:$TAG_VERSION"
           if [[ "$IS_PRERELEASE" != true ]]; then
             docker tag "$LOCAL_SERVER_IMAGE" "$SERVER_IMAGE:latest"
-            docker tag "$LOCAL_RUNTIME_IMAGE" "$RUNTIME_IMAGE:latest"
             docker push "$SERVER_IMAGE:latest"
-            docker push "$RUNTIME_IMAGE:latest"
           fi
 
       - name: Package and upload Server Compose deployment
@@ -330,7 +309,7 @@ jobs:
           MOSS_RELEASE_IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" \
             deploy/server/package.sh "$VERSION" "$OUTPUT_DIR"
           packaged_env="$(tar -xOzf "$OUTPUT_DIR/moss-server-compose-$VERSION.tar.gz" moss-server/.env.example)"
-          for name in server runtime webui; do
+          for name in server webui; do
             case "$name" in
               webui) key=MOSS_WEB_IMAGE ;;
               *) key="MOSS_${name^^}_IMAGE" ;;
@@ -412,5 +391,5 @@ jobs:
         shell: bash
         run: |
           VERSION="${RELEASE_TAG#v}"
-          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server + WebUI + runtime：下载下方 install-moss-server.sh，在 Ubuntu 主机执行；缺少 Docker 时自动安装随 Release 附带的 Docker Engine 与 Compose：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP:8444/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
+          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server 控制平面 + 个人云电脑：下载下方 install-moss-server.sh，在 Ubuntu 主机执行；缺少 Docker 时自动安装随 Release 附带的 Docker Engine 与 Compose：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
           gh release edit "$RELEASE_TAG" --notes "$notes" --draft=false --repo "$GITHUB_REPOSITORY"

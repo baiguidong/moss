@@ -94,7 +94,7 @@ try {
   await admin('stop', alice.id); assert.equal((await inspect(alice.containerId)).State.Running, false);
   await apiLogin('alice'); await verifyPersistent();
   console.log('[cloud-ci] Gateway restart and same-container stop/start passed');
-  await fs.writeFile(path.join(temporary, 'Dockerfile'), `ARG BASE\nFROM \${BASE}\nUSER root\nARG TEST_VERSION\nARG BREAK_BOOT=0\nRUN TEST_VERSION="$TEST_VERSION" BREAK_BOOT="$BREAK_BOOT" node -e 'const fs=require("fs"),p="/opt/moss/package.json",j=JSON.parse(fs.readFileSync(p));j.version=process.env.TEST_VERSION;fs.writeFileSync(p,JSON.stringify(j));if(process.env.BREAK_BOOT==="1")fs.writeFileSync("/opt/moss/ui/src/main.mjs","process.exit(42);")'\nLABEL org.opencontainers.image.version="$TEST_VERSION"\nUSER moss\n`);
+  await fs.writeFile(path.join(temporary, 'Dockerfile'), `ARG BASE\nFROM \${BASE}\nUSER root\nARG TEST_VERSION\nARG BREAK_BOOT=0\nRUN TEST_VERSION="$TEST_VERSION" BREAK_BOOT="$BREAK_BOOT" node -e 'const fs=require("fs");for(const p of ["/opt/moss/package.json","/opt/moss/ui/package.json"]){const j=JSON.parse(fs.readFileSync(p));j.version=process.env.TEST_VERSION;fs.writeFileSync(p,JSON.stringify(j));}if(process.env.BREAK_BOOT==="1")fs.writeFileSync("/opt/moss/ui/src/main.mjs","process.exit(42);")'\nLABEL org.opencontainers.image.version="$TEST_VERSION"\nUSER moss\n`);
   for (const broken of [false, true]) {
     const version = `0.0.0-cloud-ci.${broken ? 'bad' : 'good'}`, tag = `${suffix}:${broken ? 'bad' : 'good'}`;
     await docker('build', '--build-arg', `BASE=${image}`, '--build-arg', `TEST_VERSION=${version}`, '--build-arg', `BREAK_BOOT=${broken ? 1 : 0}`, '-t', tag, temporary);

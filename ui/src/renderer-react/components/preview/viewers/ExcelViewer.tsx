@@ -1,16 +1,22 @@
 "use client";
 
 import * as React from "react";
+import { ChevronDown, FileText, Loader2, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { documentIpc } from "@/ipc/document.ipc";
+import { OfficeEditRequest } from '../OfficeEditRequest';
 import { OfficePreviewToolbar } from "../OfficePreviewToolbar";
 import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
+import { SpreadsheetGrid } from "./SpreadsheetGrid";
 import { parseCellRange } from "../../../../shared/document-location.mjs";
+import { officeParserFileName } from "./office-file-utils";
 import type { OfficeViewerProps } from "./OfficeDocumentViewer";
 
 const MAX_FALLBACK_ROWS = 500;
 const MAX_FALLBACK_COLUMNS = 100;
+const FORMULA_BAR_PREFERENCE = 'ui.spreadsheet.formulaBar';
 
 type SheetMerge = { s?: { r?: number; c?: number }; e?: { r?: number; c?: number } };
 type SheetImage = { row?: number; col?: number; src?: string; width?: number; height?: number };
@@ -68,13 +74,20 @@ function buildSheetLayout(sheet: { data?: any[][]; merges?: SheetMerge[]; images
   };
 }
 
-const columnLabel = (index: number): string => index < 26 ? String.fromCharCode(65 + index) : columnLabel(Math.floor(index / 26) - 1) + String.fromCharCode(65 + index % 26);
-
-export function ExcelViewer({ filePath, fileVersion, toolbarContainer, previewPdfPath, onReady, onError, documentLocation, locationRequest, ...annotation }: OfficeViewerProps) {
+export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMenuItems, downloadMenuItems, onDownload, downloadDisabled, previewPdfPath, onReady, onError, documentLocation, locationRequest, ...annotation }: OfficeViewerProps) {
   const [state, setState] = React.useState<{ key: string; pdfPath?: string; data?: any; error?: string; dataError?: string; pdfPending?: boolean; dataPending?: boolean }>();
-  const [mode, setMode] = React.useState<'pages' | 'sheets'>('pages');
+  const [mode, setMode] = React.useState<'pages' | 'sheets'>('sheets');
+  const [pageControls, setPageControls] = React.useState<HTMLDivElement | null>(null);
+  const [zoom, setZoom] = React.useState<number | 'fit'>(100);
   const [activeSheet, setActiveSheet] = React.useState('');
   const [selectedCell, setSelectedCell] = React.useState('');
+  const [showFormulaBar, setShowFormulaBar] = React.useState(() => {
+    try { return localStorage.getItem(FORMULA_BAR_PREFERENCE) === 'true'; } catch { return false; }
+  });
+  const formulaBarId = React.useId();
+  React.useEffect(() => {
+    try { localStorage.setItem(FORMULA_BAR_PREFERENCE, String(showFormulaBar)); } catch {}
+  }, [showFormulaBar]);
   const userSelectedMode = React.useRef(false);
   const tableRoot = React.useRef<HTMLDivElement>(null);
   const locationKey = JSON.stringify([documentLocation, locationRequest]);
@@ -84,22 +97,16 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, previewPd
   const key = `${filePath}:${fileVersion ?? ''}:${attempt}:${previewPdfPath || ''}`;
   React.useEffect(() => {
     let active = true;
-    const convert = (to: 'excel-json' | 'libreoffice-pdf') => documentIpc.convert({ filePath, to }).catch(error => ({ result: { success: false, error: String(error.message || error) } }));
-    let pdfReady = Boolean(previewPdfPath && !attempt);
+    const pdfReady = Boolean(previewPdfPath);
     userSelectedMode.current = false;
     setSelectedCell('');
-    setState({ key, pdfPath: pdfReady ? previewPdfPath : undefined, pdfPending: !pdfReady, dataPending: true });
-    setMode(documentLocation?.sheet ? 'sheets' : 'pages');
-    void convert('excel-json').then(workbook => {
+    setState({ key, pdfPath: pdfReady ? previewPdfPath : undefined, pdfPending: false, dataPending: true });
+    setMode(documentLocation?.sheet ? 'sheets' : pdfReady ? 'pages' : 'sheets');
+    void documentIpc.convert({ filePath, to: 'excel-json' }).catch(error => ({ result: { success: false, error: String(error.message || error) } })).then(workbook => {
       if (!active) return;
       setState(current => ({ ...current!, key, dataPending: false, data: workbook.result?.success ? workbook.result.data : undefined, dataError: workbook.result?.error }));
-      // Keep the first usable view stable; background conversion never steals it.
+      // Keep the first usable view stable; parsing never steals a cached PDF.
       if (workbook.result?.success && !pdfReady && !userSelectedMode.current && !documentLocation?.page) setMode('sheets');
-    });
-    if (!pdfReady) void convert('libreoffice-pdf').then(pdf => {
-      if (!active) return;
-      pdfReady = Boolean(pdf.result?.success);
-      setState(current => ({ ...current!, key, pdfPending: false, pdfPath: pdf.result?.success ? pdf.result.data : undefined, error: pdf.result?.error }));
     });
     return () => { active = false; };
   }, [key, filePath]);
@@ -108,91 +115,58 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, previewPd
   React.useEffect(() => { if (mode === 'sheets' && excelData) tableRoot.current?.querySelector('[data-citation-cell="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' }); }, [mode, activeSheet, excelData, locationKey]);
   const citationError = documentLocation?.sheet && excelData && !excelData.sheets?.some((sheet: any) => sheet.name === documentLocation.sheet) ? `引用的工作表「${documentLocation.sheet}」不存在` : '';
   if (state?.key !== key) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在渲染工作簿…</div>;
-  const toolbar = <div className="flex shrink-0 items-center gap-1 border-b border-border/70 px-3 py-1 text-xs">
-    <button aria-pressed={mode === 'pages'} className="rounded px-2 py-1 aria-pressed:bg-muted" onClick={() => { userSelectedMode.current = true; setMode('pages'); }}>页面版式</button>
-    <button aria-pressed={mode === 'sheets'} className="rounded px-2 py-1 aria-pressed:bg-muted" onClick={() => { userSelectedMode.current = true; setMode('sheets'); }}>工作表</button>
-    <OfficePreviewToolbar filePath={filePath} onRefresh={() => setAttempt(value => value + 1)} container={toolbarContainer} />
-  </div>;
-  if (mode === 'pages' && pdfPath) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><PDFViewer {...annotation} documentLocation={documentLocation} locationRequest={locationRequest} sourcePath={filePath} onReady={onReady} onError={onError} filePath={pdfPath} title={filePath} /></div></div>;
-  const notice = mode === 'pages' && !pdfPath ? <p role="status" className="shrink-0 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">当前显示工作表内容；{state.pdfPending ? '页面版式正在后台生成。' : `完整页面版式暂不可用。${state.error || ''}`}</p> : null;
+  const showingSheets = mode === 'sheets' || !pdfPath;
+  const toolbar = <OfficePreviewToolbar filePath={filePath} onRefresh={() => setAttempt(value => value + 1)} container={toolbarContainer} menuItems={<><DropdownMenuCheckboxItem checked={showFormulaBar} onCheckedChange={setShowFormulaBar}>公式栏</DropdownMenuCheckboxItem>{toolbarMenuItems}</>} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled}>
+    {showingSheets && <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={`单元格 ${selectedCell}`} />}
+    <div ref={setPageControls} className="flex shrink-0 items-center gap-1 empty:hidden" />
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs" aria-label="预览模式" title={state.pdfPending ? '正在生成页面版式' : `切换预览模式：${showingSheets ? '工作表' : '页面版式'}`}>
+          <span className="office-preview-mode-label">{showingSheets ? '工作表' : '页面版式'}</span>
+          {showingSheets ? <Table2 className="office-preview-mode-icon h-3.5 w-3.5" /> : <FileText className="office-preview-mode-icon h-3.5 w-3.5" />}
+          {state.pdfPending ? <span role="status" aria-label="正在生成页面版式"><Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /></span> : <ChevronDown className="h-3 w-3" />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup value={mode} onValueChange={value => { userSelectedMode.current = true; setMode(value as 'pages' | 'sheets'); }}>
+          <DropdownMenuRadioItem value="sheets">工作表</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="pages">页面版式</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    {showingSheets && <>
+      <select aria-label="工作表缩放" className={`h-7 ${zoom === 'fit' ? 'w-24' : 'w-16'} shrink-0 rounded-md bg-transparent px-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`} value={zoom} onChange={event => setZoom(event.target.value === 'fit' ? 'fit' : Number(event.target.value))}><option value="fit">适合宽度</option>{[50, 75, 100, 125, 150, 200].map(value => <option key={value} value={value}>{value}%</option>)}</select>
+      <Button variant="ghost" size="icon-sm" className="office-formula-toggle h-7 w-7 shrink-0 rounded-md font-serif italic aria-pressed:bg-muted" aria-label="公式栏" title={showFormulaBar ? '收起公式栏' : '展开公式栏'} aria-pressed={showFormulaBar} aria-expanded={showFormulaBar} aria-controls={formulaBarId} onClick={() => setShowFormulaBar(value => !value)}>ƒx</Button>
+    </>}
+  </OfficePreviewToolbar>;
+  if (mode === 'pages' && pdfPath) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><PDFViewer {...annotation} office toolbarContainer={pageControls} documentLocation={documentLocation} locationRequest={locationRequest} sourcePath={filePath} onReady={onReady} onError={onError} filePath={pdfPath} title={filePath} /></div></div>;
+  const notice = mode === 'pages' && !pdfPath ? <details open className="shrink-0 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground"><summary className="cursor-pointer">当前没有缓存的页面版式，显示工作表</summary><p role="status" className="pt-1">可直接使用工作表模式查看内容；页面版式仅在文件已有预生成 PDF 时提供。</p></details> : null;
   if (excelData?.sheets?.length) {
     const currentSheet = excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0];
     const cited = currentSheet.name === documentLocation?.sheet && range;
     const focus = cited && range.start.row < currentSheet.data.length && range.start.col < currentSheet.data.reduce((n: number, row: any[]) => Math.max(n, row?.length || 0), 0) ? range.start : undefined;
     const layout = buildSheetLayout(currentSheet, focus);
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        {toolbar}{notice}
-        {mode === 'sheets' && <p role="status" className="shrink-0 px-4 py-1 text-xs text-muted-foreground">{state.pdfPending ? '页面版式正在后台生成，可先阅读工作表。' : pdfPath ? '页面版式已就绪，可随时切换。' : ''}</p>}
-        {selectedCell && <div data-cell-details className="shrink-0 border-b border-border/60 px-4 py-2 text-xs"><span className="font-medium">{currentSheet.name}!{selectedCell}</span>{currentSheet.cells?.[selectedCell]?.formula && <code className="ml-3 break-all">={currentSheet.cells[selectedCell].formula}</code>}</div>}
-        {citationError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{citationError}</p>}
-        {cited && <p role={focus ? "status" : "alert"} className="px-4 py-2 text-xs text-muted-foreground">{currentSheet.name}!{documentLocation?.range}{!focus && " · 引用区域超出已使用范围"}</p>}
-        <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-4 py-2.5">
-          {excelData.sheets.map((sheet: any) => (
-            <Button
-              key={sheet.name}
-              variant={sheet.name === currentSheet.name ? "default" : "ghost"}
-              size="sm"
-              className="h-8 rounded-full px-3 text-xs"
-              onClick={() => { setActiveSheet(sheet.name); setSelectedCell(''); }}
-            >
-              {sheet.name}
-            </Button>
-          ))}
-        </div>
-        <div ref={tableRoot} className="min-h-0 flex-1 overflow-auto p-4">
-          {layout.truncated ? (
-            <div className="mb-3 text-xs text-muted-foreground">
-              当前显示第 {layout.rowStart + 1}–{layout.rowCount} 行、{columnLabel(layout.colStart)}–{columnLabel(Math.max(layout.colStart, layout.columnCount - 1))} 列，完整数据保留在原文件中。
-            </div>
-          ) : null}
-          <div className="min-w-max overflow-hidden rounded-md border border-border/70 bg-card/70">
-            <table className="border-collapse text-xs">
-              <thead><tr><th className="bg-muted px-2 py-1" />{Array.from({ length: Math.max(0, layout.columnCount - layout.colStart) }, (_, i) => <th key={i} className="border-r border-border/60 bg-muted px-2 py-1">{columnLabel(i + layout.colStart)}</th>)}</tr></thead>
-              <tbody>
-                {Array.from({ length: Math.max(0, layout.rowCount - layout.rowStart) }, (_, i) => { const rowIndex = i + layout.rowStart; return (
-                  <tr key={rowIndex} className="border-b border-border/60"><th className="bg-muted px-2 py-1 font-normal">{rowIndex + 1}</th>
-                    {Array.from({ length: Math.max(0, layout.columnCount - layout.colStart) }, (_, j) => {
-                      const colIndex = j + layout.colStart;
-                      const key = `${rowIndex}:${colIndex}`;
-                      if (layout.mergedCells.has(key)) return null;
-                      const merge = layout.mergeStarts.get(key);
-                      const cellImages = layout.imagesByCell.get(key) || [];
-                      const highlighted = Boolean(cited && rowIndex <= range.end.row && rowIndex + (merge?.rowSpan || 1) - 1 >= range.start.row && colIndex <= range.end.col && colIndex + (merge?.colSpan || 1) - 1 >= range.start.col);
-                      return (
-                        <td
-                          key={key}
-                          data-cell={`${columnLabel(colIndex)}${rowIndex + 1}`} data-citation-cell={highlighted || undefined}
-                          rowSpan={merge?.rowSpan}
-                          colSpan={merge?.colSpan}
-                          className="min-w-[112px] border-r border-border/60 px-3 py-2 align-top data-[citation-cell=true]:bg-primary/15 data-[citation-cell=true]:outline data-[citation-cell=true]:outline-1 data-[citation-cell=true]:outline-primary"
-                        >
-                          <button type="button" className="w-full whitespace-pre-wrap break-words text-left focus-visible:outline focus-visible:outline-primary" aria-label={`查看 ${columnLabel(colIndex)}${rowIndex + 1}`} onClick={() => setSelectedCell(`${columnLabel(colIndex)}${rowIndex + 1}`)}>{String(currentSheet.displayData?.[rowIndex]?.[colIndex] ?? layout.rows[rowIndex]?.[colIndex] ?? "") || "\u00a0"}</button>
-                          {cellImages.map((image, imageIndex) => (
-                            <img
-                              key={`${key}:${imageIndex}`}
-                              src={image.src}
-                              alt=""
-                              className="mt-2 max-h-48 max-w-64 object-contain"
-                              style={{
-                                width: image.width ? Math.min(image.width, 256) : undefined,
-                                height: image.height ? Math.min(image.height, 192) : undefined,
-                              }}
-                            />
-                          ))}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ); })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+    const selected = parseCellRange(selectedCell || 'A1')?.start;
+    const selectedValue = selected ? currentSheet.data?.[selected.row]?.[selected.col] : '';
+    const formula = currentSheet.cells?.[selectedCell || 'A1']?.formula;
+    return <div className="flex h-full min-h-0 flex-col">
+      {toolbar}{notice}
+      {showFormulaBar && <div id={formulaBarId} data-cell-details className="flex h-8 shrink-0 items-center gap-3 border-b border-border/60 px-3 text-xs">
+        <span className="min-w-12 max-w-36 shrink-0 truncate font-medium" title={`${currentSheet.name}!${selectedCell || 'A1'}`}>{selectedCell || 'A1'}</span>
+        <span className="border-l border-border/60 pl-3 italic text-muted-foreground">ƒx</span>
+        <code className="min-w-0 truncate" title={formula ? `=${formula}` : String(selectedValue ?? '')}>{formula ? `=${formula}` : String(selectedValue ?? '')}</code>
+      </div>}
+      {citationError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{citationError}</p>}
+      {cited && <p role={focus ? "status" : "alert"} className="px-4 py-2 text-xs text-muted-foreground">{currentSheet.name}!{documentLocation?.range}{!focus && " · 引用区域超出已使用范围"}</p>}
+      <SpreadsheetGrid sheet={currentSheet} layout={layout} selectedCell={selectedCell} onSelectCell={setSelectedCell} citedRange={cited ? range : undefined} scrollRef={tableRoot} zoom={zoom}/>
+      <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border/70 px-3" aria-label="工作表列表">
+        {excelData.sheets.map((sheet: any) => <button key={sheet.name} type="button" aria-pressed={sheet.name === currentSheet.name}
+          className="h-full shrink-0 border-b-2 border-transparent px-4 text-xs text-muted-foreground aria-pressed:border-primary aria-pressed:font-medium aria-pressed:text-primary"
+          onClick={() => { setActiveSheet(sheet.name); setSelectedCell(''); }}>{sheet.name}</button>)}
       </div>
-    );
+    </div>;
   }
 
   if (state.dataPending || state.pdfPending) return <div className="flex h-full min-h-0 flex-col">{toolbar}<p role="status" className="p-4 text-sm text-muted-foreground">正在读取工作簿…</p></div>;
-  return <div className="flex h-full min-h-0 flex-col">{toolbar}{notice}<div className="min-h-0 flex-1"><LazyOpenFileViewer filePath={filePath} fileName={filePath} capability="basic" onReady={onReady} onError={onError} /></div></div>;
+  return <div className="flex h-full min-h-0 flex-col">{toolbar}{notice}<div className="min-h-0 flex-1"><LazyOpenFileViewer filePath={filePath} fileName={officeParserFileName(filePath)} capability="basic" onReady={onReady} onError={onError} /></div></div>;
 }

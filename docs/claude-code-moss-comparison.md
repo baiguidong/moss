@@ -23,7 +23,7 @@ Moss 的初始提交 `3ea8f0bf` 的 `package.json` 明确是 `@anthropic-ai/clau
 | API 重试、流式恢复、provider 兼容 | 有 retry budget、thinking fallback、streaming/non-streaming fallback、Bedrock/Vertex/Foundry | [`src/services/api/withRetry.ts`](../src/services/api/withRetry.ts:44)、[`src/services/api/claude.ts`](../src/services/api/claude.ts:1) | 已覆盖基础；fallback model、gateway hint 和新协议需核对 |
 | Remote / Cloud / Desktop host | 有 direct-connect、remote permission bridge、Electron host、WebUI、App runtime | [`src/remote/directConnectManager.ts`](../src/remote/directConnectManager.ts:1)、[`src/remote/remotePermissionBridge.ts`](../src/remote/remotePermissionBridge.ts:1)、[`packages/app-runtime/src/host/index.mjs`](../packages/app-runtime/src/host/index.mjs:1) | Moss 已走自己的宿主路线，不应照搬 VS Code/Claude Tag UI |
 | Trace / OTel / 本地索引 | 有 trace record、tool trace、protocol trace、SQLite index | [`src/services/trace/traceRecord.ts`](../src/services/trace/traceRecord.ts:1)、[`src/services/trace/localIndex/traceIndex.ts`](../src/services/trace/localIndex/traceIndex.ts:1) | 适合吸收上游事件字段和关联模型 |
-| Session Memory / Auto Memory | 有 SessionMemory、auto memory、dream/consolidation | [`src/services/SessionMemory/sessionMemory.ts`](../src/services/SessionMemory/sessionMemory.ts:1)、[`src/services/autoDream/autoDream.ts`](../src/services/autoDream/autoDream.ts:1) | 已覆盖，重点是压缩/恢复边界测试 |
+| Auto Memory | 有 auto memory、dream/consolidation；会话摘要已暂时移除 | [`src/services/autoDream/autoDream.ts`](../src/services/autoDream/autoDream.ts:1) | 长期记忆与上下文压缩独立运行 |
 
 ## 最值得借鉴的功能
 

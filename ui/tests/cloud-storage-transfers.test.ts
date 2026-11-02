@@ -11,11 +11,11 @@ const unsupportedLink = async () => { throw Object.assign(new Error('No hard lin
 
 async function fixture(overrides: Record<string, any> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'moss-cloud-regression-'))
-  const settings = { remoteEnabled: true, remoteDirect: { serverUrl: 'http://server.test', credentialMode: 'api-key', apiKey: 'old-key' } }
+  const settings = { enterpriseEnabled: true, enterpriseAccount: { serverUrl: 'http://server.test', credentialMode: 'api-key', apiKey: 'old-key' } }
   const identity = { serverUrl: 'http://server.test', orgId: 'org', userId: 'alice' }
   const options = {
     directory: join(root, 'transfers'), getSettings: () => settings,
-    resolveConnection: async () => ({ ...identity, authToken: `${settings.remoteDirect.apiKey}-token` }),
+    resolveConnection: async () => ({ ...identity, authToken: `${settings.enterpriseAccount.apiKey}-token` }),
     fetchImpl: async () => { throw new Error('Unexpected network request') },
     pickFiles: async () => [], pickDestination: async () => null, authorizeApp: async () => true,
     ...overrides,
@@ -130,7 +130,7 @@ test('credential rotation preserves same-account tasks and another account canno
   try {
     const t = f.task({ sourcePath: join(f.root, 'removed-source') })
     const oldBinding = t.binding
-    f.settings.remoteDirect.apiKey = 'rotated-key'
+    f.settings.enterpriseAccount.apiKey = 'rotated-key'
     f.host.invalidate()
     await expect(f.host.connection(oldBinding)).rejects.toMatchObject({ code: 'ACCOUNT_CHANGED' })
     expect((await f.host.handle('transfers.list', {}, context)).transfers.map((v: any) => v.id)).toEqual([t.id])
@@ -141,7 +141,7 @@ test('credential rotation preserves same-account tasks and another account canno
     expect(t.binding.settingsKey).toBe(f.host.fingerprint())
     expect(tokens).toEqual(['Bearer rotated-key-token'])
     f.identity.userId = 'bob'
-    f.settings.remoteDirect.apiKey = 'bob-key'
+    f.settings.enterpriseAccount.apiKey = 'bob-key'
     f.host.invalidate()
     expect((await f.host.handle('transfers.list', {}, context)).transfers).toEqual([])
     await expect(f.host.handle('transfers.get', { transferId: t.id }, context)).rejects.toMatchObject({ code: 'TRANSFER_NOT_FOUND' })
@@ -232,7 +232,7 @@ test('cancelling an unfinished fallback copy cleans only its own local files whi
     const t = await downloadTask(f), controller = new AbortController()
     controller.abort()
     await expect(f.host.publishDownload(t, controller.signal)).rejects.toThrow()
-    f.settings.remoteEnabled = false
+    f.settings.enterpriseEnabled = false
     await f.host.handle('transfers.cancel', { transferId: t.id }, context)
     await f.host.cancellations.get(t.id)?.done
     expect(t.state).toBe('cancelled')

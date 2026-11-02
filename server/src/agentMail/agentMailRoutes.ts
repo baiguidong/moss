@@ -79,6 +79,7 @@ export async function handleAgentMailRoute(input: {
   auth: AuthContext
   authService: AuthService
   service: AgentMailService
+  requireMailbox: () => Promise<void>
 }): Promise<boolean> {
   const { req, res, url, auth, authService, service } = input
   const pathname = url.pathname
@@ -126,6 +127,7 @@ export async function handleAgentMailRoute(input: {
               consumerId: body.consumer_id,
               waitMs: body.wait_ms,
               limit: body.limit,
+              requireMailbox: input.requireMailbox,
             },
             controller.signal,
           ),

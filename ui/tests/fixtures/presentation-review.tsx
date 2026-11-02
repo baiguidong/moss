@@ -16,6 +16,9 @@ import { AssistantOutputFileCard } from '@/components/chat/assistant-output-file
 import { usePresentation } from '@/lib/use-presentation';
 import { usePreviewDocument } from '@/lib/use-preview-document';
 import { WindowChrome } from '@/components/window-chrome';
+import { PanelResizeHandle } from '@/components/panel-resize-handle';
+import { SessionPanelTabs } from '@/components/session-panel-tabs';
+import { useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
 import { SessionTabBar } from '@/components/chat-area';
 import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import '@/globals.css';
@@ -284,7 +287,7 @@ function WindowToolbarExample({ desktop = true, isMacOS = true, rightWidth = 440
             onOpenWorkers={noop} onSelectWorker={noop} terminalActions={<button className="h-8 w-8" aria-label="终端菜单">终</button>} sessionInfo={<button className="h-8 w-8" aria-label="查看会话信息">ⓘ</button>} />}
           <div className="p-6">{sessionActive ? '会话正文' : entry.view}</div>
         </main>
-        {sessionActive && <><div className="hidden w-3 shrink-0 lg:block" /><aside data-test-workspace className="shrink-0 border-l" style={{ width: rightCollapsed ? 0 : rightWidth }}>
+        {sessionActive && <><aside data-test-workspace className="shrink-0 border-l" style={{ width: rightCollapsed ? 0 : rightWidth }}>
           {!rightCollapsed && <><PresentationToolbar snapshot={current} action={action} sessionTasks={[{ id: 'task', subject: '检查导航', description: '', status: 'pending', blockedBy: [] }]}
             tasksActive={tasksActive} onSelectTasks={() => setTasksActive(true)} onSelectPresentation={() => setTasksActive(false)} />
             <div className="p-4" data-test-view={tasksActive ? 'tasks' : current.state.activeId}>工作区内容</div></>}
@@ -342,6 +345,65 @@ api.showWindowToolbarExample = async (isMacOS = true, dark = false) => {
   document.documentElement.classList.toggle('dark', dark);
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   render(<WindowToolbarExample key={`screenshot:${isMacOS}:${dark}`} isMacOS={isMacOS} />); await delay(200);
+};
+
+function SessionPanelExample({ desktop = true, sidebarWidth = 224, isMacOS = true }: { desktop?: boolean; sidebarWidth?: number; isMacOS?: boolean }) {
+  const [layout, setLayout] = React.useState<SessionPanelLayout>({ rightWidth: 440, rightCollapsed: false, rightExpanded: false });
+  const panel = useSessionPanelLayout({ enabled: true, layout, onChange: patch => setLayout(value => ({ ...value, ...patch })) });
+  const tabs = panel.tabbed ? <SessionPanelTabs conversationTitle="创建随机销售数据表" presentationTitle="random_sales.xlsx" activeTab={panel.activeTab}
+    onSelect={panel.selectTab} onRestoreSplit={panel.restoreSplit} onClosePresentation={() => setLayout(value => ({ ...value, rightCollapsed: true }))} /> : undefined;
+  return <div className="flex h-screen flex-col bg-background">
+    <WindowChrome desktop={desktop} isMacOS={isMacOS} sidebarWidth={sidebarWidth} rightWidth={panel.rightWidth} sessionActive sessionTabs={tabs}
+      leftCollapsed={sidebarWidth === 68} rightCollapsed={layout.rightCollapsed} onToggleLeft={noop} canGoBack={false} canGoForward={false} onBack={noop} onForward={noop} notifications={null}>
+      <div className="flex min-h-0 flex-1">
+        <aside style={{ width: sidebarWidth }} className="shrink-0 bg-sidebar p-4">Moss</aside><div className="hidden w-3 shrink-0 lg:block"/>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {!desktop && tabs}
+          <div ref={panel.containerRef} data-test-session-split className="flex min-h-0 min-w-0 flex-1">
+            <main data-test-conversation className={`min-w-0 flex-1 overflow-hidden ${panel.conversationHidden ? 'hidden' : ''}`}>
+              <div className="p-6"><h2 className="mb-4 text-lg">创建随机销售数据表</h2><p className="mb-4">已生成销售明细，可在右侧查看。</p><input aria-label="会话草稿" defaultValue="保留会话草稿" className="rounded border p-2"/></div>
+            </main>
+            <aside data-test-presentation className={`relative min-h-0 min-w-0 shrink-0 border-l ${panel.presentationHidden ? 'hidden' : ''}`} style={{ width: panel.rightWidth }}>
+              {!layout.rightCollapsed && <PanelResizeHandle onBeginResize={panel.beginResize} onRestoreSplit={panel.restoreSplit} width={panel.rightWidth}/>}
+              <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                <PresentationToolbar snapshot={snapshot} action={noop}/>
+                <div className="p-4"><h2 className="mb-4 text-lg">随机销售数据示例</h2><input aria-label="文件草稿" defaultValue="保留文件草稿" className="rounded border p-2"/></div>
+                <iframe title="拖拽经过的预览" className="min-h-0 w-full flex-1 border-0" srcDoc="<body style='font:16px system-ui;padding:20px;background:#f8fafc'><h2>销售明细</h2><table style='width:100%;text-align:left'><tr><th>产品</th><th>销量</th><th>销售额</th></tr><tr><td>显示器</td><td>28</td><td>42,000</td></tr><tr><td>键盘</td><td>45</td><td>13,500</td></tr></table></body>"/>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </WindowChrome>
+  </div>;
+}
+api.showSessionPanelExample = async (desktop = true, sidebarWidth = 224, isMacOS = true) => {
+  render(<SessionPanelExample key={`${desktop}:${sidebarWidth}:${isMacOS}`} desktop={desktop} sidebarWidth={sidebarWidth} isMacOS={isMacOS}/>); await delay(100);
+};
+api.sessionPanelBounds = () => {
+  const rect = (selector: string) => {
+    const element = document.querySelector<HTMLElement>(selector)!;
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x, y, width, height };
+  };
+  return { conversation: rect('[data-test-conversation]'), presentation: rect('[data-test-presentation]'), split: rect('[data-test-session-split]'), tabbed: !!document.querySelector('[data-session-panel-tabs]') };
+};
+api.reviewSessionPanelTabs = async () => {
+  const conversation = document.querySelector<HTMLInputElement>('[aria-label="会话草稿"]')!;
+  const file = document.querySelector<HTMLInputElement>('[aria-label="文件草稿"]')!;
+  const iframe = document.querySelector('iframe');
+  conversation.value = '继续分析这些数据'; file.value = '已修改但未保存';
+  document.querySelector<HTMLButtonElement>('[role="tab"][aria-label^="会话："]')!.click(); await delay();
+  let bounds = api.sessionPanelBounds();
+  assert(bounds.conversation.width === bounds.split.width && bounds.presentation.width === 0, 'Conversation tab should fill the content area');
+  document.querySelector<HTMLButtonElement>('[role="tab"][aria-label^="内容："]')!.click(); await delay();
+  bounds = api.sessionPanelBounds();
+  assert(bounds.presentation.width === bounds.split.width && bounds.conversation.width === 0, 'File tab should fill the content area');
+  assert(conversation.value === '继续分析这些数据' && file.value === '已修改但未保存' && iframe === document.querySelector('iframe'), 'Switching tabs discarded a draft or remounted the preview');
+  assert(document.querySelectorAll('[aria-label="内容导航"]').length === 1, 'Tabbed mode duplicated the content toolbar');
+  document.querySelector<HTMLButtonElement>('[aria-label="恢复左右分栏"]')!.click(); await delay();
+  bounds = api.sessionPanelBounds();
+  assert(!bounds.tabbed && bounds.conversation.width >= 360 && bounds.presentation.width >= 320, 'Restore did not recover a readable split');
 };
 
 api.runPresentationReview = async () => {

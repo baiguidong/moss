@@ -97,7 +97,7 @@ describe('connector credential store', () => {
   it('encrypts remote server API keys and passwords by server identity', () => {
     const { storagePath, store } = createStore();
     const data = {
-      remoteDirectCredentials: {
+      enterpriseAccountCredentials: {
         abc123: {
           apiKey: {
             value: 'moss_sk_remote.secret',
@@ -148,7 +148,7 @@ describe('connector credential store', () => {
     expect(reopened.read().webSearchCredentials).toEqual(webSearchCredentials);
     reopened.update((current) => ({
       ...current,
-      remoteDirectCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
+      enterpriseAccountCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
     }));
     expect(store.read().webSearchCredentials).toEqual(webSearchCredentials);
   });
@@ -160,7 +160,7 @@ describe('connector credential store', () => {
         tavilyApiKey: { value: 'tvly-private-value', field: 'tavilyApiKey' },
         braveApiKey: { value: 'brave-private-value', field: 'braveApiKey' },
       },
-      remoteDirectCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
+      enterpriseAccountCredentials: { server: { apiKey: { value: 'server-secret', field: 'apiKey' } } },
     });
     store.update((current) => {
       delete current.webSearchCredentials.tavilyApiKey;
@@ -169,7 +169,7 @@ describe('connector credential store', () => {
     expect(store.read().webSearchCredentials).toEqual({
       braveApiKey: { value: 'brave-private-value', field: 'braveApiKey' },
     });
-    expect(store.read().remoteDirectCredentials.server.apiKey.value).toBe('server-secret');
+    expect(store.read().enterpriseAccountCredentials.server.apiKey.value).toBe('server-secret');
     store.update((current) => ({ ...current, webSearchCredentials: {} }));
     expect(store.read().webSearchCredentials || {}).toEqual({});
   });

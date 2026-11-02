@@ -11,6 +11,7 @@ test('configuration schema is generated from the runtime and project writes pres
     const first=path.join(root,'one'),second=path.join(root,'two')
     for(const p of [first,second]){fs.mkdirSync(path.join(p,'.moss'),{recursive:true});fs.writeFileSync(path.join(p,'.moss/settings.json'),JSON.stringify({language:'chinese',attribution:{commit:'old',pr:'keep'},customDesktop:{preserve:true}}))}
     expect(getMossAgentConfigurationSchema().properties).toHaveProperty('hooks')
+    expect(getMossAgentConfigurationSchema().properties).not.toHaveProperty('sessionMemory')
     let snapshot=inspectMossAgentConfiguration(first,'project')
     const initial=snapshot.revision
     snapshot=applyMossAgentConfiguration({workspace:first,scope:'project',revision:snapshot.revision,operations:[{path:'attribution',value:{commit:'new'}}]})
@@ -20,7 +21,7 @@ test('configuration schema is generated from the runtime and project writes pres
     expect(()=>applyMossAgentConfiguration({workspace:first,scope:'project',revision:initial,operations:[{path:'language',value:'japanese'}]})).toThrow('changed')
     snapshot=applyMossAgentConfiguration({workspace:first,scope:'project',revision:snapshot.revision,operations:[{path:'attribution.commit',remove:true}]})
     expect(snapshot.stored.attribution).toEqual({})
-    for(const operation of [{path:'language',value:12},{path:'doesNotExist',value:1},{path:'__proto__.polluted',value:true}])expect(()=>applyMossAgentConfiguration({workspace:first,scope:'project',revision:snapshot.revision,operations:[operation]})).toThrow()
+    for(const operation of [{path:'language',value:12},{path:'doesNotExist',value:1},{path:'sessionMemory.enabled',value:true},{path:'__proto__.polluted',value:true}])expect(()=>applyMossAgentConfiguration({workspace:first,scope:'project',revision:snapshot.revision,operations:[operation]})).toThrow()
     expect(inspectMossAgentConfiguration(first,'project').revision).toBe(snapshot.revision)
   } finally { if(previous===undefined)delete process.env.MOSS_CONFIG_DIR;else process.env.MOSS_CONFIG_DIR=previous;fs.rmSync(root,{recursive:true,force:true}) }
 })

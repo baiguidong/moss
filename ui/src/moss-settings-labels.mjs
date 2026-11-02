@@ -17,8 +17,6 @@ const named = {
   'appearance.chatMessageSpacing':['消息间距','调整不同消息之间的留白。'],
   'appearance.toolDisplayMode':['工具过程展示','选择展开、收起或合并工具执行过程。'],
   'appWidgets.enabled':['桌面宠物与挂件','显示或隐藏 Moss 窗口中的悬浮挂件。'],
-  'sessionMemory.enabled':['会话摘要','允许模型按需保存会话摘要，方便查看和交接。'],
-  'sessionMemory.compactEnabled':['摘要辅助压缩','使用会话摘要辅助整理上下文。'],
   'autoMemory.enabled':['自动记忆','记住长期有用的信息与偏好。'],
   'autoMemory.extractionEnabled':['自动提取记忆','从对话中整理可长期保存的信息。'],
   'autoMemory.pastContextSearchEnabled':['检索历史对话','需要时查找过去的对话内容。'],
@@ -42,7 +40,7 @@ const named = {
   'agentTeamsEnabled':['多助手协作','允许多个助手协同完成任务。'],
   'agentMode':['运行位置','选择使用本机或远端的 Agent。'],
   'localEnabled':['本机运行','启用本机 Agent。'],
-  'remoteEnabled':['远端连接','启用远端 Agent 连接。'],
+  'enterpriseEnabled':['远端连接','启用远端 Agent 连接。'],
   'cleanupPeriodDays':['历史保留天数','设置会话历史的自动清理周期。'],
   'userAvatar':['个人头像','设置聊天中显示的头像。'],
   'hooks':['自动执行规则','在工具调用、会话等事件发生时执行指定动作。'],
@@ -52,11 +50,11 @@ const named = {
   'managedRuntimes.node':['内置 Node.js','允许 Moss 管理 JavaScript 运行环境。'],
   'managedRuntimes.python':['内置 Python','允许 Moss 管理 Python 运行环境。'],
   'managedRuntimes.git':['内置 Git','允许 Moss 管理 Git 运行环境。'],
-  'remoteDirectServerUrl':['远端服务器地址','连接到远端 Moss 服务。'],
-  'remoteDirectWorkspace':['远端工作目录','设置远端默认工作目录。'],
-  'remoteDirectCredentialMode':['远端登录方式','选择远端连接的登录方式。'],
-  'remoteDirectUserName':['远端用户名','设置连接远端服务的用户名。'],
-  'remoteDirectUserEmail':['远端用户邮箱','设置远端账户邮箱。'],
+  'enterpriseAccountServerUrl':['远端服务器地址','连接到远端 Moss 服务。'],
+  'enterpriseAccountWorkspace':['远端工作目录','设置远端默认工作目录。'],
+  'enterpriseAccountCredentialMode':['远端登录方式','选择远端连接的登录方式。'],
+  'enterpriseAccountUserName':['远端用户名','设置连接远端服务的用户名。'],
+  'enterpriseAccountUserEmail':['远端用户邮箱','设置远端账户邮箱。'],
   'url':['模型服务地址','设置模型 API 的服务地址。'],
   'webSearch.mode':['联网搜索方式','选择搜索服务的使用方式。'],
   'image.model':['图片模型',''],
@@ -64,7 +62,7 @@ const named = {
   'logRotationMaxSize':['单个日志文件大小','达到此大小后切换新的日志文件，单位为字节。'],
   'logRotationMaxFiles':['日志文件保留数','保留多少个轮换日志文件。'],
 }
-const roots={appearance:'桌面外观',sessionMemory:'会话摘要',autoMemory:'自动记忆',toolLoading:'工具加载',advanced:'高级运行设置',models:'模型',permissions:'权限规则',sandbox:'运行隔离',hooks:'自动执行规则',mcp:'工具服务',agentMail:'Agent 消息',skillHub:'技能目录',expertHub:'助手目录',env:'环境变量'}
+const roots={appearance:'桌面外观',autoMemory:'自动记忆',toolLoading:'工具加载',advanced:'高级运行设置',models:'模型',permissions:'权限规则',sandbox:'运行隔离',hooks:'自动执行规则',mcp:'工具服务',agentMail:'Agent 消息',skillHub:'技能目录',expertHub:'助手目录',env:'环境变量'}
 export function settingPresentation(domain, field) {
   const key=field.key, definition=named[`${domain}.${key}`]||named[key]
   let group='其他设置'

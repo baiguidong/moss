@@ -7,6 +7,7 @@ const body = source.slice(source.indexOf('function shutdownDesktop()'), source.i
 function fixture(extra: Record<string, any> = {}) {
   const calls: string[] = [];
   const context = {
+    hostControl: { stop: async () => { calls.push('control-stop'); } },
     Promise, Error, appShutdownComplete: false, desktopShutdownPromise: null,
     appRuntimeRestoreController: null, appRuntimeRestorePromise: null,
     sessionRuntimePool: { stop: () => calls.push('runtime-pool-stop') },

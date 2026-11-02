@@ -145,17 +145,6 @@ const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
   activeProvider: null,
 };
 
-const DEFAULT_SESSION_MEMORY_SETTINGS: NonNullable<DesktopSettings['sessionMemory']> = {
-  enabled: false,
-  compactEnabled: false,
-  minimumMessageTokensToInit: 10000,
-  minimumTokensBetweenUpdate: 5000,
-  toolCallsBetweenUpdates: 3,
-  compactMinTokens: 10000,
-  compactMinTextBlockMessages: 5,
-  compactMaxTokens: 40000,
-};
-
 const DEFAULT_AUTO_MEMORY_SETTINGS: NonNullable<DesktopSettings['autoMemory']> = {
   enabled: true,
   extractionEnabled: false,
@@ -910,10 +899,6 @@ export function SettingsView({
     ...DEFAULT_WEB_SEARCH_SETTINGS,
     ...(settingsDraft?.webSearch || {}),
   };
-  const sessionMemoryDraft = {
-    ...DEFAULT_SESSION_MEMORY_SETTINGS,
-    ...(settingsDraft?.sessionMemory || {}),
-  };
   const autoMemoryDraft = {
     ...DEFAULT_AUTO_MEMORY_SETTINGS,
     ...(settingsDraft?.autoMemory || {}),
@@ -1007,7 +992,7 @@ export function SettingsView({
   }, [selectedAppSetting?.id, activeGroupId]);
 
   React.useEffect(() => {
-    if (!settingsDraft?.remoteDirectServerUrl || !settingsDraft.remoteDirectApiKey) {
+    if (!settingsDraft?.enterpriseAccountServerUrl || !settingsDraft.enterpriseAccountApiKey) {
       setRemoteIdentity(null);
       return;
     }
@@ -1020,7 +1005,7 @@ export function SettingsView({
     return () => {
       cancelled = true;
     };
-  }, [settingsDraft?.remoteDirectApiKey, settingsDraft?.remoteDirectServerUrl]);
+  }, [settingsDraft?.enterpriseAccountApiKey, settingsDraft?.enterpriseAccountServerUrl]);
 
   React.useEffect(() => {
     const container = scrollRef.current;
@@ -1060,9 +1045,8 @@ export function SettingsView({
     firstVisibleSectionId,
     deferredSearchQuery,
     visibleSectionKey,
-    settingsDraft?.remoteEnabled,
+    settingsDraft?.enterpriseEnabled,
     settingsDraft?.thinkingMode,
-    settingsDraft?.sessionMemory,
     settingsDraft?.autoMemory,
     settingsDraft?.advanced,
   ]);
@@ -1167,7 +1151,7 @@ export function SettingsView({
   };
 
   const authenticateRemoteServer = async () => {
-    const serverUrl = settingsDraft?.remoteDirectServerUrl?.trim() || '';
+    const serverUrl = settingsDraft?.enterpriseAccountServerUrl?.trim() || '';
     if (!serverUrl) {
       setRemoteAuthError('请先填写服务器地址。');
       return;
@@ -1178,8 +1162,8 @@ export function SettingsView({
       const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
       setSettingsDraft(next);
       setRemoteIdentity({
-        userName: next.remoteDirectUserName || '',
-        userEmail: next.remoteDirectUserEmail || '',
+        userName: next.enterpriseAccountUserName || '',
+        userEmail: next.enterpriseAccountUserEmail || '',
       });
       setRemoteAuthState('success');
       window.setTimeout(() => setRemoteAuthState('idle'), 2000);
@@ -1211,14 +1195,6 @@ export function SettingsView({
     };
     setSettingsDraft((current) => (current ? { ...current, image: nextImage } : current));
     void autoSaveImageSettings(nextImage);
-  };
-
-  const updateSessionMemorySettings = (patch: Partial<NonNullable<DesktopSettings['sessionMemory']>>) => {
-    const nextSessionMemory = {
-      ...sessionMemoryDraft,
-      ...patch,
-    };
-    updateSetting('sessionMemory', nextSessionMemory);
   };
 
   const updateAutoMemorySettings = (patch: Partial<NonNullable<DesktopSettings['autoMemory']>>) => {
@@ -1468,33 +1444,10 @@ export function SettingsView({
                     </SettingsGroup>
 
                     <div className="mb-1 mt-8 text-[13px] font-medium text-muted-foreground">
-                      Moss Server
+                      企业账号与策略
                     </div>
+                    {settingsDraft.managedPolicy?.useEnterpriseModel && <p className="my-3 text-sm text-muted-foreground">当前执行使用企业模型。你的个人模型设置会保留，退出企业账号后恢复使用。</p>}
                     <div className="divide-y divide-border">
-                      {/* 本地模式 */}
-                      <SettingsGroup>
-                        <SettingsRow
-                          title={isWebUI() ? '云电脑模式' : '本地模式'}
-                          description={isWebUI() ? '在云电脑运行 Agent，使用云电脑上的文本模型配置和文件。' : '在本机运行 Agent，直接使用本地文本模型配置。'}
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.localEnabled ?? true}
-                              onCheckedChange={(checked) => {
-                                updateSetting('localEnabled', checked);
-                                if (!checked) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                } else if (!(settingsDraft.remoteEnabled ?? false)) {
-                                  updateSetting('agentMode', 'local');
-                                }
-                              }}
-                              label="本地模式"
-                            />
-                          </div>
-                        </SettingsRow>
-                      </SettingsGroup>
-
                       {/* Agent Teams */}
                       <SettingsGroup>
                         <SettingsRow
@@ -1505,7 +1458,7 @@ export function SettingsView({
                           <div className="flex justify-start sm:justify-end">
                             <Toggle
                               checked={settingsDraft.agentTeamsEnabled === true}
-                              disabled={!(settingsDraft.localEnabled ?? true)}
+                              disabled={settingsDraft.managedPolicy?.agentTeamsEnabled !== undefined}
                               onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
                               label="启用 Agent Teams"
                             />
@@ -1513,39 +1466,15 @@ export function SettingsView({
                         </SettingsRow>
                       </SettingsGroup>
 
-                      {/* 云端模式 */}
                       <SettingsGroup>
-                        <SettingsRow
-                          title="云端模式"
-                          description="连接到云端 Moss 服务器运行 Agent。"
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.remoteEnabled ?? false}
-                              onCheckedChange={(checked) => {
-                                updateSetting('remoteEnabled', checked);
-                                if (!checked) {
-                                  setSettingsDraft((current) => current ? {
-                                    ...current,
-                                    remoteEnabled: false,
-                                    agentMail: { ...current.agentMail, enabled: false },
-                                  } : current);
-                                }
-                                if (!checked) {
-                                  updateSetting('agentMode', 'local');
-                                } else if (!(settingsDraft.localEnabled ?? true)) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                }
-                              }}
-                              label="云端模式"
-                            />
-                          </div>
+                        <SettingsRow title="企业账号连接" description="连接企业服务，使用云存储、协作邮箱和管理策略。工作电脑在左上角选择。" controlClassName="sm:w-[56px]">
+                          <Toggle disabled={isWebUI() && Boolean(window.mossWeb?.managed)} checked={settingsDraft.enterpriseEnabled ?? false}
+                            onCheckedChange={(checked) => updateSetting('enterpriseEnabled', checked)} label="启用企业账号连接" />
                         </SettingsRow>
 
                         <SettingsRow
                           title="协作邮箱"
-                          description="通过云端 Moss Server 接收其他智能体发来的协作邮件。"
+                          description="在企业管理中指定接收电脑后，在此启用协作邮箱。每个账号只有一台电脑负责接收。"
                           controlClassName="sm:w-[430px]"
                         >
                           <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
@@ -1553,7 +1482,7 @@ export function SettingsView({
                               className={cn(SELECT_CLASS_NAME, 'w-[160px]')}
                               value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
                               disabled={
-                                !(settingsDraft.remoteEnabled ?? false) ||
+                                !(settingsDraft.enterpriseEnabled ?? false) ||
                                 settingsDraft.agentMail?.enabled !== true
                               }
                               aria-label="协作邮箱会话模式"
@@ -1568,10 +1497,10 @@ export function SettingsView({
                             <span className="hidden h-6 w-px bg-sidebar-border sm:block" />
                             <Toggle
                               checked={
-                                (settingsDraft.remoteEnabled ?? false) &&
+                                (settingsDraft.enterpriseEnabled ?? false) &&
                                 settingsDraft.agentMail?.enabled === true
                               }
-                              disabled={!(settingsDraft.remoteEnabled ?? false)}
+                              disabled={!(settingsDraft.enterpriseEnabled ?? false)}
                               onCheckedChange={(enabled) => updateSetting('agentMail', {
                                 ...settingsDraft.agentMail,
                                 enabled,
@@ -1587,13 +1516,13 @@ export function SettingsView({
                             >
                               <Input
                                 className={FIELD_CLASS_NAME}
-                                value={settingsDraft.remoteDirectServerUrl || ''}
+                                value={settingsDraft.enterpriseAccountServerUrl || ''}
                                 disabled={remoteAuthState === 'loading'}
                                 onChange={(event) => {
                                   setRemoteAuthState('idle');
                                   setRemoteAuthError('');
                                   setRemoteIdentity(null);
-                                  updateSetting('remoteDirectServerUrl', event.target.value);
+                                  updateSetting('enterpriseAccountServerUrl', event.target.value);
                                 }}
                                 placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
                               />
@@ -1607,11 +1536,11 @@ export function SettingsView({
                               <div className="space-y-2">
                                 <div className="flex items-center justify-end gap-3">
                                   <span className="text-xs text-muted-foreground">
-                                    {remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
+                                    {remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
                                       ? (remoteIdentity?.userName
-                                          || settingsDraft.remoteDirectUserName
+                                          || settingsDraft.enterpriseAccountUserName
                                           || remoteIdentity?.userEmail
-                                          || settingsDraft.remoteDirectUserEmail
+                                          || settingsDraft.enterpriseAccountUserEmail
                                           || '已认证')
                                       : '未认证'}
                                   </span>
@@ -1637,7 +1566,7 @@ export function SettingsView({
                                     )}
                                     {remoteAuthState === 'loading'
                                       ? '取消'
-                                      : remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
+                                      : remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
                                         ? '重新认证'
                                         : '开始认证'}
                                   </Button>
@@ -2086,20 +2015,6 @@ export function SettingsView({
                           <option value="proactive">主动压缩（推荐）</option>
                           <option value="reactive">超限后压缩</option>
                         </select>
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="会话摘要"
-                        description="默认关闭。开启后由模型按需调用工具保存当前会话摘要，不按 token 或工具次数自动生成，也不用于上下文压缩。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={Boolean(sessionMemoryDraft.enabled)}
-                            onCheckedChange={(checked) => updateSessionMemorySettings({ enabled: checked })}
-                            label="会话摘要"
-                          />
-                        </div>
                       </SettingsRow>
 
                     </SettingsGroup>

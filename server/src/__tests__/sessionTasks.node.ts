@@ -1,10 +1,10 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -34,9 +34,7 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
   // Reading tasks must work without a live Docker container or an attach attempt.
-  runtime.ensureSessionReady = async () => { throw new Error('Unexpected runtime startup') }
   const profileDir = join(root, 'profile')
   for (const [id, userId, orgId, transcriptId] of [
     ['alice-session', alice.userId, alice.orgId, 'alice-transcript'],
@@ -50,9 +48,9 @@ try {
       status: 'active', desiredState: 'active',
     })
   }
-  const moss = startServer(config, runtime, auth)
+  const moss = startServer(config, serverTestModels(db), auth)
   try {
-    const baseUrl = `http://127.0.0.1:${await moss.ready}/api/v1/sessions`
+    const baseUrl = `http://127.0.0.1:${await moss.ready}/api/v1/archives/sessions`
     const aliceHeaders = { authorization: `Bearer ${aliceLogin.access_token}` }
     const bobHeaders = { authorization: `Bearer ${bobLogin.access_token}` }
     const list = async (id = 'alice-session') => {
@@ -102,8 +100,8 @@ try {
     await rm(join(taskDir, '10.json'))
     assert.deepEqual(await list(), [])
     assert.equal((await store.getSession('alice-session'))?.currentAttemptId, null)
-    await fetch(`${baseUrl}/alice-session`, { method: 'DELETE', headers: aliceHeaders })
-    assert.equal((await fetch(`${baseUrl}/alice-session/tasks`, { headers: aliceHeaders })).status, 404)
+    assert.equal((await fetch(`${baseUrl}/alice-session`, { method: 'DELETE', headers: aliceHeaders })).status, 404)
+    assert.equal((await fetch(`${baseUrl}/alice-session/tasks`, { headers: aliceHeaders })).status, 200)
   } finally {
     await moss.stop()
   }
