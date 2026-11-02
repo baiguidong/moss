@@ -6601,9 +6601,10 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
   }),
   applyAutomation: applyManagedSchedules,
   applyAccess: async access => {
+    const wasDenied = Boolean(hostAccessDenied);
     hostAccessDenied = access.allowed ? null : access.reason || '企业访问已停用';
     saveHostControlState();
-    if (!hostAccessDenied && !hostControlPaused) { startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); }
+    if (wasDenied && !hostAccessDenied && !hostControlPaused) { startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); }
     if (hostAccessDenied) {
       for (const record of sessions.values()) if ((isWebHost || hostControl.ownsSession(record.id)) && (record.busy || record.preparingPrompt)) {
         await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id }).catch(() => {});
