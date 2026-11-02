@@ -100,19 +100,19 @@ function decryptDocument(document, cipher) {
       );
     }
   }
-  const remoteDirectCredentials = isPlainObject(document.remoteDirectCredentials)
-    ? document.remoteDirectCredentials
+  const enterpriseAccountCredentials = isPlainObject(document.enterpriseAccountCredentials)
+    ? document.enterpriseAccountCredentials
     : {};
-  if (Object.keys(remoteDirectCredentials).length > 0) {
-    result.remoteDirectCredentials = {};
-    for (const [serverKey, records] of Object.entries(remoteDirectCredentials)) {
+  if (Object.keys(enterpriseAccountCredentials).length > 0) {
+    result.enterpriseAccountCredentials = {};
+    for (const [serverKey, records] of Object.entries(enterpriseAccountCredentials)) {
       if (!isPlainObject(records)) throw new Error('Invalid encrypted remote server credential group.');
-      result.remoteDirectCredentials[serverKey] = {};
+      result.enterpriseAccountCredentials[serverKey] = {};
       for (const [field, record] of Object.entries(records)) {
-        result.remoteDirectCredentials[serverKey][field] = decryptRecord(
+        result.enterpriseAccountCredentials[serverKey][field] = decryptRecord(
           cipher,
           record,
-          recordPath('remoteDirectCredentials', serverKey, field),
+          recordPath('enterpriseAccountCredentials', serverKey, field),
         );
       }
     }
@@ -161,19 +161,19 @@ function encryptDocument(data, cipher, header) {
       );
     }
   }
-  const remoteDirectCredentials = isPlainObject(data?.remoteDirectCredentials)
-    ? data.remoteDirectCredentials
+  const enterpriseAccountCredentials = isPlainObject(data?.enterpriseAccountCredentials)
+    ? data.enterpriseAccountCredentials
     : {};
-  if (Object.keys(remoteDirectCredentials).length > 0) {
-    document.remoteDirectCredentials = {};
-    for (const [serverKey, records] of Object.entries(remoteDirectCredentials)) {
+  if (Object.keys(enterpriseAccountCredentials).length > 0) {
+    document.enterpriseAccountCredentials = {};
+    for (const [serverKey, records] of Object.entries(enterpriseAccountCredentials)) {
       if (!isPlainObject(records)) throw new Error('Invalid remote server credential group.');
-      document.remoteDirectCredentials[serverKey] = {};
+      document.enterpriseAccountCredentials[serverKey] = {};
       for (const [field, record] of Object.entries(records)) {
-        document.remoteDirectCredentials[serverKey][field] = encryptRecord(
+        document.enterpriseAccountCredentials[serverKey][field] = encryptRecord(
           cipher,
           record,
-          recordPath('remoteDirectCredentials', serverKey, field),
+          recordPath('enterpriseAccountCredentials', serverKey, field),
         );
       }
     }

@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
+import { ProjectIcon } from '@/components/projects/project-icon';
 import { cn } from "@/lib/utils";
 import type {
   MemoryCatalog,
@@ -337,7 +338,7 @@ function ProjectList({
       {projects.map((project) => (
         <section key={project.id}>
           <div className="mb-1 flex items-center gap-2 px-2 text-xs font-semibold text-foreground">
-            <FolderKanban className="h-3.5 w-3.5 text-primary" />
+            <ProjectIcon icon={project.icon} badge={false} className="h-3.5 w-3.5" />
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
             <span className="font-normal tabular-nums text-muted-foreground">{project.finalizedSessionCount}</span>
           </div>

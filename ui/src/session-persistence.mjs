@@ -115,6 +115,7 @@ export function createSessionPersistence({
       normalizeSessionEffort(sessionRecord.effort),
       JSON.stringify(normalizeStringList(sessionRecord.appServiceIds)),
       sessionRecord.projectDefaults ? JSON.stringify(sessionRecord.projectDefaults) : null,
+      sessionRecord.projectCreationMode ? 1 : 0,
       sessionRecord.historyLoaded === false ? 0 : 1,
     ];
   }
@@ -175,6 +176,7 @@ export function createSessionPersistence({
       assistantName: sessionRecord.assistantName || null,
       projectId: sessionRecord.projectId || null,
       projectDefaults: sessionRecord.projectDefaults || null,
+      projectCreationMode: Boolean(sessionRecord.projectCreationMode),
       connectorIds: normalizeStringList(sessionRecord.connectorIds),
       appIds: normalizeStringList(sessionRecord.appIds),
       appServiceIds: normalizeStringList(sessionRecord.appServiceIds),
@@ -357,6 +359,7 @@ export function createSessionPersistence({
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
         projectDefaults: parsePersistedObject(row.project_defaults_json),
+        projectCreationMode: Boolean(row.project_creation_mode),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),
         appServiceIds: parsePersistedStringList(row.app_service_ids_json),
@@ -438,6 +441,7 @@ export function createSessionPersistence({
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
         projectDefaults: parsePersistedObject(row.project_defaults_json),
+        projectCreationMode: Boolean(row.project_creation_mode),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),
         appServiceIds: parsePersistedStringList(row.app_service_ids_json),

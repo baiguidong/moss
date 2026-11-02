@@ -28,7 +28,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   userAvatar: '',
   agentMode: 'local',
   localEnabled: true,
-  remoteEnabled: false,
+  enterpriseEnabled: false,
   agentTeamsEnabled: false,
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
@@ -110,13 +110,13 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     inboxSessionId: '',
     inboxSessionIds: {},
   },
-  remoteDirectServerUrl: '',
-  remoteDirectCredentialMode: 'password',
-  remoteDirectUserName: '',
-  remoteDirectUserEmail: '',
-  remoteDirectUserPassword: '',
-  remoteDirectApiKey: '',
-  remoteDirectWorkspace: '',
+  enterpriseAccountServerUrl: '',
+  enterpriseAccountCredentialMode: 'password',
+  enterpriseAccountUserName: '',
+  enterpriseAccountUserEmail: '',
+  enterpriseAccountUserPassword: '',
+  enterpriseAccountApiKey: '',
+  enterpriseAccountWorkspace: '',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
   logRotationMaxFiles: 5,
@@ -257,7 +257,23 @@ function loadLocalSettingsAuthConfig(settingsPath) {
   }
 }
 
+// Read legacy account settings once; saved files use the enterprise account model.
+function readEnterpriseAccountSettings(value = {}) {
+  value = value && typeof value === 'object' ? value : {};
+  const result = { ...value };
+  if (result.enterpriseEnabled === undefined && result.remoteEnabled !== undefined) result.enterpriseEnabled = result.remoteEnabled;
+  for (const [key, item] of Object.entries(value)) if (key.startsWith('remoteDirect')) {
+    const next = key.replace('remoteDirect', 'enterpriseAccount');
+    if (result[next] === undefined) result[next] = item;
+    delete result[key];
+  }
+  delete result.remoteEnabled;
+  return result;
+}
+
 export function normalizeDesktopSettings(input, existing = {}) {
+  input = readEnterpriseAccountSettings(input);
+  existing = readEnterpriseAccountSettings(existing);
   const source = input && typeof input === 'object' ? input : {};
   const result = { ...existing };
   result.desktopControl = normalizeDesktopControlSettings(source.desktopControl ?? existing.desktopControl ?? source.computerUse ?? existing.computerUse);
@@ -269,8 +285,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
   const existingModels = objectField(existing, 'models');
   const existingText = objectField(existingModels, 'text');
   const existingTextThinking = objectField(existingText, 'thinking');
-  const sourceRemoteDirect = objectField(source, 'remoteDirect');
-  const existingRemoteDirect = objectField(existing, 'remoteDirect');
+  const sourceRemoteDirect = objectField(source, 'enterpriseAccount');
+  const existingRemoteDirect = objectField(existing, 'enterpriseAccount');
 
   if (source.agentTeamsEnabled !== undefined) {
     result.agentTeamsEnabled = source.agentTeamsEnabled === true;
@@ -278,22 +294,15 @@ export function normalizeDesktopSettings(input, existing = {}) {
     result.agentTeamsEnabled = DEFAULT_DESKTOP_SETTINGS.agentTeamsEnabled;
   }
 
-  if (source.agentMode !== undefined) {
-    result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
-  } else if (result.agentMode === undefined) {
-    result.agentMode = DEFAULT_DESKTOP_SETTINGS.agentMode;
-  }
+  // Execution always belongs to this Host. Legacy remote settings now only
+  // configure the enterprise account connection; they cannot select a runner.
+  result.agentMode = 'local';
+  result.localEnabled = true;
 
-  if (source.localEnabled !== undefined) {
-    result.localEnabled = Boolean(source.localEnabled);
-  } else if (result.localEnabled === undefined) {
-    result.localEnabled = DEFAULT_DESKTOP_SETTINGS.localEnabled;
-  }
-
-  if (source.remoteEnabled !== undefined) {
-    result.remoteEnabled = Boolean(source.remoteEnabled);
-  } else if (result.remoteEnabled === undefined) {
-    result.remoteEnabled = DEFAULT_DESKTOP_SETTINGS.remoteEnabled;
+  if (source.enterpriseEnabled !== undefined) {
+    result.enterpriseEnabled = Boolean(source.enterpriseEnabled);
+  } else if (result.enterpriseEnabled === undefined) {
+    result.enterpriseEnabled = DEFAULT_DESKTOP_SETTINGS.enterpriseEnabled;
   }
 
   result.model =
@@ -398,68 +407,68 @@ export function normalizeDesktopSettings(input, existing = {}) {
           : DEFAULT_DESKTOP_SETTINGS.image.model,
   };
 
-  result.remoteDirectServerUrl =
-    ownStringField(source, 'remoteDirectServerUrl') ??
+  result.enterpriseAccountServerUrl =
+    ownStringField(source, 'enterpriseAccountServerUrl') ??
     ownStringField(sourceRemoteDirect, 'serverUrl') ??
-    stringField(result, 'remoteDirectServerUrl') ??
+    stringField(result, 'enterpriseAccountServerUrl') ??
     stringField(existingRemoteDirect, 'serverUrl') ??
-    DEFAULT_DESKTOP_SETTINGS.remoteDirectServerUrl;
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountServerUrl;
 
-  result.remoteDirectCredentialMode = normalizeRemoteDirectCredentialMode(
-    source.remoteDirectCredentialMode ??
+  result.enterpriseAccountCredentialMode = normalizeRemoteDirectCredentialMode(
+    source.enterpriseAccountCredentialMode ??
       sourceRemoteDirect.credentialMode ??
-      result.remoteDirectCredentialMode ??
+      result.enterpriseAccountCredentialMode ??
       existingRemoteDirect.credentialMode ??
-      DEFAULT_DESKTOP_SETTINGS.remoteDirectCredentialMode,
+      DEFAULT_DESKTOP_SETTINGS.enterpriseAccountCredentialMode,
   );
 
-  result.remoteDirectUserName =
-    ownStringField(source, 'remoteDirectUserName') ??
+  result.enterpriseAccountUserName =
+    ownStringField(source, 'enterpriseAccountUserName') ??
     ownStringField(sourceRemoteDirect, 'userName') ??
-    stringField(result, 'remoteDirectUserName') ??
+    stringField(result, 'enterpriseAccountUserName') ??
     stringField(existingRemoteDirect, 'userName') ??
-    DEFAULT_DESKTOP_SETTINGS.remoteDirectUserName;
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountUserName;
 
-  result.remoteDirectUserEmail =
-    ownStringField(source, 'remoteDirectUserEmail') ??
+  result.enterpriseAccountUserEmail =
+    ownStringField(source, 'enterpriseAccountUserEmail') ??
     ownStringField(sourceRemoteDirect, 'userEmail') ??
-    stringField(result, 'remoteDirectUserEmail') ??
+    stringField(result, 'enterpriseAccountUserEmail') ??
     stringField(existingRemoteDirect, 'userEmail') ??
-    DEFAULT_DESKTOP_SETTINGS.remoteDirectUserEmail;
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountUserEmail;
 
-  result.remoteDirectUserPassword =
-    ownRawStringField(source, 'remoteDirectUserPassword') ??
+  result.enterpriseAccountUserPassword =
+    ownRawStringField(source, 'enterpriseAccountUserPassword') ??
     ownRawStringField(sourceRemoteDirect, 'userPassword') ??
-    (typeof result.remoteDirectUserPassword === 'string'
-      ? result.remoteDirectUserPassword
+    (typeof result.enterpriseAccountUserPassword === 'string'
+      ? result.enterpriseAccountUserPassword
       : typeof existingRemoteDirect.userPassword === 'string'
         ? existingRemoteDirect.userPassword
-        : DEFAULT_DESKTOP_SETTINGS.remoteDirectUserPassword);
+        : DEFAULT_DESKTOP_SETTINGS.enterpriseAccountUserPassword);
 
-  result.remoteDirectApiKey =
-    ownStringField(source, 'remoteDirectApiKey') ??
+  result.enterpriseAccountApiKey =
+    ownStringField(source, 'enterpriseAccountApiKey') ??
     ownStringField(sourceRemoteDirect, 'apiKey') ??
-    stringField(result, 'remoteDirectApiKey') ??
+    stringField(result, 'enterpriseAccountApiKey') ??
     stringField(existingRemoteDirect, 'apiKey') ??
-    DEFAULT_DESKTOP_SETTINGS.remoteDirectApiKey;
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountApiKey;
 
-  result.remoteDirectWorkspace =
-    ownStringField(source, 'remoteDirectWorkspace') ??
+  result.enterpriseAccountWorkspace =
+    ownStringField(source, 'enterpriseAccountWorkspace') ??
     ownStringField(sourceRemoteDirect, 'workspace') ??
-    stringField(result, 'remoteDirectWorkspace') ??
+    stringField(result, 'enterpriseAccountWorkspace') ??
     stringField(existingRemoteDirect, 'workspace') ??
-    DEFAULT_DESKTOP_SETTINGS.remoteDirectWorkspace;
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountWorkspace;
 
-  result.remoteDirect = {
-    serverUrl: result.remoteDirectServerUrl,
-    credentialMode: result.remoteDirectCredentialMode,
-    userName: result.remoteDirectUserName,
-    userEmail: result.remoteDirectUserEmail,
-    userPassword: result.remoteDirectUserPassword,
-    apiKey: result.remoteDirectApiKey,
-    workspace: result.remoteDirectWorkspace,
+  result.enterpriseAccount = {
+    serverUrl: result.enterpriseAccountServerUrl,
+    credentialMode: result.enterpriseAccountCredentialMode,
+    userName: result.enterpriseAccountUserName,
+    userEmail: result.enterpriseAccountUserEmail,
+    userPassword: result.enterpriseAccountUserPassword,
+    apiKey: result.enterpriseAccountApiKey,
+    workspace: result.enterpriseAccountWorkspace,
   };
-  delete result.remoteDirectProfileMode;
+  delete result.enterpriseAccountProfileMode;
 
   if (source.coordinatorMode !== undefined) {
     result.coordinatorMode = Boolean(source.coordinatorMode);
@@ -640,7 +649,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
     : {};
   result.agentMail = {
     enabled:
-      result.remoteEnabled === true && (
+      result.enterpriseEnabled === true && (
         sourceAgentMail.enabled !== undefined
           ? Boolean(sourceAgentMail.enabled)
           : existingAgentMail.enabled !== undefined
@@ -889,22 +898,22 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     : {};
   const imageModel = { model: normalizedSettings.image?.model?.trim() || 'gpt-image-2' };
 
-  const existingRemoteDirect = existingFile.remoteDirect && typeof existingFile.remoteDirect === 'object'
-    ? existingFile.remoteDirect
+  const existingRemoteDirect = existingFile.enterpriseAccount && typeof existingFile.enterpriseAccount === 'object'
+    ? existingFile.enterpriseAccount
     : {};
-  const remoteDirect = {
+  const enterpriseAccount = {
     ...existingRemoteDirect,
-    serverUrl: normalizedSettings.remoteDirectServerUrl || '',
+    serverUrl: normalizedSettings.enterpriseAccountServerUrl || '',
     credentialMode: normalizeRemoteDirectCredentialMode(
-      normalizedSettings.remoteDirectCredentialMode,
+      normalizedSettings.enterpriseAccountCredentialMode,
     ),
-    userName: normalizedSettings.remoteDirectUserName || '',
-    userEmail: normalizedSettings.remoteDirectUserEmail || '',
-    workspace: normalizedSettings.remoteDirectWorkspace || '',
+    userName: normalizedSettings.enterpriseAccountUserName || '',
+    userEmail: normalizedSettings.enterpriseAccountUserEmail || '',
+    workspace: normalizedSettings.enterpriseAccountWorkspace || '',
   };
-  delete remoteDirect.userPassword;
-  delete remoteDirect.apiKey;
-  delete remoteDirect.profileMode;
+  delete enterpriseAccount.userPassword;
+  delete enterpriseAccount.apiKey;
+  delete enterpriseAccount.profileMode;
 
   const models = {
     ...existingModels,
@@ -928,21 +937,23 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     ...existingFile,
     ...normalizedSettings,
     models,
-    remoteDirect,
+    enterpriseAccount,
     webSearch: {
       mode: normalizedSettings.webSearch?.mode || DEFAULT_DESKTOP_SETTINGS.webSearch.mode,
     },
     env,
   };
   deleteLegacyServerSettings(toSave);
-  delete toSave.remoteDirectServerUrl;
-  delete toSave.remoteDirectCredentialMode;
-  delete toSave.remoteDirectUserName;
-  delete toSave.remoteDirectUserEmail;
-  delete toSave.remoteDirectUserPassword;
-  delete toSave.remoteDirectApiKey;
-  delete toSave.remoteDirectWorkspace;
-  delete toSave.remoteDirectProfileMode;
+  delete toSave.remoteEnabled;
+  for (const key of Object.keys(toSave)) if (key.startsWith('remoteDirect')) delete toSave[key];
+  delete toSave.enterpriseAccountServerUrl;
+  delete toSave.enterpriseAccountCredentialMode;
+  delete toSave.enterpriseAccountUserName;
+  delete toSave.enterpriseAccountUserEmail;
+  delete toSave.enterpriseAccountUserPassword;
+  delete toSave.enterpriseAccountApiKey;
+  delete toSave.enterpriseAccountWorkspace;
+  delete toSave.enterpriseAccountProfileMode;
   delete toSave.model;
   delete toSave.fastModel;
   delete toSave.maxTurns;
@@ -1027,9 +1038,9 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
       value = loaded.value;
       // Credentials hydrated from the secure store are intentionally absent on disk.
       value.webSearch = { ...previous.webSearch, mode: value.webSearch.mode };
-      if (value.remoteDirectServerUrl === previous.remoteDirectServerUrl) {
-        for (const key of ['remoteDirectApiKey','remoteDirectUserPassword']) value[key] = previous[key];
-        value.remoteDirect = { ...value.remoteDirect, apiKey:previous.remoteDirectApiKey, userPassword:previous.remoteDirectUserPassword };
+      if (value.enterpriseAccountServerUrl === previous.enterpriseAccountServerUrl) {
+        for (const key of ['enterpriseAccountApiKey','enterpriseAccountUserPassword']) value[key] = previous[key];
+        value.enterpriseAccount = { ...value.enterpriseAccount, apiKey:previous.enterpriseAccountApiKey, userPassword:previous.enterpriseAccountUserPassword };
       }
       syncDesktopThinkingEnv(value);
       syncDesktopModelEnv(value);

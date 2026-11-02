@@ -2,6 +2,7 @@ import { normalizeProjectDefaults } from './project-session-defaults.mjs';
 import { randomUUID } from 'node:crypto';
 import { DESKTOP_PROJECT_KIND, DESKTOP_PROJECT_LAYOUT_VERSION, isDesktopProjectRecord } from '../desktop-data-layout.mjs';
 import { normalizeStringList } from './string-list.mjs';
+import { normalizeProjectIcon } from '../../../shared/project-icon.mjs';
 
 export const PROJECT_TASK_STATUSES = new Set(['working', 'waiting_for_user', 'completed', 'failed', 'stopped']);
 
@@ -52,8 +53,11 @@ export function normalizeProjectRecord(raw, fallbackId = '') {
     layoutVersion: DESKTOP_PROJECT_LAYOUT_VERSION,
     id,
     name,
+    icon: normalizeProjectIcon(raw.icon),
     instructions: typeof raw.instructions === 'string' ? raw.instructions : '',
     templateId: typeof raw.templateId === 'string' && raw.templateId.trim() ? raw.templateId.trim() : null,
+    creationDraftId: typeof raw.creationDraftId === 'string' ? raw.creationDraftId : null,
+    resourceBindings: Array.isArray(raw.resourceBindings) ? raw.resourceBindings : null,
     connectorIds: normalizeStringList(raw.connectorIds),
     expertIds: normalizeStringList(raw.expertIds),
     skillIds: normalizeStringList(raw.skillIds),

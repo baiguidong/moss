@@ -1,5 +1,6 @@
 import { createMossClient } from '../client/moss-client.mjs';
 import { createWebTransport } from '../client/web-transport.mjs';
+import { attachDesktopShellPresentation } from '../client/desktop-shell-presentation.mjs';
 
 let environmentGeneration: number | undefined;
 async function jsonFetch(url: string, init?: RequestInit) {
@@ -62,6 +63,7 @@ export async function initializeHostClient() {
     },
   });
   const client = createMossClient(transport) as Window['agentDesktop'];
+  if (window.mossDesktopShell?.getPresentation) await attachDesktopShellPresentation(client, window.mossDesktopShell);
   const browseFiles: typeof import('./components/web-file-browser').showWebFileBrowser = async options => {
     const { showWebFileBrowser } = await import('./components/web-file-browser');
     return showWebFileBrowser(options);

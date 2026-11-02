@@ -930,7 +930,7 @@ function sortExperts(experts, sortBy = 'comprehensive') {
   return next;
 }
 
-function filterExperts(experts, { query = '', category = '', type = 'all', sortBy = 'updated' } = {}) {
+export function filterExperts(experts, { query = '', category = '', type = 'all', sortBy = 'updated' } = {}) {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   return sortExperts(experts.filter((expert) => {
     if (category && expert.categoryId !== category && expert.categoryName !== category) return false;
@@ -986,7 +986,7 @@ function getManifestExperts(manifest) {
   return extractArray(manifest, ['experts', 'expertList', 'items', 'list']);
 }
 
-async function loadExpertBundle(baseUrl, { forceRefresh = false } = {}) {
+export async function loadExpertBundle(baseUrl, { forceRefresh = false } = {}) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   const cached = expertBundleCache.get(normalizedBaseUrl);
   if (!forceRefresh && isMemoryCacheFresh(cached)) {
@@ -1378,7 +1378,7 @@ export async function migrateLegacyExpertInstallations() {
   return migrateLegacyExperts();
 }
 
-async function getInstalledExperts() {
+export async function getInstalledExperts() {
   const experts = [];
   await migrateLegacyExperts();
   try {
@@ -1428,7 +1428,7 @@ function buildExpertMarkdown(expert, promptText) {
   ].join('\n');
 }
 
-async function installExpert(baseUrl, expertId, { forceRefresh = false } = {}) {
+export async function installExpert(baseUrl, expertId, { forceRefresh = false } = {}) {
   const installKey = `${normalizeBaseUrl(baseUrl)}:${String(expertId || '').trim()}`;
   if (!forceRefresh && expertInstallPromises.has(installKey)) {
     return expertInstallPromises.get(installKey);

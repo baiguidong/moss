@@ -1,51 +1,9 @@
-import { importLegacyCloudCron } from './cronLegacyImport.js'
-import { CloudCronScheduler } from './cronScheduler.js'
-import { CronRepository, assertCronUserCanRun } from './model/repositories/cron.js'
-import { createHash, randomUUID } from 'crypto'
-import { createReadStream, existsSync } from 'fs'
-import {
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  stat,
-} from 'fs/promises'
+import { createHash } from 'crypto'
+import { existsSync } from 'fs'
+import { readFile, stat } from 'fs/promises'
 import http from 'http'
-import net from 'net'
-import {
-  basename,
-  dirname,
-  extname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from 'path'
-import { WebSocketServer, type WebSocket } from 'ws'
-import {
-  advancedSettingsSchema,
-  autoMemorySettingsSchema,
-  normalizeAdvancedSettings,
-  normalizeAutoMemorySettings,
-  normalizeSessionMemorySettings,
-  normalizeSessionRuntimeOptions,
-  sessionMemorySettingsSchema,
-  type AdvancedSettings,
-  type AutoMemorySettings,
-  type SessionMemorySettings,
-  type SessionRuntimeOptions,
-} from '../../packages/direct-connect-protocol/src/index.js'
-import {
-  MAX_WORKSPACE_TEXT_PREVIEW_BYTES,
-  decodeWorkspaceTextBuffer,
-  getWorkspaceFilePreviewInfo,
-  isBinaryPreviewContentType,
-  isLikelyBinaryBuffer,
-} from '../../shared/workspace-preview.mjs'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
+
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
@@ -60,7 +18,7 @@ import { handleCloudStorageRoute } from './cloudStorage/routes.js'
 import type { ObjectStore } from './cloudStorage/s3.js'
 import { CloudStorageService } from './cloudStorage/service.js'
 import { MOSS_SERVER_ASSET_ROOT } from './lib/env.js'
-import { jsonParse, jsonStringify } from './lib/json.js'
+
 import { AgentMailRepository } from './model/repositories/agentMail.js'
 import { CloudStorageRepository } from './model/repositories/cloudStorage.js'
 import { OpenIMIntegrationService } from './openim/service.js'
@@ -74,13 +32,12 @@ import {
 } from './profileResources.js'
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { getUserProfileDir } from './runtimePaths.js'
-import { RuntimeService } from './runtimeService.js'
+import type { createModels } from './model/index.js'
+import { HostRepository } from './model/repositories/hosts.js'
+import { authenticateHostReport, handleControlPlaneRoute } from './controlPlane.js'
 import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
-import {
-  consumeClientControlResponse,
-  trackClientControlRequest,
-} from './sessionWebSocketBridge.js'
+
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { fetchModelList } from '../../shared/model-list.mjs'
 import { loadSessionContextFromTranscript } from './transcript.js'
@@ -103,8 +60,6 @@ const MIME_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.webp': 'image/webp',
 }
-
-const MAX_WORKSPACE_UPLOAD_BYTES = 250 * 1024 * 1024
 
 class HttpError extends Error {
   constructor(
@@ -168,320 +123,6 @@ function serializeSession(session: {
     lastActiveAt: session.lastActiveAt,
     endedAt: session.endedAt,
   }
-}
-
-function getSessionWorkspaceRoot(session: SessionRecord): string {
-  return session.runtime.workspaceDir || session.cwd
-}
-
-function resolveSessionWorkspacePath(
-  session: SessionRecord,
-  inputPath?: string | null,
-): {
-  root: string
-  targetPath: string
-} {
-  const root = resolve(getSessionWorkspaceRoot(session))
-  const trimmed = typeof inputPath === 'string' ? inputPath.trim() : ''
-  const targetPath = trimmed
-    ? isAbsolute(trimmed)
-      ? resolve(trimmed)
-      : resolve(root, trimmed)
-    : root
-  const rel = relative(root, targetPath)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new HttpError(400, 'Path is outside the session workspace')
-  }
-  return { root, targetPath }
-}
-
-async function resolveExistingSessionWorkspacePath(
-  session: SessionRecord,
-  inputPath?: string | null,
-): Promise<{ root: string; targetPath: string }> {
-  const resolvedPath = resolveSessionWorkspacePath(session, inputPath)
-  const [realRoot, realTargetPath] = await Promise.all([
-    realpath(resolvedPath.root),
-    realpath(resolvedPath.targetPath),
-  ])
-  const rel = relative(realRoot, realTargetPath)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new HttpError(400, 'Path is outside the session workspace')
-  }
-  return resolvedPath
-}
-
-async function listSessionWorkspaceDir(
-  session: SessionRecord,
-  dirPath?: string | null,
-) {
-  const { root, targetPath } = await resolveExistingSessionWorkspacePath(
-    session,
-    dirPath,
-  )
-  const targetStat = await stat(targetPath)
-  if (!targetStat.isDirectory()) {
-    throw new HttpError(400, 'Target is not a directory')
-  }
-  const entries = await readdir(targetPath, { withFileTypes: true })
-  const items = entries
-    .filter(entry => !entry.name.startsWith('.'))
-    .map(entry => {
-      const fullPath = join(targetPath, entry.name)
-      return {
-        name: entry.name,
-        path: fullPath,
-        relativePath: relative(root, fullPath) || entry.name,
-        type: entry.isDirectory() ? 'directory' : 'file',
-      }
-    })
-    .sort((a, b) => {
-      if (a.type !== b.type) {
-        return a.type === 'directory' ? -1 : 1
-      }
-      return a.name.localeCompare(b.name)
-    })
-  return {
-    root,
-    path: targetPath,
-    relativePath: relative(root, targetPath) || '.',
-    items,
-  }
-}
-
-async function readSessionWorkspaceFile(
-  session: SessionRecord,
-  filePath?: string | null,
-) {
-  if (!filePath?.trim()) {
-    throw new HttpError(400, 'Missing file path')
-  }
-  const { root, targetPath } = await resolveExistingSessionWorkspacePath(
-    session,
-    filePath,
-  )
-  const targetStat = await stat(targetPath)
-  if (!targetStat.isFile()) {
-    throw new HttpError(400, 'Target is not a file')
-  }
-  const previewInfo = getWorkspaceFilePreviewInfo(targetPath)
-  const baseResult = {
-    path: targetPath,
-    relativePath: relative(root, targetPath),
-    size: targetStat.size,
-    truncated: false,
-    contentType: previewInfo.contentType,
-    language: previewInfo.language,
-    mimeType: previewInfo.mimeType,
-    metadata: {
-      modifiedAt: targetStat.mtimeMs,
-      ...(previewInfo.previewEngine
-        ? { previewEngine: previewInfo.previewEngine }
-        : {}),
-      ...(previewInfo.previewFamily
-        ? { previewFamily: previewInfo.previewFamily }
-        : {}),
-      ...(previewInfo.previewCapability
-        ? { previewCapability: previewInfo.previewCapability }
-        : {}),
-      ...(previewInfo.contentType === 'ofv' && previewInfo.binary === false
-        ? { ofvText: true }
-        : {}),
-    },
-  }
-
-  const isBinaryPreview =
-    typeof previewInfo.binary === 'boolean'
-      ? previewInfo.binary
-      : isBinaryPreviewContentType(previewInfo.contentType)
-  if (isBinaryPreview) {
-    return {
-      ...baseResult,
-      metadata: {
-        ...baseResult.metadata,
-        previewEditable: false,
-        previewSaveable: false,
-      },
-      content: '',
-    }
-  }
-
-  const handle = await open(targetPath, 'r')
-  let buffer: Buffer
-  try {
-    buffer = Buffer.alloc(
-      Math.min(targetStat.size, MAX_WORKSPACE_TEXT_PREVIEW_BYTES),
-    )
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    buffer = buffer.subarray(0, bytesRead)
-  } finally {
-    await handle.close()
-  }
-  if (isLikelyBinaryBuffer(buffer)) {
-    return {
-      ...baseResult,
-      contentType: 'unsupported',
-      language: 'binary',
-      mimeType: 'application/octet-stream',
-      metadata: {
-        ...baseResult.metadata,
-        previewEditable: false,
-        previewSaveable: false,
-        previewReason: 'binary',
-      },
-      content: 'Binary file cannot be previewed.',
-    }
-  }
-
-  const truncated = targetStat.size > MAX_WORKSPACE_TEXT_PREVIEW_BYTES
-  return {
-    ...baseResult,
-    truncated,
-    metadata: truncated
-      ? {
-          ...baseResult.metadata,
-          previewEditable: false,
-          previewSaveable: false,
-          previewReason: 'truncated',
-        }
-      : baseResult.metadata,
-    content: decodeWorkspaceTextBuffer(buffer, truncated),
-  }
-}
-
-async function writeSessionWorkspaceFileContent(
-  res: http.ServerResponse,
-  session: SessionRecord,
-  filePath?: string | null,
-): Promise<void> {
-  if (!filePath?.trim()) {
-    throw new HttpError(400, 'Missing file path')
-  }
-  const { targetPath } = await resolveExistingSessionWorkspacePath(
-    session,
-    filePath,
-  )
-  const targetStat = await stat(targetPath)
-  if (!targetStat.isFile()) {
-    throw new HttpError(400, 'Target is not a file')
-  }
-  const previewInfo = getWorkspaceFilePreviewInfo(targetPath)
-  res.writeHead(200, {
-    'accept-ranges': 'none',
-    'cache-control': 'no-store',
-    'content-type': previewInfo.mimeType || contentTypeForPath(targetPath),
-    'content-length': String(targetStat.size),
-  })
-  await new Promise<void>((resolveStream, rejectStream) => {
-    const stream = createReadStream(targetPath)
-    stream.once('error', rejectStream)
-    stream.once('end', resolveStream)
-    res.once('close', resolveStream)
-    stream.pipe(res)
-  })
-}
-
-async function resolveWritableSessionWorkspacePath(
-  session: SessionRecord,
-  filePath: string,
-): Promise<{ root: string; targetPath: string }> {
-  const { root, targetPath } = resolveSessionWorkspacePath(session, filePath)
-  const realRoot = await realpath(root)
-  const realParent = await realpath(dirname(targetPath))
-  const safeTarget = join(realParent, basename(targetPath))
-  const rel = relative(realRoot, safeTarget)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new HttpError(400, 'Path is outside the session workspace')
-  }
-  try {
-    const targetStat = await stat(safeTarget)
-    if (!targetStat.isFile()) throw new HttpError(400, 'Target is not a file')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
-  }
-  return { root, targetPath: safeTarget }
-}
-
-async function writeRequestBodyToFile(
-  req: http.IncomingMessage,
-  targetPath: string,
-  maxBytes = MAX_WORKSPACE_UPLOAD_BYTES,
-): Promise<number> {
-  const declaredLength = Number(req.headers['content-length'] || 0)
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new HttpError(413, 'Request body too large')
-  }
-  const temporaryPath = `${targetPath}.upload-${process.pid}-${randomUUID()}`
-  const handle = await open(temporaryPath, 'wx', 0o600)
-  let bytesWritten = 0
-  try {
-    for await (const chunk of req) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      bytesWritten += buffer.length
-      if (bytesWritten > maxBytes) {
-        throw new HttpError(413, 'Request body too large')
-      }
-      await handle.write(buffer)
-    }
-    await handle.sync()
-    await handle.close()
-    await rename(temporaryPath, targetPath)
-    return bytesWritten
-  } catch (error) {
-    await handle.close().catch(() => {})
-    await rm(temporaryPath, { force: true }).catch(() => {})
-    throw error
-  }
-}
-
-async function writeSessionWorkspaceFile(
-  req: http.IncomingMessage,
-  session: SessionRecord,
-  filePath?: string | null,
-) {
-  if (!filePath?.trim()) throw new HttpError(400, 'Missing file path')
-  const { targetPath } = await resolveWritableSessionWorkspacePath(
-    session,
-    filePath,
-  )
-  await writeRequestBodyToFile(req, targetPath)
-  return await readSessionWorkspaceFile(session, targetPath)
-}
-
-function sanitizeUploadName(value: string): string {
-  const safe = basename(value)
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-    .trim()
-  if (!safe || safe === '.' || safe === '..')
-    throw new HttpError(400, 'Invalid upload name')
-  return safe.slice(0, 240)
-}
-
-async function uploadSessionWorkspaceFile(
-  req: http.IncomingMessage,
-  session: SessionRecord,
-  fileName?: string | null,
-) {
-  if (!fileName?.trim()) throw new HttpError(400, 'Missing upload name')
-  const root = await realpath(getSessionWorkspaceRoot(session))
-  const inputDir = join(root, 'inputs')
-  await mkdir(inputDir, { recursive: true })
-  const realInputDir = await realpath(inputDir)
-  if (!isInsidePath(root, realInputDir)) {
-    throw new HttpError(
-      400,
-      'Upload directory is outside the session workspace',
-    )
-  }
-  const safeName = sanitizeUploadName(fileName)
-  const parsed = extname(safeName)
-  const stem = parsed ? safeName.slice(0, -parsed.length) : safeName
-  const targetPath = join(
-    realInputDir,
-    `${stem}-${randomUUID().slice(0, 8)}${parsed}`,
-  )
-  await writeRequestBodyToFile(req, targetPath)
-  return await readSessionWorkspaceFile(session, targetPath)
 }
 
 function isInsidePath(root: string, target: string): boolean {
@@ -749,107 +390,6 @@ function redirect(res: http.ServerResponse, location: string): void {
   res.end()
 }
 
-function parseAutoMemorySettings(
-  body: JsonBody,
-): AutoMemorySettings | undefined {
-  const value = body.autoMemory ?? body.auto_memory
-  if (value === undefined) return undefined
-  const parsed = autoMemorySettingsSchema().safeParse(value)
-  if (!parsed.success) {
-    throw new HttpError(400, 'Invalid auto-memory settings')
-  }
-  return normalizeAutoMemorySettings(parsed.data)
-}
-
-function parseAdvancedSettings(body: JsonBody): AdvancedSettings | undefined {
-  const value = body.advancedSettings ?? body.advanced_settings
-  if (value === undefined) return undefined
-  const parsed = advancedSettingsSchema().safeParse(value)
-  if (!parsed.success) {
-    throw new HttpError(400, 'Invalid advanced settings')
-  }
-  return normalizeAdvancedSettings(parsed.data)
-}
-
-function parseSessionMemorySettings(
-  body: JsonBody,
-): SessionMemorySettings | undefined {
-  const value = body.sessionMemory ?? body.session_memory
-  if (value === undefined) return undefined
-  const parsed = sessionMemorySettingsSchema().safeParse(value)
-  if (!parsed.success) {
-    throw new HttpError(400, 'Invalid session-memory settings')
-  }
-  return normalizeSessionMemorySettings(parsed.data)
-}
-
-const BLOCKED_REMOTE_ENV_KEYS = new Set([
-  'HOME',
-  'PATH',
-  'NODE_OPTIONS',
-  'MOSS_CONFIG_DIR',
-  'MOSS_HOME',
-  'MOSS_SERVER_HOME',
-  'MOSS_SERVER_URL',
-  'MOSS_SERVER_AUTH_TOKEN',
-  'MOSS_SESSION_USER_ID',
-  'MOSS_SESSION_ORG_ID',
-  'MOSS_SESSION_ROLE',
-  'MOSS_SESSION_SCOPES',
-  'MOSS_SESSION_RUNTIME_TYPE',
-])
-
-function parseSessionRuntimeOptions(
-  body: JsonBody,
-): SessionRuntimeOptions | undefined {
-  const normalized = normalizeSessionRuntimeOptions(
-    body.runtimeOptions ?? body.runtime_options,
-  )
-  if (!normalized) return undefined
-  const environment = Object.fromEntries(
-    Object.entries(normalized.environment || {}).filter(
-      ([key]) =>
-        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) &&
-        !BLOCKED_REMOTE_ENV_KEYS.has(key),
-    ),
-  )
-  return {
-    ...normalized,
-    ...(normalized.environment ? { environment } : {}),
-  }
-}
-
-function buildWsUrl(
-  server: http.Server,
-  config: ServerConfig,
-  sessionId: string,
-): string {
-  if (config.publicUrl) {
-    const publicUrl = new URL(config.publicUrl)
-    publicUrl.protocol = publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'
-    publicUrl.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`
-    publicUrl.search = ''
-    publicUrl.hash = ''
-    return publicUrl.toString()
-  }
-
-  const address = server.address()
-  const actualPort =
-    typeof address === 'object' && address ? address.port : config.port
-
-  // Use advertisedHost if configured, otherwise derive from bind host
-  let host: string
-  if (config.advertisedHost) {
-    host = config.advertisedHost
-  } else if (config.host === '0.0.0.0' || config.host === '::') {
-    host = '127.0.0.1'
-  } else {
-    host = config.host
-  }
-
-  return `ws://${host}:${actualPort}/ws/sessions/${sessionId}`
-}
-
 function canAccessSession(
   auth: AuthContext,
   session: { orgId: string; userId: string },
@@ -958,6 +498,10 @@ function writeError(
     return
   }
 
+  if (error instanceof Error && 'statusCode' in error && Number.isInteger(error.statusCode) && Number(error.statusCode) >= 400 && Number(error.statusCode) < 500) {
+    writeJson(res, Number(error.statusCode), { error: error.message })
+    return
+  }
   logger.error(error instanceof Error ? error.message : String(error))
   writeJson(res, 500, {
     error: error instanceof Error ? error.message : String(error),
@@ -966,7 +510,7 @@ function writeError(
 
 export function startServer(
   config: ServerConfig,
-  runtime: RuntimeService,
+  models: Awaited<ReturnType<typeof createModels>>,
   authService: AuthService,
   logger: ServerLogger = createServerLogger(),
   ragflowIntegration?: RagflowIntegrationService,
@@ -978,29 +522,23 @@ export function startServer(
   stop: () => Promise<void>
 } {
   const adminDistDir = resolveAdminDistDir()
-  const wss = new WebSocketServer({ noServer: true })
-  const websocketUsers = new WeakMap<WebSocket, AuthContext>()
-  const usageService = new UsageService(new UsageRepository(runtime.store.db), runtime.store)
+  const usageService = new UsageService(new UsageRepository(models.db), models.sessions)
   const agentMailService = new AgentMailService(
-    new AgentMailRepository(runtime.store.db),
+    new AgentMailRepository(models.db),
   )
   const cloudStorage = new CloudStorageService(
-    new CloudStorageRepository(runtime.store.db),
+    new CloudStorageRepository(models.db),
     config,
     async (auth, scope) => await authService.requireCurrentScope(auth, scope),
     cloudObjectStore,
   )
-  const cloudShares = new CloudSharesService(new CloudSharesRepository(runtime.store.db), cloudStorage,
+  const cloudShares = new CloudSharesService(new CloudSharesRepository(models.db), cloudStorage,
     (orgId, userId) => authService.requireSharingOwner(orgId, userId))
   const oauthLoginService = new OAuthLoginService(authService)
-  const cronStartup = importLegacyCloudCron(runtime.store.db, config).catch(error => logger.error(`Cron legacy import: ${String(error)}`))
-  const cronRepository = new CronRepository(runtime.store.db)
-  const cronScheduler = new CloudCronScheduler(cronRepository, runtime,
-    owner => assertCronUserCanRun(runtime.store.db, owner), message => logger.error(message))
   const handleTraceRoute = createTraceRoutes({
     config,
-    getSession: id => runtime.getSession(id),
-    listSessions: filter => runtime.listSessionRecords(filter),
+    getSession: id => models.sessions.getSession(id),
+    listSessions: filter => models.sessions.listSessionRecords(filter),
     canAccessSession,
     requireAnyScope: (auth, scopes) => authService.requireAnyScope(auth, scopes),
     readJsonBody,
@@ -1023,13 +561,15 @@ export function startServer(
           ready: true,
           auth_mode: config.authMode,
           oauth_enabled: true,
+          role: 'control-plane',
+          server_execution: false,
         })
         return
       }
 
       if ((req.method === 'GET' || isHead) && pathname === '/readyz') {
         try {
-          await runtime.store.db.check()
+          await models.db.check()
         } catch {
           writeJson(res, 503, { ok: false, ready: false })
           return
@@ -1248,10 +788,12 @@ export function startServer(
 
       if (await handlePublicShare(req, res, url, cloudShares)) return
 
-      const auth = await authenticateRequest(req, authService)
+      const auth = await authenticateRequest(req, authService) || await authenticateHostReport(req, models)
       if (!auth) {
         throw new HttpError(401, 'Unauthorized')
       }
+
+      if (await handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson })) return
 
       const traceResult = await handleTraceRoute(req, url, auth)
       if (traceResult) {
@@ -1364,6 +906,7 @@ export function startServer(
           auth,
           authService,
           service: agentMailService,
+          requireMailbox: () => new HostRepository(models.db).requireMailbox(String(req.headers['x-moss-device-credential'] || (auth.role === 'host' ? auth.rawToken : '')), auth),
         })
       ) {
         return
@@ -1374,6 +917,9 @@ export function startServer(
           client_data: null,
           additional_model_options: [],
           capabilities: {
+            control_plane: { version: 1 },
+            server_execution: false,
+            cloud_computer: { version: 1, path: '/' },
             cloud_storage: {
               version: 1,
               enabled: config.cloudStorage?.enabled ?? false,
@@ -1738,19 +1284,7 @@ export function startServer(
         const userId = decodeURIComponent(userMatch[1] || '')
         const user = await authService.getUserOrNull(userId, auth.orgId, auth)
         const result = await authService.deleteUser({ orgId: auth.orgId, userId }, auth)
-        for (const ws of wss.clients) {
-          const owner = websocketUsers.get(ws)
-          if (owner?.userId === userId && owner.orgId === auth.orgId) {
-            ws.terminate()
-          }
-        }
-        // Account deletion is already committed. Runtime/integration failures
-        // must not make the client retry an account that no longer exists.
         const cleanup = await Promise.allSettled([
-          (async () => {
-            const sessions = await runtime.store.listUserSessions(auth.orgId, userId)
-            await Promise.all(sessions.map(session => runtime.terminateSession(session.sessionId)))
-          })(),
           ...(openIMIntegration && user
             ? [openIMIntegration.syncUser({ ...user, status: 'disabled' })]
             : []),
@@ -1878,7 +1412,7 @@ export function startServer(
         writeJson(res, 200, {
           user,
           sessions: (
-            await runtime.store.listUserSessions(auth.orgId, userId)
+            await models.sessions.listUserSessions(auth.orgId, userId)
           ).map(session => serializeSession(session)),
         })
         return
@@ -2004,7 +1538,7 @@ export function startServer(
           'sessions:list:any',
         ])
         const profileDir = getUserProfileDir(config, auth.userId)
-        const sessions = await runtime.listSessionRecords({
+        const sessions = await models.sessions.listSessionRecords({
           orgId: auth.orgId,
           userId: auth.userId,
         })
@@ -2053,372 +1587,25 @@ export function startServer(
         return
       }
 
-      if (pathname === '/api/v1/cron/tasks') {
-        await cronStartup
-        await authService.requireCurrentScope(auth, req.method === 'GET' ? 'sessions:list' : 'sessions:create')
-        if (req.method === 'GET') {
-          writeJson(res, 200, { tasks: await cronRepository.list(auth) })
-          return
-        }
-        if (req.method === 'POST') {
-          const body = await readJsonBody(req)
-          if (typeof body.ownerSessionId !== 'string') throw new HttpError(400, 'Missing ownerSessionId')
-          try { writeJson(res, 201, { task: await cronRepository.create(auth, body.ownerSessionId, body) }) }
-          catch (error) { throw new HttpError(400, error instanceof Error ? error.message : String(error)) }
-          return
-        }
-      }
-      const cronMatch = pathname.match(/^\/api\/v1\/cron\/tasks\/([^/]+)(?:\/(run|enabled))?$/)
-      if (cronMatch) {
-        await authService.requireCurrentScope(auth, 'sessions:create')
-        let id: string
-        try {
-          id = decodeURIComponent(cronMatch[1]!)
-        } catch {
-          throw new HttpError(400, 'Invalid task ID encoding')
-        }
-        if (!(await cronRepository.get(id, auth))) throw new HttpError(404, 'Task not found')
-        if (req.method === 'DELETE' && !cronMatch[2]) {
-          await cronRepository.remove(id, auth)
-          writeJson(res, 200, { ok: true })
-          return
-        }
-        if (req.method === 'POST' && cronMatch[2] === 'enabled') {
-          const body = await readJsonBody(req)
-          if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be boolean')
-          await cronRepository.toggle(id, auth, body.enabled)
-          writeJson(res, 200, { ok: true })
-          return
-        }
-        if (req.method === 'POST' && cronMatch[2] === 'run') {
-          if (!(await cronScheduler.launch(id, auth))) throw new HttpError(409, '任务正在执行，或当前用户/服务端并发额度已满。')
-          writeJson(res, 202, { ok: true, accepted: true })
-          return
-        }
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/sessions') {
-        authService.requireAnyScope(auth, [
-          'sessions:list',
-          'sessions:list:any',
-        ])
-        const activeOnly = url.searchParams.get('active_only') === 'true'
-        const sessions = await runtime.listSessions({
-          orgId: auth.orgId,
-          userId: hasScope(auth.scopes, 'sessions:list:any')
-            ? undefined
-            : auth.userId,
-          activeOnly,
-        })
-        // An in-flight creation is not yet a usable session. In particular it
-        // must not be imported by clients if its runner subsequently fails.
-        const enrichedSessions = sessions.filter(session => session.status !== 'creating').map(session => ({
-          ...session,
-          originChannel: session.sessionKind === 'cron' ? 'cron' : 'desktop',
-        }))
-        writeJson(res, 200, { sessions: enrichedSessions })
+      // Legacy execution endpoints are permanently retired. History is exported
+      // through explicit archive endpoints and can never reattach a runner.
+      if (pathname === '/api/v1/sessions' || pathname.startsWith('/api/v1/sessions/') || pathname.startsWith('/api/v1/cron/')) {
+        writeJson(res, 410, { code: 'SERVER_EXECUTION_RETIRED', error: '服务端会话已退役，请连接自己的云电脑或使用此电脑。' })
         return
       }
-
-      const sessionResumeMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/resume$/,
-      )
-      if (req.method === 'POST' && sessionResumeMatch) {
-        const sessionId = sessionResumeMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        const ready = await runtime.ensureSessionReady(sessionId)
-        writeJson(res, 200, {
-          session: serializeSession(ready.session),
-          ws_url: buildWsUrl(server, config, sessionId),
-        })
+      if (req.method === 'GET' && pathname === '/api/v1/archives/sessions') {
+        authService.requireAnyScope(auth, ['sessions:list', 'sessions:list:any'])
+        const sessions = await models.sessions.listSessionRecords({ orgId: auth.orgId,
+          userId: hasScope(auth.scopes, 'sessions:list:any') ? undefined : auth.userId })
+        writeJson(res, 200, { archived: true, sessions: sessions.map(serializeSession) })
         return
       }
-
-      const sessionForkMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/fork$/,
-      )
-      if (req.method === 'POST' && sessionForkMatch) {
-        authService.requireScope(auth, 'sessions:create')
-        const sessionId = sessionForkMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        const body = await readJsonBody(req)
-        const title =
-          typeof body.title === 'string' && body.title.trim()
-            ? body.title.trim()
-            : undefined
-        const releaseTurn = await runtime.acquireSessionTurn(sessionId)
-        let created
-        try {
-          created = await runtime.forkSession(sessionId, {
-            title,
-            dangerouslySkipPermissions:
-              body.dangerously_skip_permissions === true,
-            userId: auth.userId,
-            orgId: auth.orgId,
-            role: auth.role,
-            scopes: auth.scopes,
-          })
-        } finally {
-          releaseTurn()
-        }
-        writeJson(res, 200, {
-          session: serializeSession(created),
-          ws_url: buildWsUrl(server, config, created.sessionId),
-        })
-        return
-      }
-
-      const sessionTerminateMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/terminate$/,
-      )
-      if (req.method === 'POST' && sessionTerminateMatch) {
-        const sessionId = sessionTerminateMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:terminate:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        await runtime.terminateSession(sessionId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-
-      const sessionContextMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/context$/,
-      )
-      if (req.method === 'GET' && sessionContextMatch) {
-        const sessionId = sessionContextMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        const context = await loadSessionContextFromTranscript(session)
-        writeJson(res, 200, {
-          session: serializeSession(session),
-          context: context ?? {
-            messages: [],
-            transcript: {
-              lineCount: 0,
-              parseErrorCount: 0,
-              missing: true,
-            },
-          },
-        })
-        return
-      }
-
-      const sessionTasksMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/tasks$/,
-      )
-      if (req.method === 'GET' && sessionTasksMatch) {
-        const session = await runtime.getSession(sessionTasksMatch[1] || '')
-        if (!session) throw new HttpError(404, 'Session not found')
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeNoStoreJson(res, 200, { tasks: await listSessionTasks(session) })
-        return
-      }
-
-      const sessionWorkspaceListMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/list$/,
-      )
-      if (req.method === 'GET' && sessionWorkspaceListMatch) {
-        const sessionId = sessionWorkspaceListMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeJson(
-          res,
-          200,
-          await listSessionWorkspaceDir(session, url.searchParams.get('dir')),
-        )
-        return
-      }
-
-      const sessionWorkspaceReadMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/read$/,
-      )
-      if (req.method === 'GET' && sessionWorkspaceReadMatch) {
-        const sessionId = sessionWorkspaceReadMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeJson(
-          res,
-          200,
-          await readSessionWorkspaceFile(session, url.searchParams.get('file')),
-        )
-        return
-      }
-
-      const sessionWorkspaceContentMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/content$/,
-      )
-      if (req.method === 'GET' && sessionWorkspaceContentMatch) {
-        const sessionId = sessionWorkspaceContentMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        await writeSessionWorkspaceFileContent(
-          res,
-          session,
-          url.searchParams.get('file'),
-        )
-        return
-      }
-
-      if (req.method === 'PUT' && sessionWorkspaceContentMatch) {
-        const sessionId = sessionWorkspaceContentMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) throw new HttpError(404, 'Session not found')
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeJson(
-          res,
-          200,
-          await writeSessionWorkspaceFile(
-            req,
-            session,
-            url.searchParams.get('file'),
-          ),
-        )
-        return
-      }
-
-      const sessionWorkspaceUploadMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/workspace\/upload$/,
-      )
-      if (req.method === 'POST' && sessionWorkspaceUploadMatch) {
-        const sessionId = sessionWorkspaceUploadMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) throw new HttpError(404, 'Session not found')
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeJson(
-          res,
-          200,
-          await uploadSessionWorkspaceFile(
-            req,
-            session,
-            url.searchParams.get('name'),
-          ),
-        )
-        return
-      }
-
-      const sessionMemoryMatch = pathname.match(
-        /^\/api\/v1\/sessions\/([^/]+)\/memory$/,
-      )
-      if (req.method === 'GET' && sessionMemoryMatch) {
-        const sessionId = sessionMemoryMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) throw new HttpError(404, 'Session not found')
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        writeJson(res, 200, await readSessionMemory(session))
-        return
-      }
-
-      const sessionIdMatch = pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
-      if (req.method === 'DELETE' && sessionIdMatch) {
-        const sessionId = sessionIdMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (session && !canAccessSession(auth, session, 'sessions:terminate:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        if (session) await runtime.deleteSession(sessionId)
-        writeJson(res, 200, { ok: true })
-        return
-      }
-      if (req.method === 'GET' && sessionIdMatch) {
-        const sessionId = sessionIdMatch[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          throw new HttpError(404, 'Session not found')
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          throw new HttpError(403, 'Forbidden')
-        }
-        const ready =
-          session.desiredState === 'active'
-            ? await runtime.ensureSessionReady(sessionId)
-            : { session, attempt: null }
-        writeJson(res, 200, {
-          session: serializeSession(ready.session),
-          ws_url: buildWsUrl(server, config, ready.session.sessionId),
-        })
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/sessions') {
-        authService.requireScope(auth, 'sessions:create')
-        const body = await readJsonBody(req)
-        const cwd =
-          typeof body.cwd === 'string' && body.cwd.trim()
-            ? body.cwd.trim()
-            : undefined
-        const dangerouslySkipPermissions =
-          body.dangerously_skip_permissions === true
-        const advancedSettings = parseAdvancedSettings(body)
-        const autoMemory = parseAutoMemorySettings(body)
-        const sessionMemory = parseSessionMemorySettings(body)
-        const runtimeOptions = parseSessionRuntimeOptions(body)
-        const assistantName =
-          typeof body.assistant_name === 'string' && body.assistant_name.trim()
-            ? body.assistant_name.trim()
-            : undefined
-        const created = await runtime.createSession({
-          cwd,
-          dangerouslySkipPermissions,
-          userId: auth.userId,
-          orgId: auth.orgId,
-          role: auth.role,
-          scopes: auth.scopes,
-          assistantName,
-          advancedSettings,
-          autoMemory,
-          sessionMemory,
-          runtimeOptions,
-        })
-        writeJson(res, 200, {
-          session_id: created.sessionId,
-          ws_url: buildWsUrl(server, config, created.sessionId),
-          work_dir: created.cwd,
-          runtime: created.runtime,
-        })
+      const archiveMatch = pathname.match(/^\/api\/v1\/archives\/sessions\/([^/]+)(?:\/(tasks))?$/)
+      if (req.method === 'GET' && archiveMatch) {
+        const record = await models.sessions.getSession(decodeURIComponent(archiveMatch[1]!))
+        if (!record) throw new HttpError(404, 'Session not found')
+        if (!canAccessSession(auth, record, 'sessions:attach:any')) throw new HttpError(403, 'Forbidden')
+        writeNoStoreJson(res, 200, archiveMatch[2] === 'tasks' ? { archived: true, tasks: await listSessionTasks(record) } : { archived: true, session: serializeSession(record), context: await loadSessionContextFromTranscript(record) })
         return
       }
 
@@ -2428,236 +1615,8 @@ export function startServer(
     }
   })
 
-  server.on('upgrade', (req, socket, head) => {
-    void (async () => {
-      try {
-        const auth = await authenticateRequest(req, authService)
-        if (!auth) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
-          socket.destroy()
-          return
-        }
-
-        const url = new URL(req.url || '/', 'http://localhost')
-        const pathname = url.pathname
-        const match = pathname.match(/^\/ws\/sessions\/([^/]+)$/)
-        if (!match) {
-          socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
-          socket.destroy()
-          return
-        }
-
-        const sessionId = match[1] || ''
-        const session = await runtime.getSession(sessionId)
-        if (!session) {
-          socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
-          socket.destroy()
-          return
-        }
-        if (!canAccessSession(auth, session, 'sessions:attach:any')) {
-          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
-          socket.destroy()
-          return
-        }
-
-        const ready = await runtime.ensureSessionReady(sessionId)
-        wss.handleUpgrade(req, socket, head, ws => {
-          websocketUsers.set(ws, auth)
-          void runtime
-            .connectToAttempt(ready.attempt)
-            .then((runnerSocket: net.Socket) => {
-              let buffer = ''
-              let userMessageQueue: Promise<void> = Promise.resolve()
-              let activeTurn: {
-                release: () => void
-                complete: () => void
-              } | null = null
-              let websocketClosed = false
-              const pendingControlRequestIds = new Set<string>()
-              const sendToRunner = (payload: Record<string, unknown>) => {
-                if (!runnerSocket.destroyed) {
-                  runnerSocket.write(`${jsonStringify(payload)}\n`)
-                }
-              }
-              const finishActiveTurn = () => {
-                const turn = activeTurn
-                activeTurn = null
-                turn?.release()
-                turn?.complete()
-                if (websocketClosed && !runnerSocket.destroyed) {
-                  runnerSocket.end()
-                }
-              }
-              const detachClient = () => {
-                if (websocketClosed) return
-                websocketClosed = true
-                if (!activeTurn) {
-                  runnerSocket.end()
-                  return
-                }
-
-                // A disconnected client cannot receive host-tool requests or the
-                // rest of the turn. Abort that turn in place, but keep the
-                // persistent session runtime alive for a later attach. Keep the
-                // turn lock until its result arrives so a replacement client
-                // cannot mistake that stale result for its own turn.
-                sendToRunner({ type: 'interrupt' })
-              }
-              const queueUserMessage = (text: string) => {
-                userMessageQueue = userMessageQueue
-                  .then(async () => {
-                    const release = await runtime.acquireSessionTurn(sessionId)
-                    try {
-                      if (ws.readyState !== ws.OPEN || runnerSocket.destroyed)
-                        return
-                      await new Promise<void>(complete => {
-                        activeTurn = { release, complete }
-                        sendToRunner({
-                          type: 'stdin',
-                          data: text.endsWith('\n') ? text : `${text}\n`,
-                        })
-                      })
-                    } finally {
-                      release()
-                    }
-                  })
-                  .catch(error => {
-                    logger.error(
-                      error instanceof Error ? error.message : String(error),
-                    )
-                  })
-              }
-
-              ws.on('message', data => {
-                const text =
-                  typeof data === 'string'
-                    ? data
-                    : Buffer.from(data).toString('utf8')
-                let parsed: Record<string, unknown> | null = null
-                try {
-                  parsed = jsonParse(text) as Record<string, unknown>
-                  if (
-                    parsed.type === 'control_request' &&
-                    (parsed.request as Record<string, unknown>)?.subtype ===
-                      'interrupt'
-                  ) {
-                    sendToRunner({ type: 'interrupt' })
-                    const requestId =
-                      typeof parsed.request_id === 'string'
-                        ? parsed.request_id
-                        : ''
-                    if (requestId && ws.readyState === ws.OPEN) {
-                      ws.send(
-                        jsonStringify({
-                          type: 'control_response',
-                          response: {
-                            subtype: 'success',
-                            request_id: requestId,
-                            response: { interrupted: activeTurn !== null },
-                          },
-                        }),
-                      )
-                    }
-                    return
-                  }
-                } catch {}
-                trackClientControlRequest(parsed, pendingControlRequestIds)
-                if (parsed?.type === 'user') {
-                  queueUserMessage(text)
-                  return
-                }
-                sendToRunner({
-                  type: 'stdin',
-                  data: text.endsWith('\n') ? text : `${text}\n`,
-                })
-              })
-              ws.on('close', () => {
-                detachClient()
-              })
-              ws.on('error', () => {
-                detachClient()
-              })
-
-              runnerSocket.on('data', chunk => {
-                buffer += Buffer.from(chunk).toString('utf8')
-                while (true) {
-                  const idx = buffer.indexOf('\n')
-                  if (idx < 0) {
-                    break
-                  }
-                  const line = buffer.slice(0, idx)
-                  buffer = buffer.slice(idx + 1)
-                  if (!line.trim()) {
-                    continue
-                  }
-
-                  let parsed: { type?: string; line?: string }
-                  try {
-                    parsed = jsonParse(line) as { type?: string; line?: string }
-                  } catch {
-                    continue
-                  }
-
-                  if (
-                    parsed.type === 'stdout' &&
-                    typeof parsed.line === 'string'
-                  ) {
-                    const ownsTurn = activeTurn !== null
-                    let message: Record<string, unknown> | null = null
-                    try {
-                      message = jsonParse(parsed.line) as Record<
-                        string,
-                        unknown
-                      >
-                    } catch {}
-                    const ownsControlResponse = consumeClientControlResponse(
-                      message,
-                      pendingControlRequestIds,
-                    )
-                    if (
-                      (ownsTurn || ownsControlResponse) &&
-                      ws.readyState === ws.OPEN
-                    ) {
-                      ws.send(parsed.line)
-                    }
-                    if (ownsTurn && message?.type === 'result') {
-                      finishActiveTurn()
-                    }
-                  }
-                  if (parsed.type === 'exit') {
-                    finishActiveTurn()
-                    ws.close()
-                  }
-                }
-              })
-
-              runnerSocket.on('close', () => {
-                finishActiveTurn()
-                if (ws.readyState === ws.OPEN) {
-                  ws.close()
-                }
-              })
-              runnerSocket.on('error', () => {
-                finishActiveTurn()
-                if (ws.readyState === ws.OPEN) {
-                  ws.close()
-                }
-              })
-
-              wss.emit('connection', ws, req)
-            })
-            .catch(error => {
-              logger.error(
-                error instanceof Error ? error.message : String(error),
-              )
-              ws.close()
-            })
-        })
-      } catch (error) {
-        logger.error(error instanceof Error ? error.message : String(error))
-        socket.destroy()
-      }
-    })()
+  server.on('upgrade', (_req, socket) => {
+    socket.end('HTTP/1.1 410 Gone\r\nConnection: close\r\n\r\nServer execution retired')
   })
 
   const ready = new Promise<number | null>((resolvePort, reject) => {
@@ -2668,7 +1627,6 @@ export function startServer(
     server.once('error', onError)
     server.once('listening', () => {
       server.off('error', onError)
-      void cronStartup.then(() => cronScheduler.start())
       const address = server.address()
       resolvePort(typeof address === 'object' && address ? address.port : null)
     })
@@ -2683,11 +1641,8 @@ export function startServer(
     port: null,
     ready,
     stop: async () => {
-      await cronStartup
-      await cronScheduler.stop()
       await cloudStorage.close()
       agentMailService.dispose()
-      wss.close()
       await new Promise<void>((resolveClose, reject) => {
         server.close(error => {
           if (error) {

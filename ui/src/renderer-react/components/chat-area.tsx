@@ -269,7 +269,7 @@ export function SessionTabBar({
           {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>}
 
-        <div className="@container/worker-summary flex min-w-0 flex-1 items-center justify-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           {onReturnToParentSession ? (
             <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs" onClick={onReturnToParentSession}>
               <ArrowLeft className="h-4 w-4" />
@@ -277,24 +277,22 @@ export function SessionTabBar({
             </Button>
           ) : null}
           <span
-            className={cn(toolbarTarget ? 'min-w-0 flex-1 text-center truncate text-sm font-medium' : 'max-w-[40%] truncate text-sm font-medium', 'text-foreground')}
+            className={cn('min-w-0 flex-1 truncate text-sm font-medium text-foreground', toolbarTarget && 'text-center')}
             title={title || "New Session"}
           >
             {title || "New Session"}
           </span>
-          {childSessions.length > 0 ? (
-            <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-          ) : null}
-          {appWorkbenchAction}
-          {agentTeamsStatus}
-          <CoordinatorWorkersSummary
-            workers={childSessions}
-            onOpen={onOpenWorkers}
-            onSelect={onSelectWorker}
-          />
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        {agentTeamsStatus || childSessions.length > 0 ? (
+          <div className="flex shrink-0 items-center gap-1.5 border-r border-border/80 pr-2" role="group" aria-label="Agent 协作状态">
+            {agentTeamsStatus}
+            <CoordinatorWorkersSummary workers={childSessions} onOpen={onOpenWorkers} />
+          </div>
+        ) : null}
+
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="会话功能按钮">
+          {appWorkbenchAction}
           {terminalActions}
           {sessionInfo}
           <div ref={outlineRef} className="relative inline-flex">
@@ -504,7 +502,7 @@ export function ComposerPanel({
   readOnlyReason,
   composerIntent,
   hasActiveSession,
-  remoteEnabled = false,
+  enterpriseEnabled = false,
   newSessionMode = 'local',
   sessionAgentMode = 'local',
   onNewSessionModeChange,
@@ -537,13 +535,14 @@ export function ComposerPanel({
   allowSkillSelection = true,
   className,
   contextUsage,
+  homeComposerMode = 'chat',
 }: {
   value: string;
   loading: boolean;
   readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   sessionAgentMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -576,6 +575,7 @@ export function ComposerPanel({
   sideQuestionRunning?: boolean;
   className?: string;
   contextUsage?: ContextUsageInfo | null;
+  homeComposerMode?: 'chat' | 'project-create';
 }) {
   const [internalAttachments, setInternalAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const attachments = externalAttachments ?? internalAttachments;
@@ -1265,7 +1265,9 @@ export function ComposerPanel({
               ? readOnlyReason
               : (
             isHomeComposer
-              ? composerIntent === "boss"
+              ? homeComposerMode === 'project-create'
+                    ? "描述项目目标、约束，以及希望使用的技能、专家或 App…"
+                    : composerIntent === "boss"
                     ? "描述复杂任务，我会启动多个 worker 并行执行..."
                     : defaultPlaceholder
               : loading ? '继续补充要求…' : defaultPlaceholder
@@ -1584,55 +1586,6 @@ export function ComposerPanel({
             <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {newSessionAddMenu}
 
-              {remoteEnabled ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors",
-                        newSessionMode === 'remote-direct'
-                          ? "border-green-500/30 bg-green-500/10 text-green-600 hover:bg-green-500/15 dark:text-green-400"
-                          : "border-blue-500/30 bg-blue-500/10 text-blue-600 hover:bg-blue-500/15 dark:text-blue-400",
-                      )}
-                      title="选择工作电脑"
-                      aria-label={`工作电脑：${newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}`}
-                    >
-                      {newSessionMode === 'remote-direct'
-                        ? <Cloud className="h-3.5 w-3.5" />
-                        : <Laptop className="h-3.5 w-3.5" />}
-                      <span>{newSessionMode === 'remote-direct' ? '云电脑' : '本地电脑'}</span>
-                      <ChevronRight className="h-3 w-3 opacity-60" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" sideOffset={8} className="w-56">
-                    <DropdownMenuItem
-                      className="gap-2 py-2.5"
-                      onSelect={() => onNewSessionModeChange?.('local')}
-                    >
-                      <Laptop className="h-4 w-4" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>工作任务</span>
-                        <span className="h-2 w-2 rounded-full bg-blue-500" aria-hidden="true" />
-                        <span>本地电脑</span>
-                      </span>
-                      {newSessionMode !== 'remote-direct' ? <Check className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="gap-2 py-2.5"
-                      onSelect={() => onNewSessionModeChange?.('remote-direct')}
-                    >
-                      <Cloud className="h-4 w-4" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>工作任务</span>
-                        <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden="true" />
-                        <span>云电脑</span>
-                      </span>
-                      {newSessionMode === 'remote-direct' ? <Check className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
 
               <WorkspaceSelector
                 value={workspace}
@@ -1732,10 +1685,11 @@ function HomeLanding({
   onClearAssistant,
   onOpenExpertHub,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   onOpenAgentManager,
+  homeComposerMode = 'chat',
 }: {
   value: string;
   loading: boolean;
@@ -1760,19 +1714,22 @@ function HomeLanding({
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onOpenAgentManager?: () => void;
+  homeComposerMode?: 'chat' | 'project-create';
 }) {
   return (
       <div className="flex h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
       <div className="mx-auto mb-8 text-center sm:mb-10 w-full max-w-[720px]">
         <h1 className="text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
-          Hi，今天有什么安排？
+          {homeComposerMode === 'project-create' ? '创建一个项目' : 'Hi，今天有什么安排？'}
         </h1>
         <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
-          让 moss 帮你规划任务、协同执行，或者通过助手直接开始一个新的构建目标。
+          {homeComposerMode === 'project-create'
+            ? '用自然语言描述长期目标，我会先整理项目方案，再协助选择技能、专家和 App。'
+            : '让 moss 帮你规划任务、协同执行，或者通过助手直接开始一个新的构建目标。'}
         </p>
       </div>
 
@@ -1781,7 +1738,7 @@ function HomeLanding({
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
-        remoteEnabled={remoteEnabled}
+        enterpriseEnabled={enterpriseEnabled}
         newSessionMode={newSessionMode}
         sessionAgentMode={newSessionMode}
         onNewSessionModeChange={onNewSessionModeChange}
@@ -1806,6 +1763,7 @@ function HomeLanding({
         onOpenExpertHub={onOpenExpertHub}
         onOpenAgentManager={onOpenAgentManager}
         onOpenSkillHub={onOpenSkillHub}
+        homeComposerMode={homeComposerMode}
         className="w-full max-w-[820px]"
       />
     </div>
@@ -2325,6 +2283,7 @@ function BackgroundTaskPanel({
 
 export function ChatArea({
   messages,
+  projectCreationReview,
   value,
   loading,
   busyStartedAt,
@@ -2373,7 +2332,7 @@ export function ChatArea({
   onOpenExpertHub,
   onOpenAgentManager,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   queuedMessages,
@@ -2404,8 +2363,10 @@ export function ChatArea({
   questionRequest,
   onSubmitQuestion,
   onDiscussQuestion,
+  homeComposerMode = 'chat',
 }: {
   messages: TranscriptRenderMessage[];
+  projectCreationReview?: React.ReactNode;
   value: string;
   loading: boolean;
   busyStartedAt?: number | null;
@@ -2454,7 +2415,7 @@ export function ChatArea({
   onOpenExpertHub?: () => void;
   onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   queuedMessages?: QueuedMessage[];
@@ -2489,6 +2450,7 @@ export function ChatArea({
   questionRequest?: AskUserQuestionRequest | null;
   onSubmitQuestion?: AskUserQuestionCardProps["onSubmit"];
   onDiscussQuestion?: AskUserQuestionCardProps["onDiscuss"];
+  homeComposerMode?: 'chat' | 'project-create';
 }) {
   const composerDock = React.useRef<HTMLDivElement>(null);
   const [sideOpen, setSideOpen] = React.useState(false);
@@ -2660,7 +2622,8 @@ export function ChatArea({
           onOpenExpertHub={onOpenExpertHub}
           onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
-          remoteEnabled={remoteEnabled}
+          homeComposerMode={homeComposerMode}
+          enterpriseEnabled={enterpriseEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
         />
@@ -2752,7 +2715,7 @@ export function ChatArea({
             latestMessageActions={onForkSession ? (
               <ForkSessionButton onFork={onForkSession} forking={forkingSession} disabledReason={forkDisabledReason} />
             ) : undefined}
-            footer={appWorkbench.open ? undefined : conversationRequest}
+            footer={appWorkbench.open ? undefined : <>{conversationRequest}{projectCreationReview}</>}
           />
         </ToolDisplaySettingsProvider>
         </div>

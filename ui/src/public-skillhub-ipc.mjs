@@ -299,6 +299,50 @@ function normalizeRemoteSkill(skill) {
   };
 }
 
+export async function searchPublicSkills({ baseUrl, query = '', page = 1, pageSize = 20 } = {}) {
+  const safePage = Math.max(1, Number.parseInt(String(page || 1), 10) || 1);
+  const safePageSize = Math.min(100, Math.max(1, Number.parseInt(String(pageSize || 20), 10) || 20));
+  const result = await fetchJson(buildHubUrl(baseUrl, '/api/skills', {
+    page: safePage,
+    pageSize: safePageSize,
+    keyword: query,
+  }));
+  if (result.code !== 0) throw new Error(result.message || 'SkillHub returned an error');
+  const skills = Array.isArray(result.data?.skills)
+    ? result.data.skills.map(normalizeRemoteSkill).filter(Boolean)
+    : [];
+  return { skills, total: Number(result.data?.total || skills.length) || 0, page: safePage, pageSize: safePageSize };
+}
+
+export async function getPublicSkillDetail({ baseUrl, id } = {}) {
+  const match = /^@([^/]+)\/(.+)$/.exec(String(id || ''));
+  const slug = match ? match[2] : String(id || '');
+  if (!slug || slug.includes('/') || slug.includes('\\')) throw new Error('Invalid skill ID');
+  const result = await fetchJson(buildHubUrl(baseUrl, `/api/v1/skills/${encodeURIComponent(slug)}`, { namespace: match?.[1] }));
+  const skill = normalizeRemoteSkill({ ...(result.skill || {}), namespace: result.namespace || result.skill?.namespace,
+    version: result.latestVersion?.version || result.skill?.version });
+  if (!skill || skill.id !== id) throw new Error(`Skill not found: ${id}`);
+  return { ...skill, sha256: result.latestVersion?.sha256 || result.skill?.sha256 || undefined };
+}
+
+export async function installPublicSkill({ baseUrl, skill } = {}) {
+  const remoteSkill = normalizeRemoteSkill(skill);
+  if (!remoteSkill?.slug) throw new Error('Missing skill slug');
+  const version = remoteSkill.version || '';
+  const downloadUrl = buildHubUrl(baseUrl, '/api/v1/download', {
+    slug: remoteSkill.slug,
+    version,
+    namespace: remoteSkill.namespace?.handle,
+  });
+  const zipBuffer = await downloadFileBuffer(downloadUrl, { userAgent: 'Moss-PublicSkillHub/1.0' });
+  if (skill?.sha256 || skill?.checksum) {
+    const actual = crypto.createHash('sha256').update(zipBuffer).digest('hex');
+    const expected = String(skill.sha256 || skill.checksum);
+    if (actual !== expected) throw new Error('Checksum verification failed');
+  }
+  return installSkillFromZip(zipBuffer, remoteSkill.slug || remoteSkill.name || remoteSkill.displayName, remoteSkill, version);
+}
+
 function normalizeCategory(category) {
   if (typeof category === 'string') return { key: category, name: category };
   if (!isRecord(category)) return null;

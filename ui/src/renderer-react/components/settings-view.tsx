@@ -1,3 +1,5 @@
+import { ServerLoginDialog } from './server-login-dialog';
+import { useServerAuthentication, type ServerAuthentication } from '@/lib/server-authentication';
 import { CloudSnapshots } from './cloud-snapshots';
 import { StorageSettings } from './storage-settings';
 import './settings-view.css';
@@ -58,6 +60,7 @@ type NavigationGroupId = 'basic' | 'appearance' | 'ai' | 'agents' | 'tools' | 'm
 type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'storage' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
+  serverAuthentication?: ServerAuthentication;
   settingsDraft: DesktopSettings | null;
   setSettingsDraft: React.Dispatch<React.SetStateAction<DesktopSettings | null>>;
   settingsNotice: string;
@@ -803,6 +806,7 @@ function RuntimeSettings({
 }
 
 export function SettingsView({
+  serverAuthentication,
   settingsDraft,
   setSettingsDraft,
   settingsNotice,
@@ -823,8 +827,10 @@ export function SettingsView({
 }: SettingsViewProps) {
   const initialSectionValue = initialSection ?? 'basic-info';
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [remoteAuthState, setRemoteAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
-  const [remoteAuthError, setRemoteAuthError] = React.useState('');
+  const ownAuthentication = useServerAuthentication(setSettingsDraft);
+  const authentication = serverAuthentication || ownAuthentication;
+  const remoteAuthState = authentication.state;
+  const remoteAuthError = authentication.error;
   const [remoteIdentity, setRemoteIdentity] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [tavilyApiKeyDraft, setTavilyApiKeyDraft] = React.useState('');
   const [braveApiKeyDraft, setBraveApiKeyDraft] = React.useState('');
@@ -992,7 +998,7 @@ export function SettingsView({
   }, [selectedAppSetting?.id, activeGroupId]);
 
   React.useEffect(() => {
-    if (!settingsDraft?.remoteDirectServerUrl || !settingsDraft.remoteDirectApiKey) {
+    if (!settingsDraft?.enterpriseAccountServerUrl || !settingsDraft.enterpriseAccountApiKey) {
       setRemoteIdentity(null);
       return;
     }
@@ -1005,7 +1011,7 @@ export function SettingsView({
     return () => {
       cancelled = true;
     };
-  }, [settingsDraft?.remoteDirectApiKey, settingsDraft?.remoteDirectServerUrl]);
+  }, [settingsDraft?.enterpriseAccountApiKey, settingsDraft?.enterpriseAccountServerUrl]);
 
   React.useEffect(() => {
     const container = scrollRef.current;
@@ -1045,7 +1051,7 @@ export function SettingsView({
     firstVisibleSectionId,
     deferredSearchQuery,
     visibleSectionKey,
-    settingsDraft?.remoteEnabled,
+    settingsDraft?.enterpriseEnabled,
     settingsDraft?.thinkingMode,
     settingsDraft?.autoMemory,
     settingsDraft?.advanced,
@@ -1150,43 +1156,8 @@ export function SettingsView({
     }
   };
 
-  const authenticateRemoteServer = async () => {
-    const serverUrl = settingsDraft?.remoteDirectServerUrl?.trim() || '';
-    if (!serverUrl) {
-      setRemoteAuthError('请先填写服务器地址。');
-      return;
-    }
-    setRemoteAuthState('loading');
-    setRemoteAuthError('');
-    try {
-      const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
-      setSettingsDraft(next);
-      setRemoteIdentity({
-        userName: next.remoteDirectUserName || '',
-        userEmail: next.remoteDirectUserEmail || '',
-      });
-      setRemoteAuthState('success');
-      window.setTimeout(() => setRemoteAuthState('idle'), 2000);
-    } catch (error) {
-      const message = cleanIpcErrorMessage(error);
-      if (message === '远端 Server 认证正在进行中。') {
-        setRemoteAuthState('loading');
-        setRemoteAuthError('');
-        return;
-      }
-      setRemoteAuthState('idle');
-      setRemoteAuthError(message === '认证已取消。' ? '' : message);
-    }
-  };
-
-  const cancelRemoteServerAuthentication = async () => {
-    try {
-      await window.agentDesktop.cancelRemoteServerAuthentication();
-    } finally {
-      setRemoteAuthState('idle');
-      setRemoteAuthError('');
-    }
-  };
+  const authenticateRemoteServer = () => authentication.open(settingsDraft?.enterpriseAccountServerUrl || '');
+  const cancelRemoteServerAuthentication = authentication.cancel;
 
   const updateImageSettings = (patch: Partial<DesktopSettings['image']>) => {
     const nextImage = {
@@ -1252,6 +1223,8 @@ export function SettingsView({
   }
 
   return (
+    <>
+    {!serverAuthentication && <ServerLoginDialog authentication={authentication} />}
     <div className="moss-settings h-full overflow-hidden bg-background text-foreground">
       <div className="flex h-full">
           <aside className="hidden h-full min-h-0 w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/50 lg:flex">
@@ -1444,33 +1417,10 @@ export function SettingsView({
                     </SettingsGroup>
 
                     <div className="mb-1 mt-8 text-[13px] font-medium text-muted-foreground">
-                      Moss Server
+                      企业账号与策略
                     </div>
+                    {settingsDraft.managedPolicy?.useEnterpriseModel && <p className="my-3 text-sm text-muted-foreground">当前执行使用企业模型。你的个人模型设置会保留，退出企业账号后恢复使用。</p>}
                     <div className="divide-y divide-border">
-                      {/* 本地模式 */}
-                      <SettingsGroup>
-                        <SettingsRow
-                          title={isWebUI() ? '云电脑模式' : '本地模式'}
-                          description={isWebUI() ? '在云电脑运行 Agent，使用云电脑上的文本模型配置和文件。' : '在本机运行 Agent，直接使用本地文本模型配置。'}
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.localEnabled ?? true}
-                              onCheckedChange={(checked) => {
-                                updateSetting('localEnabled', checked);
-                                if (!checked) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                } else if (!(settingsDraft.remoteEnabled ?? false)) {
-                                  updateSetting('agentMode', 'local');
-                                }
-                              }}
-                              label="本地模式"
-                            />
-                          </div>
-                        </SettingsRow>
-                      </SettingsGroup>
-
                       {/* Agent Teams */}
                       <SettingsGroup>
                         <SettingsRow
@@ -1481,7 +1431,7 @@ export function SettingsView({
                           <div className="flex justify-start sm:justify-end">
                             <Toggle
                               checked={settingsDraft.agentTeamsEnabled === true}
-                              disabled={!(settingsDraft.localEnabled ?? true)}
+                              disabled={settingsDraft.managedPolicy?.agentTeamsEnabled !== undefined}
                               onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
                               label="启用 Agent Teams"
                             />
@@ -1489,39 +1439,15 @@ export function SettingsView({
                         </SettingsRow>
                       </SettingsGroup>
 
-                      {/* 云端模式 */}
                       <SettingsGroup>
-                        <SettingsRow
-                          title="云端模式"
-                          description="连接到云端 Moss 服务器运行 Agent。"
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.remoteEnabled ?? false}
-                              onCheckedChange={(checked) => {
-                                updateSetting('remoteEnabled', checked);
-                                if (!checked) {
-                                  setSettingsDraft((current) => current ? {
-                                    ...current,
-                                    remoteEnabled: false,
-                                    agentMail: { ...current.agentMail, enabled: false },
-                                  } : current);
-                                }
-                                if (!checked) {
-                                  updateSetting('agentMode', 'local');
-                                } else if (!(settingsDraft.localEnabled ?? true)) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                }
-                              }}
-                              label="云端模式"
-                            />
-                          </div>
+                        <SettingsRow title="企业账号连接" description="连接企业服务，使用云存储、协作邮箱和管理策略。工作电脑在左上角选择。" controlClassName="sm:w-[56px]">
+                          <Toggle disabled={isWebUI() && Boolean(window.mossWeb?.managed)} checked={settingsDraft.enterpriseEnabled ?? false}
+                            onCheckedChange={(checked) => updateSetting('enterpriseEnabled', checked)} label="启用企业账号连接" />
                         </SettingsRow>
 
                         <SettingsRow
                           title="协作邮箱"
-                          description="通过云端 Moss Server 接收其他智能体发来的协作邮件。"
+                          description="在企业管理中指定接收电脑后，在此启用协作邮箱。每个账号只有一台电脑负责接收。"
                           controlClassName="sm:w-[430px]"
                         >
                           <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
@@ -1529,7 +1455,7 @@ export function SettingsView({
                               className={cn(SELECT_CLASS_NAME, 'w-[160px]')}
                               value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
                               disabled={
-                                !(settingsDraft.remoteEnabled ?? false) ||
+                                !(settingsDraft.enterpriseEnabled ?? false) ||
                                 settingsDraft.agentMail?.enabled !== true
                               }
                               aria-label="协作邮箱会话模式"
@@ -1544,10 +1470,10 @@ export function SettingsView({
                             <span className="hidden h-6 w-px bg-sidebar-border sm:block" />
                             <Toggle
                               checked={
-                                (settingsDraft.remoteEnabled ?? false) &&
+                                (settingsDraft.enterpriseEnabled ?? false) &&
                                 settingsDraft.agentMail?.enabled === true
                               }
-                              disabled={!(settingsDraft.remoteEnabled ?? false)}
+                              disabled={!(settingsDraft.enterpriseEnabled ?? false)}
                               onCheckedChange={(enabled) => updateSetting('agentMail', {
                                 ...settingsDraft.agentMail,
                                 enabled,
@@ -1563,13 +1489,11 @@ export function SettingsView({
                             >
                               <Input
                                 className={FIELD_CLASS_NAME}
-                                value={settingsDraft.remoteDirectServerUrl || ''}
+                                value={settingsDraft.enterpriseAccountServerUrl || ''}
                                 disabled={remoteAuthState === 'loading'}
                                 onChange={(event) => {
-                                  setRemoteAuthState('idle');
-                                  setRemoteAuthError('');
-                                  setRemoteIdentity(null);
-                                  updateSetting('remoteDirectServerUrl', event.target.value);
+                                  authentication.reset();
+                                  updateSetting('enterpriseAccountServerUrl', event.target.value);
                                 }}
                                 placeholder="https://moss.example.com 或 http://127.0.0.1:43127"
                               />
@@ -1583,11 +1507,9 @@ export function SettingsView({
                               <div className="space-y-2">
                                 <div className="flex items-center justify-end gap-3">
                                   <span className="text-xs text-muted-foreground">
-                                    {remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
-                                      ? (remoteIdentity?.userName
-                                          || settingsDraft.remoteDirectUserName
-                                          || remoteIdentity?.userEmail
-                                          || settingsDraft.remoteDirectUserEmail
+                                    {remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
+                                      ? (remoteIdentity?.userName || settingsDraft.enterpriseAccountUserName
+                                          || remoteIdentity?.userEmail || settingsDraft.enterpriseAccountUserEmail
                                           || '已认证')
                                       : '未认证'}
                                   </span>
@@ -1613,7 +1535,7 @@ export function SettingsView({
                                     )}
                                     {remoteAuthState === 'loading'
                                       ? '取消'
-                                      : remoteAuthState === 'success' || settingsDraft.remoteDirectApiKey
+                                      : remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
                                         ? '重新认证'
                                         : '开始认证'}
                                   </Button>
@@ -2724,5 +2646,6 @@ export function SettingsView({
         </div>
       </div>
     </div>
+    </>
   );
 }

@@ -288,6 +288,7 @@ export function createMemoryCatalog({
       return {
         id: projectId,
         name: project.name,
+        icon: project.icon,
         updatedAt: project.updatedAt,
         version: memory.version,
         memoryUpdatedAt: memory.updatedAt,

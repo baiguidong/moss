@@ -138,7 +138,7 @@ function submitHarness() {
     queueEpochs: { current: new Map() }, creatingSessionRef: { current: null },
     cleanIpcErrorMessage: (error: Error) => error.message,
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},
-    input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, planDecisionBusy: false,
+    input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, homeComposerMode: 'chat', planDecisionBusy: false,
     activeSessionId: 'session', activeDetail: { workspace: '/work', agentMode: 'local', busy: false },
     activeSessionIdRef: { current: 'session' }, activeDetailRef: { current: { workspace: '/work' } },
     inputDraftRef: { current: '' }, composerAttachmentsRef: { current: [] },

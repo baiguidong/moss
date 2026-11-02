@@ -137,6 +137,36 @@ export type SessionSummary = {
   parentSessionId?: string | null;
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
   workerName?: string | null;
+  projectCreationMode?: boolean;
+};
+
+export type ProjectCreationDraft = {
+  id: string;
+  sessionId?: string | null;
+  version: number;
+  status: 'awaiting_confirmation' | 'installing' | 'awaiting_authorization' | 'creating' | 'completed' | 'failed' | 'cancelled';
+  project: {
+    name: string;
+    icon?: import('../../../shared/project-icon.mjs').ProjectIconValue;
+    instructions: string;
+    workspace?: string | null;
+    workspaces?: string[];
+    mode?: 'chat' | 'boss';
+    permissionMode?: PermissionMode | null;
+    agentTeamsEnabled?: boolean;
+    assistantName?: string | null;
+    appServiceIds?: string[];
+  };
+  resources: Array<{ kind: 'skill' | 'expert' | 'app'; id: string; displayName: string; description?: string; source?: string; status?: string; version?: string;
+    installed?: boolean; permissions?: string[]; toolSelection?: string; services?: Array<{ id: string; title: string; available?: boolean; status?: string }> }>;
+  pendingActions?: Array<{ appId: string; displayName: string; message: string }>;
+  firstTaskSessionId?: string | null;
+  firstTaskError?: string | null;
+  firstTask?: string | null;
+  createdProjectId?: string | null;
+  error?: string | null;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -310,6 +340,7 @@ export type MemoryProjectHistoryEntry = {
 export type MemoryProjectEntry = {
   id: string;
   name: string;
+  icon?: import('../../../shared/project-icon.mjs').ProjectIconValue;
   updatedAt: number;
   version: number;
   memoryUpdatedAt: number | null;
@@ -478,8 +509,11 @@ export type ProjectTemplate = {
 };
 
 export type Project = {
+  creationDraftId?: string | null;
+  resourceBindings?: ProjectCreationDraft['resources'] | null;
   id: string;
   name: string;
+  icon?: import('../../../shared/project-icon.mjs').ProjectIconValue;
   instructions: string;
   templateId?: string | null;
   connectorIds: string[];
@@ -750,12 +784,13 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  managedPolicy?: Record<string, boolean>;
   appWidgets?: { enabled: boolean };
   desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
-  remoteEnabled: boolean;
+  enterpriseEnabled: boolean;
   agentTeamsEnabled: boolean;
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
@@ -862,7 +897,7 @@ export type DesktopSettings = {
     inboxSessionId?: string;
     inboxSessionIds?: Record<string, string>;
   };
-  remoteDirect?: {
+  enterpriseAccount?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
     userName: string;
@@ -871,14 +906,14 @@ export type DesktopSettings = {
     apiKey: string;
     workspace: string;
   };
-  remoteDirectServerUrl: string;
-  remoteDirectCredentialMode: 'password' | 'api-key';
-  remoteDirectUserName: string;
+  enterpriseAccountServerUrl: string;
+  enterpriseAccountCredentialMode: 'password' | 'api-key';
+  enterpriseAccountUserName: string;
   // Legacy key name; stores either username or email for password login.
-  remoteDirectUserEmail: string;
-  remoteDirectUserPassword: string;
-  remoteDirectApiKey: string;
-  remoteDirectWorkspace: string;
+  enterpriseAccountUserEmail: string;
+  enterpriseAccountUserPassword: string;
+  enterpriseAccountApiKey: string;
+  enterpriseAccountWorkspace: string;
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;
@@ -1342,6 +1377,12 @@ export type HostConfirmationSnapshot = { revision: number; requests: HostConfirm
 
 declare global {
   interface Window {
+    mossDesktopShell?: {
+      returnToLocal: () => Promise<void>;
+      getPresentation: () => Promise<{ appearance: DesktopSettings['appearance']; panelLayout: string | null }>;
+      updateAppearance: (appearance: DesktopSettings['appearance']) => Promise<DesktopSettings['appearance']>;
+      onPresentation: (callback: (value: { appearance?: DesktopSettings['appearance']; panelLayout?: string | null }) => void) => () => void;
+    };
     mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any;
       managed?: boolean; generation?: number; pendingBrowserUrl?: string; authorizationWindow?: Window; identity?: { hostId: string; userId: string; generation?: number }; capabilities?: import('../shared/host-capabilities.mjs').HostCapabilities;
     };
@@ -1439,6 +1480,13 @@ declare global {
         expertIds?: string[];
         skillIds?: string[];
       }) => Promise<Project>;
+      projectCreation: {
+        getDraft: (payload: { draftId?: string; sessionId?: string }) => Promise<ProjectCreationDraft | null>;
+        confirm: (payload: { draftId: string; version: number }) => Promise<{ status: string; project?: Project; draft?: ProjectCreationDraft; firstTask?: unknown }>;
+        updateDraft: (payload: { draftId: string; version: number; patch: Partial<ProjectCreationDraft['project']> & { firstTask?: string; skillIds?: string[]; expertIds?: string[]; appIds?: string[] } }) => Promise<ProjectCreationDraft>;
+        cancel: (payload: { draftId: string; version: number }) => Promise<{ ok: boolean; draft?: ProjectCreationDraft }>;
+        onChanged: (callback: (draft: ProjectCreationDraft) => void) => () => void;
+      };
       updateProject: (payload: { projectId: string; updates: Partial<Project> }) => Promise<Project>;
       archiveProject: (payload: { projectId: string }) => Promise<Project>;
       listProjectAssets: (payload: { projectId: string }) => Promise<ProjectAsset[]>;
@@ -1458,7 +1506,7 @@ declare global {
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; agentTeamsEnabled?: boolean; workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; agentTeamsEnabled?: boolean; projectCreationMode?: boolean; workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
@@ -1498,6 +1546,7 @@ declare global {
       createWorkspace: (payload: { name: string }) => Promise<WorkspaceLocation>;
       touchWorkspace: (payload: { path: string }) => Promise<WorkspaceLocation>;
       agentTeams: {
+        memberHistory: (payload: { sessionId: string; incarnationId: string; memberId: string; frame: number }) => Promise<{ history: AgentEvent[] }>;
         list: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
         refresh: (payload: { sessionId: string }) => Promise<AgentTeamsSessionState>;
         onChanged: (callback: (payload: AgentTeamsSessionState) => void) => () => void;

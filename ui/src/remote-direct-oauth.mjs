@@ -171,6 +171,7 @@ export async function performRemoteDirectOAuth({
   openAuthorization,
   fetchImpl = fetch,
   timeoutMs = LOGIN_TIMEOUT_MS,
+  requestTimeoutMs = 20_000,
   signal,
   callbackListener = createCallbackListener,
 }) {
@@ -202,23 +203,23 @@ export async function performRemoteDirectOAuth({
   let completed = false;
   let authorizationCode = '';
   let closeAuthorization = () => {};
-  try {
-    const startResponse = await Promise.race([
-      fetchImpl(`${normalizedServerUrl}/api/v1/auth/oauth/start`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          redirect_uri: listener.redirectUri,
-          state,
-          code_challenge: codeChallenge,
-          code_challenge_method: 'S256',
-        }),
-        redirect: 'error',
-        signal: abortController.signal,
-      }),
+  const requestJson = async (url, body) => {
+    const requestSignal = AbortSignal.any([abortController.signal, AbortSignal.timeout(requestTimeoutMs)]);
+    return Promise.race([
+      (async () => readJsonResponse(await fetchImpl(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body), redirect: 'error', signal: requestSignal,
+      })))(),
       stoppedPromise,
     ]);
-    const started = await readJsonResponse(startResponse);
+  };
+  try {
+    const started = await requestJson(`${normalizedServerUrl}/api/v1/auth/oauth/start`, {
+      redirect_uri: listener.redirectUri,
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+    });
     const authorizationUrl = new URL(started.authorization_url, normalizedServerUrl);
     const authorizePath = '/api/v1/auth/oauth/authorize';
     const pathTransactionId = authorizationUrl.pathname.startsWith(`${authorizePath}/`)
@@ -250,21 +251,11 @@ export async function performRemoteDirectOAuth({
       listener.callback,
       stoppedPromise,
     ]);
-    const exchangeResponse = await Promise.race([
-      fetchImpl(`${normalizedServerUrl}/api/v1/auth/oauth/exchange`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          code: authorizationCode,
-          code_verifier: codeVerifier,
-          redirect_uri: listener.redirectUri,
-        }),
-        redirect: 'error',
-        signal: abortController.signal,
-      }),
-      stoppedPromise,
-    ]);
-    const exchanged = await readJsonResponse(exchangeResponse);
+    const exchanged = await requestJson(`${normalizedServerUrl}/api/v1/auth/oauth/exchange`, {
+      code: authorizationCode,
+      code_verifier: codeVerifier,
+      redirect_uri: listener.redirectUri,
+    });
     if (typeof exchanged.api_key !== 'string' || !exchanged.api_key.startsWith('moss_sk_')) {
       throw new Error('Moss Server response is missing a permanent API Key.');
     }

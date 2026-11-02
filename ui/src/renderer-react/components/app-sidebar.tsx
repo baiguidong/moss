@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkComputerSelector } from './work-computer-selector';
 import * as React from "react";
 import {
   Archive,
@@ -52,9 +53,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AppIcon } from "@/components/app-icon";
+import { ProjectIcon } from '@/components/projects/project-icon';
 import { groupApps } from '@/lib/app-categories';
 import { getAppPrimaryEntry } from '@/lib/app-navigation';
-import type { StoredApp } from "../types";
+import type { Project, StoredApp } from "../types";
 
 export interface SidebarSession {
   id: string;
@@ -82,15 +84,15 @@ export type MainView = "chat" | "projects" | "overview" | "mail" | "common" | "s
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
 export function getSidebarMoreViews({
-  remoteEnabled,
+  enterpriseEnabled,
   agentMailEnabled,
 }: {
-  remoteEnabled: boolean;
+  enterpriseEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
-    ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
+    ...(enterpriseEnabled && agentMailEnabled ? ["mail" as const] : []),
     "cron",
   ];
 }
@@ -120,6 +122,7 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
+  projects?: Project[];
   apps: StoredApp[];
   activeSessionId: string | null;
   activeView: MainView;
@@ -128,7 +131,7 @@ interface AppSidebarProps {
   collapsed: boolean;
   searchQuery: string;
   localEnabled?: boolean;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
@@ -307,6 +310,7 @@ function ThemeButton({
 
 export function AppSidebar({
   sessions,
+  projects = [],
   apps,
   activeSessionId,
   activeView,
@@ -314,7 +318,7 @@ export function AppSidebar({
   collapsed,
   searchQuery,
   localEnabled = true,
-  remoteEnabled = false,
+  enterpriseEnabled = false,
   agentMailEnabled = false,
   onChangeView,
   onChangeTheme,
@@ -363,12 +367,13 @@ export function AppSidebar({
   const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery);
   const sessionGroups = groupSidebarSessions(filteredSessions).filter((group) => (
     group.id !== 'project' && (
-      group.id !== 'agent-mail' || (remoteEnabled && agentMailEnabled)
+      group.id !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
     )
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
+  const projectsById = React.useMemo(() => new Map(projects.map(project => [project.id, project])), [projects]);
   const moreViews = getSidebarMoreViews({
-    remoteEnabled,
+    enterpriseEnabled,
     agentMailEnabled,
   });
   const moreApps = getSidebarMoreApps(apps);
@@ -440,6 +445,7 @@ export function AppSidebar({
               </div>
             </div>
           <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
+            <WorkComputerSelector />
             {headerActions}
             <Button
               variant="ghost"
@@ -648,7 +654,7 @@ export function AppSidebar({
                         }))}
                         aria-expanded={!isCollapsed}
                       >
-                        <FolderKanban className="h-3.5 w-3.5 shrink-0" />
+                        <ProjectIcon icon={projectsById.get(project.id)?.icon} badge={false} className="h-3.5 w-3.5" />
                         <span className="min-w-0 flex-1 truncate text-left">{project.label}</span>
                         <span className="shrink-0 tabular-nums">({sessionCount})</span>
                         {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -697,7 +703,7 @@ export function AppSidebar({
             <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-(--radix-dropdown-menu-trigger-width) min-w-44">
               <DropdownMenuLabel className="space-y-1 text-xs">
                 <span role="status" className="block truncate text-sm font-medium" title={serverAccount?.userName || serverAccount?.userEmail || '个人中心'}>
-                  {serverAccount?.userName || serverAccount?.userEmail || '个人中心'}<span className="font-normal text-muted-foreground"> {serverAccount ? '已连接' : serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? 'Moss Server 已配置，尚未登录' : '请先配置 Moss Server'}</span>
+                  {serverAccount?.userName || serverAccount?.userEmail || '个人中心'}<span className="font-normal text-muted-foreground"> {serverAccount ? '已连接' : serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? 'Moss Server 已配置，尚未登录' : '登录以连接你的云电脑'}</span>
                 </span>
                 {serverAuthError ? <span className="block pt-1 font-normal text-destructive">{serverAuthError}</span> : null}
               </DropdownMenuLabel>
@@ -706,7 +712,7 @@ export function AppSidebar({
               {serverAccount ? <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLogoutServer?.()}>
                 <LogOut className="h-4 w-4" />{serverAuthState === 'loading' ? '正在退出 Moss Server…' : '退出登录'}
               </DropdownMenuItem> : <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLoginServer?.()}>
-                <LogIn className="h-4 w-4" />{serverAuthState === 'loading' ? '正在登录 Moss Server…' : serverConfigured ? '登录 Moss Server' : '配置 Moss Server'}
+                <LogIn className="h-4 w-4" />{serverAuthState === 'loading' ? '正在登录 Moss Server…' : '登录 Moss Server'}
               </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>

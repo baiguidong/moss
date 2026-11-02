@@ -35,6 +35,8 @@ import { assembleToolPool, getAllBaseTools } from './tools.js'
 import { TEAMMATE_MESSAGE_TAG } from './constants/xml.js'
 import { MossMailTool } from './tools/MossMailTool/MossMailTool.js'
 import { createProjectMemoryTool, createProjectResultTool, type ProjectMemoryProvider, type ProjectResultProvider } from './tools/ProjectMemoryTool/ProjectMemoryTool.js'
+import { createProjectCreationTool, type ProjectCreationProvider } from './tools/ProjectCreationTool/ProjectCreationTool.js'
+import { createProjectResourceTool, type ProjectResourceProvider } from './tools/ProjectCreationTool/ProjectResourceTool.js'
 import { MOSS_PRESENTATION_PROMPT } from '../ui/src/shared/presentation-contracts.mjs'
 import {
   createAppContributionTools,
@@ -218,21 +220,6 @@ import { clearProxyCache } from './utils/proxy.js'
 // "Previously ran inside setup() after ~20ms of await points,
 //  so the parallel getCommands() memoized an empty list."
 initBundledSkills()
-
-export {
-  createDirectConnectSession,
-  attachDirectConnectSession,
-  DirectConnectError,
-} from './remote/createDirectConnectSession.js'
-export { setDirectConnectFetchImplementation } from './remote/directConnectFetch.js'
-export {
-  DirectConnectSessionManager,
-  type DirectConnectConfig,
-} from './remote/directConnectManager.js'
-export {
-  buildConnectUrl,
-  parseConnectUrl,
-} from '../packages/direct-connect-protocol/src/index.js'
 
 let localAgentRuntimeInitialized = false
 
@@ -528,6 +515,10 @@ export interface ClaudeSessionOptions {
   /** Tools contributed by enabled Apps. */
   projectMemory?: ProjectMemoryProvider
   projectResult?: ProjectResultProvider
+  /** Host callback for the dedicated natural-language project creation session. */
+  projectCreation?: ProjectCreationProvider
+  /** Host callback for resource discovery/install in project creation sessions. */
+  projectResources?: ProjectResourceProvider
   appTools?: AppToolContributionDescriptor[]
   appToolPolicy?: AppToolPolicy
   /** Restrict Bash to commands accepted by the core read-only validator. */
@@ -587,6 +578,8 @@ type ResolvedClaudeSessionOptions = {
   agentMailEnabled: boolean
   projectMemory?: ProjectMemoryProvider
   projectResult?: ProjectResultProvider
+  projectCreation?: ProjectCreationProvider
+  projectResources?: ProjectResourceProvider
   appTools: AppToolContributionDescriptor[]
   readOnlyBashOnly: boolean
   sessionId?: string
@@ -903,6 +896,8 @@ export class ClaudeSession {
       agentMailEnabled: opts.agentMailEnabled === true,
       projectMemory: opts.projectMemory,
       projectResult: opts.projectResult,
+      projectCreation: opts.projectCreation,
+      projectResources: opts.projectResources,
       appTools: Array.isArray(opts.appTools) ? [...opts.appTools] : [],
       readOnlyBashOnly: opts.readOnlyBashOnly === true,
       sessionId: opts.sessionId,
@@ -1208,6 +1203,8 @@ export class ClaudeSession {
           ...(this.#opts.agentMailEnabled ? [MossMailTool] : []),
           ...(this.#opts.projectMemory ? [createProjectMemoryTool(this.#opts.projectMemory)] : []),
           ...(this.#opts.projectResult ? [createProjectResultTool(this.#opts.projectResult)] : []),
+          ...(this.#opts.projectCreation ? [createProjectCreationTool(this.#opts.projectCreation)] : []),
+          ...(this.#opts.projectResources ? [createProjectResourceTool(this.#opts.projectResources)] : []),
           ...appTools,
         ]
         const merged = mergeAndFilterTools(dynamicTools, modeTools, state.toolPermissionContext.mode)

@@ -46,23 +46,20 @@ fi
 grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx.conf"
 grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
 grep -Fq 'proxy_pass http://web-gateway:43128;' "$ROOT/nginx.conf"
-grep -Fq 'docker pull "$(env_value MOSS_RUNTIME_IMAGE)"' "$ROOT/start.sh"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
 grep -Fq 'apply_setting MOSS_SERVER_HOME /data/moss-server' "$ROOT/configure.sh"
 grep -Fxq "apply_setting MOSS_SERVER_IMAGE ''" "$ROOT/configure.sh"
-grep -Fxq "apply_setting MOSS_RUNTIME_IMAGE ''" "$ROOT/configure.sh"
 grep -Fq 'INSTALL_DIR="${INSTALL_DIR:-/data/moss-server}"' "$ROOT/install.sh"
 
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 mkdir -p "$test_root/deployment" "$test_root/home"
-cp "$ROOT/.env.example" "$ROOT/configure.sh" "$test_root/deployment/"
+cp "$ROOT/.env.example" "$ROOT/configure.sh" "$ROOT/nginx.conf" "$test_root/deployment/"
 printf '%s\n' '{"openIM":{"secret":"preserve-me"}}' > "$test_root/home/settings.json"
 MOSS_SERVER_HOME="$test_root/home" \
 MOSS_PUBLIC_HOST=10.0.1.181 \
 MOSS_SERVER_IMAGE=ghcr.io/example/private-server:test \
-MOSS_RUNTIME_IMAGE=ghcr.io/example/private-runtime:test \
   "$test_root/deployment/configure.sh" >/dev/null
 
 jq -e \
@@ -77,11 +74,15 @@ jq -e \
   "$test_root/home/server.json" >/dev/null
 jq -e \
   '.openIM.secret == "preserve-me"
-   and .serverRuntime.dockerImage == "ghcr.io/example/private-runtime:test"' \
+   and (.serverRuntime // null) == null' \
   "$test_root/home/settings.json" >/dev/null
 openssl x509 -in "$test_root/deployment/tls/server.crt" -noout -text \
   | grep -Fq 'IP Address:10.0.1.181'
-grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181:8444' "$test_root/deployment/.env"
+grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181' "$test_root/deployment/.env"
+grep -Fq 'return 308 https://10.0.1.181$request_uri;' "$test_root/deployment/nginx.conf"
+MOSS_HTTPS_PORT=9443 "$test_root/deployment/configure.sh" >/dev/null
+grep -Fq 'return 308 https://10.0.1.181:9443$request_uri;' "$test_root/deployment/nginx.conf"
+MOSS_HTTPS_PORT=443 "$test_root/deployment/configure.sh" >/dev/null
 printf '%s\n' 'MOSS_WEB_DEPLOY_MODE=single' 'MOSS_WEB_ENABLED=1' 'MOSS_WEB_OWNER_ID=old-owner' 'SILO_MC_IMAGE=old-image' >> "$test_root/deployment/.env"
 "$test_root/deployment/configure.sh" >/dev/null
 ! grep -Eq '^(MOSS_WEB_DEPLOY_MODE|MOSS_WEB_ENABLED|MOSS_WEB_OWNER_ID|SILO_MC_IMAGE)=' "$test_root/deployment/.env"
@@ -109,8 +110,6 @@ chmod 0755 "$test_root/upgrade/upgrade.sh" "$test_root/upgrade/start.sh"
 "$test_root/upgrade/upgrade.sh" 1.2.3 >/dev/null
 grep -Fxq 'MINIO_IMAGE=docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z' "$test_root/upgrade/.env"
 grep -Fxq 'MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:1.2.3' \
-  "$test_root/upgrade/.env"
-grep -Fxq 'MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:1.2.3' \
   "$test_root/upgrade/.env"
 grep -Fxq 'MOSS_WEB_IMAGE=ghcr.io/baiguidong/moss-webui:1.2.3' \
   "$test_root/upgrade/.env"

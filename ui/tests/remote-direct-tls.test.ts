@@ -49,6 +49,30 @@ function observedCertificate(pem: string, trustedBySystem = false, selfSigned = 
 }
 
 describe('remote direct TLS trust store', () => {
+  it('does not save a first self-signed certificate until the login confirmation accepts it', async () => {
+    const trustDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-first-tls-'));
+    const originalExtraCa = process.env.NODE_EXTRA_CA_CERTS;
+    const observed = observedCertificate(TEST_SELF_SIGNED_CERTIFICATE);
+    const store = createRemoteDirectTrustStore({ trustDir, initialExtraCaPath: '', probeCertificate: async () => observed });
+    try {
+      await expect(ensureRemoteDirectTrustWithConfirmation({ trustStore: store, serverUrl: observed.origin,
+        confirmUntrustedCertificate: async () => false,
+      })).rejects.toThrow('认证已取消');
+      expect(store.getRecords()).toHaveLength(0);
+      let confirmations = 0;
+      const options = { trustStore: store, serverUrl: observed.origin, confirmUntrustedCertificate: async (details: any) => {
+        expect(details.newFingerprint).toBe(observed.fingerprint256); confirmations++; return true;
+      } };
+      await ensureRemoteDirectTrustWithConfirmation(options);
+      await ensureRemoteDirectTrustWithConfirmation(options);
+      expect(confirmations).toBe(1);
+      expect(store.getRecords()).toHaveLength(1);
+    } finally {
+      if (originalExtraCa === undefined) delete process.env.NODE_EXTRA_CA_CERTS; else process.env.NODE_EXTRA_CA_CERTS = originalExtraCa;
+      await fsp.rm(trustDir, { recursive: true, force: true });
+    }
+  });
+
   it('pins the first certificate and replaces it only after explicit confirmation', async () => {
     const trustDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-remote-tls-'));
     const originalExtraCa = process.env.NODE_EXTRA_CA_CERTS;
@@ -79,6 +103,11 @@ describe('remote direct TLS trust store', () => {
       }, (result: number) => { verificationResult = result; });
       expect(verificationResult).toBe(0);
       store.verifyCertificate({
+        hostname: 'moss.example.com', verificationResult: 'net::OK',
+        certificate: { fingerprint: electronFingerprint },
+      }, (result: number) => { verificationResult = result; });
+      expect(verificationResult).toBe(0);
+      store.verifyCertificate({
         hostname: 'moss.example.com',
         verificationResult: 'net::ERR_CERT_DATE_INVALID',
         certificate: { fingerprint: electronFingerprint },
@@ -90,7 +119,12 @@ describe('remote direct TLS trust store', () => {
         initialExtraCaPath: '',
         probeCertificate: async () => observed,
       });
-      await reloaded.load();
+      // A login may be the first server operation after restarting the app.
+      // It must read saved pins without requiring a separate startup load.
+      const [afterRestart] = await Promise.all([
+        reloaded.ensureTrusted('https://moss.example.com'), reloaded.load(),
+      ]);
+      expect(afterRestart.trustUpdated).toBeUndefined();
       expect(reloaded.getRecords()).toHaveLength(1);
 
       observed = observedCertificate(tls.rootCertificates[1]);

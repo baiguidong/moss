@@ -146,15 +146,3 @@ build('bin/moss-server.mjs', [
   ...defines,
 ])
 sanitizePaths('bin/moss-server.mjs')
-
-// bin/moss-session-runner.mjs（每个 server session 的独立 runner 进程）
-build('bin/moss-session-runner.mjs', [
-  'build', 'scripts/session-runner-entry.ts',
-  '--outfile=bin/moss-session-runner.mjs',
-  '--target=node',
-  '--format=esm',
-  ...aliases,
-  ...featureArgs,
-  ...defines,
-])
-sanitizePaths('bin/moss-session-runner.mjs')

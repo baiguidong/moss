@@ -6,6 +6,7 @@ import {
   AgentTeamsStatus,
   AgentTeamsWorkbench,
 } from '../src/renderer-react/components/agent-teams-workbench';
+import { getTeamMembersAtFrame, memberMatchesQuery, messagesForMember, memberRelations } from '../src/renderer-react/lib/agent-team-members';
 import type { AgentTeamsSessionState } from '../src/renderer-react/types';
 
 const state: AgentTeamsSessionState = {
@@ -53,13 +54,76 @@ test('Agent Teams header status and workbench expose archived DAG playback', () 
   expect(workbench).toContain('Agent Teams · 共享任务图');
   expect(workbench).not.toContain('Ship Agent Teams');
   expect(workbench).not.toContain('按依赖分层 · 左至右');
-  expect(workbench).toContain('团队任务');
-  expect(workbench).not.toContain('未领取');
-  expect(workbench).toContain('aria-label="缩小任务图"');
-  expect(workbench).toContain('aria-label="重置任务图缩放"');
-  expect(workbench).toContain('aria-label="放大任务图"');
-  expect(workbench).toContain('marker-end="url(#agent-team-arrow)"');
+  expect(workbench).toContain('成员拓扑');
+  expect(workbench).toContain('任务依赖');
+  expect(workbench).toContain('任务分配');
+  expect(workbench).toContain('worker');
   expect(workbench).toContain('aria-label="团队历史时间轴"');
   expect(workbench).toContain('aria-label="从头播放团队历史"');
   expect(workbench).toContain('lg:w-1/2');
+});
+
+test('shutdown retains departed teammates and clears stale running status without changing the archive', () => {
+  const archive = structuredClone(state);
+  const run = archive.teams[0];
+  const shutdown = structuredClone(run.snapshots.at(-1)!);
+  shutdown.team.members = [{ ...shutdown.team.members[0], status: 'running' }];
+  shutdown.phase = 'interrupted';
+  run.status = 'interrupted';
+  run.snapshots.push(shutdown);
+  const original = JSON.stringify(archive);
+  const members = getTeamMembersAtFrame(run);
+  expect(members.find(member => member.name === 'worker')).toMatchObject({ present: false, activity: 'completed' });
+  expect(members.find(member => member.name === 'team-lead')?.activity).toBe('interrupted');
+  const workbench = renderToStaticMarkup(<AgentTeamsWorkbench state={archive} onClose={() => {}} />);
+  expect(workbench).toContain('查看成员 worker，任务完成');
+  expect(workbench).toContain('已退出团队');
+  expect(workbench).toContain('0 个正在工作');
+  expect(renderToStaticMarkup(<AgentTeamsStatus state={archive} onOpen={() => {}} />)).toContain('Team 2');
+  expect(JSON.stringify(archive)).toBe(original);
+});
+
+test('replay shows only members known at the selected frame and restores rejoined members', () => {
+  const run = structuredClone(state.teams[0]);
+  run.snapshots[0].team.members = [run.snapshots[0].team.members[0]];
+  run.snapshots[0].tasks = [];
+  expect(getTeamMembersAtFrame(run, 0).map(member => member.name)).toEqual(['team-lead']);
+  const departed = structuredClone(run.snapshots[1]);
+  departed.team.members = [departed.team.members[0]];
+  departed.phase = 'executing';
+  departed.tasks[0].status = 'in_progress';
+  run.snapshots.push(departed);
+  expect(getTeamMembersAtFrame(run, 2).find(member => member.name === 'worker')?.activity).toBe('departed');
+  const rejoined = structuredClone(run.snapshots[1]);
+  rejoined.phase = 'executing';
+  rejoined.team.members[1].status = 'running';
+  run.snapshots.push(rejoined);
+  expect(getTeamMembersAtFrame(run, 3).find(member => member.name === 'worker')).toMatchObject({ present: true, activity: 'working' });
+});
+
+test('bounded archives recover explicit team assignees without inventing members for arbitrary owners', () => {
+  const run = structuredClone(state.teams[0]);
+  run.snapshots = [run.snapshots[1]];
+  run.snapshots[0].team.members = [run.snapshots[0].team.members[0]];
+  run.snapshots[0].tasks[0].metadata = { agentTeamAssignment: true, agentTeamAgentId: 'worker', agentTeamAgentName: 'worker' };
+  run.snapshots[0].tasks[1].owner = 'external-reviewer';
+  expect(getTeamMembersAtFrame(run).map(member => member.name)).toEqual(['team-lead', 'worker']);
+});
+
+test('member search includes tasks and relationships use actual dependencies and human messages', () => {
+  const snapshot = structuredClone(state.teams[0].snapshots[0]);
+  const worker = snapshot.team.members[1];
+  snapshot.tasks[1].owner = 'team-lead';
+  snapshot.messages = [
+    { id: 'control', from: 'worker', to: 'team-lead', text: '{"type":"idle_notification"}', timestamp: '2026-09-16T10:00:00Z', read: true, color: '', summary: '' },
+    { id: 'reply', from: 'worker', to: 'team-lead', text: 'Implementation ready for verification', timestamp: '2026-09-16T10:00:01Z', read: true, color: '', summary: 'Ready for verification' },
+  ];
+  expect(memberMatchesQuery(worker, snapshot, 'IMPLEMENT')).toBe(true);
+  expect(memberMatchesQuery(worker, snapshot, 'missing')).toBe(false);
+  expect(messagesForMember(snapshot.messages, worker).map(message => message.id)).toEqual(['reply']);
+  expect(memberRelations(worker, snapshot.team.members, snapshot)).toMatchObject([{ member: { name: 'team-lead' }, upstream: 0, downstream: 1, messages: 1 }]);
+  const markup = renderToStaticMarkup(<AgentTeamsWorkbench state={state} onClose={() => {}} />);
+  expect(markup).toContain('Implement');
+  expect(markup).toContain('搜索 Agent 或任务');
+  expect(markup).toContain('筛选 Agent 状态');
 });

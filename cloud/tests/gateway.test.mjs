@@ -10,6 +10,7 @@ const respond = (res, data) => { res.setHeader('Content-Type', 'application/json
 test('gateway authenticates routing, strips client credentials, closes WS on logout, persists mapping', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-gateway-'));
   await fs.mkdir(path.join(dir, 'renderer')); await fs.writeFile(path.join(dir, 'renderer/index.html'), '<h1>Login</h1>');
+  let revokedHost;
   const identity = user => ({ user: { id: user, name: `Server ${user}`, email: `${user}@example.test` }, organization: { id: 'org' } });
   const auth = http.createServer(async (req, res) => {
     if (req.url.endsWith('/login')) {
@@ -17,7 +18,11 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
       const input = JSON.parse(body);
       if (input.password !== 'test' || !['alice','bob'].includes(input.username)) { res.writeHead(401); res.end('{}'); return; }
       respond(res, { access_token: input.username, expires_in: 3600 });
-    } else respond(res, identity(req.headers.authorization?.replace('Bearer ', '')));
+    } else {
+      const user = req.headers.authorization?.replace('Bearer ', '');
+      if (!['alice', 'bob'].includes(user)) { res.writeHead(401); res.end('{}'); return; }
+      respond(res, req.url === '/api/v1/hosts' ? { hosts: revokedHost ? [{ id: revokedHost, access: { allowed: false, reason: 'revoked' } }] : [] } : identity(user));
+    }
   });
   const upstreamSockets = new Set();
   const host = http.createServer((req, res) => {
@@ -46,6 +51,20 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   const loginA = await post('/api/login', { username: 'alice', password: 'test' });
   assert.equal(loginA.status, 200); assert.match(loginA.headers.get('set-cookie'), /HttpOnly; SameSite=Strict; Secure/);
   const ca = loginA.headers.get('set-cookie').split(';')[0];
+  const desktopLogin = (token, origin = env.MOSS_WEB_ORIGIN) => fetch(base() + '/api/desktop/login', {
+    method: 'POST', headers: { Origin: origin, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: '{}',
+  });
+  assert.equal((await desktopLogin()).status, 401);
+  assert.equal((await desktopLogin('invalid')).status, 401);
+  assert.equal((await desktopLogin('alice', 'https://attacker.example')).status, 403);
+  const desktop = await desktopLogin('alice');
+  assert.equal(desktop.status, 200);
+  const desktopCookie = desktop.headers.get('set-cookie').split(';')[0];
+  assert.equal(gateway.store.all().length, 1, 'Desktop reconnects to the same personal computer');
+  assert.equal((await (await fetch(base() + '/api/private', { headers: { Cookie: desktopCookie } })).json()).cookie, 'moss_web=alice');
+  const personal = gateway.store.all()[0];
+  const config = await fetch(base() + '/_moss-auth/web-config', { headers: { 'X-Moss-Environment': personal.id, 'X-Moss-Host-Token': personal.controlToken } });
+  assert.equal((await config.json()).origin, env.MOSS_WEB_ORIGIN);
   const account = await (await fetch(base() + '/api/auth', { headers: { Cookie: ca } })).json();
   assert.deepEqual(account.account, { userName: 'Server alice', userEmail: 'alice@example.test' });
   for (const requestPath of ['//attacker.invalid/path', '/\\attacker.invalid/path', '/a/..//attacker.invalid/path']) {
@@ -82,6 +101,9 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   assert.equal((await post('/api/logout', {}, ca)).status, 200); await closed;
   assert.equal((await fetch(base() + '/api/private', { headers: { Cookie: ca } })).status, 401);
   assert.equal(gateway.store.all().length, 2);
+  revokedHost = personal.id;
+  assert.equal((await post('/api/login', { username: 'alice', password: 'test' })).status, 403);
+  revokedHost = null;
   const ids = gateway.store.all().map(r => r.containerId);
   await gateway.close();
   gateway = await startGateway({ env, docker: {}, rendererRoot: path.join(dir, 'renderer') }); adapters();

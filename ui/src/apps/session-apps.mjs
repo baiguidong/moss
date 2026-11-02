@@ -147,5 +147,5 @@ export function createSessionApps({ getRuntime, getMcpHost, isBusy, disposeRunti
     await validateIds([provider.appId])
     return provider.appId
   }
-  return { validateIds, validateServiceIds, validateSelection, isConnectorApp, migrateRecord, update, toggle, toggleService, setServices, resourceAppId }
+  return { catalog, validateIds, validateServiceIds, validateSelection, isConnectorApp, migrateRecord, update, toggle, toggleService, setServices, resourceAppId }
 }

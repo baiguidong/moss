@@ -57,7 +57,6 @@ apply_setting COMPOSE_PROJECT_NAME moss-server
 apply_setting MOSS_REGISTRY ghcr.io
 apply_setting MOSS_REGISTRY_USERNAME ''
 apply_setting MOSS_SERVER_IMAGE ''
-apply_setting MOSS_RUNTIME_IMAGE ''
 apply_setting MOSS_CLOUD_MAX_USERS 20
 apply_setting MOSS_CLOUD_CPUS 1
 apply_setting MOSS_CLOUD_MEMORY_MB 1024
@@ -85,7 +84,7 @@ apply_setting MOSS_DB_ROOT_PASSWORD moss_root_internal_password
 [[ "$(read_value MOSS_DB_USER)" =~ ^[A-Za-z0-9_]+$ && "$(read_value MOSS_DB_USER)" != root ]] || die 'MOSS_DB_USER must be a non-root application username'
 
 
-for image_key in MOSS_SERVER_IMAGE MOSS_RUNTIME_IMAGE MYSQL_IMAGE; do
+for image_key in MOSS_SERVER_IMAGE MYSQL_IMAGE; do
   image_value="$(read_value "$image_key")"
   [[ -n "$image_value" && "$image_value" != *[[:space:]]* ]] \
     || die "$image_key must be a non-empty image reference without whitespace"
@@ -128,14 +127,13 @@ web_port="$(read_value MOSS_WEB_HTTPS_PORT)"
 if [[ "$web_port" == "$https_port" ]]; then
   die 'MOSS_WEB_HTTPS_PORT must differ from MOSS_HTTPS_PORT'
 fi
-web_origin="$(read_value MOSS_WEB_ORIGIN)"
-if [[ -z "$web_origin" ]]; then
-  web_origin="https://${public_authority}"
-  [[ "$web_port" == 443 ]] || web_origin="${web_origin}:${web_port}"
-fi
-[[ "$web_origin" =~ ^https://([A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$ ]] \
-  || die 'MOSS_WEB_ORIGIN must be an HTTPS origin without a path'
+# Server and personal computers share one public origin.
+web_origin="$public_url"
 set_env MOSS_WEB_ORIGIN "$web_origin"
+if [[ -f "$ROOT_DIR/nginx.conf" ]]; then
+  sed "s|return 308 https://[^;]*;|return 308 $public_url\\\$request_uri;|" "$ROOT_DIR/nginx.conf" > "$ROOT_DIR/nginx.conf.new"
+  mv "$ROOT_DIR/nginx.conf.new" "$ROOT_DIR/nginx.conf"
+fi
 
 install -d -m 0700 "$server_home" "$server_home/var/lib" \
   "$server_home/var/run" "$server_home/var/log" "$ROOT_DIR/tls"
@@ -192,19 +190,11 @@ jq 'if has("cloudStorage") then . else .cloudStorage = {
 mv "$config_path.new" "$config_path"
 
 settings_path="$server_home/settings.json"
-runtime_image="$(read_value MOSS_RUNTIME_IMAGE)"
 if [[ -f "$settings_path" ]]; then
-  jq -e 'type == "object"' "$settings_path" >/dev/null \
-    || die "existing settings are not a valid JSON object: $settings_path"
-  jq --arg image "$runtime_image" \
-    '.serverRuntime = ((.serverRuntime // {}) + {dockerImage: $image})
-     | del(.serverRuntime.backend, .serverRuntime.defaultProfileMode, .serverRuntime.allowedProfileModes)' \
-    "$settings_path" > "$settings_path.new"
+  jq -e 'type == "object"' "$settings_path" >/dev/null || die "invalid settings: $settings_path"
 else
-  jq -n --arg image "$runtime_image" \
-    '{serverRuntime: {dockerImage: $image}}' > "$settings_path.new"
+  printf '{}\n' > "$settings_path"
 fi
-mv "$settings_path.new" "$settings_path"
 
 cert_path="$ROOT_DIR/tls/server.crt"
 key_path="$ROOT_DIR/tls/server.key"

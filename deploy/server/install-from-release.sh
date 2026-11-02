@@ -90,6 +90,5 @@ for name in server runtime webui; do
 done
 image_prefix="ghcr.io/${REPOSITORY%%/*}"
 export MOSS_SERVER_IMAGE="$image_prefix/moss-server:$VERSION"
-export MOSS_RUNTIME_IMAGE="$image_prefix/moss-runtime:$VERSION"
 export MOSS_WEB_IMAGE="$image_prefix/moss-webui:$VERSION"
 bash "$stage_dir/moss-server/install.sh"

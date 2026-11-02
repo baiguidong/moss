@@ -52,9 +52,12 @@ import { PresentationToolbar, PresentationContent } from '@/components/presentat
 import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AppWidgetHost } from '@/components/app-widget-host';
 import { SettingsView } from '@/components/settings-view';
+import { ServerLoginDialog } from '@/components/server-login-dialog';
+import { useServerAuthentication } from '@/lib/server-authentication';
 import { UserAvatarContext } from '@/components/user-avatar';
 import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 import { ProjectWorkspace } from '@/components/projects/project-workspace';
+import { ProjectCreationDraftCard } from '@/components/projects/project-creation-draft-card';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { NotificationCenter, NotificationToast } from '@/components/notification-center';
 import {
@@ -90,6 +93,7 @@ import type {
   ModelContextInfo,
   PermissionMode,
   Project,
+  ProjectCreationDraft,
   SessionDetail,
   SessionSearchResult,
   SessionSummary,
@@ -451,6 +455,13 @@ export default function App() {
   const [pendingFirstMessage, setPendingFirstMessage] = React.useState<PendingFirstMessage | null>(null);
   const [preparingNewSession, setPreparingNewSession] = React.useState(false);
   const [draftProject, setDraftProject] = React.useState<Project | null>(null);
+  const [projectCreationDraft, setProjectCreationDraft] = React.useState<ProjectCreationDraft | null>(null);
+  const [projectCreationBusy, setProjectCreationBusy] = React.useState(false);
+  const [projectCreationInput, setProjectCreationInput] = React.useState('');
+  const [creatingProjectSession, setCreatingProjectSession] = React.useState(false);
+  const projectCreationEntryLock = React.useRef(false);
+  const projectCreationReturnSessionRef = React.useRef<string | null>(null);
+  const [homeComposerMode, setHomeComposerMode] = React.useState<'chat' | 'project-create'>('chat');
   const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
   const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
   const permissionModeSettingRequestRef = React.useRef<string | null>(null);
@@ -510,10 +521,10 @@ export default function App() {
   const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
-  const [serverAuthState, setServerAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
-  const [serverAuthError, setServerAuthError] = React.useState('');
+  const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
+  const [serverLogoutError, setServerLogoutError] = React.useState('');
   React.useEffect(() => {
-    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl || !desktopSettings.remoteDirectApiKey) {
+    if (window.mossWeb || !desktopSettings?.enterpriseAccountServerUrl || !desktopSettings.enterpriseAccountApiKey) {
       setServerAccount(null);
       return;
     }
@@ -524,12 +535,12 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
+  }, [desktopSettings?.enterpriseAccountServerUrl, desktopSettings?.enterpriseAccountApiKey, desktopSettings?.enterpriseAccountUserEmail, desktopSettings?.enterpriseAccountUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const agentMailEnabled =
-    desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
+    desktopSettings?.enterpriseEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
@@ -782,6 +793,7 @@ export default function App() {
   const navigateToHome = React.useCallback((options?: { resetInput?: boolean; preserveIntent?: boolean; preserveAgentMode?: boolean; forceDiscardDirty?: boolean }) => {
     if (!confirmAppViewLeave()) return false;
     setActiveView('chat');
+    setHomeComposerMode('chat');
     setDraftProject(null);
     activeSessionIdRef.current = null;
     activeDetailRef.current = null;
@@ -862,7 +874,7 @@ export default function App() {
     appIds: string[] = [],
     appServiceIds: string[] = [],
     onCreated?: (sessionId: string) => void,
-    projectOptions?: { projectId: string; mode: 'chat' | 'boss'; skillIds: string[] },
+    projectOptions?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; projectCreationMode?: boolean },
   ) => {
     const payload: { title?: string; workspace?: string; assistant_name?: string; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
     if (workspace) payload.workspace = workspace;
@@ -888,11 +900,67 @@ export default function App() {
     return created.summary.id;
   }, [apps, clearSessionWorkspaceState, openSession, sessionAgentModes, persistSessionAgentModes]);
 
-  const handleAuthorizeApp = React.useCallback((app: StoredApp) => authorizeAppConnector({
-    app,
-    createSession: title => createAndOpenSession(title),
-    api: window.agentDesktop,
-  }), [createAndOpenSession]);
+  const handleAuthorizeApp = React.useCallback(async (app: StoredApp) => {
+    const result = await authorizeAppConnector({ app, createSession: title => createAndOpenSession(title), api: window.agentDesktop });
+    if (projectCreationReturnSessionRef.current && result?.auth?.status === 'authenticated') {
+      const sessionId = projectCreationReturnSessionRef.current;
+      projectCreationReturnSessionRef.current = null;
+      await openSession(sessionId);
+      setActiveView('chat');
+    }
+    return result;
+  }, [createAndOpenSession, openSession]);
+
+  const handleProjectCreationConfirm = React.useCallback(async () => {
+    const draft = projectCreationDraft;
+    if (!draft || projectCreationBusy) return;
+    setProjectCreationBusy(true);
+    try {
+      const result = await window.agentDesktop.projectCreation.confirm({ draftId: draft.id, version: draft.version });
+      if (result.draft && activeSessionIdRef.current === draft.sessionId) setProjectCreationDraft(result.draft);
+      if (result.project) {
+        await refreshProjectWorkspace();
+        if (activeSessionIdRef.current === draft.sessionId) {
+          setActiveProjectId(result.project.id);
+          if (result.draft?.firstTaskSessionId && !result.draft.firstTaskError) await openSession(result.draft.firstTaskSessionId);
+          else if (!result.draft?.firstTaskError) setActiveView('projects');
+        }
+      }
+    } catch (error) {
+      showPermissionNotice(cleanIpcErrorMessage(error), 'error', 6000);
+      const latest = await window.agentDesktop.projectCreation.getDraft({ draftId: draft.id }).catch(() => null);
+      if (latest && activeSessionIdRef.current === draft.sessionId) setProjectCreationDraft(latest);
+    } finally { setProjectCreationBusy(false); }
+  }, [projectCreationBusy, projectCreationDraft, refreshProjectWorkspace, openSession, showPermissionNotice]);
+
+  const handleProjectCreationCancel = React.useCallback(async () => {
+    const draft = projectCreationDraft;
+    if (!draft || projectCreationBusy) return;
+    setProjectCreationBusy(true);
+    try {
+      const result = await window.agentDesktop.projectCreation.cancel({ draftId: draft.id, version: draft.version });
+      if (result.draft && activeSessionIdRef.current === draft.sessionId) setProjectCreationDraft(result.draft);
+    } catch (error) { showPermissionNotice(cleanIpcErrorMessage(error), 'error', 6000); }
+    finally { setProjectCreationBusy(false); }
+  }, [projectCreationDraft, projectCreationBusy, showPermissionNotice]);
+
+  const handleProjectCreationSave = React.useCallback(async (patch: Parameters<Window['agentDesktop']['projectCreation']['updateDraft']>[0]['patch']) => {
+    const draft = projectCreationDraft;
+    if (!draft) return;
+    const next = await window.agentDesktop.projectCreation.updateDraft({ draftId: draft.id, version: draft.version, patch });
+    if (activeSessionIdRef.current === draft.sessionId) setProjectCreationDraft(next);
+  }, [projectCreationDraft]);
+
+  const handleProjectCreationApp = React.useCallback(async (id: string) => {
+    try {
+      const entries = await refreshApps();
+      const app = entries.find(entry => (entry.id || entry.name) === id);
+      if (!app) throw new Error('请先完成 App 安装，再配置或授权。');
+      projectCreationReturnSessionRef.current = projectCreationDraft?.sessionId || null;
+      appDetailsReturnView.current = 'chat';
+      setAppInfoName(app.name); setAppInfoSettings(true); setActiveView('app-info');
+    } catch (error) { showPermissionNotice(cleanIpcErrorMessage(error), 'error', 6000); }
+  }, [refreshApps, projectCreationDraft, showPermissionNotice]);
 
   const ensureRootDirectory = React.useCallback(async (sessionId: string, workspace: string) => {
     try {
@@ -923,6 +991,21 @@ export default function App() {
     layoutRef.current = layout;
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
   }, [layout]);
+
+  React.useEffect(() => {
+    const apply = (value: { panelLayout?: string | null }) => {
+      if (typeof value.panelLayout !== 'string') return;
+      localStorage.setItem(LAYOUT_STORAGE_KEY, value.panelLayout);
+      setLayout(loadPanelLayout());
+    };
+    const listener = (event: Event) => apply((event as CustomEvent).detail);
+    window.addEventListener('moss:desktop-presentation', listener);
+    const handler = !window.mossWeb ? window.agentDesktop.ipcOn('desktop:presentation', apply) : null;
+    return () => {
+      window.removeEventListener('moss:desktop-presentation', listener);
+      if (handler) window.agentDesktop.ipcOff('desktop:presentation', handler);
+    };
+  }, []);
 
   React.useEffect(() => {
     activeDetailRef.current = activeDetail;
@@ -1199,12 +1282,12 @@ export default function App() {
   }, [refreshSummaries, openSession]);
 
   React.useEffect(() => {
-    if (!desktopSettings?.remoteEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
+    if (!desktopSettings?.enterpriseEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
     const timer = window.setInterval(() => {
       void window.agentDesktop.syncRemoteSessions().catch(() => {});
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [desktopSettings?.remoteEnabled, desktopSettings?.agentMode, activeView]);
+  }, [desktopSettings?.enterpriseEnabled, desktopSettings?.agentMode, activeView]);
 
   React.useEffect(() => {
     if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
@@ -1391,6 +1474,10 @@ export default function App() {
       void refreshSummaries();
     });
 
+    const offProjectCreation = window.agentDesktop.projectCreation?.onChanged((draft) => {
+      if (draft.sessionId === activeSessionIdRef.current) setProjectCreationDraft(current => current?.id === draft.id && current.updatedAt > draft.updatedAt ? current : draft);
+    });
+
     const offAssistantsChanged = window.agentDesktop.onAssistantsChanged(() => {
       void refreshAssistants();
     });
@@ -1410,9 +1497,25 @@ export default function App() {
       offAppsChanged();
       offSettingsChanged();
       offProjectsChanged();
+      offProjectCreation?.();
       offAssistantsChanged();
     };
   }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+
+  React.useEffect(() => {
+    if (!activeSessionId || !activeDetail?.projectCreationMode) {
+      setProjectCreationDraft(null);
+      return;
+    }
+    let disposed = false;
+    const restoreDraft = () => void window.agentDesktop.projectCreation.getDraft({ sessionId: activeSessionId }).then(draft => {
+      if (!disposed) setProjectCreationDraft(current => current?.sessionId === activeSessionId && draft && current.id === draft.id && current.updatedAt > draft.updatedAt ? current : draft);
+    }).catch(error => { if (!disposed) showPermissionNotice(cleanIpcErrorMessage(error), 'error', 6000); });
+    setProjectCreationDraft(current => current?.sessionId === activeSessionId ? current : null);
+    restoreDraft();
+    window.addEventListener('moss:reconnected', restoreDraft);
+    return () => { disposed = true; window.removeEventListener('moss:reconnected', restoreDraft); };
+  }, [activeDetail?.projectCreationMode, activeSessionId, showPermissionNotice]);
 
   const baseSidebarSessions = React.useMemo(
     () => toSidebarSessions(summaries, pinnedIds),
@@ -1420,7 +1523,7 @@ export default function App() {
   );
   const activeChildSessions = React.useMemo(
     () => activeSessionId
-      ? summaries.filter((session) => session.parentSessionId === activeSessionId)
+      ? summaries.filter((session) => session.parentSessionId === activeSessionId && session.isSubAgent)
       : [],
     [activeSessionId, summaries],
   );
@@ -1630,6 +1733,7 @@ export default function App() {
 
   const handleNewSession = React.useCallback(async () => {
     navigateToHome({ resetInput: true });
+    setHomeComposerMode('chat');
   }, [navigateToHome]);
 
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
@@ -1854,6 +1958,38 @@ export default function App() {
     }
   }, [selectedAssistant]);
 
+  const handleCreateProjectConversation = React.useCallback(async (prompt: string) => {
+    if (!prompt.trim() || projectCreationEntryLock.current) return;
+    if (!confirmAppViewLeave()) return;
+    projectCreationEntryLock.current = true;
+    setCreatingProjectSession(true);
+    let sessionId: string | null = null;
+    const firstMessageId = crypto.randomUUID();
+    try {
+      const createdId = await createAndOpenSession(
+        firstMessageTitle(prompt), undefined, undefined, 'default', 'local', [], [],
+        id => {
+          sessionId = id;
+          setPendingFirstMessage({ id: firstMessageId, sessionId: id, prompt, files: [], submittedAt: Date.now() });
+        },
+        { projectCreationMode: true, mode: 'chat', skillIds: [] },
+      );
+      setProjectCreationInput(current => current.trim() === prompt ? '' : current);
+      await dispatchToSession(createdId, prompt, 'chat');
+    } catch (error) {
+      if (!sessionId) throw error; // Keep the project-page input if session creation failed.
+      // A send rejection may still have reached the Host. Keep a draft in that
+      // session for review instead of starting another project conversation.
+      updateQueue(sessionId, items => [...items, { id: crypto.randomUUID(), prompt, intent: 'chat', status: 'draft',
+        notice: `发送未确认，请先核对会话记录。${cleanIpcErrorMessage(error)}` }]);
+      showPermissionNotice(cleanIpcErrorMessage(error), 'error', 6000);
+    } finally {
+      setPendingFirstMessage(current => current?.id === firstMessageId ? null : current);
+      projectCreationEntryLock.current = false;
+      setCreatingProjectSession(false);
+    }
+  }, [createAndOpenSession, dispatchToSession, updateQueue, showPermissionNotice]);
+
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
   const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
@@ -1994,7 +2130,11 @@ export default function App() {
                 submittedAt: Date.now(),
               });
             },
-            draftProject ? { projectId: draftProject.id, mode: intent, skillIds: (skills || []).map(skill => skill.name) } : undefined,
+            draftProject
+              ? { projectId: draftProject.id, mode: intent, skillIds: (skills || []).map(skill => skill.name) }
+              : homeComposerMode === 'project-create'
+                ? { projectCreationMode: true, mode: 'chat', skillIds: [] }
+                : undefined,
           ).finally(() => {
             creatingSessionRef.current = null;
             setPreparingNewSession(false);
@@ -2055,7 +2195,7 @@ export default function App() {
         setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
       }
     }
-  }, [draftProject, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
+  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -2547,54 +2687,40 @@ export default function App() {
     }
   }, [applyDesktopSettings]);
 
-  const handleServerLogin = React.useCallback(async () => {
-    const serverUrl = desktopSettings?.remoteDirectServerUrl?.trim() || '';
-    if (!serverUrl) {
-      setSettingsInitialSection('basic-info');
-      setSettingsInitialAppId(null);
-      setActiveView('settings');
-      showPermissionNotice('请先在设置的“Moss Server”中配置服务器地址。', 'info', 5000);
-      return;
-    }
-    if (serverAuthState === 'loading') return;
-    setServerAuthState('loading');
-    setServerAuthError('');
-    try {
-      const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
-      applyDesktopSettings(next);
-      setServerAccount(
-        next.remoteDirectUserName || next.remoteDirectUserEmail
-          ? { userName: next.remoteDirectUserName || '', userEmail: next.remoteDirectUserEmail || '' }
-          : null,
-      );
-      setServerAuthState('success');
-      window.setTimeout(() => setServerAuthState('idle'), 2000);
-    } catch (error) {
-      setServerAuthState('idle');
-      const message = cleanIpcErrorMessage(error);
-      if (message !== '认证已取消。') setServerAuthError(message);
-    }
-  }, [applyDesktopSettings, desktopSettings?.remoteDirectServerUrl, serverAuthState, showPermissionNotice]);
+  const serverAuthentication = useServerAuthentication(next => {
+    applyDesktopSettings(next);
+    setServerAccount(next.enterpriseAccountUserName || next.enterpriseAccountUserEmail
+      ? { userName: next.enterpriseAccountUserName || '', userEmail: next.enterpriseAccountUserEmail || '' } : null);
+  });
+  const serverAuthState = serverLogoutState === 'loading' ? 'loading' : serverAuthentication.state;
+  const serverAuthError = serverLogoutError || serverAuthentication.error;
+  const handleServerLogin = async () => {
+    const serverUrl = desktopSettings?.enterpriseAccountServerUrl?.trim() || '';
+    setServerLogoutError('');
+    serverAuthentication.open(serverUrl);
+  };
 
   const handleServerLogout = React.useCallback(async () => {
     if (serverAuthState === 'loading') return;
-    setServerAuthState('loading');
-    setServerAuthError('');
+    setServerLogoutState('loading');
+    setServerLogoutError('');
     try {
       const next = await window.agentDesktop.updateSettings({
-        remoteDirectApiKey: '',
-        remoteDirectUserName: '',
-        remoteDirectUserEmail: '',
-        remoteDirectUserPassword: '',
+        enterpriseAccountApiKey: '',
+        enterpriseAccountUserName: '',
+        enterpriseAccountUserEmail: '',
+        enterpriseAccountUserPassword: '',
       });
       applyDesktopSettings(next);
       setServerAccount(null);
-      setServerAuthState('idle');
+      setServerLogoutState('idle');
     } catch (error) {
-      setServerAuthState('idle');
-      setServerAuthError(`退出 Moss Server 失败：${cleanIpcErrorMessage(error)}`);
+      setServerLogoutState('idle');
+      const message = `退出 Moss Server 失败：${cleanIpcErrorMessage(error)}`;
+      setServerLogoutError(message);
+      showPermissionNotice(message, 'error', 0);
     }
-  }, [applyDesktopSettings, serverAuthState]);
+  }, [applyDesktopSettings, serverAuthState, showPermissionNotice]);
 
   React.useEffect(() => {
     if (!desktopSettings || localStorage.getItem('ui.buddyVisibilityMigrated.v1')) return;
@@ -2651,6 +2777,7 @@ export default function App() {
 
   const renderSettingsView = () => (
     <SettingsView
+      serverAuthentication={serverAuthentication}
       apps={apps}
       settingsDraft={settingsDraft}
       setSettingsDraft={setSettingsDraft}
@@ -2758,7 +2885,7 @@ export default function App() {
           });
         }} />}
       <WindowChrome
-        desktop={!window.mossWeb}
+        desktop={!window.mossWeb || Boolean(window.mossDesktopShell?.getPresentation)}
         isMacOS={isMacOS}
         sidebarWidth={effectiveLeftCollapsed ? 68 : layout.leftWidth}
         rightWidth={sessionPanel.rightWidth}
@@ -2781,8 +2908,9 @@ export default function App() {
         >
           <ComputerUseControl />
           <AppSidebar
-            headerActions={window.mossWeb ? notificationCenter : undefined}
+            headerActions={window.mossWeb && !window.mossDesktopShell?.getPresentation ? notificationCenter : undefined}
             sessions={sidebarSessions}
+            projects={projects}
             apps={apps}
             activeSessionId={activeSessionId}
             activeView={activeView}
@@ -2791,10 +2919,10 @@ export default function App() {
             themeMode={themeMode}
             collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
-            localEnabled={desktopSettings?.localEnabled ?? true}
-            remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+            localEnabled={true}
+            enterpriseEnabled={desktopSettings?.enterpriseEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
-            serverConfigured={Boolean(desktopSettings?.remoteDirectServerUrl?.trim())}
+            serverConfigured={Boolean(desktopSettings?.enterpriseAccountServerUrl?.trim())}
             serverAuthState={serverAuthState}
             serverAuthError={serverAuthError}
             onLoginServer={handleServerLogin}
@@ -2883,7 +3011,12 @@ export default function App() {
             return app ? <AppDetailsView key={`${app.name}:${appInfoSettings}`} app={app} installedApps={apps} onRefresh={refreshApps} onAuthorize={handleAuthorizeApp} initialSettingsOpen={appInfoSettings}
               onDelete={handleDeleteApp} onIterate={handleIterateExistingApp} onLoadVersions={loadAppVersions} onRollback={handleRollbackApp}
               onOpenApp={route => handleOpenEmbeddedApp(app.name, route)}
-              onBack={() => setActiveView(appDetailsReturnView.current)}
+              onBack={() => {
+                const returnSession = projectCreationReturnSessionRef.current;
+                projectCreationReturnSessionRef.current = null;
+                if (returnSession) { void openSession(returnSession); setActiveView('chat'); }
+                else setActiveView(appDetailsReturnView.current);
+              }}
               onTry={prompt => {
                 if (app.toolScope !== 'global' && !selectedToolAppIds.includes(app.id || app.name)) handleToggleToolApp(app.id || app.name);
                 setActiveView('chat');
@@ -2893,6 +3026,19 @@ export default function App() {
             activeSessionId ? (
               <ChatArea
                 messages={chatMessages}
+                projectCreationReview={projectCreationDraft?.sessionId === activeSessionId && activeDetail?.projectCreationMode ? (
+                  <ProjectCreationDraftCard
+                    draft={projectCreationDraft}
+                    busy={projectCreationBusy || Boolean(activeDetail.busy)}
+                    onConfirm={() => { void handleProjectCreationConfirm(); }}
+                    onCancel={() => { void handleProjectCreationCancel(); }}
+                    onSave={handleProjectCreationSave}
+                    onOpenProject={() => { setActiveProjectId(projectCreationDraft.createdProjectId || null); setActiveView('projects'); }}
+                    onOpenSession={id => { void openSession(id); }}
+                    onConfigureApp={id => { void handleProjectCreationApp(id); }}
+                    onDiscuss={() => setInput('我想修改项目方案：')}
+                  />
+                ) : undefined}
                 interactions={latestSessionInteractions(activeDetail?.history ?? [])}
                 onRestoreInteraction={handleRestoreInteraction}
                 onInteraction={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionInteraction : undefined}
@@ -2902,7 +3048,7 @@ export default function App() {
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 isProjectSession={Boolean(activeDetail?.projectId)}
-                sessionTitle={activeDetail ? displaySessionTitle(activeDetail) : 'New Session'}
+                sessionTitle={activeDetail ? `${activeDetail.projectCreationMode ? '创建项目 · ' : ''}${displaySessionTitle(activeDetail)}` : 'New Session'}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
                 sessionAgentMode={activeDetail?.agentMode || sessionAgentModes.get(activeSessionId) || 'local'}
@@ -2955,7 +3101,7 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                enterpriseEnabled={false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
                 onEditQueuedMessage={handleEditQueuedMessage}
@@ -2987,6 +3133,7 @@ export default function App() {
                 onComposerAttachmentsChange={setComposerAttachments}
                 composerChoices={composerChoices}
                 onComposerChoicesChange={setComposerChoices}
+                homeComposerMode={homeComposerMode}
                 sessionTitle=""
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
@@ -3021,15 +3168,15 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                enterpriseEnabled={false}
                 newSessionMode={newSessionAgentMode}
                 onNewSessionModeChange={draftProject ? undefined : handleNewSessionModeChange}
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView cloudEnabled={desktopSettings?.remoteEnabled === true && Boolean(desktopSettings.remoteDirectServerUrl?.trim())} />
+            <OverviewView cloudEnabled={desktopSettings?.enterpriseEnabled === true && Boolean(desktopSettings.enterpriseAccountServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
-            <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
+            <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}
@@ -3054,6 +3201,10 @@ export default function App() {
               onActiveProjectChange={setActiveProjectId}
               onProjectsChange={refreshProjectWorkspace}
               onOpenSession={handleSelectSession}
+              creationPrompt={projectCreationInput}
+              onCreationPromptChange={setProjectCreationInput}
+              creatingProjectSession={creatingProjectSession}
+              onCreateProjectConversation={handleCreateProjectConversation}
               onNewSession={handleNewProjectSession}
             />
           ) : (
@@ -3125,6 +3276,7 @@ export default function App() {
           onClose={() => setGlobalSearchOpen(false)}
           onSelect={handleOpenSearchResult}
         />
+        <ServerLoginDialog authentication={serverAuthentication} />
         <UpdateModal />
       </div>
       </WindowChrome>

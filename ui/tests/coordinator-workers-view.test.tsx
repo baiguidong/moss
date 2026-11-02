@@ -62,20 +62,20 @@ const workers: SessionSummary[] = [
   },
 ];
 
-test("coordinator header uses compact status dots without worker titles", () => {
+test("coordinator header exposes one bounded summary without worker titles", () => {
   const markup = renderToStaticMarkup(
-    <CoordinatorWorkersSummary workers={workers} onOpen={() => {}} onSelect={() => {}} />,
+    <CoordinatorWorkersSummary workers={workers} onOpen={() => {}} />,
   );
 
   expect(markup).toContain("3 个子 Agent");
   expect(markup).toContain("1 运行 · 1 失败");
-  expect(markup).toContain("bg-sky-500");
   expect(markup).toContain("bg-destructive");
-  expect(markup).toContain("bg-emerald-500");
+  expect(markup.match(/<button/g)).toHaveLength(1);
+  expect(markup).toContain("Agents 3");
   expect(markup).not.toContain(">调查一个很长很长的认证异常任务标题并确认刷新令牌处理逻辑<");
 });
 
-test("coordinator worker view groups status rows and truncates long titles", () => {
+test("coordinator worker view exposes topology cards and a list fallback", () => {
   const markup = renderToStaticMarkup(
     <CoordinatorWorkersView
       workers={workers}
@@ -85,17 +85,17 @@ test("coordinator worker view groups status rows and truncates long titles", () 
     />,
   );
 
-  expect(markup).toContain("进行中");
+  expect(markup).toContain("Agent 协作");
+  expect(markup).toContain("协作图");
+  expect(markup).toContain("列表");
+  expect(markup).toContain("团队进度");
   expect(markup).toContain("需要关注");
-  expect(markup).toContain("历史");
   expect(markup).toContain("researcher · general-purpose");
   expect(markup).toContain("migration test exited with code 1");
-  expect(markup).toContain("data-worker-id=\"worker-running\"");
   expect(markup).toContain("aria-current=\"true\"");
   expect(markup).toContain(">运行中</span>");
   expect(markup).toContain(">失败</span>");
   expect(markup).toContain(">已完成</span>");
-  expect(markup).toContain("block truncate text-sm font-medium");
 });
 
 test("chat header renders a truncated session title alongside worker status", () => {
@@ -125,9 +125,11 @@ test("chat header renders a truncated session title alongside worker status", ()
 
   expect(markup).toContain(`aria-label="会话操作：${title}"`);
   expect(markup).toContain(`>${title}</span>`);
-  expect(markup).toContain("max-w-[40%] truncate text-sm font-medium");
+  expect(markup).toContain("min-w-0 flex-1 truncate text-sm font-medium");
   expect(markup).toContain('aria-label="查看会话大纲"');
   expect(markup).toContain("3 个子 Agent");
+  expect(markup).toContain('aria-label="Agent 协作状态"');
+  expect(markup).toContain('aria-label="会话功能按钮"');
 });
 
 test("chat area uses the coordinator list instead of footer worker cards", () => {
@@ -139,4 +141,13 @@ test("chat area uses the coordinator list instead of footer worker cards", () =>
   expect(source).not.toContain("打开子任务：");
   expect(source).toContain("<CoordinatorWorkersSummary");
   expect(source).toContain("<CoordinatorWorkersView");
+});
+
+
+test("hundreds of agents keep one full-list entry with accurate totals", () => {
+  const many = Array.from({ length: 120 }, (_, index) => ({ ...workers[2], id: `worker-${index}` }));
+  const markup = renderToStaticMarkup(<CoordinatorWorkersSummary workers={many} onOpen={() => {}} />);
+  expect(markup.match(/<button/g)).toHaveLength(1);
+  expect(markup).toContain("120 个子 Agent，120 已完成");
+  expect(markup).toContain("Agents 120");
 });

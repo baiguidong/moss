@@ -28,6 +28,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ProjectCreationComposer } from '@/components/projects/project-creation-composer';
+import { ProjectIcon, ProjectIconPicker } from '@/components/projects/project-icon';
+import { ResourceHubSearch } from '@/components/resource-hub-search';
 import { ProjectDefaultsFields } from '@/components/projects/project-defaults-fields';
 import { ProjectResourcePicker } from '@/components/projects/project-resource-picker';
 import { ProjectTasksTab } from '@/components/projects/project-tasks-tab';
@@ -52,6 +55,10 @@ type ProjectWorkspaceProps = {
   onActiveProjectChange: (projectId: string | null) => void;
   onProjectsChange: () => Promise<void>;
   onOpenSession: (sessionId: string) => void;
+  creationPrompt: string;
+  onCreationPromptChange: (value: string) => void;
+  creatingProjectSession: boolean;
+  onCreateProjectConversation: (prompt: string) => Promise<void>;
   onNewSession: (project: Project) => void;
 };
 
@@ -185,6 +192,7 @@ function NewProjectDialog({
         </div>
         <ScrollArea className="min-h-0 flex-1 overflow-hidden">
           <div className="space-y-5 p-5 pb-8">
+            <ProjectIconPicker value={form.icon} disabled={saving} onChange={icon => setForm(current => ({ ...current, icon }))} />
             <div className="grid gap-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>项目名称</span>
@@ -254,6 +262,10 @@ function ProjectList({
   onOpen,
   onRename,
   onDelete,
+  creationPrompt,
+  onCreationPromptChange,
+  creatingProjectSession,
+  onCreateProjectConversation,
   onNew,
 }: {
   projects: Project[];
@@ -262,6 +274,10 @@ function ProjectList({
   onOpen: (projectId: string) => void;
   onRename: (project: Project, name: string) => Promise<void>;
   onDelete: (project: Project) => Promise<void>;
+  creationPrompt: string;
+  onCreationPromptChange: (value: string) => void;
+  creatingProjectSession: boolean;
+  onCreateProjectConversation: (prompt: string) => Promise<void>;
   onNew: () => void;
 }) {
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null);
@@ -272,10 +288,31 @@ function ProjectList({
   const [renameError, setRenameError] = React.useState('');
   const renameInputRef = React.useRef<HTMLInputElement>(null);
   const renameFocusRequestedRef = React.useRef(false);
-  const filtered = projects.filter((project) =>
-    project.name.toLowerCase().includes(query.toLowerCase()) ||
-    project.id.toLowerCase().includes(query.toLowerCase())
-  );
+  const [sort, setSort] = React.useState('updated');
+  const [visibleCount, setVisibleCount] = React.useState(24);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const listRef = React.useRef<HTMLElement>(null);
+  const moreRef = React.useRef<HTMLDivElement>(null);
+  const filtered = React.useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return projects.filter(project => [project.name, project.instructions, project.id].some(value => value?.toLocaleLowerCase().includes(needle)))
+      .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : (sort === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt) || a.id.localeCompare(b.id));
+  }, [projects, query, sort]);
+  const shown = filtered.slice(0, visibleCount);
+  const hasMore = shown.length < filtered.length;
+  React.useEffect(() => { setVisibleCount(24); }, [query, sort]);
+  React.useEffect(() => {
+    if (!hasMore || !moreRef.current || !scrollRef.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) setVisibleCount(count => Math.min(count + 24, filtered.length));
+    }, { root: scrollRef.current, rootMargin: '0px 0px 240px 0px' });
+    observer.observe(moreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, visibleCount, filtered.length]);
+  const scrollToList = () => {
+    const viewport = scrollRef.current, list = listRef.current;
+    if (viewport && list) viewport.scrollTop += list.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+  };
 
   React.useEffect(() => {
     if (!renameTarget) return;
@@ -340,76 +377,54 @@ function ProjectList({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border/70 px-5 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">项目</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">共享会话配置，汇集成果与项目记忆</p>
-          </div>
-          <Button onClick={onNew}>
-            <Plus className="h-4 w-4" />
-            新建项目
-          </Button>
-        </div>
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto w-full max-w-[1180px] px-5 py-5 sm:px-6 sm:py-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-base font-semibold text-foreground">我的项目</h2>
-              <span className="text-xs text-muted-foreground">{filtered.length}</span>
-            </div>
-            <div className="relative w-full sm:w-[300px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => onQueryChange(event.target.value)}
-                placeholder="搜索项目"
-                className="pl-9"
-              />
-            </div>
+    <div ref={scrollRef} data-project-list-scroll className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain bg-background [scrollbar-gutter:stable]">
+      <div className="mx-auto w-full max-w-[1180px] px-4 sm:px-5">
+        <ProjectCreationComposer value={creationPrompt} onChange={onCreationPromptChange} busy={creatingProjectSession} onSend={onCreateProjectConversation} />
+        <section ref={listRef} aria-label="我的项目" className="pb-6">
+          <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-2 bg-background/95 px-1 py-3 backdrop-blur">
+            <h2 className="mr-1 shrink-0 text-sm font-semibold">我的项目 <span className="ml-1 font-normal text-muted-foreground">{filtered.length}</span></h2>
+            <ResourceHubSearch value={query} onChange={value => { onQueryChange(value); scrollToList(); }} label="搜索项目" placeholder="搜索项目名称或描述" />
+            <select aria-label="项目排序" className="h-8 rounded-lg border border-border/50 bg-muted/40 px-2 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={sort} onChange={event => { setSort(event.target.value); scrollToList(); }}>
+              <option value="updated">最近更新</option><option value="created">最近创建</option><option value="name">名称排序</option>
+            </select>
+            <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground" onClick={onNew}><Plus className="h-3.5 w-3.5" />使用表单创建</Button></TooltipTrigger><TooltipContent>手动填写项目名称、指令、资源和默认设置</TooltipContent></Tooltip>
           </div>
           {deleteError ? (
             <div className="mt-3 text-sm text-destructive">{deleteError}</div>
           ) : null}
           {filtered.length > 0 ? (
-            <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
-              {filtered.map((project) => (
+            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+              {shown.map((project) => (
                 <div
                   key={project.id}
-                  className="group relative flex min-h-[148px] overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/45 hover:bg-accent/25"
+                  data-project-card={project.id}
+                  className="group relative min-w-0 rounded-lg border border-border/70 bg-card/82 p-2.5"
                 >
-                  <button
-                    type="button"
-                    aria-label={`打开项目：${project.name}`}
-                    onClick={() => onOpen(project.id)}
-                    className="flex min-w-0 flex-1 flex-col p-4 pr-12 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                        <FolderKanban className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 pt-0.5">
-                        <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {formatTime(project.updatedAt)} 更新
-                        </div>
-                      </div>
+                  <button type="button" aria-label={`打开项目：${project.name}`} onClick={() => onOpen(project.id)}
+                    className="absolute inset-0 cursor-pointer rounded-lg transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" />
+                  <div className="pointer-events-none relative flex min-w-0 items-start gap-2.5">
+                    <ProjectIcon icon={project.icon} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate pr-8 text-sm font-semibold text-foreground" title={project.name}>{project.name}</h3>
+                      <p className="mt-0.5 truncate pr-8 text-xs text-muted-foreground">{formatTime(project.updatedAt)} 更新</p>
+                      <p className="mt-2 line-clamp-2 h-9 text-xs leading-[18px] text-muted-foreground">{project.instructions || '汇集项目会话、资源和成果'}</p>
+                      <p className="mt-2 truncate text-xs text-muted-foreground">{[
+                        project.skillIds?.length ? `${project.skillIds.length} 技能` : '',
+                        project.expertIds?.length ? `${project.expertIds.length} 专家` : '',
+                        project.appIds?.length ? `${project.appIds.length} App` : '',
+                        project.appServiceIds?.length ? `${project.appServiceIds.length} 服务` : '',
+                      ].filter(Boolean).join(' · ') || '暂未配置资源'}</p>
+                      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground"><span>{project.sessionCount || 0} 会话</span><span>{project.assetCount || 0} 成果</span></div>
                     </div>
-                    <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-4 text-xs text-muted-foreground">
-                      <span>{project.sessionCount || 0} 会话</span>
-                      <span>{project.taskCount || 0} 会话</span>
-                      <span>{project.assetCount || 0} 成果</span>
-                    </div>
-                  </button>
+                  </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon-sm"
-                        className="absolute right-3 top-3 text-muted-foreground hover:text-foreground"
+                        className="absolute right-2 top-2 h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
                         disabled={deletingProjectId !== null}
                         title={`${project.name} 更多操作`}
                         aria-label={`${project.name} 更多操作`}
@@ -448,18 +463,15 @@ function ProjectList({
             <div className="mt-3 rounded-lg border border-dashed border-border px-6 py-12 text-center">
               <div className="text-sm font-medium text-foreground">{query ? '未找到相关项目' : '暂无项目'}</div>
               <div className="mt-1 text-sm text-muted-foreground">
-                {query ? '试试其他关键词' : '新建项目，开始组织会话、任务和项目成果。'}
+                {query ? '试试其他关键词，或清空搜索查看全部项目' : '在上方描述你的目标，开始创建第一个项目。'}
               </div>
-              {!query ? (
-                <Button className="mt-4" onClick={onNew}>
-                  <Plus className="h-4 w-4" />
-                  新建项目
-                </Button>
-              ) : null}
             </div>
           )}
-        </div>
-      </ScrollArea>
+          {filtered.length > 0 && <div ref={moreRef} className="flex h-16 items-center justify-center text-xs text-muted-foreground">
+            {hasMore ? <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground" onClick={() => setVisibleCount(count => count + 24)}>继续下滑加载更多</Button> : <span>已显示全部 {filtered.length} 个项目</span>}
+          </div>}
+        </section>
+      </div>
       {renameTarget ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
@@ -561,6 +573,7 @@ function ProjectConfigPanel({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-5 p-4">
+          <ProjectIconPicker value={draft.icon} disabled={saving} onChange={icon => setDraft(current => ({ ...current, icon }))} />
           <div className="grid gap-2">
             <div className="text-xs font-medium text-muted-foreground">项目名称</div>
             <Input
@@ -860,7 +873,7 @@ function ProjectDetail({
           </button>
           <div className="mt-1 flex min-w-0 items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <FolderKanban className="h-5 w-5 shrink-0 text-primary" />
+              <ProjectIcon icon={detail.icon} className="h-9 w-9" />
               <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
             </div>
             <Tooltip>
@@ -1020,6 +1033,10 @@ export function ProjectWorkspace({
   onActiveProjectChange,
   onProjectsChange,
   onOpenSession,
+  creationPrompt,
+  onCreationPromptChange,
+  creatingProjectSession,
+  onCreateProjectConversation,
   onNewSession,
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = React.useState('');
@@ -1036,7 +1053,7 @@ export function ProjectWorkspace({
 
   return (
     <>
-      {activeProject ? (
+      {activeProject && (
         <ProjectDetail
           project={activeProject}
           refreshSignal={refreshSignal}
@@ -1048,7 +1065,8 @@ export function ProjectWorkspace({
           onOpenSession={onOpenSession}
           onNewSession={onNewSession}
         />
-      ) : (
+      )}
+      <div className={activeProject ? 'hidden' : 'h-full min-h-0 min-w-0'} aria-hidden={activeProject ? true : undefined}>
         <ProjectList
           projects={projects}
           query={query}
@@ -1065,9 +1083,13 @@ export function ProjectWorkspace({
             await window.agentDesktop.archiveProject({ projectId: project.id });
             await onProjectsChange();
           }}
+          creationPrompt={creationPrompt}
+          onCreationPromptChange={onCreationPromptChange}
+          creatingProjectSession={creatingProjectSession}
+          onCreateProjectConversation={onCreateProjectConversation}
           onNew={() => setDialogOpen(true)}
         />
-      )}
+      </div>
       <NewProjectDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}

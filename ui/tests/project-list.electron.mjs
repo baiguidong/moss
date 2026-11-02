@@ -1,0 +1,99 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { app, BrowserWindow } from 'electron';
+import { createServer } from 'vite';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+const uiRoot = path.resolve(import.meta.dirname, '..');
+const temp = await mkdtemp(path.join(tmpdir(), 'moss-project-list-'));
+app.setPath('userData', path.join(temp, 'profile'));
+app.on('window-all-closed', () => {});
+let server, win;
+const watchdog = setTimeout(() => { console.error('Project list UI timed out'); app.exit(1); }, 60_000);
+app.whenReady().then(async () => {
+  try {
+    server = await createServer({ root: uiRoot, configFile: path.join(uiRoot, 'vite.config.ts'), cacheDir: path.join(temp, 'vite'), server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } });
+    await server.listen();
+    win = new BrowserWindow({ show: false, width: 1380, height: 900, useContentSize: true, webPreferences: { backgroundThrottling: false } });
+    const rendererErrors = [];
+    win.webContents.on('console-message', (_event, level, message) => { if (level === 3) rendererErrors.push(message); });
+    const evaluate = code => win.webContents.executeJavaScript(code);
+    const paint = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+    const waitFor = async code => { for (let i = 0; i < 150; i++) { if (await evaluate(code)) return; await new Promise(resolve => setTimeout(resolve, 30)); } throw new Error(`UI condition failed: ${code}`); };
+    const click = text => evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === ${JSON.stringify(text)}).click()`);
+    const typeInto = (selector, value) => evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    const count = () => evaluate("document.querySelectorAll('[data-project-card]').length");
+    await win.loadURL(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/project-list.html`);
+    await waitFor("document.querySelectorAll('[data-project-card]').length === 24");
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('[data-project-card] [data-project-icon]')].slice(0, 3).map(icon => icon.dataset.projectIcon)"), ['generated', 'book', 'folder']);
+    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '通过会话创建项目')"), false);
+    assert.equal(await evaluate("document.querySelector('[aria-label=\"发送项目需求\"]').disabled"), true);
+    assert.equal(await evaluate("document.querySelector('textarea').getBoundingClientRect().bottom < document.querySelector('[data-project-card]').getBoundingClientRect().top"), true);
+    assert.equal(await evaluate("(() => { const cards = [...document.querySelectorAll('[data-project-card]')]; return cards.filter(card => card.getBoundingClientRect().top === cards[0].getBoundingClientRect().top).length; })()"), 3);
+    await paint();
+    await writeFile(path.join(tmpdir(), 'moss-project-list-desktop.png'), (await win.webContents.capturePage()).toPNG());
+
+    await typeInto('textarea', '建立客户研究项目');
+    await evaluate("document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true, bubbles: true }))");
+    assert.equal(await evaluate("JSON.parse(document.querySelector('[data-sent]').textContent).length"), 0, 'IME confirmation must not submit');
+    await evaluate("document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', shiftKey: true, bubbles: true }))");
+    assert.equal(await evaluate("JSON.parse(document.querySelector('[data-sent]').textContent).length"), 0);
+    await evaluate("document.querySelector('[aria-label=\"发送项目需求\"]').click(); document.querySelector('[aria-label=\"发送项目需求\"]').click()");
+    await waitFor("document.querySelector('textarea').value === ''");
+    assert.deepEqual(JSON.parse(await evaluate("document.querySelector('[data-sent]').textContent")), ['建立客户研究项目']);
+
+    await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop = 100000");
+    await waitFor("document.querySelectorAll('[data-project-card]').length === 48");
+    const scrollTop = await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop");
+    assert(scrollTop > 0); assert.equal(await evaluate('document.scrollingElement.scrollTop'), 0);
+    await evaluate("document.querySelector('[data-project-card=\"project-23\"] > button').click()");
+    await waitFor("document.body.textContent.includes('项目 / 返回列表')");
+    await click('项目 / 返回列表');
+    await waitFor("document.querySelector('[data-project-list-scroll]').getBoundingClientRect().height > 0");
+    assert.equal(await count(), 48);
+    assert.equal(await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop"), scrollTop, 'returning from details preserves browsing position');
+
+    await typeInto('[aria-label="搜索项目"]', '独特的客户研究');
+    await waitFor("document.querySelectorAll('[data-project-card]').length === 1");
+    assert.equal(await evaluate("document.querySelector('[data-project-card]').dataset.projectCard"), 'project-74', 'search includes unloaded project descriptions');
+    await typeInto('[aria-label="搜索项目"]', '');
+    await waitFor("document.querySelectorAll('[data-project-card]').length === 24");
+    await evaluate("const select = document.querySelector('[aria-label=\"项目排序\"]'); select.value = 'created'; select.dispatchEvent(new Event('change', { bubbles: true }))");
+    await waitFor("document.querySelector('[data-project-card]').dataset.projectCard === 'project-74'");
+    while (await count() < 75) {
+      const previous = await count();
+      await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop = 100000");
+      await waitFor(`document.querySelectorAll('[data-project-card]').length > ${previous}`);
+    }
+    await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop = 100000");
+    await waitFor("document.body.textContent.includes('已显示全部 75 个项目')");
+    assert.equal(await evaluate('document.scrollingElement.scrollTop'), 0);
+
+    win.setContentSize(600, 760);
+    await evaluate("document.querySelector('[data-project-list-scroll]').scrollTop = 0");
+    await waitFor("document.querySelector('[data-project-list-scroll]').clientWidth < 650");
+    assert.equal(await evaluate("(() => { const node = document.querySelector('[data-project-list-scroll]'); return node.scrollWidth <= node.clientWidth; })()"), true, 'no horizontal overflow on narrow windows');
+    await paint();
+    await writeFile(path.join(tmpdir(), 'moss-project-list-narrow.png'), (await win.webContents.capturePage()).toPNG());
+    await click('使用表单创建');
+    await waitFor("document.body.textContent.includes('新建项目')");
+    await evaluate("document.querySelector('[aria-label=\"使用探索图标\"]').click()");
+    await evaluate("document.querySelector('[aria-label=\"蓝色图标\"]').click()");
+    await typeInto('input[placeholder="项目"]', '有图标的项目');
+    await paint();
+    await writeFile(path.join(tmpdir(), 'moss-project-icon-manual.png'), (await win.webContents.capturePage()).toPNG());
+    await click('创建项目');
+    await waitFor("document.querySelector('h1')?.textContent === '有图标的项目'");
+    assert.equal(await evaluate("document.querySelector('[data-project-icon]').dataset.projectIcon"), 'rocket');
+    assert.equal(await evaluate("document.querySelector('[data-project-icon]').dataset.iconColor"), 'blue');
+    await evaluate("document.querySelector('[aria-label=\"在右侧展开项目配置\"]').click()");
+    await click('恢复默认');
+    await click('保存配置');
+    await waitFor("document.querySelector('[data-project-icon]').dataset.projectIcon === 'folder'");
+    await click('项目 / 返回列表');
+    await waitFor("document.querySelector('[data-project-card=\"created-manual\"] [data-project-icon]')?.dataset.projectIcon === 'folder'");
+    assert.deepEqual(rendererErrors, [], 'page should render without runtime errors');
+    console.log('PROJECT_LIST_UI_PASSED: composer, IME, cards, scrolling, search, sort, generated/default icons, manual icon selection and editing');
+  } catch (error) { console.error(error); process.exitCode = 1; }
+  finally { clearTimeout(watchdog); win?.destroy(); await server?.close(); await rm(temp, { recursive: true, force: true }); app.exit(process.exitCode || 0); }
+});

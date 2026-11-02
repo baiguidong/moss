@@ -7,6 +7,7 @@ import { createProjectAssetService } from '../src/project-assets.mjs';
 import { createDesktopDataPaths } from '../src/desktop-data-layout.mjs';
 import { normalizeProjectId } from '../src/shared/project-normalization.mjs';
 import { runInKeyedQueue } from '../src/shared/keyed-queue.mjs';
+import { DEFAULT_PROJECT_ICON } from '../../shared/project-icon.mjs';
 import { readJsonFileAsync, writeJsonFileAtomicAsync } from '../src/shared/json-files.mjs';
 
 const roots: string[] = [];
@@ -24,6 +25,21 @@ async function fixture() {
   await store.writeProject({ id: 'project', name: 'Original', instructions: '', updatedAt: 1, createdAt: 1 });
   return { root, store, projectRecordQueues };
 }
+
+it('keeps generated and selected project icons across reads and unrelated updates', async () => {
+  const { root, store } = await fixture();
+  expect((await store.readProject('project')).icon).toEqual(DEFAULT_PROJECT_ICON);
+  const icon = { kind: 'generated', paths: ['M3 20 12 4l9 16Z', 'M8 14h8'], color: 'violet' };
+  await store.mutateProjectRecord('project', project => ({ ...project, icon }));
+  const reopened = createProjectStore({ DESKTOP_DATA_PATHS: createDesktopDataPaths(root), projectRecordQueues: new Map(), mossLog() {} });
+  await reopened.mutateProjectRecord('project', project => ({ ...project, name: 'Renamed' }));
+  expect(reopened.readProjectSync('project').icon).toEqual(icon);
+  const builtin = { kind: 'builtin', name: 'book', color: 'blue' };
+  await reopened.mutateProjectRecord('project', project => ({ ...project, icon: builtin }));
+  expect((await store.readProject('project')).icon).toEqual(builtin);
+  await reopened.mutateProjectRecord('project', project => ({ ...project, icon: null }));
+  expect((await store.readProject('project')).icon).toEqual(DEFAULT_PROJECT_ICON);
+});
 
 it('preserves the project layout, memory and finalizer files across store instances', async () => {
   const { root, store } = await fixture();

@@ -1,7 +1,8 @@
 # Moss Server Docker Compose deployment
 
-This deployment runs Moss Server and its HTTPS Nginx proxy in containers. Moss
-Server uses the host Docker socket to launch isolated session-runtime containers.
+This deployment runs the Moss control plane, personal-computer gateway, and HTTPS
+Nginx proxy in containers. Agent execution runs on Desktop or a persistent personal
+cloud computer. Only the gateway has the host Docker socket; Server has no Runner.
 The deployment also creates the external `moss-integrations` network so managed
 dependencies can use stable container DNS names instead of host IP addresses.
 
@@ -25,8 +26,8 @@ sudo env MOSS_PUBLIC_HOST=你的服务器IP bash install-moss-server.sh
 ```
 
 脚本下载并校验同一 Release 的 `moss-server-compose-0.0.16.tar.gz`，安装到
-`/data/moss-server`。发布包把 Server、WebUI、runtime 三个镜像固定为 `0.0.16`，
-默认启用 cloud WebUI。首次部署完成后访问 `https://服务器IP:8444/` 登录，
+`/data/moss-server`。新版发布包只需 Server 与 WebUI 两个 Moss 镜像。以下统一入口说明适用于控制平面改造后的源码构建或对应新版发布包；旧 `0.0.16` 包仍采用旧架构。
+新版默认启用个人云电脑，首次部署完成后访问 `https://服务器IP/` 登录，
 在登录页下载同版本 macOS 或 Windows 桌面客户端；管理页位于
 `https://服务器IP/admin/`。Desktop 是 Release 中的 `.dmg` 和 `.exe` 安装包，
 不是 Linux Docker 镜像。默认自签名证书需要在客户端信任，初始管理员账号
@@ -47,7 +48,7 @@ gh run list --workflow build-release.yml
 ./install.sh
 ```
 
-默认地址 `https://10.0.1.181:8444/`，Server 管理入口仍为 `/admin/`。用户以现有 Server 账号登录，首次创建个人 Linux 容器，后续复用同一容器。一个用户的全部聊天、项目和终端共享环境，退出浏览器不会停止它。Server 的现有会话能力保持不变。
+统一入口为 `https://10.0.1.181/`，Server 管理入口为 `/admin/`；旧 `:8444` 入口重定向到统一地址。用户以现有 Server 账号登录，首次创建个人 Linux 容器，后续复用同一容器。一个用户的全部聊天、项目和终端共享环境，退出浏览器不会停止它。Server 仅提供控制平面；旧 `/api/v1/sessions` 和 `/api/v1/cron` 返回 HTTP 410，历史读取改为 `/api/v1/archives/sessions`。
 
 Server 安装始终启用多用户 cloud WebUI。升级旧版时，脚本会将旧固定用户 `webui` 容器提交为本地 `moss-legacy-webui:<container-id>` 镜像，记录原 HOME 卷名到 `legacy-webui-backups.tsv`，随后移除旧容器及两个旧代理容器。旧 HOME 卷不会删除。新的多用户环境独立创建，旧数据不会自动导入；需要迁移时先保留备份镜像和 HOME 卷。
 
@@ -84,7 +85,7 @@ sudo env MOSS_PUBLIC_HOST=10.0.1.181 bash install.sh
 默认生成自签名证书，客户端需信任证书或换成正式证书。
 
 `install.sh` 默认使用 `.env.example` 中的发布镜像；可用 `MOSS_SERVER_IMAGE`
-和 `MOSS_RUNTIME_IMAGE` 指定版本。要部署尚未发布的源码改动，使用下面的源码构建入口。
+和 `MOSS_WEB_IMAGE` 指定版本。要部署尚未发布的源码改动，使用下面的源码构建入口。
 
 ### 在 Linux 自动编译当前源码
 
@@ -103,10 +104,10 @@ MOSS_INTEGRATION_NETWORK=moss-integrations \
 bash deploy/server/local.sh /data/moss-server
 ```
 
-该入口只自动编译 Server；会话运行时使用 `MOSS_RUNTIME_IMAGE` 配置的镜像，
+该入口自动编译 Server；个人云电脑使用 `MOSS_WEB_IMAGE` 配置的镜像，
 MySQL、Nginx 和 Silo 使用各自配置的镜像，缺失时自动拉取。
 后续更新源码后，在仓库重新执行同一命令即可构建并部署，保留安装目录中的配置、凭证和数据。
-需要镜像代理时，设置下文的 `MOSS_SERVER_BASE_IMAGE` 和 `MOSS_DOCKER_CLI_IMAGE`，
+需要镜像代理时，设置下文的 `MOSS_SERVER_BASE_IMAGE`，
 后续构建继续使用相同设置。
 
 源码构建默认根据 Docker daemon 的架构选择 AMD64 或 ARM64。
@@ -126,7 +127,7 @@ This builds the Server image for the Docker daemon's architecture (ARM64 or AMD6
 extracts the normal deployment package into the separate directory, and starts
 MySQL, Server, Nginx, and private Silo. The first run defaults to
 `https://127.0.0.1:8443`, Compose project `moss-local`, and its own integration
-network. Set `MOSS_RUNTIME_IMAGE` to reuse an available session-runtime image.
+network. Set `MOSS_WEB_IMAGE` to select the personal-computer gateway image.
 Missing dependency images are pulled; the Server image is always compiled locally.
 Rerun the command to rebuild and apply source changes while preserving data and
 configuration. `MOSS_LOCAL_ARCH` and `MOSS_LOCAL_SERVER_IMAGE` override the build
@@ -136,14 +137,12 @@ If Docker Hub is unavailable, select reachable base-image mirrors for the build:
 
 ```bash
 MOSS_SERVER_BASE_IMAGE=docker.m.daocloud.io/library/debian:bookworm-slim \
-MOSS_DOCKER_CLI_IMAGE=docker.m.daocloud.io/library/docker:29.2.1-cli \
 bash deploy/server/local.sh "$HOME/moss-server-local"
 ```
 
-Use the same overrides when rebuilding. The image includes a current Docker CLI
-compatible with Docker Engine 29; the host still provides the Docker daemon.
-Dependency image references and runtime configuration are preserved in the
-installation directory.
+Use the same overrides when rebuilding. The Server image does not include Docker
+CLI. The gateway talks to the host Docker daemon to manage persistent personal
+computers. Dependency image references are preserved in the installation directory.
 
 To verify a disposable local installation through HTTPS, including a 2 GiB
 multipart transfer, user isolation, Host pause/resume and checksum verification:
@@ -223,8 +222,8 @@ The first run creates `.env`, `/data/moss-server/server.json`, and a self-signed
 certificate under `tls/`. The initial login is `admin` / `password`; change it
 after signing in.
 
-Existing `/data/moss-server/settings.json` values are preserved and merged with
-the published session-runtime image setting.
+Existing `/data/moss-server/settings.json` values are preserved. The retired
+`serverRuntime.dockerImage` setting is no longer used by the control plane.
 
 ## Image versions and upgrades
 
@@ -233,12 +232,11 @@ source for Moss image versions:
 
 ```text
 MOSS_SERVER_IMAGE=ghcr.io/baiguidong/moss-server:latest
-MOSS_RUNTIME_IMAGE=ghcr.io/baiguidong/moss-runtime:latest
 MOSS_WEB_IMAGE=ghcr.io/baiguidong/moss-webui:latest
 ```
 
-All three Moss images are published with the same release tag. The official
-one-click package pins all three images to its version. Use one of these commands
+The Server and WebUI images use the same release tag. The official
+one-click package pins both images to its version. Use one of these commands
 to update the image references in `.env`, pull them, and apply the upgrade:
 
 ```bash
@@ -249,12 +247,8 @@ sudo /data/moss-server/upgrade.sh 1.2.3
 Running `upgrade.sh` without an argument keeps the configured references and
 pulls them again, which is useful when both already use `latest`.
 
-The start script pulls the configured images, recreates the Server container when its image
-changes, and copies `MOSS_RUNTIME_IMAGE` into
-`/data/moss-server/settings.json` for newly created session containers. Do not
-edit `serverRuntime.dockerImage` by hand; it is derived from `.env` on every
-start. Existing running session containers retain the image with which they were
-created.
+The start script updates the control plane and gateway images. It never creates
+a container for an Agent session.
 Existing personal WebUI computers keep their installed program until an
 administrator upgrades each idle environment with `webui.sh upgrade`.
 
@@ -266,15 +260,16 @@ to `configure.sh` before starting.
 
 `/data/moss-server` is bind-mounted into the Server container at the same
 absolute path. It contains `server.json`, `settings.json`, the MySQL data directory,
-logs, session workspaces, user profiles, transcripts, and the image-owned
-`container-app` payload. The Docker socket is mounted separately at
-`/var/run/docker.sock`.
+logs, legacy archives, user profiles, and the image-owned `container-app` payload.
+Server has no Docker socket and does not resume legacy tasks. Cloud computers retain
+separate HOME volumes and container IDs across program upgrades. Back up both the
+control-plane database and the gateway's environment registry, together with each
+personal computer's system/data snapshots.
 
-The runtime image is not mounted as a volume. For each new Agent session, Server
-reads `serverRuntime.dockerImage`, invokes `docker run` through the host socket,
-and bind-mounts only that session's workspace, profile, transcript, manifest,
-and the read-only session runner from `container-app`. Existing sessions keep
-their originally recorded runtime image.
+Desktop selects “此电脑 / 我的云电脑” at the application level. WebUI uses its current
+personal computer and hides the mode selector. `/api/v1/hosts` supplies registration,
+status and controlled commands; enterprise execution policies and usage are reported
+by the Host. Chat contents and workspace files remain on that Host.
 
 Docker image layers and Docker-managed named volumes are stored under the Docker
 daemon's data root, not under `/data/moss-server`. The bundled

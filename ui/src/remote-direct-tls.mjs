@@ -208,7 +208,8 @@ export function createRemoteDirectTrustStore({
     return bundlePath;
   };
 
-  const load = async () => {
+  let loading;
+  const loadRecords = async () => {
     records.clear();
     await fsp.mkdir(trustDir, { recursive: true, mode: 0o700 });
     await fsp.chmod(trustDir, 0o700);
@@ -246,6 +247,9 @@ export function createRemoteDirectTrustStore({
     }
     return rebuildBundle();
   };
+  // Login and background polling can start together. Load persisted pins once,
+  // before either observes a certificate, and never clear pins mid-login.
+  const load = () => loading ??= loadRecords().catch(error => { loading = null; throw error; });
 
   const removeRecord = async (origin) => {
     const existing = records.get(origin);
@@ -294,7 +298,8 @@ export function createRemoteDirectTrustStore({
     };
   };
 
-  const ensureTrusted = async (serverUrl) => {
+  const ensureTrusted = async (serverUrl, { confirmUntrustedCertificate } = {}) => {
+    await load();
     const target = parseServerOrigin(serverUrl);
     if (!target.secure) return { ...target, pinned: false, caBundlePath: null };
     const observed = await probeCertificate(target.origin);
@@ -310,6 +315,14 @@ export function createRemoteDirectTrustStore({
       return { ...observed, pinned: false, caBundlePath: process.env.NODE_EXTRA_CA_CERTS || null };
     }
     if (!existing) {
+      if (!observed.trustedBySystem && confirmUntrustedCertificate) {
+        const accepted = await confirmUntrustedCertificate({ origin: target.origin, newFingerprint: observed.fingerprint256 });
+        if (!accepted) throw new Error('认证已取消。');
+        const checked = await probeCertificate(target.origin);
+        if (normalizeFingerprint(checked.fingerprint256) !== normalizeFingerprint(observed.fingerprint256)) {
+          throw new Error('服务器证书在确认期间发生变化，已拒绝连接。请核对服务器后重试。');
+        }
+      }
       return persistObservedCertificate(target, observed);
     }
     const caBundlePath = await rebuildBundle();
@@ -321,6 +334,7 @@ export function createRemoteDirectTrustStore({
   };
 
   const acceptChangedCertificate = async (serverUrl, expectedFingerprint) => {
+    await load();
     const target = parseServerOrigin(serverUrl);
     if (!target.secure) return { ...target, pinned: false, caBundlePath: null };
 
@@ -359,7 +373,7 @@ export function createRemoteDirectTrustStore({
     );
     const hostRecords = [...records.values()].filter((record) => record.hostname === hostname);
     if (
-      request?.verificationResult === 'net::ERR_CERT_AUTHORITY_INVALID'
+      ['net::ERR_CERT_AUTHORITY_INVALID', 'net::OK'].includes(request?.verificationResult)
       && hostRecords.some((record) => normalizeFingerprint(record.fingerprint256) === fingerprint)
     ) {
       callback(0);
@@ -382,9 +396,10 @@ export async function ensureRemoteDirectTrustWithConfirmation({
   trustStore,
   serverUrl,
   confirmCertificateChange,
+  confirmUntrustedCertificate,
 }) {
   try {
-    return await trustStore.ensureTrusted(serverUrl);
+    return await trustStore.ensureTrusted(serverUrl, { confirmUntrustedCertificate });
   } catch (error) {
     if (!isRemoteCertificateChangedError(error)) throw error;
     const accepted = await confirmCertificateChange({

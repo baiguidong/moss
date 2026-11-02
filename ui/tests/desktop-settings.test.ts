@@ -112,7 +112,7 @@ describe('desktop settings', () => {
       model: text.model, fastModel: text.fastModel, url: text.baseUrl,
       apiKey: text.apiKey, maxTurns: text.maxTurns,
     });
-    store.save({ ...store.value, remoteDirectApiKey: 'hydrated-server-login-key' });
+    store.save({ ...store.value, enterpriseAccountApiKey: 'hydrated-server-login-key' });
     expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text).toEqual(text);
 
     const updatedText = { ...text, model: 'edited-model', apiKey: 'edited-key' };
@@ -242,7 +242,7 @@ describe('desktop settings', () => {
       inboxSessionIds: {},
     });
     expect(normalizeDesktopSettings({
-      remoteEnabled: true,
+      enterpriseEnabled: true,
       agentMail: {
         enabled: true,
         sessionMode: 'new',
@@ -267,15 +267,15 @@ describe('desktop settings', () => {
       },
     });
     expect(normalizeDesktopSettings({
-      remoteEnabled: false,
+      enterpriseEnabled: false,
       agentMail: { enabled: true },
     }).agentMail.enabled).toBe(false);
     expect(normalizeDesktopSettings(
-      { remoteEnabled: false },
-      { remoteEnabled: true, agentMail: { enabled: true } },
+      { enterpriseEnabled: false },
+      { enterpriseEnabled: true, agentMail: { enabled: true } },
     ).agentMail.enabled).toBe(false);
     expect(normalizeDesktopSettings({
-      remoteEnabled: true,
+      enterpriseEnabled: true,
       agentMail: { sessionMode: 'unsupported' },
     }).agentMail.sessionMode).toBe('fixed');
   });
@@ -298,7 +298,7 @@ describe('desktop settings', () => {
           model: 'image-a',
         },
       },
-      remoteDirect: {
+      enterpriseAccount: {
         serverUrl: 'https://remote.example.com/',
         credentialMode: 'api-key',
         apiKey: 'remote-secret',
@@ -317,12 +317,12 @@ describe('desktop settings', () => {
       image: {
         model: 'image-a',
       },
-      remoteDirectServerUrl: 'https://remote.example.com/',
-      remoteDirectCredentialMode: 'api-key',
-      remoteDirectApiKey: 'remote-secret',
+      enterpriseAccountServerUrl: 'https://remote.example.com/',
+      enterpriseAccountCredentialMode: 'api-key',
+      enterpriseAccountApiKey: 'remote-secret',
     });
-    expect(settings).not.toHaveProperty('remoteDirectProfileMode');
-    expect(settings.remoteDirect).not.toHaveProperty('profileMode');
+    expect(settings).not.toHaveProperty('enterpriseAccountProfileMode');
+    expect(settings.enterpriseAccount).not.toHaveProperty('profileMode');
     expect(settings.image).toEqual({ model: 'image-a' });
   });
 
@@ -493,14 +493,14 @@ describe('desktop settings', () => {
     const store = createDesktopSettingsStore({ settingsPath });
     store.save({
       ...store.value,
-      remoteDirectServerUrl: 'https://moss.example.com',
-      remoteDirectCredentialMode: 'api-key',
-      remoteDirectUserName: 'Moss User',
-      remoteDirectApiKey: 'moss_sk_remote.secret',
-      remoteDirectUserPassword: 'remote-password',
-      remoteDirectProfileMode: 'session',
-      remoteDirect: {
-        ...store.value.remoteDirect,
+      enterpriseAccountServerUrl: 'https://moss.example.com',
+      enterpriseAccountCredentialMode: 'api-key',
+      enterpriseAccountUserName: 'Moss User',
+      enterpriseAccountApiKey: 'moss_sk_remote.secret',
+      enterpriseAccountUserPassword: 'remote-password',
+      enterpriseAccountProfileMode: 'session',
+      enterpriseAccount: {
+        ...store.value.enterpriseAccount,
         profileMode: 'session',
       },
     });
@@ -509,11 +509,11 @@ describe('desktop settings', () => {
     expect(serialized).not.toContain('moss_sk_remote.secret');
     expect(serialized).not.toContain('remote-password');
     const persisted = JSON.parse(serialized);
-    expect(persisted.remoteDirect).not.toHaveProperty('apiKey');
-    expect(persisted.remoteDirect).not.toHaveProperty('userPassword');
-    expect(persisted.remoteDirect).not.toHaveProperty('profileMode');
-    expect(persisted.remoteDirect.userName).toBe('Moss User');
-    expect(persisted).not.toHaveProperty('remoteDirectProfileMode');
+    expect(persisted.enterpriseAccount).not.toHaveProperty('apiKey');
+    expect(persisted.enterpriseAccount).not.toHaveProperty('userPassword');
+    expect(persisted.enterpriseAccount).not.toHaveProperty('profileMode');
+    expect(persisted.enterpriseAccount.userName).toBe('Moss User');
+    expect(persisted).not.toHaveProperty('enterpriseAccountProfileMode');
   });
 
   it('persists a text model API URL ending in /v1', () => {
@@ -672,4 +672,14 @@ describe('desktop settings', () => {
     expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).webSearch)
       .toEqual({ mode: 'auto' });
   });
+});
+
+
+it('reads legacy enterprise credentials without creating or moving any sessions', () => {
+  const settings = normalizeDesktopSettings({ remoteEnabled: true, remoteDirect: { serverUrl: 'https://enterprise.test', userEmail: 'alice', apiKey: 'key' } });
+  expect(settings.enterpriseEnabled).toBe(true);
+  expect(settings.enterpriseAccountServerUrl).toBe('https://enterprise.test');
+  expect(settings.enterpriseAccountApiKey).toBe('key');
+  expect(settings.remoteDirect).toBeUndefined();
+  expect(settings.remoteEnabled).toBeUndefined();
 });

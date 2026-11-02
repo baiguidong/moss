@@ -42,6 +42,7 @@ function calculateStreaks(activeDays, today) {
 }
 
 export function createUsageLedger(db) {
+  let reporter;
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +146,7 @@ export function createUsageLedger(db) {
   `);
 
   return {
+    setReporter(value) { reporter = value; },
     record(event, context = {}) {
       const eventId = typeof event?.eventId === 'string' ? event.eventId.trim() : '';
       const sessionId = typeof context?.sessionId === 'string' ? context.sessionId.trim() : '';
@@ -166,6 +168,7 @@ export function createUsageLedger(db) {
         toTokenCount(event.cacheReadTokens),
         toTokenCount(event.cacheWriteTokens),
       );
+      if (result.changes === 1) reporter?.(eventId);
       return result.changes === 1;
     },
 

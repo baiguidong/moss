@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { decodeWorkspaceTextBuffer, getWorkspaceFilePreviewInfo, isBinaryPreviewContentType, isLikelyBinaryBuffer, MAX_WORKSPACE_TEXT_PREVIEW_BYTES } from '../../shared/workspace-preview.mjs';
 import { ensureInsideRoot, getSessionWorkspaceRoot, isAccessibleDirectory } from './workspace-paths.mjs';
 import { toRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
-import { downloadRemoteDirectWorkspaceFile } from './remote-direct-client.mjs';
+import { downloadRemoteDirectWorkspaceFile } from './enterprise-account-client.mjs';
 
 export function createWorkspaceFileService({
   MAX_IMAGE_BASE64_BYTES,
@@ -17,7 +17,7 @@ export function createWorkspaceFileService({
   fetchRemoteDirectWorkspaceDir,
   fetchRemoteDirectWorkspaceFile,
   mossLog,
-  resolveRemoteDirectConnection,
+  resolveEnterpriseAccountConnection,
   uploadRemoteDirectWorkspaceData,
   uploadRemoteDirectWorkspaceFile,
   writeRemoteDirectWorkspaceFile,
@@ -88,7 +88,7 @@ export function createWorkspaceFileService({
   }
 
   async function fetchRemoteWorkspaceProtocolContent(sessionRecord, filePath, request) {
-    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+    const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
     const range = request.headers.get('range');
     return fetchRemoteDirectWorkspaceContent({
       serverUrl,
@@ -162,7 +162,7 @@ export function createWorkspaceFileService({
   async function listDirectoryEntries(sessionRecord, dirPath) {
     if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
       try {
-        const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+        const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
         return await fetchRemoteDirectWorkspaceDir({
           serverUrl,
           authToken,
@@ -237,7 +237,7 @@ export function createWorkspaceFileService({
   async function readWorkspaceFile(sessionRecord, filePath) {
     if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.underlyingSessionId) {
       try {
-        const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+        const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
         const remoteFile = await fetchRemoteDirectWorkspaceFile({
           serverUrl,
           authToken,

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import electron from 'electron';
 import { createDesktopDataPaths } from '../../src/desktop-data-layout.mjs';
 
@@ -11,6 +12,7 @@ assert.equal(await readFile(path.join(root, '.main-services-smoke'), 'utf8'), 'i
 const phase = process.env.MOSS_MAIN_SMOKE_PHASE;
 assert.ok(['prepare', 'restart'].includes(phase));
 const { app, ipcMain } = electron;
+app.setAppPath(fileURLToPath(new URL('../..', import.meta.url)));
 const handlers = new Map();
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (name, callback) => { handlers.set(name, callback); return handle(name, callback); };

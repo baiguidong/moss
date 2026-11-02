@@ -137,4 +137,28 @@ describe('remote direct authentication window', () => {
     expect(window.isDestroyed()).toBe(true);
     expect(userClosed).toBe(false);
   });
+
+  it('reports a failed form navigation and closes the unusable window', async () => {
+    const window = fakeWindow();
+    let failure = '';
+    await openRemoteDirectAuthorizationWindow({ createWindow: () => window,
+      authorizationUrl: AUTHORIZATION_URL, redirectUri: REDIRECT_URI,
+      onFailure: (error: Error) => { failure = error.message; },
+    });
+    window.webContents.emit('did-navigate', {}, 'https://moss.example.com/api/v1/auth/oauth/authorize', 401);
+    expect(window.isDestroyed()).toBe(false);
+    expect(failure).toBe('');
+    window.webContents.emit('did-navigate', {}, AUTHORIZATION_URL, 503);
+    expect(failure).toContain('HTTP 503');
+    expect(window.isDestroyed()).toBe(true);
+  });
+
+  it('times out loading the form instead of leaving an invisible login pending', async () => {
+    const window = fakeWindow();
+    window.loadURL = () => new Promise(() => {});
+    await expect(openRemoteDirectAuthorizationWindow({ createWindow: () => window,
+      authorizationUrl: AUTHORIZATION_URL, redirectUri: REDIRECT_URI, loadTimeoutMs: 10,
+    })).rejects.toThrow('登录页面加载超时');
+    expect(window.isDestroyed()).toBe(true);
+  });
 });

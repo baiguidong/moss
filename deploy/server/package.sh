@@ -50,10 +50,9 @@ done
 if [[ -n "${MOSS_RELEASE_IMAGE_PREFIX:-}" ]]; then
   [[ "$MOSS_RELEASE_IMAGE_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ && "$MOSS_RELEASE_IMAGE_PREFIX" != */ ]] \
     || die 'MOSS_RELEASE_IMAGE_PREFIX must be a registry/owner prefix'
-  for name in server runtime webui; do
+  for name in server webui; do
     case "$name" in
       server) key=MOSS_SERVER_IMAGE ;;
-      runtime) key=MOSS_RUNTIME_IMAGE ;;
       webui) key=MOSS_WEB_IMAGE ;;
     esac
     sed -i.bak "s|^${key}=.*|${key}=${MOSS_RELEASE_IMAGE_PREFIX}/moss-${name}:${VERSION}|" "$tmp_dir/$PACKAGE_ROOT/.env.example"

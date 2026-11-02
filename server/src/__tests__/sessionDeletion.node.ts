@@ -1,10 +1,10 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -34,7 +34,6 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
   for (const [id, userId, orgId] of [
     ['alice-session', alice.userId, alice.orgId],
     ['bob-session', bob.id, alice.orgId],
@@ -48,33 +47,23 @@ try {
     })
   }
   await writeFile(join(root, 'keep.txt'), 'workspace data')
-  const moss = startServer(config, runtime, auth)
+  const moss = startServer(config, serverTestModels(db), auth)
   try {
     const baseUrl = `http://127.0.0.1:${await moss.ready}/api/v1/sessions`
     const aliceHeaders = { authorization: `Bearer ${aliceLogin.access_token}` }
     const bobHeaders = { authorization: `Bearer ${bobLogin.access_token}` }
     assert.equal((await fetch(`${baseUrl}/bob-session`, { method: 'DELETE' })).status, 401)
-    assert.equal((await fetch(`${baseUrl}/alice-session`, { method: 'DELETE', headers: bobHeaders })).status, 403)
-    assert.equal((await fetch(`${baseUrl}/other-org-session`, { method: 'DELETE', headers: aliceHeaders })).status, 403)
-    assert.ok(await store.getSession('alice-session'))
-    assert.ok(await store.getSession('other-org-session'))
-
-    const response = await fetch(`${baseUrl}/bob-session`, { method: 'DELETE', headers: bobHeaders })
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { ok: true })
-    assert.equal(await store.getSession('bob-session'), null)
-    const deleted = (await store.listSessionRecords({ orgId: alice.orgId, userId: bob.id, includeDeleted: true }))[0]
-    assert.equal(deleted?.desiredState, 'terminated')
-    assert.ok(deleted?.deletedAt)
-    assert.equal((await store.listSessionsToRecover()).some(session => session.sessionId === 'bob-session'), false)
-    const listed = await fetch(baseUrl, { headers: bobHeaders })
-    assert.deepEqual(await listed.json(), { sessions: [] })
-    for (const suffix of ['', '/context', '/resume']) {
-      assert.equal((await fetch(`${baseUrl}/bob-session${suffix}`, {
-        method: suffix === '/resume' ? 'POST' : 'GET', headers: bobHeaders,
-      })).status, 404)
+    for (const headers of [aliceHeaders, bobHeaders]) {
+      const response = await fetch(`${baseUrl}/bob-session`, { method: 'DELETE', headers })
+      assert.equal(response.status, 410)
+      assert.equal((await response.json()).code, 'SERVER_EXECUTION_RETIRED')
     }
-    assert.equal((await fetch(`${baseUrl}/bob-session`, { method: 'DELETE', headers: bobHeaders })).status, 200)
+    assert.ok(await store.getSession('bob-session'))
+    const archiveUrl = baseUrl.replace('/sessions', '/archives/sessions')
+    assert.equal((await fetch(`${archiveUrl}/bob-session`, { headers: bobHeaders })).status, 200)
+    assert.equal((await fetch(`${archiveUrl}/alice-session`, { headers: bobHeaders })).status, 403)
+    assert.equal((await fetch(`${archiveUrl}/other-org-session`, { headers: aliceHeaders })).status, 403)
+    assert.equal((await store.getSession('bob-session'))?.currentAttemptId, null)
     assert.equal(await readFile(join(root, 'keep.txt'), 'utf8'), 'workspace data')
   } finally {
     await moss.stop()

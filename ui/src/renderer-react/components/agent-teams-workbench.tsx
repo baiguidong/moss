@@ -3,21 +3,26 @@
 import * as React from "react";
 import {
   ArrowLeft,
+  Bot,
   CheckCircle2,
   Circle,
   Clock3,
   History,
   LoaderCircle,
+  List,
+  LayoutGrid,
   MessageSquareText,
   Network,
   Pause,
   Play,
   RotateCcw,
-  Users,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getTeamMembersAtFrame, MEMBER_ACTIVITY_LABELS, tasksForMember, messagesForMember, memberMatchesQuery, type TeamMemberView } from "@/lib/agent-team-members";
+import { AgentBrowserControls } from "./agent-browser-controls";
+import { AgentTeamInspector } from "./agent-team-inspector";
 import type {
   AgentTeamRun,
   AgentTeamsSessionState,
@@ -59,7 +64,8 @@ export function AgentTeamsStatus({
   if (!run || !snapshot) return null;
   const counts = snapshot.taskCounts;
   const unclaimedCount = snapshot.tasks.filter((task) => task.status === "pending" && !task.owner).length;
-  const activeMembers = snapshot.team.members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.status === "running").length;
+  const members = getTeamMembersAtFrame(run);
+  const activeMembers = members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.activity === "working").length;
   const live = run.status === "live";
   const phaseLabel = PHASE_LABELS[snapshot.phase] ?? snapshot.phase;
   const statusLabel = live ? "运行中" : run.status === "completed" ? "已完成" : "已中断";
@@ -68,9 +74,9 @@ export function AgentTeamsStatus({
     <button
       type="button"
       onClick={onOpen}
-      className="group inline-flex h-7 max-w-[min(42vw,240px)] shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/25 px-2 text-left transition-colors hover:border-primary/40 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group inline-flex h-7 max-w-[220px] shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/25 px-2 text-left transition-colors hover:border-primary/40 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`Agent Teams ${statusLabel}，${phaseLabel}，完成 ${counts.completed}/${counts.total}`}
-      title={`Agent Teams · ${statusLabel} · ${phaseLabel} · 完成 ${counts.completed}/${counts.total} · 进行中 ${counts.inProgress} · 待领 ${unclaimedCount} · ${live ? `跟随 ${activeMembers} 位成员` : `${snapshot.team.members.length} 位成员`}`}
+      title={`Agent Teams · ${statusLabel} · ${phaseLabel} · 完成 ${counts.completed}/${counts.total} · 进行中 ${counts.inProgress} · 待领 ${unclaimedCount} · ${live ? `跟随 ${activeMembers} 位成员` : `${members.length} 位成员`}`}
     >
       <span className="relative flex h-4 w-4 shrink-0 items-center justify-center text-primary">
         <Network className="h-3.5 w-3.5" />
@@ -80,8 +86,8 @@ export function AgentTeamsStatus({
           live && "animate-pulse",
         )} />
       </span>
-      <span className="truncate text-[11px] font-medium text-foreground">{statusLabel}</span>
-      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{counts.completed}/{counts.total}</span>
+      <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground">Team {members.length}</span>
+      <span className="hidden truncate text-[10px] text-muted-foreground @[640px]/session-header:inline">{statusLabel} · {counts.completed}/{counts.total}</span>
     </button>
   );
 }
@@ -154,6 +160,55 @@ function TaskNode({ task, selected, onSelect }: { task: PositionedTask; selected
       </span>
     </button>
   );
+}
+
+function TeamMemberCard({ member, snapshot, selected, onSelect }: {
+  member: TeamMemberView; snapshot: AgentTeamSnapshot; selected: boolean; onSelect: () => void;
+}) {
+  const tasks = tasksForMember(snapshot.tasks, member);
+  const task = tasks.find(item => item.status === "in_progress") ?? tasks.find(item => item.status === "pending") ?? tasks.at(-1);
+  const completed = tasks.filter(item => item.status === "completed").length;
+  const recent = messagesForMember(snapshot.messages, member).filter(message => message.from === member.name || message.from === member.agentId).at(-1);
+  const working = member.activity === "working";
+  const color = working ? "text-sky-600 dark:text-sky-400" : member.activity === "completed" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground";
+  return <button type="button" onClick={onSelect} aria-label={`查看成员 ${member.name}，${MEMBER_ACTIVITY_LABELS[member.activity]}`} aria-pressed={selected}
+    className={cn("flex min-h-40 min-w-0 flex-col rounded-xl border bg-background p-3.5 text-left transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", selected ? "border-primary ring-2 ring-primary/10" : "border-border/70")}>
+    <span className="flex w-full min-w-0 items-center gap-2"><span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60", color)}><Bot className="h-4 w-4" /></span><span className="min-w-0 flex-1 truncate text-xs font-semibold" title={member.name}>{member.name}</span><span className={cn("shrink-0 text-[10px]", color)}>{MEMBER_ACTIVITY_LABELS[member.activity]}</span></span>
+    <span className="mt-3 line-clamp-2 min-h-8 text-xs font-medium leading-4">{task ? task.status === "in_progress" && task.activeForm ? task.activeForm : task.subject : "暂无已分配任务"}</span>
+    <span className="mt-2 line-clamp-2 min-h-8 text-[11px] leading-4 text-muted-foreground">{recent ? `最近回复 · ${recent.summary || recent.text}` : task?.description || (member.present ? "等待任务分配" : "已退出团队")}</span>
+    <span className="mt-auto flex w-full items-center justify-between gap-2 border-t border-border/40 pt-2 text-[10px] text-muted-foreground"><span>{completed}/{tasks.length} 任务完成</span><span>{recent ? `最近 ${new Date(recent.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : member.joinedAt ? `加入 ${new Date(member.joinedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : member.agentType || "Agent"}</span></span>
+  </button>;
+}
+
+function TeamTopology({ snapshot, members, selectedId, onSelect }: {
+  snapshot: AgentTeamSnapshot; members: TeamMemberView[]; selectedId: string | null; onSelect: (id: string) => void;
+}) {
+  const [query, setQuery] = React.useState("");
+  const [status, setStatus] = React.useState("all");
+  const [collapsed, setCollapsed] = React.useState(false);
+  const [limit, setLimit] = React.useState(24);
+  React.useEffect(() => setLimit(24), [query, status, collapsed]);
+  const lead = members.find(member => member.agentId === snapshot.team.leadAgentId);
+  const workers = members.filter(member => member.agentId !== snapshot.team.leadAgentId);
+  const completed = workers.filter(member => member.activity === "completed").length;
+  const active = members.filter(member => member.activity === "working").length;
+  const filtered = workers.filter(member => memberMatchesQuery(member, snapshot, query)
+    && (status === "all" || (status === "attention" ? ["departed", "interrupted"].includes(member.activity) : member.activity === status))
+    && !(collapsed && status === "all" && !query.trim() && member.activity === "completed"));
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <AgentBrowserControls query={query} onQuery={setQuery} status={status} onStatus={setStatus} options={[{ value: "all", label: "全部状态" }, { value: "working", label: "工作中" }, { value: "completed", label: "任务完成" }, { value: "idle", label: "空闲" }, { value: "attention", label: "中断 / 退出" }]} count={filtered.length} completedCount={completed} collapsed={collapsed} onCollapse={() => setCollapsed(value => !value)} />
+    <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 p-4">
+      <div className="mx-auto max-w-6xl">
+        {lead ? <button type="button" onClick={() => onSelect(lead.agentId)} aria-label="查看 Team Lead" className={cn("mb-4 flex w-full items-center gap-3 rounded-xl border bg-primary/5 p-3 text-left hover:border-primary/50", selectedId === lead.agentId ? "border-primary" : "border-primary/20")}><Bot className="h-5 w-5 shrink-0 text-primary" /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold">{lead.name}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">Team Lead · 协调 {workers.length} 位成员</span></span><span className="text-[10px] text-muted-foreground">{active} 个正在工作</span></button> : null}
+        <div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground"><span>团队成员 · 点击查看任务与执行记录</span><span>任务分配 {snapshot.tasks.filter(task => task.owner).length}/{snapshot.tasks.length}</span></div>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,230px),1fr))] gap-3">
+          {filtered.slice(0, limit).map(member => <TeamMemberCard key={member.agentId} member={member} snapshot={snapshot} selected={selectedId === member.agentId} onSelect={() => onSelect(member.agentId)} />)}
+        </div>
+        {filtered.length > limit ? <button type="button" onClick={() => setLimit(value => value + 24)} className="mt-4 w-full rounded-lg border py-2 text-xs hover:bg-muted">再显示 {Math.min(24, filtered.length - limit)} 位成员（剩余 {filtered.length - limit} 位）</button> : null}
+        {filtered.length === 0 ? <div className="rounded-xl border border-dashed p-8 text-center text-xs text-muted-foreground">{collapsed && completed > 0 && !query && status === "all" ? "已完成成员已收起，可在上方展开" : workers.length === 0 ? "此时尚无子 Agent 加入团队" : "没有匹配的 Agent"}</div> : null}
+      </div>
+    </div>
+  </div>;
 }
 
 function TaskDag({ snapshot }: { snapshot: AgentTeamSnapshot }) {
@@ -265,6 +320,8 @@ export function AgentTeamsWorkbench({
   onClose: () => void;
 }) {
   const [selectedId, setSelectedId] = React.useState(() => latestRun(state)?.incarnationId ?? "");
+  const [selectedMember, setSelectedMember] = React.useState<{ runId: string; id: string | null } | null>(null);
+  const [teamView, setTeamView] = React.useState<"topology" | "tasks">("topology");
   const run = state.teams.find((team) => team.incarnationId === selectedId) ?? latestRun(state);
   const [frame, setFrame] = React.useState(() => Math.max(0, (run?.snapshots.length ?? 1) - 1));
   const [playing, setPlaying] = React.useState(false);
@@ -301,7 +358,11 @@ export function AgentTeamsWorkbench({
   const counts = snapshot.taskCounts;
   const unclaimedCount = snapshot.tasks.filter((task) => task.status === "pending" && !task.owner).length;
   const endAt = run.status === "live" ? now : Date.parse(run.deletedAt || run.updatedAt) || now;
-  const activeMembers = snapshot.team.members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.status === "running").length;
+  const members = getTeamMembersAtFrame(run, frame);
+  const selected = selectedMember?.runId === run.incarnationId ? members.find(member => member.agentId === selectedMember.id) ?? null : null;
+  const panelOpen = selectedMember?.runId === run.incarnationId && (selectedMember.id === null || Boolean(selected));
+  const selectMember = (id: string | null) => setSelectedMember({ runId: run.incarnationId, id });
+  const activeMembers = members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.activity === "working").length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -318,6 +379,27 @@ export function AgentTeamsWorkbench({
               </span>
             </div>
           </div>
+          <div className="flex items-center rounded-lg border border-border/70 bg-muted/25 p-0.5" role="tablist" aria-label="Agent Teams 展示方式">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={teamView === "topology"}
+              onClick={() => setTeamView("topology")}
+              className={cn("flex h-7 items-center gap-1 rounded-md px-2 text-[10px] transition-colors", teamView === "topology" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />成员拓扑
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={teamView === "tasks"}
+              onClick={() => setTeamView("tasks")}
+              className={cn("flex h-7 items-center gap-1 rounded-md px-2 text-[10px] transition-colors", teamView === "tasks" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            >
+              <List className="h-3.5 w-3.5" />任务依赖
+            </button>
+          </div>
+          <button type="button" onClick={() => selectMember(null)} className="flex h-7 items-center gap-1 rounded-md px-2 text-[11px] text-muted-foreground hover:bg-muted" aria-label="查看团队协作消息"><MessageSquareText className="h-3.5 w-3.5" />协作消息</button>
           {state.teams.length > 1 ? (
             <select
               value={run.incarnationId}
@@ -343,9 +425,9 @@ export function AgentTeamsWorkbench({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className="flex min-h-[360px] min-w-0 flex-1 flex-col border-b border-border/70 lg:border-b-0 lg:border-r">
-          <TaskDag snapshot={snapshot} />
+      <div className="@container/agent-workspace relative flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {teamView === "topology" ? <TeamTopology key={run.incarnationId} snapshot={snapshot} members={members} selectedId={selected?.agentId ?? null} onSelect={selectMember} /> : <TaskDag snapshot={snapshot} />}
           {run.status !== "live" && run.snapshots.length > 1 ? (
             <div className="flex h-11 shrink-0 items-center border-t border-border/70 px-3">
               <div className="flex w-full items-center gap-2 lg:w-1/2 lg:max-w-[560px]">
@@ -384,33 +466,7 @@ export function AgentTeamsWorkbench({
             </div>
           ) : null}
         </div>
-        <aside className="flex max-h-64 w-full shrink-0 flex-col lg:max-h-none lg:w-64">
-          <div className="border-b border-border/60 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5" />成员</div>
-            <div className="mt-2 space-y-1.5">
-              {snapshot.team.members.map((member) => (
-                <div key={member.agentId} className="flex items-center gap-2 text-[11px]">
-                  <span className={cn("h-2 w-2 rounded-full", member.status === "running" ? "bg-emerald-500" : "bg-muted-foreground/40")} />
-                  <span className="min-w-0 flex-1 truncate text-foreground">{member.name}</span>
-                  <span className="truncate text-muted-foreground">{member.agentType || "agent"}</span>
-                </div>
-              ))}
-            </div>
-            {run.status === "live" ? <div className="mt-2 text-[10px] text-muted-foreground">正在跟随 {activeMembers} 个成员的实时进度</div> : null}
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-            <div className="flex items-center gap-2 text-xs font-medium"><MessageSquareText className="h-3.5 w-3.5" />协作消息</div>
-            <div className="mt-2 space-y-3">
-              {snapshot.messages.slice(-30).reverse().map((message) => (
-                <div key={message.id} className="text-[11px] leading-4">
-                  <div className="flex items-center gap-1 text-muted-foreground"><span className="text-foreground">{message.from}</span><span>→</span><span>{message.to}</span></div>
-                  <p className="mt-0.5 break-words text-muted-foreground">{message.summary || message.text}</p>
-                </div>
-              ))}
-              {snapshot.messages.length === 0 ? <p className="text-[11px] text-muted-foreground">暂无协作消息</p> : null}
-            </div>
-          </div>
-        </aside>
+        {panelOpen ? <AgentTeamInspector key={`${run.incarnationId}:${selected?.agentId ?? "team"}`} sessionId={state.sessionId} run={run} snapshot={snapshot} frame={Math.min(frame, run.snapshots.length - 1)} member={selected} members={members} onSelect={selectMember} onClose={() => setSelectedMember(null)} /> : null}
       </div>
 
     </div>

@@ -35,7 +35,9 @@ export async function openRemoteDirectAuthorizationWindow({
   redirectUri,
   signal,
   onUserClosed,
+  onFailure,
   certificateVerifyProc,
+  loadTimeoutMs = 20_000,
 }) {
   if (typeof createWindow !== 'function') {
     throw new Error('Unable to create the Moss authentication window.');
@@ -106,6 +108,22 @@ export async function openRemoteDirectAuthorizationWindow({
   authWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   authWindow.webContents.on('will-navigate', guardNavigation);
   authWindow.webContents.on('will-redirect', guardNavigation);
+  authWindow.webContents.on('did-navigate', (_event, _url, statusCode) => {
+    // Wrong credentials render a retryable form with HTTP 401. Keep that page
+    // visible so the user can correct the password without starting over.
+    const target = parseUrl(_url);
+    if (statusCode === 401 && target?.origin === authorization.origin && target.pathname === AUTHORIZE_PATH) return;
+    if (statusCode >= 400) {
+      onFailure?.(new Error(`登录页面加载失败（HTTP ${statusCode}），请检查服务器后重试。`));
+      close();
+    }
+  });
+  authWindow.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+    if (isMainFrame && code !== -3 && !closedByClient) {
+      onFailure?.(new Error(`登录页面加载失败：${description}`));
+      close();
+    }
+  });
   authWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
   authSession.setPermissionRequestHandler(
     (_webContents, _permission, callbackHandler) => callbackHandler(false),
@@ -117,7 +135,7 @@ export async function openRemoteDirectAuthorizationWindow({
   authSession.on('will-download', blockDownload);
 
   authWindow.once('ready-to-show', () => {
-    if (!authWindow.isDestroyed()) authWindow.show();
+    if (!authWindow.isDestroyed()) { authWindow.show(); authWindow.focus?.(); }
   });
   authWindow.on('closed', () => {
     signal?.removeEventListener('abort', handleAbort);
@@ -143,12 +161,17 @@ export async function openRemoteDirectAuthorizationWindow({
   }
   signal?.addEventListener('abort', handleAbort, { once: true });
 
+  let loadTimeout;
   try {
-    await authWindow.loadURL(authorization.href);
+    await Promise.race([
+      authWindow.loadURL(authorization.href),
+      new Promise((_, reject) => { loadTimeout = setTimeout(() => reject(new Error('登录页面加载超时，请检查网络后重试。')), loadTimeoutMs); }),
+    ]);
     if (!authWindow.isDestroyed() && !authWindow.isVisible?.()) authWindow.show();
+    if (!authWindow.isDestroyed()) authWindow.focus?.();
     return close;
   } catch (error) {
     close();
     throw error;
-  }
+  } finally { clearTimeout(loadTimeout); }
 }

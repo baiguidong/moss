@@ -127,6 +127,17 @@ export function createMossClient(transport, platform = {}) {
   listProjects: (payload) => transport.invoke('project:list', payload),
   getProject: (payload) => transport.invoke('project:get', payload),
   createProject: (payload) => transport.invoke('project:create', payload),
+  projectCreation: {
+    getDraft: (payload) => transport.invoke('project-creation:get-draft', payload),
+    confirm: (payload) => transport.invoke('project-creation:confirm', payload),
+    updateDraft: (payload) => transport.invoke('project-creation:update-draft', payload),
+    cancel: (payload) => transport.invoke('project-creation:cancel', payload),
+    onChanged: (callback) => {
+      const handler = (payload) => callback(payload);
+      transport.on('project-creation:draft-changed', handler);
+      return () => transport.off('project-creation:draft-changed', handler);
+    },
+  },
   updateProject: (payload) => transport.invoke('project:update', payload),
   archiveProject: (payload) => transport.invoke('project:archive', payload),
   listProjectAssets: (payload) => transport.invoke('project:list-assets', payload),
@@ -168,6 +179,7 @@ export function createMossClient(transport, platform = {}) {
   createWorkspace: (payload) => transport.invoke('agent:create-workspace', payload),
   touchWorkspace: (payload) => transport.invoke('agent:touch-workspace', payload),
   agentTeams: {
+    memberHistory: (payload) => transport.invoke('agent-teams:member-history', payload),
     list: (payload) => transport.invoke('agent-teams:list', payload),
     refresh: (payload) => transport.invoke('agent-teams:refresh', payload),
     onChanged: (callback) => {

@@ -45,7 +45,7 @@ test('loads runtime file URLs in Node and retries after a failed Windows runtime
     const getBundledResourceDir = () => '/bundled/skills';
     const MOSS_REPO_SKILLS_DIR = '/bundled/skills';
     const appMcpHost = null;
-    const remoteDirectNetFetch = () => {};
+    const enterpriseAccountNetFetch = () => {};
     const logs = [];
     const mossLog = (...args) => logs.push(args);
     ${main.slice(start, end)}
@@ -69,7 +69,7 @@ test('loads runtime file URLs in Node and retries after a failed Windows runtime
       assert.equal(first, second);
       assert.equal(typeof first.ClaudeSession, 'function');
       assert.equal(first.configEnableCount, 1);
-      assert.equal(first.fetchImplementation, remoteDirectNetFetch);
+      assert.equal(first.fetchImplementation, enterpriseAccountNetFetch);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
