@@ -32,6 +32,8 @@ export function AgentExecutionRecord({ requestKey, load, live = false }: {
   }, [requestKey, load, live, retry]);
   const history = data?.key === requestKey ? data.history : null;
   const messages = React.useMemo(() => buildWorkerRenderMessagesFromSubagentEvents(history ?? []), [history]);
+  const timestamps = (history ?? []).map(event => typeof event.timestamp === "number" ? event.timestamp : Date.parse(event.timestamp)).filter(Number.isFinite);
+  const spanSeconds = timestamps.length > 1 ? Math.max(0, Math.round((timestamps.reduce((a, b) => Math.max(a, b), -Infinity) - timestamps.reduce((a, b) => Math.min(a, b), Infinity)) / 1000)) : null;
   const results = new Map(messages.filter(message => message.type === "tool_result").map(message => [message.toolUseId, message]));
   const output = messages.filter(message => message.type === "assistant_text").at(-1);
   const records = messages.filter(message => mode === "tools" ? message.type === "tool_use"
@@ -41,6 +43,7 @@ export function AgentExecutionRecord({ requestKey, load, live = false }: {
       {[["output", "最新输出"], ["tools", "工具调用"], ["all", "全部记录"]].map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={mode === value} onClick={() => setMode(value)} className={cn("rounded-md px-2 py-1.5 text-[11px]", mode === value ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted")}>{label}</button>)}
       <button type="button" className="ml-auto rounded-md p-1.5 hover:bg-muted" aria-label="刷新执行记录" onClick={() => setRetry(value => value + 1)}><RefreshCw className="h-3.5 w-3.5" /></button>
     </div>
+    {history?.length ? <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground"><span>{messages.filter(message => message.type === "tool_use").length} 次工具调用</span>{spanSeconds !== null ? <span title="首条到末条保留记录之间的时间，包含等待时间">记录跨度 {Math.floor(spanSeconds / 60)} 分 {spanSeconds % 60} 秒</span> : null}</div> : null}
     {error ? <div role="alert" className="break-words rounded-lg bg-destructive/5 p-3 text-xs text-destructive">{error}<button type="button" onClick={() => setRetry(value => value + 1)} className="ml-2 underline">重试</button></div> : null}
     {!history && !error ? <div role="status" className="flex items-center gap-2 py-6 text-xs text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在读取执行记录…</div>
       : history?.length === 0 ? <p className="py-4 text-xs text-muted-foreground">暂无可用的执行记录</p>
