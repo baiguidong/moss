@@ -123,72 +123,19 @@ bun run dist:mac
 并在生成安装包后实际运行 Node、Python、Sharp 和 ripgrep，检查连接器目录与
 其他必需资源。当前桌面安装包不执行 macOS/Windows 代码签名或 macOS 公证。
 
-### 3. Docker Runtime 镜像
+### 3. Server 控制平面与个人云电脑
 
-服务端使用 Docker session runtime 镜像。镜像只提供 Ubuntu/Node/工具链环境；实际 Agent 入口由 Server 镜像复制到持久化目录，再只读挂载到会话容器中执行：
+Desktop 提供“此电脑”和“我的云电脑”两种入口。云电脑是当前账号的持久环境；浏览器 WebUI 只操作自己的电脑，不展示模式选择。
 
-```bash
-node $MOSS_SERVER_HOME/container-app/bin/moss-session-runner.mjs --stdio <manifest>
-```
+Moss Server 负责企业账号、电脑登记与授权、策略、任务配置、协作邮箱归属和用量汇总。模型、工具、文件、终端、App 和定时任务都在 Desktop 或云电脑 Host 上执行。Server 镜像不再包含 Agent Runner，也不挂载 Docker socket。
 
-先准备 server runtime 产物：
+Compose 部署使用 `MOSS_SERVER_IMAGE` 与 `MOSS_WEB_IMAGE`；云电脑 Controller 保留管理持久环境的能力。统一 HTTPS 地址的 `/` 是云电脑，`/admin/` 是企业管理，`/api/v1/` 是控制平面。旧 8444 入口重定向到统一入口。
 
 ```bash
 bun run server:prepare
 ```
 
-本地 Apple Silicon / Linux arm64 测试构建：
-
-```bash
-bun run docker:build-runtime -- --tag moss-runtime:latest --platform linux/arm64 --load
-```
-
-多平台发布镜像：
-
-```bash
-bun run docker:build-runtime -- \
-  --tag your-registry/moss-runtime:latest \
-  --platform linux/arm64,linux/amd64 \
-  --push
-```
-
-默认基础镜像是 `public.ecr.aws/ubuntu/ubuntu:24.04`。如需切换镜像源：
-
-```bash
-bun run docker:build-runtime -- \
-  --tag moss-runtime:latest \
-  --platform linux/arm64 \
-  --base-image ubuntu:24.04 \
-  --load
-```
-
-Compose 部署只需修改 `/data/moss-server/.env` 中的 `MOSS_RUNTIME_IMAGE`；每次启动会把它同步到 `/data/moss-server/settings.json` 的派生字段 `serverRuntime.dockerImage`。新建 session 时，Server 读取该字段作为 Docker 运行时镜像：
-
-```json
-{
-  "serverRuntime": {
-    "dockerImage": "moss-runtime:latest"
-  }
-}
-```
-
-`$MOSS_SERVER_HOME/server.json` 只保留 server 启动、存储、session 数量上限、
-Docker network/label/stop timeout 等基础配置。
-
-服务端只支持 Docker 会话运行时。所有服务端 session 都使用
-`var/lib/profiles/users/<userId>` 下的用户级 Memory；
-同一用户的会话共享 Memory，但 workspace、transcript 和运行状态仍按 session
-隔离。Docker 模式只挂载当前 session 目录和该用户的共享 profile 目录；显式传入
-的外部 `cwd` 会作为工作目录单独挂载。
-
-基础验证：
-
-```bash
-docker run --rm moss-runtime:latest node --version
-docker run --rm moss-runtime:latest rg --version
-docker run --rm moss-runtime:latest node -e "const sharp=require('sharp'); console.log(sharp.versions.sharp, sharp.versions.vips)"
-docker run --rm --user 501:20 -e HOME=/tmp/moss-home moss-runtime:latest whoami
-```
+部署与升级步骤见 [部署说明](deploy/server/README.md)。企业管理的“工作电脑”页提供暂停、恢复、撤销、任务取消、邮箱电脑和定时任务配置。离线电脑显示等待，控制结果以实际电脑回执为准。历史会话不自动迁移，现有电脑文件保留。
 
 ## 核心功能
 

@@ -6603,6 +6603,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
   applyAccess: async access => {
     hostAccessDenied = access.allowed ? null : access.reason || '企业访问已停用';
     saveHostControlState();
+    if (!hostAccessDenied && !hostControlPaused) { startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); }
     if (hostAccessDenied) {
       for (const record of sessions.values()) if ((isWebHost || hostControl.ownsSession(record.id)) && (record.busy || record.preparingPrompt)) {
         await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id }).catch(() => {});
@@ -6611,7 +6612,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
   },
   execute: async command => {
     if (command.action === 'pause') { hostControlPaused = true; saveHostControlState(); return; }
-    if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); return; }
+    if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); return; }
     if (command.action === 'cancel-session') {
       const record = getSessionRecord(command.input.sessionId);
       if (!record || !hostControl.ownsSession(record.id)) throw new Error('会话不属于当前企业账号');
