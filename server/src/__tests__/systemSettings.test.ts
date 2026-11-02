@@ -112,9 +112,7 @@ describe('system settings model layout', () => {
     })
     expect(mod.getSystemSettings()).not.toHaveProperty('skillStore')
     expect(mod.getSystemSettings().image).toEqual({ model: 'image-initial' })
-    expect(mod.getSystemSettings().serverRuntime).toEqual({
-      dockerImage: 'moss-runtime:latest',
-    })
+    expect(mod.getSystemSettings().serverRuntime).toBeUndefined()
     expect(mod.getSystemSettings().openIM).toEqual({
       enabled: true,
       instanceId: 'default',
@@ -197,9 +195,7 @@ describe('system settings model layout', () => {
     expect(persisted.apiKey).toBeUndefined()
     expect(persisted.image).toBeUndefined()
     expect(persisted.skillStore).toBeUndefined()
-    expect(persisted.serverRuntime).toEqual({
-      dockerImage: 'moss-runtime:latest',
-    })
+    expect(persisted.serverRuntime).toBeUndefined()
     expect(persisted.openIM).toMatchObject({
       enabled: false,
       apiUrl: 'https://im.updated.test/api',

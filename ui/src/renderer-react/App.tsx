@@ -513,7 +513,7 @@ export default function App() {
   const [serverAuthState, setServerAuthState] = React.useState<'idle' | 'loading' | 'success'>('idle');
   const [serverAuthError, setServerAuthError] = React.useState('');
   React.useEffect(() => {
-    if (window.mossWeb || !desktopSettings?.remoteDirectServerUrl || !desktopSettings.remoteDirectApiKey) {
+    if (window.mossWeb || !desktopSettings?.enterpriseAccountServerUrl || !desktopSettings.enterpriseAccountApiKey) {
       setServerAccount(null);
       return;
     }
@@ -524,12 +524,12 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [desktopSettings?.remoteDirectServerUrl, desktopSettings?.remoteDirectApiKey, desktopSettings?.remoteDirectUserEmail, desktopSettings?.remoteDirectUserPassword]);
+  }, [desktopSettings?.enterpriseAccountServerUrl, desktopSettings?.enterpriseAccountApiKey, desktopSettings?.enterpriseAccountUserEmail, desktopSettings?.enterpriseAccountUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
   const agentMailEnabled =
-    desktopSettings?.remoteEnabled === true && desktopSettings?.agentMail?.enabled === true;
+    desktopSettings?.enterpriseEnabled === true && desktopSettings?.agentMail?.enabled === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
@@ -1199,12 +1199,12 @@ export default function App() {
   }, [refreshSummaries, openSession]);
 
   React.useEffect(() => {
-    if (!desktopSettings?.remoteEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
+    if (!desktopSettings?.enterpriseEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
     const timer = window.setInterval(() => {
       void window.agentDesktop.syncRemoteSessions().catch(() => {});
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [desktopSettings?.remoteEnabled, desktopSettings?.agentMode, activeView]);
+  }, [desktopSettings?.enterpriseEnabled, desktopSettings?.agentMode, activeView]);
 
   React.useEffect(() => {
     if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
@@ -2548,7 +2548,7 @@ export default function App() {
   }, [applyDesktopSettings]);
 
   const handleServerLogin = React.useCallback(async () => {
-    const serverUrl = desktopSettings?.remoteDirectServerUrl?.trim() || '';
+    const serverUrl = desktopSettings?.enterpriseAccountServerUrl?.trim() || '';
     if (!serverUrl) {
       setSettingsInitialSection('basic-info');
       setSettingsInitialAppId(null);
@@ -2563,8 +2563,8 @@ export default function App() {
       const next = await window.agentDesktop.authenticateRemoteServer({ serverUrl });
       applyDesktopSettings(next);
       setServerAccount(
-        next.remoteDirectUserName || next.remoteDirectUserEmail
-          ? { userName: next.remoteDirectUserName || '', userEmail: next.remoteDirectUserEmail || '' }
+        next.enterpriseAccountUserName || next.enterpriseAccountUserEmail
+          ? { userName: next.enterpriseAccountUserName || '', userEmail: next.enterpriseAccountUserEmail || '' }
           : null,
       );
       setServerAuthState('success');
@@ -2574,7 +2574,7 @@ export default function App() {
       const message = cleanIpcErrorMessage(error);
       if (message !== '认证已取消。') setServerAuthError(message);
     }
-  }, [applyDesktopSettings, desktopSettings?.remoteDirectServerUrl, serverAuthState, showPermissionNotice]);
+  }, [applyDesktopSettings, desktopSettings?.enterpriseAccountServerUrl, serverAuthState, showPermissionNotice]);
 
   const handleServerLogout = React.useCallback(async () => {
     if (serverAuthState === 'loading') return;
@@ -2582,10 +2582,10 @@ export default function App() {
     setServerAuthError('');
     try {
       const next = await window.agentDesktop.updateSettings({
-        remoteDirectApiKey: '',
-        remoteDirectUserName: '',
-        remoteDirectUserEmail: '',
-        remoteDirectUserPassword: '',
+        enterpriseAccountApiKey: '',
+        enterpriseAccountUserName: '',
+        enterpriseAccountUserEmail: '',
+        enterpriseAccountUserPassword: '',
       });
       applyDesktopSettings(next);
       setServerAccount(null);
@@ -2792,9 +2792,9 @@ export default function App() {
             collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
             localEnabled={true}
-            remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+            enterpriseEnabled={desktopSettings?.enterpriseEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
-            serverConfigured={Boolean(desktopSettings?.remoteDirectServerUrl?.trim())}
+            serverConfigured={Boolean(desktopSettings?.enterpriseAccountServerUrl?.trim())}
             serverAuthState={serverAuthState}
             serverAuthError={serverAuthError}
             onLoginServer={handleServerLogin}
@@ -2955,7 +2955,7 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={false}
+                enterpriseEnabled={false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
                 onEditQueuedMessage={handleEditQueuedMessage}
@@ -3021,15 +3021,15 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={false}
+                enterpriseEnabled={false}
                 newSessionMode={newSessionAgentMode}
                 onNewSessionModeChange={draftProject ? undefined : handleNewSessionModeChange}
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView cloudEnabled={desktopSettings?.remoteEnabled === true && Boolean(desktopSettings.remoteDirectServerUrl?.trim())} />
+            <OverviewView cloudEnabled={desktopSettings?.enterpriseEnabled === true && Boolean(desktopSettings.enterpriseAccountServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
-            <CronView onOpenSession={handleSelectSession} remoteEnabled={false} />
+            <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}

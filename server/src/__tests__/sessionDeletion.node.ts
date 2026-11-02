@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -35,7 +34,6 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
   for (const [id, userId, orgId] of [
     ['alice-session', alice.userId, alice.orgId],
     ['bob-session', bob.id, alice.orgId],

@@ -4,14 +4,15 @@ import os from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 
 export function createHostControlClient({ home, db, kind, environmentId, version, getConnection, fetchImpl = fetch,
-  getStatus, execute, applyPolicy, onAccountChange = () => {}, onError = () => {} }) {
+  getStatus, execute, applyPolicy, applyAccess = () => {}, applyAutomation = async () => [], onAccountChange = () => {}, onError = () => {} }) {
   const filename = path.join(home, 'control-plane.json');
   let state;
   try { state = JSON.parse(fs.readFileSync(filename, 'utf8')); } catch { state = {}; }
   state.deviceId ||= randomUUID();
   state.accounts ||= {};
   db.exec('CREATE TABLE IF NOT EXISTS control_usage_owners (event_id TEXT PRIMARY KEY, account_key TEXT NOT NULL)');
-  let activeAccount;
+  db.exec('CREATE TABLE IF NOT EXISTS control_session_owners (session_id TEXT PRIMARY KEY, account_key TEXT NOT NULL)');
+  let activeAccount, activeConnection;
   let generation = 0;
   const epoch = randomUUID();
   let timer, busy, stopped = false;
@@ -23,34 +24,45 @@ export function createHostControlClient({ home, db, kind, environmentId, version
   save();
   async function tick() {
     const current = generation;
-    const connection = await getConnection();
+    let connection;
+    try { connection = await getConnection(); }
+    catch (error) {
+      if (current === generation && !stopped && [401, 403].includes(error.status)) await applyAccess({ allowed: false, reason: '企业账号已停用或凭据失效。' });
+      throw error;
+    }
     if (current !== generation || stopped) return;
-    if (!connection?.serverUrl) { activeAccount = null; onAccountChange(null); return; }
+    if (!connection?.serverUrl) { activeAccount = null; activeConnection = null; onAccountChange(null); return; }
     const accountKey = createHash('sha256').update(`${connection.serverUrl}:${connection.accountId || ''}`).digest('hex');
     activeAccount = accountKey;
+    activeConnection = connection;
     onAccountChange(accountKey);
     const account = state.accounts[accountKey] ||= {};
-    if (kind === 'cloud' && !account.historyAssigned) {
-      db.prepare('INSERT OR IGNORE INTO control_usage_owners(event_id,account_key) SELECT event_id,? FROM usage_events').run(accountKey);
-      account.historyAssigned = true; save();
-    }
     const id = environmentId || `desktop-${state.deviceId}-${accountKey.slice(0, 12)}`;
     const request = async (route, body, token = account.token) => {
       const response = await fetchImpl(`${connection.serverUrl}${route}`, { method: 'POST', redirect: 'error',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...connection.headers },
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
       if (!response.ok) {
-        if ([401, 403].includes(response.status)) { delete account.token; save(); }
+        if (current === generation && !stopped && [401, 403].includes(response.status)) {
+          await applyAccess({ allowed: false, reason: '企业身份验证失败，请重新登录或联系管理员。' });
+          if (response.status === 401) { delete account.token; save(); }
+        }
         throw new Error(`控制平面请求失败 (${response.status})`);
       }
       return response.json();
     };
-    const heartbeat = { id, epoch, kind, name: kind === 'cloud' ? '我的云电脑' : os.hostname(), platform: process.platform, version, status: getStatus() };
+    const heartbeat = { id, epoch, kind, name: kind === 'cloud' ? '我的云电脑' : os.hostname(), platform: process.platform, version, status: await getStatus(), schedules: account.scheduleReports || [] };
     if (!account.token && !connection.authToken) return;
     const response = await request(account.token ? '/api/v1/hosts/heartbeat' : '/api/v1/hosts/enroll', heartbeat, account.token || connection.authToken);
     if (response.token) { account.token = response.token; save(); }
     if (current !== generation || stopped) return;
-    await applyPolicy(response.policy);
+    await applyAccess(response.access || { allowed: true });
+    if (response.access?.allowed === false || current !== generation || stopped) return;
+    await applyPolicy(response.policy, response.modelConfig || null);
+    if (current !== generation || stopped) return;
+    account.mailbox = response.mailbox === true;
+    account.scheduleReports = await applyAutomation(response.schedules || [], accountKey, () => current === generation && !stopped);
+    save();
     // Persist an acknowledgement before sending it. Network failures retry the
     // acknowledgement, never the already accepted command's side effect.
     account.acks ||= [];
@@ -79,10 +91,22 @@ export function createHostControlClient({ home, db, kind, environmentId, version
     return busy ||= tick().catch(onError).finally(() => { busy = null; });
   };
   return {
+    attributeSession(sessionId) {
+      if (activeAccount) db.prepare('INSERT OR IGNORE INTO control_session_owners(session_id,account_key) VALUES(?,?)').run(sessionId, activeAccount);
+    },
+    ownsSession(sessionId) {
+      return Boolean(activeAccount && db.prepare('SELECT 1 FROM control_session_owners WHERE session_id=? AND account_key=?').get(sessionId, activeAccount));
+    },
+    getServiceConnection() {
+      const token = activeAccount && state.accounts[activeAccount]?.token;
+      return token && activeConnection ? { ...activeConnection, authToken: token, deviceToken: token } : null;
+    },
+    getDeviceCredential() { return activeAccount ? state.accounts[activeAccount]?.token : null; },
+    isMailboxAssigned() { return activeAccount && state.accounts[activeAccount]?.mailbox === true; },
     attributeUsage(eventId) {
       if (activeAccount) db.prepare('INSERT OR IGNORE INTO control_usage_owners(event_id,account_key) VALUES(?,?)').run(eventId, activeAccount);
     },
-    invalidate() { generation++; activeAccount = null; onAccountChange(null); if (busy) void busy.finally(refresh); },
+    invalidate() { generation++; activeAccount = null; activeConnection = null; onAccountChange(null); if (busy) void busy.finally(refresh); },
     start() { stopped = false; void refresh(); timer ||= setInterval(() => void refresh(), 30000); timer.unref?.(); },
     refresh,
     async stop() { stopped = true; clearInterval(timer); timer = null; await busy; },

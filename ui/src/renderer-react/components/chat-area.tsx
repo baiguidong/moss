@@ -504,7 +504,7 @@ export function ComposerPanel({
   readOnlyReason,
   composerIntent,
   hasActiveSession,
-  remoteEnabled = false,
+  enterpriseEnabled = false,
   newSessionMode = 'local',
   sessionAgentMode = 'local',
   onNewSessionModeChange,
@@ -543,7 +543,7 @@ export function ComposerPanel({
   readOnlyReason?: string | null;
   composerIntent: ComposerIntent;
   hasActiveSession: boolean;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   sessionAgentMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
@@ -1682,7 +1682,7 @@ function HomeLanding({
   onClearAssistant,
   onOpenExpertHub,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   onOpenAgentManager,
@@ -1710,7 +1710,7 @@ function HomeLanding({
   onClearAssistant?: () => void;
   onOpenExpertHub?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onOpenAgentManager?: () => void;
@@ -1731,7 +1731,7 @@ function HomeLanding({
         loading={loading}
         composerIntent={composerIntent}
         hasActiveSession={false}
-        remoteEnabled={remoteEnabled}
+        enterpriseEnabled={enterpriseEnabled}
         newSessionMode={newSessionMode}
         sessionAgentMode={newSessionMode}
         onNewSessionModeChange={onNewSessionModeChange}
@@ -2323,7 +2323,7 @@ export function ChatArea({
   onOpenExpertHub,
   onOpenAgentManager,
   onOpenSkillHub,
-  remoteEnabled,
+  enterpriseEnabled,
   newSessionMode,
   onNewSessionModeChange,
   queuedMessages,
@@ -2404,7 +2404,7 @@ export function ChatArea({
   onOpenExpertHub?: () => void;
   onOpenAgentManager?: () => void;
   onOpenSkillHub?: () => void;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   newSessionMode?: 'local' | 'remote-direct';
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   queuedMessages?: QueuedMessage[];
@@ -2610,7 +2610,7 @@ export function ChatArea({
           onOpenExpertHub={onOpenExpertHub}
           onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
-          remoteEnabled={remoteEnabled}
+          enterpriseEnabled={enterpriseEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
         />

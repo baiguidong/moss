@@ -22,7 +22,6 @@ import { AuthRepository } from '../model/repositories/auth.js'
 import { CloudStorageRepository } from '../model/repositories/cloudStorage.js'
 import { RagflowRepository } from '../model/repositories/ragflow.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import type { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import { startStandaloneDirectConnectServer } from '../startStandaloneServer.js'
 import { openTestDatabase, testDatabaseConfig } from './databaseTestUtils.js'
@@ -82,7 +81,7 @@ await test('initialization is repeatable; unrecognized databases are preserved a
     assert.equal(
       (await fresh.prepare('SELECT version FROM model_schema WHERE id=1').get())
         ?.version,
-      6,
+      7,
     )
     await fresh.prepare('UPDATE model_schema SET version=99 WHERE id=1').run()
     await assert.rejects(
@@ -497,6 +496,6 @@ test('version 4 upgrades to persistent shares and initialization remains repeata
     assert.deepEqual(await db.prepare('SELECT id FROM cloud_shares').all(), [])
     await requireSchema(db)
     await initializeDatabase(db)
-    assert.equal((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())!.version, 6)
+    assert.equal((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())!.version, 7)
   } finally { await db.close() }
 })

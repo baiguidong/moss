@@ -1,3 +1,4 @@
+import { createManagedSchedules } from './host/managed-schedules.mjs';
 import { createHostControlClient } from './host/control-plane-client.mjs';
 import { createCloudComputerWindow } from './cloud-computer-window.mjs';
 import { resolveAppSettingsView, validateAppViewState } from './apps/app-view-binding.mjs';
@@ -52,8 +53,6 @@ import { isAppResourceUri } from './shared/app-resource-uri.mjs';
 import { createLocalFilesProtocolDefinition, createRuntimesProtocolDefinition, createLocalAppHostHandlers } from './apps/app-local-host.mjs';
 import { createAppArtifactProtocolDefinition, createAppArtifactUrls } from './apps/app-artifacts.mjs';
 import { AppMcpHost, createMcpProtocolDefinition, MCP_PROTOCOL, MCP_METHODS } from './apps/app-mcp-host.mjs';
-import { registerRemoteCronIpc } from './remote-cron-ipc.mjs';
-import { requestRemoteCron } from './remote-direct-client.mjs';
 import electron from 'electron';
 import { hostIpc as ipcMain } from './host/ipc.mjs';
 import { createSessionInteractions } from './session-interactions.mjs';
@@ -89,7 +88,6 @@ import { createAppTestingHost, TESTING_PROTOCOL } from './app-testing/host.mjs';
 import { isExpectedControllerCancellation } from './app-testing/controller-cancellation.mjs';
 import { configureSelfTestTarget, selfTestRendererUrl, resizeTestWindow } from './app-testing/instance.mjs';
 import { restoreTestController, closeTestController, validateTestToolUse, TEST_APP_ID, TEST_BROWSER_SERVER, TEST_ALLOWED_TOOLS, TEST_SYSTEM_PROMPT, TEST_REVIEW_ALLOWED_TOOLS, TEST_REVIEW_SYSTEM_PROMPT } from './app-testing/browser.mjs';
-import { synchronizeRemoteSkills } from './remote-profile-sync.mjs';
 import {
   installRemoteWorkspaceProtocol,
   REMOTE_WORKSPACE_SCHEME,
@@ -341,10 +339,10 @@ import { createDesktopStateStore } from './desktop-state-store.mjs';
 import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import {
-  createRemoteDirectClient,
+  createEnterpriseAccountClient,
   parseRemoteDirectServerInput,
-  setRemoteDirectFetchImplementation,
-} from './remote-direct-client.mjs';
+  setEnterpriseFetchImplementation,
+} from './enterprise-account-client.mjs';
 import {
   applyRemoteSessionHistoryTitle,
   applyRemoteSessionTitle,
@@ -477,15 +475,15 @@ const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
 const REMOTE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), `moss-remote-preview-${process.pid}`);
 const REMOTE_DIRECT_TRUST_DIR = path.join(MOSS_HOME, 'certificates', 'remote-direct');
-const remoteDirectTrustStore = createRemoteDirectTrustStore({
+const enterpriseAccountTrustStore = createRemoteDirectTrustStore({
   trustDir: REMOTE_DIRECT_TRUST_DIR,
 });
-const remoteDirectCertificateVerifyProc = (request, callback) => {
-  remoteDirectTrustStore.verifyCertificate(request, callback);
+const enterpriseAccountCertificateVerifyProc = (request, callback) => {
+  enterpriseAccountTrustStore.verifyCertificate(request, callback);
 };
 let remoteTrustReady;
 const ensureRemoteTrust = () => remoteTrustReady ??= initializeRemoteDirectTlsTrust().catch(error => { remoteTrustReady = null; throw error; });
-const remoteDirectNetFetch = createOfflineAwareFetch({
+const enterpriseAccountNetFetch = createOfflineAwareFetch({
   fetchImpl: async (input, init) => { await ensureRemoteTrust(); return net.fetch(input, init); },
   isOnline: () => net.isOnline(),
 });
@@ -628,7 +626,7 @@ let appDecisionBroker = null;
 let remoteSessionSyncPromise = null;
 let localSessionReconciliationPromise = null;
 let lastRemoteSessionSyncErrorMessage = '';
-let remoteDirectTlsRestartRequired = false;
+let enterpriseAccountTlsRestartRequired = false;
 const REMOTE_DIRECT_TLS_RESTART_MESSAGE = '新证书已接受并保存。请完全退出并重新启动 Moss，然后再次点击“重新认证”。';
 
 if (hasSingleInstanceLock) {
@@ -825,8 +823,10 @@ const webSearchCapabilityStore = createWebSearchCapabilityStore({
   log: mossLog,
 });
 const localSettingsAuthConfig = desktopSettingsStore.authConfig;
+let hostControl;
 let desktopSettingsState = desktopSettingsStore.state;
 let desktopSettings = desktopSettingsStore.value;
+if (isWebHost && process.env.MOSS_WEB_OWNER_ID) desktopSettings = normalizeDesktopSettings({ enterpriseEnabled: true }, desktopSettings);
 // WebUI requests are handled concurrently. A late get-settings response must
 // not overwrite a newer settings save, so every persisted snapshot gets a
 // process-local monotonic revision.
@@ -886,15 +886,15 @@ function getRemoteCredentialServerUrl(rawServerUrl) {
 
 try {
   const credentialServerUrl = getRemoteCredentialServerUrl(
-    desktopSettings.remoteDirectServerUrl,
+    desktopSettings.enterpriseAccountServerUrl,
   );
   if (credentialServerUrl) {
     const storedCredentials = getRemoteDirectCredentials(credentialServerUrl);
-    const apiKey = desktopSettings.remoteDirectApiKey || storedCredentials.apiKey;
+    const apiKey = desktopSettings.enterpriseAccountApiKey || storedCredentials.apiKey;
     const userPassword =
-      desktopSettings.remoteDirectUserPassword || storedCredentials.userPassword;
+      desktopSettings.enterpriseAccountUserPassword || storedCredentials.userPassword;
     if (apiKey || userPassword) {
-      const migrating = Boolean(desktopSettings.remoteDirectApiKey || desktopSettings.remoteDirectUserPassword);
+      const migrating = Boolean(desktopSettings.enterpriseAccountApiKey || desktopSettings.enterpriseAccountUserPassword);
       if (migrating) saveRemoteDirectCredentials({
         serverUrl: credentialServerUrl,
         apiKey,
@@ -902,10 +902,10 @@ try {
       });
       const hydrated = normalizeDesktopSettings({
         ...desktopSettings,
-        remoteDirectApiKey: apiKey,
-        remoteDirectUserPassword: userPassword,
-        remoteDirect: {
-          ...desktopSettings.remoteDirect,
+        enterpriseAccountApiKey: apiKey,
+        enterpriseAccountUserPassword: userPassword,
+        enterpriseAccount: {
+          ...desktopSettings.enterpriseAccount,
           apiKey,
           userPassword,
         },
@@ -946,69 +946,25 @@ const {
   fetchRemoteProfileMemoryFile,
   fetchRemoteSessionMemory,
   getDesktopAgentMode,
-  getRemoteDirectSettings,
+  getEnterpriseAccountSettings,
   getCloudUsageOverview,
   isRemoteDirectModeEnabled,
   isRemoteDirectSessionNotFoundError,
   parseRemoteDirectError,
-  resolveRemoteDirectConnection,
+  resolveEnterpriseAccountConnection,
   resumeRemoteDirectSession,
-} = createRemoteDirectClient({ getSettings: () => desktopSettings });
+} = createEnterpriseAccountClient({ getSettings: () => desktopSettings });
 
 const syncRemoteSessionTasks = createRemoteSessionTaskSync({
-  resolveConnection: () => resolveRemoteDirectConnection(),
+  resolveConnection: () => resolveEnterpriseAccountConnection(),
   fetchTasks: fetchRemoteDirectSessionTasks,
   onTasks: (record, tasks) => emitToRenderer('agent:state', { sessionId: record.id, tasks }),
 });
 
-const remoteSkillSyncPromises = new Map();
-
-async function getRemoteMemoryCatalogForDesktop() {
-  if (!(desktopSettings.remoteEnabled ?? false) || !getRemoteDirectSettings().serverUrl) {
-    return null;
-  }
-  const connection = await resolveRemoteDirectConnection();
-  return fetchRemoteProfileMemory(connection);
-}
-
-async function readRemoteGlobalMemoryForDesktop(filePath) {
-  const connection = await resolveRemoteDirectConnection();
-  return fetchRemoteProfileMemoryFile({ ...connection, filePath });
-}
-
-async function readRemoteSessionMemoryForDesktop(sessionId) {
-  const connection = await resolveRemoteDirectConnection();
-  return fetchRemoteSessionMemory({ ...connection, sessionId });
-}
-
-async function syncRemoteSkillsForConnection(connection) {
-  const syncKey = createHash('sha256')
-    .update(`${connection.serverUrl}\0${connection.authToken}`)
-    .digest('hex');
-  const pending = remoteSkillSyncPromises.get(syncKey);
-  if (pending) return pending;
-  const operation = synchronizeRemoteSkills({
-    skillsDir: MOSS_SKILLS_DIR,
-    connection,
-    fetchStatus: fetchRemoteProfileSkillStatus,
-    uploadArchive: uploadRemoteProfileSkills,
-  }).then((result) => {
-    mossLog('info', 'remote-skills', result.unchanged
-      ? 'Remote skills are already synchronized'
-      : 'Synchronized desktop skills to Moss Server', {
-      revision: result.revision,
-      fileCount: result.fileCount,
-    });
-    return result;
-  }).finally(() => {
-    if (remoteSkillSyncPromises.get(syncKey) === operation) {
-      remoteSkillSyncPromises.delete(syncKey);
-    }
-  });
-  remoteSkillSyncPromises.set(syncKey, operation);
-  return operation;
-}
-
+// Memory and skills belong to the computer currently open in this window.
+async function getRemoteMemoryCatalogForDesktop() { return null; }
+async function readRemoteGlobalMemoryForDesktop() { throw new Error('请在对应云电脑查看个人记忆。'); }
+async function readRemoteSessionMemoryForDesktop() { throw new Error('请在对应云电脑查看会话记忆。'); }
 
 const { persistSessionRecord, schedulePersistSession, deletePersistedSession, hydratePersistedSessions } = createSessionPersistence({
   statements: sessionStatements,
@@ -1019,7 +975,7 @@ const { persistSessionRecord, schedulePersistSession, deletePersistedSession, hy
 const { localTranscriptSync, loadDisplayHistoryFromLocalTranscript, recoverInterruptedLocalSession, syncSessionRecordHistory, loadSessionHistoryFromSource, refreshSessionHistoryFromTranscriptAfterTurn } = createSessionHistoryService({
   DESKTOP_DATA_PATHS, sessionPaths, disposeRuntime, emitSessionHistory, emitSessionMeta,
   fetchRemoteDirectSessionContext, getLoadClaudeSessionSnapshotFn, hasActiveAgentTeam,
-  isRemoteDirectSessionNotFoundError, mossLog, resolveRemoteDirectConnection, schedulePersistSession,
+  isRemoteDirectSessionNotFoundError, mossLog, resolveEnterpriseAccountConnection, schedulePersistSession,
 });
 
 // Compose Desktop services once. Session/runtime state stays with Main; each
@@ -1046,7 +1002,7 @@ const { ensureRemoteSessionConnection, fetchRemoteWorkspaceProtocolContent, list
   MAX_IMAGE_BASE64_BYTES, REMOTE_PREVIEW_CACHE_DIR, allowMediaRoot,
   assertWorkspaceVersionIdle, emitWorkspaceChanged, ensureRuntime,
   fetchRemoteDirectWorkspaceContent, fetchRemoteDirectWorkspaceDir, fetchRemoteDirectWorkspaceFile,
-  mossLog, resolveRemoteDirectConnection, uploadRemoteDirectWorkspaceData,
+  mossLog, resolveEnterpriseAccountConnection, uploadRemoteDirectWorkspaceData,
   uploadRemoteDirectWorkspaceFile, writeRemoteDirectWorkspaceFile,
 });
 const { buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePendingBashContexts, localizeProjectSessionAttachments, maybeSpillLargePromptToWorkspace, prepareRemoteFileAttachments, runDirectBashCommand } = createSessionPromptPreparation({
@@ -1086,6 +1042,7 @@ function getDesktopSettingsPayload(extra = {}) {
   return {
     ...desktopSettingsStore.getPayload(extra),
     settingsRevision: desktopSettingsRevision,
+    ...(isWebHost && process.env.MOSS_WEB_OWNER_ID ? { enterpriseEnabled: true } : {}),
     managedPolicy: { ...hostPolicy },
     webSearch: toPublicWebSearchSettings(
       desktopSettings.webSearch,
@@ -1101,6 +1058,10 @@ function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
     model: resolveNativeWebSearchModel(settings),
     apiKey: settings.apiKey,
   });
+}
+
+function getRuntimeModelSettings() {
+  return hostPolicy.useEnterpriseModel === true && hostManagedModel ? { ...desktopSettings, ...hostManagedModel } : desktopSettings;
 }
 
 function getHostPermissionMode(value, fallback = desktopSettings.permissionMode) {
@@ -2030,10 +1991,10 @@ function summarizeAgentChannelSession(session) {
 }
 
 async function requestAppAccount(pathname) {
-  const remote = getRemoteDirectSettings();
+  const remote = getEnterpriseAccountSettings();
   if (!remote.serverUrl) return null;
-  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-  const response = await remoteDirectNetFetch(`${serverUrl}${pathname}`, {
+  const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
+  const response = await enterpriseAccountNetFetch(`${serverUrl}${pathname}`, {
     method: 'GET',
     signal: AbortSignal.timeout(20_000),
     headers: { authorization: `Bearer ${authToken}` },
@@ -2043,10 +2004,10 @@ async function requestAppAccount(pathname) {
 }
 
 async function requestAppOpenIM(pathname, { method = 'GET', body } = {}) {
-  const remote = getRemoteDirectSettings();
+  const remote = getEnterpriseAccountSettings();
   if (!remote.serverUrl) throw new Error('请先连接 Moss Server。');
-  const { serverUrl, authToken } = await resolveRemoteDirectConnection();
-  const response = await remoteDirectNetFetch(`${serverUrl}${pathname}`, {
+  const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
+  const response = await enterpriseAccountNetFetch(`${serverUrl}${pathname}`, {
     method,
     signal: AbortSignal.timeout(35_000),
     headers: {
@@ -2398,12 +2359,12 @@ function getSessionMcpServers(sessionRecord, runtimeCredentialValues = {}, appId
 }
 
 async function resolveCurrentMossServerAuthToken() {
-  const remoteDirect = getRemoteDirectSettings();
-  if (!remoteDirect.serverUrl) {
+  const enterpriseAccount = getEnterpriseAccountSettings();
+  if (!enterpriseAccount.serverUrl) {
     throw new Error('该连接器需要 Moss Server 登录态，请先登录 Moss Server。');
   }
-  const authToken = remoteDirect.apiKey
-    || (await resolveRemoteDirectConnection()).authToken;
+  const authToken = enterpriseAccount.apiKey
+    || (await resolveEnterpriseAccountConnection()).authToken;
   if (!authToken) {
     throw new Error('无法取得 Moss Server 登录凭据，请重新登录 Moss Server。');
   }
@@ -2609,9 +2570,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     cwd,
     executionEnvironment: 'desktop',
     desktopCronHostId,
-    image: desktopSettings.image ? { ...desktopSettings.image } : undefined,
-    model: desktopSettings.model,
-    fastModel: desktopSettings.fastModel || undefined,
+    image: getRuntimeModelSettings().image ? { ...getRuntimeModelSettings().image } : undefined,
+    model: getRuntimeModelSettings().model,
+    fastModel: getRuntimeModelSettings().fastModel || undefined,
     customSystemPrompt: sessionRecord?.appTestRunId ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_SYSTEM_PROMPT : TEST_SYSTEM_PROMPT) : customSystemPrompt || undefined,
     effort: sessionRecord?.effort ?? null,
     appendSystemPrompt: sessionRecord?.appTestRunId ? undefined : appendSystemPrompt || undefined,
@@ -2623,8 +2584,8 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       sessionRecord?.permissionMode,
       desktopSettings.permissionMode,
     ),
-    url: desktopSettings.url || undefined,
-    apiKey: desktopSettings.apiKey || undefined,
+    url: getRuntimeModelSettings().url || undefined,
+    apiKey: getRuntimeModelSettings().apiKey || undefined,
     webSearch: getRuntimeWebSearchSettings(),
     mcpServers,
     appTools,
@@ -2703,7 +2664,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ? (event) => recordUsageForSession(event, sessionRecord)
       : undefined,
     agentMailEnabled:
-      desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true,
+      (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true,
   };
 }
 
@@ -2714,7 +2675,8 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
     for (const [key, value] of Object.entries(hostPolicy)) if (Object.hasOwn(payload, key) && payload[key] !== value) throw new Error('此设置已由企业策略管理。');
     if (hostPolicy.bypassPermissions === false && payload.permissionMode === 'bypassPermissions') throw new Error('企业策略禁止自动批准工具权限。');
   }
-  const sourcePayload = payload && typeof payload === 'object' ? payload : {};
+  const sourcePayload = payload && typeof payload === 'object' ? { ...payload } : {};
+  if (isWebHost && process.env.MOSS_WEB_OWNER_ID) sourcePayload.enterpriseEnabled = true;
   const previousWebSearchFingerprint = getCurrentWebSearchCapabilityFingerprint();
   const webSearchPayload = sourcePayload.webSearch
     && typeof sourcePayload.webSearch === 'object'
@@ -2753,35 +2715,35 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
     ...normalizeDesktopSettings(normalizedPayload, desktopSettings)
   };
   const previousServerUrl = getRemoteCredentialServerUrl(
-    desktopSettings.remoteDirectServerUrl,
+    desktopSettings.enterpriseAccountServerUrl,
   );
-  const nextServerUrl = getRemoteCredentialServerUrl(nextSettings.remoteDirectServerUrl);
+  const nextServerUrl = getRemoteCredentialServerUrl(nextSettings.enterpriseAccountServerUrl);
   if (previousServerUrl !== nextServerUrl) {
-    remoteDirectTlsRestartRequired = false;
+    enterpriseAccountTlsRestartRequired = false;
   }
-  const nestedRemotePayload = payload?.remoteDirect && typeof payload.remoteDirect === 'object'
-    ? payload.remoteDirect
+  const nestedRemotePayload = payload?.enterpriseAccount && typeof payload.enterpriseAccount === 'object'
+    ? payload.enterpriseAccount
     : {};
-  const hasApiKeyUpdate = Object.prototype.hasOwnProperty.call(payload, 'remoteDirectApiKey')
+  const hasApiKeyUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountApiKey')
     || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'apiKey');
-  const hasPasswordUpdate = Object.prototype.hasOwnProperty.call(payload, 'remoteDirectUserPassword')
+  const hasPasswordUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountUserPassword')
     || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'userPassword');
   if (previousServerUrl !== nextServerUrl) {
     const storedCredentials = nextServerUrl
       ? getRemoteDirectCredentials(nextServerUrl)
       : { apiKey: '', userPassword: '' };
     const apiKey = hasApiKeyUpdate
-      ? nextSettings.remoteDirectApiKey
+      ? nextSettings.enterpriseAccountApiKey
       : storedCredentials.apiKey;
     const userPassword = hasPasswordUpdate
-      ? nextSettings.remoteDirectUserPassword
+      ? nextSettings.enterpriseAccountUserPassword
       : storedCredentials.userPassword;
     nextSettings = normalizeDesktopSettings({
       ...nextSettings,
-      remoteDirectApiKey: apiKey,
-      remoteDirectUserPassword: userPassword,
-      remoteDirect: {
-        ...nextSettings.remoteDirect,
+      enterpriseAccountApiKey: apiKey,
+      enterpriseAccountUserPassword: userPassword,
+      enterpriseAccount: {
+        ...nextSettings.enterpriseAccount,
         apiKey,
         userPassword,
       },
@@ -2790,8 +2752,8 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
   if (nextServerUrl && (hasApiKeyUpdate || hasPasswordUpdate)) {
     saveRemoteDirectCredentials({
       serverUrl: nextServerUrl,
-      apiKey: nextSettings.remoteDirectApiKey,
-      userPassword: nextSettings.remoteDirectUserPassword,
+      apiKey: nextSettings.enterpriseAccountApiKey,
+      userPassword: nextSettings.enterpriseAccountUserPassword,
     });
   }
   if (webSearchPayload) {
@@ -2807,13 +2769,13 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
   desktopSettingsRevision += 1;
   if (
     Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
-    Object.prototype.hasOwnProperty.call(payload, 'remoteEnabled') ||
-    Object.prototype.hasOwnProperty.call(payload, 'remoteDirect') ||
-    Object.keys(payload).some((key) => key.startsWith('remoteDirect'))
+    Object.prototype.hasOwnProperty.call(payload, 'enterpriseEnabled') ||
+    Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccount') ||
+    Object.keys(payload).some((key) => key.startsWith('enterpriseAccount'))
   ) {
     cloudComputerWindow?.close();
     hostControl.invalidate();
-    remoteDirectNetFetch.reset(nextServerUrl);
+    enterpriseAccountNetFetch.reset(nextServerUrl);
     void hostControl.refresh();
     agentMailPoller?.refresh();
     cloudStorageHost?.invalidate();
@@ -2915,7 +2877,7 @@ async function getClaudeRuntimeModule() {
           mod.getAuthDebugSnapshot();
         }
       } catch {}
-      mod.setDirectConnectFetchImplementation?.(remoteDirectNetFetch);
+      mod.setDirectConnectFetchImplementation?.(enterpriseAccountNetFetch);
       mod.onMcpToolCatalog?.(({ name, config, check, connectionStartedAt }) => appMcpHost?.recordRuntimeCatalog(name, config, check, connectionStartedAt));
       return mod;
     })
@@ -2941,14 +2903,14 @@ async function reloadRemoteDirectRuntimeTlsTrust() {
 
 async function initializeRemoteDirectTlsTrust() {
   try {
-    await remoteDirectTrustStore.load();
+    await enterpriseAccountTrustStore.load();
   } catch (error) {
     mossLog('warn', 'remote-auth', 'Failed to load the Moss Server certificate trust store', {
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  session.defaultSession.setCertificateVerifyProc(remoteDirectCertificateVerifyProc);
-  setRemoteDirectFetchImplementation(remoteDirectNetFetch);
+  session.defaultSession.setCertificateVerifyProc(enterpriseAccountCertificateVerifyProc);
+  setEnterpriseFetchImplementation(enterpriseAccountNetFetch);
 }
 
 async function getClaudeSessionCtor() {
@@ -3687,6 +3649,7 @@ async function runSessionPromptObserved({
 }
 
 async function runSessionPrompt(options) {
+  hostControl.attributeSession(options.sessionRecord.id);
   assertUpdateWorkAllowed();
   const sessionId = String(options?.sessionRecord?.id || '').trim();
   if (!sessionId) throw new Error('Session id is required.');
@@ -4970,6 +4933,7 @@ function createSessionRecord({
     sessions.set(sessionRecord.id, sessionRecord);
   }
   persistSessionRecord(sessionRecord, isSubAgent);
+  if (!isSubAgent) hostControl?.attributeSession(sessionRecord.id);
   if (!isSubAgent) {
     void startWorkspaceWatcher(sessionRecord);
     emitSessionMeta(sessionRecord);
@@ -4994,7 +4958,7 @@ function findRemoteDirectSessionRecord(serverSessionId) {
 async function syncRemoteDirectSessionsFromServer() {
   if (remoteSessionSyncPromise) return remoteSessionSyncPromise;
   remoteSessionSyncPromise = (async () => {
-    const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+    const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
     const response = await fetchRemoteDirectSessions({ serverUrl, authToken });
     const remoteSessions = Array.isArray(response?.sessions) ? response.sessions : [];
     const synchronized = [];
@@ -5704,18 +5668,20 @@ const mossAppEventHandler = createMossAppEventHandler(
 )
 
 async function resolveAgentMailConnection() {
-  if (desktopSettings.remoteEnabled !== true || desktopSettings.agentMail?.enabled !== true) {
+  if ((!isWebHost && desktopSettings.enterpriseEnabled !== true) || desktopSettings.agentMail?.enabled !== true) {
     throw new Error('协作邮箱尚未在 Moss 设置中启用。');
   }
-  const connection = await resolveRemoteDirectConnection();
+  const connection = hostControl.getServiceConnection();
+  if (!connection) throw new Error('电脑正在连接企业服务，请稍后重试。');
   const mailboxKey = buildAgentMailMailboxKey(connection);
   if (!mailboxKey) {
     throw new Error('无法识别当前 Moss Server 邮箱账号，请重新登录。');
   }
   return {
     ...connection,
-    fetchImpl: remoteDirectNetFetch,
+    fetchImpl: isWebHost ? fetch : enterpriseAccountNetFetch,
     mailboxKey,
+    deviceToken: hostControl.getDeviceCredential(),
     mailboxLabel: buildAgentMailMailboxLabel(connection),
   };
 }
@@ -6232,13 +6198,13 @@ function createAgentMailApproval(message, context = {}) {
 
 function initializeAgentMail() {
   if (agentMailPoller) return;
-  if (webAutomationsPaused || hostControlPaused || desktopSettings.remoteEnabled !== true || desktopSettings.agentMail?.enabled !== true) return;
+  if (webAutomationsPaused || hostControlPaused || hostAccessDenied || (!isWebHost && desktopSettings.enterpriseEnabled !== true) || desktopSettings.agentMail?.enabled !== true) return;
   const consumerId = ensureAgentMailConsumerId();
   agentMailPoller = createAgentMailPoller({
     consumerId,
     store: agentMailStore,
     getEnabled: () => (
-      !webAutomationsPaused && !hostControlPaused && desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
+      !webAutomationsPaused && !hostControlPaused && !hostAccessDenied && (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true
     ),
     getConnection: async () => {
       const connection = await resolveAgentMailConnection();
@@ -6585,23 +6551,31 @@ const hostControlStatePath = path.join(MOSS_HOME, 'host-control-state.json');
 let hostControlState;
 try { hostControlState = JSON.parse(fs.readFileSync(hostControlStatePath, 'utf8')); } catch { hostControlState = {}; }
 let hostControlPaused = hostControlState.paused === true;
+let hostAccessDenied = hostControlState.accessDenied || null;
+const hostAccessAccounts = hostControlState.accessAccounts || {};
 let hostPolicyRevision = hostControlState.revision || 0;
 let hostPolicy = hostControlState.policy || {};
+let hostManagedModel = hostControlState.modelConfig || null;
 let hostPolicyOriginal = hostControlState.original || {};
 let hostControlAccount = hostControlState.account || null;
 const hostPausedAccounts = hostControlState.pausedAccounts || {};
 function saveHostControlState() {
-  fs.writeFileSync(hostControlStatePath + '.tmp', JSON.stringify({ account: hostControlAccount, pausedAccounts: hostPausedAccounts, paused: hostControlPaused, revision: hostPolicyRevision, policy: hostPolicy, original: hostPolicyOriginal }), { mode: 0o600 });
+  fs.writeFileSync(hostControlStatePath + '.tmp', JSON.stringify({ modelConfig: hostManagedModel, accessDenied: hostAccessDenied, accessAccounts: hostAccessAccounts, account: hostControlAccount, pausedAccounts: hostPausedAccounts, paused: hostControlPaused, revision: hostPolicyRevision, policy: hostPolicy, original: hostPolicyOriginal }), { mode: 0o600 });
   fs.renameSync(hostControlStatePath + '.tmp', hostControlStatePath);
 }
-const hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: isWebHost ? 'cloud' : 'desktop',
+const applyManagedSchedules = createManagedSchedules({ home: MOSS_HOME,
+  createOwner: name => createSessionRecord({ title: `企业定时任务 · ${name}`, agentMode: 'local' }).id,
+  ownerExists: id => sessions.has(id) && !sessions.get(id).deleted,
+});
+hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: isWebHost ? 'cloud' : 'desktop',
   environmentId: process.env.MOSS_ENVIRONMENT_ID, version: app.getVersion(),
   onAccountChange: account => {
     if (account === hostControlAccount) return;
-    if (hostControlAccount) hostPausedAccounts[hostControlAccount] = hostControlPaused;
-    const restore = hostPolicyOriginal;
+    if (hostControlAccount) { hostPausedAccounts[hostControlAccount] = hostControlPaused; hostAccessAccounts[hostControlAccount] = hostAccessDenied; }
+    const restore = { ...hostPolicyOriginal, ...(hostManagedModel ? { model: desktopSettings.model } : {}) };
     hostControlAccount = account;
-    hostPolicy = {}; hostPolicyOriginal = {}; hostPolicyRevision = -1;
+    hostAccessDenied = account ? hostAccessAccounts[account] || null : null;
+    hostPolicy = {}; hostManagedModel = null; hostPolicyOriginal = {}; hostPolicyRevision = -1;
     hostControlPaused = account ? hostPausedAccounts[account] === true : false;
     if (Object.keys(restore).length) refreshDesktopSettings(restore, { policyUpdate: true });
     saveHostControlState();
@@ -6610,35 +6584,54 @@ const hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, ki
     if (isWebHost) return process.env.MOSS_ENVIRONMENT_ID && process.env.MOSS_WEB_AUTH_SERVER ? {
       serverUrl: process.env.MOSS_WEB_AUTH_SERVER, authToken: webServer?.auth.getHostAccessToken?.(),
       accountId: `${process.env.MOSS_WEB_OWNER_ORG_ID}:${process.env.MOSS_WEB_OWNER_ID}`,
+      userId: process.env.MOSS_WEB_OWNER_ID, orgId: process.env.MOSS_WEB_OWNER_ORG_ID,
       headers: { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN },
     } : null;
-    if (!desktopSettings.remoteEnabled || !getRemoteDirectSettings().serverUrl) return null;
-    const connection = await resolveRemoteDirectConnection();
+    if (!desktopSettings.enterpriseEnabled || !getEnterpriseAccountSettings().serverUrl) return null;
+    const connection = await resolveEnterpriseAccountConnection();
     const identity = JSON.parse(Buffer.from(connection.authToken.split('.')[1], 'base64url').toString('utf8'));
     return { ...connection, accountId: `${identity.org_id}:${identity.sub}` };
   },
-  fetchImpl: (...args) => isWebHost ? fetch(...args) : remoteDirectNetFetch(...args),
+  fetchImpl: (...args) => isWebHost ? fetch(...args) : enterpriseAccountNetFetch(...args),
   getStatus: () => ({ paused: hostControlPaused, policyRevision: hostPolicyRevision,
-    activeSessions: [...sessions.values()].filter(record => record.busy || record.preparingPrompt).length }),
+    activeSessions: [...sessions.values()].filter(record => hostControl.ownsSession(record.id) && (record.busy || record.preparingPrompt)).length,
+    tasks: [...sessions.values()].filter(record => hostControl.ownsSession(record.id) && !record.deleted && record.agentMode !== 'remote-direct')
+      .sort((a, b) => Number(Boolean(b.busy)) - Number(Boolean(a.busy)) || b.updatedAt - a.updatedAt).slice(0, 100)
+      .map(record => ({ id: record.id, title: record.title, state: record.busy || record.preparingPrompt ? 'running' : 'idle', updatedAt: record.updatedAt })),
+  }),
+  applyAutomation: applyManagedSchedules,
+  applyAccess: async access => {
+    hostAccessDenied = access.allowed ? null : access.reason || '企业访问已停用';
+    saveHostControlState();
+    if (hostAccessDenied) {
+      for (const record of sessions.values()) if ((isWebHost || hostControl.ownsSession(record.id)) && (record.busy || record.preparingPrompt)) {
+        await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id }).catch(() => {});
+      }
+    }
+  },
   execute: async command => {
     if (command.action === 'pause') { hostControlPaused = true; saveHostControlState(); return; }
     if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); return; }
     if (command.action === 'cancel-session') {
       const record = getSessionRecord(command.input.sessionId);
-      if (!record) throw new Error('会话不存在');
+      if (!record || !hostControl.ownsSession(record.id)) throw new Error('会话不属于当前企业账号');
       await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id });
       return;
     }
     throw new Error('不支持此控制命令');
   },
-  applyPolicy: async policy => {
-    if (!policy || policy.revision === hostPolicyRevision) return;
+  applyPolicy: async (policy, modelConfig) => {
+    const modelChanged = JSON.stringify(modelConfig) !== JSON.stringify(hostManagedModel);
+    if (!policy || (policy.revision === hostPolicyRevision && !modelChanged)) return;
+    hostManagedModel = policy.settings?.useEnterpriseModel === true ? modelConfig : null;
     const next = policy.settings || {};
     const patch = {};
-    for (const key of Object.keys(hostPolicy)) if (!(key in next)) { patch[key] = hostPolicyOriginal[key]; delete hostPolicyOriginal[key]; }
-    for (const key of Object.keys(next)) if (!(key in hostPolicy)) hostPolicyOriginal[key] = desktopSettings[key];
+    for (const key of Object.keys(hostPolicy).filter(key => key !== 'useEnterpriseModel')) if (!(key in next)) { patch[key] = hostPolicyOriginal[key]; delete hostPolicyOriginal[key]; }
+    for (const key of Object.keys(next).filter(key => key !== 'useEnterpriseModel')) if (!(key in hostPolicy)) hostPolicyOriginal[key] = desktopSettings[key];
     hostPolicy = next;
-    if (Object.keys(patch).length || Object.keys(next).length) await refreshDesktopSettings({ ...patch, ...next }, { policyUpdate: true });
+    if (modelChanged) patch.model = desktopSettings.model;
+    const runtimePolicy = Object.fromEntries(Object.entries(next).filter(([key]) => key !== 'useEnterpriseModel'));
+    if (Object.keys(patch).length || Object.keys(next).length) await refreshDesktopSettings({ ...patch, ...runtimePolicy }, { policyUpdate: true });
     hostPolicyRevision = policy.revision;
     saveHostControlState();
   },
@@ -6648,8 +6641,8 @@ usageLedger.setReporter(hostControl.attributeUsage);
 let cloudComputerWindow;
 function createWindow() {
   cloudComputerWindow ||= createCloudComputerWindow({ BrowserWindow, session, shell, ipcMain,
-    getLocalWindow: () => mainWindow, resolveConnection: () => resolveRemoteDirectConnection(),
-    certificateVerifyProc: remoteDirectCertificateVerifyProc, preload: path.join(__dirname, 'cloud-computer-preload.cjs'), appVersion: app.getVersion() });
+    getLocalWindow: () => mainWindow, resolveConnection: () => resolveEnterpriseAccountConnection(),
+    certificateVerifyProc: enterpriseAccountCertificateVerifyProc, preload: path.join(__dirname, 'cloud-computer-preload.cjs'), appVersion: app.getVersion() });
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -6844,7 +6837,7 @@ const {
   stop: stopMossCronScheduler,
   skipMissed: skipMissedMossCronTasks,
 } = createMossCronScheduler({
-  canRun: () => !webAutomationsPaused && !hostControlPaused,
+  canRun: task => !webAutomationsPaused && !hostControlPaused && !hostAccessDenied && (!task?.controlAccount || task.controlAccount === hostControlAccount),
   ipcMain,
   mossHome: MOSS_HOME,
   sessions,
@@ -6860,7 +6853,7 @@ const {
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   try { applyDockIcon(desktopSettings.appearance?.dockIcon); } catch (error) { console.warn('[appearance]', error.message); }
   appRuntimeRestorePending = !isWebHost;
-  setRemoteDirectFetchImplementation(remoteDirectNetFetch);
+  setEnterpriseFetchImplementation(enterpriseAccountNetFetch);
 
   const decisionSigningSecret = getOrCreateDecisionSigningSecret();
   appDecisionBroker = createDecisionBroker({
@@ -6948,14 +6941,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     shell: appShell,
     systemPreferences,
     allowMediaFile,
-    fetchImpl: remoteDirectNetFetch,
+    fetchImpl: enterpriseAccountNetFetch,
   });
   cloudStorageHost = new CloudStorageHost({
     deferInitialize: true,
     directory: path.join(MOSS_HOME, 'cloud-transfers'),
     getSettings: () => desktopSettings,
-    resolveConnection: (options) => resolveRemoteDirectConnection(undefined, options),
-    fetchImpl: remoteDirectNetFetch,
+    resolveConnection: (options) => resolveEnterpriseAccountConnection(undefined, options),
+    fetchImpl: enterpriseAccountNetFetch,
     pickFiles: async () => {
       const result = await appDialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
       return result.canceled ? [] : result.filePaths;
@@ -7721,15 +7714,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   });
   }
   registerCronIpcHandlers({ ipcMain, mossHome: MOSS_HOME });
-  registerRemoteCronIpc({
-    ipcMain,
-    request: async (operation, payload = {}) => {
-      if (!desktopSettings.remoteEnabled) throw new Error('请先在设置中启用云端连接。');
-      return requestRemoteCron({ ...await resolveRemoteDirectConnection(), operation, taskId: payload.taskId, enabled: payload.enabled });
-    },
-    syncSessions: syncRemoteDirectSessionsFromServer,
-    findSession: findRemoteDirectSessionRecord,
-  });
   if (!isWebHost) await initUpdateIpcHandlers({ prepareForInstall: updateInstallPreparation.prepare, getInstallBlockers });
   registerDocumentIpcHandlers();
   registerLibreOfficeIpcHandlers();
@@ -7982,6 +7966,7 @@ function getInstallBlockers() {
 const updateInstallPreparation = createUpdateInstallPreparation({ getBlockers: getInstallBlockers, shutdown: shutdownDesktop });
 function assertUpdateWorkAllowed() {
   if (appQuitting || appQuitPending) throw new Error('Moss 正在退出，无法开始新的操作。');
+  if (hostAccessDenied) throw new Error(hostAccessDenied);
   if (hostControlPaused) throw new Error('此电脑已由企业管理暂停接收新任务。');
   webServer?.assertWorkAllowed();
   if (updateInstallPreparation.isPreparing()) throw new Error('正在准备安装更新，请完成安装或退出后重新打开 Moss。');
@@ -8218,7 +8203,7 @@ ipcMain.handle('agent-mail:delete', async (_event, payload = {}) => {
   }
   return { messageIds: deleted };
 });
-let remoteDirectOAuthInFlight = null;
+let enterpriseAccountOAuthInFlight = null;
 
 async function confirmRemoteDirectCertificateChange({
   origin,
@@ -8247,21 +8232,21 @@ async function confirmRemoteDirectCertificateChange({
 }
 
 ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
-  if (remoteDirectOAuthInFlight) {
+  if (enterpriseAccountOAuthInFlight) {
     throw new Error('远端 Server 认证正在进行中。');
   }
-  if (remoteDirectTlsRestartRequired) {
+  if (enterpriseAccountTlsRestartRequired) {
     throw new Error(REMOTE_DIRECT_TLS_RESTART_MESSAGE);
   }
   const rawServerUrl = typeof payload.serverUrl === 'string' ? payload.serverUrl.trim() : '';
   if (!rawServerUrl) throw new Error('请先填写 Moss Server 地址。');
   const parsed = parseRemoteDirectServerInput(rawServerUrl);
-  remoteDirectNetFetch.reset(parsed.serverUrl);
+  enterpriseAccountNetFetch.reset(parsed.serverUrl);
   const controller = new AbortController();
   mossLog('info', 'remote-auth', 'Moss Server authentication started');
   const promise = (async () => {
     const trust = await ensureRemoteDirectTrustWithConfirmation({
-      trustStore: remoteDirectTrustStore,
+      trustStore: enterpriseAccountTrustStore,
       serverUrl: parsed.serverUrl,
       confirmCertificateChange: confirmRemoteDirectCertificateChange,
     });
@@ -8270,7 +8255,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
       // Chromium caches certificate verification results in the network
       // service. After rejecting an old pinned certificate, the same process
       // cannot reliably re-verify that origin with its replacement.
-      remoteDirectTlsRestartRequired = true;
+      enterpriseAccountTlsRestartRequired = true;
       mossLog('info', 'remote-auth', 'Moss Server certificate trust updated; restart required before authentication');
       throw new Error(REMOTE_DIRECT_TLS_RESTART_MESSAGE);
     }
@@ -8283,7 +8268,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
         return { ...listener, callback: listener.callback.then(url => new URL(url).searchParams.get('code')) };
       } } : {}),
       serverUrl: parsed.serverUrl,
-      fetchImpl: remoteDirectNetFetch,
+      fetchImpl: enterpriseAccountNetFetch,
       openAuthorization: (authorizationUrl, { redirectUri, state, signal }) => (
         isWebHost ? webOAuth.show(authorizationUrl, { state }) : openRemoteDirectAuthorizationWindow({
           createWindow: (options) => new BrowserWindow(options),
@@ -8291,7 +8276,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
           authorizationUrl,
           redirectUri,
           signal,
-          certificateVerifyProc: remoteDirectCertificateVerifyProc,
+          certificateVerifyProc: enterpriseAccountCertificateVerifyProc,
           onUserClosed: () => {
             mossLog('info', 'remote-auth', 'Authentication window closed by user');
             controller.abort(new Error('认证已取消。'));
@@ -8302,15 +8287,15 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
     });
   })();
   const authentication = { controller, promise };
-  remoteDirectOAuthInFlight = authentication;
+  enterpriseAccountOAuthInFlight = authentication;
   try {
     const authenticated = await promise;
     const settings = await refreshDesktopSettings({
-      remoteDirectServerUrl: rawServerUrl,
-      remoteDirectCredentialMode: 'api-key',
-      remoteDirectUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
-      remoteDirectUserEmail: typeof authenticated.user?.email === 'string' ? authenticated.user.email.trim() : '',
-      remoteDirectApiKey: authenticated.apiKey,
+      enterpriseAccountServerUrl: rawServerUrl,
+      enterpriseAccountCredentialMode: 'api-key',
+      enterpriseAccountUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
+      enterpriseAccountUserEmail: typeof authenticated.user?.email === 'string' ? authenticated.user.email.trim() : '',
+      enterpriseAccountApiKey: authenticated.apiKey,
     });
     mossLog('info', 'remote-auth', 'Moss Server authentication completed');
     return settings;
@@ -8320,15 +8305,15 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
     });
     throw error;
   } finally {
-    if (remoteDirectOAuthInFlight === authentication) {
-      remoteDirectOAuthInFlight = null;
+    if (enterpriseAccountOAuthInFlight === authentication) {
+      enterpriseAccountOAuthInFlight = null;
     }
   }
 });
 ipcMain.handle('agent:remote-authenticate-cancel', async () => {
-  const authentication = remoteDirectOAuthInFlight;
+  const authentication = enterpriseAccountOAuthInFlight;
   if (!authentication) return { canceled: false };
-  remoteDirectOAuthInFlight = null;
+  enterpriseAccountOAuthInFlight = null;
   authentication.controller.abort(new Error('认证已取消。'));
   void authentication.promise.catch(() => {});
   return { canceled: true };
@@ -9052,7 +9037,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       if (!sourceSession.underlyingSessionId) {
         throw new Error('远程会话尚未建立，不能分叉。');
       }
-      const { serverUrl, authToken } = await resolveRemoteDirectConnection();
+      const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
       const result = await forkRemoteDirectSession({
         serverUrl,
         authToken,
@@ -9561,7 +9546,7 @@ async function deleteSessionRecordById(sessionId, guard) {
       // before deleting; an untouched local draft has no server session to remove.
       await sessionRecord.runtime?.waitForSessionCreation?.();
       if (sessionRecord.underlyingSessionId) {
-        const connection = await resolveRemoteDirectConnection(undefined, {
+        const connection = await resolveEnterpriseAccountConnection(undefined, {
           signal: AbortSignal.timeout(10_000),
         });
         await deleteRemoteDirectSession({ ...connection, sessionId: sessionRecord.underlyingSessionId });

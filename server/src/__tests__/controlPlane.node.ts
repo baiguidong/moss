@@ -1,3 +1,4 @@
+import { updateSystemSettings } from '../systemSettings.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -61,7 +62,34 @@ try {
   for (let i = 0; i < 2; i++) assert.equal((await call('/api/v1/hosts/desktop-alice/usage', deviceToken, { events: [event] })).status, 200)
   assert.equal((await call('/api/v1/usage', alice.access_token)).body.totals.totalTokens, 15)
   assert.equal((await call('/api/v1/hosts/desktop-alice/usage', deviceToken, { events: [{ ...event, inputTokens: -1 }] })).status, 400)
+  updateSystemSettings({ models: { text: { model: 'enterprise-test', baseUrl: 'https://models.example.test', apiKey: 'fixture-secret' } } })
+  await call('/api/v1/host-policy', admin.access_token, { settings: { useEnterpriseModel: true } }, 'PUT')
+  report = await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)
+  assert.equal(report.body.modelConfig.apiKey, 'fixture-secret')
+  assert.equal(JSON.stringify((await call('/api/v1/hosts', alice.access_token)).body).includes('fixture-secret'), false)
+  assert.equal(JSON.stringify((await call('/api/v1/host-policy', alice.access_token)).body).includes('fixture-secret'), false)
+  await call('/api/v1/host-policy', admin.access_token, { settings: {} }, 'PUT')
+  const config = { name: 'Daily', cron: '0 9 * * *', prompt: 'Summarize', enabled: false }
+  assert.equal((await call('/api/v1/hosts/desktop-alice/schedules/daily', alice.access_token, { config, revision: 0 }, 'PUT')).status, 200)
+  assert.equal((await call('/api/v1/hosts/desktop-alice/schedules/daily', alice.access_token, { config, revision: 0 }, 'PUT')).status, 409)
+  report = await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)
+  assert.equal(report.body.schedules[0].appliedRevision, 0)
+  await call('/api/v1/hosts/heartbeat', deviceToken, { ...heartbeat, schedules: [{ id: 'daily', revision: 1 }] })
+  assert.equal((await call('/api/v1/hosts/desktop-alice/schedules', alice.access_token)).body.schedules[0].appliedRevision, 1)
+  await call('/api/v1/hosts/desktop-alice/schedules/daily', alice.access_token, { deleted: true, revision: 1 }, 'PUT')
+  report = await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)
+  assert.equal(report.body.schedules[0].deleted, true)
+  assert.equal(report.body.schedules[0].revision, 2)
+  assert.equal((await call('/api/v1/hosts/desktop-alice/mailbox', alice.access_token, { assigned: true }, 'PUT')).status, 200)
+  assert.equal((await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)).body.mailbox, true)
+  assert.equal((await call('/api/v1/hosts/desktop-alice/access', alice.access_token, { revoked: true }, 'PUT')).status, 403)
+  assert.equal((await call('/api/v1/hosts/desktop-alice/access', admin.access_token, { revoked: true }, 'PUT')).status, 200)
+  assert.equal((await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)).body.access.allowed, false)
+  assert.equal((await call('/api/v1/hosts/enroll', alice.access_token, heartbeat)).status, 403)
+  assert.equal((await call('/api/v1/hosts/desktop-alice/usage', deviceToken, { events: [event] })).status, 401)
+  await call('/api/v1/hosts/desktop-alice/access', admin.access_token, { revoked: false }, 'PUT')
+  assert.equal((await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)).body.access.allowed, true)
   await auth.updateUser({ orgId: principal.orgId, userId: created.user.id, status: 'disabled' }, principal)
-  assert.equal((await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)).status, 401)
+  assert.equal((await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)).body.access.allowed, false)
   console.log('Control plane: retired execution, device ownership, commands, crash recovery, policy, usage and revocation passed')
 } finally { await app.stop(); await models.close(); await rm(root, { recursive: true, force: true }) }

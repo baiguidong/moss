@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
-import type { RuntimeService } from '../runtimeService.js'
 import { openTestDatabase } from './databaseTestUtils.js'
 const root = await mkdtemp(join(tmpdir(), 'moss-snapshot-http-'))
 process.env.MOSS_SERVER_HOME = root

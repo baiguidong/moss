@@ -1,4 +1,6 @@
 import type http from 'node:http'
+import { Cron } from 'croner'
+import { getSystemSettings } from './systemSettings.js'
 import type { createModels } from './model/index.js'
 import type { AuthContext } from './auth/token.js'
 import { hasScope } from './auth/token.js'
@@ -17,6 +19,11 @@ export async function authenticateHostReport(req: http.IncomingMessage, models: 
   if (!host) return null
   const pathname = new URL(req.url || '/', 'http://local').pathname
   const base = `/api/v1/hosts/${host.id}/`
+  if (pathname !== '/api/v1/hosts/heartbeat' && !(await new HostRepository(models.db).access(String(host.id), String(host.org_id))).allowed) return null
+  if (pathname.startsWith('/api/v1/agent-mail/') || pathname === '/api/v1/bootstrap') {
+    return { rawToken: token, userId: String(host.user_id), orgId: String(host.org_id), role: 'host',
+      scopes: ['agent-mail:send', 'agent-mail:receive'], keyId: String(host.id) }
+  }
   if (req.method !== 'POST' || !(pathname === '/api/v1/hosts/heartbeat' || pathname === `${base}usage` || pathname.startsWith(`${base}commands/`))) return null
   return { rawToken: token, userId: String(host.user_id), orgId: String(host.org_id), role: 'host', scopes: ['hosts:report'], keyId: String(host.id) }
 }
@@ -36,8 +43,9 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
       const body = await readJsonBody(req)
       const settings = object(body.settings)
       for (const [key, value] of Object.entries(settings)) {
-        if (!['agentTeamsEnabled', 'bypassPermissions'].includes(key) || typeof value !== 'boolean') fail(400, 'Unsupported policy field')
+        if (!['agentTeamsEnabled', 'bypassPermissions', 'useEnterpriseModel'].includes(key) || typeof value !== 'boolean') fail(400, 'Unsupported policy field')
       }
+      if (settings.useEnterpriseModel === true && (!getSystemSettings().model || !getSystemSettings().url)) fail(400, '请先配置企业模型和 API 地址')
       writeJson(res, 200, await hosts.setPolicy(auth.orgId, auth.userId, settings))
     } else fail(405, 'Method not allowed')
     return true
@@ -60,18 +68,71 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
     const count = Number(status.activeSessions || 0)
     if (!Number.isSafeInteger(count) || count < 0 || count > 10000) fail(400, 'Invalid activity count')
     const kind = body.kind === 'desktop' || body.kind === 'cloud' ? body.kind : fail(400, 'Invalid host kind')
-    const response = await hosts.heartbeat(auth, { id, kind,
+    const tasks = (Array.isArray(status.tasks) ? status.tasks : []).slice(0, 100).map(raw => {
+      const task = object(raw)
+      return { id: identifier(task.id), title: typeof task.title === 'string' ? task.title.slice(0, 200) : '',
+        state: ['running', 'idle', 'failed'].includes(task.state) ? task.state : 'idle', updatedAt: Number(task.updatedAt) || 0 }
+    })
+    const schedules = (Array.isArray(body.schedules) ? body.schedules : []).slice(0, 100).map(raw => {
+      const item = object(raw)
+      return { id: identifier(item.id), revision: Number(item.revision) || 0, error: typeof item.error === 'string' ? item.error.slice(0, 500) : null }
+    })
+    if (enrolling && !(await hosts.access(id, auth.orgId)).allowed) fail(403, '电脑已被撤销')
+    const response = await hosts.heartbeat(auth, { id, kind, schedules,
       name: string(body.name, 255), version: string(body.version), platform: string(body.platform, 32), epoch: identifier(body.epoch),
-      status: { activeSessions: count, paused: status.paused === true, policyRevision: Number(status.policyRevision) || 0 } })
-    writeJson(res, 200, { ...response, ...(enrolling ? { token: await hosts.enroll(id) } : {}) })
+      status: { tasks, activeSessions: count, paused: status.paused === true, policyRevision: Number(status.policyRevision) || 0 } })
+    const settings = getSystemSettings()
+    const modelConfig = response.access.allowed && response.policy?.settings.useEnterpriseModel === true
+      ? { model: settings.model, fastModel: settings.fastModel, url: settings.url, apiKey: settings.apiKey, image: settings.image } : null
+    writeJson(res, 200, { ...response, modelConfig, ...(enrolling ? { token: await hosts.enroll(id) } : {}) })
     return true
   }
-  const match = url.pathname.match(/^\/api\/v1\/hosts\/([^/]+)\/(commands|usage)(?:\/([^/]+))?$/)
+  const match = url.pathname.match(/^\/api\/v1\/hosts\/([^/]+)\/(commands|usage|access|mailbox|schedules)(?:\/([^/]+))?$/)
   if (!match) return fail(404, 'Not found')
   const hostId = identifier(decodeURIComponent(match[1]!))
   const host = await hosts.get(hostId, auth.orgId)
   if (!host || (host.user_id !== auth.userId && !hasScope(auth.scopes, 'admin:users'))) fail(404, 'Host not found')
   if (auth.role !== 'host' && host?.user_id !== auth.userId && !(await authService.getUserOrNull(String(host?.user_id), auth.orgId, auth))) fail(404, 'Host not found')
+  if (match[2] === 'access' && !match[3]) {
+    if (req.method === 'GET') writeJson(res, 200, await hosts.access(hostId, auth.orgId))
+    else if (req.method === 'PUT') {
+      await authService.requireCurrentScope(auth, 'admin:users')
+      const body = await readJsonBody(req)
+      if (typeof body.revoked !== 'boolean') fail(400, 'Invalid access state')
+      await hosts.setAccess(hostId, auth.userId, body.revoked as boolean)
+      writeJson(res, 200, await hosts.access(hostId, auth.orgId))
+    } else fail(405, 'Method not allowed')
+    return true
+  }
+  if (match[2] === 'mailbox' && req.method === 'PUT' && !match[3]) {
+    await authService.requireCurrentScope(auth, host!.user_id === auth.userId ? 'agent-mail:receive' : 'admin:users')
+    const body = await readJsonBody(req)
+    if (typeof body.assigned !== 'boolean') fail(400, 'Invalid assignment')
+    if (body.assigned && !(await hosts.access(hostId, auth.orgId)).allowed) fail(403, '电脑已停用')
+    await hosts.assignMailbox(auth.orgId, String(host!.user_id), body.assigned ? hostId : null)
+    writeJson(res, 200, { ok: true }); return true
+  }
+  if (match[2] === 'schedules') {
+    if (req.method === 'GET' && !match[3]) writeJson(res, 200, { schedules: await hosts.schedules(hostId) })
+    else if (req.method === 'PUT' && match[3]) {
+      await authService.requireCurrentScope(auth, host!.user_id === auth.userId ? 'sessions:create' : 'admin:users')
+      if (!(await hosts.access(hostId, auth.orgId)).allowed) fail(403, '电脑已停用')
+      const body = await readJsonBody(req, 32 * 1024)
+      let config
+      if (body.deleted !== true) {
+        const input = object(body.config)
+        const cron = string(input.cron, 100)
+        if (cron.trim().split(/\s+/).length !== 5 || !cron.trim().split(/\s+/).every(field => field.split(',').every(part => /^(\*|\d+)(?:-\d+)?(?:\/\d+)?$/.test(part)))) fail(400, '需要五段数字 cron 表达式')
+        try { new Cron(cron, { paused: true }).stop() } catch { fail(400, 'Invalid cron expression') }
+        config = { name: string(input.name, 200), cron, prompt: string(input.prompt, 16000), enabled: input.enabled !== false }
+      }
+      const revision = Number(body.revision)
+      if (!Number.isSafeInteger(revision) || revision < 0) fail(400, 'Invalid revision')
+      if (body.deleted === true && revision === 0) fail(400, 'Task not found')
+      writeJson(res, 200, await hosts.setSchedule(auth.orgId, hostId, identifier(match[3]), config, body.deleted === true, revision))
+    } else fail(405, 'Method not allowed')
+    return true
+  }
   if (match[2] === 'usage' && req.method === 'POST' && !match[3]) {
     if (host!.user_id !== auth.userId) fail(403, 'Only the owner can report usage')
     const body = await readJsonBody(req, 256 * 1024)
@@ -96,6 +157,7 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
   } else if (match[2] === 'commands' && req.method === 'POST' && !match[3]) {
     await authService.requireCurrentScope(auth, host!.user_id === auth.userId ? 'sessions:create' : 'admin:users')
     const body = await readJsonBody(req)
+    if (!(await hosts.access(hostId, auth.orgId)).allowed) fail(403, '电脑已停用')
     const action = string(body.action, 32)
     if (!['pause', 'resume', 'cancel-session'].includes(action)) fail(400, 'Unsupported command')
     const input = action === 'cancel-session' ? { sessionId: identifier(object(body.input).sessionId) } : {}

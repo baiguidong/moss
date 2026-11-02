@@ -33,6 +33,7 @@ import {
 import { RagflowIntegrationService } from './ragflow/service.js'
 import { getUserProfileDir } from './runtimePaths.js'
 import type { createModels } from './model/index.js'
+import { HostRepository } from './model/repositories/hosts.js'
 import { authenticateHostReport, handleControlPlaneRoute } from './controlPlane.js'
 import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
@@ -905,6 +906,7 @@ export function startServer(
           auth,
           authService,
           service: agentMailService,
+          requireMailbox: () => new HostRepository(models.db).requireMailbox(String(req.headers['x-moss-device-credential'] || (auth.role === 'host' ? auth.rawToken : '')), auth),
         })
       ) {
         return

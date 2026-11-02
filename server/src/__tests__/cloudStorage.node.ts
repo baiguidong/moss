@@ -685,8 +685,8 @@ try {
   await src.write(Buffer.from('moss-large-file-check'), 0, 21, sourceSize - 21)
   await src.close()
   let settings: any = {
-    remoteEnabled: true,
-    remoteDirect: {
+    enterpriseEnabled: true,
+    enterpriseAccount: {
       serverUrl: base,
       credentialMode: 'api-key',
       apiKey: 'test-host-key',
@@ -704,12 +704,12 @@ try {
     resolveConnection: async () => ({
       serverUrl: base,
       userId:
-        settings.remoteDirect.apiKey === 'test-host-key'
+        settings.enterpriseAccount.apiKey === 'test-host-key'
           ? identity.userId
           : bob.id,
       orgId: identity.orgId,
       authToken:
-        settings.remoteDirect.apiKey === 'test-host-key'
+        settings.enterpriseAccount.apiKey === 'test-host-key'
           ? login.access_token
           : bobLogin.access_token,
     }),
@@ -870,7 +870,7 @@ try {
     ).state,
     'completed',
   )
-  settings = { ...settings, remoteEnabled: false }
+  settings = { ...settings, enterpriseEnabled: false }
   host.invalidate()
   const before = fetches
   assert.equal(
@@ -880,8 +880,8 @@ try {
   assert.equal(fetches, before)
   settings = {
     ...settings,
-    remoteEnabled: true,
-    remoteDirect: { ...settings.remoteDirect, apiKey: 'different' },
+    enterpriseEnabled: true,
+    enterpriseAccount: { ...settings.enterpriseAccount, apiKey: 'different' },
   }
   host.invalidate()
   await assert.rejects(() =>

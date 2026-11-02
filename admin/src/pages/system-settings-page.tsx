@@ -42,7 +42,7 @@ import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'serverRuntime' | 'openIM'
+  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'openIM'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
@@ -68,9 +68,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     apiKey: settings.apiKey,
     image: {
       model: settings.image.model,
-    },
-    serverRuntime: {
-      dockerImage: settings.serverRuntime.dockerImage,
     },
     openIM: { ...settings.openIM },
   }
@@ -115,14 +112,6 @@ function buildSystemSettingsPatch(
       ...patch.models,
       image: imagePatch,
     }
-  }
-
-  const serverRuntimePatch: NonNullable<UpdateSystemSettingsRequest['serverRuntime']> = {}
-  if (draft.serverRuntime.dockerImage !== settings.serverRuntime.dockerImage) {
-    serverRuntimePatch.dockerImage = draft.serverRuntime.dockerImage
-  }
-  if (Object.keys(serverRuntimePatch).length > 0) {
-    patch.serverRuntime = serverRuntimePatch
   }
 
   const openIMPatch: NonNullable<UpdateSystemSettingsRequest['openIM']> = {}
@@ -423,7 +412,7 @@ export default function SystemSettingsPage() {
         <SettingSection
           icon={Sparkles}
           title="模型"
-          description="配置共用的 API 地址和 Key，并选择默认、快速和图片模型。"
+          description="设置供工作电脑使用的企业模型。需在工作电脑页启用“使用企业模型配置”策略；调用由电脑执行，个人模型设置保留。"
         >
           <SettingField label="API URL">
             <Input

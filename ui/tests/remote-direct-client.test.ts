@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  createRemoteDirectClient,
+  createEnterpriseAccountClient,
   fetchRemoteUsageOverview,
   fetchRemoteDirectSessions,
   fetchRemoteDirectSessionTasks,
@@ -15,14 +15,14 @@ import {
   fetchRemoteProfileSkillStatus,
   fetchRemoteSessionMemory,
   forkRemoteDirectSession,
-  getRemoteDirectSettings,
+  getEnterpriseAccountSettings,
   parseRemoteDirectServerInput,
-  requestRemoteDirectAuthentication,
-  requestRemoteDirectAccessToken,
+  requestEnterpriseAuthentication,
+  requestEnterpriseAccessToken,
   uploadRemoteDirectWorkspaceData,
   uploadRemoteProfileSkills,
   writeRemoteDirectWorkspaceFile,
-} from '../src/remote-direct-client.mjs';
+} from '../src/enterprise-account-client.mjs';
 
 const originalFetch = globalThis.fetch;
 
@@ -34,11 +34,11 @@ describe('cloud usage', () => {
   it('does not request usage when cloud is disabled, unconfigured or not signed in', async () => {
     globalThis.fetch = async () => { throw new Error('Unexpected request'); };
     for (const settings of [
-      { remoteEnabled: false, remoteDirectServerUrl: 'https://moss.example.com', remoteDirectApiKey: 'key' },
-      { remoteEnabled: true },
-      { remoteEnabled: true, remoteDirectServerUrl: 'https://moss.example.com', remoteDirectCredentialMode: 'api-key' },
+      { enterpriseEnabled: false, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountApiKey: 'key' },
+      { enterpriseEnabled: true },
+      { enterpriseEnabled: true, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'api-key' },
     ]) {
-      const client = createRemoteDirectClient({ getSettings: () => settings });
+      const client = createEnterpriseAccountClient({ getSettings: () => settings });
       expect(await client.getCloudUsageOverview()).toBeNull();
     }
   });
@@ -55,10 +55,10 @@ describe('cloud usage', () => {
       requests.push({ url: String(input), init });
       return Response.json(String(input).endsWith('/auth/token') ? { access_token: 'current-account-token' } : overview);
     };
-    const client = createRemoteDirectClient({ getSettings: () => ({
-      remoteEnabled: true,
+    const client = createEnterpriseAccountClient({ getSettings: () => ({
+      enterpriseEnabled: true,
       agentMode: 'local',
-      remoteDirect: { serverUrl: 'https://moss.example.com/', credentialMode: 'api-key', apiKey: 'current-account-key' },
+      enterpriseAccount: { serverUrl: 'https://moss.example.com/', credentialMode: 'api-key', apiKey: 'current-account-key' },
     }) });
 
     expect(await client.getCloudUsageOverview()).toEqual(overview);
@@ -86,9 +86,9 @@ describe('cloud usage', () => {
 
 describe('remote direct client settings', () => {
   it('prefers structured remote settings and preserves passwords verbatim', () => {
-    expect(getRemoteDirectSettings({
-      remoteDirectServerUrl: 'https://legacy.example.com',
-      remoteDirect: {
+    expect(getEnterpriseAccountSettings({
+      enterpriseAccountServerUrl: 'https://legacy.example.com',
+      enterpriseAccount: {
         serverUrl: ' https://remote.example.com ',
         credentialMode: 'api-key',
         userEmail: ' user@example.com ',
@@ -123,7 +123,7 @@ describe('remote direct client settings', () => {
       throw new TypeError('fetch failed');
     };
 
-    await expect(requestRemoteDirectAccessToken({
+    await expect(requestEnterpriseAccessToken({
       authCenterUrl: 'http://127.0.0.1:43127',
       credentialMode: 'api-key',
       apiKey: 'server-key',
@@ -142,7 +142,7 @@ describe('remote direct client settings', () => {
       headers: { 'content-type': 'application/json' },
     });
 
-    await expect(requestRemoteDirectAuthentication({
+    await expect(requestEnterpriseAuthentication({
       authCenterUrl: 'https://moss.example.com',
       credentialMode: 'api-key',
       apiKey: 'server-key',
@@ -155,222 +155,9 @@ describe('remote direct client settings', () => {
     });
   });
 
-  it('lists authoritative Moss Server sessions with bearer auth', async () => {
-    const requests = [];
-    globalThis.fetch = async (input, init = {}) => {
-      requests.push({ url: String(input), init });
-      return new Response(JSON.stringify({
-        sessions: [{
-          sessionId: 'server-session-1',
-          title: 'App Channel 会话',
-          originChannel: 'app:example.chat',
-        }],
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    };
-
-    const result = await fetchRemoteDirectSessions({
-      serverUrl: 'https://moss.example.com',
-      authToken: 'access-token',
-    });
-
-    expect(result.sessions).toEqual([{
-      sessionId: 'server-session-1',
-      title: 'App Channel 会话',
-      originChannel: 'app:example.chat',
-    }]);
-    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions');
-    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
-  });
-
-  it('fetches cloud task snapshots with authentication, URL encoding and a timeout', async () => {
-    const requests: any[] = [];
-    const tasks = [{ id: '1', subject: '分析', status: 'in_progress', blockedBy: [] }];
-    globalThis.fetch = async (input, init = {}) => {
-      requests.push({ url: String(input), init });
-      return Response.json({ tasks });
-    };
-    expect(await fetchRemoteDirectSessionTasks({
-      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud/id',
-    })).toEqual({ tasks });
-    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions/cloud%2Fid/tasks');
-    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
-    expect(requests[0].init.signal).toBeInstanceOf(AbortSignal);
-
-    globalThis.fetch = async () => Response.json({ error: 'Forbidden' }, { status: 403 });
-    await expect(fetchRemoteDirectSessionTasks({
-      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud',
-    })).rejects.toThrow('Forbidden');
-    globalThis.fetch = async () => Response.json({});
-    await expect(fetchRemoteDirectSessionTasks({
-      serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'cloud',
-    })).rejects.toThrow('Invalid remote session tasks response');
-  });
-
-  it('forks a remote session with bearer auth', async () => {
-    const requests = [];
-    globalThis.fetch = async (input, init = {}) => {
-      requests.push({ url: String(input), init });
-      return new Response(JSON.stringify({
-        session: { sessionId: 'fork-1', title: 'Research (Fork)' },
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    };
-
-    const result = await forkRemoteDirectSession({
-      serverUrl: 'https://moss.example.com',
-      authToken: 'access-token',
-      sessionId: 'source/1',
-      title: 'Research (Fork)',
-      dangerouslySkipPermissions: true,
-    });
-
-    expect(result.session.sessionId).toBe('fork-1');
-    expect(requests[0].url).toBe('https://moss.example.com/api/v1/sessions/source%2F1/fork');
-    expect(requests[0].init.headers.authorization).toBe('Bearer access-token');
-    expect(JSON.parse(requests[0].init.body)).toEqual({
-      title: 'Research (Fork)',
-      dangerously_skip_permissions: true,
-    });
-  });
-
-  it('requires explicit server confirmation before accepting a remote deletion', async () => {
-    const connection = { serverUrl: 'https://moss.example.com', authToken: 'access-token', sessionId: 'source/1' };
-    globalThis.fetch = async (input, init = {}) => {
-      expect(String(input)).toBe('https://moss.example.com/api/v1/sessions/source%2F1');
-      expect(init.method).toBe('DELETE');
-      expect(init.headers.authorization).toBe('Bearer access-token');
-      expect(init.signal).toBeInstanceOf(AbortSignal);
-      return new Response('{"ok":true}', { status: 200 });
-    };
-    await expect(deleteRemoteDirectSession(connection)).resolves.toBeUndefined();
-    for (const status of [403, 404, 500]) {
-      globalThis.fetch = async () => new Response('{"error":"Unavailable"}', { status });
-      await expect(deleteRemoteDirectSession(connection)).rejects.toThrow(String(status));
-    }
-    globalThis.fetch = async () => new Response('{"ok":false}', { status: 200 });
-    await expect(deleteRemoteDirectSession(connection)).rejects.toThrow('未确认');
-    globalThis.fetch = async () => { throw new TypeError('offline'); };
-    await expect(deleteRemoteDirectSession(connection)).rejects.toThrow('offline');
-  });
-
-  it('downloads an authenticated remote workspace file to the requested path', async () => {
-    const outputDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-remote-preview-test-'));
-    const outputPath = path.join(outputDir, 'report.pdf');
-    globalThis.fetch = async (input, init = {}) => {
-      expect(String(input)).toContain('/api/v1/sessions/session%2F1/workspace/content');
-      expect(init.headers.authorization).toBe('Bearer access-token');
-      return new Response(new Uint8Array([37, 80, 68, 70]), {
-        status: 200,
-        headers: { 'content-length': '4', 'content-type': 'application/pdf' },
-      });
-    };
-
-    try {
-      await expect(downloadRemoteDirectWorkspaceFile({
-        serverUrl: 'https://moss.example.com',
-        authToken: 'access-token',
-        sessionId: 'session/1',
-        filePath: '/workspace/report.pdf',
-        destinationPath: outputPath,
-      })).resolves.toEqual({ path: outputPath, size: 4 });
-      expect(await fsp.readFile(outputPath)).toEqual(Buffer.from('%PDF'));
-    } finally {
-      await fsp.rm(outputDir, { recursive: true, force: true });
-    }
-  });
-
-  it('rejects remote preview downloads above the configured limit', async () => {
-    globalThis.fetch = async () => new Response(new Uint8Array([1, 2, 3, 4]), {
-      status: 200,
-      headers: { 'content-length': '4' },
-    });
-
-    await expect(downloadRemoteDirectWorkspaceFile({
-      serverUrl: 'https://moss.example.com',
-      authToken: 'access-token',
-      sessionId: 'session-1',
-      filePath: '/workspace/large.bin',
-      destinationPath: path.join(os.tmpdir(), 'unused-moss-preview.bin'),
-      maxBytes: 3,
-    })).rejects.toThrow('too large to preview');
-  });
-
-  it('writes and uploads remote workspace files with bearer auth', async () => {
-    const requests: Array<{ url: string; init: RequestInit }> = [];
-    globalThis.fetch = async (input, init = {}) => {
-      requests.push({ url: String(input), init });
-      return new Response(JSON.stringify({
-        path: '/workspace/inputs/demo.txt',
-        relativePath: 'inputs/demo.txt',
-        content: 'hello',
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    };
-
-    await writeRemoteDirectWorkspaceFile({
-      serverUrl: 'https://moss.example.com',
-      authToken: 'access-token',
-      sessionId: 'session/1',
-      filePath: 'index.html',
-      content: '<h1>Hello</h1>',
-    });
-    await uploadRemoteDirectWorkspaceData({
-      serverUrl: 'https://moss.example.com',
-      authToken: 'access-token',
-      sessionId: 'session/1',
-      fileName: 'demo.txt',
-      data: Buffer.from('hello'),
-    });
-
-    expect(requests[0].url).toContain('/api/v1/sessions/session%2F1/workspace/content?file=index.html');
-    expect(requests[0].init.method).toBe('PUT');
-    expect(Buffer.from(requests[0].init.body as Buffer).toString()).toBe('<h1>Hello</h1>');
-    expect(requests[1].url).toContain('/api/v1/sessions/session%2F1/workspace/upload?name=demo.txt');
-    expect(requests[1].init.method).toBe('POST');
-    expect(requests[1].init.headers).toMatchObject({
-      authorization: 'Bearer access-token',
-      'content-length': '5',
-    });
-  });
-
-  it('queries and updates remote profile resources', async () => {
-    const requests: Array<{ url: string; init: RequestInit }> = [];
-    globalThis.fetch = async (input, init = {}) => {
-      requests.push({ url: String(input), init });
-      const url = String(input);
-      if (url.endsWith('/profile/skills') && init.method === 'GET') {
-        return new Response(JSON.stringify({ revision: 'sha256:old', fileCount: 1 }), { status: 200 });
-      }
-      if (url.endsWith('/profile/skills') && init.method === 'PUT') {
-        return new Response(JSON.stringify({ revision: 'sha256:new', fileCount: 2 }), { status: 200 });
-      }
-      if (url.includes('/profile/memory/read')) {
-        return new Response(JSON.stringify({ content: '# Remote', bytes: 8, readable: true }), { status: 200 });
-      }
-      if (url.endsWith('/profile/memory')) {
-        return new Response(JSON.stringify({ global: { files: [] }, sessions: [] }), { status: 200 });
-      }
-      return new Response(JSON.stringify({ exists: true, content: '# Session' }), { status: 200 });
-    };
-    const connection = { serverUrl: 'https://moss.example.com', authToken: 'access-token' };
-
-    await expect(fetchRemoteProfileSkillStatus(connection)).resolves.toMatchObject({ revision: 'sha256:old' });
-    await expect(uploadRemoteProfileSkills({
-      ...connection,
-      archive: Buffer.from('zip'),
-      revision: 'sha256:new',
-    })).resolves.toMatchObject({ revision: 'sha256:new' });
-    await expect(fetchRemoteProfileMemory(connection)).resolves.toHaveProperty('global');
-    await expect(fetchRemoteProfileMemoryFile({ ...connection, filePath: 'preferences.md' }))
-      .resolves.toMatchObject({ content: '# Remote' });
-    await expect(fetchRemoteSessionMemory({ ...connection, sessionId: 'session-1' }))
-      .resolves.toMatchObject({ exists: true, content: '# Session' });
-
-    expect(requests[1].init.headers).toMatchObject({
-      authorization: 'Bearer access-token',
-      'x-moss-content-sha256': 'sha256:new',
-    });
-    expect(requests[3].url).toContain('file=preferences.md');
+  it('rejects retired server execution without network requests', async () => {
+    globalThis.fetch = async () => { throw new Error('Unexpected network request'); };
+    await expect(fetchRemoteDirectSessions({})).rejects.toThrow('服务端执行已退役');
+    await expect(forkRemoteDirectSession({})).rejects.toThrow('服务端执行已退役');
   });
 });

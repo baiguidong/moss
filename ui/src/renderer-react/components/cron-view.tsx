@@ -26,22 +26,10 @@ function formatCronTime(ms: number | null, timezone?: string) {
   return sameYear ? `${md} ${hm}` : `${d.getFullYear()}/${md} ${hm}`;
 }
 
-type CronViewProps = { onOpenSession?: (sessionId: string) => void; remoteEnabled?: boolean };
+type CronViewProps = { onOpenSession?: (sessionId: string) => void; enterpriseEnabled?: boolean };
 
-export function CronView(props: CronViewProps) {
-  const [source, setSource] = React.useState<'local' | 'cloud'>('local');
-  return <div className="flex h-full min-h-0 flex-col">
-    <div role="tablist" aria-label="定时任务位置" className="flex shrink-0 gap-2 border-b px-4 py-2 sm:px-6">
-      {([['local', '本地'], ['cloud', '云端']] as const).map(([value, label]) =>
-        <Button key={value} role="tab" aria-selected={source === value} variant={source === value ? 'secondary' : 'ghost'} size="sm" onClick={() => setSource(value)}>{label}</Button>)}
-    </div>
-    <div role="tabpanel" className="min-h-0 flex-1">
-      <CronTaskList key={source} source={source} {...props} />
-    </div>
-  </div>;
-}
-
-function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronViewProps & { source: 'local' | 'cloud' }) {
+export function CronView({ onOpenSession }: CronViewProps) {
+  const source = 'local';
   const [tasks, setTasks] = React.useState<CronTaskInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState("");
@@ -52,29 +40,22 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      if (source === 'cloud' && !remoteEnabled) throw new Error('请先在设置中启用云端连接。');
       const res = await window.agentDesktop.sessionCron.list(source);
       setTasks(Array.isArray(res?.tasks) ? res.tasks : []);
       setLoadError("");
       setConnectionNotice("");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (source === 'cloud' && /Remote Direct server URL is required|请先在设置中启用云端连接/.test(message)) {
-        setTasks([]);
-        setLoadError("");
-        setConnectionNotice('尚未连接 Moss Server，请先在设置中配置云端连接。');
-      } else {
-        setConnectionNotice("");
-        setLoadError(`加载失败：${message}`);
-      }
+      setConnectionNotice("");
+      setLoadError(`加载失败：${message}`);
     } finally {
       setLoading(false);
     }
-  }, [source, remoteEnabled]);
+  }, [source]);
 
   React.useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), source === 'cloud' ? 5_000 : 30_000);
+    const timer = window.setInterval(() => void refresh(), 30_000);
     return () => window.clearInterval(timer);
   }, [refresh, source]);
 
@@ -108,7 +89,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
     setPendingRuns(current => new Set(current).add(task.id));
     try {
       const res = await window.agentDesktop.sessionCron.runNow(source, { taskId: task.id });
-      flashNotice(res?.ok ? (source === 'cloud' ? "已提交执行" : "执行完成") : `执行失败：${res?.error || "未知错误"}`);
+      flashNotice(res?.ok ? "执行完成" : `执行失败：${res?.error || "未知错误"}`);
       if (res?.ok && res.sessionId) onOpenSession?.(res.sessionId);
     } catch (error) {
       flashNotice(`执行失败：${error instanceof Error ? error.message : String(error)}`);
@@ -128,7 +109,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
             <AlarmClock className="h-4.5 w-4.5" />
           </span>
           <div className="min-w-0 flex-1">
-<div className="text-sm font-medium text-foreground">{source === 'cloud' ? '云端定时任务' : '本地定时任务'}</div>
+<div className="text-sm font-medium text-foreground">此电脑的定时任务</div>
             <div className="truncate text-xs text-muted-foreground">
               {tasks.length} 个任务
               {orphanCount > 0 ? ` · ${orphanCount} 个已孤立` : ""}
@@ -150,7 +131,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto w-full max-w-[980px] px-4 py-4 sm:px-6">
-          <div className="mb-3 text-xs text-muted-foreground">{source === 'cloud' ? '由 Moss Server 执行，关闭桌面不影响运行。' : '由本机执行，需要保持桌面应用运行。'}</div>
+          <div className="mb-3 text-xs text-muted-foreground">由当前电脑执行，请保持电脑上的 Moss 服务运行。</div>
           {loadError && <div role="alert" className="mb-3 text-sm text-destructive">{loadError}</div>}
           {connectionNotice && <div role="status" className="mb-3 rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">{connectionNotice}</div>}
           {tasks.length === 0 && !loadError && !connectionNotice ? (
@@ -159,7 +140,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
                 <>
                   暂无定时任务
                   <div className="mt-1 text-xs text-muted-foreground/70">
-                    在{source === 'cloud' ? '云端' : '本地'}会话里对 AI 说“每天早上九点总结新闻”即可创建
+                    在当前电脑的会话里对 AI 说“每天早上九点总结新闻”即可创建
                   </div>
                 </>
               )}
@@ -215,7 +196,7 @@ function CronTaskList({ onOpenSession, remoteEnabled = false, source }: CronView
                       )}
                     </span>
                     <span>{task.recurring ? "循环任务" : "一次性任务"}</span>
-                    <span>{source === 'cloud' ? "云端持久任务" : task.durable === false ? "本次桌面运行有效" : "重启后保留"}</span>
+                    <span>{task.durable === false ? "本次桌面运行有效" : "重启后保留"}</span>
                     {task.executionSessionId && onOpenSession ? (
                       <button
                         type="button"

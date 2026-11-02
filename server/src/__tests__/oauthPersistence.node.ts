@@ -2,7 +2,6 @@ import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createAuthService } from '../auth/service.js'
-import type { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -39,10 +38,6 @@ try {
     resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = {
-    store: { db },
-    countActiveSessions: () => 0,
-  } as unknown as RuntimeService
   const moss = await startServer(config, serverTestModels(db), service)
   try {
     const mossPort = await moss.ready

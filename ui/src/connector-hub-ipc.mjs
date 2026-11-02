@@ -98,7 +98,7 @@ async function updateConnectorCredentials(mutator) {
   });
 }
 
-function remoteDirectCredentialKey(serverUrl) {
+function enterpriseAccountCredentialKey(serverUrl) {
   return createHash('sha256').update(normalizeString(serverUrl), 'utf8').digest('hex');
 }
 
@@ -106,8 +106,8 @@ export function getRemoteDirectCredentials(serverUrl) {
   const normalizedServerUrl = normalizeString(serverUrl);
   if (!normalizedServerUrl) return { apiKey: '', userPassword: '' };
   const credentials = readConnectorCredentials();
-  const records = credentials.remoteDirectCredentials?.[
-    remoteDirectCredentialKey(normalizedServerUrl)
+  const records = credentials.enterpriseAccountCredentials?.[
+    enterpriseAccountCredentialKey(normalizedServerUrl)
   ];
   if (!isPlainObject(records)) return { apiKey: '', userPassword: '' };
   return {
@@ -121,11 +121,11 @@ export function getRemoteDirectCredentials(serverUrl) {
 export function saveRemoteDirectCredentials({ serverUrl, apiKey, userPassword }) {
   const normalizedServerUrl = normalizeString(serverUrl);
   if (!normalizedServerUrl) return;
-  const serverKey = remoteDirectCredentialKey(normalizedServerUrl);
+  const serverKey = enterpriseAccountCredentialKey(normalizedServerUrl);
   const updatedAt = new Date().toISOString();
   connectorCredentialStore.update((current) => {
-    const remoteDirectCredentials = isPlainObject(current.remoteDirectCredentials)
-      ? { ...current.remoteDirectCredentials }
+    const enterpriseAccountCredentials = isPlainObject(current.enterpriseAccountCredentials)
+      ? { ...current.enterpriseAccountCredentials }
       : {};
     const records = {};
     if (normalizeString(apiKey)) {
@@ -144,13 +144,13 @@ export function saveRemoteDirectCredentials({ serverUrl, apiKey, userPassword })
         updatedAt,
       };
     }
-    if (Object.keys(records).length > 0) remoteDirectCredentials[serverKey] = records;
-    else delete remoteDirectCredentials[serverKey];
+    if (Object.keys(records).length > 0) enterpriseAccountCredentials[serverKey] = records;
+    else delete enterpriseAccountCredentials[serverKey];
     return {
       ...current,
-      ...(Object.keys(remoteDirectCredentials).length > 0
-        ? { remoteDirectCredentials }
-        : { remoteDirectCredentials: {} }),
+      ...(Object.keys(enterpriseAccountCredentials).length > 0
+        ? { enterpriseAccountCredentials }
+        : { enterpriseAccountCredentials: {} }),
     };
   });
 }

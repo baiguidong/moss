@@ -756,7 +756,7 @@ export type DesktopSettings = {
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
-  remoteEnabled: boolean;
+  enterpriseEnabled: boolean;
   agentTeamsEnabled: boolean;
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
@@ -863,7 +863,7 @@ export type DesktopSettings = {
     inboxSessionId?: string;
     inboxSessionIds?: Record<string, string>;
   };
-  remoteDirect?: {
+  enterpriseAccount?: {
     serverUrl: string;
     credentialMode: 'password' | 'api-key';
     userName: string;
@@ -872,14 +872,14 @@ export type DesktopSettings = {
     apiKey: string;
     workspace: string;
   };
-  remoteDirectServerUrl: string;
-  remoteDirectCredentialMode: 'password' | 'api-key';
-  remoteDirectUserName: string;
+  enterpriseAccountServerUrl: string;
+  enterpriseAccountCredentialMode: 'password' | 'api-key';
+  enterpriseAccountUserName: string;
   // Legacy key name; stores either username or email for password login.
-  remoteDirectUserEmail: string;
-  remoteDirectUserPassword: string;
-  remoteDirectApiKey: string;
-  remoteDirectWorkspace: string;
+  enterpriseAccountUserEmail: string;
+  enterpriseAccountUserPassword: string;
+  enterpriseAccountApiKey: string;
+  enterpriseAccountWorkspace: string;
   settingsPath: string;
   settingsExists: boolean;
   settingsLoaded: boolean;

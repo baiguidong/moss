@@ -8,10 +8,8 @@ import { initializeDatabase, openDatabase, requireSchema } from '../model/index.
 import { AuthRepository } from '../model/repositories/auth.js'
 import { SessionRepository } from '../model/repositories/session.js'
 import { UsageRepository } from '../model/repositories/usage.js'
-import { DirectEmbeddedBackend, registerDirectRuntimeModule } from '../backends/directEmbeddedBackend.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
-import { recordRunnerUsage, UsageService } from '../usageService.js'
+import { UsageService } from '../usageService.js'
 import type { ModelUsageEvent, UsageOverview } from '../usageTypes.js'
 import type { ServerConfig } from '../types.js'
 import { testDatabaseConfig } from './databaseTestUtils.js'
@@ -94,41 +92,9 @@ try {
     inputTokens: 1000, outputTokens: 200, cacheReadTokens: 300, cacheWriteTokens: 40,
   }
   await usage.record(owner, fork.sessionId, { ...event, outputTokens: 50 })
-  // Exercise the same onUsage -> runner stdout -> persistent ledger path used
-  // for interactive sessions, background work and server cron execution.
-  class FakeSession {
-    constructor(private options: { onUsage?: (event: ModelUsageEvent) => void }) {}
-    async *send() {
-      this.options.onUsage?.(event)
-      this.options.onUsage?.(event)
-      yield { type: 'result' }
-    }
-    abort() {}
-    dispose() {}
-    setPermissionMode() {}
-  }
-  registerDirectRuntimeModule({ ClaudeSession: FakeSession, resumeClaudeSession: async () => null })
-  const handle = await new DirectEmbeddedBackend().spawn({
-    sessionId: fork.sessionId, cwd: root, runtime: { ...fork.runtime, backend: 'host' },
-    systemSettings: { model: 'model-a', fastModel: '', maxTurns: 10, thinkingMode: 'disabled',
-      thinkingBudgetTokens: 1024, url: '', apiKey: '', bypassPermissions: true },
-  })
-  try {
-    let recorded = Promise.resolve()
-    await new Promise<void>((resolve, reject) => {
-      handle.onStdoutLine(line => {
-        recorded = recorded.then(async () => {
-          if (await recordRunnerUsage(line, { ...owner, sessionId: fork.sessionId }, usage)) return
-          if (JSON.parse(line).type === 'result') resolve()
-        }).catch(reject)
-      })
-      handle.writeStdin(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello' } })}\n`)
-    })
-    await recorded
-  } finally { handle.destroy() }
-  await recordRunnerUsage(JSON.stringify({ type: 'moss_usage', userId: bob.id, event }), { ...owner, sessionId: 'reconnected-session' }, usage)
+  await usage.record(owner, fork.sessionId, event)
+  await usage.record(owner, 'reconnected-session', event)
   await usage.record(owner, fork.sessionId, { ...event, outputTokens: 1 })
-  assert.equal(await recordRunnerUsage('{"type":"assistant"}', { ...owner, sessionId: 'fork' }, usage), false)
   await usage.record({ orgId: 'other-org', userId: foreign.id }, 'foreign', event)
 
   const config: ServerConfig = {
@@ -138,7 +104,6 @@ try {
     dockerStopTimeoutSec: 1, dockerLabels: {}, startupPolicy: 'reattach-or-resume',
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true, logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store: sessions, serverInstanceId: 'test-server' })
   const server = startServer(config, serverTestModels(db), auth)
   let expected: UsageOverview['totals']
   try {

@@ -168,14 +168,12 @@ jobs:
         run: |
           bash -n deploy/server/prepare-image-context.sh
           bash deploy/server/scripts/validate.sh
-          node --check scripts/docker-build-runtime.mjs
 
       - name: Build and verify Server images
         shell: bash
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          RUNTIME_IMAGE="moss-runtime:$VERSION-amd64"
           SERVER_IMAGE="moss-server:$VERSION-amd64"
           deploy/server/prepare-image-context.sh "$VERSION" amd64 dist/server-image
           docker buildx build \
@@ -184,15 +182,6 @@ jobs:
             --tag "$SERVER_IMAGE" \
             --load \
             -f docker/server/Dockerfile .
-          bun scripts/docker-build-runtime.mjs \
-            --tag "$RUNTIME_IMAGE" \
-            --platform linux/amd64 \
-            --node-version "$SERVER_NODE_VERSION" \
-            --load
-          docker run --rm "$RUNTIME_IMAGE" node --no-warnings -e \
-            "require('node:sqlite'); require('sharp')"
-          docker run --rm --user 10001:10001 -e HOME=/tmp/moss-home \
-            "$RUNTIME_IMAGE" node --version
           docker run --rm --entrypoint /opt/moss/node/bin/node \
             "$SERVER_IMAGE" --no-warnings -e \
             "require('node:sqlite'); require('sharp')"

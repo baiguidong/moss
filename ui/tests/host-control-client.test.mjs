@@ -74,3 +74,22 @@ test('an account switch discards an in-flight heartbeat policy and commands', as
   release(); await request; await stopping;
   assert.equal(runs, 0); assert.equal(policies, 0);
 });
+
+test('a revoked Host suspends work without enrolling again or applying queued commands', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-host-revoke-'));
+  const db = new DatabaseSync(path.join(home, 'host.sqlite')); createUsageLedger(db);
+  let revoked = false, enrollments = 0, denied = false, commands = 0, automation = 0;
+  const client = createHostControlClient({ home, db, kind: 'cloud', environmentId: 'cloud-alice', version: 'test',
+    getConnection: () => ({ serverUrl: 'https://server.test', accountId: 'alice', authToken: 'user-token' }),
+    getStatus: () => ({}), execute: () => { commands++; }, applyPolicy: () => {},
+    applyAccess: access => { denied = !access.allowed; }, applyAutomation: async () => { automation++; return []; },
+    fetchImpl: async url => { if (url.endsWith('/enroll')) enrollments++;
+      return Response.json({ token: 'device-token', access: { allowed: !revoked }, commands: revoked ? [{ id: 'bad', action: 'resume' }] : [] }); },
+  });
+  t.after(async () => { await client.stop(); db.close(); await fs.rm(home, { recursive: true, force: true }); });
+  await client.refresh(); client.attributeSession('alice-session');
+  assert.equal(client.ownsSession('alice-session'), true);
+  revoked = true; await client.refresh(); await client.refresh();
+  assert.equal(denied, true); assert.equal(enrollments, 1); assert.equal(commands, 0); assert.equal(automation, 1);
+  revoked = false; await client.refresh(); assert.equal(denied, false);
+});

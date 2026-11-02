@@ -21,4 +21,16 @@ export async function installControlPlaneSchema(db: Database) {
     token_hash VARCHAR(64) PRIMARY KEY, host_id VARCHAR(128) NOT NULL,
     created_at BIGINT NOT NULL
   )`)
+  await db.exec(`CREATE TABLE IF NOT EXISTS host_access (
+    host_id VARCHAR(128) PRIMARY KEY, revoked INTEGER NOT NULL, actor_id VARCHAR(128) NOT NULL, updated_at BIGINT NOT NULL
+  )`)
+  await db.exec(`CREATE TABLE IF NOT EXISTS host_mailboxes (
+    org_id VARCHAR(128) NOT NULL, user_id VARCHAR(128) NOT NULL, host_id VARCHAR(128) NOT NULL,
+    PRIMARY KEY (org_id,user_id)
+  )`)
+  await db.exec(`CREATE TABLE IF NOT EXISTS host_schedules (
+    id VARCHAR(128) PRIMARY KEY, host_id VARCHAR(128) NOT NULL, org_id VARCHAR(128) NOT NULL,
+    revision BIGINT NOT NULL, config_json TEXT NOT NULL, deleted INTEGER NOT NULL,
+    applied_revision BIGINT NOT NULL, error TEXT, updated_at BIGINT NOT NULL
+  )`)
 }

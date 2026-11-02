@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
 import { SessionRepository } from '../model/repositories/session.js'
-import { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -35,9 +34,7 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
   // Reading tasks must work without a live Docker container or an attach attempt.
-  runtime.ensureSessionReady = async () => { throw new Error('Unexpected runtime startup') }
   const profileDir = join(root, 'profile')
   for (const [id, userId, orgId, transcriptId] of [
     ['alice-session', alice.userId, alice.orgId, 'alice-transcript'],

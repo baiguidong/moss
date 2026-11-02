@@ -83,15 +83,15 @@ export type MainView = "chat" | "projects" | "overview" | "mail" | "common" | "s
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
 export function getSidebarMoreViews({
-  remoteEnabled,
+  enterpriseEnabled,
   agentMailEnabled,
 }: {
-  remoteEnabled: boolean;
+  enterpriseEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
-    ...(remoteEnabled && agentMailEnabled ? ["mail" as const] : []),
+    ...(enterpriseEnabled && agentMailEnabled ? ["mail" as const] : []),
     "cron",
   ];
 }
@@ -129,7 +129,7 @@ interface AppSidebarProps {
   collapsed: boolean;
   searchQuery: string;
   localEnabled?: boolean;
-  remoteEnabled?: boolean;
+  enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
@@ -315,7 +315,7 @@ export function AppSidebar({
   collapsed,
   searchQuery,
   localEnabled = true,
-  remoteEnabled = false,
+  enterpriseEnabled = false,
   agentMailEnabled = false,
   onChangeView,
   onChangeTheme,
@@ -364,12 +364,12 @@ export function AppSidebar({
   const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery);
   const sessionGroups = groupSidebarSessions(filteredSessions).filter((group) => (
     group.id !== 'project' && (
-      group.id !== 'agent-mail' || (remoteEnabled && agentMailEnabled)
+      group.id !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
     )
   ));
   const projectTrees = groupProjectSessionTrees(filteredSessions);
   const moreViews = getSidebarMoreViews({
-    remoteEnabled,
+    enterpriseEnabled,
     agentMailEnabled,
   });
   const moreApps = getSidebarMoreApps(apps);

@@ -303,7 +303,7 @@ function remoteSyncHarness(fetchContext = async () => ({ context: { messages: []
     async ${source}
     syncRemoteDirectSessionsFromServer;
   `, {
-    resolveRemoteDirectConnection: async () => ({ serverUrl: 'https://moss.test', authToken: 'test' }),
+    resolveEnterpriseAccountConnection: async () => ({ serverUrl: 'https://moss.test', authToken: 'test' }),
     fetchRemoteDirectSessions: async () => ({ sessions: [{ sessionId: 'server-session', createdAt: 100, lastActiveAt: 200 }] }),
     fetchRemoteDirectSessionContext: fetchContext,
     remoteSessionDeletions: { has: (id: string) => deleted.has(id) },
@@ -353,7 +353,7 @@ function deletionHarness(deleteRemote: () => Promise<void>, closeStorage: () => 
     projectTaskCancellationRequests: new Set(), subAgentSyncTimers: new Map(),
     browserAutomationSessionOrigins: new Map(), pendingBrowserAutomationGrants: new Map(),
     isProjectTaskRootSession: () => false,
-    resolveRemoteDirectConnection: async () => ({ serverUrl: 'https://moss.test', authToken: 'test' }),
+    resolveEnterpriseAccountConnection: async () => ({ serverUrl: 'https://moss.test', authToken: 'test' }),
     deleteRemoteDirectSession: async ({ sessionId }: { sessionId: string }) => {
       expect(sessionId).toBe('server-session');
       actions.push('remote-request');

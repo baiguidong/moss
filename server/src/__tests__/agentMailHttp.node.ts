@@ -1,10 +1,10 @@
 import { serverTestModels } from './databaseTestUtils.js'
+import { HostRepository } from '../model/repositories/hosts.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthService } from '../auth/service.js'
-import type { RuntimeService } from '../runtimeService.js'
 import { startServer } from '../server.js'
 import type { ServerConfig } from '../types.js'
 import { openTestDatabase } from './databaseTestUtils.js'
@@ -86,10 +86,6 @@ try {
     resumeOnMissingRuntime: true,
     logLevel: 'error',
   }
-  const runtime = {
-    store: { db },
-    countActiveSessions: () => 0,
-  } as unknown as RuntimeService
   const moss = await startServer(config, serverTestModels(db), authService)
   try {
     const port = await moss.ready
@@ -98,8 +94,13 @@ try {
       authorization: `Bearer ${aliceLogin.access_token}`,
       'content-type': 'application/json',
     }
+    const hosts = new HostRepository(db)
+    await hosts.heartbeat({ orgId: aliceAuth.orgId, userId: bob.id }, { id: 'bob-computer', epoch: 'test', name: 'Bob', kind: 'desktop', version: 'test', platform: 'test', status: {} })
+    const deviceToken = await hosts.enroll('bob-computer')
+    await hosts.assignMailbox(aliceAuth.orgId, bob.id, 'bob-computer')
     const bobHeaders = {
       authorization: `Bearer ${bobLogin.access_token}`,
+      "x-moss-device-credential": deviceToken,
       'content-type': 'application/json',
     }
 

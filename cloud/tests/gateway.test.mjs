@@ -10,6 +10,7 @@ const respond = (res, data) => { res.setHeader('Content-Type', 'application/json
 test('gateway authenticates routing, strips client credentials, closes WS on logout, persists mapping', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-gateway-'));
   await fs.mkdir(path.join(dir, 'renderer')); await fs.writeFile(path.join(dir, 'renderer/index.html'), '<h1>Login</h1>');
+  let revokedHost;
   const identity = user => ({ user: { id: user, name: `Server ${user}`, email: `${user}@example.test` }, organization: { id: 'org' } });
   const auth = http.createServer(async (req, res) => {
     if (req.url.endsWith('/login')) {
@@ -20,7 +21,7 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
     } else {
       const user = req.headers.authorization?.replace('Bearer ', '');
       if (!['alice', 'bob'].includes(user)) { res.writeHead(401); res.end('{}'); return; }
-      respond(res, identity(user));
+      respond(res, req.url === '/api/v1/hosts' ? { hosts: revokedHost ? [{ id: revokedHost, access: { allowed: false, reason: 'revoked' } }] : [] } : identity(user));
     }
   });
   const upstreamSockets = new Set();
@@ -100,6 +101,9 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   assert.equal((await post('/api/logout', {}, ca)).status, 200); await closed;
   assert.equal((await fetch(base() + '/api/private', { headers: { Cookie: ca } })).status, 401);
   assert.equal(gateway.store.all().length, 2);
+  revokedHost = personal.id;
+  assert.equal((await post('/api/login', { username: 'alice', password: 'test' })).status, 403);
+  revokedHost = null;
   const ids = gateway.store.all().map(r => r.containerId);
   await gateway.close();
   gateway = await startGateway({ env, docker: {}, rendererRoot: path.join(dir, 'renderer') }); adapters();

@@ -3,8 +3,8 @@ import { Cloud, Laptop, ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 export function WorkComputerSelector({ collapsed = false }: { collapsed?: boolean }) {
-  const web = Boolean(window.mossWeb);
-  const shell = (window as any).mossDesktopShell as { returnToLocal: () => Promise<void> } | undefined;
+  const web = Boolean(typeof window !== 'undefined' && window.mossWeb);
+  const shell = (typeof window !== 'undefined' ? (window as any).mossDesktopShell : undefined) as { returnToLocal: () => Promise<void> } | undefined;
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState('');
   if (web && !shell) return null;
