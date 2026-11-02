@@ -11,9 +11,8 @@ install -d -m 0700 \
   "$server_home/var/run" \
   "$server_home/var/log"
 
-# Session containers are siblings launched through the host Docker socket. Keep
-# a current image-owned copy of the application inside the shared host mount,
-# separate from persistent configuration and any legacy host installation.
+# Keep image-owned control-plane assets separate from persistent configuration
+# and any legacy host installation.
 staging="${asset_root}.container-new"
 install -d -m 0700 "$(dirname -- "$asset_root")"
 rm -rf "$staging"

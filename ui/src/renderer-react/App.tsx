@@ -2791,7 +2791,7 @@ export default function App() {
             themeMode={themeMode}
             collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
-            localEnabled={desktopSettings?.localEnabled ?? true}
+            localEnabled={true}
             remoteEnabled={desktopSettings?.remoteEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
             serverConfigured={Boolean(desktopSettings?.remoteDirectServerUrl?.trim())}
@@ -2955,7 +2955,7 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                remoteEnabled={false}
                 queuedMessages={queuedMessages[activeSessionId] ?? []}
                 onRemoveQueuedMessage={handleRemoveQueuedMessage}
                 onEditQueuedMessage={handleEditQueuedMessage}
@@ -3021,7 +3021,7 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 onOpenSkillHub={() => setActiveView('skills')}
-                remoteEnabled={desktopSettings?.remoteEnabled ?? false}
+                remoteEnabled={false}
                 newSessionMode={newSessionAgentMode}
                 onNewSessionModeChange={draftProject ? undefined : handleNewSessionModeChange}
               />
@@ -3029,7 +3029,7 @@ export default function App() {
           ) : activeView === 'overview' ? (
             <OverviewView cloudEnabled={desktopSettings?.remoteEnabled === true && Boolean(desktopSettings.remoteDirectServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
-            <CronView onOpenSession={handleSelectSession} remoteEnabled={desktopSettings?.remoteEnabled ?? false} />
+            <CronView onOpenSession={handleSelectSession} remoteEnabled={false} />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}

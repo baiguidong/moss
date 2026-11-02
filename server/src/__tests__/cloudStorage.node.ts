@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { verifyCloudShares } from './cloudShares.http.js'
 import { execFileSync } from 'node:child_process'
@@ -221,7 +222,7 @@ try {
   const runtime = { store: { db }, countActiveSessions: () => 0 } as any
   moss = await startServer(
     config,
-    runtime,
+    serverTestModels(db),
     auth,
     undefined,
     undefined,
@@ -382,7 +383,7 @@ try {
     await moss.stop()
     moss = await startServer(
       config,
-      runtime,
+      serverTestModels(db),
       auth,
       undefined,
       undefined,
@@ -431,7 +432,7 @@ try {
   const persistentShare = await verifyCloudShares({ base, request, db, token: login.access_token,
     other: bobLogin.access_token, foreign: foreignLogin.access_token, fileId: file.id, folderId: folder.id, size: input.size, store })
   await moss.stop()
-  moss = await startServer(config, runtime, auth, undefined, undefined, undefined, store)
+  moss = await startServer(config, serverTestModels(db), auth, undefined, undefined, undefined, store)
   base = `http://127.0.0.1:${await moss.ready}`
   const sharesAfterRestart = await j('/shares')
   assert.equal(sharesAfterRestart.shares.find((item: any) => item.id === persistentShare.id).url, persistentShare.url)
@@ -531,7 +532,7 @@ try {
     })
     const restored = await startServer(
       restoreConfig,
-      { store: { db: restoredDb }, countActiveSessions: () => 0 } as any,
+      serverTestModels(restoredDb),
       restoredAuth.service,
     )
     try {
@@ -569,7 +570,7 @@ try {
       .run(store.identity, 'target')
     moss = await startServer(
       config,
-      runtime,
+      serverTestModels(db),
       auth,
       undefined,
       undefined,

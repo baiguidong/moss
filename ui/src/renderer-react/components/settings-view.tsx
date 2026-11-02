@@ -1447,30 +1447,6 @@ export function SettingsView({
                       Moss Server
                     </div>
                     <div className="divide-y divide-border">
-                      {/* 本地模式 */}
-                      <SettingsGroup>
-                        <SettingsRow
-                          title={isWebUI() ? '云电脑模式' : '本地模式'}
-                          description={isWebUI() ? '在云电脑运行 Agent，使用云电脑上的文本模型配置和文件。' : '在本机运行 Agent，直接使用本地文本模型配置。'}
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.localEnabled ?? true}
-                              onCheckedChange={(checked) => {
-                                updateSetting('localEnabled', checked);
-                                if (!checked) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                } else if (!(settingsDraft.remoteEnabled ?? false)) {
-                                  updateSetting('agentMode', 'local');
-                                }
-                              }}
-                              label="本地模式"
-                            />
-                          </div>
-                        </SettingsRow>
-                      </SettingsGroup>
-
                       {/* Agent Teams */}
                       <SettingsGroup>
                         <SettingsRow
@@ -1481,7 +1457,7 @@ export function SettingsView({
                           <div className="flex justify-start sm:justify-end">
                             <Toggle
                               checked={settingsDraft.agentTeamsEnabled === true}
-                              disabled={!(settingsDraft.localEnabled ?? true)}
+                              disabled={settingsDraft.managedPolicy?.agentTeamsEnabled !== undefined}
                               onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
                               label="启用 Agent Teams"
                             />
@@ -1489,34 +1465,10 @@ export function SettingsView({
                         </SettingsRow>
                       </SettingsGroup>
 
-                      {/* 云端模式 */}
                       <SettingsGroup>
-                        <SettingsRow
-                          title="云端模式"
-                          description="连接到云端 Moss 服务器运行 Agent。"
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.remoteEnabled ?? false}
-                              onCheckedChange={(checked) => {
-                                updateSetting('remoteEnabled', checked);
-                                if (!checked) {
-                                  setSettingsDraft((current) => current ? {
-                                    ...current,
-                                    remoteEnabled: false,
-                                    agentMail: { ...current.agentMail, enabled: false },
-                                  } : current);
-                                }
-                                if (!checked) {
-                                  updateSetting('agentMode', 'local');
-                                } else if (!(settingsDraft.localEnabled ?? true)) {
-                                  updateSetting('agentMode', 'remote-direct');
-                                }
-                              }}
-                              label="云端模式"
-                            />
-                          </div>
+                        <SettingsRow title="企业账号连接" description="连接企业服务，使用云存储、协作邮箱和管理策略。工作电脑在左上角选择。" controlClassName="sm:w-[56px]">
+                          <Toggle checked={settingsDraft.remoteEnabled ?? false}
+                            onCheckedChange={(checked) => updateSetting('remoteEnabled', checked)} label="启用企业账号连接" />
                         </SettingsRow>
 
                         <SettingsRow

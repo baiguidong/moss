@@ -2,7 +2,7 @@ import {
   advancedSettingsSchema,
   DEFAULT_ADVANCED_SETTINGS,
   type AdvancedSettings,
-} from '../../packages/direct-connect-protocol/src/index.js'
+} from '../../shared/session-settings.js'
 import { getSessionEnvironmentContext } from '../utils/sessionIdContext.js'
 import {
   getFeatureFlagConfigOverrides,

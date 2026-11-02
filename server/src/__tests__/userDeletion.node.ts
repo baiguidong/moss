@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -87,7 +88,7 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true, logLevel: 'error',
   }
   const runtime = new RuntimeService({ config, store, serverInstanceId: 'test-server' })
-  const server = startServer(config, runtime, auth)
+  const server = startServer(config, serverTestModels(db), auth)
   try {
     const baseUrl = `http://127.0.0.1:${await server.ready}/api/v1`
     const remove = (id: string, token?: string) => fetch(`${baseUrl}/users/${id}`, {

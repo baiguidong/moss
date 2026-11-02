@@ -13,6 +13,7 @@ import { installCronSchema } from './schema/cron.js'
 import { installUserDeletionSchema } from './schema/userDeletion.js'
 import { installCloudSharesSchema } from './schema/cloudShares.js'
 import { installUsageSchema } from './schema/usage.js'
+import { installControlPlaneSchema } from './schema/controlPlane.js'
 import { UsageRepository } from './repositories/usage.js'
 
 export type { DatabaseConfig } from './config.js'
@@ -75,13 +76,14 @@ export async function initializeDatabase(db: Database): Promise<void> {
     const version = await db
       .prepare('SELECT version FROM model_schema WHERE id=1')
       .get()
-    if (version && Number(version.version) === 5) return
-    if (version && [1, 2, 3, 4].includes(Number(version.version))) {
+    if (version && Number(version.version) === 6) return
+    if (version && [1, 2, 3, 4, 5].includes(Number(version.version))) {
       if (Number(version.version) === 1) await installCronSchema(db)
       await installUserDeletionSchema(db)
       await installUsageSchema(db)
       await installCloudSharesSchema(db)
-      await db.prepare('UPDATE model_schema SET version=5 WHERE id=1').run()
+      await installControlPlaneSchema(db)
+      await db.prepare('UPDATE model_schema SET version=6 WHERE id=1').run()
       return
     }
     if (version && Number(version.version) !== 0)
@@ -114,7 +116,8 @@ export async function initializeDatabase(db: Database): Promise<void> {
     await installUserDeletionSchema(db)
     await installUsageSchema(db)
     await installCloudSharesSchema(db)
-    await db.prepare('UPDATE model_schema SET version=5 WHERE id=1').run()
+    await installControlPlaneSchema(db)
+      await db.prepare('UPDATE model_schema SET version=6 WHERE id=1').run()
   })
 }
 
@@ -122,6 +125,6 @@ export async function requireSchema(db: Database): Promise<void> {
   const row = await db
     .prepare('SELECT version FROM model_schema WHERE id=1')
     .get()
-  if (Number(row?.version) !== 5)
+  if (Number(row?.version) !== 6)
     throw new Error('Database is not initialized by Moss Server')
 }

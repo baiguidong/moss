@@ -17,7 +17,11 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
       const input = JSON.parse(body);
       if (input.password !== 'test' || !['alice','bob'].includes(input.username)) { res.writeHead(401); res.end('{}'); return; }
       respond(res, { access_token: input.username, expires_in: 3600 });
-    } else respond(res, identity(req.headers.authorization?.replace('Bearer ', '')));
+    } else {
+      const user = req.headers.authorization?.replace('Bearer ', '');
+      if (!['alice', 'bob'].includes(user)) { res.writeHead(401); res.end('{}'); return; }
+      respond(res, identity(user));
+    }
   });
   const upstreamSockets = new Set();
   const host = http.createServer((req, res) => {
@@ -46,6 +50,20 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   const loginA = await post('/api/login', { username: 'alice', password: 'test' });
   assert.equal(loginA.status, 200); assert.match(loginA.headers.get('set-cookie'), /HttpOnly; SameSite=Strict; Secure/);
   const ca = loginA.headers.get('set-cookie').split(';')[0];
+  const desktopLogin = (token, origin = env.MOSS_WEB_ORIGIN) => fetch(base() + '/api/desktop/login', {
+    method: 'POST', headers: { Origin: origin, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: '{}',
+  });
+  assert.equal((await desktopLogin()).status, 401);
+  assert.equal((await desktopLogin('invalid')).status, 401);
+  assert.equal((await desktopLogin('alice', 'https://attacker.example')).status, 403);
+  const desktop = await desktopLogin('alice');
+  assert.equal(desktop.status, 200);
+  const desktopCookie = desktop.headers.get('set-cookie').split(';')[0];
+  assert.equal(gateway.store.all().length, 1, 'Desktop reconnects to the same personal computer');
+  assert.equal((await (await fetch(base() + '/api/private', { headers: { Cookie: desktopCookie } })).json()).cookie, 'moss_web=alice');
+  const personal = gateway.store.all()[0];
+  const config = await fetch(base() + '/_moss-auth/web-config', { headers: { 'X-Moss-Environment': personal.id, 'X-Moss-Host-Token': personal.controlToken } });
+  assert.equal((await config.json()).origin, env.MOSS_WEB_ORIGIN);
   const account = await (await fetch(base() + '/api/auth', { headers: { Cookie: ca } })).json();
   assert.deepEqual(account.account, { userName: 'Server alice', userEmail: 'alice@example.test' });
   for (const requestPath of ['//attacker.invalid/path', '/\\attacker.invalid/path', '/a/..//attacker.invalid/path']) {

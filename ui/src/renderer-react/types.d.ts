@@ -750,6 +750,7 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  managedPolicy?: Record<string, boolean>;
   appWidgets?: { enabled: boolean };
   desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
   userAvatar?: string;

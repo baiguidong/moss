@@ -39,7 +39,7 @@ function ownRawStringField(source, key) {
 }
 
 export function getDesktopAgentMode(settings) {
-  return settings?.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
+  return 'local';
 }
 
 export function isRemoteDirectModeEnabled(settings) {

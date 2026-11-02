@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createAuthService } from '../auth/service.js'
@@ -42,7 +43,7 @@ try {
     store: { db },
     countActiveSessions: () => 0,
   } as unknown as RuntimeService
-  const moss = await startServer(config, runtime, service)
+  const moss = await startServer(config, serverTestModels(db), service)
   try {
     const mossPort = await moss.ready
     assert.ok(mossPort)

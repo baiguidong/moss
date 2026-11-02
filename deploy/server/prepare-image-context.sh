@@ -57,7 +57,6 @@ install -d \
   "$APP_ROOT/resources" \
   "$NODE_ROOT/bin"
 install -m 0644 "$ROOT_DIR/bin/moss-server.mjs" "$APP_ROOT/bin/moss-server.mjs"
-install -m 0644 "$ROOT_DIR/bin/moss-session-runner.mjs" "$APP_ROOT/bin/moss-session-runner.mjs"
 cp -a "$ROOT_DIR/admin/dist" "$APP_ROOT/admin/dist"
 
 for resource in skills assistants; do
@@ -139,7 +138,6 @@ printf '%s\n' "$NODE_VERSION" > "$PACKAGE_ROOT/NODE_VERSION"
 
 test -x "$NODE_ROOT/bin/node"
 test -f "$APP_ROOT/bin/moss-server.mjs"
-test -f "$APP_ROOT/bin/moss-session-runner.mjs"
 test ! -e "$APP_ROOT/apps"
 test -f "$APP_ROOT/admin/dist/index.html"
 test -f "$APP_ROOT/node_modules/@img/sharp-linux-$NODE_ARCH/lib/sharp-linux-$NODE_ARCH.node"

@@ -1,6 +1,4 @@
 ARG BASE_IMAGE=debian:bookworm-slim
-ARG DOCKER_CLI_IMAGE=docker:29.2.1-cli
-FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -17,7 +15,6 @@ RUN apt-get update \
     tini \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY dist/server-image/moss-server /opt/moss
 COPY docker/server/entrypoint.sh /usr/local/bin/moss-server-entrypoint
 

@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
@@ -40,7 +41,7 @@ try {
   await db.prepare('UPDATE model_schema SET version=1 WHERE id=1').run()
   await initializeDatabase(db)
   assert.ok(await sessions.getSession('source'))
-  assert.equal(Number((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())?.version), 5)
+  assert.equal(Number((await db.prepare('SELECT version FROM model_schema WHERE id=1').get())?.version), 6)
   const repo = new CronRepository(db)
   const now = Date.parse('2026-09-24T00:00:00Z')
   assert.equal(nextCloudCronRun('0 9 * * *', now, 'Asia/Shanghai'), now + 3600000)
@@ -64,7 +65,7 @@ try {
     dockerStopTimeoutSec:1, dockerLabels:{}, startupPolicy:'reattach-or-resume', heartbeatTimeoutMs:30000,
     reattachProbeTimeoutMs:100, resumeOnMissingRuntime:true, logLevel:'error' }
   const runtime = new RuntimeService({ config, store:sessions, serverInstanceId:'fake' })
-  const app = startServer(config, runtime, auth)
+  const app = startServer(config, serverTestModels(db), auth)
   try {
     const base = `http://127.0.0.1:${await app.ready}/api/v1`
     const headers = { authorization:`Bearer ${login.access_token}`, 'content-type':'application/json' }
@@ -72,39 +73,12 @@ try {
     const result = await fetch(`${base}/cron/tasks`, { method:'POST', headers, body:JSON.stringify({
       ownerSessionId:'source', cron:'0 9 * * *', timezone:'Asia/Shanghai', prompt:'API task',
     }) })
-    assert.equal(result.status, 201)
-    const { task } = await result.json() as any
+    assert.equal(result.status, 410)
+    assert.equal((await result.json()).code, 'SERVER_EXECUTION_RETIRED')
     assert.equal((await fetch(`${base}/cron/tasks`)).status, 401)
-    assert.deepEqual(await (await fetch(`${base}/cron/tasks`,{headers:other})).json(),{tasks:[]})
-    assert.equal((await fetch(`${base}/cron/tasks/${task.id}`,{method:'DELETE',headers:other})).status,404)
-    assert.equal((await fetch(`${base}/cron/tasks`,{method:'POST',headers,body:JSON.stringify({ownerSessionId:'bob-source',cron:'* * * * *',prompt:'cross-user'})})).status,400)
-    assert.equal((await fetch(`${base}/cron/tasks/${task.id}/enabled`,{method:'POST',headers,body:JSON.stringify({enabled:false})})).status,200)
-    await source('execution')
-    await source('pending-creation')
-    await sessions.setSessionLifecycle('pending-creation','creating','active')
-    await db.prepare('INSERT INTO cron_session_links (session_id,task_id,source_session_id) VALUES (?,?,?)').run('execution',task.id,'source')
-    const listed = await (await fetch(`${base}/sessions`,{headers})).json() as any
-    assert.equal(listed.sessions.some((s:any)=>s.sessionId==='pending-creation'),false)
-    assert.equal(listed.sessions.find((s:any)=>s.sessionId==='execution').originChannel,'cron')
-    assert.equal(listed.sessions.find((s:any)=>s.sessionId==='execution').sourceSessionId,'source')
-    assert.equal((await fetch(`${base}/cron/tasks/${task.id}`,{method:'DELETE',headers})).status,200)
-
-    const profile=join(config.dataDir,'profiles','users',alice.userId)
-    await mkdir(profile,{recursive:true})
-    await writeFile(join(profile,'cron_tasks.json'),JSON.stringify({tasks:[{id:'legacy',cron:'* * * * *',prompt:'legacy',createdAt:now,recurring:true}]}))
-    await importLegacyCloudCron(db,config)
-    const legacyList=await (await fetch(`${base}/cron/tasks`,{headers})).json() as any
-    const legacy=legacyList.tasks.find((t:any)=>t.id.startsWith('legacy:'))!
-    assert.equal(legacy.enabled,false); assert.equal(legacy.orphaned,true)
-    // Use the same URL encoding as the desktop for IDs returned by the list API.
-    const legacyUrl=`${base}/cron/tasks/${encodeURIComponent(legacy.id)}`
-    assert.equal((await fetch(legacyUrl,{method:'DELETE',headers:other})).status,404)
-    assert.equal((await fetch(`${legacyUrl}/enabled`,{method:'POST',headers,body:JSON.stringify({enabled:false})})).status,200)
-    assert.equal((await fetch(legacyUrl,{method:'DELETE',headers})).status,200)
-    assert.equal(await repo.get(legacy.id,alice),null)
-    await importLegacyCloudCron(db,config)
-    assert.equal((await repo.list(alice)).some(t=>t.id.startsWith('legacy:')),false)
-    assert.equal((await fetch(`${base}/cron/tasks/%ZZ`,{method:'DELETE',headers})).status,400)
+    assert.equal((await fetch(`${base}/cron/tasks`, { headers: other })).status, 410)
+    assert.equal((await fetch(`${base}/cron/tasks/old/run`, { method: 'POST', headers })).status, 410)
+    assert.deepEqual(await repo.list(alice), [])
   } finally { await app.stop() }
 
   let time = now + 10 * 60000, calls = 0, fail = false

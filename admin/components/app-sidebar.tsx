@@ -51,8 +51,8 @@ const menuItems: NavItem[] = [
     requiredScope: 'admin:users',
   },
   {
-    title: '会话管理',
-    url: '/sessions',
+    title: '工作电脑',
+    url: '/computers',
     icon: MessageSquare,
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
   },

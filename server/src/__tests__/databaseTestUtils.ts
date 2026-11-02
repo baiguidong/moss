@@ -1,3 +1,7 @@
+import { SessionRepository } from '../model/repositories/session.js'
+import { UsageRepository } from '../model/repositories/usage.js'
+import type { Database } from '../model/database.js'
+import type { createModels } from '../model/index.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { databaseConfigSchema, type DatabaseConfig } from '../model/config.js'
 import { openDatabase } from '../model/index.js'
@@ -65,4 +69,8 @@ export async function openTestDatabase(filename = ':memory:') {
   return await openDatabase(await testDatabaseConfig(filename), {
     initialize: true,
   })
+}
+
+export function serverTestModels(db: Database) {
+  return { db, sessions: new SessionRepository(db), usage: new UsageRepository(db) } as Awaited<ReturnType<typeof createModels>>
 }

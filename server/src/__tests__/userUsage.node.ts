@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -138,7 +139,7 @@ try {
     heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true, logLevel: 'error',
   }
   const runtime = new RuntimeService({ config, store: sessions, serverInstanceId: 'test-server' })
-  const server = startServer(config, runtime, auth)
+  const server = startServer(config, serverTestModels(db), auth)
   let expected: UsageOverview['totals']
   try {
     const base = `http://127.0.0.1:${await server.ready}/api/v1`

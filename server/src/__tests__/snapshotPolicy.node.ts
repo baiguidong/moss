@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,7 +21,7 @@ try {
   const config: ServerConfig = { host: '127.0.0.1', port: 0, authMode: 'local', tokenTtlSec: 3600, bootstrapAdmin: { username: 'admin' }, idleTimeoutMs: 600000,
     maxSessions: 4, rootDir: root, database: { driver: 'sqlite', filename: ':memory:' }, dataDir: join(root, 'data'), runDir: join(root, 'run'), logDir: join(root, 'log'),
     dockerStopTimeoutSec: 1, dockerLabels: {}, startupPolicy: 'reattach-or-resume', heartbeatTimeoutMs: 30000, reattachProbeTimeoutMs: 100, resumeOnMissingRuntime: true, logLevel: 'error' }
-  const app = startServer(config, { store: { db }, countActiveSessions: () => 0 } as unknown as RuntimeService, auth)
+  const app = startServer(config, serverTestModels(db), auth)
   try {
     const base = `http://127.0.0.1:${await app.ready}`
     const call = (route: string, token?: string, body?: unknown) => fetch(base + route, { method: body ? 'PATCH' : 'GET', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })

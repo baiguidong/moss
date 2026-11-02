@@ -1,3 +1,5 @@
+import { createHostControlClient } from './host/control-plane-client.mjs';
+import { createCloudComputerWindow } from './cloud-computer-window.mjs';
 import { resolveAppSettingsView, validateAppViewState } from './apps/app-view-binding.mjs';
 import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
 import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
@@ -32,7 +34,6 @@ import { createWorkspaceWatcherService } from './workspace-watcher.mjs';
 import { createWorkspaceFileService } from './workspace-files.mjs';
 import { createProjectAssetService } from './project-assets.mjs';
 import { createSessionTaskService } from './session-task-service.mjs';
-import { createRemoteRuntimeFactory } from './remote-session-runtime.mjs';
 import { SessionRuntimePool } from './session-runtime-pool.mjs';
 import { normalizeRuntimeLifecycle } from './runtime-lifecycle-settings.mjs';
 import { buildFileAttachmentPrompt, createSessionPromptPreparation } from './session-prompt-preparation.mjs';
@@ -379,6 +380,20 @@ import { createAgentMailStore } from './agent-mail-store.mjs';
 import { createAgentMailPoller } from './agent-mail-poller.mjs';
 
 const isWebHost = process.env.MOSS_WEB_MODE === '1';
+// A managed Host obtains the canonical public origin from its authenticated
+// controller, so moving the gateway does not require replacing its container.
+if (isWebHost && process.env.MOSS_ENVIRONMENT_ID && process.env.MOSS_WEB_AUTH_SERVER) {
+  try {
+    const response = await fetch(`${process.env.MOSS_WEB_AUTH_SERVER}/web-config`, {
+      headers: { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN },
+      redirect: 'error', signal: AbortSignal.timeout(5000),
+    });
+    if (response.ok) {
+      const config = await response.json();
+      if (config.origin && ['https:', 'http:'].includes(new URL(config.origin).protocol) && new URL(config.origin).origin === config.origin) process.env.MOSS_WEB_ORIGIN = config.origin;
+    }
+  } catch {} // Existing standalone Hosts keep their explicit configured origin.
+}
 const webRestoreState = createRestoreState(isWebHost ? process.env : {});
 let webAutomationsPaused = isWebHost && (webRestoreState.get().automationsPaused || !!webRestoreState.get().maintenance);
 let webServer = null;
@@ -1026,14 +1041,7 @@ const { addProjectAsset, registerProjectResult, listProjectAssets, readProjectAs
   normalizeProjectId, projectRecordQueues, readJsonFileAsync, readProject,
   runInKeyedQueue, writeJsonFileAtomicAsync, writeProject,
 });
-const { createRemoteDirectRuntime } = createRemoteRuntimeFactory({
-  getSettings: () => desktopSettings,
-  buildClaudeSessionConfig, emitSessionMeta, fetchRemoteDirectSessionInfo,
-  getClaudeRuntimeModule, isRemoteDirectSessionNotFoundError, mossLog,
-  normalizePermissionDecision, prepareAssistantContextForSessionStart,
-  resolveRemoteDirectConnection, resumeRemoteDirectSession, schedulePersistSession,
-  startWorkspaceWatcher, syncRemoteSkillsForConnection,
-});
+function createRemoteDirectRuntime() { throw new Error('服务端会话已退役，请连接我的云电脑。'); }
 const { ensureRemoteSessionConnection, fetchRemoteWorkspaceProtocolContent, listDirectoryEntries, readWorkspaceFile, uploadFileToRemoteSessionWorkspace, writeWorkspaceFile, takeRemoteAttachmentSource } = createWorkspaceFileService({
   MAX_IMAGE_BASE64_BYTES, REMOTE_PREVIEW_CACHE_DIR, allowMediaRoot,
   assertWorkspaceVersionIdle, emitWorkspaceChanged, ensureRuntime,
@@ -1078,6 +1086,7 @@ function getDesktopSettingsPayload(extra = {}) {
   return {
     ...desktopSettingsStore.getPayload(extra),
     settingsRevision: desktopSettingsRevision,
+    managedPolicy: { ...hostPolicy },
     webSearch: toPublicWebSearchSettings(
       desktopSettings.webSearch,
       capability,
@@ -1092,6 +1101,12 @@ function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
     model: resolveNativeWebSearchModel(settings),
     apiKey: settings.apiKey,
   });
+}
+
+function getHostPermissionMode(value, fallback = desktopSettings.permissionMode) {
+  const mode = normalizePermissionMode(value, fallback);
+  if (hostPolicy.bypassPermissions === true) return 'bypassPermissions';
+  return hostPolicy.bypassPermissions === false && mode === 'bypassPermissions' ? 'default' : mode;
 }
 
 function getRuntimeWebSearchSettings(settings = desktopSettings) {
@@ -2604,7 +2619,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     presentationEnabled: sessionRecord?.sessionKind === 'chat' && sessionRecord?.agentMode !== 'remote-direct' && !sessionRecord?.isSubAgent && !sessionRecord?.appTestRunId,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(desktopSettings),
-    permissionMode: normalizePermissionMode(
+    permissionMode: getHostPermissionMode(
       sessionRecord?.permissionMode,
       desktopSettings.permissionMode,
     ),
@@ -2647,7 +2662,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
         ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' }
         : {}),
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: (sessionRecord?.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled) === true ? '1' : '0',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: (hostPolicy.agentTeamsEnabled ?? sessionRecord?.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled) === true ? '1' : '0',
       MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
         ...desktopSettings.advanced,
         moss_response_language: desktopSettings.language,
@@ -2694,7 +2709,11 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
 
 
 
-function refreshDesktopSettings(payload = {}) {
+function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
+  if (!policyUpdate && typeof hostPolicy !== 'undefined') {
+    for (const [key, value] of Object.entries(hostPolicy)) if (Object.hasOwn(payload, key) && payload[key] !== value) throw new Error('此设置已由企业策略管理。');
+    if (hostPolicy.bypassPermissions === false && payload.permissionMode === 'bypassPermissions') throw new Error('企业策略禁止自动批准工具权限。');
+  }
   const sourcePayload = payload && typeof payload === 'object' ? payload : {};
   const previousWebSearchFingerprint = getCurrentWebSearchCapabilityFingerprint();
   const webSearchPayload = sourcePayload.webSearch
@@ -2792,7 +2811,10 @@ function refreshDesktopSettings(payload = {}) {
     Object.prototype.hasOwnProperty.call(payload, 'remoteDirect') ||
     Object.keys(payload).some((key) => key.startsWith('remoteDirect'))
   ) {
+    cloudComputerWindow?.close();
+    hostControl.invalidate();
     remoteDirectNetFetch.reset(nextServerUrl);
+    void hostControl.refresh();
     agentMailPoller?.refresh();
     cloudStorageHost?.invalidate();
   }
@@ -3057,9 +3079,9 @@ function getSessionSummary(sessionRecord) {
     archivedAt: sessionArchives.archivedAt(sessionRecord),
     title: sessionRecord.title,
     agentMode: sessionRecord.agentMode === 'remote-direct' ? 'remote-direct' : 'local',
-    permissionMode: normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
+    permissionMode: getHostPermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
     composerIntent: sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
-    agentTeamsEnabled: sessionRecord.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled,
+    agentTeamsEnabled: hostPolicy.agentTeamsEnabled ?? sessionRecord.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled,
     skillIds: sessionRecord.projectDefaults?.skillIds || [],
     workspace,
     createdAt: sessionRecord.createdAt,
@@ -4121,7 +4143,7 @@ function authorizeBrowserAutomationEvent(event, sessionRecord) {
   });
   const origin = getBrowserAutomationOrigin(page.url);
   if (
-    normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
+    getHostPermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
       === 'bypassPermissions'
     || isBrowserAutomationAutoAllowed(sessionRecord, page.url)
   ) return page;
@@ -4238,7 +4260,7 @@ async function requestToolPermission(sessionRecord, toolName, input, request = {
   // but any permission request that reaches the desktop must not block either.
   if (shouldAutoApproveToolPermission({
     bypassPermissions:
-      normalizePermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
+      getHostPermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode)
         === 'bypassPermissions',
     toolName,
   })) {
@@ -4871,6 +4893,7 @@ function createSessionRecord({
   projectDefaults = null,
   mode = 'chat',
 } = {}) {
+  if (requestedAgentMode === 'remote-direct') throw new Error('服务端会话已退役，请从左上角连接我的云电脑。');
   const now = Date.now();
   const id = randomUUID();
   const sessionDir = getLocalSessionDir(id);
@@ -4884,11 +4907,7 @@ function createSessionRecord({
       fs.mkdirSync(path.join(normalizedWorkspace, directory), { recursive: true });
     }
   }
-  const agentMode = requestedAgentMode === 'remote-direct'
-    ? 'remote-direct'
-    : requestedAgentMode === 'local'
-      ? 'local'
-      : getDesktopAgentMode();
+  const agentMode = 'local';
 
   const sessionRecord = {
     id,
@@ -6213,13 +6232,13 @@ function createAgentMailApproval(message, context = {}) {
 
 function initializeAgentMail() {
   if (agentMailPoller) return;
-  if (webAutomationsPaused || desktopSettings.remoteEnabled !== true || desktopSettings.agentMail?.enabled !== true) return;
+  if (webAutomationsPaused || hostControlPaused || desktopSettings.remoteEnabled !== true || desktopSettings.agentMail?.enabled !== true) return;
   const consumerId = ensureAgentMailConsumerId();
   agentMailPoller = createAgentMailPoller({
     consumerId,
     store: agentMailStore,
     getEnabled: () => (
-      !webAutomationsPaused && desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
+      !webAutomationsPaused && !hostControlPaused && desktopSettings.remoteEnabled === true && desktopSettings.agentMail?.enabled === true
     ),
     getConnection: async () => {
       const connection = await resolveAgentMailConnection();
@@ -6562,7 +6581,75 @@ function syncMainWindowAppearance() {
 
 nativeTheme.on('updated', syncMainWindowAppearance);
 
+const hostControlStatePath = path.join(MOSS_HOME, 'host-control-state.json');
+let hostControlState;
+try { hostControlState = JSON.parse(fs.readFileSync(hostControlStatePath, 'utf8')); } catch { hostControlState = {}; }
+let hostControlPaused = hostControlState.paused === true;
+let hostPolicyRevision = hostControlState.revision || 0;
+let hostPolicy = hostControlState.policy || {};
+let hostPolicyOriginal = hostControlState.original || {};
+let hostControlAccount = hostControlState.account || null;
+const hostPausedAccounts = hostControlState.pausedAccounts || {};
+function saveHostControlState() {
+  fs.writeFileSync(hostControlStatePath + '.tmp', JSON.stringify({ account: hostControlAccount, pausedAccounts: hostPausedAccounts, paused: hostControlPaused, revision: hostPolicyRevision, policy: hostPolicy, original: hostPolicyOriginal }), { mode: 0o600 });
+  fs.renameSync(hostControlStatePath + '.tmp', hostControlStatePath);
+}
+const hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: isWebHost ? 'cloud' : 'desktop',
+  environmentId: process.env.MOSS_ENVIRONMENT_ID, version: app.getVersion(),
+  onAccountChange: account => {
+    if (account === hostControlAccount) return;
+    if (hostControlAccount) hostPausedAccounts[hostControlAccount] = hostControlPaused;
+    const restore = hostPolicyOriginal;
+    hostControlAccount = account;
+    hostPolicy = {}; hostPolicyOriginal = {}; hostPolicyRevision = -1;
+    hostControlPaused = account ? hostPausedAccounts[account] === true : false;
+    if (Object.keys(restore).length) refreshDesktopSettings(restore, { policyUpdate: true });
+    saveHostControlState();
+  },
+  getConnection: async () => {
+    if (isWebHost) return process.env.MOSS_ENVIRONMENT_ID && process.env.MOSS_WEB_AUTH_SERVER ? {
+      serverUrl: process.env.MOSS_WEB_AUTH_SERVER, authToken: webServer?.auth.getHostAccessToken?.(),
+      accountId: `${process.env.MOSS_WEB_OWNER_ORG_ID}:${process.env.MOSS_WEB_OWNER_ID}`,
+      headers: { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN },
+    } : null;
+    if (!desktopSettings.remoteEnabled || !getRemoteDirectSettings().serverUrl) return null;
+    const connection = await resolveRemoteDirectConnection();
+    const identity = JSON.parse(Buffer.from(connection.authToken.split('.')[1], 'base64url').toString('utf8'));
+    return { ...connection, accountId: `${identity.org_id}:${identity.sub}` };
+  },
+  fetchImpl: (...args) => isWebHost ? fetch(...args) : remoteDirectNetFetch(...args),
+  getStatus: () => ({ paused: hostControlPaused, policyRevision: hostPolicyRevision,
+    activeSessions: [...sessions.values()].filter(record => record.busy || record.preparingPrompt).length }),
+  execute: async command => {
+    if (command.action === 'pause') { hostControlPaused = true; saveHostControlState(); return; }
+    if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); return; }
+    if (command.action === 'cancel-session') {
+      const record = getSessionRecord(command.input.sessionId);
+      if (!record) throw new Error('会话不存在');
+      await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id });
+      return;
+    }
+    throw new Error('不支持此控制命令');
+  },
+  applyPolicy: async policy => {
+    if (!policy || policy.revision === hostPolicyRevision) return;
+    const next = policy.settings || {};
+    const patch = {};
+    for (const key of Object.keys(hostPolicy)) if (!(key in next)) { patch[key] = hostPolicyOriginal[key]; delete hostPolicyOriginal[key]; }
+    for (const key of Object.keys(next)) if (!(key in hostPolicy)) hostPolicyOriginal[key] = desktopSettings[key];
+    hostPolicy = next;
+    if (Object.keys(patch).length || Object.keys(next).length) await refreshDesktopSettings({ ...patch, ...next }, { policyUpdate: true });
+    hostPolicyRevision = policy.revision;
+    saveHostControlState();
+  },
+  onError: error => mossLog('warn', 'control-plane', error.message),
+});
+usageLedger.setReporter(hostControl.attributeUsage);
+let cloudComputerWindow;
 function createWindow() {
+  cloudComputerWindow ||= createCloudComputerWindow({ BrowserWindow, session, shell, ipcMain,
+    getLocalWindow: () => mainWindow, resolveConnection: () => resolveRemoteDirectConnection(),
+    certificateVerifyProc: remoteDirectCertificateVerifyProc, preload: path.join(__dirname, 'cloud-computer-preload.cjs'), appVersion: app.getVersion() });
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -6757,7 +6844,7 @@ const {
   stop: stopMossCronScheduler,
   skipMissed: skipMissedMossCronTasks,
 } = createMossCronScheduler({
-  canRun: () => !webAutomationsPaused,
+  canRun: () => !webAutomationsPaused && !hostControlPaused,
   ipcMain,
   mossHome: MOSS_HOME,
   sessions,
@@ -7080,6 +7167,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
         if (changes.some(change => change.path === 'permissionMode')) {
           if (!isPermissionMode(next.permissionMode)) throw new Error('无效权限模式');
+          if (getHostPermissionMode(next.permissionMode) !== next.permissionMode) throw new Error('此权限模式已由企业策略管理。');
           context.assertCurrent?.(); await record.runtime?.setPermissionMode?.(next.permissionMode); record.permissionMode=next.permissionMode;
         }
         schedulePersistSession(record,true); emitSessionMeta(record);
@@ -7722,6 +7810,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   }
 
   mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
+  hostControl.start();
 
   if (selfTestTarget?.fixture) {
     const { workspace, title } = selfTestTarget.fixture;
@@ -7893,6 +7982,7 @@ function getInstallBlockers() {
 const updateInstallPreparation = createUpdateInstallPreparation({ getBlockers: getInstallBlockers, shutdown: shutdownDesktop });
 function assertUpdateWorkAllowed() {
   if (appQuitting || appQuitPending) throw new Error('Moss 正在退出，无法开始新的操作。');
+  if (hostControlPaused) throw new Error('此电脑已由企业管理暂停接收新任务。');
   webServer?.assertWorkAllowed();
   if (updateInstallPreparation.isPreparing()) throw new Error('正在准备安装更新，请完成安装或退出后重新打开 Moss。');
 }
@@ -7905,6 +7995,7 @@ function shutdownDesktop() {
     const attempt = async (operation) => {
       try { await operation(); } catch (error) { errors.push(error); }
     };
+    await attempt(() => hostControl.stop());
     await attempt(() => sessionRuntimePool.stop());
     await attempt(() => appRuntimeRestoreController?.abort());
     await attempt(() => stopMossCronScheduler());
@@ -8804,41 +8895,12 @@ ipcMain.handle('project:get-task', async (_event, { projectId, taskId } = {}) =>
 });
 
 async function synchronizeRemoteSessionsBestEffort() {
-  if (remoteDirectTlsRestartRequired) return;
-  if (desktopSettings.remoteEnabled ?? false) {
-    await syncRemoteDirectSessionsFromServer().catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message !== lastRemoteSessionSyncErrorMessage) {
-        lastRemoteSessionSyncErrorMessage = message;
-        mossLog('warn', 'remote-session-sync', 'Unable to synchronize Moss Server sessions', {
-          error: message,
-        });
-      }
-    });
-  }
-}
-
-function reconcileLocalSessionSourcesBestEffort() {
-  if (localSessionReconciliationPromise) return localSessionReconciliationPromise;
-  localSessionReconciliationPromise = interruptedSessionRecoveryPromise
-    .then(() => Promise.allSettled(Array.from(sessions.values()).map((record) => (
-      syncSubAgentSessionsBestEffort(record)
-    ))))
-    .finally(() => {
-      localSessionReconciliationPromise = null;
-    });
-  return localSessionReconciliationPromise;
+  // Legacy Server sessions are archived; browsing a Host never reconnects them.
 }
 
 function listVisibleSessionSummaries() {
-  const currentMode = getDesktopAgentMode();
-  const localEnabled = desktopSettings.localEnabled ?? true;
-  const remoteEnabled = desktopSettings.remoteEnabled ?? false;
-  const showAll = localEnabled && remoteEnabled;
   return [...sessions.values(), ...subAgentSessions.values()]
-    .filter(s => !s.deleted && !sessionArchives.archivedAt(s))
-    .filter(s => s.agentMode !== 'remote-direct' || !remoteSessionDeletions.has(s.underlyingSessionId))
-    .filter(s => showAll || (s.agentMode === 'remote-direct' ? 'remote-direct' : 'local') === currentMode)
+    .filter(record => !record.deleted && !sessionArchives.archivedAt(record) && record.agentMode !== 'remote-direct')
     .map(getSessionSummary)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -9430,6 +9492,7 @@ ipcMain.handle('app:import-legacy-buddy', async (_event, payload) => {
 });
 
 ipcMain.handle('agent:set-session-permission-mode', async (_event, { sessionId, mode } = {}) => {
+  if (getHostPermissionMode(mode) !== mode) throw new Error('此权限模式已由企业策略管理。');
   if (!isPermissionMode(mode)) {
     throw new Error('Permission mode is invalid.');
   }
@@ -10192,6 +10255,9 @@ async function sendAgentPromptNow(event, {
   controllerSignal?.throwIfAborted();
   const sender = event?.sender || mainWindow?.webContents || null;
   const sessionRecord = getSessionRecord(sessionId);
+  if (sessionRecord.agentMode === 'remote-direct') throw new Error('旧服务端会话已归档，请连接我的云电脑。');
+  const permissionMode = getHostPermissionMode(sessionRecord.permissionMode);
+  if (permissionMode !== sessionRecord.permissionMode) { await sessionRecord.runtime?.setPermissionMode?.(permissionMode); sessionRecord.permissionMode = permissionMode; schedulePersistSession(sessionRecord, true); }
   const preparedAnnotation = visualizationAnnotation ? await prepareVisualizationAnnotation(visualizationAnnotation, {
     session: sessionRecord, resolveResourceFile: uri => resolveAppResourceFile(appRuntime, uri),
     resolveArtifact: async (artifactId, revision) => {

@@ -4,17 +4,12 @@ import { Loader2 } from 'lucide-react'
 import { DashboardShell } from './layouts/dashboard-shell'
 
 const LoginPage = lazy(() => import('./pages/login-page'))
-const DashboardPage = lazy(() => import('./pages/dashboard-page'))
-const SessionsPage = lazy(() => import('./pages/sessions-page'))
+const DashboardPage = lazy(() => import('./pages/computers-page'))
+const SessionsPage = DashboardPage
 const UsersPage = lazy(() => import('./pages/users-page'))
 const UsagePage = lazy(() => import('./pages/usage-page'))
 const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))
 const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
-const SessionDetailPage = lazy(() =>
-  import('./pages/session-detail-page').then((module) => ({
-    default: module.SessionDetailPage,
-  })),
-)
 
 function RouteLoader() {
   return (
@@ -35,7 +30,7 @@ function SessionDetailRoute() {
     return <Navigate to="/sessions" replace />
   }
 
-  return <SessionDetailPage sessionId={id} />
+  return <Navigate to="/computers" replace />
 }
 
 export default function App() {
@@ -71,7 +66,7 @@ export default function App() {
           }
         />
         <Route
-          path="/sessions"
+          path="/computers"
           element={
             <SuspendedRoute>
               <SessionsPage />
@@ -103,6 +98,7 @@ export default function App() {
           }
         />
       </Route>
+      <Route path="/sessions" element={<Navigate to="/computers" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

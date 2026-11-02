@@ -1,3 +1,4 @@
+import { serverTestModels } from './databaseTestUtils.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -89,7 +90,7 @@ try {
     store: { db },
     countActiveSessions: () => 0,
   } as unknown as RuntimeService
-  const moss = await startServer(config, runtime, authService)
+  const moss = await startServer(config, serverTestModels(db), authService)
   try {
     const port = await moss.ready
     const baseUrl = `http://127.0.0.1:${port}`

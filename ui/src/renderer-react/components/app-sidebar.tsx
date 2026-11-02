@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkComputerSelector } from './work-computer-selector';
 import * as React from "react";
 import {
   Archive,
@@ -453,6 +454,8 @@ export function AppSidebar({
             </Button>
           </div>
         </div>
+
+        <WorkComputerSelector collapsed={collapsed} />
 
         {!collapsed && isSearchOpen && !onOpenGlobalSearch ? (
           <div className="relative mt-2">

@@ -153,7 +153,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         const row = store.get(String(req.headers['x-moss-environment'] || ''));
         if (!row || !timingSafeEqual(hash(row.controlToken), hash(req.headers['x-moss-host-token']))) return json(res, 403, { error: 'Forbidden' });
         const endpoint = url.pathname.slice('/_moss-auth'.length);
-        if (req.method === 'GET' && endpoint === '/web-config') return json(res, 200, { previewDomain: env.MOSS_WEB_PREVIEW_DOMAIN || null });
+        if (req.method === 'GET' && endpoint === '/web-config') return json(res, 200, { previewDomain: env.MOSS_WEB_PREVIEW_DOMAIN || null, origin });
         if (req.method === 'POST' && endpoint === '/ports/register') {
           const { token, expiresAt } = await readJson(req);
           if (!previewDomain || !/^[a-f0-9]{48}$/.test(token) || !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 25 * 3600_000 || portRoutes.has(token) || portRoutes.size >= 1000) return json(res, 400, { error: 'Invalid port preview' });
@@ -170,6 +170,21 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
           if (typeof state !== 'string' || !/^[\w-]{16,256}$/.test(state) || !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 11 * 60_000 || oauthCallbacks.has(state) || oauthCallbacks.size >= 1000) return json(res, 400, { error: 'Invalid transaction' });
           oauthCallbacks.set(state, { environmentId: row.id, expiresAt });
           return json(res, 200, { ok: true });
+        }
+        // Only this environment may report or enroll itself. The device token
+        // is independently bound to the Host by the control plane.
+        if (authBase && req.method === 'POST' && (['/api/v1/hosts/enroll', '/api/v1/hosts/heartbeat'].includes(endpoint)
+          || endpoint === `/api/v1/hosts/${row.id}/usage` || new RegExp(`^/api/v1/hosts/${row.id}/commands/[a-zA-Z0-9:_-]+$`).test(endpoint))) {
+          const input = await readJson(req);
+          if (['/api/v1/hosts/enroll', '/api/v1/hosts/heartbeat'].includes(endpoint)) {
+            if (input.id !== row.id || input.kind !== 'cloud') return json(res, 403, { error: 'Host ownership mismatch' });
+            if (endpoint.endsWith('/enroll')) {
+              const identity = await authRequest(authBase, '/api/v1/auth/me', null, req.headers.authorization?.replace(/^Bearer /, ''));
+              if (!sameIdentity(identity, row)) return json(res, 403, { error: 'Host ownership mismatch' });
+            }
+          }
+          const response = await fetch(`${authBase}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(15000) });
+          return json(res, response.status, await response.json());
         }
         if (!(req.method === 'POST' && endpoint === '/api/v1/auth/login') && !(req.method === 'GET' && endpoint === '/api/v1/auth/me')) return json(res, 404, { error: 'Not found' });
         const result = await authRequest(authBase, endpoint, req.method === 'POST' ? await readJson(req) : null, req.headers.authorization?.replace(/^Bearer /, ''));
@@ -201,12 +216,16 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       }
       if (url.pathname.startsWith('/internal/') || url.pathname.startsWith('/_cloud/')) return json(res, 403, { error: 'Forbidden' });
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin !== origin) return json(res, 403, { error: '请求来源无效。' });
-      if (url.pathname === '/api/login' && req.method === 'POST') {
+      if (['/api/login', '/api/desktop/login'].includes(url.pathname) && req.method === 'POST') {
         const ip = req.socket.remoteAddress; let attempts = loginAttempts.get(ip);
         if (!attempts || attempts.until < Date.now()) { attempts = { count: 0, until: Date.now() + 60000 }; loginAttempts.set(ip, attempts); }
         if (++attempts.count > 100) return json(res, 429, { error: '登录尝试过多。' });
         const input = await readJson(req);
-        const token = await authRequest(authBase, '/api/v1/auth/login', { username: input.username, password: input.password, token: input.token });
+        const desktopToken = url.pathname === '/api/desktop/login' && authBase
+          ? req.headers.authorization?.match(/^Bearer ([^\s]+)$/)?.[1] : null;
+        if (url.pathname === '/api/desktop/login' && !desktopToken) return json(res, 401, { error: '需要企业账号授权。' });
+        const token = desktopToken ? { access_token: desktopToken, expires_in: 3600 }
+          : await authRequest(authBase, '/api/v1/auth/login', { username: input.username, password: input.password, token: input.token });
         if (!token.access_token) throw new Error('认证中心未返回凭据');
         const identity = await authRequest(authBase, '/api/v1/auth/me', null, token.access_token);
         let row = store.ensure(identity);

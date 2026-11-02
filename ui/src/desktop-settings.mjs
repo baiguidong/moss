@@ -278,17 +278,10 @@ export function normalizeDesktopSettings(input, existing = {}) {
     result.agentTeamsEnabled = DEFAULT_DESKTOP_SETTINGS.agentTeamsEnabled;
   }
 
-  if (source.agentMode !== undefined) {
-    result.agentMode = source.agentMode === 'remote-direct' ? 'remote-direct' : 'local';
-  } else if (result.agentMode === undefined) {
-    result.agentMode = DEFAULT_DESKTOP_SETTINGS.agentMode;
-  }
-
-  if (source.localEnabled !== undefined) {
-    result.localEnabled = Boolean(source.localEnabled);
-  } else if (result.localEnabled === undefined) {
-    result.localEnabled = DEFAULT_DESKTOP_SETTINGS.localEnabled;
-  }
+  // Execution always belongs to this Host. Legacy remote settings now only
+  // configure the enterprise account connection; they cannot select a runner.
+  result.agentMode = 'local';
+  result.localEnabled = true;
 
   if (source.remoteEnabled !== undefined) {
     result.remoteEnabled = Boolean(source.remoteEnabled);

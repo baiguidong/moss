@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildNodeFixture } from './buildNodeFixture.js'
 
-test('remote session deletion is authorized, persistent and idempotent', async () => {
+test('retired execution preserves archives and enforces archive ownership', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-session-deletion-test-'))
   try {
     const build = await buildNodeFixture({
