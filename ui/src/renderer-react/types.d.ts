@@ -1343,6 +1343,12 @@ export type HostConfirmationSnapshot = { revision: number; requests: HostConfirm
 
 declare global {
   interface Window {
+    mossDesktopShell?: {
+      returnToLocal: () => Promise<void>;
+      getPresentation: () => Promise<{ appearance: DesktopSettings['appearance']; panelLayout: string | null }>;
+      updateAppearance: (appearance: DesktopSettings['appearance']) => Promise<DesktopSettings['appearance']>;
+      onPresentation: (callback: (value: { appearance?: DesktopSettings['appearance']; panelLayout?: string | null }) => void) => () => void;
+    };
     mossWeb?: { fileUrl: (path: string) => string; uploadFile: (file: File) => Promise<{ path: string; name: string }>; snapshot: any;
       managed?: boolean; generation?: number; pendingBrowserUrl?: string; authorizationWindow?: Window; identity?: { hostId: string; userId: string; generation?: number }; capabilities?: import('../shared/host-capabilities.mjs').HostCapabilities;
     };

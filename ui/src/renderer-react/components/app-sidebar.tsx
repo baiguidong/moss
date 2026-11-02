@@ -441,6 +441,7 @@ export function AppSidebar({
               </div>
             </div>
           <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
+            <WorkComputerSelector />
             {headerActions}
             <Button
               variant="ghost"
@@ -454,8 +455,6 @@ export function AppSidebar({
             </Button>
           </div>
         </div>
-
-        <WorkComputerSelector collapsed={collapsed} />
 
         {!collapsed && isSearchOpen && !onOpenGlobalSearch ? (
           <div className="relative mt-2">

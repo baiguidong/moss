@@ -925,6 +925,21 @@ export default function App() {
   }, [layout]);
 
   React.useEffect(() => {
+    const apply = (value: { panelLayout?: string | null }) => {
+      if (typeof value.panelLayout !== 'string') return;
+      localStorage.setItem(LAYOUT_STORAGE_KEY, value.panelLayout);
+      setLayout(loadPanelLayout());
+    };
+    const listener = (event: Event) => apply((event as CustomEvent).detail);
+    window.addEventListener('moss:desktop-presentation', listener);
+    const handler = !window.mossWeb ? window.agentDesktop.ipcOn('desktop:presentation', apply) : null;
+    return () => {
+      window.removeEventListener('moss:desktop-presentation', listener);
+      if (handler) window.agentDesktop.ipcOff('desktop:presentation', handler);
+    };
+  }, []);
+
+  React.useEffect(() => {
     activeDetailRef.current = activeDetail;
   }, [activeDetail]);
 
@@ -2758,7 +2773,7 @@ export default function App() {
           });
         }} />}
       <WindowChrome
-        desktop={!window.mossWeb}
+        desktop={!window.mossWeb || Boolean(window.mossDesktopShell?.getPresentation)}
         isMacOS={isMacOS}
         sidebarWidth={effectiveLeftCollapsed ? 68 : layout.leftWidth}
         rightWidth={sessionPanel.rightWidth}
@@ -2781,7 +2796,7 @@ export default function App() {
         >
           <ComputerUseControl />
           <AppSidebar
-            headerActions={window.mossWeb ? notificationCenter : undefined}
+            headerActions={window.mossWeb && !window.mossDesktopShell?.getPresentation ? notificationCenter : undefined}
             sessions={sidebarSessions}
             apps={apps}
             activeSessionId={activeSessionId}

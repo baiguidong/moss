@@ -6543,6 +6543,7 @@ function syncMainWindowAppearance() {
   const { backgroundColor, titleBarOverlay } = getMainWindowAppearance();
   mainWindow.setBackgroundColor(backgroundColor);
   if (titleBarOverlay) mainWindow.setTitleBarOverlay(titleBarOverlay);
+  cloudComputerWindow?.syncAppearance();
 }
 
 nativeTheme.on('updated', syncMainWindowAppearance);
@@ -6642,8 +6643,9 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
 usageLedger.setReporter(hostControl.attributeUsage);
 let cloudComputerWindow;
 function createWindow() {
-  cloudComputerWindow ||= createCloudComputerWindow({ BrowserWindow, session, shell, ipcMain,
+  cloudComputerWindow ||= createCloudComputerWindow({ WebContentsView, session, shell, ipcMain,
     getLocalWindow: () => mainWindow, resolveConnection: () => resolveEnterpriseAccountConnection(),
+    getAppearance: () => desktopSettings.appearance, updateAppearance: appearance => refreshDesktopSettings({ appearance }),
     certificateVerifyProc: enterpriseAccountCertificateVerifyProc, preload: path.join(__dirname, 'cloud-computer-preload.cjs'), appVersion: app.getVersion() });
   mainWindow = new BrowserWindow({
     width: 1280,
