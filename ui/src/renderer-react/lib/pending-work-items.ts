@@ -71,6 +71,11 @@ export function buildPendingWorkItems({
   const items: PendingWorkItem[] = [];
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const sessionsWithQuestions = new Set(questions.map((request) => request.sessionId));
+  const planDecisionSessionIds = new Set(
+    notifications
+      .filter((notification) => notification.decisionRequestId && notification.kind === 'plan_approval' && notification.sessionId)
+      .map((notification) => notification.sessionId as string),
+  );
 
   for (const request of questions) {
     if (!request?.requestId || !request.sessionId) continue;
@@ -94,13 +99,15 @@ export function buildPendingWorkItems({
   // Decision Broker item belongs in the task queue because it still blocks work.
   for (const notification of notifications) {
     if (notification.decisionRequestId) {
+      const session = notification.sessionId ? sessionById.get(notification.sessionId) : undefined;
       addItem(items, {
         id: `decision:${notification.decisionRequestId}`,
+        sessionId: notification.sessionId,
         source: 'approval',
         state: 'attention',
         title: compactText(notification.title, '待确认操作'),
         summary: compactText(notification.message, '有一项操作等待确认'),
-        context: compactText(notification.source, ''),
+        context: sessionContext(session) || compactText(notification.source, ''),
         createdAt: notification.createdAt,
         actionRef: notification.decisionRequestId,
         notificationId: notification.id,
@@ -113,7 +120,7 @@ export function buildPendingWorkItems({
     if (session.archivedAt) continue;
     const title = sessionTitle(session);
     const context = sessionContext(session);
-    if (session.pendingPlanApproval) {
+    if (session.pendingPlanApproval && !planDecisionSessionIds.has(session.id)) {
       addItem(items, {
         id: `session:${session.id}:plan`,
         sessionId: session.id,

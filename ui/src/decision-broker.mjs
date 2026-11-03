@@ -108,6 +108,8 @@ export function createDecisionBroker({
       source: '待确认',
       title,
       message: desktopMessage || summary,
+      sessionId,
+      kind,
       details: desktopDetails,
       mobileTitle: title,
       mobileSummary: summary,

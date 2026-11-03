@@ -55,6 +55,18 @@ describe('pending work aggregation', () => {
     expect(items[0].source).toBe('approval');
   });
 
+  test('does not duplicate a plan approval represented by its decision notification', () => {
+    const items = buildPendingWorkItems({
+      sessions: [session({ pendingPlanApproval: { kind: 'plan', originalPrompt: '整理周报', plan: '执行计划', requestedAt: 12_000 } })],
+      notifications: [{
+        id: 'notification-plan', severity: 'warning', source: '待确认', title: 'Plan 等待确认', message: '等待批准',
+        createdAt: 12_000, read: false, occurrences: 1, decisionRequestId: 'decision-plan',
+        sessionId: 'session-1', kind: 'plan_approval',
+      }],
+    });
+    expect(items.map(item => item.id)).toEqual(['decision:decision-plan']);
+  });
+
   test('does not show old completed results', () => {
     const items = buildPendingWorkItems({
       now: 10 * 24 * 60 * 60 * 1_000,

@@ -66,6 +66,22 @@ describe('Main app notification broker', () => {
     expect(result.afterResolution).toEqual([]);
   });
 
+  it('persists decision context for work item correlation', () => {
+    const result = runScenario(`
+      const broker = createAppNotificationBroker(db);
+      const item = broker.create({
+        source: '待确认', title: 'Plan', message: 'Approve?',
+        decisionRequestId: 'decision-1', sessionId: 'session-1', kind: 'plan_approval',
+      }, { id: 'decision-notification' });
+      console.log(JSON.stringify(item));
+    `);
+    expect(result).toMatchObject({
+      sessionId: 'session-1',
+      kind: 'plan_approval',
+      decisionRequestId: 'decision-1',
+    });
+  });
+
   it('imports legacy history without reviving stale decision actions', () => {
     const result = runScenario(`
       const broker = createAppNotificationBroker(db);

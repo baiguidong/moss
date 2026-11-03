@@ -6,6 +6,8 @@ export type AppNotification = {
   source: string;
   title: string;
   message: string;
+  sessionId?: string;
+  kind?: string;
   details?: string;
   createdAt: number;
   read: boolean;
@@ -15,6 +17,8 @@ export type AppNotification = {
 };
 
 export type NewAppNotification = Pick<AppNotification, 'severity' | 'source' | 'title' | 'message'> & {
+  sessionId?: string;
+  kind?: string;
   details?: string;
 };
 

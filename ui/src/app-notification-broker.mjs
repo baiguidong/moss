@@ -47,6 +47,8 @@ function toNotification(row) {
     source: row.source,
     title: row.title,
     message: row.message,
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.kind ? { kind: row.kind } : {}),
     ...(row.desktop_details ? { details: row.desktop_details } : {}),
     createdAt: row.created_at,
     read: Boolean(row.read),
@@ -80,14 +82,15 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
   `);
   const insertStmt = db.prepare(`
     INSERT INTO app_notifications (
-      id, severity, source, title, message, desktop_details,
+      id, severity, source, title, message, session_id, kind, desktop_details,
       mobile_title, mobile_summary, mobile_policy, decision_request_id,
       decision_options_json, read, occurrences, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
   `);
   const updateDuplicateStmt = db.prepare(`
     UPDATE app_notifications
-    SET severity = ?, desktop_details = COALESCE(?, desktop_details), read = 0,
+    SET severity = ?, session_id = COALESCE(?, session_id), kind = COALESCE(?, kind),
+        desktop_details = COALESCE(?, desktop_details), read = 0,
         occurrences = occurrences + 1, updated_at = ?
     WHERE id = ?
   `);
@@ -130,6 +133,8 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
     const source = sanitizeText(input.source, 120).trim() || 'Moss';
     const title = sanitizeText(input.title, 240).trim() || '应用消息';
     const message = sanitizeText(input.message, 4_000).trim() || '未提供消息内容';
+    const sessionId = sanitizeText(input.sessionId, 160).trim();
+    const kind = sanitizeText(input.kind, 120).trim();
     const details = sanitizeText(input.details, 16_000).trim();
     const mobileTitle = sanitizeMobileNotificationText(input.mobileTitle, 160).trim();
     const mobileSummary = sanitizeMobileNotificationText(input.mobileSummary, 1_000).trim();
@@ -139,12 +144,12 @@ export function createAppNotificationBroker(db, { onChanged = () => {}, onDelive
     const duplicate = findDuplicateStmt.get(source, title, message, timestamp - DEDUPE_WINDOW_MS);
     let notification;
     if (duplicate && !requestedId && !decisionRequestId) {
-      updateDuplicateStmt.run(severity, details || null, timestamp, duplicate.id);
+      updateDuplicateStmt.run(severity, sessionId || null, kind || null, details || null, timestamp, duplicate.id);
       notification = toNotification(getStmt.get(duplicate.id));
     } else {
       const id = requestedId || randomUUID();
       insertStmt.run(
-        id, severity, source, title, message, details || null,
+        id, severity, source, title, message, sessionId || null, kind || null, details || null,
         mobileTitle || null, mobileSummary || null, mobilePolicy,
         decisionRequestId || null, JSON.stringify(decisionOptions), timestamp, timestamp,
       );

@@ -62,6 +62,8 @@ export function createDesktopStateStore(db, { now = () => Date.now() } = {}) {
       source TEXT NOT NULL,
       title TEXT NOT NULL,
       message TEXT NOT NULL,
+      session_id TEXT,
+      kind TEXT,
       desktop_details TEXT,
       mobile_title TEXT,
       mobile_summary TEXT,
@@ -111,6 +113,16 @@ export function createDesktopStateStore(db, { now = () => Date.now() } = {}) {
   }
   try {
     db.exec(`ALTER TABLE app_notifications ADD COLUMN decision_options_json TEXT NOT NULL DEFAULT '[]'`);
+  } catch {
+    // Column already exists.
+  }
+  try {
+    db.exec(`ALTER TABLE app_notifications ADD COLUMN session_id TEXT`);
+  } catch {
+    // Column already exists.
+  }
+  try {
+    db.exec(`ALTER TABLE app_notifications ADD COLUMN kind TEXT`);
   } catch {
     // Column already exists.
   }
