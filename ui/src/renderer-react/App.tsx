@@ -347,6 +347,7 @@ export default function App() {
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
   const [operationDrafts, setOperationDrafts] = React.useState<OperationDraft[]>([]);
+  const [selectedOperationDraftId, setSelectedOperationDraftId] = React.useState<string | null>(null);
   const [activeView, setActiveViewRaw] = React.useState<MainView>('chat');
   const setActiveView = React.useCallback((view: MainView) => { if (confirmAppViewLeave()) setActiveViewRaw(view); }, []);
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
@@ -1632,6 +1633,7 @@ export default function App() {
       await openSession(item.sessionId);
     }
     if (item.source === 'operation' && item.actionRef) {
+      setSelectedOperationDraftId(item.actionRef);
       setActiveView('drafts');
     }
     if (item.notificationId) {
@@ -3279,7 +3281,7 @@ export default function App() {
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
           ) : activeView === 'drafts' ? (
-            <OperationDraftPanel />
+            <OperationDraftPanel selectedDraftId={selectedOperationDraftId} />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}

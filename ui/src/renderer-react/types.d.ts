@@ -1595,9 +1595,9 @@ declare global {
         list: () => Promise<OperationDraft[]>;
         get: (payload: { draftId: string }) => Promise<OperationDraft | null>;
         create: (payload: Partial<OperationDraft>) => Promise<OperationDraft>;
-        update: (payload: { draftId: string; expectedRevision?: number; patch: OperationDraftPatch }) => Promise<OperationDraft>;
-        cancel: (payload: { draftId: string; expectedRevision?: number }) => Promise<OperationDraft>;
-        confirm: (payload: { draftId: string; expectedRevision?: number }) => Promise<OperationDraft>;
+        update: (payload: { draftId: string; expectedRevision: number; patch: OperationDraftPatch }) => Promise<OperationDraft>;
+        cancel: (payload: { draftId: string; expectedRevision: number }) => Promise<OperationDraft>;
+        confirm: (payload: { draftId: string; expectedRevision: number }) => Promise<OperationDraft>;
         queryResult: (payload: { draftId: string }) => Promise<OperationDraft>;
         onChanged: (callback: (payload: { reason: string; draft: OperationDraft | null }) => void) => () => void;
       };
