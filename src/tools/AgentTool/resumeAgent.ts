@@ -219,6 +219,7 @@ export async function resumeAgentBackground({
     permissionMode,
   )
 
+  const resumedCwdPath = resumedWorktreePath ?? resumedWorkspacePath
   const workerPermissionContext = {
     ...appState.toolPermissionContext,
     mode: selectedAgent.permissionMode ?? 'acceptEdits',
@@ -226,6 +227,18 @@ export async function resumeAgentBackground({
       appState.toolPermissionContext.additionalWorkingDirectories,
       projectResourceSelection,
     ),
+    ...(resumedCwdPath
+      ? {
+          workingDirectoriesOverride: [resumedCwdPath],
+          additionalWorkingDirectories: new Map([
+            ...filterResourceDirectoriesForProjectWorker(
+              appState.toolPermissionContext.additionalWorkingDirectories,
+              projectResourceSelection,
+            ).entries(),
+            [resumedCwdPath, { path: resumedCwdPath, source: 'session' }],
+          ]),
+        }
+      : {}),
   }
   const workerTools = isResumedFork
     ? toolUseContext.options.tools
@@ -261,7 +274,7 @@ export async function resumeAgentBackground({
       ? { systemPrompt: forkParentSystemPrompt }
       : undefined,
     availableTools: workerTools,
-    permissionContextOverride: projectResourceSelection
+    permissionContextOverride: projectResourceSelection || resumedCwdPath
       ? workerPermissionContext
       : undefined,
     // Transcript already contains the parent context slice from the
@@ -332,7 +345,6 @@ export async function resumeAgentBackground({
     invocationEmitted: false,
   }
 
-  const resumedCwdPath = resumedWorktreePath ?? resumedWorkspacePath
   const workerAdditionalDirectories = Array.from(
     workerPermissionContext.additionalWorkingDirectories.keys(),
   )

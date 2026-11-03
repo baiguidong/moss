@@ -745,6 +745,9 @@ export function checkPathSafetyForAutoEdit(
 export function allWorkingDirectories(
   context: ToolPermissionContext,
 ): Set<string> {
+  if (context.workingDirectoriesOverride) {
+    return new Set(context.workingDirectoriesOverride)
+  }
   return new Set([
     getOriginalCwd(),
     ...getCurrentSessionWorkspaceDirectories(),

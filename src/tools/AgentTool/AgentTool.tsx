@@ -547,7 +547,7 @@ export const AgentTool = buildTool({
     // permission mode, so they aren't affected by the parent's tool
     // restrictions. This is computed here so that runAgent doesn't need to
     // import from tools.ts (which would create a circular dependency).
-    const workerPermissionContext = {
+    let workerPermissionContext: typeof appState.toolPermissionContext = {
       ...appState.toolPermissionContext,
       mode: workerAgentDefinition.permissionMode ?? 'acceptEdits',
       additionalWorkingDirectories: filterResourceDirectoriesForProjectWorker(
@@ -615,10 +615,14 @@ export const AgentTool = buildTool({
       // Keep the runtime permission scope aware of the actual child root. The
       // cwd override makes relative paths resolve there; this entry also lets
       // file and shell tools validate absolute paths without a prompt message.
-      workerPermissionContext.additionalWorkingDirectories = new Map([
-        ...workerPermissionContext.additionalWorkingDirectories.entries(),
-        [isolatedWorkspace, { path: isolatedWorkspace, source: 'session' }],
-      ]);
+      workerPermissionContext = {
+        ...workerPermissionContext,
+        additionalWorkingDirectories: new Map([
+          ...workerPermissionContext.additionalWorkingDirectories.entries(),
+          [isolatedWorkspace, { path: isolatedWorkspace, source: 'session' }],
+        ]),
+        workingDirectoriesOverride: [isolatedWorkspace],
+      };
       // The child workspace is enforced by the cwd and permission context
       // below. Do not add a user message describing filesystem limits: those
       // are runtime invariants and must not depend on model compliance.

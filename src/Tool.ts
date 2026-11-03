@@ -124,6 +124,8 @@ export type { ToolPermissionRulesBySource }
 export type ToolPermissionContext = DeepImmutable<{
   mode: PermissionMode
   additionalWorkingDirectories: Map<string, AdditionalWorkingDirectory>
+  /** Optional hard scope used by isolated workers. */
+  workingDirectoriesOverride?: readonly string[]
   alwaysAllowRules: ToolPermissionRulesBySource
   alwaysDenyRules: ToolPermissionRulesBySource
   alwaysAskRules: ToolPermissionRulesBySource
