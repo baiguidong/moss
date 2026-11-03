@@ -51,7 +51,7 @@ import { setAgentColor } from './agentColorManager.js';
 import { agentToolResultSchema, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js';
 import { AGENT_TOOL_NAME, LEGACY_AGENT_TOOL_NAME, ONE_SHOT_BUILTIN_AGENT_TYPES } from './constants.js';
-import { buildForkedMessages, buildWorktreeNotice, FORK_AGENT, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
+import { buildForkedMessages, FORK_AGENT, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
 import type { AgentDefinition } from './loadAgentsDir.js';
 import { filterAgentsByMcpRequirements, hasRequiredMcpServers, isBuiltInAgent } from './loadAgentsDir.js';
 import { getPrompt } from './prompt.js';
@@ -578,6 +578,14 @@ export const AgentTool = buildTool({
     if (effectiveIsolation === 'worktree') {
       const slug = `agent-${earlyAgentId.slice(0, 8)}`;
       worktreeInfo = await createAgentWorktree(slug);
+      workerPermissionContext = {
+        ...workerPermissionContext,
+        additionalWorkingDirectories: new Map([
+          ...workerPermissionContext.additionalWorkingDirectories.entries(),
+          [worktreeInfo.worktreePath, { path: worktreeInfo.worktreePath, source: 'session' }],
+        ]),
+        workingDirectoriesOverride: [worktreeInfo.worktreePath],
+      };
     }
 
     const parentUiSessionId = taskScope && 'sessionId' in taskScope
@@ -628,14 +636,6 @@ export const AgentTool = buildTool({
       // are runtime invariants and must not depend on model compliance.
     }
 
-    // Fork + worktree: inject a notice telling the child to translate paths
-    // and re-read potentially stale files. Appended after the fork directive
-    // so it appears as the most recent guidance the child sees.
-    if (isForkPath && worktreeInfo) {
-      promptMessages.push(createUserMessage({
-        content: buildWorktreeNotice(getCwd(), worktreeInfo.worktreePath)
-      }));
-    }
     const runAgentParams: Parameters<typeof runAgent>[0] = {
       agentDefinition: workerAgentDefinition,
       promptMessages,
@@ -662,7 +662,7 @@ export const AgentTool = buildTool({
         systemPrompt: asSystemPrompt(enhancedSystemPrompt)
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
-      permissionContextOverride: projectResourceSelection || isolatedWorkspace
+      permissionContextOverride: projectResourceSelection || isolatedWorkspace || worktreeInfo
         ? workerPermissionContext
         : undefined,
       // Pass parent conversation when the fork-subagent path needs full

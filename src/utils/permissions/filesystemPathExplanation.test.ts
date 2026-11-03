@@ -6,6 +6,7 @@ import {
   getPathsForPermissionCheck,
 } from '../fsOperations.js'
 import {
+  allWorkingDirectories,
   pathForPermissionMessage,
   permissionPathDetails,
 } from './filesystem.js'
@@ -27,3 +28,15 @@ test('symlink permission explanations expose the canonical target', async () => 
   })
 })
 
+test('isolated workers can replace inherited working directories with a hard scope', () => {
+  const context = {
+    mode: 'acceptEdits',
+    additionalWorkingDirectories: new Map(),
+    alwaysAllowRules: {},
+    alwaysDenyRules: {},
+    alwaysAskRules: {},
+    isBypassPermissionsModeAvailable: false,
+    workingDirectoriesOverride: ['/tmp/moss-isolated-worker'],
+  } as any
+  expect(allWorkingDirectories(context)).toEqual(new Set(['/tmp/moss-isolated-worker']))
+})
