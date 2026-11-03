@@ -612,14 +612,16 @@ export const AgentTool = buildTool({
         recursive: true,
         force: true,
       }).catch(() => {});
-      promptMessages.push(createUserMessage({
-        content: [
-          `Your isolated workspace is: ${isolatedWorkspace}`,
-          `A session-local project asset snapshot is available at: ${childAssetSnapshot}`,
-          'If the task mentions project asset paths from the parent session, use the matching files in this local snapshot instead.',
-          'Keep all local files inside your isolated workspace: use working/ for intermediate files and outputs/ for final publishable files.',
-        ].join('\n'),
-      }));
+      // Keep the runtime permission scope aware of the actual child root. The
+      // cwd override makes relative paths resolve there; this entry also lets
+      // file and shell tools validate absolute paths without a prompt message.
+      workerPermissionContext.additionalWorkingDirectories = new Map([
+        ...workerPermissionContext.additionalWorkingDirectories.entries(),
+        [isolatedWorkspace, { path: isolatedWorkspace, source: 'session' }],
+      ]);
+      // The child workspace is enforced by the cwd and permission context
+      // below. Do not add a user message describing filesystem limits: those
+      // are runtime invariants and must not depend on model compliance.
     }
 
     // Fork + worktree: inject a notice telling the child to translate paths
@@ -656,7 +658,7 @@ export const AgentTool = buildTool({
         systemPrompt: asSystemPrompt(enhancedSystemPrompt)
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
-      permissionContextOverride: projectResourceSelection
+      permissionContextOverride: projectResourceSelection || isolatedWorkspace
         ? workerPermissionContext
         : undefined,
       // Pass parent conversation when the fork-subagent path needs full
