@@ -136,6 +136,9 @@ describe('desktop cron lifecycle', () => {
     expect(f.calls.every(call => call.runtimePrompt === 'report')).toBe(true);
     expect((await f.invoke('list')).tasks[0].executionSessionId).toBe(third.id);
     expect((await f.invoke('list')).tasks[0].runs).toHaveLength(3);
+    expect((await f.invoke('list')).tasks[0].runs.map(run => run.status)).toEqual(['succeeded', 'succeeded', 'succeeded']);
+    expect((await f.invoke('list')).tasks[0].runs[0].trigger).toBe('manual');
+    expect((await f.read())[0].runHistory).toHaveLength(3);
     expect((await f.invoke('list')).tasks[0].executionComputer).toBe('当前电脑');
     // Restored records need not be ordered by creation time in the session map.
     first.updatedAt = at(9, 12);
@@ -313,4 +316,15 @@ describe('desktop cron lifecycle', () => {
     expect(tasks.find(task => task.id === 'unknown')).toMatchObject({ enabled: false });
     expect(f.calls).toHaveLength(1);
   });
+});
+
+
+test('run receipts preserve failure and interrupted status independently of project lifecycle', async () => {
+  const f = await fixture([job()], { run: () => { throw new Error('fixture timeout'); } });
+  const failed = await f.invoke('run-now', { taskId: 'job-1' });
+  expect(failed.ok).toBe(false);
+  expect((await f.invoke('list')).tasks[0].runs[0]).toMatchObject({ status: 'failed', summary: 'fixture timeout' });
+  await updateCronTaskStore(f.filePath, tasks => { tasks[0].runHistory[0].status = 'running'; });
+  const restored = f.create('desktop-2');
+  expect((await restored.invoke('list')).tasks[0].runs[0].status).toBe('unknown');
 });

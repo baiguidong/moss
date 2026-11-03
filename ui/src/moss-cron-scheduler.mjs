@@ -144,6 +144,9 @@ export function createMossCronScheduler({
         try { bindings = JSON.parse(fs.readFileSync(path.join(mossHome, 'cron_bindings.json'), 'utf8')); } catch {}
         for (let index = tasks.length - 1; index >= 0; index--) {
           const task = tasks[index];
+          for (const run of task.runHistory || []) {
+            if (run.status === 'running') { run.status = 'unknown'; run.summary = '上次运行被中断，请查看执行会话。'; }
+          }
           if (typeof task.durable !== 'boolean') {
             const creation = legacyCreation(task);
             if (creation) Object.assign(task, creation);
@@ -202,6 +205,21 @@ export function createMossCronScheduler({
     };
   }
 
+  async function saveRun(taskId, execution, status, { manual = false, error = null } = {}) {
+    if (!execution) return;
+    await updateCronTaskStore(filePath, tasks => {
+      const task = tasks.find(item => item.id === taskId);
+      if (!task) return;
+      const run = {
+        ...executionSummary(execution), status,
+        trigger: manual ? 'manual' : 'schedule',
+        completedAt: status === 'running' ? null : now(),
+        summary: error ? String(error.message || error).slice(0, 2000) : execution.preview || '',
+      };
+      task.runHistory = [run, ...(task.runHistory || []).filter(item => item.sessionId !== execution.id)].slice(0, 10);
+    });
+  }
+
   async function createExecution(task, owner) {
     // Copy configuration only, never a previous run's history or runtime.
     const record = createSessionRecord({
@@ -254,6 +272,7 @@ export function createMossCronScheduler({
         });
         return null;
       }
+      await saveRun(taskId, execution, 'running', { manual });
       const window = getMainWindow();
       await runSessionPrompt({
         sessionRecord: execution,
@@ -262,6 +281,7 @@ export function createMossCronScheduler({
         visibleUserPrompt: `⏰ 定时任务${manual ? '（手动触发）' : ''}：${claimed.prompt}`,
         failOnApiError: true,
       });
+      await saveRun(taskId, execution, 'succeeded', { manual });
       await updateCronTaskStore(filePath, tasks => {
         const index = tasks.findIndex(task => task.id === taskId && task.runId === runId);
         if (index < 0) return; // A delete during execution must stay deleted.
@@ -273,6 +293,7 @@ export function createMossCronScheduler({
       });
       return execution;
     } catch (error) {
+      await saveRun(taskId, execution, 'failed', { manual, error });
       await updateCronTaskStore(filePath, tasks => {
         const task = tasks.find(entry => entry.id === taskId && entry.runId === runId);
         if (!task) return;
@@ -364,10 +385,11 @@ export function createMossCronScheduler({
     return { tasks: (await readCronTaskStore(filePath)).map(task => {
       const owner = ownerFor(task);
       const execution = latestExecutionFor(task.id);
+      const history = new Map((task.runHistory || []).map(run => [run.sessionId, run]));
       const runs = executionsFor(task.id)
         .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))
         .slice(0, 10)
-        .map(executionSummary);
+        .map(record => history.get(record.id) || executionSummary(record));
       return {
         ...task,
         enabled: task.enabled !== false,
