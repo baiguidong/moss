@@ -277,9 +277,6 @@ export function UsageOverviewPanel({ overview, compact = false }: { overview: Us
 
   return (
     <div>
-      {overview.historyIncomplete && <p className="mb-4 text-sm text-muted-foreground" role="status">
-        部分历史会话记录无法读取，当前累计值可能不完整。
-      </p>}
       <div className={cn('grid gap-3 sm:grid-cols-2', !compact && 'md:grid-cols-3 xl:grid-cols-5')}>
         {cards.map(card => <StatCard key={card.label} {...card} />)}
       </div>

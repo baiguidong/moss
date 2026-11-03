@@ -117,7 +117,7 @@ export async function initializeDatabase(db: Database): Promise<void> {
     await installUsageSchema(db)
     await installCloudSharesSchema(db)
     await installControlPlaneSchema(db)
-      await db.prepare('UPDATE model_schema SET version=7 WHERE id=1').run()
+    await db.prepare('UPDATE model_schema SET version=7 WHERE id=1').run()
   })
 }
 

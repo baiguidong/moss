@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildNodeFixture } from './buildNodeFixture.js'
 
-test('personal usage persists, backfills history, deduplicates requests and enforces access', async () => {
+test('personal usage persists and scopes Host reports', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-user-usage-test-'))
   try {
     const build = await buildNodeFixture({

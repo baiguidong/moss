@@ -20,14 +20,10 @@ export async function installUsageSchema(db: Database): Promise<void> {
     if ((error as { code?: string }).code !== 'ER_DUP_KEYNAME') throw error
   }
   await db.exec(`CREATE TABLE IF NOT EXISTS usage_metadata (
-    id INTEGER PRIMARY KEY, history_before BIGINT NOT NULL, timezone VARCHAR(128) NOT NULL
+    id INTEGER PRIMARY KEY, timezone VARCHAR(128) NOT NULL
   )${engine}`)
   await db.prepare(db.sql(
-    'INSERT OR IGNORE INTO usage_metadata (id, history_before, timezone) VALUES (1, ?, ?)',
-    'INSERT INTO usage_metadata (id, history_before, timezone) VALUES (1, ?, ?) ON DUPLICATE KEY UPDATE id=id',
-  )).run(Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone)
-  await db.exec(`CREATE TABLE IF NOT EXISTS usage_imports (
-    org_id ${text} NOT NULL, user_id ${text} NOT NULL, completed_at BIGINT NOT NULL,
-    PRIMARY KEY (org_id, user_id)
-  )${engine}`)
+    'INSERT OR IGNORE INTO usage_metadata (id, timezone) VALUES (1, ?)',
+    'INSERT INTO usage_metadata (id, timezone) VALUES (1, ?) ON DUPLICATE KEY UPDATE id=id',
+  )).run(Intl.DateTimeFormat().resolvedOptions().timeZone)
 }

@@ -50,7 +50,7 @@ try {
   await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/${path.basename(harness)}/index.html`);
   const modal = page.getByRole('dialog', { name: '启用完全放行？' });
   const open = async () => {
-    await page.getByTitle('选择权限模式', { exact: true }).click();
+    await page.getByRole('button', { name: /^权限模式：/ }).click();
     await page.getByRole('menuitemradio', { name: /完全放行/ }).click();
     await modal.waitFor({ state: 'visible' });
   };
@@ -72,7 +72,7 @@ try {
   await page.evaluate(() => window.permissionHarness.setDisabled(true));
   await modal.waitFor({ state: 'hidden' });
   await page.evaluate(() => window.permissionHarness.setDisabled(false));
-  await page.getByTitle('选择权限模式', { exact: true }).waitFor();
+  await page.getByRole('button', { name: /^权限模式：/ }).waitFor();
   assert.equal(await modal.isVisible(), false); await unchanged();
   await open();
   await page.evaluate(() => window.permissionHarness.setValue('acceptEdits'));

@@ -38,6 +38,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { contextUsagePresentation, formatTokenCount, type ContextUsageInfo } from "@/lib/context-usage";
@@ -106,6 +107,8 @@ import { AppComposerContext, resourceKey, useAppComposerResources, type AppCompo
 import { AppConversationFlow } from '@/components/app-conversation-flow';
 import { AppWorkbenchButton, AppConversationWorkbench, useAppConversationWorkbench } from '@/components/app-conversation-workbench';
 import { ComposerResourceSelectionArea } from "@/components/composer-resource-selection-area";
+import '@/components/composer-panel.css';
+import { HomeResourceShortcuts, type HomeShortcutOptions } from "@/components/home-resource-shortcuts";
 import { WorkspaceSelector } from "@/components/workspace-selector";
 import { SlashCommandMenu, SlashCommandSubMenu, getSlashCommandFilter, SLASH_COMMANDS, COMMANDS_WITH_ARGS } from "@/components/slash-command-menu";
 import {
@@ -150,7 +153,7 @@ const intentOptions: IntentOption[] = [
 ];
 
 const MAIN_CHAT_CONTENT_CLASS_NAME =
-  "max-w-[1120px] px-4 sm:px-6 lg:px-12";
+  "max-w-[1120px] px-3 @[640px]/chat-pane:px-6 @[1024px]/chat-pane:px-12";
 
 function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
   const parts: string[] = [];
@@ -171,6 +174,8 @@ function buildTranscriptPlainText(messages: TranscriptRenderMessage[]): string {
 
 export function SessionTabBar({
   title,
+  projectName,
+  onReturnToProject,
   leftCollapsed,
   rightCollapsed,
   leftPanelName,
@@ -187,6 +192,8 @@ export function SessionTabBar({
   messages,
   terminalActions,
   sessionInfo,
+  isPinned = false,
+  onTogglePin,
   childSessions,
   onReturnToParentSession,
   onOpenWorkers,
@@ -195,6 +202,8 @@ export function SessionTabBar({
   agentTeamsStatus,
 }: {
   title: string;
+  projectName?: string;
+  onReturnToProject?: () => void;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   leftPanelName: string;
@@ -211,6 +220,8 @@ export function SessionTabBar({
   messages: TranscriptRenderMessage[];
   terminalActions?: React.ReactNode;
   sessionInfo?: React.ReactNode;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   childSessions: SessionSummary[];
   onReturnToParentSession?: () => void;
   onOpenWorkers: () => void;
@@ -270,6 +281,16 @@ export function SessionTabBar({
         </Button>}
 
         <div className="flex min-w-0 flex-1 items-center gap-2">
+          {onReturnToProject ? (
+            <Button
+              variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+              onClick={onReturnToProject} aria-label="返回项目"
+              title={projectName ? `返回项目：${projectName}` : "返回项目"}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              返回项目
+            </Button>
+          ) : null}
           {onReturnToParentSession ? (
             <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs" onClick={onReturnToParentSession}>
               <ArrowLeft className="h-4 w-4" />
@@ -293,6 +314,23 @@ export function SessionTabBar({
 
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="会话功能按钮">
           {appWorkbenchAction}
+          {onTogglePin ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn("h-8 w-8 rounded-full", isPinned && "text-primary")}
+                  onClick={onTogglePin}
+                  aria-label={isPinned ? "取消置顶会话" : "置顶会话"}
+                  aria-pressed={isPinned}
+                >
+                  <Pin className="h-4 w-4" fill={isPinned ? "currentColor" : "none"} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{isPinned ? "取消置顶会话" : "置顶会话"}</TooltipContent>
+            </Tooltip>
+          ) : null}
           {terminalActions}
           {sessionInfo}
           <div ref={outlineRef} className="relative inline-flex">
@@ -536,6 +574,7 @@ export function ComposerPanel({
   className,
   contextUsage,
   homeComposerMode = 'chat',
+  homeShortcuts,
 }: {
   value: string;
   loading: boolean;
@@ -576,6 +615,7 @@ export function ComposerPanel({
   className?: string;
   contextUsage?: ContextUsageInfo | null;
   homeComposerMode?: 'chat' | 'project-create';
+  homeShortcuts?: HomeShortcutOptions;
 }) {
   const [internalAttachments, setInternalAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const attachments = externalAttachments ?? internalAttachments;
@@ -801,13 +841,25 @@ export function ComposerPanel({
   }, [mentionBase, mentionFilter, mentionItems]);
 
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const mentionAnchorRef = React.useRef<HTMLDivElement | null>(null);
   React.useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     const maxHeight = isHomeComposer ? 240 : 120;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  }, [value, isHomeComposer]);
+    const resize = () => {
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    };
+    resize();
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value, isHomeComposer, defaultPlaceholder, loading, readOnlyReason, homeComposerMode, composerIntent]);
 
   const visibleSkillItems = React.useMemo(() => {
     if (mentionFilter === null || !allowSkillSelection) return [];
@@ -1034,9 +1086,9 @@ export function ComposerPanel({
     <div className="flex flex-wrap gap-1.5" aria-label="已选资源">
       {toolApps.enabled && toolApps.selectedIds.map(id => {
         const app = toolApps.apps.find(item => toolAppId(item) === id);
-        return <button type="button" key={id} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary"
-          aria-label={`移除 App：${app ? toolAppTitle(app) : id}`} onClick={() => toolApps.toggle(id)} title={app ? toolAppDescription(app) : 'App 已卸载'}>
-          <AppIcon icon={app?.icon} className="h-4 w-4" />{app ? toolAppTitle(app) : id}{(!app || !canSelectToolApp(app)) && '（不可用）'}<X className="h-3 w-3" />
+        return <button type="button" key={id} className="composer-resource-chip inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary"
+          aria-label={`移除 App：${app ? toolAppTitle(app) : id}`} onClick={() => toolApps.toggle(id)} title={`${app ? toolAppTitle(app) : id} · ${app ? toolAppDescription(app) : 'App 已卸载'} · 点击移除`}>
+          <AppIcon icon={app?.icon} className="h-4 w-4" /><span className="composer-resource-label truncate">{app ? toolAppTitle(app) : id}{(!app || !canSelectToolApp(app)) && '（不可用）'}</span><X className="composer-resource-remove h-3 w-3 shrink-0" />
         </button>;
       })}
       {toolApps.enabled && (toolApps.selectedServiceIds || []).map(id => {
@@ -1044,23 +1096,23 @@ export function ComposerPanel({
         const app = toolApps.apps.find(item => toolAppId(item) === ref?.appId);
         const service = app && getAppToolServices(app).find(item => item.id === id);
         const title = `${app ? toolAppTitle(app) : ref?.appId || 'App'} · ${service?.title || '已移除的服务'}`;
-        return <button type="button" key={id} className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除服务：${title}`} title={title} onClick={() => toolApps.toggleService?.(id)}>
-          <AppIcon icon={app?.icon} className="h-4 w-4 shrink-0" /><span className="truncate">{title}{!service?.available && '（不可用）'}</span><X className="h-3 w-3 shrink-0" />
+        return <button type="button" key={id} className="composer-resource-chip inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除服务：${title}`} title={`${title} · 点击移除`} onClick={() => toolApps.toggleService?.(id)}>
+          <AppIcon icon={app?.icon} className="h-4 w-4 shrink-0" /><span className="composer-resource-label truncate">{title}{!service?.available && '（不可用）'}</span><X className="composer-resource-remove h-3 w-3 shrink-0" />
         </button>;
       })}
       {toolApps.enabled && toolApps.nextTurn && <span className="self-center text-xs text-muted-foreground">资源变更等待应用</span>}
-      {appSelection && <button type="button" className="inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除工作流：${appSelection.title}`} onClick={() => selectAppResource(null)}><GitFork className="h-3.5 w-3.5"/>{appSelection.title}<X className="h-3 w-3"/></button>}
+      {appSelection && <button type="button" className="composer-resource-chip inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary" aria-label={`移除工作流：${appSelection.title}`} title={`${appSelection.title} · 点击移除`} onClick={() => selectAppResource(null)}><GitFork className="h-3.5 w-3.5 shrink-0"/><span className="composer-resource-label truncate">{appSelection.title}</span><X className="composer-resource-remove h-3 w-3 shrink-0"/></button>}
       {canSelectAgents && selectedAgent ? (
         <button
           type="button"
-          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-500/15 dark:text-violet-300"
+          className="composer-resource-chip inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-500/15 dark:text-violet-300"
           onClick={() => setSelectedAgent(null)}
           aria-label={`移除 Agent：${selectedAgent.agentType}`}
-          title="点击移除显式调度"
+          title={`Agent · ${selectedAgent.agentType} · 点击移除显式调度`}
         >
-          <GitFork className="h-3.5 w-3.5" />
-          <span>Agent · {selectedAgent.agentType}</span>
-          <X className="h-3 w-3" />
+          <GitFork className="h-3.5 w-3.5 shrink-0" />
+          <span className="composer-resource-label truncate">Agent · {selectedAgent.agentType}</span>
+          <X className="composer-resource-remove h-3 w-3 shrink-0" />
         </button>
       ) : null}
       {selectedAssistant ? (
@@ -1177,9 +1229,10 @@ export function ComposerPanel({
   );
 
   return (
+    <>
     <div
       className={cn(
-        "rounded-[26px] border border-border/80 bg-card/92 backdrop-blur",
+        "composer-surface min-w-0 rounded-[26px] border border-border/80 bg-card/92 backdrop-blur",
         isHomeComposer
           ? "shadow-[0_24px_80px_-44px_rgba(0,0,0,0.55)]"
           : "shadow-[0_16px_54px_-38px_rgba(0,0,0,0.45)]",
@@ -1192,7 +1245,7 @@ export function ComposerPanel({
     >
       {(draggingFiles || importingFiles) && <div role="status" className="px-4 pt-3 text-xs text-primary">{importingFiles ? '正在添加文件…' : '松开以添加文件'}</div>}
       {attachmentError && <div role="alert" className="px-4 pt-3 text-xs text-destructive">{attachmentError}</div>}
-      <div className="relative">
+      <div ref={mentionAnchorRef} className="relative">
         {slashCommandFilter && !isHomeComposer && !subMenuCommand && (
           <SlashCommandMenu
             commands={slashCommands}
@@ -1216,6 +1269,7 @@ export function ComposerPanel({
         )}
         {mentionFilter !== null && (
           <MentionMenu
+            anchorRef={mentionAnchorRef}
             tabs={mentionTabs}
             tab={mentionTab}
             onTabChange={(tab) => {
@@ -1496,7 +1550,7 @@ export function ComposerPanel({
       </div>
 
       {!isHomeComposer && (
-        <div className="px-4 py-2 sm:px-5">
+        <div className="composer-footer px-4 py-2 sm:px-5">
           {selectedResourceIcons ? <div className="mb-2">{selectedResourceIcons}</div> : null}
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
@@ -1511,17 +1565,18 @@ export function ComposerPanel({
             </div>
           )}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="composer-toolbar flex flex-wrap items-center justify-between gap-2">
+            <div className="composer-toolbar-options flex min-w-0 flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={handleSelectFile}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                className="composer-control inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                 title="选择文件"
+                aria-label="选择文件"
               >
-                <Plus className="h-3 w-3" />
-                <FileText className="h-3.5 w-3.5" />
-                <span>文件</span>
+                <Plus className="composer-control-detail h-3 w-3" />
+                <FileText className="h-3.5 w-3.5 shrink-0" />
+                <span className="composer-control-label">文件</span>
               </button>
 
               <ComposerResourceSelectionArea
@@ -1553,27 +1608,31 @@ export function ComposerPanel({
 
             </div>
 
-            <div className="flex items-center justify-end gap-2">
-              {onOpenSideQuestion && <button type="button" aria-label="打开侧问" onClick={onOpenSideQuestion} className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground hover:bg-muted"><MessageSquareText className="h-4 w-4" />侧问{sideQuestionRunning && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}</button>}
+            <div className="composer-toolbar-actions ml-auto flex shrink-0 items-center justify-end gap-2">
+              {onOpenSideQuestion && <button type="button" aria-label="打开侧问" title={sideQuestionRunning ? '侧问 · 正在回答' : '打开侧问'} onClick={onOpenSideQuestion} className="composer-control relative inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-xs text-muted-foreground hover:bg-muted"><MessageSquareText className="h-4 w-4 shrink-0" /><span className="composer-control-label">侧问</span>{sideQuestionRunning && <span className="composer-control-status h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}</button>}
               {contextUsage && <ContextUsageRing usage={contextUsage} />}
               {loading && (
                 <Button
                   variant="outline"
-                  className="h-9 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground"
+                  className="composer-control h-9 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground"
                   onClick={onStop}
+                  aria-label="停止"
+                  title="停止生成"
                 >
                   <Square className="h-3 w-3" />
-                  <span className="ml-1">停止</span>
+                  <span className="composer-control-label ml-1">停止</span>
                 </Button>
               )}
 
               <Button
-                className="h-9 rounded-full px-3.5 sm:px-4"
+                className="composer-control composer-send h-9 rounded-full px-3.5 sm:px-4"
                 disabled={submitDisabled}
                 onClick={handleSendClick}
+                aria-label={sendLabel}
+                title={sendLabel}
               >
                 <Send className="h-4 w-4" />
-                {sendLabel}
+                <span className="composer-control-label">{sendLabel}</span>
               </Button>
             </div>
           </div>
@@ -1658,6 +1717,22 @@ export function ComposerPanel({
       )}
 
     </div>
+    {isHomeComposer && homeComposerMode === 'chat' && newSessionMode === 'local' && homeShortcuts && onSelectAssistant && onClearAssistant && (
+      <HomeResourceShortcuts
+        options={homeShortcuts}
+        assistants={installedAssistants ?? []}
+        skills={skillItems}
+        selectedAssistant={selectedAssistant}
+        selectedSkills={selectedSkills}
+        skillsLoading={skillsLoading}
+        onSelectAssistant={onSelectAssistant}
+        onClearAssistant={onClearAssistant}
+        onToggleSkill={toggleSelectedSkill}
+        onMoreAssistants={() => openResourcePicker('assistants')}
+        onMoreSkills={() => openResourcePicker('skills')}
+      />
+    )}
+    </>
   );
 }
 
@@ -1690,6 +1765,7 @@ function HomeLanding({
   onNewSessionModeChange,
   onOpenAgentManager,
   homeComposerMode = 'chat',
+  homeShortcuts,
 }: {
   value: string;
   loading: boolean;
@@ -1719,18 +1795,18 @@ function HomeLanding({
   onNewSessionModeChange?: (mode: 'local' | 'remote-direct') => void;
   onOpenAgentManager?: () => void;
   homeComposerMode?: 'chat' | 'project-create';
+  homeShortcuts?: HomeShortcutOptions;
 }) {
   return (
-      <div className="flex h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-y-auto px-4 py-6 sm:px-6 sm:py-8">
+      <div className="my-auto flex w-full shrink-0 flex-col items-center">
       <div className="mx-auto mb-8 text-center sm:mb-10 w-full max-w-[720px]">
         <h1 className="text-2xl font-medium tracking-[-0.02em] text-foreground sm:text-3xl">
           {homeComposerMode === 'project-create' ? '创建一个项目' : 'Hi，今天有什么安排？'}
         </h1>
-        <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
-          {homeComposerMode === 'project-create'
-            ? '用自然语言描述长期目标，我会先整理项目方案，再协助选择技能、专家和 App。'
-            : '让 moss 帮你规划任务、协同执行，或者通过助手直接开始一个新的构建目标。'}
-        </p>
+        {homeComposerMode === 'project-create' && <p className="mx-auto mt-3 max-w-[560px] text-sm leading-7 text-muted-foreground sm:text-base">
+          用自然语言描述长期目标，我会先整理项目方案，再协助选择技能、专家和 App。
+        </p>}
       </div>
 
       <ComposerPanel
@@ -1764,8 +1840,10 @@ function HomeLanding({
         onOpenAgentManager={onOpenAgentManager}
         onOpenSkillHub={onOpenSkillHub}
         homeComposerMode={homeComposerMode}
+        homeShortcuts={homeShortcuts}
         className="w-full max-w-[820px]"
       />
+      </div>
     </div>
   );
 }
@@ -1869,6 +1947,7 @@ function MentionResourceRow({
 }
 
 function MentionMenu({
+  anchorRef,
   toolAppItems, onSelectToolApp, toolAppParent, onLeaveToolApp,
   appResources, selectedAppResource, onSelectAppResource, onMoreAppResources,
   tabs,
@@ -1888,6 +1967,7 @@ function MentionMenu({
   onSelectSkill,
   onSelectAssistant,
 }: {
+  anchorRef: React.RefObject<HTMLDivElement | null>;
   toolAppItems: ToolPickerItem[];
   toolAppParent?: StoredApp;
   onLeaveToolApp: () => void;
@@ -1916,6 +1996,59 @@ function MentionMenu({
   const toolApps = React.useContext(AppToolSelectionContext);
   const selectedSkills = new Set(selectedSkillNames);
   const itemsRef = React.useRef<HTMLDivElement>(null);
+  const [position, setPosition] = React.useState<{
+    left: number;
+    width: number;
+    top?: number;
+    bottom?: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const updatePosition = React.useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor || typeof window === 'undefined') return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const viewportMargin = 8;
+    const gap = 4;
+    const toolbar = document.querySelector<HTMLElement>('.moss-window-chrome');
+    const toolbarBottom = toolbar?.getBoundingClientRect().bottom ?? 0;
+    const safeTop = Math.max(viewportMargin, toolbarBottom + viewportMargin);
+    const availableAbove = Math.max(0, anchorRect.top - safeTop - gap);
+    const availableBelow = Math.max(0, window.innerHeight - anchorRect.bottom - viewportMargin - gap);
+    const placeAbove = availableAbove >= 180 || availableAbove >= availableBelow;
+    const availableHeight = placeAbove ? availableAbove : availableBelow;
+    const width = Math.min(anchorRect.width, window.innerWidth - viewportMargin * 2);
+    const left = Math.max(
+      viewportMargin,
+      Math.min(anchorRect.left, window.innerWidth - viewportMargin - width),
+    );
+
+    setPosition({
+      left,
+      width,
+      maxHeight: Math.max(0, availableHeight),
+      ...(placeAbove
+        ? { bottom: window.innerHeight - anchorRect.top + gap }
+        : { top: anchorRect.bottom + gap }),
+    });
+  }, [anchorRef]);
+
+  React.useLayoutEffect(() => {
+    updatePosition();
+    const onViewportChange = () => updatePosition();
+    window.addEventListener('resize', onViewportChange);
+    // Capture scrolling from HomeLanding's scroll container as well as the window.
+    window.addEventListener('scroll', onViewportChange, true);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onViewportChange);
+    if (anchorRef.current) observer?.observe(anchorRef.current);
+    return () => {
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+      observer?.disconnect();
+    };
+  }, [anchorRef, updatePosition]);
+
   React.useLayoutEffect(() => {
     const container = itemsRef.current;
     const activeItem = container?.querySelector<HTMLElement>('[data-active="true"]');
@@ -1925,8 +2058,20 @@ function MentionMenu({
     if (item.top < viewport.top) container.scrollTop -= viewport.top - item.top;
     else if (item.bottom > viewport.bottom) container.scrollTop += item.bottom - viewport.bottom;
   }, [selectedIndex, tab]);
-  return (
-    <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur">
+
+  if (!position || typeof document === 'undefined') return null;
+
+  const menu = (
+    <div
+      className="fixed z-[70] flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.5)] backdrop-blur"
+      style={{
+        left: position.left,
+        top: position.top,
+        bottom: position.bottom,
+        width: position.width,
+        maxHeight: position.maxHeight,
+      }}
+    >
       <div className="flex min-w-0 items-center border-b border-border/50 px-2 py-1.5 text-xs">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
           {tabs.map((key) => (
@@ -1956,7 +2101,7 @@ function MentionMenu({
         <button type="button" className="flex min-w-0 items-center gap-1" onClick={onLeaveToolApp}><ArrowLeft className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{toolAppTitle(toolAppParent)}</span></button>
         <button type="button" className="shrink-0 text-primary disabled:opacity-50" disabled={toolApps.pending || !getAppToolServices(toolAppParent).some(service => service.available)} onClick={() => toolApps.setServices?.(toolAppId(toolAppParent), getAppToolServices(toolAppParent).filter(service => service.available).map(service => service.id))}>全选当前可用服务</button>
       </div>}
-      <div ref={itemsRef} className="max-h-64 overflow-y-auto p-1">
+      <div ref={itemsRef} className="min-h-0 flex-1 overflow-y-auto p-1">
         {tab === "workflows" ? (<>
           {appResources.length === 0 && <p className="p-3 text-xs text-muted-foreground">没有匹配的已发布工作流</p>}
           {appResources.map((resource, index) => <MentionResourceRow key={resourceKey(resource)} active={index === selectedIndex} selected={resourceKey(resource) === resourceKey(selectedAppResource)} icon={<GitFork className="h-4 w-4"/>} title={resource.title} description={`${resource.scope === "project" ? "项目" : "个人"} · ${resource.description || ""}`} selectionStyle="check" onSelect={() => onSelectAppResource(resource)}/>)}
@@ -2046,6 +2191,7 @@ function MentionMenu({
       </div>
     </div>
   );
+  return createPortal(menu, document.body);
 }
 
 function formatTaskElapsed(ms: number) {
@@ -2297,6 +2443,7 @@ export function ChatArea({
   homeWorkspace,
   workspaceOptions,
   projectName,
+  onReturnToProject,
   focusedToolUseId,
   focusedToolRequestId,
   focusedMessageId,
@@ -2351,6 +2498,8 @@ export function ChatArea({
   forkDisabledReason,
   terminalActions,
   sessionInfo,
+  isPinned = false,
+  onTogglePin,
   toolDisplayMode = "expanded",
   sessionToolDisplayMode = null,
   globalToolDisplayMode = "expanded",
@@ -2364,6 +2513,7 @@ export function ChatArea({
   onSubmitQuestion,
   onDiscussQuestion,
   homeComposerMode = 'chat',
+  homeShortcuts,
 }: {
   messages: TranscriptRenderMessage[];
   projectCreationReview?: React.ReactNode;
@@ -2380,6 +2530,7 @@ export function ChatArea({
   homeWorkspace?: string;
   workspaceOptions?: string[];
   projectName?: string;
+  onReturnToProject?: () => void;
   focusedToolUseId?: string;
   focusedToolRequestId?: number;
   focusedMessageId?: string;
@@ -2434,6 +2585,8 @@ export function ChatArea({
   forkDisabledReason?: string | null;
   terminalActions?: React.ReactNode;
   sessionInfo?: React.ReactNode;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   toolDisplayMode?: ToolDisplayMode;
   sessionToolDisplayMode?: ToolDisplayMode | null;
   globalToolDisplayMode?: ToolDisplayMode;
@@ -2451,6 +2604,7 @@ export function ChatArea({
   onSubmitQuestion?: AskUserQuestionCardProps["onSubmit"];
   onDiscussQuestion?: AskUserQuestionCardProps["onDiscuss"];
   homeComposerMode?: 'chat' | 'project-create';
+  homeShortcuts?: HomeShortcutOptions;
 }) {
   const composerDock = React.useRef<HTMLDivElement>(null);
   const [sideOpen, setSideOpen] = React.useState(false);
@@ -2593,7 +2747,20 @@ export function ChatArea({
     return (
       <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.12),transparent_24%),radial-gradient(circle_at_80%_10%,rgba(255,176,32,0.1),transparent_24%),var(--background)]">
         <div className="mx-auto w-full max-w-3xl px-4 pt-4"><QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} /></div>
-        {projectName && <div className="mx-auto mt-4 text-sm text-primary">项目 / {projectName}</div>}
+        {projectName && (
+          <div className="mx-auto mt-4 flex max-w-full items-center gap-2 px-4 text-sm text-primary">
+            {onReturnToProject && (
+              <Button
+                variant="ghost" size="sm" className="h-8 shrink-0 gap-1 rounded-full px-2 text-xs"
+                onClick={onReturnToProject} aria-label="返回项目" title={`返回项目：${projectName}`}
+              >
+                <ArrowLeft className="h-4 w-4" />
+                返回项目
+              </Button>
+            )}
+            <span className="min-w-0 truncate">{projectName}</span>
+          </div>
+        )}
         <HomeLanding
           value={value}
           loading={loading}
@@ -2623,6 +2790,7 @@ export function ChatArea({
           onOpenAgentManager={onOpenAgentManager}
           onOpenSkillHub={onOpenSkillHub}
           homeComposerMode={homeComposerMode}
+          homeShortcuts={homeShortcuts}
           enterpriseEnabled={enterpriseEnabled}
           newSessionMode={newSessionMode}
           onNewSessionModeChange={onNewSessionModeChange}
@@ -2637,9 +2805,11 @@ export function ChatArea({
   }
 
   return (
-    <div className="@container relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
+    <div className="@container/chat-pane relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
         title={sessionTitle}
+        projectName={projectName}
+        onReturnToProject={onReturnToProject}
         leftCollapsed={leftCollapsed}
         rightCollapsed={rightCollapsed}
         leftPanelName={leftPanelName}
@@ -2656,6 +2826,8 @@ export function ChatArea({
         messages={messages}
         terminalActions={terminalActions}
         sessionInfo={sessionInfo}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
         childSessions={childSessions}
         onReturnToParentSession={onReturnToParentSession}
         appWorkbenchAction={<AppWorkbenchButton entries={appWorkbench.entries} entry={appWorkbench.entry} open={appWorkbench.open} onClick={() => {

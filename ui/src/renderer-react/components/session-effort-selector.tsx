@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as Slider from '@radix-ui/react-slider';
-import { ChevronDown, RotateCcw } from 'lucide-react';
+import { Brain, ChevronDown, RotateCcw } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import type { EffortLevel, SessionEffortConfiguration } from '../types';
@@ -49,9 +49,9 @@ export function SessionEffortSelector({ sessionId, disabled = false, busy = fals
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
       <button type="button" disabled={disabled} aria-label={`推理强度：${config?.applied ? LABELS[config.applied] : 'Auto'}`}
-        title="推理强度 · 仅当前会话，后续请求生效"
-        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50">
-        <span>{config?.applied ? LABELS[config.applied] : '推理强度'}</span><ChevronDown className="h-3 w-3" />
+        title={`推理强度：${config?.applied ? LABELS[config.applied] : 'Auto'} · 仅当前会话，后续请求生效`}
+        className="composer-control inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50">
+        <Brain className="h-3.5 w-3.5 shrink-0" /><span className="composer-control-label">{config?.applied ? LABELS[config.applied] : '推理强度'}</span><ChevronDown className="composer-control-detail h-3 w-3 shrink-0" />
       </button>
     </PopoverTrigger>
     <PopoverContent side="top" align="start" sideOffset={6} className="w-64 rounded-xl border-border/70 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur">

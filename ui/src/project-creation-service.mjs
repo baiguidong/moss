@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { normalizeGeneratedProjectInstructions, DEFAULT_PROJECT_PERMISSION_MODE } from './shared/project-instructions.mjs';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { runInKeyedQueue } from './shared/keyed-queue.mjs';
@@ -14,10 +15,9 @@ const list = (value, max = 100) => {
 };
 const message = error => error instanceof Error ? error.message : String(error);
 
-export function normalizeCreationPlan(input) {
+export function normalizeCreationPlan(input, { generated = true } = {}) {
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 80) throw new Error('项目名称应为 1–80 个字符。');
   if (input.instructions != null && (typeof input.instructions !== 'string' || input.instructions.length > 20000)) throw new Error('项目指令过长或无效。');
-  if (input.firstTask != null && (typeof input.firstTask !== 'string' || input.firstTask.length > 12000)) throw new Error('首个任务过长或无效。');
   if (input.mode != null && !['chat', 'boss'].includes(input.mode)) throw new Error('会话模式无效。');
   if (input.permissionMode != null && !PERMISSION_MODES.includes(input.permissionMode)) throw new Error('权限模式无效。');
   if (input.agentTeamsEnabled != null && typeof input.agentTeamsEnabled !== 'boolean') throw new Error('协作配置无效。');
@@ -30,18 +30,17 @@ export function normalizeCreationPlan(input) {
   const assistantName = input.assistantName ?? null;
   if (assistantName !== null && (typeof assistantName !== 'string' || (assistantName && !expertIds.includes(assistantName)))) throw new Error('默认专家必须来自已选专家。');
   return {
-    project: { name: input.name.trim(), icon: normalizeProjectIcon(input.icon, { strict: true }), instructions: input.instructions || '', workspaces, workspace, defaultWorkspace: workspace,
-      mode: input.mode || 'boss', permissionMode: input.permissionMode || 'default', agentTeamsEnabled: input.agentTeamsEnabled !== false,
+    project: { name: input.name.trim(), icon: normalizeProjectIcon(input.icon, { strict: true }), instructions: generated ? normalizeGeneratedProjectInstructions(input.instructions) : input.instructions || '', workspaces, workspace, defaultWorkspace: workspace,
+      mode: input.mode || 'boss', permissionMode: input.permissionMode || DEFAULT_PROJECT_PERMISSION_MODE, agentTeamsEnabled: input.agentTeamsEnabled !== false,
       assistantName, appServiceIds },
     refs: [ ...skillIds.map(id => ({ kind: 'skill', id })), ...expertIds.map(id => ({ kind: 'expert', id })),
       ...[...new Set([...appIds, ...appServiceIds.map(id => parseAppServiceKey(id).appId)])].map(id => ({ kind: 'app', id })) ],
-    firstTask: input.firstTask?.trim() || null,
   };
 }
 
 /** Only confirm() can install or create. Model tools can read and propose plans. */
 export function createProjectCreationService({ directory, assertSession, resources, createProject, readProject,
-  startFirstTask, emit = () => {}, validateWorkspace = async () => {} }) {
+  emit = () => {}, validateWorkspace = async () => {} }) {
   const queue = new Map();
   const file = id => {
     if (!/^[a-zA-Z0-9_-]{8,120}$/.test(id || '')) throw new Error('项目草稿 ID 无效。');
@@ -83,17 +82,17 @@ export function createProjectCreationService({ directory, assertSession, resourc
     if (draft && (!editable.has(draft.status) || draft.createdProjectId)) throw new Error('项目正在创建或已经创建，不能修改此方案。');
   }
   function toInput(draft) {
-    return { ...draft.project, firstTask: draft.firstTask,
+    return { ...draft.project,
       ...Object.fromEntries(['skill', 'expert', 'app'].map(kind => [`${kind}Ids`, draft.resources.filter(item => item.kind === kind).map(item => item.id)])) };
   }
-  async function proposeNow(input, sessionId, previous) {
+  async function proposeNow(input, sessionId, previous, options) {
     await ensureEditable(previous);
-    const plan = normalizeCreationPlan(input);
+    const plan = normalizeCreationPlan(input, options);
     for (const directory of plan.project.workspaces) await validateWorkspace(directory);
     const selected = [];
     for (const ref of plan.refs) selected.push(await resources.inspect(ref));
     return save({ id: previous?.id || randomUUID(), sessionId, version: (previous?.version || 0) + 1,
-      status: 'awaiting_confirmation', project: plan.project, resources: selected, firstTask: plan.firstTask,
+      status: 'awaiting_confirmation', project: plan.project, resources: selected,
       createdProjectId: null, error: null, createdAt: previous?.createdAt || Date.now(), updatedAt: previous?.updatedAt || 0 });
   }
   async function propose(input, sessionId) {
@@ -116,7 +115,7 @@ export function createProjectCreationService({ directory, assertSession, resourc
       const draft = await requireDraft(draftId, version);
       const input = { ...toInput(draft), ...patch };
       if ('workspace' in patch && !('workspaces' in patch)) input.workspaces = patch.workspace ? [patch.workspace] : [];
-      return proposeNow(input, draft.sessionId, draft);
+      return proposeNow(input, draft.sessionId, draft, { generated: false });
     });
   }
   async function cancel({ draftId, version }) {
@@ -132,15 +131,7 @@ export function createProjectCreationService({ directory, assertSession, resourc
     draft.error = null;
     draft.pendingActions = [];
     draft.createdProjectId = project.id;
-    await save(draft); // Project identity survives first-task failures.
-    if (draft.firstTask && !draft.firstTaskSessionId && !draft.firstTaskError) {
-      try {
-        const result = await startFirstTask(project, draft);
-        draft.firstTaskSessionId = result.sessionId;
-        draft.firstTaskError = result.error || null;
-      } catch (error) { draft.firstTaskError = message(error); }
-      await save(draft);
-    }
+    await save(draft); // Project identity survives a response interruption.
     return { status: draft.status, project, draft };
   }
   async function confirm({ draftId, version }) {
@@ -153,7 +144,7 @@ export function createProjectCreationService({ directory, assertSession, resourc
         return finish(draft, project);
       }
       draft.reservedProjectId ||= `draft-${draft.id}`;
-      // A crash after writing project.json must not duplicate the project or its first task.
+      // A crash after writing project.json must not duplicate the project.
       const recovered = await readProject(draft.reservedProjectId);
       if (recovered?.archivedAt) throw new Error('已创建的项目已删除。');
       if (recovered) return finish(draft, recovered);
@@ -229,11 +220,5 @@ export function createProjectCreationService({ directory, assertSession, resourc
       }
     });
   }
-  async function reportFirstTaskError(draftId, error) {
-    return runInKeyedQueue(queue, draftId, async () => {
-      const draft = await get({ draftId });
-      if (draft?.status === 'completed') await save({ ...draft, firstTaskError: message(error) });
-    });
-  }
-  return { get, propose, update, cancel, confirm, reportFirstTaskError };
+  return { get, propose, update, cancel, confirm };
 }

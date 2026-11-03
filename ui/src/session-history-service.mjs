@@ -6,7 +6,7 @@ import { createLocalTranscriptSync, readTranscriptHistory } from './local-transc
 import { normalizeSessionDirName } from './session-paths.mjs';
 import { applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { applyRemoteSessionHistoryTitle } from './remote-session-reconcile.mjs';
-import { backfillVisibleUserMessageIds, truncateHistoryBeforeUserMessage } from './shared/turn-changes.mjs';
+import { backfillVisibleUserMessageIds, isTopLevelUserMessage, truncateHistoryBeforeUserMessage } from './shared/turn-changes.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import { mergeInterruptedSessionHistory, shouldAdoptSessionHistory } from './shared/session-history-reconcile.mjs';
 import { deriveSessionPreview, derivePendingPlanApproval, historyCompletenessScore, isDisplayTranscriptEntry } from './shared/session-history-display.mjs';
@@ -15,6 +15,19 @@ function sleepMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+// The engine transcript omits UI delivery receipts. Keep them on the matching
+// user UUID so reconnects can reconcile saved queues without matching text.
+function preserveClientMessageIds(currentHistory, candidateHistory) {
+  if (!Array.isArray(candidateHistory)) return candidateHistory;
+  const receipts = new Map((currentHistory || [])
+    .filter(event => isTopLevelUserMessage(event) && event.uuid && typeof event.clientMessageId === 'string')
+    .map(event => [event.uuid, event.clientMessageId]));
+  if (!receipts.size) return candidateHistory;
+  return candidateHistory.map(event => isTopLevelUserMessage(event) && receipts.has(event.uuid)
+    ? { ...event, clientMessageId: receipts.get(event.uuid) }
+    : event);
 }
 
 // The local model transcript stores screenshot captions, but not the Host's
@@ -79,7 +92,8 @@ export function createSessionHistoryService({
     const transcriptPath = getLocalSessionTranscriptPath(sessionRecord);
     if (!transcriptPath) return null;
     const history = await readTranscriptHistory(transcriptPath, { isDisplayEntry: isDisplayTranscriptEntry, requireComplete });
-    return restoreAppTestScreenshotAttachments(sessionRecord, preserveVisualizationAnnotations(sessionRecord.history, history));
+    return restoreAppTestScreenshotAttachments(sessionRecord, preserveClientMessageIds(sessionRecord.history,
+      preserveVisualizationAnnotations(sessionRecord.history, history)));
   }
 
   const localTranscriptSync = createLocalTranscriptSync({
@@ -181,7 +195,8 @@ export function createSessionHistoryService({
   }
 
   function syncSessionRecordHistory(sessionRecord, history, metadata = {}) {
-    const nextHistory = preserveAppTaskHistory(sessionRecord.history, preserveVisualizationAnnotations(sessionRecord.history, history));
+    const nextHistory = preserveClientMessageIds(sessionRecord.history,
+      preserveAppTaskHistory(sessionRecord.history, preserveVisualizationAnnotations(sessionRecord.history, history)));
     if (!metadata.allowReplacement && !shouldAdoptSessionHistory(sessionRecord.history, nextHistory)) {
       const enrichedHistory = backfillVisibleUserMessageIds(sessionRecord.history, nextHistory);
       if (enrichedHistory !== sessionRecord.history) {

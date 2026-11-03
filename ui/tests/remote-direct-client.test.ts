@@ -61,7 +61,7 @@ describe('cloud usage', () => {
   it('uses the current cloud account and shares a timeout across authentication and usage', async () => {
     const requests: any[] = [];
     const overview = {
-      generatedAt: Date.now(), timezone: 'Asia/Shanghai', today: '2026-09-24', historyIncomplete: false,
+      generatedAt: Date.now(), timezone: 'Asia/Shanghai', today: '2026-09-24',
       totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
         totalTokens: 0, requestCount: 0, activeDays: 0, peakDay: null, peakTokens: 0 },
       daily: [],
@@ -78,7 +78,7 @@ describe('cloud usage', () => {
 
     expect(await client.getCloudUsageOverview()).toEqual(overview);
     expect(requests.map(request => request.url)).toEqual([
-      'https://moss.example.com/api/v1/auth/token', 'https://moss.example.com/api/v1/usage',
+      'https://moss.example.com/api/v1/auth/token', 'https://moss.example.com/api/v1/usage?host_kind=cloud',
     ]);
     expect(JSON.parse(requests[0].init.body)).toEqual({ grant_type: 'api_key', api_key: 'current-account-key' });
     expect(requests[1].init.headers.authorization).toBe('Bearer current-account-token');

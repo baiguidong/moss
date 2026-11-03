@@ -22,7 +22,6 @@ const local: UsageOverview = {
 };
 const cloud: CloudUsageOverview = {
   generatedAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, today: cloudDay.day,
-  historyIncomplete: false,
   totals: { ...cloudDay, activeDays: 1, peakDay: cloudDay.day, peakTokens: 72 },
   daily: [cloudDay],
 };
@@ -84,14 +83,13 @@ describe('local and cloud usage overview', () => {
     }
   });
 
-  test('shows available cloud activity and incomplete history even when local usage fails', () => {
+  test('shows available cloud activity when local usage fails', () => {
     const html = renderToStaticMarkup(<UsageOverviewContent
       local={{ data: null, loading: false, error: 'Database unavailable' }}
-      cloud={loaded({ ...cloud, historyIncomplete: true })}
+      cloud={loaded(cloud)}
       onRefresh={() => {}}
     />);
     expect(html).toContain('本地电脑用量暂时不可用');
-    expect(html).toContain('部分云端历史记录无法读取');
     expect(html).toContain('2026年9月24日 · 72 Token · 2 次请求');
   });
 });

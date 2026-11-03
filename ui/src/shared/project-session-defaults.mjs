@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { normalizeStringList } from './string-list.mjs';
 import { normalizePermissionMode } from '../permission-modes.mjs';
+import { DEFAULT_PROJECT_PERMISSION_MODE } from './project-instructions.mjs';
 
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export function normalizeProjectDefaults(raw = {}) {
@@ -10,7 +11,7 @@ export function normalizeProjectDefaults(raw = {}) {
     appIds: normalizeStringList(raw.appIds),
     appServiceIds: normalizeStringList(raw.appServiceIds),
     assistantName: typeof raw.assistantName === 'string' ? raw.assistantName.trim() : null,
-    permissionMode: raw.permissionMode ? normalizePermissionMode(raw.permissionMode) : null,
+    permissionMode: raw.permissionMode ? normalizePermissionMode(raw.permissionMode) : DEFAULT_PROJECT_PERMISSION_MODE,
     mode: raw.mode === 'chat' ? 'chat' : 'boss',
     agentTeamsEnabled: raw.agentTeamsEnabled !== false,
     workspaces,

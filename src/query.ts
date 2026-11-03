@@ -1471,6 +1471,18 @@ async function* queryLoop(
       queryDepth: queryTracking.depth,
     })
 
+    // Consume foreground supplements immediately after the complete tool
+    // group. This is the first valid boundary for a regular user message:
+    // inserting it before every tool_result in the group would break the
+    // tool_use/tool_result pairing, while waiting for attachment discovery
+    // here makes a steer look late even though the tool group is already done.
+    // Keep the consumed messages in toolResults so the next model request
+    // receives them in order and the transcript records the receipt promptly.
+    for (const message of takeAgentMessages(updatedToolUseContext)) {
+      yield message
+      toolResults.push(message)
+    }
+
     // Get queued commands snapshot before processing attachments.
     // These will be sent as attachments so Claude can respond to them in the current turn.
     //
@@ -1512,11 +1524,6 @@ async function* queryLoop(
     )) {
       yield attachment
       toolResults.push(attachment)
-    }
-
-    for (const message of takeAgentMessages(updatedToolUseContext)) {
-      yield message
-      toolResults.push(message)
     }
 
     // Inject prefetched skill discovery. collectSkillDiscoveryPrefetch emits

@@ -29,6 +29,7 @@ import {
   Plug,
   GitFork,
   LogOut,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -79,7 +80,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
+export type MainView = "chat" | "pending" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
 
@@ -127,6 +128,7 @@ interface AppSidebarProps {
   activeSessionId: string | null;
   activeView: MainView;
   projectsCount: number;
+  pendingCount?: number;
   themeMode: "dark" | "light" | "system";
   collapsed: boolean;
   searchQuery: string;
@@ -315,6 +317,7 @@ export function AppSidebar({
   apps,
   activeSessionId,
   activeView,
+  pendingCount = 0,
   themeMode,
   collapsed,
   searchQuery,
@@ -366,13 +369,17 @@ export function AppSidebar({
 
   const historySessions = sessions.filter((session) => !session.isSubAgent);
   const activeHistorySessionId = getSidebarActiveSessionId(sessions, activeSessionId);
-  const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery);
-  const sessionGroups = groupSidebarSessions(filteredSessions).filter((group) => (
+  const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery).filter((session) => (
+    session.sessionKind !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
+  ));
+  const pinnedSessions = filteredSessions.filter((session) => session.isPinned);
+  const unpinnedSessions = filteredSessions.filter((session) => !session.isPinned);
+  const sessionGroups = groupSidebarSessions(unpinnedSessions).filter((group) => (
     group.id !== 'project' && (
       group.id !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
     )
   ));
-  const projectTrees = groupProjectSessionTrees(filteredSessions);
+  const projectTrees = groupProjectSessionTrees(unpinnedSessions);
   const projectsById = React.useMemo(() => new Map(projects.map(project => [project.id, project])), [projects]);
   const moreViews = getSidebarMoreViews({
     enterpriseEnabled,
@@ -398,6 +405,7 @@ export function AppSidebar({
         : getSessionNodePreview(groupSessionNodes(group.sessions), activeHistorySessionId),
   }));
   const orderedSessions = [
+    ...pinnedSessions,
     ...visibleSessionGroups.flatMap((group) => group.visibleNodes.map((node) => node.session)),
     ...projectTrees.flatMap((project) => project.sessions.map((node) => node.session)),
   ];
@@ -491,6 +499,19 @@ export function AppSidebar({
             {!collapsed && "新会话"}
           </Button>
           <Button
+            variant={activeView === "pending" ? "secondary" : "ghost"}
+            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
+            onClick={() => onChangeView("pending")}
+            title="待处理"
+            aria-label={`待处理${pendingCount > 0 ? `，${pendingCount} 项` : ''}`}
+          >
+            <span className="relative">
+              <Inbox className="h-4 w-4" />
+              {pendingCount > 0 ? <span className="absolute -right-2 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground">{pendingCount > 99 ? '99+' : pendingCount}</span> : null}
+            </span>
+            {!collapsed && "待处理"}
+          </Button>
+          <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("projects")}
@@ -570,9 +591,12 @@ export function AppSidebar({
                 )}
                 title={session.title}
               >
-                {session.agentMode === 'remote-direct'
-                  ? <Cloud className="h-4 w-4" aria-label="云端会话" />
-                  : <Monitor className="h-4 w-4" aria-label="本地会话" />}
+                <span className="relative flex h-4 w-4 items-center justify-center">
+                  {session.agentMode === 'remote-direct'
+                    ? <Cloud className="h-4 w-4" aria-label="云端会话" />
+                    : <Monitor className="h-4 w-4" aria-label="本地会话" />}
+                  {session.isPinned && <Pin className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 text-primary" fill="currentColor" />}
+                </span>
               </button>
             ))}
           </div>
@@ -581,8 +605,31 @@ export function AppSidebar({
         <>
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2 max-w-full overflow-hidden">
-              {sessionGroups.length > 0 || projectTrees.length > 0 ? (
+              {pinnedSessions.length > 0 || sessionGroups.length > 0 || projectTrees.length > 0 ? (
                 <>
+                {pinnedSessions.length > 0 && (
+                  <section aria-label="置顶会话">
+                    <div className="mb-1 flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-sidebar-foreground/55">
+                      <Pin className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">置顶会话</span>
+                      <span className="shrink-0 tabular-nums">({pinnedSessions.length})</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {pinnedSessions.map((session) => (
+                        <SessionItem
+                          key={session.id}
+                          session={session}
+                          isActive={activeHistorySessionId === session.id}
+                          onClick={() => onSelectSession(session.id)}
+                          onDelete={() => onDeleteSession(session.id)}
+                          onArchive={onArchiveSession ? () => onArchiveSession(session.id) : undefined}
+                          onRename={(newTitle) => onRenameSession(session.id, newTitle)}
+                          onTogglePin={() => onTogglePin(session.id)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
                 {visibleSessionGroups.map((group) => {
                   const GroupIcon = sessionGroupIcons[group.id];
                   const isCollapsed = Boolean(collapsedSessionGroups[group.id]);

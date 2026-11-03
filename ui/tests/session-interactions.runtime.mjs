@@ -32,7 +32,8 @@ const server = createServer(async (request, response) => {
   const b = text.includes('SESSION_B_ONLY');
   if (!side && !b) aCalls++;
   const blocks = side ? [{ type: 'text', text: 'The tool is still pending.' }] : b ? [{ type: 'text', text: 'B finished.' }]
-    : aCalls === 1 ? [1, 2].map(n => ({ type: 'tool_use', id: 'call_' + n, name: toolName, input: { n } }))
+    : aCalls === 1 ? [{ type: 'tool_use', id: 'call_1', name: toolName, input: { n: 1 } }]
+    : aCalls === 2 ? [{ type: 'tool_use', id: 'call_2', name: toolName, input: { n: 2 } }]
     : [{ type: 'text', text: 'A finished with the supplemental requirement.' }];
   response.setHeader('Content-Type', 'text/event-stream');
   const event = value => response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
@@ -95,9 +96,12 @@ try {
   const injected = messages.findIndex(message => message.type === 'user' && message.uuid === inputId);
   assert(injected >= 0);
   const receiptIds = messages.slice(0, injected).flatMap(message => message.message?.content || []).filter(block => block.type === 'tool_result').map(block => block.tool_use_id);
-  assert.deepEqual(receiptIds.sort(), ['call_1', 'call_2']);
+  assert.deepEqual(receiptIds, ['call_1']);
   const followup = requests.find(body => JSON.stringify(body.messages).includes('SUPPLEMENT_A'));
   assert(followup); assert(JSON.stringify(followup).includes(attachment)); assert(JSON.stringify(followup).includes('review')); assert(!JSON.stringify(followup).includes('The tool is still pending.'));
+  assert(JSON.stringify(followup).includes('call_1')); assert(!JSON.stringify(followup).includes('call_2'), 'Supplement was inserted after the next tool group instead of at the first boundary');
+  const finalRequest = requests.at(-1);
+  assert(JSON.stringify(finalRequest).includes('call_2'));
   assert.equal(a.steer('late', randomUUID(), () => {}), false);
   const heldSide = a.askSideQuestion('HOLD_SIDE'); await sideStarted;
   assert.equal(a.getIdleRetirementBlocker(), 'request-running', 'Active side question must retain its runtime');

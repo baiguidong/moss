@@ -19,7 +19,6 @@ type ProjectTasksTabProps = {
   project: Project;
   tasks: ProjectTask[];
   onOpenSession: (sessionId: string) => void;
-  onNewSession: (project: Project) => void;
   onReload: () => Promise<void>;
 };
 
@@ -58,7 +57,6 @@ export function ProjectTasksTab({
   project,
   tasks,
   onOpenSession,
-  onNewSession,
   onReload,
 }: ProjectTasksTabProps) {
   const [query, setQuery] = React.useState('');
@@ -95,11 +93,7 @@ export function ProjectTasksTab({
 
   return (
     <div className="grid min-h-0 gap-5">
-      <section aria-label="发起项目会话" className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">会话继承项目默认配置，发送前可调整。</p>
-        <Button onClick={() => onNewSession(project)}><MessageSquare className="h-4 w-4" />新会话</Button>
-        {error && <span className="text-xs text-destructive">{error}</span>}
-      </section>
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
 
       <section className="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">

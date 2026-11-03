@@ -13,11 +13,11 @@ export function QueuedMessages({ messages, onEdit, onRemove }: {
     <div key={item.id} className="rounded-xl border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
       <div className="flex items-center gap-2">
         <Clock className="h-3 w-3 shrink-0" />
-        <span className="shrink-0">#{index + 1} {item.status === 'draft' ? '已保留草稿' : item.status === 'dispatching' ? '发送中' : '排队中'}</span>
+        <span className="shrink-0">#{index + 1} {item.status === 'draft' ? '已保留草稿' : item.status === 'canceling' ? '正在取消' : item.status === 'dispatching' ? '发送中' : '排队中'}</span>
         <span className="min-w-0 flex-1 truncate">{item.visualizationAnnotation ? '' : item.prompt || `[${item.files?.length ?? 0} 个附件]`}</span>
-        {(!item.visualizationAnnotation || item.status === 'draft') && <button type="button" disabled={item.status === 'dispatching'} className="shrink-0 rounded p-1 disabled:opacity-40"
+        {(!item.visualizationAnnotation || item.status === 'draft') && <button type="button" disabled={item.status === 'dispatching' || item.status === 'canceling'} className="shrink-0 rounded p-1 disabled:opacity-40"
           onClick={() => onEdit?.(item.id)} title={item.visualizationAnnotation ? '重试发送标注' : item.status === 'draft' ? '编辑草稿' : '撤回编辑'} aria-label={item.visualizationAnnotation ? '重试发送标注' : item.status === 'draft' ? '编辑草稿' : '撤回编辑'}><Pencil className="h-3 w-3" /></button>}
-        <button type="button" disabled={item.status === 'dispatching'} className="shrink-0 rounded p-1 disabled:opacity-40"
+        <button type="button" disabled={item.status === 'canceling'} className="shrink-0 rounded p-1 disabled:opacity-40"
           onClick={() => onRemove?.(item.id)} title="移除排队消息" aria-label="移除排队消息"><X className="h-3 w-3" /></button>
       </div>
       {item.visualizationAnnotation && <div className="mt-1"><VisualizationAnnotationCard annotation={item.visualizationAnnotation} /></div>}

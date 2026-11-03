@@ -141,6 +141,9 @@ api.runComposerQueueReview = async () => {
   assert((await listDrafts<ComposerDraft>(JSON.stringify(['desktop']), alternateSession)).some(row => row.value.text === '另一份草稿'), 'Dismiss deleted a saved draft');
   passed.push('收起其他已保存草稿提示会关闭整个浮层，并保留当前输入和已保存草稿');
   render(<Harness key="final" initial={recoverQueuedMessages([entry, { ...entry, id: 'second', prompt: '第二条' }])} />); await delay();
+  click('移除排队消息'); await delay();
+  assert(latest.queued?.length === 1 && latest.queued[0].id === 'second', 'An unreceived draft could not be canceled independently');
+  passed.push('未发送草稿可单条取消，其他草稿保持不变');
   return passed;
 };
 

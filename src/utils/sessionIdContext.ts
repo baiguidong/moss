@@ -23,6 +23,9 @@ export type SessionRuntime = {
 }
 
 export type ScopedWorkerResources = {
+  apps: Array<{
+    id: string
+  }>
   connectors: Array<{
     id: string
     mcpServerNames?: string[]

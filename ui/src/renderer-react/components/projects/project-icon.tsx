@@ -21,15 +21,16 @@ export function ProjectIconPicker({ value, onChange, disabled = false }: {
   value?: ProjectIconValue | null; onChange: (icon: ProjectIconValue) => void; disabled?: boolean;
 }) {
   const icon = normalizeProjectIcon(value);
+  const [expanded, setExpanded] = React.useState(false);
   // Keep the generated proposal available when comparing it with built-in options.
   const generated = React.useRef<ProjectIconValue | null>(null);
   if (icon.kind === 'generated') generated.current = icon;
   return <fieldset disabled={disabled} className="min-w-0 space-y-3 disabled:opacity-60" aria-label="项目图标">
     <legend className="text-xs font-medium text-muted-foreground">项目图标</legend>
-    <div className="flex items-center gap-3"><ProjectIcon icon={icon} className="h-12 w-12" />
-      <div className="min-w-0 flex-1 text-xs text-muted-foreground">{icon.kind === 'generated' ? 'AI 生成图标，可调整配色或改选内置图标' : '选择内置图标和配色'}</div>
-      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onChange({ ...DEFAULT_PROJECT_ICON })}>恢复默认</Button>
+    <div className="flex items-center justify-between gap-3"><ProjectIcon icon={icon} className="h-8 w-8" />
+      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-expanded={expanded} onClick={() => setExpanded(current => !current)}>{expanded ? '收起' : '修改'}</Button>
     </div>
+    {expanded && <>
     <div role="group" aria-label="选择图形" className="flex flex-wrap gap-1.5">
       {generated.current && <button type="button" aria-label="使用 AI 生成图标" aria-pressed={icon.kind === 'generated'} title="AI 生成图标"
         className={cn('rounded-lg border p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', icon.kind === 'generated' ? 'border-primary' : 'border-transparent hover:border-border')}
@@ -46,5 +47,7 @@ export function ProjectIconPicker({ value, onChange, disabled = false }: {
         className={cn('flex h-7 w-7 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', icon.color === color.id ? 'border-primary' : 'border-transparent hover:border-border')}
         onClick={() => onChange({ ...icon, color: color.id })}><span className="h-4 w-4 rounded-full" style={{ backgroundColor: color.value }} /></button>)}
     </div>
+    <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onChange({ ...DEFAULT_PROJECT_ICON })}>恢复默认</Button>
+    </>}
   </fieldset>;
 }

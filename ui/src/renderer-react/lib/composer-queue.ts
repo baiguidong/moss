@@ -16,7 +16,7 @@ export type QueuedMessage = {
   agent?: DesktopAgentDefinition | null;
   appSelection?: AppComposerResource | null;
   workspace?: string;
-  status?: 'queued' | 'dispatching' | 'draft';
+  status?: 'queued' | 'dispatching' | 'canceling' | 'draft';
   notice?: string;
 };
 export type ComposerDraft = {
@@ -29,6 +29,15 @@ export type ComposerDraft = {
   queued?: QueuedMessage[];
 };
 
+/** Receipt identity is independent of prompt text and the end of the Agent turn. */
+export function reconcileQueuedMessages(queue: QueuedMessage[], history: readonly { type?: unknown; clientMessageId?: unknown }[]) {
+  if (!queue.length) return queue;
+  const received = new Set(history.filter(event => event?.type === 'user' && typeof event.clientMessageId === 'string')
+    .map(event => event.clientMessageId));
+  const remaining = queue.filter(item => !received.has(item.id));
+  return remaining.length === queue.length ? queue : remaining;
+}
+
 export function composerIsEmpty(draft: ComposerDraft) {
   return !draft.text.trim() && !draft.files.length && !draft.appSelection &&
     !draft.choices?.skills.length && !draft.choices?.agent;
@@ -37,7 +46,7 @@ export function composerIsEmpty(draft: ComposerDraft) {
 /** Only entries still owned by the UI queue can be withdrawn. */
 export function withdrawMessage(queue: QueuedMessage[], id: string, draft: ComposerDraft, workspace?: string) {
   const item = queue.find(value => value.id === id);
-  if (!item || item.status === 'dispatching') return { queue, draft, restored: false };
+  if (!item || item.status === 'dispatching' || item.status === 'canceling') return { queue, draft, restored: false };
   const mismatch = item.workspace !== undefined && item.workspace !== workspace;
   if (mismatch || !composerIsEmpty(draft)) {
     return {
@@ -59,7 +68,16 @@ export function preserveQueuedMessages(queue: QueuedMessage[]) {
     { ...item, status: 'draft' as const, notice: '已停止排队，内容已保留。' });
 }
 
-/** Stop interrupts the current turn while keeping queued messages live. */
+/** Stop converts every unreceived item into a manual draft and pauses replay. */
+export function stopQueuedMessages(queue: QueuedMessage[]) {
+  return queue.map(item => item.status === 'draft' ? item :
+    { ...item, status: 'draft' as const, notice: item.status === 'dispatching'
+      ? '已停止发送，请先核对会话记录后再编辑。'
+      : item.status === 'canceling' ? '取消请求未确认，内容已保留。'
+      : '已停止排队，内容已保留。' });
+}
+
+/** @deprecated Kept for older integrations; Stop now preserves drafts instead. */
 export function requeueMessagesAfterStop(queue: QueuedMessage[]) {
   return queue.map(item => item.status === 'dispatching'
     ? { ...item, status: 'queued' as const, notice: undefined }

@@ -3,7 +3,9 @@ import { normalizeProjectDefaults, resolveProjectSessionDefaults } from '../src/
 
 test('inherits project configuration with Boss and Teams enabled, independent of global Teams', () => {
   const resolved = resolveProjectSessionDefaults({ id: 'p', instructions: 'Project rules', skillIds: ['s'], expertIds: ['assistant'], appIds: ['app'] }, {}, { permissionMode: 'acceptEdits', agentTeamsEnabled: false }, '/projects/p');
-  expect(resolved).toMatchObject({ workspace: '/projects/p', permissionMode: 'acceptEdits', mode: 'boss', assistant_name: 'assistant', appIds: ['app'], projectDefaults: { instructions: 'Project rules', agentTeamsEnabled: true } });
+  expect(resolved).toMatchObject({ workspace: '/projects/p', permissionMode: 'bypassPermissions', mode: 'boss', assistant_name: 'assistant', appIds: ['app'], projectDefaults: { instructions: 'Project rules', agentTeamsEnabled: true } });
+  expect(resolveProjectSessionDefaults({ id: 'p', permissionMode: 'acceptEdits' }, {}, {}, '/p').permissionMode).toBe('acceptEdits');
+  expect(resolveProjectSessionDefaults({ id: 'p' }, { permissionMode: 'plan' }, {}, '/p').permissionMode).toBe('plan');
 });
 
 test('explicit empty resources, Chat and false override project values; snapshots do not change with project', () => {

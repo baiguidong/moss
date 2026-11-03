@@ -32,21 +32,22 @@ export function getSelectableInstalledSkills(skills: InstalledSkillOption[]) {
 }
 
 export function SkillIcon({ skill, className }: { skill?: InstalledSkillOption; className?: string }) {
-  const [failed, setFailed] = React.useState(false);
-  if (skill?.icon && !failed) {
+  const [failedSource, setFailedSource] = React.useState<string>();
+  const source = skill?.icon?.trim();
+  if (source && failedSource !== source) {
     return (
       <img
-        src={skill.icon}
+        src={source}
         alt=""
-        className={cn('shrink-0 object-contain', className)}
-        onError={() => setFailed(true)}
+        className={cn('h-4 w-4 shrink-0 object-contain', className)}
+        onError={() => setFailedSource(source)}
       />
     );
   }
-  if (skill?.emoji) {
-    return <span className="shrink-0 text-sm leading-none" aria-hidden="true">{skill.emoji}</span>;
+  if (skill?.emoji?.trim()) {
+    return <span className={cn('inline-flex h-4 w-4 shrink-0 items-center justify-center text-sm leading-none', className)} aria-hidden="true">{skill.emoji}</span>;
   }
-  return <Hammer className={cn('shrink-0', className)} />;
+  return <Hammer aria-hidden="true" className={cn('h-4 w-4 shrink-0', className)} />;
 }
 
 export function SkillSelectionArea({

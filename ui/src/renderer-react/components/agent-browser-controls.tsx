@@ -1,13 +1,15 @@
+import * as React from "react";
 import { Search } from "lucide-react";
 
-export function AgentBrowserControls({ query, onQuery, status, onStatus, options, count, completedCount, collapsed, onCollapse }: {
+export function AgentBrowserControls({ query, onQuery, status, onStatus, options, count, completedCount, collapsed, onCollapse, dense = false }: {
   query: string; onQuery: (value: string) => void;
   status: string; onStatus: (value: string) => void;
   options: { value: string; label: string }[];
   count: number; completedCount: number; collapsed: boolean; onCollapse: () => void;
+  dense?: boolean;
 }) {
-  return <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-2.5">
-    <label className="relative min-w-36 flex-1">
+  return <div className={dense ? "flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5" : "flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-2.5"}>
+    <label className={dense ? "relative min-w-32 max-w-56 flex-1" : "relative min-w-36 flex-1"}>
       <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
       <input aria-label="搜索 Agent 或任务" placeholder="搜索 Agent 或任务…" value={query} onChange={event => onQuery(event.target.value)} className="h-8 w-full rounded-lg border border-input bg-background pl-8 pr-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring" />
     </label>

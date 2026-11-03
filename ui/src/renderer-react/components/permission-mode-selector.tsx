@@ -83,14 +83,15 @@ export function PermissionModeSelector({
         <button
           type="button"
           className={cn(
-            'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+            'composer-control inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-muted/35 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
             compact ? 'px-2.5 py-1.5' : 'h-9 px-3',
           )}
-          title={disabled ? '会话执行期间不能切换权限模式' : '选择权限模式'}
+          aria-label={`权限模式：${getPermissionModeLabel(value)}`}
+          title={`${getPermissionModeLabel(value)} · ${disabled ? '会话执行期间不能切换权限模式' : '选择权限模式'}`}
         >
-          <ShieldCheck className="h-3.5 w-3.5" />
-          <span>{getPermissionModeLabel(value)}</span>
-          <ChevronDown className="h-3 w-3 opacity-60" />
+          <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+          <span className="composer-control-label">{getPermissionModeLabel(value)}</span>
+          <ChevronDown className="composer-control-detail h-3 w-3 shrink-0 opacity-60" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">

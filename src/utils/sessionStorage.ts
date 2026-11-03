@@ -304,6 +304,7 @@ export type AgentMetadata = {
   workspacePath?: string
   /** Project resources explicitly assigned to this worker. */
   projectResources?: {
+    appIds: string[]
     connectorIds: string[]
     skillIds: string[]
     expertId?: string

@@ -16,6 +16,23 @@ const user = (text: string, uuid = 'u1') => ({ type: 'user', uuid, message: { co
 const assistant = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 const jsonl = (history: unknown[]) => history.map(entry => JSON.stringify(entry)).join('\n') + '\n';
 
+it('preserves delivery receipts across transcript refresh without matching repeated prompt text', async () => {
+  const { paths, service, record } = await fixture();
+  record.underlyingSessionId = 'engine';
+  record.history = [{ ...user('same prompt'), clientMessageId: 'queue-one' }];
+  await writeFile(paths.sessionTranscriptPath('session', 'engine'), jsonl([
+    user('same prompt'), assistant('received'), user('same prompt', 'u2'),
+  ]));
+  const history = await service.loadSessionHistoryFromSource(record);
+  expect(history[0].clientMessageId).toBe('queue-one');
+  expect(history[2].clientMessageId).toBeUndefined();
+  expect(record.history[0].clientMessageId).toBe('queue-one');
+  const reloaded = JSON.parse(JSON.stringify(record));
+  service.syncSessionRecordHistory(reloaded, [user('same prompt'), assistant('done'), user('same prompt', 'u2')], { allowReplacement: true });
+  expect(reloaded.history[0].clientMessageId).toBe('queue-one');
+  expect(reloaded.history[2].clientMessageId).toBeUndefined();
+});
+
 it('keeps all three observed outputs after canonical JSONL replaces the live user UUID and after restart', async () => {
   const { paths, service, record } = await fixture();
   const workspace = path.join(record.workspace, 'workspace'); await mkdir(workspace); record.workspace = workspace;

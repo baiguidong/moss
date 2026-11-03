@@ -117,6 +117,8 @@ test("chat header renders a truncated session title alongside worker status", ()
       outline={[]}
       onJumpToOutlineItem={() => {}}
       messages={[]}
+      isPinned
+      onTogglePin={() => {}}
       childSessions={workers}
       onOpenWorkers={() => {}}
       onSelectWorker={() => {}}
@@ -127,6 +129,7 @@ test("chat header renders a truncated session title alongside worker status", ()
   expect(markup).toContain(`>${title}</span>`);
   expect(markup).toContain("min-w-0 flex-1 truncate text-sm font-medium");
   expect(markup).toContain('aria-label="查看会话大纲"');
+  expect(markup).toContain('aria-label="取消置顶会话"');
   expect(markup).toContain("3 个子 Agent");
   expect(markup).toContain('aria-label="Agent 协作状态"');
   expect(markup).toContain('aria-label="会话功能按钮"');

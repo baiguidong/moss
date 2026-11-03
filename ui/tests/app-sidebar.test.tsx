@@ -15,12 +15,14 @@ function renderSidebar({
   searchQuery = '',
   activeSessionId = null,
   serverAccount = null,
+  pendingCount = 0,
 }: {
   enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
   apps?: any[];
   activeView?: 'chat' | 'overview' | 'common' | 'skills' | 'experts' | 'apps';
+  pendingCount?: number;
   collapsed?: boolean;
   searchQuery?: string;
   activeSessionId?: string | null;
@@ -34,6 +36,7 @@ function renderSidebar({
       activeView={activeView}
       serverAccount={serverAccount}
       projectsCount={0}
+      pendingCount={pendingCount}
       themeMode="system"
       collapsed={collapsed}
       searchQuery={searchQuery}
@@ -104,6 +107,14 @@ describe('app sidebar more menu', () => {
       agentMailEnabled: true,
       sessions: [mailSession],
     })).toContain('邮件处理会话');
+  });
+});
+
+describe('app sidebar pending work', () => {
+  test('shows a compact pending entry and count', () => {
+    const html = renderSidebar({ pendingCount: 2 });
+    expect(html).toContain('待处理');
+    expect(html).toContain('待处理，2 项');
   });
 });
 
@@ -251,5 +262,17 @@ describe('app sidebar session controls', () => {
     expect(collapsedHtml).toContain('title="搜索会话"');
     expect(expandedHtml).not.toContain('title="收起侧栏"');
     expect(collapsedHtml).not.toContain('title="展开侧栏"');
+  });
+
+  test('shows pinned sessions in a dedicated area before the regular groups', () => {
+    const html = renderSidebar({
+      sessions: [
+        { ...localSession, id: 'recent-session', title: '普通会话标题' },
+        { ...localSession, id: 'pinned-session', title: '置顶会话标题', isPinned: true },
+      ],
+    });
+
+    expect(html).toContain('aria-label="置顶会话"');
+    expect(html.indexOf('置顶会话标题')).toBeLessThan(html.indexOf('普通会话标题'));
   });
 });

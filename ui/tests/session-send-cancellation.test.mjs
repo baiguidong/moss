@@ -38,4 +38,43 @@ describe('send cancellation before runtime creation', () => {
     await expect(send).rejects.toThrow();
     expect(called).toBe(false);
   });
+
+  it('cancels only an unaccepted message and refuses to cancel after the receipt boundary', async () => {
+    const cancellation = createSessionSendCancellation();
+    let releasePreparing;
+    const preparing = new Promise(resolve => { releasePreparing = resolve; });
+    let accept;
+    const first = cancellation.run('one', async (_signal, markAccepted) => {
+      accept = markAccepted;
+      await preparing;
+      markAccepted();
+      return 'accepted';
+    }, 'first');
+    expect(cancellation.cancel('one', 'first')).toMatchObject({ canceled: true });
+    releasePreparing();
+    await expect(first).rejects.toThrow();
+    let releaseAccepted;
+    const second = cancellation.run('one', async (_signal, markAccepted) => {
+      markAccepted();
+      await new Promise(resolve => { releaseAccepted = resolve; });
+      return 'accepted';
+    }, 'second');
+    expect(cancellation.cancel('one', 'second')).toMatchObject({ canceled: false });
+    releaseAccepted();
+    await expect(second).resolves.toBe('accepted');
+    expect(typeof accept).toBe('function');
+  });
+
+  it('consumes a pre-send cancel tombstone so the same draft ID can be retried', async () => {
+    const cancellation = createSessionSendCancellation();
+    expect(cancellation.cancel('one', 'retry-me')).toMatchObject({ canceled: true });
+    await expect(cancellation.run('one', async signal => {
+      signal.throwIfAborted();
+      return 'unreachable';
+    }, 'retry-me')).rejects.toThrow();
+    await expect(cancellation.run('one', async signal => {
+      signal.throwIfAborted();
+      return 'retried';
+    }, 'retry-me')).resolves.toBe('retried');
+  });
 });

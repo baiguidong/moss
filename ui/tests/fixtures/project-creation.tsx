@@ -13,7 +13,7 @@ const initial: ProjectCreationDraft = {
     { kind: 'app', id: 'docs', displayName: '文档', installed: true, source: 'installed', toolSelection: 'services', permissions: ['document:read'], services: [{ id: '["docs","read"]', title: '读取文档', available: true }, { id: '["docs","write"]', title: '写入文档', available: false }] },
   ], createdAt: 1, updatedAt: 1,
 };
-window.agentDesktop = { pickDirectory: async () => '/tmp/project-fixture' } as unknown as Window['agentDesktop'];
+window.agentDesktop = { pickDirectory: async () => '/tmp/project-fixture', projectResources: async (payload: any) => payload.action === 'inspect' ? initial.resources.find(entry => entry.kind === payload.kind && entry.id === payload.id) : { resources: [...initial.resources.filter(entry => entry.kind === payload.kind), { kind: payload.kind, id: 'market-extra', displayName: '市场新增资源', installed: false }], total: 4, hasMore: false } } as unknown as Window['agentDesktop'];
 function Fixture() {
   const [draft, setDraft] = React.useState(initial);
   const [action, setAction] = React.useState('');
@@ -21,9 +21,9 @@ function Fixture() {
   return <main className="mx-auto max-w-3xl p-4">
     <ProjectCreationDraftCard draft={draft} onConfirm={() => { setAction('confirmed'); setDraft({ ...draft, status: 'awaiting_authorization', pendingActions: [{ appId: 'docs', displayName: '文档', message: '请先连接' }] }); }}
       onCancel={() => { setAction('cancelled'); setDraft({ ...draft, status: 'cancelled' }); }}
-      onSave={async patch => { setPatch(patch); setDraft({ ...draft, version: draft.version + 1, project: { ...draft.project, ...patch }, firstTask: patch.firstTask, resources: draft.resources.filter(entry => (patch[`${entry.kind}Ids`] || []).includes(entry.id)) }); }}
-      onConfigureApp={id => setAction(`configure:${id}`)} onDiscuss={() => setAction('discuss')}
-      onOpenProject={() => setAction('project')} onOpenSession={id => setAction(`session:${id}`)} />
+      onSave={async patch => { setPatch(patch); setDraft({ ...draft, version: draft.version + 1, project: { ...draft.project, ...patch }, resources: [...draft.resources, ...(['skill', 'expert', 'app'] as const).flatMap(kind => (patch[`${kind}Ids`] || []).filter(id => !draft.resources.some(entry => entry.kind === kind && entry.id === id)).map(id => ({ kind, id, displayName: '市场新增资源', installed: false })))].filter(entry => (patch[`${entry.kind}Ids`] || []).includes(entry.id)) }); }}
+      onConfigureApp={id => setAction(`configure:${id}`)}
+      onOpenProject={() => setAction('project')} />
     <output data-action>{action}</output><output data-patch>{JSON.stringify(patch)}</output>
     <button onClick={() => setDraft({ ...draft, status: 'failed', error: '下载失败' })}>模拟安装失败</button>
   </main>;

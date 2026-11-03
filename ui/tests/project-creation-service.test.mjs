@@ -12,7 +12,7 @@ async function fixture(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const local = new Map(), market = new Map(), projects = new Map();
   const installs = [], events = [];
-  const state = { authorized: false, createCalls: 0, firstTaskCalls: 0, failInstall: '', failAfterWrite: false, validSession: true };
+  const state = { authorized: false, createCalls: 0, failInstall: '', failAfterWrite: false, validSession: true };
   const resource = (kind, id, extras = {}) => ({ kind, id, displayName: id, version: '1.0.0', ...extras });
   const add = (kind, id, extras = {}) => { market.set(`${kind}:${id}`, resource(kind, id, extras)); };
   const resources = createProjectCreationResources({
@@ -40,7 +40,6 @@ async function fixture(t) {
       if (state.failAfterWrite) throw new Error('interrupted after project write');
       return project;
     },
-    startFirstTask: async () => { state.firstTaskCalls++; if (state.failTask) throw new Error('task failed'); return { sessionId: 'first-task-session' }; },
     emit: draft => events.push(draft),
   };
   let service = createProjectCreationService(options);
@@ -53,27 +52,26 @@ async function fixture(t) {
 
 test('preview never installs; confirmation creates with resources inherited by new project sessions', async t => {
   const f = await fixture(t); f.add('skill', 'research'); f.add('expert', 'analyst', { runtimeId: 'runtime-analyst' });
-  const draft = await f.propose({ skillIds: ['research'], expertIds: ['analyst'], assistantName: 'analyst', instructions: '中文输出', workspaces: ['/tmp'], mode: 'chat', firstTask: '分析反馈' });
+  const draft = await f.propose({ skillIds: ['research'], expertIds: ['analyst'], assistantName: 'analyst', instructions: '中文输出', workspaces: ['/tmp'], mode: 'chat' });
   assert.equal(f.installs.length, 0); assert.equal(f.projects.size, 0);
   const result = await f.confirm(draft);
-  assert.equal(result.status, 'completed'); assert.equal(result.draft.firstTaskSessionId, 'first-task-session');
+  assert.equal(result.status, 'completed'); assert.equal(Object.hasOwn(result.draft, 'firstTaskSessionId'), false);
   const defaults = resolveProjectSessionDefaults(result.project, {}, {}, '/tmp');
   assert.deepEqual(defaults.skillIds, ['research']); assert.equal(defaults.assistant_name, 'runtime-analyst');
   assert.equal(defaults.projectDefaults.instructions, '中文输出'); assert.equal(defaults.mode, 'chat');
-  assert.equal(f.state.firstTaskCalls, 1);
 });
 
 test('concurrent and repeated confirmations create and launch only once', async t => {
   const f = await fixture(t); f.add('skill', 'research');
-  const draft = await f.propose({ skillIds: ['research'], firstTask: '分析' });
+  const draft = await f.propose({ skillIds: ['research'] });
   const results = await Promise.all([f.confirm(draft), f.confirm(draft), f.confirm(draft)]);
   assert.equal(new Set(results.map(result => result.project.id)).size, 1);
-  assert.equal(f.state.createCalls, 1); assert.equal(f.state.firstTaskCalls, 1); assert.deepEqual(f.installs, ['research']);
+  assert.equal(f.state.createCalls, 1); assert.deepEqual(f.installs, ['research']);
 });
 
 test('edited configuration invalidates old confirmation and old model revision', async t => {
   const f = await fixture(t); const draft = await f.propose({});
-  const next = await f.service.update({ draftId: draft.id, version: draft.version, patch: { name: '新名称', workspace: '/tmp', firstTask: '开始' } });
+  const next = await f.service.update({ draftId: draft.id, version: draft.version, patch: { name: '新名称', workspace: '/tmp' } });
   await assert.rejects(f.confirm(draft), /发生变化/);
   await assert.rejects(f.propose({ version: draft.version }), /版本已变化/);
   const result = await f.confirm(next);
@@ -122,11 +120,11 @@ test('partial installation failure leaves no project and retries only unfinished
 
 test('lost response after project write recovers reserved project identity', async t => {
   const f = await fixture(t); f.state.failAfterWrite = true;
-  const draft = await f.propose({ firstTask: '开始' });
+  const draft = await f.propose({});
   assert.equal((await f.confirm(draft)).status, 'failed');
   f.restart();
   const result = await f.confirm(draft);
-  assert.equal(result.status, 'completed'); assert.equal(result.draft.error, null); assert.equal(f.state.createCalls, 1); assert.equal(f.state.firstTaskCalls, 1);
+  assert.equal(result.status, 'completed'); assert.equal(result.draft.error, null); assert.equal(f.state.createCalls, 1);
 });
 
 test('App authorization pauses creation and resumes without reinstalling', async t => {
@@ -181,13 +179,13 @@ test('resource version changes require a fresh review before installation', asyn
   assert.equal((await f.confirm(result.draft)).status, 'completed');
 });
 
-test('first-task failure does not turn a created project into a duplicate creation', async t => {
-  const f = await fixture(t); f.state.failTask = true;
-  const draft = await f.propose({ firstTask: '开始' });
+test('repeated confirmation does not duplicate a created project', async t => {
+  const f = await fixture(t);
+  const draft = await f.propose({});
   const result = await f.confirm(draft);
-  assert.equal(result.status, 'completed'); assert.equal(result.draft.firstTaskError, 'task failed');
+  assert.equal(result.status, 'completed');
   f.restart(); await f.confirm(draft);
-  assert.equal(f.state.createCalls, 1); assert.equal(f.state.firstTaskCalls, 1);
+  assert.equal(f.state.createCalls, 1);
 });
 
 test('deleted creation sessions cannot install or create', async t => {
@@ -229,17 +227,6 @@ test('resources changed while another installation is pending require review', a
   const result = await confirmation;
   assert.equal(result.status, 'awaiting_confirmation'); assert.equal(f.projects.size, 0);
 });
-
-test('late first-task errors are saved independently of project completion', async t => {
-  const f = await fixture(t); const draft = await f.propose({ firstTask: '开始' });
-  await f.confirm(draft);
-  await f.service.reportFirstTaskError(draft.id, new Error('provider unavailable'));
-  f.restart();
-  const restored = await f.service.get({ draftId: draft.id });
-  assert.equal(restored.status, 'completed'); assert.equal(restored.firstTaskError, 'provider unavailable');
-  assert.equal(f.projects.size, 1);
-});
-
 
 test('interrupted execution can be edited or cancelled after restart if no project was written', async t => {
   const f = await fixture(t); const draft = await f.propose({});

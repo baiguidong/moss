@@ -406,7 +406,6 @@ export function UsageOverviewContent({ local, cloud, cloudEnabled = true, onRefr
         description={cloud.data ? `当前账号 · 按 ${cloud.data.timezone} 统计` : cloud.loading ? "正在获取当前账号的用量…" : "连接 Moss Server 后查看当前账号的用量"}
         onRefresh={onRefresh}
       />}
-      {showCloud && cloud.data?.historyIncomplete && <p className="mt-2 text-xs text-muted-foreground" role="status">部分云端历史记录无法读取，累计值可能不完整。</p>}
       {(local.data || showCloud && cloud.data) && <ActivityChart data={daily} now={now} description={`${sources}${timezoneNote}`} />}
     </>
   );
@@ -453,10 +452,10 @@ export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean 
     <main className="h-full min-h-0 overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-7 lg:px-10">
         <header className="flex items-center justify-between gap-4">
-          <div>
+          <div className={activeTab === "usage" ? "flex min-w-0 items-baseline gap-3" : undefined}>
             <h1 className="text-xl font-semibold text-foreground">概览</h1>
             {activeTab === "usage" && generatedAt > 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="truncate text-xs text-muted-foreground">
                 更新于 {new Date(generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
               </p>
             ) : activeTab === "resources" ? (

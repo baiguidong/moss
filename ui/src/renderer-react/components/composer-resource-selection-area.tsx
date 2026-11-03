@@ -253,15 +253,15 @@ export function ComposerResourceSelectionArea({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 shrink-0 rounded-full border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          className="composer-control h-7 shrink-0 rounded-full border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
           onClick={() => setOpen(true)}
           title={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
           aria-label={selectedCount > 0 ? `选择资源，已选 ${selectedCount} 项` : '选择资源'}
         >
           <ListFilter className="h-3.5 w-3.5" />
-          <span>选择资源</span>
+          <span className="composer-control-label">选择资源</span>
           {selectedCount > 0 ? (
-            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-medium text-primary">
+            <span className="composer-control-count flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-medium text-primary">
               {selectedCount}
             </span>
           ) : null}

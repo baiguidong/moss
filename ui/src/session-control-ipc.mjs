@@ -3,6 +3,7 @@
 export function registerSessionControlIpc({
   ipcMain,
   abortPendingSends = () => {},
+  cancelPendingSend = () => { throw new Error('Canceling individual sends is unavailable.'); },
   stopComputerUse = async () => {},
   stopAppTasks = async () => {},
   shutdownAgentTeam = async () => {},
@@ -16,8 +17,9 @@ export function registerSessionControlIpc({
   respondToPendingQuestionRequest,
   buildAskUserQuestionUpdatedInput,
 }) {
-  ipcMain.handle('agent:abort', async (_event, { sessionId, terminateSession = true }) => {
+  ipcMain.handle('agent:abort', async (_event, { sessionId, terminateSession = true, clientMessageId }) => {
     const sessionRecord = getSessionRecord(sessionId);
+    if (typeof clientMessageId === 'string' && clientMessageId) return cancelPendingSend(sessionId, clientMessageId);
     abortPendingSends(sessionId);
     if (terminateSession && sessionRecord.projectId && !sessionRecord.parentSessionId) {
       projectTaskCancellationRequests.add(sessionRecord.id);

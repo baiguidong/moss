@@ -24,6 +24,7 @@ function isResourceScopedTask(taskScope: TaskScope | undefined): taskScope is Ex
 }
 
 export type ProjectWorkerResourceSelection = {
+  appIds: string[]
   connectorIds: string[]
   skillIds: string[]
   skillCommands: string[]
@@ -44,9 +45,12 @@ export function scopeProjectTaskScopeForWorker(
   }
   const connectorIds = new Set(selection.connectorIds)
   const skillIds = new Set(selection.skillIds)
+  const appIds = new Set(selection.appIds)
   return {
     ...taskScope,
     projectResources: {
+      apps: (taskScope.projectResources.apps || [])
+        .filter(item => appIds.has(item.id)),
       connectors: taskScope.projectResources.connectors
         .filter(item => connectorIds.has(item.id)),
       skills: taskScope.projectResources.skills
@@ -85,6 +89,7 @@ export function getProjectConnectorScopeError(
 export function resolveProjectWorkerResourceSelection(
   taskScope: TaskScope | undefined,
   input: {
+    app_ids?: unknown
     connector_ids?: unknown
     skill_ids?: unknown
     expert_id?: unknown
@@ -95,15 +100,24 @@ export function resolveProjectWorkerResourceSelection(
     throw new Error('Scoped worker resource manifest is unavailable')
   }
   const resources = taskScope.projectResources
+  const apps = Array.isArray(resources.apps) ? resources.apps : []
   const connectors = Array.isArray(resources.connectors) ? resources.connectors : []
   const skills = Array.isArray(resources.skills) ? resources.skills : []
   const experts = Array.isArray(resources.experts) ? resources.experts : []
-  const connectorIds = normalizeIds(input.connector_ids)
-  const skillIds = normalizeIds(input.skill_ids)
+  const appIds = Array.isArray(input.app_ids)
+    ? normalizeIds(input.app_ids)
+    : apps.map(item => item.id)
+  const connectorIds = Array.isArray(input.connector_ids)
+    ? normalizeIds(input.connector_ids)
+    : connectors.map(item => item.id)
+  const skillIds = Array.isArray(input.skill_ids)
+    ? normalizeIds(input.skill_ids)
+    : skills.map(item => item.id)
   const expertId = typeof input.expert_id === 'string' && input.expert_id.trim()
     ? input.expert_id.trim()
     : null
 
+  requireKnownIds('app ids', appIds, new Set(apps.map(item => item.id)))
   requireKnownIds('connector ids', connectorIds, new Set(connectors.map(item => item.id)))
   requireKnownIds('skill ids', skillIds, new Set(skills.map(item => item.id)))
   if (expertId && !experts.some(item => item.id === expertId)) {
@@ -133,6 +147,7 @@ export function resolveProjectWorkerResourceSelection(
   ) as Record<string, string>
 
   return {
+    appIds,
     connectorIds,
     skillIds,
     skillCommands: Array.from(new Set([
@@ -155,9 +170,30 @@ export function filterToolsForProjectWorker(
   if (!selection) return tools
   return tools.filter(tool => {
     if (tool.name === SKILL_TOOL_NAME) return false
+    if (tool.appInfo) return selection.appIds.includes(tool.appInfo.appId)
     const info = getMcpToolInfo(tool)
     if (!info) return !tool.isMcp
+    if (info.appId && selection.appIds.includes(info.appId)) return true
     return selection.connectorServerNames.has(normalizeNameForMCP(info.serverName))
+  })
+}
+
+/** Native App tools live in the parent session's tool list, not MCP state. */
+export function addProjectWorkerAppTools(
+  tools: Tools,
+  parentTools: Tools,
+  selection: ProjectWorkerResourceSelection | null,
+): Tools {
+  if (!selection) return tools
+  const parentAppTools = filterToolsForProjectWorker(
+    parentTools.filter(tool => Boolean(tool.appInfo || tool.mcpInfo?.appId)),
+    selection,
+  )
+  const seen = new Set<string>()
+  return [...tools, ...parentAppTools].filter(tool => {
+    if (seen.has(tool.name)) return false
+    seen.add(tool.name)
+    return true
   })
 }
 

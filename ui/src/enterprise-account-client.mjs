@@ -277,8 +277,10 @@ export async function parseRemoteDirectError(prefix, response) {
     : `${prefix}: ${response.status} ${response.statusText}`;
 }
 
-export async function fetchRemoteUsageOverview({ serverUrl, authToken, signal = AbortSignal.timeout(20_000) }) {
-  const response = await enterpriseAccountFetch(`${serverUrl}/api/v1/usage`, {
+export async function fetchRemoteUsageOverview({ serverUrl, authToken, signal = AbortSignal.timeout(20_000), hostKind = 'cloud' }) {
+  const usageUrl = new URL(`${serverUrl}/api/v1/usage`);
+  if (hostKind) usageUrl.searchParams.set('host_kind', hostKind);
+  const response = await enterpriseAccountFetch(usageUrl, {
     method: 'GET',
     headers: { authorization: `Bearer ${authToken}` },
     signal,

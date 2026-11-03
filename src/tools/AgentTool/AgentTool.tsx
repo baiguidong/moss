@@ -57,6 +57,7 @@ import { filterAgentsByMcpRequirements, hasRequiredMcpServers, isBuiltInAgent } 
 import { getPrompt } from './prompt.js';
 import {
   filterResourceDirectoriesForProjectWorker,
+  addProjectWorkerAppTools,
   filterToolsForProjectWorker,
   resolveProjectWorkerResourceSelection,
   scopeProjectTaskScopeForWorker,
@@ -92,8 +93,9 @@ const baseInputSchema = lazySchema(() => z.object({
   description: z.string().describe('A short (3-5 word) description of the task'),
   prompt: z.string().describe('The task for the agent to perform'),
   subagent_type: z.string().optional().describe('The type of specialized agent to use for this task'),
-  connector_ids: z.array(z.string()).optional().describe('Project connector IDs assigned to this worker. Use an empty array when none are needed.'),
-  skill_ids: z.array(z.string()).optional().describe('Project skill IDs assigned to this worker. Use an empty array when none are needed.'),
+  connector_ids: z.array(z.string()).optional().describe('Project connector IDs assigned to this worker. Omit to inherit project connectors; use an empty array when none are needed.'),
+  skill_ids: z.array(z.string()).optional().describe('Project skill IDs assigned to this worker. Omit to inherit project skills; use an empty array when none are needed.'),
+  app_ids: z.array(z.string()).optional().describe('Project App IDs assigned to this worker. Omit to inherit project Apps; use an empty array to disable them.'),
   expert_id: z.string().optional().describe('One project expert ID assigned to this worker, only when expert guidance is needed.'),
   model: z.enum(['sonnet', 'opus', 'haiku']).optional().describe("Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
   run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.')
@@ -241,6 +243,7 @@ export const AgentTool = buildTool({
     isolation,
     connector_ids,
     skill_ids,
+    app_ids,
     expert_id,
   }: AgentToolInput, toolUseContext, canUseTool, assistantMessage, onProgress?) {
     const startTime = Date.now();
@@ -252,6 +255,7 @@ export const AgentTool = buildTool({
     const projectResourceSelection = resolveProjectWorkerResourceSelection(taskScope, {
       connector_ids,
       skill_ids,
+      app_ids,
       expert_id,
     });
     const workerTaskScope = scopeProjectTaskScopeForWorker(
@@ -522,18 +526,6 @@ export const AgentTool = buildTool({
         content: prompt
       })];
     }
-    if (projectResourceSelection) {
-      const assignedResources = [
-        `Assigned connector ids: ${projectResourceSelection.connectorIds.join(', ') || 'none'}`,
-        `Assigned skill ids: ${projectResourceSelection.skillIds.join(', ') || 'none'}`,
-        `Assigned expert id: ${projectResourceSelection.expertId || 'none'}`,
-        projectResourceSelection.expertInstructionsPath
-          ? `Before working, read and follow the assigned expert instructions: ${projectResourceSelection.expertInstructionsPath}`
-          : '',
-        'Only the resources listed above are assigned to this worker. Do not substitute or request other project resources.',
-      ].filter(Boolean).join('\n');
-      promptMessages.push(createUserMessage({ content: assignedResources }));
-    }
     const metadata = {
       prompt,
       resolvedAgentModel,
@@ -563,8 +555,12 @@ export const AgentTool = buildTool({
         projectResourceSelection,
       ),
     };
-    const workerTools = filterToolsForProjectWorker(
-      assembleToolPool(workerPermissionContext, appState.mcp.tools),
+    const workerTools = addProjectWorkerAppTools(
+      filterToolsForProjectWorker(
+        assembleToolPool(workerPermissionContext, appState.mcp.tools),
+        projectResourceSelection,
+      ),
+      toolUseContext.options.tools,
       projectResourceSelection,
     );
 
@@ -672,6 +668,7 @@ export const AgentTool = buildTool({
       worktreePath: worktreeInfo?.worktreePath,
       workspacePath: isolatedWorkspace,
       projectResources: projectResourceSelection ? {
+        appIds: projectResourceSelection.appIds,
         connectorIds: projectResourceSelection.connectorIds,
         skillIds: projectResourceSelection.skillIds,
         ...(projectResourceSelection.expertId

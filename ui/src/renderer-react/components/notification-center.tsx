@@ -86,6 +86,16 @@ export function NotificationCenter({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open]);
 
+  React.useEffect(() => {
+    const openNotification = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (!id || !notifications.some((item) => item.id === id)) return;
+      setOpen(true);
+    };
+    window.addEventListener('moss:show-notification', openNotification);
+    return () => window.removeEventListener('moss:show-notification', openNotification);
+  }, [notifications]);
+
   const copyNotification = React.useCallback(async (notification: AppNotification) => {
     const text = [
       notification.title,

@@ -80,7 +80,7 @@ app.on('browser-window-created', (_event, window) => {
         const clearedResources = JSON.parse(await readFile(projectPaths.sessionResourceManifestPath(sharedTwo.summary.id), 'utf8'));
         assert.equal(inheritedResources.experts.length, 1);
         assert.deepEqual(clearedResources.experts, [], 'Clearing the assistant must remove its resource scope');
-        await assert.rejects(invoke('project:update', { projectId, updates: { appServiceIds: ['["missing.app","service"]'] } }), /子服务/);
+        await assert.rejects(invoke('project:update', { projectId, updates: { appServiceIds: ['invalid-service-key'] } }), /服务/);
         await invoke('project:update', { projectId, updates: { mode: 'chat', permissionMode: 'plan', assistantName: '', expertIds: [], agentTeamsEnabled: false, instructions: 'Future sessions', workspaces: [project.workspace, workspace], defaultWorkspace: workspace } });
         const later = await invoke('agent:create-session', { projectId });
         assert.equal(later.summary.workspace, workspace);
@@ -125,9 +125,9 @@ app.on('browser-window-created', (_event, window) => {
             (await waitFor(() => document.querySelector('button[aria-label=\"打开项目：Renamed project\"]'))).click();
             await waitFor(() => button('整理项目'));`);
           await writeFile(path.join(screenshotDir, 'overview.png'), (await window.webContents.capturePage()).toPNG());
-          await ui(`document.querySelector('button[aria-label="在右侧展开项目配置"]').click(); await waitFor(() => document.body.innerText.includes('Agent Teams 智能体团队'));`);
+          await ui(`document.querySelector('button[aria-label="项目设置"]').click(); await waitFor(() => document.querySelector('aside details')); document.querySelector('aside details').open = true;`);
           await writeFile(path.join(screenshotDir, 'settings.png'), (await window.webContents.capturePage()).toPNG());
-          await ui(`button('会话').click(); (await waitFor(() => document.querySelector('section[aria-label=\"发起项目会话\"] button'))).click(); await waitFor(() => document.querySelector('select[aria-label="项目工作目录"]'));`);
+          await ui(`button('会话').click(); (await waitFor(() => document.querySelector('button[aria-label=\"新会话\"]'))).click(); await waitFor(() => document.querySelector('select[aria-label="项目工作目录"]'));`);
           assert.equal(await ui(`return document.querySelector('select[aria-label="项目工作目录"]').value;`), workspace);
           assert.equal(await ui(`return document.body.innerText.includes('项目 / Renamed project');`), true);
           await writeFile(path.join(screenshotDir, 'composer.png'), (await window.webContents.capturePage()).toPNG());

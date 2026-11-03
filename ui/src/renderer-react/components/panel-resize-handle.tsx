@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { acquireNativeOverlayVisibility } from '@/lib/native-overlay-visibility';
 
-export function PanelResizeHandle({ onBeginResize, onRestoreSplit, width }: {
+export function PanelResizeHandle({ onBeginResize, onRestoreSplit, width, label = '调整会话与内容宽度' }: {
   onBeginResize: () => (delta: number) => void;
   onRestoreSplit: () => void;
   width: number;
+  label?: string;
 }) {
   const drag = React.useRef<{ x: number; move: (delta: number) => void; release: () => void } | null>(null);
   const stop = () => {
@@ -17,7 +18,7 @@ export function PanelResizeHandle({ onBeginResize, onRestoreSplit, width }: {
     return () => { window.removeEventListener('blur', stop); stop(); };
   }, []);
 
-  return <div role="separator" aria-label="调整会话与内容宽度" aria-orientation="vertical"
+  return <div role="separator" aria-label={label} aria-orientation="vertical"
     aria-valuenow={Math.round(width)} tabIndex={0} title="拖动调整宽度，双击恢复分栏"
     className="session-panel-resize-handle absolute inset-y-0 -left-1.5 z-30 w-3 touch-none cursor-col-resize focus-visible:outline-none"
     onPointerDown={event => {

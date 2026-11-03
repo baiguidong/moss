@@ -567,7 +567,7 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 
 ### GET `/api/v1/usage`
 
-读取当前登录用户的服务端 Token 用量。需要当前有效的 `sessions:list`、`sessions:list:any` 或 `admin:users` 权限之一。
+读取当前登录用户的 Host Token 用量。需要当前有效的 `sessions:list`、`sessions:list:any` 或 `admin:users` 权限之一。
 
 ### GET `/api/v1/users/:userId/usage`
 
@@ -581,7 +581,6 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
   "generatedAt": 1790208000000,
   "timezone": "Asia/Shanghai",
   "today": "2026-09-24",
-  "historyIncomplete": false,
   "totals": {
     "inputTokens": 100,
     "outputTokens": 50,
@@ -600,11 +599,11 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 }
 ```
 
-`user` 实际为完整的脱敏用户对象。累计 Token 为输入、输出、缓存读取、缓存写入之和，按模型请求去重；一次对话可能产生多次模型请求。云端子任务、记忆更新和定时任务使用同一采集回调，归属会话的所有者。删除会话不清除用量。
+`user` 实际为完整的脱敏用户对象。累计 Token 为输入、输出、缓存读取、缓存写入之和，按模型请求去重；一次对话可能产生多次模型请求。Host 上的子任务、记忆更新和定时任务使用同一采集回调，归属对应账号。用量记录独立于会话生命周期保存。
 
-统计使用首次启用用量采集时的服务端时区，接口返回 `timezone` 和 `today`；管理后台按该时区显示活跃日、单日峰值和每日／每周／累计趋势。此功能只统计服务端执行用量，不合并各客户端的本机账本，不执行 Token 限额拦截。
+统计使用 Server 的时区，接口返回 `timezone` 和 `today`；管理后台按该时区显示活跃日、单日峰值和每日／每周／累计趋势。用量只来自 Desktop 或云电脑 Host 通过控制平面上报的模型请求，不再扫描或导入已退役的 Server 会话转录，也不执行 Token 限额拦截。
 
-数据库自动升级到 schema 4。首次查询会从该用户启用采集前的可用 transcript 回填历史数据，包含子任务并跳过复制的历史消息；重复的响应块仅计一次。回填只使用实际保存的 usage，不估算缺失 Token；无法读取或解析的历史记录通过 `historyIncomplete` 标识，并在后续查询重试。历史后台请求若未写入 transcript 无法回填。新采集随更新后的会话运行器启用，已运行的旧运行器需要重启会话才能采集后续请求。
+桌面端概览请求 `/api/v1/usage?host_kind=cloud`，只统计当前账号的云电脑 Host；不带 `host_kind` 时保留账号下所有 Host 的汇总，供管理后台使用。
 
 ### GET `/api/v1/users/:userId/sessions`
 

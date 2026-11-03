@@ -4,9 +4,12 @@ import type {
 } from '../types';
 
 export type SessionRequest = { sessionId: string };
-export type AbortRequest = SessionRequest & { terminateSession?: boolean };
+export type AbortRequest = SessionRequest & { terminateSession?: boolean; clientMessageId?: string };
 export type ControlResult = { ok: true };
+export type AbortResult = ControlResult & { canceled?: boolean };
 export type SendRequest = SessionRequest & {
+  /** Echoed on the visible user event when the Host accepts a queued message. */
+  clientMessageId?: string;
   visualizationAnnotation?: import('../../shared/visualization-annotation.mjs').VisualizationAnnotation;
   appContext?: {providerId:string;intent:string;ref?:unknown};
   prompt: string;

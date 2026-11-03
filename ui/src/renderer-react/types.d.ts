@@ -38,7 +38,7 @@ export type StorageReview = {
 export type ArchivedChat = { id: string; title: string; updatedAt: number; archivedAt: number; subagents: number };
 export type StorageCleanupResult = { deleted: number; skipped: number; failed: number };
 import type {
-  SendRequest, SendResult, SessionRequest, AbortRequest, ControlResult, PlanDecisionResult,
+  SendRequest, SendResult, SessionRequest, AbortRequest, AbortResult, ControlResult, PlanDecisionResult,
   AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
   SessionHistoryEvent, ConnectorsChangedEvent, SkillHubApi, ExpertHubApi,
   SessionCronApi, MarketplaceResponse,
@@ -158,11 +158,8 @@ export type ProjectCreationDraft = {
     appServiceIds?: string[];
   };
   resources: Array<{ kind: 'skill' | 'expert' | 'app'; id: string; displayName: string; description?: string; source?: string; status?: string; version?: string;
-    installed?: boolean; permissions?: string[]; toolSelection?: string; services?: Array<{ id: string; title: string; available?: boolean; status?: string }> }>;
+    runtimeId?: string; icon?: string; installed?: boolean; permissions?: string[]; toolSelection?: string; services?: Array<{ id: string; title: string; available?: boolean; status?: string }> }>;
   pendingActions?: Array<{ appId: string; displayName: string; message: string }>;
-  firstTaskSessionId?: string | null;
-  firstTaskError?: string | null;
-  firstTask?: string | null;
   createdProjectId?: string | null;
   error?: string | null;
   createdAt: number;
@@ -308,7 +305,6 @@ export type CloudUsageOverview = Omit<UsageOverview, 'totals'> & {
   totals: Omit<UsageOverview['totals'], 'currentStreak' | 'longestStreak' | 'todayTokens'>;
   timezone: string;
   today: string;
-  historyIncomplete: boolean;
 };
 
 export type MemorySource = 'local' | 'remote';
@@ -1480,10 +1476,14 @@ declare global {
         expertIds?: string[];
         skillIds?: string[];
       }) => Promise<Project>;
+      projectResources: {
+        (payload: { kind: 'skill' | 'expert' | 'app'; action: 'inspect'; id: string }): Promise<ProjectCreationDraft['resources'][number]>;
+        (payload: { kind: 'skill' | 'expert' | 'app'; action?: 'list'; query?: string; page?: number; pageSize?: number }): Promise<{ resources: ProjectCreationDraft['resources']; total: number; hasMore: boolean; warning?: string }>;
+      };
       projectCreation: {
         getDraft: (payload: { draftId?: string; sessionId?: string }) => Promise<ProjectCreationDraft | null>;
-        confirm: (payload: { draftId: string; version: number }) => Promise<{ status: string; project?: Project; draft?: ProjectCreationDraft; firstTask?: unknown }>;
-        updateDraft: (payload: { draftId: string; version: number; patch: Partial<ProjectCreationDraft['project']> & { firstTask?: string; skillIds?: string[]; expertIds?: string[]; appIds?: string[] } }) => Promise<ProjectCreationDraft>;
+        confirm: (payload: { draftId: string; version: number }) => Promise<{ status: string; project?: Project; draft?: ProjectCreationDraft }>;
+        updateDraft: (payload: { draftId: string; version: number; patch: Partial<ProjectCreationDraft['project']> & { skillIds?: string[]; expertIds?: string[]; appIds?: string[] } }) => Promise<ProjectCreationDraft>;
         cancel: (payload: { draftId: string; version: number }) => Promise<{ ok: boolean; draft?: ProjectCreationDraft }>;
         onChanged: (callback: (draft: ProjectCreationDraft) => void) => () => void;
       };
@@ -1586,7 +1586,7 @@ declare global {
       rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
       answerQuestion: (payload: AnswerQuestionRequest) => Promise<ControlResult>;
       rejectQuestion: (payload: RejectQuestionRequest) => Promise<ControlResult>;
-      abort: (payload: AbortRequest) => Promise<ControlResult>;
+      abort: (payload: AbortRequest) => Promise<AbortResult>;
       skillHub: SkillHubApi;
       expertHub: ExpertHubApi;
       sessionCron: SessionCronApi;

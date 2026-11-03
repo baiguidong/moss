@@ -34,12 +34,16 @@ export function resolveProjectSessionResourceScope(project) {
 export function scopeProjectResourceManifestForWorker(manifest, assignment) {
   if (!manifest || typeof manifest !== 'object') return null;
   const connectorIds = new Set(normalizeStringList(assignment?.connectorIds));
+  const appIds = new Set(normalizeStringList(assignment?.appIds));
   const skillIds = new Set(normalizeStringList(assignment?.skillIds));
   const expertIds = new Set(normalizeStringList(
     typeof assignment?.expertId === 'string' ? [assignment.expertId] : [],
   ));
   return {
     ...manifest,
+    apps: Array.isArray(manifest.apps)
+      ? manifest.apps.filter((item) => appIds.has(item?.id))
+      : [],
     connectors: Array.isArray(manifest.connectors)
       ? manifest.connectors.filter((item) => connectorIds.has(item?.id))
       : [],

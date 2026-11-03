@@ -25,7 +25,6 @@ export type UsageOverview = {
   generatedAt: number
   timezone: string
   today: string
-  historyIncomplete: boolean
   totals: Omit<UsageDailySummary, 'day'> & {
     activeDays: number
     peakDay: string | null

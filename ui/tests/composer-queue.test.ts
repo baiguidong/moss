@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { composerIsEmpty, mergeRecoveredDraft, preserveQueuedMessages, recoverQueuedMessages, requeueMessagesAfterStop, withdrawMessage,
+import { composerIsEmpty, mergeRecoveredDraft, preserveQueuedMessages, reconcileQueuedMessages, recoverQueuedMessages, requeueMessagesAfterStop, stopQueuedMessages, withdrawMessage,
   type ComposerDraft, type QueuedMessage } from '../src/renderer-react/lib/composer-queue';
 import { firstMessageTitle } from '../src/renderer-react/lib/pending-first-message';
 
@@ -52,6 +52,11 @@ test('Stop and reload keep separate complete drafts without automatic replay', (
   expect(recovered[2].notice).toContain('未确认');
 });
 
+test('Stop releases a concurrent individual cancellation back to an editable draft', () => {
+  const stopped = stopQueuedMessages([{ ...queued, status: 'canceling' }]);
+  expect(stopped[0]).toMatchObject({ status: 'draft', notice: '取消请求未确认，内容已保留。' });
+});
+
 test('Stop requeues an in-flight item while keeping existing drafts untouched', () => {
   const items: QueuedMessage[] = [
     { ...queued, status: 'dispatching', notice: '正在发送' },
@@ -74,16 +79,25 @@ test('recovering another window preserves its intent/resources independently of 
 });
 
 // Execute the actual App queue-dispatch integration with controlled Host timing.
-function dispatchHarness(items: QueuedMessage[], host: any, dispatch: any) {
+function dispatchHarness(items: QueuedMessage[], host: any, dispatch?: any) {
   const source = readFileSync(new URL('../src/renderer-react/App.tsx', import.meta.url), 'utf8');
   const start = source.indexOf('  const flushQueuedMessagesRef =');
+  const receiptStart = source.indexOf('  const acknowledgeQueuedMessages =');
+  const eventStart = source.indexOf('    const offEvent =');
+  const dispatchStart = source.indexOf('  const dispatchToSession =');
   const code = new Bun.Transpiler({ loader: 'tsx' }).transformSync(
+    source.slice(receiptStart, source.indexOf('  // Draft restoration', receiptStart)) +
+    source.slice(eventStart, source.indexOf('    const offState =', eventStart)) +
+    (dispatch ? '' : source.slice(dispatchStart, source.indexOf('  const handleCreateProjectConversation =', dispatchStart))) +
     source.slice(start, source.indexOf('  const submitPrompt =', start)) + '\nglobalThis.flush = flushQueuedMessagesRef.current;');
   const state = {
-    React: { useRef: (current: any) => ({ current }), useEffect: (fn: any) => fn() },
+    React: { useRef: (current: any) => ({ current }), useEffect: (fn: any) => fn(), useCallback: (fn: any) => fn },
+    reconcileQueuedMessages, stopQueuedMessages, activeSessionIdRef: { current: 'another-session' },
+    selectedAssistant: null, resourceContext: (resource: any) => resource,
+    setPendingSendRequests: (_update: any) => {}, receive: (_event: any) => {},
     queuedMessagesRef: { current: { session: items } }, queueEpochs: { current: new Map() },
     removedSessionIdsRef: { current: new Set() }, cleanIpcErrorMessage: (error: Error) => error.message,
-    dispatchToSession: dispatch, window: { agentDesktop: host }, flush: (_id: string) => {},
+    dispatchToSession: dispatch, window: { agentDesktop: { ...host, onEvent: (fn: any) => { state.receive = fn; } } }, flush: (_id: string) => {},
     updateQueue: (id: string, update: any) => { (state.queuedMessagesRef.current as any)[id] = update((state.queuedMessagesRef.current as any)[id] ?? []); },
   };
   runInNewContext(code, state);
@@ -91,7 +105,59 @@ function dispatchHarness(items: QueuedMessage[], host: any, dispatch: any) {
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-test('duplicate turn-end events do not dispatch twice; Stop during preparation requeues late sends', async () => {
+test('a received queued message disappears while the Agent is still running, even in another session', async () => {
+  let finish!: () => void;
+  let busy = false;
+  let sent: any;
+  const state = dispatchHarness([queued, { ...queued, id: 'two' }], {
+    getSession: async () => ({ workspace: '/work', busy }),
+    send: (payload: any) => { sent = payload; busy = true; return new Promise<void>(resolve => { finish = resolve; }); },
+  });
+  state.flush('session'); await settle();
+  expect(sent.clientMessageId).toBe(queued.id);
+  expect(state.queuedMessagesRef.current.session[0].status).toBe('dispatching');
+  // A reply or an unrelated user message is not a receipt for this request.
+  state.receive({ sessionId: 'session', payload: { type: 'assistant', clientMessageId: queued.id } });
+  state.receive({ sessionId: 'session', payload: { type: 'user', prompt: queued.prompt } });
+  expect(state.queuedMessagesRef.current.session).toHaveLength(2);
+  state.receive({ sessionId: 'session', payload: { type: 'user', clientMessageId: sent.clientMessageId } });
+  expect(busy).toBe(true);
+  expect(state.queuedMessagesRef.current.session.map(item => item.id)).toEqual(['two']);
+  state.flush('session'); // Receipt must not start the next message mid-turn.
+  expect(sent.clientMessageId).toBe(queued.id);
+  // Stop must not put the already received message back into the queue.
+  state.queueEpochs.current.set('session', 1);
+  state.updateQueue('session', requeueMessagesAfterStop);
+  finish(); await settle();
+  expect(state.queuedMessagesRef.current.session.map(item => item.id)).toEqual(['two']);
+});
+
+test('a late receipt after Stop removes the requeued entry, and late failure does not restore it', async () => {
+  let fail!: (error: Error) => void;
+  const state = dispatchHarness([queued], {
+    getSession: async () => ({ workspace: '/work', busy: false }),
+    send: () => new Promise((_resolve, reject) => { fail = reject; }),
+  });
+  state.flush('session'); await settle();
+  state.queueEpochs.current.set('session', 1);
+  state.updateQueue('session', requeueMessagesAfterStop);
+  state.receive({ sessionId: 'session', payload: { type: 'user', clientMessageId: queued.id } });
+  fail(new Error('connection closed after acceptance')); await settle();
+  expect(state.queuedMessagesRef.current.session).toEqual([]);
+});
+
+test('history receipts clear recovered drafts and prevent replay when a live receipt was missed', async () => {
+  const history = [{ type: 'user', clientMessageId: queued.id }];
+  expect(reconcileQueuedMessages(recoverQueuedMessages([{ ...queued, status: 'dispatching' }]), history)).toEqual([]);
+  let sends = 0;
+  const state = dispatchHarness([queued], { getSession: async () => ({ workspace: '/work', busy: false, history }) },
+    async () => { sends++; });
+  state.flush('session'); await settle();
+  expect(sends).toBe(0);
+  expect(state.queuedMessagesRef.current.session).toEqual([]);
+});
+
+test('duplicate turn-end events do not dispatch twice; Stop during preparation preserves a draft', async () => {
   let resolve!: (value: any) => void;
   let sends = 0;
   const host = { getSession: () => new Promise(value => { resolve = value; }) };
@@ -102,7 +168,7 @@ test('duplicate turn-end events do not dispatch twice; Stop during preparation r
   resolve({ workspace: '/work', busy: false });
   await settle();
   expect(sends).toBe(0);
-  expect(state.queuedMessagesRef.current.session[0]).toMatchObject({ status: 'queued', files: queued.files });
+  expect(state.queuedMessagesRef.current.session[0]).toMatchObject({ status: 'draft', files: queued.files });
 });
 
 test('failed transport preserves a reviewable draft instead of retrying automatically', async () => {

@@ -9,8 +9,6 @@ import { AgentMailService } from './agentMail/agentMailService.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { hasScope, type AuthContext } from './auth/token.js'
-import { UsageRepository } from './model/repositories/usage.js'
-import { UsageService } from './usageService.js'
 import { CloudSharesRepository } from './model/repositories/cloudShares.js'
 import { CloudSharesService } from './cloudStorage/shares.js'
 import { handleShareManagement, handlePublicShare } from './cloudStorage/shareRoutes.js'
@@ -522,7 +520,6 @@ export function startServer(
   stop: () => Promise<void>
 } {
   const adminDistDir = resolveAdminDistDir()
-  const usageService = new UsageService(new UsageRepository(models.db), models.sessions)
   const agentMailService = new AgentMailService(
     new AgentMailRepository(models.db),
   )
@@ -1195,6 +1192,8 @@ export function startServer(
       const userUsageMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/usage$/)
       if (req.method === 'GET' && (pathname === '/api/v1/usage' || userUsageMatch)) {
         const userId = userUsageMatch ? decodeURIComponent(userUsageMatch[1] || '') : auth.userId
+        const hostKind = url.searchParams.get('host_kind')
+        if (hostKind !== null && hostKind !== 'cloud') throw new HttpError(400, 'Invalid host_kind')
         if (userId === auth.userId) {
           await authService.requireAnyCurrentScope(auth, ['sessions:list', 'sessions:list:any', 'admin:users'])
         } else {
@@ -1206,7 +1205,10 @@ export function startServer(
           systemRoles: actor.roles.flatMap(role => role.systemKey ? [role.systemKey] : []) }
         const user = userId === auth.userId ? actor : await authService.getUserOrNull(userId, auth.orgId, currentAuth)
         if (!user) throw new HttpError(404, 'Unknown user_id')
-        writeNoStoreJson(res, 200, { user, ...await usageService.getOverview({ orgId: auth.orgId, userId }) })
+        const hostIds = hostKind === 'cloud'
+          ? (await new HostRepository(models.db).list(auth.orgId, userId)).filter(host => host.kind === 'cloud').map(host => host.hostId)
+          : undefined
+        writeNoStoreJson(res, 200, { user, ...await models.usage.getOverview({ orgId: auth.orgId, userId }, Date.now(), hostIds) })
         return
       }
 

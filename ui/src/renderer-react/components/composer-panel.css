@@ -1,0 +1,68 @@
+.composer-surface {
+  container: chat-composer / inline-size;
+}
+
+/* Follow the conversation pane, including when a preview narrows a wide window. */
+@container chat-composer (max-width: 760px) {
+  .composer-footer {
+    padding-inline: 12px;
+  }
+
+  .composer-toolbar,
+  .composer-toolbar-options,
+  .composer-toolbar-actions {
+    gap: 6px;
+  }
+
+  .composer-toolbar .composer-control {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .composer-toolbar .composer-send {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .composer-toolbar .composer-control-label,
+  .composer-toolbar .composer-control-detail {
+    display: none;
+  }
+
+  .composer-toolbar .composer-control-count {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: var(--background);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+
+  .composer-toolbar .composer-control-status {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+  }
+}
+
+@container chat-composer (max-width: 560px) {
+  .composer-resource-chip {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 6px;
+  }
+
+  .composer-resource-label,
+  .composer-resource-remove {
+    display: none;
+  }
+}

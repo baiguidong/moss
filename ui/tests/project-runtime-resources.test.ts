@@ -66,6 +66,7 @@ describe('project runtime resources', () => {
   it('scopes a worker manifest to its explicit resource assignment', () => {
     const scoped = scopeProjectResourceManifestForWorker({
       projectId: 'project-1',
+      apps: [{ id: 'docs' }, { id: 'mail' }],
       connectors: [{ id: 'mail' }, { id: 'meeting' }],
       skills: [{ id: 'review' }, { id: 'slides' }],
       unavailableSkillIds: ['review', 'slides'],
@@ -75,10 +76,12 @@ describe('project runtime resources', () => {
       memory: { version: 2 },
     }, {
       connectorIds: ['mail'],
+      appIds: ['docs'],
       skillIds: ['review'],
       expertId: 'reviewer',
     });
     expect(scoped?.connectors).toEqual([{ id: 'mail' }]);
+    expect(scoped?.apps).toEqual([{ id: 'docs' }]);
     expect(scoped?.skills).toEqual([{ id: 'review' }]);
     expect(scoped?.unavailableSkillIds).toEqual(['review']);
     expect(scoped?.experts).toEqual([{ id: 'reviewer' }]);

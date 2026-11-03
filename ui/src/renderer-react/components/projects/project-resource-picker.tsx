@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  AppWindow,
   Bot,
   Check,
   Loader2,
@@ -11,7 +12,8 @@ import { Button } from '@/components/ui/button';
 import { SelectionPickerDialog } from '@/components/selection-picker-dialog';
 import { cn } from '@/lib/utils';
 
-type ProjectResourceKind = 'skill' | 'expert';
+type ProjectResourceKind = 'skill' | 'expert' | 'app';
+type Resource = import('@/types').ProjectCreationDraft['resources'][number] & { icon?: string; runtimeId?: string };
 
 type ProjectResourceOption = {
   id: string;
@@ -19,28 +21,29 @@ type ProjectResourceOption = {
   description: string;
   icon?: string;
   meta?: string;
+  resource?: Resource;
 };
 
 type ProjectResourcePage = {
   items: ProjectResourceOption[];
   total: number;
   hasMore: boolean;
+  warning?: string;
 };
 
 type ProjectResourcePickerProps = {
   kind: ProjectResourceKind;
   title: string;
-  description: string;
+  description?: string;
+  disabled?: boolean;
+  initialResources?: Resource[];
+  onResourceSelect?: (resource: Resource) => void;
   selectedIds: string[];
   multiple?: boolean;
   onChange: (ids: string[]) => void;
 };
 
 const PAGE_SIZE = 50;
-
-function normalizeText(value: unknown) {
-  return typeof value === 'string' ? value.trim() : '';
-}
 
 function uniqueOptions(items: ProjectResourceOption[]) {
   const seen = new Set<string>();
@@ -51,92 +54,30 @@ function uniqueOptions(items: ProjectResourceOption[]) {
   });
 }
 
-async function loadMarketSkills(query: string, page: number): Promise<ProjectResourcePage> {
-  const response = await window.agentDesktop.skillHub.fetchSkills({
-    page,
-    pageSize: PAGE_SIZE,
-    query,
-    sortBy: 'downloads',
-    order: 'desc',
-  }) as {
-    success?: boolean;
-    data?: { skills?: Array<Record<string, unknown>>; total?: number; hasMore?: boolean };
-    error?: string;
-  };
-  if (!response?.success) {
-    throw new Error(response?.error || '读取技能市场失败');
-  }
-  const skills = Array.isArray(response.data?.skills) ? response.data.skills : [];
-  const items = uniqueOptions(skills.map((skill) => {
-    const id = normalizeText(skill.id) || normalizeText(skill.slug) || normalizeText(skill.name);
-    return {
-      id,
-      name: normalizeText(skill.displayName) || normalizeText(skill.name) || id,
-      description: normalizeText(skill.description),
-      icon: normalizeText(skill.icon),
-      meta: normalizeText(skill.category) || normalizeText(skill.ownerName) || '技能市场',
-    };
-  }));
-  return {
-    items,
-    total: Number(response.data?.total) || items.length,
-    hasMore: Boolean(response.data?.hasMore),
-  };
+function toOption(resource: Resource): ProjectResourceOption {
+  return { id: resource.id, name: resource.displayName || resource.id, description: resource.description || '', icon: resource.icon,
+    meta: resource.installed ? resource.status === 'disabled' ? '待启用' : '已安装' : '待安装', resource };
 }
 
-async function loadMarketExperts(query: string, page: number): Promise<ProjectResourcePage> {
-  const response = await window.agentDesktop.expertHub.fetchExperts({
-    page,
-    pageSize: PAGE_SIZE,
-    query,
-    type: 'all',
-    sortBy: 'comprehensive',
-  }) as {
-    success?: boolean;
-    data?: { experts?: Array<Record<string, unknown>>; total?: number; hasMore?: boolean };
-    error?: string;
-  };
-  if (!response?.success) {
-    throw new Error(response?.error || '读取专家市场失败');
-  }
-  const experts = Array.isArray(response.data?.experts) ? response.data.experts : [];
-  const items = uniqueOptions(experts.map((expert) => {
-    const id = normalizeText(expert.id) || normalizeText(expert.agentName) || normalizeText(expert.name);
-    return {
-      id,
-      name: normalizeText(expert.displayName) || normalizeText(expert.name) || id,
-      description: normalizeText(expert.description),
-      icon: normalizeText(expert.avatar),
-      meta: normalizeText(expert.profession) || normalizeText(expert.categoryName) || (
-        expert.type === 'team' ? '专家团' : '专家'
-      ),
-    };
-  }));
-  return {
-    items,
-    total: Number(response.data?.total) || items.length,
-    hasMore: Boolean(response.data?.hasMore),
-  };
-}
-
-function loadResources(kind: ProjectResourceKind, query: string, page: number) {
-  if (kind === 'skill') return loadMarketSkills(query, page);
-  return loadMarketExperts(query, page);
+async function loadResources(kind: ProjectResourceKind, query: string, page: number): Promise<ProjectResourcePage> {
+  const result = await window.agentDesktop.projectResources({ kind, query, page, pageSize: PAGE_SIZE });
+  return { items: result.resources.map(toOption), total: result.total, hasMore: result.hasMore, warning: result.warning };
 }
 
 function resourceCopy(kind: ProjectResourceKind) {
+  if (kind === 'app') return { action: '选择', pickerTitle: '选择 App', searchPlaceholder: '搜索 App', emptyLabel: '没有匹配的 App' };
   if (kind === 'skill') {
     return {
       action: '选择',
       pickerTitle: '选择技能',
-      searchPlaceholder: '搜索技能市场',
+      searchPlaceholder: '搜索技能',
       emptyLabel: '没有匹配的技能',
     };
   }
   return {
     action: '选择',
     pickerTitle: '选择专家',
-    searchPlaceholder: '搜索专家市场',
+    searchPlaceholder: '搜索专家',
     emptyLabel: '没有匹配的专家',
   };
 }
@@ -153,6 +94,7 @@ function ResourceIcon({ kind, option }: { kind: ProjectResourceKind; option?: Pr
       />
     );
   }
+  if (kind === 'app') return <AppWindow className="h-4 w-4" />;
   if (kind === 'skill') return <Sparkles className="h-4 w-4" />;
   return <Bot className="h-4 w-4" />;
 }
@@ -161,6 +103,9 @@ export function ProjectResourcePicker({
   kind,
   title,
   description,
+  disabled = false,
+  initialResources,
+  onResourceSelect,
   selectedIds,
   multiple = true,
   onChange,
@@ -168,7 +113,7 @@ export function ProjectResourcePicker({
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [items, setItems] = React.useState<ProjectResourceOption[]>([]);
-  const [knownItems, setKnownItems] = React.useState<Record<string, ProjectResourceOption>>({});
+  const [knownItems, setKnownItems] = React.useState<Record<string, ProjectResourceOption>>(() => Object.fromEntries((initialResources || []).map(resource => [resource.id, toOption(resource)])));
   const [page, setPage] = React.useState(1);
   const [total, setTotal] = React.useState(0);
   const [hasMore, setHasMore] = React.useState(false);
@@ -187,6 +132,14 @@ export function ProjectResourcePicker({
     });
   }, []);
 
+  const selectedKey = selectedIds.join('\0');
+  React.useEffect(() => {
+    let disposed = false;
+    void Promise.allSettled(selectedIds.map(id => window.agentDesktop.projectResources({ kind, action: 'inspect', id })))
+      .then(results => { if (!disposed) rememberItems(results.flatMap(result => result.status === 'fulfilled' ? [toOption(result.value)] : [])); });
+    return () => { disposed = true; };
+  }, [kind, selectedKey, rememberItems]);
+
   React.useEffect(() => {
     const requestId = ++requestIdRef.current;
     setLoadingMore(false);
@@ -202,6 +155,7 @@ export function ProjectResourcePicker({
           setPage(1);
           setTotal(result.total);
           setHasMore(result.hasMore);
+          setError(result.warning || '');
         })
         .catch((err) => {
           if (requestIdRef.current !== requestId) return;
@@ -231,6 +185,7 @@ export function ProjectResourcePicker({
       setPage(nextPage);
       setTotal(result.total);
       setHasMore(result.hasMore);
+      setError(result.warning || '');
     } catch (err) {
       if (requestIdRef.current === requestId) {
         setError(err instanceof Error ? err.message : String(err));
@@ -241,6 +196,9 @@ export function ProjectResourcePicker({
   };
 
   const toggle = (id: string) => {
+    if (disabled) return;
+    const resource = knownItems[id]?.resource;
+    if (!selected.has(id) && resource) onResourceSelect?.(resource);
     onChange(selected.has(id)
       ? selectedIds.filter((entry) => entry !== id)
       : multiple ? [...selectedIds, id] : [id]);
@@ -252,13 +210,13 @@ export function ProjectResourcePicker({
   };
 
   return (
-    <div className="space-y-2.5 border-t border-border pt-5">
+    <div className="space-y-2.5 border-t border-border pt-5" data-project-resource-kind={kind}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">{title}</div>
-          <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">{description}</div>
+          {description && <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">{description}</div>}
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => setOpen(true)}>
           <Plus className="h-4 w-4" />
           {copy.action}
         </Button>
@@ -313,6 +271,7 @@ export function ProjectResourcePicker({
               <button
                 key={option.id}
                 type="button"
+                disabled={disabled}
                 aria-pressed={isSelected}
                 onClick={() => toggle(option.id)}
                 className={cn(
@@ -329,6 +288,7 @@ export function ProjectResourcePicker({
                     {option.description || option.meta || option.id}
                   </span>
                 </span>
+                <span className="shrink-0 text-xs text-muted-foreground">{option.meta}</span>
                 <span className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded border',
                   isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-border',

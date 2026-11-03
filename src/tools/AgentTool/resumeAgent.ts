@@ -41,6 +41,7 @@ import type { AgentDefinition } from './loadAgentsDir.js'
 import { isBuiltInAgent } from './loadAgentsDir.js'
 import {
   filterResourceDirectoriesForProjectWorker,
+  addProjectWorkerAppTools,
   filterToolsForProjectWorker,
   resolveProjectWorkerResourceSelection,
   scopeProjectTaskScopeForWorker,
@@ -154,6 +155,7 @@ export async function resumeAgentBackground({
   }
   const projectResourceSelection = assignedResources
     ? resolveProjectWorkerResourceSelection(taskScope, {
+        app_ids: assignedResources.appIds,
         connector_ids: assignedResources.connectorIds,
         skill_ids: assignedResources.skillIds,
         expert_id: assignedResources.expertId,
@@ -227,8 +229,12 @@ export async function resumeAgentBackground({
   }
   const workerTools = isResumedFork
     ? toolUseContext.options.tools
-    : filterToolsForProjectWorker(
-        assembleToolPool(workerPermissionContext, appState.mcp.tools),
+    : addProjectWorkerAppTools(
+        filterToolsForProjectWorker(
+          assembleToolPool(workerPermissionContext, appState.mcp.tools),
+          projectResourceSelection,
+        ),
+        toolUseContext.options.tools,
         projectResourceSelection,
       )
 

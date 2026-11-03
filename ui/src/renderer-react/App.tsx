@@ -9,7 +9,7 @@ import { WebAppPreviews } from '@/components/web-app-previews';
 import { WebAuthorizations } from '@/components/web-authorizations';
 import { WebComposerDraft } from '@/components/web-composer-draft';
 import { latestSessionInteractions, type InteractionKind, type InteractionDetails, type SessionInteraction } from '@/lib/session-interactions';
-import { composerIsEmpty, messageFromDraft, recoverQueuedMessages, requeueMessagesAfterStop, withdrawMessage,
+import { composerIsEmpty, messageFromDraft, reconcileQueuedMessages, recoverQueuedMessages, stopQueuedMessages, withdrawMessage,
   type ComposerAttachment, type ComposerChoices, type ComposerDraft, type QueuedMessage } from '@/lib/composer-queue';
 import { HostConfirmations } from '@/components/host-confirmations';
 import { ComputerUseControl } from '@/components/computer-use';
@@ -60,6 +60,8 @@ import { ProjectWorkspace } from '@/components/projects/project-workspace';
 import { ProjectCreationDraftCard } from '@/components/projects/project-creation-draft-card';
 import { openBrowserPanelUrl } from '@/components/browser-panel';
 import { NotificationCenter, NotificationToast } from '@/components/notification-center';
+import { PendingWorkPanel } from '@/components/pending-work-panel';
+import { buildPendingWorkItems, countPendingWorkItems, type PendingWorkItem } from '@/lib/pending-work-items';
 import {
   buildMainChatRenderMessagesFromHistory,
 } from '@/lib/agent-transcript';
@@ -483,6 +485,17 @@ export default function App() {
     queuedMessagesRef.current = { ...queuedMessagesRef.current, [sessionId]: next };
     setQueuedMessages(queuedMessagesRef.current);
   }, []);
+  const acknowledgeQueuedMessages = React.useCallback((sessionId: string, history: AgentEvent[]) => {
+    const queue = queuedMessagesRef.current[sessionId] ?? [];
+    const remaining = reconcileQueuedMessages(queue, history);
+    if (remaining !== queue) updateQueue(sessionId, () => remaining);
+  }, [updateQueue]);
+  // Draft restoration and reconnect snapshots may arrive in either order.
+  React.useEffect(() => {
+    if (activeSessionId && activeDetail?.id === activeSessionId) {
+      acknowledgeQueuedMessages(activeSessionId, activeDetail.history);
+    }
+  }, [activeSessionId, activeDetail?.id, activeDetail?.history, queuedMessages, acknowledgeQueuedMessages]);
   const updateQuestionRequests = React.useCallback((updater: (prev: AskUserQuestionRequest[]) => AskUserQuestionRequest[]) => {
     const next = updater(questionRequestsRef.current);
     questionRequestsRef.current = next;
@@ -922,8 +935,7 @@ export default function App() {
         await refreshProjectWorkspace();
         if (activeSessionIdRef.current === draft.sessionId) {
           setActiveProjectId(result.project.id);
-          if (result.draft?.firstTaskSessionId && !result.draft.firstTaskError) await openSession(result.draft.firstTaskSessionId);
-          else if (!result.draft?.firstTaskError) setActiveView('projects');
+          setActiveView('projects');
         }
       }
     } catch (error) {
@@ -931,7 +943,7 @@ export default function App() {
       const latest = await window.agentDesktop.projectCreation.getDraft({ draftId: draft.id }).catch(() => null);
       if (latest && activeSessionIdRef.current === draft.sessionId) setProjectCreationDraft(latest);
     } finally { setProjectCreationBusy(false); }
-  }, [projectCreationBusy, projectCreationDraft, refreshProjectWorkspace, openSession, showPermissionNotice]);
+  }, [projectCreationBusy, projectCreationDraft, refreshProjectWorkspace, showPermissionNotice]);
 
   const handleProjectCreationCancel = React.useCallback(async () => {
     const draft = projectCreationDraft;
@@ -1298,6 +1310,9 @@ export default function App() {
 
     const offEvent = window.agentDesktop.onEvent((payload) => {
       if (removedSessionIdsRef.current.has(payload.sessionId)) return;
+      // A queued send is delivered before send() resolves at turn completion.
+      // Handle receipts even when the user is viewing a different session.
+      acknowledgeQueuedMessages(payload.sessionId, [payload.payload]);
       if (payload.sessionId !== activeSessionIdRef.current) return;
       setActiveDetail((prev) => {
         if (!prev) return prev;
@@ -1310,6 +1325,7 @@ export default function App() {
     const offState = window.agentDesktop.onState((payload) => {
       const eventSessionId = payload?.sessionId || payload?.summary?.id;
       if (eventSessionId && removedSessionIdsRef.current.has(eventSessionId)) return;
+      if (eventSessionId && Array.isArray(payload.history)) acknowledgeQueuedMessages(eventSessionId, payload.history);
       if (eventSessionId && payload?.busy === true) {
         setPendingSendRequests((previous) => {
           if (!previous.has(eventSessionId)) return previous;
@@ -1349,9 +1365,7 @@ export default function App() {
         });
       }
       if (payload?.busy === false && payload?.sessionId) {
-        if (stoppingSessions.current.has(payload.sessionId)) {
-          stopFlushPending.current.add(payload.sessionId);
-        } else {
+        if (!stoppingSessions.current.has(payload.sessionId)) {
           flushQueuedMessagesRef.current(payload.sessionId);
         }
       }
@@ -1408,6 +1422,7 @@ export default function App() {
       if (!payload?.sessionId || !Array.isArray(payload.history)) return;
       if (removedSessionIdsRef.current.has(payload.sessionId)) return;
       if (payload.summary?.archivedAt) return;
+      acknowledgeQueuedMessages(payload.sessionId, payload.history);
       if (payload.summary) {
         setSummaries((prev) => upsertSummary(prev, payload.summary!));
       }
@@ -1500,7 +1515,7 @@ export default function App() {
       offProjectCreation?.();
       offAssistantsChanged();
     };
-  }, [applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
+  }, [acknowledgeQueuedMessages, applyDesktopSettings, dismissPermissionNotice, embeddedAppName, loadAppVersions, navigateToHome, refreshApps, refreshAssistants, refreshProjects, refreshSummaries, selectedAssistant, showPermissionNotice, updateQuestionRequests]);
 
   React.useEffect(() => {
     if (!activeSessionId || !activeDetail?.projectCreationMode) {
@@ -1579,6 +1594,32 @@ export default function App() {
     }),
     [baseSidebarSessions, questionRequests],
   );
+
+  const pendingWorkItems = React.useMemo(
+    () => buildPendingWorkItems({
+      questions: questionRequests,
+      notifications: appNotifications,
+      sessions: summaries,
+    }),
+    [appNotifications, questionRequests, summaries],
+  );
+  const pendingWorkCount = React.useMemo(() => countPendingWorkItems(pendingWorkItems), [pendingWorkItems]);
+
+  const handleOpenPendingWork = React.useCallback(async (item: PendingWorkItem) => {
+    if (item.sessionId) {
+      await openSession(item.sessionId);
+    }
+    if (item.notificationId) {
+      void window.agentDesktop.notifications.markRead(item.notificationId);
+      window.dispatchEvent(new CustomEvent('moss:show-notification', { detail: item.notificationId }));
+    }
+    if (item.actionRef && item.source === 'approval') {
+      const pending = await window.agentDesktop.confirmations.list().catch(() => null);
+      if (pending?.requests.some(request => request.id === item.actionRef)) {
+        window.dispatchEvent(new CustomEvent('moss:show-confirmation', { detail: item.actionRef }));
+      }
+    }
+  }, [openSession]);
 
   const activeSessionQuestionRequest = React.useMemo(() => (
     questionRequests.find((request) => (
@@ -1921,6 +1962,7 @@ export default function App() {
     agentType?: string,
     selectedResource?: AppComposerResource | null,
     visualizationAnnotation?: VisualizationAnnotation,
+    clientMessageId?: string,
   ) => {
     // Show activity during IPC/runtime startup, before the first busy event.
     const request = Symbol();
@@ -1937,8 +1979,15 @@ export default function App() {
         }
       }
       if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，草稿已保留。');
+      const queuedItem = clientMessageId
+        ? queuedMessagesRef.current[sessionId]?.find(item => item.id === clientMessageId)
+        : undefined;
+      // Direct composer sends carry an ID for transcript receipts but have no
+      // queue entry. Only enforce the dispatching guard for actual queue items.
+      if (queuedItem && queuedItem.status !== 'dispatching') return;
       await window.agentDesktop.send({
         sessionId,
+        clientMessageId,
         prompt,
         appContext: selectedResource ? resourceContext(selectedResource) : undefined,
         visualizationAnnotation,
@@ -1995,11 +2044,9 @@ export default function App() {
   const flushQueuedMessagesRef = React.useRef<(sessionId: string) => void>(() => {});
   const flushingQueues = React.useRef(new Set<string>());
   const stoppingSessions = React.useRef(new Set<string>());
-  const stopFlushPending = React.useRef(new Set<string>());
   React.useEffect(() => {
     flushQueuedMessagesRef.current = (sessionId: string) => {
       if (stoppingSessions.current.has(sessionId)) {
-        stopFlushPending.current.add(sessionId);
         return;
       }
       if (flushingQueues.current.has(sessionId)) return;
@@ -2012,10 +2059,10 @@ export default function App() {
       void (async () => {
         try {
           const detail = await window.agentDesktop.getSession({ sessionId });
+          updateQueue(sessionId, items => reconcileQueuedMessages(items, detail.history ?? []));
+          if (!queuedMessagesRef.current[sessionId]?.some(item => item.id === next.id && item.status === 'dispatching')) return;
           if (epoch !== (queueEpochs.current.get(sessionId) ?? 0)) {
-            updateQueue(sessionId, items => items.map(item => item.id === next.id
-              ? { ...item, status: 'queued', notice: undefined }
-              : item));
+            updateQueue(sessionId, stopQueuedMessages);
             return;
           }
           if (detail.busy) {
@@ -2023,11 +2070,9 @@ export default function App() {
             return;
           }
           if (next.workspace !== undefined && next.workspace !== detail.workspace) throw new Error('工作区已变化，请切回原工作区后编辑。');
-          await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection, next.visualizationAnnotation);
+          await dispatchToSession(sessionId, next.prompt, next.intent, next.files, next.skills, next.agentType, next.appSelection, next.visualizationAnnotation, next.id);
           if (epoch !== (queueEpochs.current.get(sessionId) ?? 0) || stoppingSessions.current.has(sessionId)) {
-            updateQueue(sessionId, items => items.map(item => item.id === next.id
-              ? { ...item, status: 'queued', notice: undefined }
-              : item));
+            updateQueue(sessionId, stopQueuedMessages);
           } else {
             updateQueue(sessionId, items => items.filter(item => item.id !== next.id));
           }
@@ -2035,9 +2080,7 @@ export default function App() {
           // A transport rejection does not prove that the Host never accepted
           // the message. Preserve it for review, never enqueue an automatic replay.
           if (epoch !== (queueEpochs.current.get(sessionId) ?? 0) || stoppingSessions.current.has(sessionId)) {
-            updateQueue(sessionId, items => items.map(item => item.id === next.id
-              ? { ...item, status: 'queued', notice: undefined }
-              : item));
+            updateQueue(sessionId, stopQueuedMessages);
           } else {
             updateQueue(sessionId, items => items.map(item => item.id === next.id ? { ...item, status: 'draft',
               notice: `发送未确认，请先核对会话记录。${cleanIpcErrorMessage(err)}` } : item));
@@ -2069,6 +2112,7 @@ export default function App() {
     if (planDecisionBusy) return;
 
     const prompt = input.trim();
+    const clientMessageId = crypto.randomUUID();
     const selection = appSelection;
     const messageWorkspace = activeSessionId ? activeDetail?.workspace : workspace || appDraftWorkspace;
 
@@ -2174,7 +2218,7 @@ export default function App() {
 
       if (submitEpoch !== (queueEpochs.current.get(sessionId) ?? 0)) throw new Error('发送已停止，草稿已保留。');
       sendAttempted = true;
-      await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType, selection);
+      await dispatchToSession(sessionId, prompt, intent, filesToSend, skills, agent?.agentType, selection, undefined, clientMessageId);
     } catch(error) {
       const current: ComposerDraft = { text: inputDraftRef.current, files: composerAttachmentsRef.current,
         choices: composerChoicesRef.current, appSelection: appSelectionDraftRef.current };
@@ -2185,7 +2229,7 @@ export default function App() {
         setAppSelection(selection);
         handleComposerIntentChange(intent);
       } else {
-        updateQueue(sessionId || 'home', items => [...items, { id: crypto.randomUUID(), prompt, intent, files: filesToSend,
+        updateQueue(sessionId || 'home', items => [...items, { id: clientMessageId, prompt, intent, files: filesToSend,
           skills, agent, agentType: agent?.agentType, appSelection: selection, workspace: messageWorkspace,
           status: 'draft', notice: sendAttempted ? '发送未确认，请先核对会话记录。' : `发送准备失败，内容已保留。${cleanIpcErrorMessage(error)}` }]);
       }
@@ -2308,28 +2352,16 @@ export default function App() {
     if (!activeSessionId) return;
     const sessionId = activeSessionId;
     stoppingSessions.current.add(sessionId);
-    stopFlushPending.current.delete(sessionId);
     queueEpochs.current.set(sessionId, (queueEpochs.current.get(sessionId) ?? 0) + 1);
-    const queue = queuedMessagesRef.current[sessionId] ?? [];
-    const hasQueuedMessages = queue.some(item => !item.status || item.status === 'queued' || item.status === 'dispatching');
-    // The current dispatch may be waiting on file/App preparation when Stop
-    // arrives. Put it back in the live queue so the interrupted turn cannot
-    // make the message disappear or convert it into a manual draft.
-    updateQueue(sessionId, () => requeueMessagesAfterStop(queue));
+    // Stop also pauses delivery. Late send responses and idle events must not
+    // replay the interrupted prompt or automatically send the next message.
+    const hadQueuedMessages = (queuedMessagesRef.current[sessionId] ?? []).some(item => item.status !== 'draft');
+    updateQueue(sessionId, stopQueuedMessages);
     updateQuestionRequests((prev) => prev.filter((entry) => entry.sessionId !== sessionId));
     try {
-      await window.agentDesktop.abort({ sessionId, terminateSession: !hasQueuedMessages });
+      await window.agentDesktop.abort({ sessionId, terminateSession: !hadQueuedMessages });
     } finally {
-      const observedIdle = stopFlushPending.current.delete(sessionId);
       stoppingSessions.current.delete(sessionId);
-      if (hasQueuedMessages || observedIdle) {
-        void window.agentDesktop.getSession({ sessionId }).then(detail => {
-          // A busy=false event may arrive before the abort IPC completes. The
-          // event is remembered above; otherwise the fresh session snapshot is
-          // the final guard before dispatching the next queued prompt.
-          if (observedIdle || !detail.busy) flushQueuedMessagesRef.current(sessionId);
-        }).catch(() => {});
-      }
     }
   }, [activeSessionId, updateQueue, updateQuestionRequests]);
 
@@ -2370,9 +2402,29 @@ export default function App() {
     }
   }, [composerIntent, updateQueue, handleComposerIntentChange]);
 
-  const handleRemoveQueuedMessage = React.useCallback((id: string) => {
-    updateQueue(activeSessionId || 'home', (prev) => prev.filter((q) => q.id !== id || q.status === 'dispatching'));
-  }, [activeSessionId, updateQueue]);
+  const handleRemoveQueuedMessage = React.useCallback(async (id: string) => {
+    const sessionId = activeSessionIdRef.current || 'home';
+    const item = queuedMessagesRef.current[sessionId]?.find(message => message.id === id);
+    if (!item || item.status === 'canceling') return;
+    if (item.status !== 'dispatching') {
+      updateQueue(sessionId, items => items.filter(message => message.id !== id));
+      return;
+    }
+    updateQueue(sessionId, items => items.map(message => message.id === id ? { ...message, status: 'canceling' } : message));
+    try {
+      // Cancel only this pending send, never the Agent's already accepted turn.
+      const result = await window.agentDesktop.abort({ sessionId, clientMessageId: id });
+      if (result?.canceled === false) {
+        updateQueue(sessionId, items => items.map(message => message.id === id ? { ...message, status: 'draft',
+          notice: '消息已被会话接收，请先核对会话记录。' } : message));
+      } else {
+        updateQueue(sessionId, items => items.filter(message => message.id !== id));
+      }
+    } catch (error) {
+      updateQueue(sessionId, items => items.map(message => message.id === id ? { ...message, status: 'draft',
+        notice: `取消未确认，请先核对会话记录。${cleanIpcErrorMessage(error)}` } : message));
+    }
+  }, [updateQueue]);
 
   const handlePickWorkspace = React.useCallback(async () => {
     if (!activeSessionId) return;
@@ -2914,6 +2966,7 @@ export default function App() {
             apps={apps}
             activeSessionId={activeSessionId}
             activeView={activeView}
+            pendingCount={pendingWorkCount}
             serverAccount={serverAccount}
             projectsCount={projects.length}
             themeMode={themeMode}
@@ -3025,7 +3078,9 @@ export default function App() {
                 setActiveView('chat');
                 if (prompt) setInput(previous => previous.trim() ? `${previous}\n\n${prompt}` : prompt);
               }} /> : null;
-          })() : activeView === 'embedded-app' ? null : activeView === 'chat' ? (
+          })() : activeView === 'embedded-app' ? null : activeView === 'pending' ? (
+            <PendingWorkPanel items={pendingWorkItems} onOpen={(item) => { void handleOpenPendingWork(item); }} />
+          ) : activeView === 'chat' ? (
             activeSessionId ? (
               <ChatArea
                 messages={chatMessages}
@@ -3037,9 +3092,7 @@ export default function App() {
                     onCancel={() => { void handleProjectCreationCancel(); }}
                     onSave={handleProjectCreationSave}
                     onOpenProject={() => { setActiveProjectId(projectCreationDraft.createdProjectId || null); setActiveView('projects'); }}
-                    onOpenSession={id => { void openSession(id); }}
                     onConfigureApp={id => { void handleProjectCreationApp(id); }}
-                    onDiscuss={() => setInput('我想修改项目方案：')}
                   />
                 ) : undefined}
                 interactions={latestSessionInteractions(activeDetail?.history ?? [])}
@@ -3051,6 +3104,10 @@ export default function App() {
                 readOnlyReason={activeDetail?.resumeReadOnlyReason || null}
                 hasActiveSession={Boolean(activeSessionId)}
                 isProjectSession={Boolean(activeDetail?.projectId)}
+                projectName={activeDetail?.projectName || undefined}
+                onReturnToProject={activeDetail?.projectId
+                  ? () => { setActiveProjectId(activeDetail.projectId!); setActiveView('projects'); }
+                  : undefined}
                 sessionTitle={activeDetail ? `${activeDetail.projectCreationMode ? '创建项目 · ' : ''}${displaySessionTitle(activeDetail)}` : 'New Session'}
                 sessionId={activeSessionId || undefined}
                 sessionWorkspace={activeDetail?.workspace || undefined}
@@ -3081,6 +3138,8 @@ export default function App() {
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
                 terminalActions={<SessionTerminalActions key={`terminal:${activeSessionId}`} session={activeDetail} />}
+                isPinned={pinnedIds.has(activeSessionId)}
+                onTogglePin={activeDetail && !activeDetail.isSubAgent ? () => handleTogglePin(activeSessionId) : undefined}
                 sessionInfo={<SessionInfoButton key={`info:${activeSessionId}`}
                   session={activeDetail?.id === activeSessionId ? activeDetail : null}
                   messages={chatMessages} childSessions={activeChildSessions}
@@ -3137,11 +3196,20 @@ export default function App() {
                 composerChoices={composerChoices}
                 onComposerChoicesChange={setComposerChoices}
                 homeComposerMode={homeComposerMode}
+                homeShortcuts={!draftProject ? {
+                  projects,
+                  sessions: summaries,
+                  onOpenProject: handleNewProjectSession,
+                  onOpenProjects: () => { setActiveProjectId(null); setActiveView('projects'); },
+                } : undefined}
                 sessionTitle=""
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
                 workspaceOptions={draftProject?.workspaces}
                 projectName={draftProject?.name}
+                onReturnToProject={draftProject
+                  ? () => { setActiveProjectId(draftProject.id); setActiveView('projects'); }
+                  : undefined}
                 onHomeWorkspaceChange={setAppDraftWorkspace}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}

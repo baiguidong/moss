@@ -1,5 +1,7 @@
 import * as React from 'react';
 import {
+  ArrowLeft,
+  RefreshCw,
   FileText,
   FolderKanban,
   ListChecks,
@@ -7,8 +9,6 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   Search,
   Settings,
@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   DropdownMenu,
@@ -36,7 +35,9 @@ import { ProjectResourcePicker } from '@/components/projects/project-resource-pi
 import { ProjectTasksTab } from '@/components/projects/project-tasks-tab';
 import { MarkdownRenderer } from '@/components/markdown/markdown-renderer';
 import { cn } from '@/lib/utils';
-import { syncProjectMarketplaceResources } from '@/lib/project-resource-sync';
+import { ProjectInstructionsField } from './project-instructions-field';
+import { PanelResizeHandle } from '@/components/panel-resize-handle';
+import { useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
 import { formatProjectMemoryForDisplay } from '../../../shared/project-memory.mjs';
 import type {
   Project,
@@ -76,17 +77,35 @@ const EMPTY_FORM: ProjectFormState = {
   templateId: null,
   expertIds: [],
   skillIds: [],
+  permissionMode: 'bypassPermissions',
 };
+
+const NEW_PROJECT_DRAFT_KEY = 'ui.newProjectDraft';
+const projectDraftKey = (id: string) => `ui.projectConfigDraft:${id}`;
+function readFormDraft(key: string, updatedAt?: number): ProjectFormState | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+    return saved?.form && saved.updatedAt === updatedAt ? saved.form : null;
+  } catch { return null; }
+}
+function saveFormDraft(key: string, form: ProjectFormState | null, updatedAt?: number) {
+  try {
+    if (form) sessionStorage.setItem(key, JSON.stringify({ form, updatedAt }));
+    else sessionStorage.removeItem(key);
+  } catch {}
+}
 
 function projectFormFromProject(project: Project): ProjectFormState {
   const { connectorIds: _legacyConnectorIds, ...rest } = project;
+  const resourceId = (kind: string, id: string) => project.resourceBindings?.find(entry => entry.kind === kind && (entry.id === id || entry.runtimeId === id))?.id || id;
   return {
     ...rest,
     name: project.name,
     instructions: project.instructions,
     templateId: project.templateId || null,
-    expertIds: project.expertIds || [],
-    skillIds: project.skillIds || [],
+    expertIds: (project.expertIds || []).map(id => resourceId('expert', id)),
+    skillIds: (project.skillIds || []).map(id => resourceId('skill', id)),
+    assistantName: project.assistantName ? resourceId('expert', project.assistantName) : project.assistantName,
   };
 }
 
@@ -130,18 +149,21 @@ function NewProjectDialog({
   onClose: () => void;
   onCreated: (project: Project) => void;
 }) {
-  const [form, setForm] = React.useState<ProjectFormState>(EMPTY_FORM);
+  const [form, setForm] = React.useState<ProjectFormState>(() => readFormDraft(NEW_PROJECT_DRAFT_KEY) || EMPTY_FORM);
   const [saving, setSaving] = React.useState(false);
   const [savingStatus, setSavingStatus] = React.useState('');
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
     if (open) {
-      setForm(EMPTY_FORM);
+      setForm(readFormDraft(NEW_PROJECT_DRAFT_KEY) || EMPTY_FORM);
       setSavingStatus('');
       setError('');
     }
   }, [open]);
+
+  React.useEffect(() => { if (open) saveFormDraft(NEW_PROJECT_DRAFT_KEY, form); }, [open, form]);
+  const close = () => { saveFormDraft(NEW_PROJECT_DRAFT_KEY, null); onClose(); };
 
   if (!open) return null;
 
@@ -154,11 +176,6 @@ function NewProjectDialog({
     setSavingStatus('正在准备项目...');
     setError('');
     try {
-      await syncProjectMarketplaceResources({
-        skillIds: form.skillIds,
-        expertIds: form.expertIds,
-        onProgress: setSavingStatus,
-      });
       setSavingStatus('正在创建项目...');
       const project = await window.agentDesktop.createProject({
         ...form,
@@ -169,7 +186,7 @@ function NewProjectDialog({
         skillIds: form.skillIds,
       });
       onCreated(project);
-      onClose();
+      close();
     } catch (err: any) {
       setError(err?.message || String(err));
     } finally {
@@ -184,9 +201,8 @@ function NewProjectDialog({
         <div className="shrink-0 flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <div className="text-lg font-semibold text-foreground">新建项目</div>
-            <div className="text-xs text-muted-foreground">让会话共享配置，汇集成果并积累项目记忆。</div>
           </div>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} disabled={saving}>
+          <Button variant="ghost" size="icon-sm" onClick={close} disabled={saving}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -206,23 +222,11 @@ function NewProjectDialog({
               />
             </div>
 
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>指令</span>
-                <span>{form.instructions.length}</span>
-              </div>
-              <Textarea
-                value={form.instructions}
-                placeholder="写入项目长期约束、偏好、交付标准或背景信息"
-                onChange={(event) => setForm((prev) => ({ ...prev, instructions: event.target.value }))}
-                className="min-h-[180px] resize-y text-sm"
-              />
-            </div>
+            <ProjectInstructionsField value={form.instructions} disabled={saving} onChange={instructions => setForm(current => ({ ...current, instructions }))} />
 
             <ProjectResourcePicker
               kind="skill"
               title="添加技能"
-              description="从技能市场选择项目可使用的技能。"
               selectedIds={form.skillIds}
               onChange={(skillIds) => setForm((prev) => ({ ...prev, skillIds }))}
             />
@@ -230,7 +234,6 @@ function NewProjectDialog({
               kind="expert"
               multiple={false}
               title="默认助手"
-              description="与普通会话一样，选择一个默认助手。"
               selectedIds={form.expertIds}
               onChange={(expertIds) => setForm((prev) => ({ ...prev, expertIds, assistantName: expertIds.length === 1 ? expertIds[0] : '' }))}
             />
@@ -243,7 +246,7 @@ function NewProjectDialog({
             {savingStatus}
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+            <Button variant="outline" onClick={close} disabled={saving}>取消</Button>
             <Button className="min-w-[112px]" onClick={createProject} disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderKanban className="h-4 w-4" />}
               {saving ? '创建中' : '创建项目'}
@@ -522,15 +525,25 @@ function ProjectConfigPanel({
   project,
   open,
   onSaved,
+  width,
+  onBeginResize,
+  onRestoreSplit,
 }: {
   project: Project;
   open: boolean;
+  width: number;
+  onBeginResize: () => (delta: number) => void;
+  onRestoreSplit: () => void;
   onSaved: (project: Project) => void;
 }) {
-  const [draft, setDraft] = React.useState<ProjectFormState>(() => projectFormFromProject(project));
+  const [draft, setDraft] = React.useState<ProjectFormState>(() => readFormDraft(projectDraftKey(project.id), project.updatedAt) || projectFormFromProject(project));
   const [saving, setSaving] = React.useState(false);
   const [savingStatus, setSavingStatus] = React.useState('');
   const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    saveFormDraft(projectDraftKey(project.id), JSON.stringify(draft) === JSON.stringify(projectFormFromProject(project)) ? null : draft, project.updatedAt);
+  }, [draft, project]);
 
   const save = async () => {
     if (!draft.name.trim()) {
@@ -538,15 +551,9 @@ function ProjectConfigPanel({
       return;
     }
     setSaving(true);
-    setSavingStatus('正在检查本地资源...');
+    setSavingStatus('正在准备资源并保存...');
     setError('');
     try {
-      await syncProjectMarketplaceResources({
-        skillIds: draft.skillIds,
-        expertIds: draft.expertIds,
-        onProgress: setSavingStatus,
-      });
-      setSavingStatus('正在保存项目配置...');
       const saved = await window.agentDesktop.updateProject({
         projectId: project.id,
         updates: draft,
@@ -564,13 +571,8 @@ function ProjectConfigPanel({
   if (!open) return null;
 
   return (
-    <aside className="absolute right-0 z-20 flex h-full min-h-0 w-[312px] max-w-full shrink-0 flex-col border-l border-border bg-background lg:static lg:bg-sidebar/35">
-      <div className="border-b border-border px-4 py-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Settings className="h-4 w-4 text-muted-foreground" />
-          <span>项目配置</span>
-        </div>
-      </div>
+    <aside aria-label="项目设置" style={{ width }} className="relative flex h-full min-h-0 max-w-full shrink-0 flex-col border-l border-border bg-background">
+      <PanelResizeHandle width={width} onBeginResize={onBeginResize} onRestoreSplit={onRestoreSplit} label="调整项目设置宽度" />
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-5 p-4">
           <ProjectIconPicker value={draft.icon} disabled={saving} onChange={icon => setDraft(current => ({ ...current, icon }))} />
@@ -582,18 +584,10 @@ function ProjectConfigPanel({
               className="h-8 text-xs"
             />
           </div>
-          <div className="grid gap-2">
-            <div className="text-xs font-medium text-muted-foreground">指令</div>
-            <Textarea
-              value={draft.instructions}
-              onChange={(event) => setDraft((prev) => ({ ...prev, instructions: event.target.value }))}
-              className="min-h-[160px] text-xs"
-            />
-          </div>
+          <ProjectInstructionsField value={draft.instructions} disabled={saving} onChange={instructions => setDraft(current => ({ ...current, instructions }))} />
           <ProjectResourcePicker
             kind="skill"
             title="添加技能"
-            description="新会话默认选择的技能。"
             selectedIds={draft.skillIds}
             onChange={(skillIds) => setDraft((prev) => ({ ...prev, skillIds }))}
           />
@@ -601,7 +595,6 @@ function ProjectConfigPanel({
             kind="expert"
             multiple={false}
             title="默认助手"
-            description="新会话预填此助手，发送前可以修改。"
             selectedIds={draft.expertIds}
             onChange={(expertIds) => setDraft((prev) => ({ ...prev, expertIds, assistantName: expertIds.length === 1 ? expertIds[0] : '' }))}
           />
@@ -638,26 +631,6 @@ function ProjectAssetsTab({
   const [busyAssetId, setBusyAssetId] = React.useState<string | null>(null);
   const [assetQuery, setAssetQuery] = React.useState('');
 
-  const upload = async () => {
-    setBusyAssetId('upload');
-    setError('');
-    try {
-      const files = await window.agentDesktop.pickFiles();
-      for (const file of files) {
-        await window.agentDesktop.addProjectAsset({
-          projectId,
-          sourcePath: file.path,
-          fileName: file.name,
-        });
-      }
-      await onReload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyAssetId(null);
-    }
-  };
-
   const remove = async (assetId: string) => {
     setBusyAssetId(assetId);
     setError('');
@@ -691,17 +664,7 @@ function ProjectAssetsTab({
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} placeholder={`${assets.length} 项成果和资料中搜索`} className="pl-8" />
         </div>
-        <div className="flex items-center gap-2">
-
-          <Button onClick={upload} disabled={busyAssetId !== null}>
-            {busyAssetId === 'upload'
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <Upload className="h-4 w-4" />}
-            添加资料
-          </Button>
-        </div>
       </div>
-      <p className="text-xs text-muted-foreground">汇集会话登记的成果和添加的资料。移除列表项会保留原文件。</p>
       {error ? <div className="text-sm text-destructive">{error}</div> : null}
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="hidden grid-cols-[minmax(0,1fr)_100px_110px_120px] border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:grid">
@@ -785,7 +748,17 @@ function ProjectDetail({
   const [memoryNote, setMemoryNote] = React.useState('');
   const [memoryPending, setMemoryPending] = React.useState(false);
   const [loadError, setLoadError] = React.useState('');
-  const [configOpen, setConfigOpen] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const [layout, setLayout] = React.useState<SessionPanelLayout>(() => {
+    let width = 360;
+    try { width = Number(localStorage.getItem('ui.projectSettingsWidth')) || width; } catch {}
+    return { rightWidth: Math.max(320, width), rightCollapsed: true, rightExpanded: false };
+  });
+  const configOpen = !layout.rightCollapsed;
+  const setConfigOpen = (open: boolean) => setLayout(current => ({ ...current, rightCollapsed: !open, rightExpanded: false }));
+  const updateLayout = React.useCallback((patch: Partial<SessionPanelLayout>) => setLayout(current => ({ ...current, ...patch })), []);
+  const panel = useSessionPanelLayout({ enabled: true, layout, onChange: updateLayout });
+  React.useEffect(() => { try { localStorage.setItem('ui.projectSettingsWidth', String(layout.rightWidth)); } catch {} }, [layout.rightWidth]);
   const reloadRequestIdRef = React.useRef(0);
 
   const reload = React.useCallback(async () => {
@@ -822,7 +795,7 @@ function ProjectDetail({
     setEvents([]);
     setMemory(null);
     setLoadError('');
-    setConfigOpen(false);
+    setConfigOpen(Boolean(readFormDraft(projectDraftKey(project.id), project.updatedAt)));
   }, [project.id]);
 
   React.useEffect(() => {
@@ -846,6 +819,22 @@ function ProjectDetail({
     finally { setMemoryPending(false); }
   };
 
+  const upload = async () => {
+    if (uploading) return;
+    setUploading(true);
+    setLoadError('');
+    try {
+      const files = await window.agentDesktop.pickFiles();
+      if (!files.length) return;
+      for (const file of files) await window.agentDesktop.addProjectAsset({ projectId: project.id, sourcePath: file.path, fileName: file.name });
+      await reload();
+      setActiveTab('assets');
+    } catch (error) {
+      await reload().catch(() => {});
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally { setUploading(false); }
+  };
+
   const recentEvents = events.slice(0, 30);
   const memoryOverview = formatProjectMemoryForDisplay(memory?.overview || '');
 
@@ -865,36 +854,26 @@ function ProjectDetail({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 bg-background">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="border-b border-border px-6 py-4">
-          <button type="button" onClick={onBack} className="text-xs text-muted-foreground hover:text-foreground">
-            项目 / 返回列表
-          </button>
-          <div className="mt-1 flex min-w-0 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <ProjectIcon icon={detail.icon} className="h-9 w-9" />
-              <h1 className="truncate text-xl font-semibold text-foreground">{detail.name}</h1>
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={configOpen ? 'secondary' : 'ghost'}
-                  size="icon-sm"
-                  className="inline-flex h-8 w-8 shrink-0 rounded-md"
-                  onClick={() => setConfigOpen((current) => !current)}
-                  aria-label={configOpen ? '收起右侧项目配置' : '在右侧展开项目配置'}
-                  aria-expanded={configOpen}
-                >
-                  {configOpen
-                    ? <PanelRightClose className="h-4 w-4" />
-                    : <PanelRightOpen className="h-4 w-4" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="left">
-                {configOpen ? '收起右侧项目配置' : '在右侧展开项目配置'}
-              </TooltipContent>
-            </Tooltip>
+    <div className="relative flex h-full min-h-0 flex-col bg-background">
+        <div className="shrink-0 border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2" data-project-toolbar>
+            <Button variant="ghost" size="sm" className="shrink-0 px-2" onClick={onBack} aria-label="返回项目" title="返回项目">
+              <ArrowLeft className="h-4 w-4" /><span className="hidden xl:inline">返回项目</span>
+            </Button>
+            <ProjectIcon icon={detail.icon} className="h-8 w-8" />
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-foreground" title={detail.name}>{detail.name}</h1>
+            <Button variant="ghost" size="sm" className="shrink-0 px-2" onClick={() => onNewSession(detail)} aria-label="新会话" title="新会话">
+              <MessageSquarePlus className="h-4 w-4" /><span className="hidden md:inline">新会话</span>
+            </Button>
+            <Button variant="ghost" size="sm" className="shrink-0 px-2" onClick={() => void upload()} disabled={uploading} aria-label="添加资料" title="添加资料">
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}<span className="hidden md:inline">添加资料</span>
+            </Button>
+            <Button variant="ghost" size="sm" className="shrink-0 px-2" onClick={() => void updateMemory()} disabled={memoryPending || memory?.maintenance?.phase === 'running'} aria-label="整理项目" title="整理项目">
+              {memoryPending || memory?.maintenance?.phase === 'running' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}<span className="hidden md:inline">{memoryPending || memory?.maintenance?.phase === 'running' ? '正在整理…' : '整理项目'}</span>
+            </Button>
+            <Button variant={configOpen ? 'secondary' : 'ghost'} size="icon-sm" className="shrink-0" onClick={() => setConfigOpen(!configOpen)} aria-label="项目设置" title="项目设置" aria-expanded={configOpen}>
+              <Settings className="h-4 w-4" />
+            </Button>
           </div>
           <div className="mt-4 flex flex-wrap gap-1.5 border-b border-border/0">
             {TABS.map((tab) => (
@@ -914,6 +893,8 @@ function ProjectDetail({
             ))}
           </div>
         </div>
+      <div ref={panel.containerRef} className="flex min-h-0 flex-1">
+      <div className={cn('flex min-w-0 flex-1 flex-col', configOpen && panel.tabbed && 'hidden')}>
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-6">
             {loadError ? (
@@ -925,18 +906,13 @@ function ProjectDetail({
               <div className="grid gap-6">
                 <section>
                   <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
-                    <div className="flex items-center gap-3 text-sm font-medium text-foreground">项目沉淀
-                      <Button variant="outline" size="sm" disabled={memoryPending || memory?.maintenance?.phase === 'running'} onClick={() => void updateMemory()}>
-                        {memory?.maintenance?.phase === 'running' ? '正在整理…' : '整理项目'}
-                      </Button>
-                    </div>
+                    <div className="text-sm font-medium text-foreground">项目沉淀</div>
                     <div className="text-xs text-muted-foreground">
                       {memory?.finalizedSessionCount
                         ? `${memory.finalizedSessionCount} 个来源会话${memory.updatedAt ? ` · ${formatTime(memory.updatedAt)}` : ''}`
                         : '尚未沉淀'}
                     </div>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">会话空闲后自动提炼，定期整合项目记忆。手动整理会处理当前空闲的会话。</p>
                   {memory?.maintenance?.message && <p role="status" className="mt-2 text-xs text-muted-foreground">{memory.maintenance.message}</p>}
                   {memory?.maintenance?.error && <p className="mt-2 text-xs text-destructive">{memory.maintenance.error}</p>}
                   <div className="max-h-[320px] overflow-auto py-3 text-sm text-muted-foreground">
@@ -997,7 +973,6 @@ function ProjectDetail({
                 project={detail}
                 tasks={tasks}
                 onOpenSession={onOpenSession}
-                onNewSession={onNewSession}
                 onReload={reload}
               />
             )}
@@ -1016,12 +991,16 @@ function ProjectDetail({
         key={detail.id}
         project={detail}
         open={configOpen}
+        width={panel.rightWidth}
+        onBeginResize={panel.beginResize}
+        onRestoreSplit={panel.restoreSplit}
         onSaved={(saved) => {
           setDetail(saved);
           onProjectSaved(saved);
           void reload().catch(() => {});
         }}
       />
+      </div>
     </div>
   );
 }
@@ -1040,7 +1019,7 @@ export function ProjectWorkspace({
   onNewSession,
 }: ProjectWorkspaceProps) {
   const [query, setQuery] = React.useState('');
-  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [dialogOpen, setDialogOpen] = React.useState(() => Boolean(readFormDraft(NEW_PROJECT_DRAFT_KEY)));
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId) || null
     : null;

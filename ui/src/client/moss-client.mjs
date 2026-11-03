@@ -127,6 +127,7 @@ export function createMossClient(transport, platform = {}) {
   listProjects: (payload) => transport.invoke('project:list', payload),
   getProject: (payload) => transport.invoke('project:get', payload),
   createProject: (payload) => transport.invoke('project:create', payload),
+  projectResources: (payload) => transport.invoke('project:resources', payload),
   projectCreation: {
     getDraft: (payload) => transport.invoke('project-creation:get-draft', payload),
     confirm: (payload) => transport.invoke('project-creation:confirm', payload),

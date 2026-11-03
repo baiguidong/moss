@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
+import { ProjectResourcePicker } from './project-resource-picker';
+import { Button } from '@/components/ui/button';
 import { ComposerResourceSelectionArea } from '@/components/composer-resource-selection-area';
 import { AppToolSelectionContext, getAppToolServices, parseAppServiceKey, toolAppId, toolAppTitle } from '@/lib/app-tool-selection';
 import type { Project, StoredApp } from '@/types';
@@ -34,7 +36,6 @@ export function ProjectAppDefaultsPicker({ apps, value, onChange, loading = fals
         setServices: (appId, ids) => onChange(setProjectAppServices(value, appId, ids)),
       }}><ComposerResourceSelectionArea /></AppToolSelectionContext.Provider>
     </div>
-    <p className="text-xs text-muted-foreground">新会话默认使用的 App 和子服务。</p>
     <div className="flex flex-wrap gap-1.5">{selections.map(item => <span key={item.id} className="inline-flex max-w-full items-center gap-1 rounded-md border border-border px-2 py-1 text-xs">
       <span className="truncate">{item.title}</span>
       <button type="button" aria-label={`移除 ${item.title}`} onClick={() => onChange({ appIds: item.service ? appIds : appIds.filter(id => id !== item.id), appServiceIds: item.service ? appServiceIds.filter(id => id !== item.id) : appServiceIds })}><X className="h-3 w-3" /></button>
@@ -43,6 +44,7 @@ export function ProjectAppDefaultsPicker({ apps, value, onChange, loading = fals
 }
 
 export function ProjectAppDefaults({ value, onChange }: { value: Partial<Project>; onChange: (patch: Partial<Project>) => void }) {
+  const manager = React.useContext(AppToolSelectionContext);
   const [apps, setApps] = React.useState<StoredApp[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -58,6 +60,15 @@ export function ProjectAppDefaults({ value, onChange }: { value: Partial<Project
     const off = window.agentDesktop.onAppsChanged(() => { void refresh(); });
     return () => { disposed = true; off(); };
   }, []);
-  return <><ProjectAppDefaultsPicker apps={apps} value={value} onChange={onChange} loading={loading} />
-    {error && <p className="text-xs text-destructive">{error}</p>}</>;
+  const selectedIds = [...new Set([...(value.appIds || []), ...(value.appServiceIds || []).map(id => parseAppServiceKey(id)?.appId).filter((id): id is string => Boolean(id))])];
+  const serviceApps = apps.filter(app => selectedIds.includes(toolAppId(app)) && app.toolSelection === 'services');
+  return <>
+    <ProjectResourcePicker kind="app" title="App" selectedIds={selectedIds} onChange={ids => onChange({
+      appIds: ids.filter(id => !(value.appServiceIds || []).some(service => parseAppServiceKey(service)?.appId === id)),
+      appServiceIds: (value.appServiceIds || []).filter(service => ids.includes(parseAppServiceKey(service)?.appId || '')),
+    })} />
+    {!!serviceApps.length && <ProjectAppDefaultsPicker apps={serviceApps} value={value} onChange={onChange} loading={loading} />}
+    {!!selectedIds.length && <Button type="button" variant="ghost" size="sm" className="justify-self-start text-xs" onClick={() => manager.openManager?.()}>配置 App</Button>}
+    {error && <p className="text-xs text-destructive">{error}</p>}
+  </>;
 }

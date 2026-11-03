@@ -8,13 +8,13 @@ const count = (value: unknown) => {
 }
 
 export class UsageRepository {
-  private metadata: Promise<{ historyBefore: number; timezone: string }> | undefined
+  private metadata: Promise<{ timezone: string }> | undefined
   constructor(readonly db: Database) {}
 
   getMetadata() {
-    return this.metadata ??= this.db.prepare('SELECT * FROM usage_metadata WHERE id=1').get().then(row => {
+    return this.metadata ??= this.db.prepare('SELECT timezone FROM usage_metadata WHERE id=1').get().then(row => {
       if (!row) throw new Error('Usage database is not initialized')
-      return { historyBefore: Number(row.history_before), timezone: String(row.timezone) }
+      return { timezone: String(row.timezone) }
     }).catch(error => {
       this.metadata = undefined
       throw error
@@ -47,24 +47,24 @@ export class UsageRepository {
     )).run(owner.orgId, eventKey, owner.userId, sessionId, Math.floor(event.occurredAt), usageDay(event.occurredAt, timezone), ...tokens)
   }
 
-  async hasImported(owner: UsageOwner): Promise<boolean> {
-    return Boolean(await this.db.prepare('SELECT user_id FROM usage_imports WHERE org_id=? AND user_id=?').get(owner.orgId, owner.userId))
-  }
-
-  async markImported(owner: UsageOwner): Promise<void> {
-    await this.db.prepare(this.db.sql(
-      'INSERT OR IGNORE INTO usage_imports (org_id,user_id,completed_at) VALUES (?,?,?)',
-      'INSERT INTO usage_imports (org_id,user_id,completed_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE completed_at=completed_at',
-    )).run(owner.orgId, owner.userId, Date.now())
-  }
-
-  async getOverview(owner: UsageOwner, historyIncomplete = false, now = Date.now()): Promise<UsageOverview> {
+  async getOverview(owner: UsageOwner, now = Date.now(), hostIds?: readonly string[]): Promise<UsageOverview> {
     const { timezone } = await this.getMetadata()
+    // Host reports prefix the session id with the reporting host id. A scoped
+    // overview must use those records only; otherwise a user's Desktop usage
+    // is mixed into the cloud computer card and old Server sessions can leak
+    // into the result.
+    const prefixes = (hostIds || []).map(hostId => `${hostId}:`)
+    const hostFilter = hostIds === undefined
+      ? ''
+      : prefixes.length > 0
+        ? ` AND (${prefixes.map(() => 'substr(session_id, 1, ?) = ?').join(' OR ')})`
+        : ' AND 1=0'
+    const params = [owner.orgId, owner.userId, ...prefixes.flatMap(prefix => [prefix.length, prefix])]
     const rows = await this.db.prepare(`SELECT day,
       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-      COUNT(*) AS request_count FROM usage_events WHERE org_id=? AND user_id=? GROUP BY day ORDER BY day
-    `).all(owner.orgId, owner.userId)
+      COUNT(*) AS request_count FROM usage_events WHERE org_id=? AND user_id=?${hostFilter} GROUP BY day ORDER BY day
+    `).all(...params)
     const daily: UsageDailySummary[] = rows.map(row => {
       const inputTokens = Number(row.input_tokens)
       const outputTokens = Number(row.output_tokens)
@@ -87,6 +87,6 @@ export class UsageRepository {
         totals.peakDay = row.day
       }
     }
-    return { generatedAt: now, timezone, today: usageDay(now, timezone), historyIncomplete, totals, daily }
+    return { generatedAt: now, timezone, today: usageDay(now, timezone), totals, daily }
   }
 }
