@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2, "id": "fixture.operations", "version": "1.0.0", "displayName": "操作草稿验收", "hostApi": "^3.17.0",
+  "permissions": ["operations:propose"], "host": { "protocols": ["moss.operations/v1"] },
+  "backend": { "entry": "dist/backend/main.mjs", "runtime": "node", "apiVersion": 1, "lifecycle": "on-demand",
+    "actions": [{"name":"prepare"},{"name":"validate"},{"name":"execute"},{"name":"query"}] },
+  "contributes": { "commands": [
+    {"id":"prepare","title":"准备验收草稿","action":"prepare"},
+    {"id":"validate","title":"校验草稿","action":"validate"},
+    {"id":"execute","title":"执行 fixture","action":"execute"},
+    {"id":"query","title":"查询 fixture","action":"query"}
+  ] }
+}
