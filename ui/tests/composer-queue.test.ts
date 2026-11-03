@@ -251,6 +251,16 @@ test('busy App messages enter the queue synchronously so Stop/turn-end cannot mi
   expect(state.queue[0].status).toBe('draft');
 });
 
+test('a host busy update held in the synchronous detail ref is queued before React rerenders', async () => {
+  const { state } = submitHarness();
+  state.activeDetail.busy = false;
+  state.activeDetailRef.current.busy = true;
+  const sent = state.submit('chat', [], undefined, [], null);
+  expect(state.queue).toHaveLength(1);
+  expect(state.queue[0]).toMatchObject({ prompt: 'original', status: 'queued' });
+  await sent;
+});
+
 test('failed sends restore intent into an empty composer but cannot restore into a changed workspace', async () => {
   for (const changedWorkspace of [false, true]) {
     const { state, fail } = submitHarness();
