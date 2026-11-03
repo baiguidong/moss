@@ -326,6 +326,18 @@ export interface TestingHostOutputMap {
 export interface TestingHostEventMap {
   "target.changed": { [key: string]: unknown }
 }
+export interface OperationsHostInputMap {
+  "draft.create": { "title": string; "summary"?: string; "channel": string; "accountId": string; "accountLabel"?: string; "target": { [key: string]: unknown }; "content": string; "attachments"?: Array<{ "name": string; "uri": string }>; "baseVersion"?: string | null; "expiresAt"?: number; "actionRefs": { "validateDraft": string; "execute": string; "queryResult": string }; "metadata"?: { [key: string]: unknown } }
+  "draft.list": Record<string, never>
+  "draft.get": { "draftId": string }
+}
+export interface OperationsHostOutputMap {
+  "draft.create": { [key: string]: unknown }
+  "draft.list": { "drafts": Array<{ [key: string]: unknown }> }
+  "draft.get": { [key: string]: unknown } | null
+}
+export interface OperationsHostEventMap {
+}
 export interface HostInputMap {
   "moss.tasks/v1": TasksHostInputMap
   "moss.agent-execution/v1": ExecutionHostInputMap
@@ -341,6 +353,7 @@ export interface HostInputMap {
   "moss.settings/v1": SettingsHostInputMap
   "moss.notifications/v1": NotificationsHostInputMap
   "moss.testing/v1": TestingHostInputMap
+  "moss.operations/v1": OperationsHostInputMap
 }
 export interface HostOutputMap {
   "moss.tasks/v1": TasksHostOutputMap
@@ -357,6 +370,7 @@ export interface HostOutputMap {
   "moss.settings/v1": SettingsHostOutputMap
   "moss.notifications/v1": NotificationsHostOutputMap
   "moss.testing/v1": TestingHostOutputMap
+  "moss.operations/v1": OperationsHostOutputMap
 }
 export interface HostEventMap {
   "moss.tasks/v1": TasksHostEventMap
@@ -373,4 +387,5 @@ export interface HostEventMap {
   "moss.settings/v1": SettingsHostEventMap
   "moss.notifications/v1": NotificationsHostEventMap
   "moss.testing/v1": TestingHostEventMap
+  "moss.operations/v1": OperationsHostEventMap
 }

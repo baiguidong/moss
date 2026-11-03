@@ -1,3 +1,4 @@
+import { operationsContracts } from './operations.mjs'
 import { localContracts } from './local.mjs'
 import { cloudContracts } from './cloud.mjs'
 import { hostContracts } from './host.mjs'
@@ -10,4 +11,4 @@ import { executionContracts } from './execution.mjs'
 import { mcpContracts } from './mcp.mjs'
 export { executionLimits } from './execution.mjs'
 export { mcpLimits } from './mcp.mjs'
-export const contracts = { ...executionContracts, ...mcpContracts, ...localContracts, ...cloudContracts, ...hostContracts, ...appsContracts, ...settingsContracts, ...testingContracts }
+export const contracts = { ...executionContracts, ...mcpContracts, ...localContracts, ...cloudContracts, ...hostContracts, ...appsContracts, ...settingsContracts, ...testingContracts, ...operationsContracts }

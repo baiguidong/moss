@@ -110,6 +110,9 @@ Source: `src/*` contract modules. DTO definitions: [generated types](src/generat
 | moss.testing/v1 / controller.dispose | testing:control | sessionId* | backend |  |
 | moss.testing/v1 / controller.caller | testing:control | {} | backend |  |
 | moss.testing/v1 / controller.open | testing:control | sessionId* | backend |  |
+| moss.operations/v1 / draft.create | operations:propose | title*, summary, channel*, accountId*, accountLabel, target*, content*, attachments, baseVersion, expiresAt, actionRefs*, metadata | backend |  |
+| moss.operations/v1 / draft.list | operations:propose | {} | backend |  |
+| moss.operations/v1 / draft.get | operations:propose | draftId* | backend |  |
 
 ## Events
 

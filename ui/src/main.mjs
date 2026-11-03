@@ -351,6 +351,7 @@ import { createDesktopStateStore } from './desktop-state-store.mjs';
 import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import { createOperationDraftService } from './operation-drafts.mjs';
+import { createAppOperationDraftHandlers } from './apps/app-operation-drafts.mjs';
 import {
   createEnterpriseAccountClient,
   parseRemoteDirectServerInput,
@@ -7420,6 +7421,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       contractDefinition(TESTING_PROTOCOL),
       contractDefinition('moss.settings/v1'),
       contractDefinition('moss.notifications/v1'),
+      contractDefinition('moss.operations/v1'),
       contractDefinition('moss.apps/v1'),
       ...createExecutionProtocolDefinitions(),
       createTraceProtocolDefinition(),
@@ -7439,6 +7441,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       createCloudStorageProtocolDefinition(),
     ],
     hostHandlers: {
+      'moss.operations/v1': createAppOperationDraftHandlers(operationDraftService),
       [TESTING_PROTOCOL]: Object.fromEntries(Object.keys(publicHostContracts[TESTING_PROTOCOL].methods).map(method => [method, (input, context) => appTestingHost.handle(method, input, context)])),
       'moss.settings/v1': Object.fromEntries(['catalog','read','apply','undo'].map(method => [method,(input,context)=>configurationService.handle(method,input,context)])),
       'moss.notifications/v1': {
