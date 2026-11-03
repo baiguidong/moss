@@ -2,7 +2,7 @@
 
 日期：2026-11-03
 
-状态：**方案 review 完成；待处理工作台第一版已经实现，后续批次按本文的验收门槛推进。**
+状态：**方案 review 完成；实施与发布进度见 [交付记录](grok-bot-delivery-20261104.md)。本文保留原分批方案，不代表所有后续批次均已实现。**
 
 关联证据：[REA 分析与初版建议](grok-bot-rea-analysis-20261103.md)、[静态证据摘录](../output/grok-bot-analysis-20261103/evidence-excerpts.md)、[REA 摘要](../output/grok-bot-analysis-20261103/rea-summary.json)。
 
