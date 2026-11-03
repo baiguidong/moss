@@ -26,4 +26,3 @@ describe('pending work panel', () => {
     expect(html).toContain('现在没有待处理事项');
   });
 });
-
