@@ -81,9 +81,9 @@ describe('app sidebar more menu', () => {
 
   test('builds menu entries from feature availability', () => {
     expect(getSidebarMoreViews({ enterpriseEnabled: false, agentMailEnabled: false }))
-      .toEqual(['overview', 'cron']);
+      .toEqual(['overview', 'drafts', 'cron']);
     expect(getSidebarMoreViews({ enterpriseEnabled: true, agentMailEnabled: true }))
-      .toEqual(['overview', 'mail', 'cron']);
+      .toEqual(['overview', 'drafts', 'mail', 'cron']);
   });
 
   test('stays hidden unless cloud mode and the mailbox are enabled', () => {

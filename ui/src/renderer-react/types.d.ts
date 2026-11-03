@@ -44,6 +44,7 @@ import type {
   SessionCronApi, MarketplaceResponse,
 } from './lib/desktop-api-types';
 import type { AppNotification, NewAppNotification } from './lib/app-notifications';
+import type { OperationDraft, OperationDraftPatch } from './lib/operation-drafts';
 
 export type OutputFileResolution =
   | { inputPath: string; file: { path: string; name: string; size: number; relativePath?: string } }
@@ -1590,6 +1591,16 @@ declare global {
       skillHub: SkillHubApi;
       expertHub: ExpertHubApi;
       sessionCron: SessionCronApi;
+      operationDrafts: {
+        list: () => Promise<OperationDraft[]>;
+        get: (payload: { draftId: string }) => Promise<OperationDraft | null>;
+        create: (payload: Partial<OperationDraft>) => Promise<OperationDraft>;
+        update: (payload: { draftId: string; expectedRevision?: number; patch: OperationDraftPatch }) => Promise<OperationDraft>;
+        cancel: (payload: { draftId: string; expectedRevision?: number }) => Promise<OperationDraft>;
+        confirm: (payload: { draftId: string; expectedRevision?: number }) => Promise<OperationDraft>;
+        queryResult: (payload: { draftId: string }) => Promise<OperationDraft>;
+        onChanged: (callback: (payload: { reason: string; draft: OperationDraft | null }) => void) => () => void;
+      };
       getInstalledSkills: () => Promise<MarketplaceResponse<unknown[]>>;
       onConnectorsChanged: (callback: (payload: ConnectorsChangedEvent) => void) => () => void;
       appDiscovery: (payload: AppDiscoveryPreferenceUpdate) => Promise<AppDiscoveryPreferences>;

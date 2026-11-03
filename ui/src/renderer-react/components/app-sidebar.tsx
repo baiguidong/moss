@@ -30,6 +30,7 @@ import {
   GitFork,
   LogOut,
   Inbox,
+  FilePenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -80,9 +81,9 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "pending" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
+export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
 
-export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron">;
+export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron" | "drafts">;
 
 export function getSidebarMoreViews({
   enterpriseEnabled,
@@ -93,6 +94,7 @@ export function getSidebarMoreViews({
 }): SidebarMoreView[] {
   return [
     "overview",
+    "drafts",
     ...(enterpriseEnabled && agentMailEnabled ? ["mail" as const] : []),
     "cron",
   ];
@@ -119,6 +121,7 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
   overview: { label: "概览", icon: ChartNoAxesCombined },
   mail: { label: "协作邮箱", icon: Mail },
   cron: { label: "定时任务", icon: AlarmClock },
+  drafts: { label: "业务操作草稿", icon: FilePenLine },
 };
 
 interface AppSidebarProps {

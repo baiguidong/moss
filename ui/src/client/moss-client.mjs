@@ -50,6 +50,20 @@ export function createMossClient(transport, platform = {}) {
     remove: (source, payload) => transport.invoke(`${cronPrefix(source)}-remove`, payload),
     runNow: (source, payload) => transport.invoke(`${cronPrefix(source)}-run-now`, payload),
   },
+  operationDrafts: {
+    list: () => transport.invoke('operation-draft:list'),
+    get: (payload) => transport.invoke('operation-draft:get', payload),
+    create: (payload) => transport.invoke('operation-draft:create', payload),
+    update: (payload) => transport.invoke('operation-draft:update', payload),
+    cancel: (payload) => transport.invoke('operation-draft:cancel', payload),
+    confirm: (payload) => transport.invoke('operation-draft:confirm', payload),
+    queryResult: (payload) => transport.invoke('operation-draft:query-result', payload),
+    onChanged: (callback) => {
+      const handler = payload => callback(payload);
+      transport.on('operation-draft:changed', handler);
+      return () => transport.off('operation-draft:changed', handler);
+    },
+  },
   onConnectorsChanged: (callback) => {
     const handler = (payload) => callback(payload);
     transport.on('connector-hub:changed', handler);

@@ -350,6 +350,7 @@ import {
 import { createDesktopStateStore } from './desktop-state-store.mjs';
 import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
+import { createOperationDraftService } from './operation-drafts.mjs';
 import {
   createEnterpriseAccountClient,
   parseRemoteDirectServerInput,
@@ -812,6 +813,11 @@ const agentChannelStore = createAgentChannelStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
   onChanged: (payload) => emitToRenderer('notification:changed', payload),
+});
+const operationDraftService = createOperationDraftService({
+  filePath: path.join(MOSS_HOME, 'operation_drafts.json'),
+  getRuntime: () => appRuntime,
+  onChanged: payload => emitToRenderer('operation-draft:changed', payload),
 });
 let agentMailPoller = null;
 let agentMailStatus = {
@@ -8967,6 +8973,13 @@ ipcMain.handle('notification:mark-read', (_event, { id } = {}) => appNotificatio
 ipcMain.handle('notification:mark-all-read', () => appNotificationBroker.markAllRead());
 ipcMain.handle('notification:remove', (_event, { id } = {}) => appNotificationBroker.remove(id));
 ipcMain.handle('notification:clear', () => appNotificationBroker.clear());
+ipcMain.handle('operation-draft:list', () => operationDraftService.list());
+ipcMain.handle('operation-draft:get', (_event, payload = {}) => operationDraftService.get(payload));
+ipcMain.handle('operation-draft:create', (_event, payload = {}) => operationDraftService.create(payload));
+ipcMain.handle('operation-draft:update', (_event, payload = {}) => operationDraftService.update(payload));
+ipcMain.handle('operation-draft:cancel', (_event, payload = {}) => operationDraftService.cancel(payload));
+ipcMain.handle('operation-draft:confirm', (_event, payload = {}) => operationDraftService.confirm(payload));
+ipcMain.handle('operation-draft:query-result', (_event, payload = {}) => operationDraftService.queryResult(payload));
 ipcMain.handle('decision:respond', (_event, { decisionId, allowed, choice } = {}) => {
   if (!appDecisionBroker) throw new Error('Moss decision broker is not ready.');
   return appDecisionBroker.respond({
