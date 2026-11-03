@@ -202,6 +202,7 @@ function submitHarness() {
     React: { useCallback: (fn: any) => fn }, crypto,
     firstMessageTitle, setPendingFirstMessage: () => {},
     queueEpochs: { current: new Map() }, creatingSessionRef: { current: null },
+    pendingSendRequests: new Map(),
     cleanIpcErrorMessage: (error: Error) => error.message,
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},
     input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, homeComposerMode: 'chat', planDecisionBusy: false,

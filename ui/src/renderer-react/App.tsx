@@ -18,6 +18,7 @@ import { AppsPanel } from '@/components/apps-panel';
 import { authorizeAppConnector } from '@/lib/connector-auth-flow';
 import { appPageUnavailableReason, getAppPrimaryEntry, getAppSettingsEntries, isAppSharedSettingsRoute } from '@/lib/app-navigation';
 import { CronView } from '@/components/cron-view';
+import { OperationDraftPanel } from '@/components/operation-draft-panel';
 import { OverviewView } from '@/components/overview-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
@@ -1363,6 +1364,16 @@ export default function App() {
           activeDetailRef.current = next;
           return next;
         });
+      } else if (eventSessionId === activeSessionIdRef.current && typeof payload?.busy === 'boolean') {
+        // Some runtime updates only carry the busy bit. Keep the synchronous
+        // detail ref in step with the host so a send made in the same frame is
+        // queued instead of racing the foreground send IPC guard.
+        setActiveDetail((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev, busy: payload.busy };
+          activeDetailRef.current = next;
+          return next;
+        });
       }
       if (payload?.busy === false && payload?.sessionId) {
         if (!stoppingSessions.current.has(payload.sessionId)) {
@@ -2120,7 +2131,12 @@ export default function App() {
     // the current turn ends (same as typing while the CLI REPL is running).
     // Claim it before asynchronous App preparation so Stop/turn-end can see it.
     // The Host resolves and validates App resources again when dispatching.
-    if (activeDetail?.busy && activeSessionId) {
+    const activeSessionBusy = Boolean(activeSessionId && (
+      activeDetail?.busy
+      || activeDetailRef.current?.busy
+      || pendingSendRequests.has(activeSessionId)
+    ));
+    if (activeSessionBusy && activeSessionId) {
       const queued: QueuedMessage = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         prompt,
@@ -2239,7 +2255,7 @@ export default function App() {
         setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
       }
     }
-  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
+  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, pendingSendRequests, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -3248,6 +3264,8 @@ export default function App() {
             <OverviewView cloudEnabled={desktopSettings?.enterpriseEnabled === true && Boolean(desktopSettings.enterpriseAccountServerUrl?.trim())} />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
+          ) : activeView === 'drafts' ? (
+            <OperationDraftPanel />
           ) : activeView === 'mail' && agentMailEnabled ? (
             <AgentMailView
               enabled={agentMailEnabled}
