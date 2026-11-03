@@ -50,3 +50,21 @@ test('execution failures remain visible as failed drafts', async () => {
   assert.match(stored.error, /unknown action/);
 });
 
+test('unknown execution results cannot be retried before querying', async () => {
+  const { directory } = await fixture();
+  const runtime = {
+    async invokeCommandContribution(id) {
+      if (id === 'demo/execute') return { status: 'unknown', result: { requestId: 'req-1' } };
+      if (id === 'demo/query') return { status: 'succeeded', result: { externalId: 'msg-1' } };
+      return { valid: true };
+    },
+  };
+  const service = createOperationDraftService({ filePath: path.join(directory, 'drafts.json'), getRuntime: () => runtime });
+  const draft = await service.create({ appId: 'demo', content: 'hello', actionRefs: { execute: 'demo/execute', validateDraft: 'demo/validate', queryResult: 'demo/query' } });
+  const unknown = await service.confirm({ draftId: draft.id, expectedRevision: draft.revision });
+  assert.equal(unknown.status, 'unknown');
+  await assert.rejects(() => service.confirm({ draftId: draft.id, expectedRevision: unknown.revision }), /结果未知/);
+  const resolved = await service.queryResult({ draftId: draft.id });
+  assert.equal(resolved.status, 'succeeded');
+  assert.equal(resolved.resultRef.externalId, 'msg-1');
+});

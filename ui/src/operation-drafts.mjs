@@ -183,6 +183,7 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
       if (draft.expiresAt <= now()) { draft.status = 'expired'; draft.updatedAt = now(); await writeStore(filePath, drafts); emit('expired', draft); throw new Error('草稿已过期，请重新生成。'); }
       if (draft.status === 'succeeded') { claimed = toPublicDraft(draft); return; }
       if (draft.status === 'executing') throw new Error('草稿正在执行，请稍候。');
+      if (draft.status === 'unknown') throw new Error('草稿执行结果未知，请先查询结果，不能重复执行。');
       if (!draft.actionRefs.execute) throw new Error('草稿尚未绑定可执行的 App 操作。');
       draft.status = 'executing'; draft.updatedAt = now(); draft.error = null;
       await writeStore(filePath, drafts); emit('executing', draft); claimed = toPublicDraft(draft);
@@ -224,4 +225,3 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
 
   return { list, create, update, cancel, confirm, queryResult, get: async ({ draftId } = {}) => (await list()).find(item => item.id === draftId) || null };
 }
-
