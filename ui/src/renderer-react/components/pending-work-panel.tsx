@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from 'react';
-import { AlertCircle, CheckCircle2, CircleDot, Inbox, MessageCircleQuestion, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleDot, Inbox, MessageCircleQuestion, ShieldCheck, Send } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PendingWorkItem, PendingWorkState } from '@/lib/pending-work-items';
 
@@ -17,6 +17,7 @@ const sourceMeta = {
   approval: { label: '需要确认', icon: ShieldCheck },
   result: { label: '新结果', icon: Inbox },
   failure: { label: '运行异常', icon: AlertCircle },
+  operation: { label: '业务草稿', icon: Send },
 } as const;
 
 type GroupMode = 'status' | 'project';
@@ -116,4 +117,3 @@ export function PendingWorkPanel({ items, onOpen }: { items: PendingWorkItem[]; 
     </div>
   );
 }
-

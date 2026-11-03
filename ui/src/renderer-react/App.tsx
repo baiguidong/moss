@@ -103,6 +103,7 @@ import type {
   StoredApp,
   WorkspacePreviewData,
 } from './types';
+import type { OperationDraft } from './lib/operation-drafts';
 
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -345,6 +346,7 @@ export default function App() {
   const [permissionNoticeSeverity, setPermissionNoticeSeverity] = React.useState<AppNotificationSeverity>('info');
   const permissionNoticeTimerRef = React.useRef<number | null>(null);
   const [appNotifications, setAppNotifications] = React.useState<AppNotification[]>([]);
+  const [operationDrafts, setOperationDrafts] = React.useState<OperationDraft[]>([]);
   const [activeView, setActiveViewRaw] = React.useState<MainView>('chat');
   const setActiveView = React.useCallback((view: MainView) => { if (confirmAppViewLeave()) setActiveViewRaw(view); }, []);
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
@@ -419,6 +421,14 @@ export default function App() {
     const updateViewport = () => setCompactViewport(window.innerWidth < 720);
     window.addEventListener('resize', updateViewport);
     return () => window.removeEventListener('resize', updateViewport);
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    const refresh = () => { void window.agentDesktop.operationDrafts.list().then(value => { if (active) setOperationDrafts(value); }).catch(() => {}); };
+    refresh();
+    const off = window.agentDesktop.operationDrafts.onChanged(refresh);
+    return () => { active = false; off(); };
   }, []);
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
@@ -1611,14 +1621,18 @@ export default function App() {
       questions: questionRequests,
       notifications: appNotifications,
       sessions: summaries,
+      operationDrafts,
     }),
-    [appNotifications, questionRequests, summaries],
+    [appNotifications, operationDrafts, questionRequests, summaries],
   );
   const pendingWorkCount = React.useMemo(() => countPendingWorkItems(pendingWorkItems), [pendingWorkItems]);
 
   const handleOpenPendingWork = React.useCallback(async (item: PendingWorkItem) => {
     if (item.sessionId) {
       await openSession(item.sessionId);
+    }
+    if (item.source === 'operation' && item.actionRef) {
+      setActiveView('drafts');
     }
     if (item.notificationId) {
       void window.agentDesktop.notifications.markRead(item.notificationId);

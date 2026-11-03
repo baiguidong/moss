@@ -1,8 +1,9 @@
 import type { AppNotification } from './app-notifications';
 import type { AskUserQuestionRequest, SessionSummary } from '../types';
+import type { OperationDraft } from './operation-drafts';
 
 export type PendingWorkState = 'attention' | 'review' | 'progress' | 'done';
-export type PendingWorkSource = 'question' | 'approval' | 'result' | 'failure';
+export type PendingWorkSource = 'question' | 'approval' | 'result' | 'failure' | 'operation';
 
 export type PendingWorkItem = {
   id: string;
@@ -22,6 +23,7 @@ export type PendingWorkInput = {
   questions?: AskUserQuestionRequest[];
   notifications?: AppNotification[];
   sessions?: SessionSummary[];
+  operationDrafts?: OperationDraft[];
   now?: number;
   doneWindowMs?: number;
 };
@@ -65,6 +67,7 @@ export function buildPendingWorkItems({
   questions = [],
   notifications = [],
   sessions = [],
+  operationDrafts = [],
   now = Date.now(),
   doneWindowMs = DEFAULT_DONE_WINDOW_MS,
 }: PendingWorkInput = {}): PendingWorkItem[] {
@@ -114,6 +117,23 @@ export function buildPendingWorkItems({
         dedupeKey: `decision:${notification.decisionRequestId}`,
       });
     }
+  }
+
+  for (const draft of operationDrafts) {
+    if (!draft?.id || ['cancelled', 'expired'].includes(draft.status)) continue;
+    const state = draft.status === 'executing' ? 'progress' : draft.status === 'succeeded' ? 'done' : draft.status === 'unknown' ? 'review' : 'attention';
+    if (state === 'done' && now - draft.updatedAt > doneWindowMs) continue;
+    addItem(items, {
+      id: `operation:${draft.id}`,
+      source: 'operation',
+      state,
+      title: compactText(draft.title, '业务操作草稿'),
+      summary: compactText(draft.summary, `${draft.channel} 操作等待处理`),
+      context: compactText(draft.accountLabel || draft.accountId, draft.channel),
+      createdAt: draft.updatedAt || draft.createdAt || now,
+      actionRef: draft.id,
+      dedupeKey: `operation:${draft.id}`,
+    });
   }
 
   for (const session of sessions) {

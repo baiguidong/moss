@@ -74,4 +74,16 @@ describe('pending work aggregation', () => {
     });
     expect(items).toEqual([]);
   });
+
+  test('exposes unresolved operation drafts as actionable work', () => {
+    const now = Date.now();
+    const items = buildPendingWorkItems({ operationDrafts: [{
+      id: 'draft-1', draftId: 'draft-1', appId: 'demo', instanceId: null, channel: 'mail', accountId: 'a', accountLabel: '工作邮箱',
+      title: '发送周报', summary: '等待确认', target: {}, content: 'hello', attachments: [], baseVersion: null, revision: 1, status: 'draft',
+      idempotencyKey: 'draft:draft-1', expiresAt: now + 10000, createdAt: now, updatedAt: now, resultRef: null, error: null,
+      actionRefs: { execute: 'demo/execute' }, metadata: {},
+    }] });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ source: 'operation', state: 'attention', actionRef: 'draft-1' });
+  });
 });
