@@ -187,6 +187,21 @@ export function createMossCronScheduler({
     ), null);
   }
 
+  function executionSummary(record) {
+    const lifecycle = record.projectTaskStatus;
+    const status = record.busy ? 'running'
+      : lifecycle === 'failed' || record.projectTaskError ? 'failed'
+        : lifecycle === 'completed' || record.projectTaskCompletedAt ? 'succeeded' : 'unknown';
+    return {
+      sessionId: record.id,
+      title: record.title || record.id,
+      status,
+      startedAt: record.createdAt || null,
+      completedAt: record.projectTaskCompletedAt || (status === 'succeeded' ? record.updatedAt || null : null),
+      summary: record.projectTaskError || record.projectConclusion || record.preview || '',
+    };
+  }
+
   async function createExecution(task, owner) {
     // Copy configuration only, never a previous run's history or runtime.
     const record = createSessionRecord({
@@ -349,6 +364,10 @@ export function createMossCronScheduler({
     return { tasks: (await readCronTaskStore(filePath)).map(task => {
       const owner = ownerFor(task);
       const execution = latestExecutionFor(task.id);
+      const runs = executionsFor(task.id)
+        .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))
+        .slice(0, 10)
+        .map(executionSummary);
       return {
         ...task,
         enabled: task.enabled !== false,
@@ -357,6 +376,10 @@ export function createMossCronScheduler({
         ownerSessionTitle: owner?.title ?? null,
         executionSessionId: execution?.id ?? null,
         executionSessionTitle: execution?.title ?? null,
+        executionComputer: task.desktopHostId === hostId ? '此电脑' : task.desktopHostId || '当前电脑',
+        projectId: owner?.projectId ?? null,
+        projectName: owner?.projectId ? readProjectSync(owner.projectId)?.name || null : null,
+        runs,
         nextRunAt: task.enabled === false ? null : task.nextRunAt ?? nextRunAt(task, task.createdAt ?? now()),
       };
     }) };

@@ -135,6 +135,8 @@ describe('desktop cron lifecycle', () => {
     expect(second.history).toHaveLength(2);
     expect(f.calls.every(call => call.runtimePrompt === 'report')).toBe(true);
     expect((await f.invoke('list')).tasks[0].executionSessionId).toBe(third.id);
+    expect((await f.invoke('list')).tasks[0].runs).toHaveLength(3);
+    expect((await f.invoke('list')).tasks[0].executionComputer).toBe('当前电脑');
     // Restored records need not be ordered by creation time in the session map.
     first.updatedAt = at(9, 12);
     f.sessions.delete(first.id); f.sessions.set(first.id, first);

@@ -96,6 +96,8 @@ export type CronTaskInfo = {
   nextRunAt: number | null; durable?: boolean;
   status?: 'idle' | 'running' | 'failed'; lastError?: string | null;
   lastCompletedAt?: number | null; timezone?: string;
+  executionComputer?: string | null; projectId?: string | null; projectName?: string | null;
+  runs?: Array<{ sessionId: string; title: string; status: 'running' | 'succeeded' | 'failed' | 'unknown'; startedAt: number | null; completedAt: number | null; summary: string }>;
 };
 type CronResult = { ok: boolean; error?: string; sessionId?: string };
 export type SessionCronApi = {
