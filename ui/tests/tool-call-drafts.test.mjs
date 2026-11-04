@@ -29,10 +29,13 @@ test('user policies persist outside packages and separate owner, App, MCP instan
   store.set('alice/app', native, 'draft');
   const restored = new AppToolCallPolicyStore(file);
   assert.equal(restored.get('alice/app', native), 'draft'); assert.equal(restored.get('bob/app', native), 'normal');
-  const mcp = { kind: 'mcp', instanceId: 'one', server: 'mail', toolName: 'send' };
+  const mcp = { kind: 'mcp', instanceId: 'one', server: 'mail', serviceId: 'mcp/one/mail-id', toolName: 'send' };
   restored.set('alice/app', mcp, 'draft'); assert.equal(restored.get('alice/app', { ...mcp, instanceId: 'two' }), 'normal');
+  const stable = { ...mcp, serviceId: 'mcp/one/stable-id' };
+  restored.set('alice/app', stable, 'draft'); assert.equal(restored.get('alice/app', { ...stable, server: 'renamed' }), 'draft');
+  assert.equal(restored.get('alice/app', { ...stable, serviceId: 'mcp/one/recreated-id' }), 'normal');
   assert.throws(() => restored.set('alice/app', mcp, 'allow'));
-  assert.throws(() => restored.get('alice/app', { ...mcp, server: '' }));
+  assert.throws(() => restored.get('alice/app', { ...mcp, serviceId: '' }));
   restored.set('alice/app', native, 'normal'); assert.equal(new AppToolCallPolicyStore(file).get('alice/app', native), 'normal');
 });
 

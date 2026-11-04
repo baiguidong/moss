@@ -169,6 +169,22 @@ try {
   const restoredSetting = page.getByRole('combobox', { name: `${mcpName} 调用方式`, exact: true });
   await until(() => restoredSetting.isEnabled(), 'restored MCP policy'); assert.equal(await restoredSetting.inputValue(), 'draft');
   mark('Abrupt Host restart preserves user settings and receipts, expires lost waiting calls, and never replays pending or unknown operations');
+  await page.evaluate(async ({ app, service }) => {
+    const request = (method, input) => window.agentDesktop.manageAppMcp({ appId: app.id, instanceId: service.instanceId, version: app.currentVersion, method, input });
+    const current = (await request('servers.list', {})).servers.find(s => s.name === service.name);
+    await request('servers.save', { previousName: current.name, name: 'renamed-review', enabled: true, config: current.config });
+    await request('servers.inspect', { name: 'renamed-review' });
+  }, { app: mcpApp, service });
+  await page.reload(); await page.waitForSelector('button'); await openDetails('MCP 调用演示', 'fixture.mcp-review');
+  const renamedSetting = page.getByRole('combobox', { name: `${mcpName} 调用方式`, exact: true });
+  await until(() => renamedSetting.isEnabled(), 'renamed MCP policy'); assert.equal(await renamedSetting.inputValue(), 'draft');
+  const renamedSession = await send('fixture.mcp-review', mcpName, 'MCP 服务改名演示');
+  await until(async () => (await drafts()).some(d => d.toolCall?.sessionId === renamedSession), 'renamed MCP draft');
+  assert.equal(mcpCalls.length, 2);
+  const renamedDraft = (await drafts()).find(d => d.toolCall?.sessionId === renamedSession);
+  await page.evaluate(draft => window.agentDesktop.operationDrafts.cancel({ draftId: draft.id, expectedRevision: draft.revision }), renamedDraft);
+  assert.equal((await finished()).is_error, true);
+  mark('Renaming an MCP service retains its user draft rule through its stable service identity');
   assert.deepEqual(exceptions, []);
   await fs.rm(path.join(output, 'failure.json'), { force: true }); await fs.rm(path.join(output, 'failure.png'), { force: true });
   await fs.writeFile(path.join(output, 'validation.json'), JSON.stringify({ ok: true, checks, exceptions, externalSideEffects: false }, null, 2));

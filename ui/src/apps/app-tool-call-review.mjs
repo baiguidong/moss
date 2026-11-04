@@ -36,7 +36,7 @@ export function createAppToolCallReviewer({ getRuntime, getMcpHost, drafts }) {
         const tool = catalog?.tools.find(t => t.name === input.toolName);
         if (tool?.disabled) throw new Error('MCP 工具已排除。');
         schema = tool?.inputSchema || input.schema;
-        identity = { kind: 'mcp', instanceId: server.provider.instanceId, server: server.localName, toolName: input.toolName };
+        identity = { kind: 'mcp', instanceId: server.provider.instanceId, server: server.localName, serviceId: source.serviceId, toolName: input.toolName };
         binding = { serviceRevision: catalog?.revision, config: server.config, tool: tool || { name: input.toolName, inputSchema: input.schema } };
         title = input.toolName;
       } else throw new Error('未知工具来源。');

@@ -25,7 +25,7 @@ const statusLabels: Record<AppMcpServiceTools['status'], string> = {
 };
 const serviceKey = (service: AppMcpServiceTools) => `${service.instanceId}/${service.name}/${service.revision}`;
 const serviceTools = (services: AppMcpServiceTools[]): AppDetailsMcpTool[] => services.flatMap(service => service.tools.map(tool => ({
-  ...tool, instanceId: service.instanceId, server: service.name,
+  ...tool, instanceId: service.instanceId, serviceId: service.serviceId, server: service.name,
   status: service.catalogStale ? '目录待刷新' : service.status === 'connected' ? '可用' : statusLabels[service.status],
 })));
 
@@ -107,7 +107,7 @@ function ConfiguredMcpPanel({ app, settingsOpen = false, settingsBusy, settingsP
     const cache = cached.find(service => service.name === server.name);
     const tools = server.check?.state === 'connected' ? server.check.tools : cache?.tools || server.check?.tools || [];
     const status = !server.enabled ? '服务已停用' : server.credentialsMissing ? '需补充凭据' : server.check?.state === 'connected' ? '检查通过' : server.check?.state === 'needs-auth' ? '需要授权' : server.check?.state === 'failed' ? '连接失败' : '使用时连接';
-    return tools.map(tool => ({ ...tool, instanceId, server: server.name, disabled: tool.disabled || server.config.disabledTools?.includes(tool.name), status: status === '检查通过' ? '可用' : status }));
+    return tools.map(tool => ({ ...tool, instanceId, serviceId: cache?.serviceId, server: server.name, disabled: tool.disabled || server.config.disabledTools?.includes(tool.name), status: status === '检查通过' ? '可用' : status }));
   }) : serviceTools(cached);
   const canManage = Boolean(app.grants?.includes('mcp:manage')), canConnect = Boolean(app.grants?.includes('mcp:connect'));
   return <div className="space-y-8" data-mcp-management>

@@ -269,7 +269,7 @@ export function registerAppRuntimeIpc(options) {
         const { tools } = await host.listContributions({ appId, kinds: ['tools'], includeUnavailable: true });
         if (!tools.some(tool => tool.id === identity.contributionId && tool.appId === appId)) throw new Error('App 工具不存在。');
       } else {
-        const service = options.getMcpHost?.()?.toolCatalog(appId).find(s => s.instanceId === identity.instanceId && s.name === identity.server);
+        const service = options.getMcpHost?.()?.toolCatalog(appId).find(s => s.instanceId === identity.instanceId && s.name === identity.server && (!identity.serviceId || s.serviceId === identity.serviceId));
         if (!service?.tools.some(tool => tool.name === identity.toolName)) throw new Error('MCP 工具不存在，请刷新工具目录。');
       }
       if (host.currentOwner().key !== owner) throw new Error('账号已变化，请重试。');

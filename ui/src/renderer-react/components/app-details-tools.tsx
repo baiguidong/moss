@@ -6,7 +6,7 @@ import { ToolDescription } from './tool-description';
 import { normalizeAppToolName } from '../../../../packages/app-sdk/src/tool-names.mjs';
 import { toolCallPolicyKey } from '../../../../packages/app-runtime/src/tool-call-policy/identity.mjs';
 
-export type AppDetailsMcpTool = { name: string; description?: string; disabled?: boolean; server: string; instanceId?: string; status?: string };
+export type AppDetailsMcpTool = { name: string; description?: string; disabled?: boolean; server: string; serviceId?: string; instanceId?: string; status?: string };
 
 /** One tool list for native App contributions and MCP services. */
 export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpTools?: AppDetailsMcpTool[] }) {
@@ -39,7 +39,7 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
     })),
     ...mcpTools.map(tool => ({
       key: `mcp/${tool.instanceId || ''}/${tool.server}/${tool.name}`, name: normalizeAppToolName(tool.name, app.id || app.name), title: tool.name,
-      identity: { kind: 'mcp' as const, instanceId: tool.instanceId || '', server: tool.server, toolName: tool.name },
+      identity: { kind: 'mcp' as const, instanceId: tool.instanceId || '', server: tool.server, serviceId: tool.serviceId, toolName: tool.name },
       description: tool.description, kind: 'MCP', effect: '', source: `${appTitle} · ${tool.server}`,
       status: !app.enabled ? 'App 已停用' : tool.disabled ? '已排除' : tool.status || '可用',
     })),
@@ -66,8 +66,8 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
         <div className="flex shrink-0 flex-col items-end gap-2">
           <span className="text-xs leading-6 text-muted-foreground">{tool.status}</span>
           <select aria-label={`${tool.name} 调用方式`} className="h-8 max-w-32 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
-            disabled={!ready || saving !== null || (tool.identity.kind === 'mcp' && !tool.identity.instanceId)}
-            value={tool.identity.kind === 'mcp' && !tool.identity.instanceId ? 'normal' : policies[toolCallPolicyKey(tool.identity)] || 'normal'}
+            disabled={!ready || saving !== null || (tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId))}
+            value={tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId) ? 'normal' : policies[toolCallPolicyKey(tool.identity)] || 'normal'}
             onChange={event => void change(tool.identity, event.target.value as 'normal' | 'draft')}>
             <option value="normal">正常调用</option><option value="draft">草稿确认</option>
           </select>
