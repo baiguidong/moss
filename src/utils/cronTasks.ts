@@ -60,7 +60,7 @@ export type CronTask = {
   /** When true, the task reschedules after firing instead of being deleted. */
   recurring?: boolean
   /**
-   * Desktop persists this flag: false means valid only for desktopHostId.
+   * Desktop always persists tasks, including legacy calls passing false.
    * CLI uses it at runtime only; project-file tasks are implicitly durable.
    */
   durable?: boolean
@@ -71,6 +71,8 @@ export type CronTask = {
   lastError?: string | null
   timezone?: string
   nextRunAt?: number | null
+  /** Desktop: no new execution may start at or after this absolute deadline. */
+  expiresAt?: number
   /**
    * Identifies the creating teammate. CLI routes fires to that teammate's
    * queue; desktop runs tasks in a separate execution conversation.
@@ -208,8 +210,18 @@ export async function addCronTask(
   durable: boolean,
   agentId?: string,
   timezone?: string,
+  expiresAt?: number,
 ): Promise<string> {
   const provider = getSessionRuntimeContext()?.cron
+  const desktopHostId = getDesktopCronHostId()
+  if (expiresAt !== undefined) {
+    if (provider || !desktopHostId) throw new Error('expires_at is supported by Moss Desktop scheduling only.')
+    const now = Date.now()
+    const next = nextCronRunMs(cron, now)
+    if (!Number.isFinite(expiresAt) || expiresAt <= now || next === null || next >= expiresAt) {
+      throw new Error('The task must have a scheduled run before its future expiry time.')
+    }
+  }
   if (provider) return (await provider.create({ cron, prompt, recurring, agentId, timezone })).id
   // Short ID — 8 hex chars is plenty for MAX_JOBS=50, avoids slice/prefix
   // juggling between the tool layer (shows short IDs) and disk.
@@ -220,13 +232,13 @@ export async function addCronTask(
     prompt,
     createdAt: Date.now(),
     ...(recurring ? { recurring: true } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
   }
-  const desktopHostId = getDesktopCronHostId()
   if (desktopHostId) {
     const ownerSessionId = getTaskScopeContext()?.sessionId
     if (!ownerSessionId) throw new Error('Desktop cron requires an owning session.')
     await updateCronTaskStore(getGlobalCronFilePath(), tasks => {
-      tasks.push({ ...task, durable, ownerSessionId, desktopHostId, ...(agentId ? { agentId } : {}) })
+      tasks.push({ ...task, durable: true, ownerSessionId, desktopHostId, ...(agentId ? { agentId } : {}) })
     })
     return id
   }
@@ -333,10 +345,9 @@ export async function listAllCronTasks(dir?: string): Promise<CronTask[]> {
   const desktopHostId = dir === undefined ? getDesktopCronHostId() : undefined
   if (desktopHostId) {
     const ownerSessionId = getTaskScopeContext()?.sessionId
-    return (await readCronTaskStore<CronTask>(getGlobalCronFilePath())).filter(task =>
-      task.ownerSessionId === ownerSessionId &&
-      (task.durable !== false || task.desktopHostId === desktopHostId),
-    )
+    return (await readCronTaskStore<CronTask>(getGlobalCronFilePath()))
+      .filter(task => task.ownerSessionId === ownerSessionId)
+      .map(task => ({ ...task, durable: true }))
   }
   const fileTasks = await readCronTasks(dir)
   if (dir !== undefined) return fileTasks

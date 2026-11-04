@@ -1725,12 +1725,9 @@ export function ComposerPanel({
         skills={skillItems}
         selectedAssistant={selectedAssistant}
         selectedSkills={selectedSkills}
-        skillsLoading={skillsLoading}
         onSelectAssistant={onSelectAssistant}
         onClearAssistant={onClearAssistant}
         onToggleSkill={toggleSelectedSkill}
-        onMoreAssistants={() => openResourcePicker('assistants')}
-        onMoreSkills={() => openResourcePicker('skills')}
       />
     )}
     </>

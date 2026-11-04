@@ -34,12 +34,15 @@ const inputSchema = lazySchema(() =>
         'Standard 5-field cron expression in local time: "M H DoM Mon DoW" (e.g. "*/5 * * * *" = every 5 minutes, "30 14 28 2 *" = Feb 28 at 2:30pm local once).',
       ),
     timezone: z.string().optional().describe('Cloud schedules: IANA timezone, e.g. Asia/Shanghai. Omit to use the server timezone. Desktop uses the computer timezone.'),
+    expires_at: z.iso.datetime({ offset: true }).optional().describe(
+      'Moss Desktop: exclusive end time as ISO 8601 with timezone, e.g. 2026-11-05T00:00:00+08:00 for "today only" on Nov 4. The task stops automatically at this time; do not create a second cleanup task.',
+    ),
     prompt: z.string().describe('The prompt to enqueue at each fire time.'),
     recurring: semanticBoolean(z.boolean().optional()).describe(
-      `true (default) = repeat. Cloud tasks run until cancelled; desktop/CLI tasks expire after ${DEFAULT_MAX_AGE_DAYS} days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.`,
+      `true (default) = repeat. Cloud tasks run until cancelled; desktop tasks stop at expires_at, or after ${DEFAULT_MAX_AGE_DAYS} days if omitted; CLI tasks expire after ${DEFAULT_MAX_AGE_DAYS} days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.`,
     ),
     durable: semanticBoolean(z.boolean().optional()).describe(
-      'Cloud tasks always persist. Desktop/CLI: true = survive restarts; false (default) = only this app/runtime run. Use true when the user requests persistence.',
+      'Desktop and cloud tasks always persist across restarts; this flag is ignored there. Use expires_at for a desktop validity deadline. CLI only: true persists, false (default) is session-only.',
     ),
   }),
 )
@@ -51,6 +54,7 @@ const outputSchema = lazySchema(() =>
     humanSchedule: z.string(),
     recurring: z.boolean(),
     durable: z.boolean().optional(),
+    expiresAt: z.number().optional(),
   }),
 )
 type OutputSchema = ReturnType<typeof outputSchema>
@@ -93,8 +97,21 @@ export const CronCreateTool = buildTool({
         errorCode: 2,
       }
     }
+    if (input.expires_at !== undefined) {
+      if (!getDesktopCronHostId() || getSessionRuntimeContext()?.cron) {
+        return { result: false, message: 'expires_at is supported by Moss Desktop scheduling only.', errorCode: 5 }
+      }
+      const expiresAt = Date.parse(input.expires_at)
+      const next = nextCronRunMs(input.cron, Date.now())
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || next === null || next >= expiresAt) {
+        return { result: false, message: 'expires_at must be in the future, with at least one scheduled run strictly before it.', errorCode: 6 }
+      }
+    }
     const tasks = await listAllCronTasks()
-    if (tasks.length >= MAX_JOBS) {
+    const activeTasks = getDesktopCronHostId()
+      ? tasks.filter(task => task.status !== 'expired' && (task.expiresAt === undefined || task.expiresAt > Date.now()))
+      : tasks
+    if (activeTasks.length >= MAX_JOBS) {
       return {
         result: false,
         message: `Too many scheduled jobs (max ${MAX_JOBS}). Cancel one first.`,
@@ -103,7 +120,7 @@ export const CronCreateTool = buildTool({
     }
     // Teammates don't persist across sessions, so a durable teammate cron
     // would orphan on restart (agentId would point to a nonexistent teammate).
-    if (input.durable && getTeammateContext() && !getSessionRuntimeContext()?.cron) {
+    if (input.durable && getTeammateContext() && !getSessionRuntimeContext()?.cron && !getDesktopCronHostId()) {
       return {
         result: false,
         message:
@@ -113,11 +130,12 @@ export const CronCreateTool = buildTool({
     }
     return { result: true }
   },
-  async call({ cron, prompt, recurring = true, durable = false, timezone }) {
-    // Kill switch forces session-only; schema stays stable so the model sees
-    // no validation errors when the gate flips mid-session.
+  async call({ cron, prompt, recurring = true, durable, timezone, expires_at }) {
+    // Desktop/cloud always persist, including older callers passing false.
+    // The durability feature gate only controls CLI storage.
     const cloud = Boolean(getSessionRuntimeContext()?.cron)
-    const effectiveDurable = cloud || (durable && isDurableCronEnabled())
+    const effectiveDurable = cloud || Boolean(getDesktopCronHostId()) || (Boolean(durable) && isDurableCronEnabled())
+    const expiresAt = expires_at === undefined ? undefined : Date.parse(expires_at)
     const id = await addCronTask(
       cron,
       prompt,
@@ -125,12 +143,11 @@ export const CronCreateTool = buildTool({
       effectiveDurable,
       getTeammateContext()?.agentId,
       timezone,
+      expiresAt,
     )
     // Enable the scheduler so the task fires in this session. The
-    // useScheduledTasks hook polls this flag and will start watching
-    // on the next tick. For durable: false tasks the file never changes
-    // — check() reads the session store directly — but the enable flag
-    // is still what starts the tick loop.
+    // useScheduledTasks hook polls this flag and starts watching on the
+    // next tick; desktop tasks are already in the persistent shared store.
     if (!cloud) setScheduledTasksEnabled(true)
     return {
       data: {
@@ -138,6 +155,7 @@ export const CronCreateTool = buildTool({
         humanSchedule: cronToHuman(cron),
         recurring,
         durable: effectiveDurable,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
       },
     }
   },
@@ -147,18 +165,19 @@ export const CronCreateTool = buildTool({
       content: `Created cloud task ${output.id} (${output.humanSchedule}). Persistent; runs on Moss Server while desktop is offline. ${output.recurring ? 'Repeats until cancelled.' : 'Removed after successful execution.'} Failures pause the task for review.`,
     }
     const where = getDesktopCronHostId()
-      ? output.durable
-        ? 'Saved by Moss Desktop; survives restarts. Runs while the desktop app is running.'
-        : 'Valid only during this desktop app run; removed after the app restarts.'
+      ? 'Saved by Moss Desktop; survives restarts. Runs while the desktop app is running.'
       : output.durable
       ? 'Persisted to .moss/scheduled_tasks.json'
       : 'Session-only (not written to disk, dies when Claude exits)'
+    const lifetime = output.expiresAt !== undefined
+      ? `Stops automatically at ${new Date(output.expiresAt).toISOString()} and remains listed as expired. No cleanup task is needed.`
+      : `Auto-expires after ${DEFAULT_MAX_AGE_DAYS} days.`
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
       content: output.recurring
-        ? `Scheduled recurring job ${output.id} (${output.humanSchedule}). ${where}. Auto-expires after ${DEFAULT_MAX_AGE_DAYS} days. Use CronDelete to cancel sooner.`
-        : `Scheduled one-shot task ${output.id} (${output.humanSchedule}). ${where}. It will fire once then auto-delete.`,
+        ? `Scheduled recurring job ${output.id} (${output.humanSchedule}). ${where} ${lifetime} Use CronDelete to cancel sooner.`
+        : `Scheduled one-shot task ${output.id} (${output.humanSchedule}). ${where} It will fire once then auto-delete.${output.expiresAt !== undefined ? ` ${lifetime}` : ''}`,
     }
   },
   renderToolUseMessage: renderCreateToolUseMessage,

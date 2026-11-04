@@ -90,13 +90,29 @@ export function createMossCronScheduler({
   let stopped = false;
   let ticking = false;
 
+  function expiresAt(task) {
+    if (Number.isFinite(task.expiresAt)) return task.expiresAt;
+    return task.recurring && !task.controlAccount && Number.isFinite(task.createdAt)
+      ? task.createdAt + recurringMaxAge : Infinity;
+  }
+
+  function hasExpired(task) { return now() >= expiresAt(task); }
+
+  function expireTask(task) {
+    if (!hasExpired(task)) return false;
+    task.enabled = false;
+    task.nextRunAt = null;
+    if (!task.runId) task.status = 'expired';
+    return true;
+  }
+
   function nextRunAt(task, fromMs) {
     const fields = parseMossCronExpression(task.cron);
     if (!fields) return null;
     const cursor = new Date(fromMs);
     cursor.setSeconds(0, 0);
     cursor.setMinutes(cursor.getMinutes() + 1);
-    const limit = fromMs + 366 * 24 * 60 * 60 * 1000;
+    const limit = Math.min(fromMs + 366 * 24 * 60 * 60 * 1000, expiresAt(task) - 1);
     while (cursor.getTime() <= limit) {
       if (mossCronMatches(fields, cursor)) return cursor.getTime();
       cursor.setMinutes(cursor.getMinutes() + 1);
@@ -151,8 +167,8 @@ export function createMossCronScheduler({
             const creation = legacyCreation(task);
             if (creation) Object.assign(task, creation);
             else {
-              // Preserve unidentifiable legacy records for review, never
-              // silently turn an old session-only reminder into a durable job.
+              // Preserve unidentifiable legacy records, but require ownership
+              // review before resuming their execution.
               task.durable = true;
               task.ownerSessionId ||= bindings[task.id];
               task.enabled = false;
@@ -160,10 +176,8 @@ export function createMossCronScheduler({
               task.lastError = '旧任务缺少生命周期信息，请检查后重新启用。';
             }
           }
-          if (task.durable === false && task.desktopHostId !== hostId) {
-            tasks.splice(index, 1);
-            continue;
-          }
+          // Desktop tasks always survive restarts, including old session-only records.
+          task.durable = true;
           if (task.runId && task.runHostId !== hostId) {
             task.enabled = false;
             task.status = 'failed';
@@ -171,6 +185,7 @@ export function createMossCronScheduler({
             delete task.runId;
             delete task.runHostId;
           }
+          if (expireTask(task)) continue;
           if (!Number.isFinite(task.nextRunAt)) {
             task.nextRunAt = nextRunAt(task, task.lastCompletedAt ?? task.lastFiredAt ?? task.createdAt ?? now());
           }
@@ -245,9 +260,9 @@ export function createMossCronScheduler({
     const claimed = await updateCronTaskStore(filePath, tasks => {
       const task = tasks.find(entry => entry.id === taskId);
       if (!task) { if (manual) throw new Error('Task not found.'); return null; }
+      if (expireTask(task)) return null;
       if (!canRun(task)) { if (manual) throw new Error('此电脑或任务的企业账号已暂停。'); return null; }
       if (stopped || task.runId) { if (manual) throw new Error('定时任务正在执行或调度器已停止。'); return null; }
-      if (task.durable === false && task.desktopHostId !== hostId) return null;
       if (!manual && (task.enabled === false || !Number.isFinite(task.nextRunAt) || task.nextRunAt > now())) return null;
       const owner = ownerFor(task);
       if (!owner) { if (manual) throw new Error('归属会话不存在，不能执行该任务。'); return null; }
@@ -265,10 +280,10 @@ export function createMossCronScheduler({
       execution = await createExecution(claimed, ownerFor(claimed));
       // Recheck deletion/pause after async session creation, before starting work.
       const current = (await readCronTaskStore(filePath)).find(task => task.id === taskId);
-      if (!current || !canRun(current) || (!manual && current.enabled === false) || stopped) {
+      if (!current || hasExpired(current) || !canRun(current) || (!manual && current.enabled === false) || stopped) {
         await updateCronTaskStore(filePath, tasks => {
           const task = tasks.find(entry => entry.id === taskId && entry.runId === runId);
-          if (task) { delete task.runId; delete task.runHostId; task.status = 'idle'; }
+          if (task) { delete task.runId; delete task.runHostId; task.status = 'idle'; expireTask(task); }
         });
         return null;
       }
@@ -290,6 +305,7 @@ export function createMossCronScheduler({
         Object.assign(task, { status: 'idle', lastError: null, lastCompletedAt: now(), nextRunAt: nextRunAt(task, now()) });
         delete task.runId;
         delete task.runHostId;
+        expireTask(task);
       });
       return execution;
     } catch (error) {
@@ -302,6 +318,7 @@ export function createMossCronScheduler({
         task.lastError = error instanceof Error ? error.message : String(error);
         delete task.runId;
         delete task.runHostId;
+        expireTask(task);
       });
       throw error;
     }
@@ -320,26 +337,26 @@ export function createMossCronScheduler({
     if (stopped || ticking) return;
     ticking = true;
     try {
-      const currentTasks = await readCronTaskStore(filePath);
-      if (!currentTasks.some(task => task.enabled !== false || task.runId)) {
-        clearInterval(timer); timer = null;
-        return;
-      }
       await initialize();
       await updateCronTaskStore(filePath, tasks => {
         for (let index = tasks.length - 1; index >= 0; index--) {
           const task = tasks[index];
+          task.durable = true;
+          if (expireTask(task)) continue;
           if (task.runId) continue;
-          const staleSession = task.durable === false && task.desktopHostId !== hostId;
-          const expired = !task.controlAccount && task.enabled !== false && task.recurring && now() - task.createdAt > recurringMaxAge;
-          if (staleSession || expired || (task.ownerSessionId && !sessions.has(task.ownerSessionId))) {
+          if (task.ownerSessionId && !sessions.has(task.ownerSessionId)) {
             tasks.splice(index, 1);
             continue;
           }
           if (!Number.isFinite(task.nextRunAt)) task.nextRunAt = nextRunAt(task, task.createdAt ?? now());
         }
       });
-      for (const task of await readCronTaskStore(filePath)) {
+      const currentTasks = await readCronTaskStore(filePath);
+      if (!currentTasks.some(task => task.enabled !== false || task.runId)) {
+        clearInterval(timer); timer = null;
+        return;
+      }
+      for (const task of currentTasks) {
         if (stopped || !canRun()) return;
         if (!canRun(task) || task.enabled === false || task.runId || activeRuns.has(task.id)) continue;
         if (Number.isFinite(task.nextRunAt) && task.nextRunAt <= now()) {
@@ -382,7 +399,11 @@ export function createMossCronScheduler({
 
   ipcMain.handle('agent:cron-list', async () => {
     await initialize();
-    return { tasks: (await readCronTaskStore(filePath)).map(task => {
+    const tasks = await updateCronTaskStore(filePath, tasks => {
+      for (const task of tasks) expireTask(task);
+      return tasks;
+    });
+    return { tasks: tasks.map(task => {
       const owner = ownerFor(task);
       const execution = latestExecutionFor(task.id);
       const history = new Map((task.runHistory || []).map(run => [run.sessionId, run]));
@@ -393,6 +414,7 @@ export function createMossCronScheduler({
       return {
         ...task,
         enabled: task.enabled !== false,
+        expiresAt: Number.isFinite(expiresAt(task)) ? expiresAt(task) : null,
         orphaned: !owner,
         ownerSessionId: owner?.id ?? null,
         ownerSessionTitle: owner?.title ?? null,
@@ -424,6 +446,7 @@ export function createMossCronScheduler({
       const task = tasks.find(entry => entry.id === taskId);
       if (!task) return { ok: false, error: 'Task not found.' };
       if (task.controlAccount) throw new Error('请在企业工作电脑管理中修改定时任务。');
+      if (expireTask(task)) return { ok: false, error: '任务已到期，请新建任务。' };
       if (enabled && !task.enabled) {
         task.nextRunAt = task.lastError ? now() : nextRunAt(task, now());
         task.lastError = null;
@@ -438,7 +461,7 @@ export function createMossCronScheduler({
     try {
       // Await completion: a successful dispatch is not a successful run.
       const execution = await launch(taskId, true);
-      return execution ? { ok: true, sessionId: execution.id } : { ok: false, error: '任务未执行。' };
+      return execution ? { ok: true, sessionId: execution.id } : { ok: false, error: '任务已到期或当前不可执行。' };
     } catch (error) { return { ok: false, error: error?.message || String(error) }; }
   });
 
@@ -448,6 +471,7 @@ export function createMossCronScheduler({
       for (const task of tasks) {
         task.nextRunAt = nextRunAt(task, now());
         if (task.runId) { task.enabled = false; task.status = 'failed'; task.lastError = '环境已恢复，请检查历史任务结果后手动重试。'; delete task.runId; delete task.runHostId; }
+        expireTask(task);
       }
     });
   }

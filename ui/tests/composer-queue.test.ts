@@ -94,6 +94,7 @@ function dispatchHarness(items: QueuedMessage[], host: any, dispatch?: any) {
     React: { useRef: (current: any) => ({ current }), useEffect: (fn: any) => fn(), useCallback: (fn: any) => fn },
     reconcileQueuedMessages, stopQueuedMessages, activeSessionIdRef: { current: 'another-session' },
     selectedAssistant: null, resourceContext: (resource: any) => resource,
+    resourceUses: [] as any[], recordHomeResourceUse: (...args: any[]) => { state.resourceUses.push(args); },
     setPendingSendRequests: (_update: any) => {}, receive: (_event: any) => {},
     queuedMessagesRef: { current: { session: items } }, queueEpochs: { current: new Map() },
     removedSessionIdsRef: { current: new Set() }, cleanIpcErrorMessage: (error: Error) => error.message,
@@ -104,6 +105,18 @@ function dispatchHarness(items: QueuedMessage[], host: any, dispatch?: any) {
   return state;
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('successful queued sends record their own resources while failed sends do not count', async () => {
+  const summary = { id: 'session', projectId: 'project', assistantName: 'expert' };
+  for (const result of [{ ok: true, summary }, { ok: false, error: 'failed' }, { ok: true, interrupted: true }]) {
+    const state = dispatchHarness([queued], {
+      getSession: async () => ({ workspace: '/work', busy: false }),
+      send: async () => result,
+    });
+    state.flush('session'); await settle();
+    expect(state.resourceUses).toEqual('summary' in result ? [[summary, queued.skills, queued.id]] : []);
+  }
+});
 
 test('a received queued message disappears while the Agent is still running, even in another session', async () => {
   let finish!: () => void;

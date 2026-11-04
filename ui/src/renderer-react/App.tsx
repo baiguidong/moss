@@ -30,6 +30,7 @@ import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
 import { firstMessageTitle, historyWithPendingFirstMessage, type PendingFirstMessage } from '@/lib/pending-first-message';
+import { initializeHomeResourceUsage, recordHomeResourceUse } from '@/lib/home-resource-usage';
 import { SessionTerminalActions } from '@/components/session-terminal-actions';
 import { SessionInfoButton } from '@/components/session-info';
 import { GlobalSessionSearch } from '@/components/global-session-search';
@@ -623,6 +624,7 @@ export default function App() {
   const refreshSummaries = React.useCallback(async () => {
     const list = await window.agentDesktop.listSessions();
     const visible = excludeRemovedSessions(list, removedSessionIdsRef.current);
+    initializeHomeResourceUsage(visible);
     setSummaries(visible);
     return visible;
   }, []);
@@ -2012,7 +2014,7 @@ export default function App() {
       // Direct composer sends carry an ID for transcript receipts but have no
       // queue entry. Only enforce the dispatching guard for actual queue items.
       if (queuedItem && queuedItem.status !== 'dispatching') return;
-      await window.agentDesktop.send({
+      const result = await window.agentDesktop.send({
         sessionId,
         clientMessageId,
         prompt,
@@ -2024,6 +2026,7 @@ export default function App() {
         files: files?.filter((file) => !file.resource).map((file) => file.path),
         resources: files?.flatMap((file) => file.resource ? [file.resource] : []),
       });
+      if (result?.ok && 'summary' in result) recordHomeResourceUse(result.summary, skills, clientMessageId);
     } finally {
       setPendingSendRequests(previous => {
         if (previous.get(sessionId) !== request) return previous;
@@ -2299,6 +2302,7 @@ export default function App() {
     const sessionId = activeSessionId;
     if (!sessionId) throw new Error('请先打开主会话。');
     const originalInput = inputDraftRef.current;
+    const usageSession = activeDetailRef.current;
     const epoch = queueEpochs.current.get(sessionId) ?? 0;
     const key = `${sessionId}:${kind}`;
     const previous = interactionRequests.current.get(key);
@@ -2322,6 +2326,9 @@ export default function App() {
       throw new Error('消息接收状态未确认，内容已保留。');
     }
     if (interactionRequests.current.get(key) === request) interactionRequests.current.delete(key);
+    if (kind === 'steer' && usageSession?.id === sessionId && ['accepted', 'consumed', 'running', 'completed'].includes(result.status)) {
+      recordHomeResourceUse(usageSession, details?.skills, request.id);
+    }
     if (kind === 'steer' && activeSessionIdRef.current === sessionId && inputDraftRef.current === originalInput) setInput('');
   }, [activeSessionId, composerIntent, activeDetail?.workspace, updateQueue]);
 
@@ -3230,9 +3237,7 @@ export default function App() {
                 homeComposerMode={homeComposerMode}
                 homeShortcuts={!draftProject ? {
                   projects,
-                  sessions: summaries,
                   onOpenProject: handleNewProjectSession,
-                  onOpenProjects: () => { setActiveProjectId(null); setActiveView('projects'); },
                 } : undefined}
                 sessionTitle=""
                 sessionWorkspace={undefined}

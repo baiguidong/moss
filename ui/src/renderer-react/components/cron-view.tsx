@@ -5,15 +5,38 @@ import {
   AlarmClock,
   Pause,
   Play,
+  Power,
+  LoaderCircle,
   RefreshCw,
   Trash2,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { CronTaskInfo } from '@/lib/desktop-api-types';
+
+function CronActionButton({ label, hint = label, disabled = false, destructive = false, onClick, children }: {
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  destructive?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <span className="inline-flex" tabIndex={disabled ? 0 : undefined} aria-label={disabled ? hint : undefined}>
+        <button type="button" aria-label={label} disabled={disabled} onClick={onClick}
+          className={cn('cursor-pointer rounded-md p-1.5 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40',
+            destructive ? 'hover:text-destructive' : 'hover:text-foreground')}>
+          {children}
+        </button>
+      </span>
+    </TooltipTrigger>
+    <TooltipContent side="top" sideOffset={6}>{hint}</TooltipContent>
+  </Tooltip>;
+}
 
 function formatCronTime(ms: number | null, timezone?: string) {
   if (!ms) return "—";
@@ -112,7 +135,7 @@ export function CronView({ onOpenSession }: CronViewProps) {
             <AlarmClock className="h-4.5 w-4.5" />
           </span>
           <div className="min-w-0 flex-1">
-<div className="text-sm font-medium text-foreground">此电脑的定时任务</div>
+            <div className="text-sm font-medium text-foreground">定时任务</div>
             <div className="truncate text-xs text-muted-foreground">
               {tasks.length} 个任务
               {orphanCount > 0 ? ` · ${orphanCount} 个已孤立` : ""}
@@ -134,7 +157,6 @@ export function CronView({ onOpenSession }: CronViewProps) {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto w-full max-w-[980px] px-4 py-4 sm:px-6">
-          <div className="mb-3 text-xs text-muted-foreground">由当前电脑执行，请保持电脑上的 Moss 服务运行。</div>
           {loadError && <div role="alert" className="mb-3 text-sm text-destructive">{loadError}</div>}
           {connectionNotice && <div role="status" className="mb-3 rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">{connectionNotice}</div>}
           {tasks.length === 0 && !loadError && !connectionNotice ? (
@@ -153,12 +175,16 @@ export function CronView({ onOpenSession }: CronViewProps) {
               {tasks.map((task) => (
                 <div
                   key={task.id}
-                  className="rounded-[20px] border border-border/70 bg-card/80 px-4 py-3 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.5)]"
+                  className="group/task cursor-pointer rounded-[20px] border border-border/70 bg-card/80 px-4 py-3 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.5)]"
+                  onClick={event => {
+                    if ((event.target as HTMLElement).closest('button, a, [data-slot="tooltip-trigger"], [data-cron-task-details]')) return;
+                    setExpandedTaskId(current => current === task.id ? null : task.id);
+                  }}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <button type="button" className="rounded-md p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground" aria-label={`${expandedTaskId === task.id ? '收起' : '展开'}自动化详情`} onClick={() => setExpandedTaskId(current => current === task.id ? null : task.id)}>
-                      {expandedTaskId === task.id ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                    </button>
+                  <button type="button" className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg text-left transition-colors group-hover/task:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={`${expandedTaskId === task.id ? '收起' : '展开'}任务详情：${task.prompt}`}
+                    aria-expanded={expandedTaskId === task.id} aria-controls={`cron-task-details-${task.id}`}
+                    onClick={() => setExpandedTaskId(current => current === task.id ? null : task.id)}>
                     <span
                       className={cn(
                         "inline-block h-2.5 w-2.5 shrink-0 rounded-full",
@@ -181,9 +207,9 @@ export function CronView({ onOpenSession }: CronViewProps) {
                             : "bg-muted/60 text-muted-foreground",
                       )}
                     >
-                      {task.orphaned ? "已孤立" : task.status === 'running' || pendingRuns.has(task.id) ? "运行中" : task.status === 'failed' ? "执行失败" : task.enabled ? "待执行" : "已暂停"}
+                      {task.orphaned ? "已孤立" : task.status === 'running' || pendingRuns.has(task.id) ? "运行中" : task.status === 'expired' ? "已到期" : task.status === 'failed' ? "执行失败" : task.enabled ? "待执行" : "已暂停"}
                     </span>
-                  </div>
+                  </button>
                   <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pl-5 text-xs text-muted-foreground">
                     <span>
                       归属：
@@ -202,7 +228,7 @@ export function CronView({ onOpenSession }: CronViewProps) {
                       )}
                     </span>
                     <span>{task.recurring ? "循环任务" : "一次性任务"}</span>
-                    <span>{task.durable === false ? "本次桌面运行有效" : "重启后保留"}</span>
+                    {task.expiresAt && <span>有效期至：{formatCronTime(task.expiresAt, task.timezone)}</span>}
                     <span>执行电脑：{task.executionComputer || '当前电脑'}</span>
                     {task.projectName && <span>项目：{task.projectName}</span>}
                     {task.executionSessionId && onOpenSession ? (
@@ -219,36 +245,33 @@ export function CronView({ onOpenSession }: CronViewProps) {
                     <span>上次开始：{formatCronTime(task.lastFiredAt, task.timezone)}</span>
                     <span>上次完成：{formatCronTime(task.lastCompletedAt ?? null, task.timezone)}</span>
                     <span className="ml-auto flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        className="rounded-md p-1.5 transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                        title="立即执行"
-                        disabled={task.orphaned || task.status === 'running' || pendingRuns.has(task.id)}
+                      <CronActionButton
+                        label="立即运行"
+                        hint={task.status === 'expired' ? '任务已到期' : task.orphaned ? '归属会话不可用，无法运行' : task.status === 'running' || pendingRuns.has(task.id) ? '任务正在运行' : '立即运行一次'}
+                        disabled={task.status === 'expired' || task.orphaned || task.status === 'running' || pendingRuns.has(task.id)}
                         onClick={() => void handleRunNow(task)}
                       >
-                        <Play className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md p-1.5 transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                        title={task.enabled ? "暂停" : "启用"}
-                        disabled={task.orphaned}
+                        {task.status === 'running' || pendingRuns.has(task.id) ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                      </CronActionButton>
+                      <CronActionButton
+                        label={task.enabled ? '暂停定时任务' : '启用定时任务'}
+                        hint={task.status === 'expired' ? '任务已到期，请新建任务' : task.orphaned ? '归属会话不可用，无法更改状态' : task.enabled ? '暂停定时任务，不再自动触发' : '启用定时任务，按计划自动运行'}
+                        disabled={task.status === 'expired' || task.orphaned}
                         onClick={() => void handleToggle(task)}
                       >
-                        {task.enabled ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 text-emerald-500" />}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md p-1.5 transition-colors hover:bg-muted/60 hover:text-destructive"
-                        title="删除任务"
+                        {task.enabled ? <Pause className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5 text-emerald-500" />}
+                      </CronActionButton>
+                      <CronActionButton
+                        label="删除任务"
+                        destructive
                         onClick={() => void handleRemove(task)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      </CronActionButton>
                     </span>
                   </div>
                   {task.lastError && <div role="alert" className="mt-2 pl-5 text-xs text-destructive">{task.lastError}</div>}
-                  {expandedTaskId === task.id && <div className="mt-3 ml-5 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                  {expandedTaskId === task.id && <div id={`cron-task-details-${task.id}`} data-cron-task-details className="mt-3 ml-5 cursor-auto rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
                     <div className="grid gap-2 text-muted-foreground sm:grid-cols-2"><span>触发器：Cron · {task.cron}</span><span>时区：{task.timezone || '系统时区'}</span><span>关联项目：{task.projectName || '未关联项目'}</span><span>执行电脑：{task.executionComputer || '当前电脑'}</span></div>
                     <div className="mt-3 border-t border-border/50 pt-3"><p className="mb-2 font-medium text-foreground">最近运行</p>{task.runs?.length ? <div className="space-y-1.5">{task.runs.map(run => <div key={run.sessionId} className="flex flex-wrap items-center gap-2"><span className={cn('h-1.5 w-1.5 rounded-full', run.status === 'succeeded' ? 'bg-emerald-500' : run.status === 'failed' ? 'bg-destructive' : run.status === 'running' ? 'bg-primary' : 'bg-muted-foreground')} /><span className="text-foreground">{run.status === 'succeeded' ? '成功' : run.status === 'failed' ? '失败' : run.status === 'running' ? '运行中' : '结果未知'}</span><span>{formatCronTime(run.startedAt)}</span>{run.summary && <span className="min-w-0 flex-1 truncate" title={run.summary}>{run.summary}</span>}{onOpenSession && <button type="button" className="text-primary hover:underline" onClick={() => onOpenSession(run.sessionId)}>打开会话</button>}</div>)}</div> : <p className="text-muted-foreground">还没有运行记录。</p>}</div>
                   </div>}

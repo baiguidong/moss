@@ -5,6 +5,7 @@ import {
   isCronEnabled,
 } from '../../tools/ScheduleCronTool/prompt.js'
 import { registerBundledSkill } from '../bundledSkills.js'
+import { getDesktopCronHostId } from '../../utils/cronTasks.js'
 
 const DEFAULT_INTERVAL = '10m'
 
@@ -23,6 +24,9 @@ Examples:
   /loop check the deploy every 20m`
 
 function buildPrompt(args: string): string {
+  const lifetime = getDesktopCronHostId()
+    ? `All desktop tasks survive app restarts; there is no session-only mode and durable is ignored. If the user says "today only" or supplies an end time, set expires_at on this SAME task (ISO 8601 with the local UTC offset; today ends at next local midnight). Create exactly one task for one recurring request. Do not create a second cleanup/CronDelete task, and do not add date-checking instructions to the reminder prompt. Confirm the requested deadline instead of the default ${DEFAULT_MAX_AGE_DAYS}-day limit.`
+    : `Recurring tasks auto-expire after ${DEFAULT_MAX_AGE_DAYS} days. Follow CronCreate's host-specific persistence rules.`
   return `# /loop — schedule a recurring prompt
 
 Parse the input below into \`[interval] <prompt…>\` and schedule it with ${CRON_CREATE_TOOL_NAME}.
@@ -59,11 +63,13 @@ Supported suffixes: \`s\` (seconds, rounded up to nearest minute, min 1), \`m\` 
 
 ## Action
 
+${lifetime}
+
 1. Call ${CRON_CREATE_TOOL_NAME} with:
    - \`cron\`: the expression from the table above
    - \`prompt\`: the parsed prompt from above, verbatim (slash commands are passed through unchanged)
    - \`recurring\`: \`true\`
-2. Briefly confirm: what's scheduled, the cron expression, the human-readable cadence, that recurring tasks auto-expire after ${DEFAULT_MAX_AGE_DAYS} days, and that they can cancel sooner with ${CRON_DELETE_TOOL_NAME} (include the job ID).
+2. Briefly confirm: what's scheduled, the human-readable cadence, its actual end time or default expiry, and that they can cancel sooner with ${CRON_DELETE_TOOL_NAME} (include the job ID).
 3. **Then immediately execute the parsed prompt now** — don't wait for the first cron fire. If it's a slash command, invoke it via the Skill tool; otherwise act on it directly.
 
 ## Input

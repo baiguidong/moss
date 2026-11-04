@@ -14,8 +14,8 @@ export function isCronEnabled(): boolean {
 }
 
 /**
- * Kill switch for disk-persistent (durable) cron tasks. Narrower than
- * Durable cron remains available whenever cron scheduling is enabled.
+ * CLI feature gate for disk-persistent cron tasks. Desktop and cloud
+ * scheduling persist independently of this flag.
  */
 export function isDurableCronEnabled(): boolean {
   return isCronEnabled()
@@ -27,7 +27,7 @@ export const CRON_LIST_TOOL_NAME = 'CronList'
 
 export function buildCronCreateDescription(durableEnabled: boolean): string {
   if (getSessionRuntimeContext()?.cron) return 'Schedule a persistent prompt on Moss Server, including when desktop is offline.'
-  if (getDesktopCronHostId()) return 'Schedule a prompt through Moss Desktop. Runs while the app is running; durable: true survives app restarts.'
+  if (getDesktopCronHostId()) return 'Schedule a prompt through Moss Desktop. Survives app restarts by default; expires_at limits its validity without a separate cleanup task.'
   return durableEnabled
     ? 'Schedule a prompt to run at a future time — either recurring on a cron schedule, or once at a specific time. Pass durable: true to persist to .moss/scheduled_tasks.json; otherwise session-only.'
     : 'Schedule a prompt to run at a future time within this Claude session — either recurring on a cron schedule, or once at a specific time.'
@@ -42,9 +42,11 @@ Returns a task ID for CronDelete. The desktop cloud task list shows status and t
   if (getDesktopCronHostId()) {
     return `Schedule a recurring or one-shot prompt through Moss Desktop using a standard 5-field cron expression in the computer's local timezone.
 The desktop app must be running, but its window may be closed. The scheduler creates a separate execution conversation with the owner's workspace, project, connectors and permission mode; include the instructions needed to perform the task in prompt.
-durable: false (default) is valid only during this desktop app run. durable: true persists in the desktop cron_tasks.json and survives app restarts; use it only when the user asks for a persistent schedule.
+All desktop tasks persist across app restarts. There is no session-only desktop task; durable is ignored. A short interval or "today only" does not change persistence.
+For "today only", "until tonight", or another end date/time, create ONE task with expires_at (ISO 8601 including the local UTC offset). For example, every 5 minutes on 2026-11-04 in Asia/Shanghai: cron: "*/5 * * * *", recurring: true, durable: true, expires_at: "2026-11-05T00:00:00+08:00". The deadline is exclusive; the scheduler stops new runs at that instant, including after restart or missed occurrences, and retains the task as expired.
+Do not create a second CronDelete/cleanup task or put date-checking instructions into the reminder prompt. Keep prompt focused on the requested reminder. Preserve the user's end date; never substitute an app restart for that date.
 Missed occurrences are coalesced into one catch-up execution. A busy task waits until its execution conversation is free. A failed or interrupted execution pauses the task for manual review/retry; one-shot tasks are removed only after success.
-recurring: false runs once at the next matching date. Pin the minute, hour, day and month for a specific reminder. Recurring tasks expire after ${DEFAULT_MAX_AGE_DAYS} days. Tell the user about this limit.
+recurring: false runs once at the next matching date. Pin the minute, hour, day and month for a specific reminder. Without expires_at, recurring tasks expire after ${DEFAULT_MAX_AGE_DAYS} days. Confirm the actual end time when supplied; otherwise tell the user about the default limit.
 Returns a job ID for ${CRON_DELETE_TOOL_NAME}.`
   }
   const durabilitySection = durableEnabled
@@ -107,7 +109,7 @@ export function buildCronDeletePrompt(durableEnabled: boolean): string {
 export const CRON_LIST_DESCRIPTION = 'List scheduled cron jobs'
 export function buildCronListPrompt(durableEnabled: boolean): string {
   if (getSessionRuntimeContext()?.cron) return 'List cloud scheduled tasks owned by this conversation, including paused tasks and errors.'
-  if (getDesktopCronHostId()) return 'List tasks owned by this conversation in Moss Desktop, including durable tasks and tasks valid only during this app run.'
+  if (getDesktopCronHostId()) return 'List tasks owned by this conversation in Moss Desktop, including paused and expired tasks. All tasks survive app restarts.'
   return durableEnabled
     ? `List all cron jobs scheduled via ${CRON_CREATE_TOOL_NAME}, both durable (.moss/scheduled_tasks.json) and session-only.`
     : `List all cron jobs scheduled via ${CRON_CREATE_TOOL_NAME} in this session.`

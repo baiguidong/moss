@@ -76,7 +76,7 @@ async function fixture(tasks: any[], options: any = {}) {
   await updateCronTaskStore(filePath, list => list.push(...tasks));
   let time = options.now ?? at(9, 6);
   const sessions = new Map<string, any>([
-    ['owner', { id: 'owner', title: 'Source', workspace: '/workspace', agentMode: 'local', permissionMode: 'default', history: options.history || [] }],
+    ['owner', { id: 'owner', title: 'Source', workspace: '/workspace', agentMode: 'local', permissionMode: 'default', history: options.history || [], ...options.owner }],
   ]);
   const calls: any[] = [];
   function create(hostId = 'desktop-1') {
@@ -92,7 +92,7 @@ async function fixture(tasks: any[], options: any = {}) {
         sessions.set(record.id, record);
         return record;
       },
-      linkSessionToProject: async () => {}, readProjectSync: () => null,
+      linkSessionToProject: options.linkSessionToProject || (async () => {}), readProjectSync: () => options.project || null,
       runSessionPrompt: async input => { calls.push(input); return options.run?.(input); },
     });
     cleanups.push(async () => scheduler.stop());
@@ -208,15 +208,104 @@ describe('desktop cron lifecycle', () => {
     expect(f.calls).toHaveLength(1);
   });
 
-  test('expires session-only tasks from a previous desktop run, preserving current and durable tasks', async () => {
+  test('preserves and persists all tasks across restarts, including legacy session-only tasks', async () => {
     const f = await fixture([
       job({ id: 'old', durable: false, desktopHostId: 'desktop-old' }),
       job({ id: 'current', durable: false, desktopHostId: 'desktop-1' }),
       job({ id: 'durable', desktopHostId: 'desktop-old' }),
     ]);
     await f.scheduler.tick(); await f.scheduler.waitForIdle();
-    expect((await f.read()).map(task => task.id).sort()).toEqual(['current', 'durable']);
+    expect((await f.read()).map(task => task.id).sort()).toEqual(['current', 'durable', 'old']);
+    expect((await f.read()).every(task => task.durable === true)).toBe(true);
+    expect(f.calls).toHaveLength(3);
+  });
+
+  test('one today-only reminder survives restart and stops at midnight while retaining history', async () => {
+    const midnight = at(24, 0);
+    const f = await fixture([job({ createdAt: at(23, 45), expiresAt: midnight, durable: false })], { now: at(23, 50) });
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    expect(f.calls).toHaveLength(1);
+    f.scheduler.stop();
+    const restarted = f.create('desktop-2');
+    f.setTime(at(23, 55));
+    await restarted.scheduler.tick(); await restarted.scheduler.waitForIdle();
     expect(f.calls).toHaveLength(2);
+    expect(await f.read()).toHaveLength(1);
+    expect((await f.read())[0].nextRunAt).toBeNull();
+    f.setTime(midnight);
+    await restarted.scheduler.tick(); await restarted.scheduler.waitForIdle();
+    const [task] = (await restarted.invoke('list')).tasks;
+    expect(task).toMatchObject({ id: 'job-1', durable: true, enabled: false, status: 'expired', expiresAt: midnight, nextRunAt: null });
+    expect(task.runs).toHaveLength(2);
+    expect(task.runs.every(run => run.status === 'succeeded')).toBe(true);
+    expect(await restarted.invoke('run-now', { taskId: 'job-1' })).toMatchObject({ ok: false });
+    expect(await restarted.invoke('toggle', { taskId: 'job-1', enabled: true })).toMatchObject({ ok: false });
+    expect(f.calls).toHaveLength(2);
+    expect(await f.read()).toHaveLength(1);
+  });
+
+  test.each([true, false])('never catches up expired tasks after restart (recurring: %s)', async recurring => {
+    const f = await fixture([job({ recurring, expiresAt: at(10, 0), nextRunAt: at(9, 5) })], { now: at(11, 0) });
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    expect(f.calls).toHaveLength(0);
+    expect((await f.read())[0]).toMatchObject({ status: 'expired', nextRunAt: null, enabled: false });
+    f.setTime(at(24, 0));
+    const restarted = f.create('desktop-2');
+    await restarted.scheduler.skipMissed();
+    expect(await restarted.invoke('run-now', { taskId: 'job-1' })).toMatchObject({ ok: false });
+    expect(f.calls).toHaveLength(0);
+    expect(await f.read()).toHaveLength(1);
+  });
+
+  test('an expiry reached during session creation prevents execution', async () => {
+    let release!: () => void;
+    let linking!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { linking = resolve; });
+    const f = await fixture([job({ expiresAt: at(9, 10) })], {
+      owner: { projectId: 'project' }, project: { id: 'project' },
+      linkSessionToProject: () => { linking(); return pending; },
+    });
+    await f.scheduler.tick(); await ready;
+    f.setTime(at(9, 10));
+    release(); await f.scheduler.waitForIdle();
+    expect(f.calls).toHaveLength(0);
+    expect((await f.read())[0]).toMatchObject({ status: 'expired', nextRunAt: null, enabled: false });
+    expect((await f.read())[0].runId).toBeUndefined();
+  });
+
+  test.each([false, true])('expiry during execution retains the result without rescheduling (failure: %s)', async fails => {
+    let finish!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const f = await fixture([job({ expiresAt: at(9, 10) })], {
+      run: async () => { started(); await pending; if (fails) throw new Error('fixture failed'); },
+    });
+    await f.scheduler.tick(); await ready;
+    f.setTime(at(9, 10));
+    await f.scheduler.tick();
+    finish(); await f.scheduler.waitForIdle();
+    expect((await f.read())[0]).toMatchObject({ enabled: false, status: 'expired', nextRunAt: null });
+    expect((await f.read())[0].runHistory[0].status).toBe(fails ? 'failed' : 'succeeded');
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    expect(f.calls).toHaveLength(1);
+  });
+
+  test('retains expired paused tasks and uses explicit deadlines instead of the default age limit', async () => {
+    const day = 24 * 60 * 60_000;
+    const f = await fixture([
+      job({ id: 'paused', enabled: false, expiresAt: at(9, 5) }),
+      job({ id: 'default', createdAt: at(9, 0) - 8 * day }),
+      job({ id: 'extended', createdAt: at(9, 0) - 8 * day, expiresAt: at(9, 0) + day }),
+    ]);
+    await f.scheduler.tick(); await f.scheduler.waitForIdle();
+    const tasks = await f.read();
+    expect(tasks).toHaveLength(3);
+    expect(tasks.find(task => task.id === 'paused')).toMatchObject({ status: 'expired', nextRunAt: null });
+    expect(tasks.find(task => task.id === 'default')).toMatchObject({ status: 'expired', nextRunAt: null });
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0].sessionRecord.cronTaskId).toBe('extended');
   });
 
   test('keeps a busy task due after its scheduled minute has passed', async () => {
@@ -294,7 +383,7 @@ describe('desktop cron lifecycle', () => {
     expect((await f.read())[0].nextRunAt).toBe(at(10, 5));
   });
 
-  test('migrates proven durable legacy jobs and removes proven session-only jobs', async () => {
+  test('migrates ownership and retains all legacy jobs regardless of the old persistence flag', async () => {
     const history = [
       { message: { content: [
         { type: 'tool_use', id: 'call-1', name: 'CronCreate', input: { durable: false } },
@@ -312,9 +401,10 @@ describe('desktop cron lifecycle', () => {
     ], { history });
     await f.scheduler.tick(); await f.scheduler.waitForIdle();
     const tasks = await f.read();
-    expect(tasks.map(task => task.id).sort()).toEqual(['old-durable', 'unknown']);
+    expect(tasks.map(task => task.id).sort()).toEqual(['old-durable', 'old-session', 'unknown']);
+    expect(tasks.every(task => task.durable === true)).toBe(true);
     expect(tasks.find(task => task.id === 'unknown')).toMatchObject({ enabled: false });
-    expect(f.calls).toHaveLength(1);
+    expect(f.calls).toHaveLength(2);
   });
 });
 

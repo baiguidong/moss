@@ -94,7 +94,8 @@ export type CronTaskInfo = {
   ownerSessionId: string | null; ownerSessionTitle: string | null;
   executionSessionId: string | null; executionSessionTitle: string | null;
   nextRunAt: number | null; durable?: boolean;
-  status?: 'idle' | 'running' | 'failed'; lastError?: string | null;
+  status?: 'idle' | 'running' | 'failed' | 'expired'; lastError?: string | null;
+  expiresAt?: number | null;
   lastCompletedAt?: number | null; timezone?: string;
   executionComputer?: string | null; projectId?: string | null; projectName?: string | null;
   runs?: Array<{ sessionId: string; title: string; status: 'running' | 'succeeded' | 'failed' | 'unknown'; startedAt: number | null; completedAt: number | null; summary: string }>;

@@ -31,6 +31,7 @@ const outputSchema = lazySchema(() =>
         status: z.string().optional(),
         timezone: z.string().optional(),
         nextRunAt: z.number().nullable().optional(),
+        expiresAt: z.number().optional(),
         lastError: z.string().nullable().optional(),
       }),
     ),
@@ -81,6 +82,7 @@ export const CronListTool = buildTool({
       ...(t.enabled !== undefined ? { enabled: t.enabled } : {}),
       ...(t.timezone ? { timezone: t.timezone } : {}),
       ...(t.nextRunAt !== undefined ? { nextRunAt: t.nextRunAt } : {}),
+      ...(t.expiresAt !== undefined ? { expiresAt: t.expiresAt } : {}),
       ...(t.status ? { status: t.status } : {}),
       ...(t.lastError ? { lastError: t.lastError } : {}),
     }))
@@ -95,7 +97,7 @@ export const CronListTool = buildTool({
           ? output.jobs
               .map(
                 j =>
-                  `${j.id} — ${j.humanSchedule}${j.recurring ? ' (recurring)' : ' (one-shot)'}${j.durable === false ? ' [session-only]' : ''}${j.timezone ? ` [${j.timezone}]` : ''}${j.enabled === false ? ' [paused]' : ''}${j.status ? ` [${j.status}]` : ''}: ${truncate(j.prompt, 80, true)}${j.lastError ? `; error: ${j.lastError}` : ''}`,
+                  `${j.id} — ${j.humanSchedule}${j.recurring ? ' (recurring)' : ' (one-shot)'}${j.durable === false ? ' [session-only]' : ''}${j.timezone ? ` [${j.timezone}]` : ''}${j.expiresAt !== undefined ? ` [expires ${new Date(j.expiresAt).toISOString()}]` : ''}${j.enabled === false ? ' [paused]' : ''}${j.status ? ` [${j.status}]` : ''}: ${truncate(j.prompt, 80, true)}${j.lastError ? `; error: ${j.lastError}` : ''}`,
               )
               .join('\n')
           : 'No scheduled jobs.',
