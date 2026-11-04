@@ -111,3 +111,19 @@ test('reviewer uses raw native identity and preserves explicit draft rule when n
   assert.equal((await f.service.confirm({ draftId: second.id, expectedRevision: 1 })).status, 'failed');
   await assert.rejects(changedAccount, /变化/); assert.equal(f.calls.length, 1);
 });
+
+test('reviewer bypasses configured draft rules while the global draft box is disabled', async t => {
+  const f = await fixture(t), policies = new AppToolCallPolicyStore(path.join(f.root, 'disabled-policy.json'));
+  policies.set(f.input.appId, f.input.identity, 'draft');
+  let enabled = false;
+  const contribution = { id: f.input.identity.contributionId, appId: f.input.appId, title: 'Send', inputSchemaDocument: schema, toolScope: 'session' };
+  const runtime = { toolCallPolicies: policies, currentOwner: () => ({ key: 'alice' }), storageAppId: id => id,
+    instances: { list: () => [] }, credentials: { get: async () => ({}) },
+    getInstallation: () => ({ enabled: true, activeVersion: '1', grants: [] }), requireContribution: async () => contribution };
+  const review = createAppToolCallReviewer({ getRuntime: () => runtime, getMcpHost: () => null, drafts: f.service, isEnabled: () => enabled });
+  const session = { id: 'chat-1', appIds: [f.input.appId], runtimeAppToolIds: new Set([contribution.id]) };
+  const event = { input: { kind: 'app', appId: f.input.appId, contributionId: contribution.id, toolName: 'send', arguments: f.input.args, schema, toolUseId: 'disabled-1' }, signal: f.controller.signal, execute: f.input.execute };
+  await review(event, session);
+  assert.equal(f.calls.length, 1);
+  assert.equal((await f.service.list()).length, 0);
+});

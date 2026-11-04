@@ -4,9 +4,13 @@ import { isToolSourceAvailable } from '../../../packages/app-sdk/src/tool-servic
 import { canInvokeSessionAppTool } from './session-apps.mjs';
 
 /** Resolve identities using Host state, never renderer-provided executable destinations. */
-export function createAppToolCallReviewer({ getRuntime, getMcpHost, drafts }) {
+export function createAppToolCallReviewer({ getRuntime, getMcpHost, drafts, isEnabled = () => true }) {
   return async function review(event, session) {
     if (session?.agentMode === 'remote-direct' || !session?.id || session.deleted || typeof event.execute !== 'function' || !event.signal?.throwIfAborted) throw new Error('工具草稿只支持当前 Moss 会话的调用。');
+    // The host switch disables this feature globally. Existing drafts remain
+    // reviewable so a pending call cannot be stranded, but new calls follow
+    // their normal execution path.
+    if (!isEnabled()) return event.execute(event.input.arguments, false);
     const runtime = getRuntime(), input = event.input;
     if (!runtime) throw new Error('App Runtime 尚未就绪。');
     const policyScope = runtime.storageAppId(input.appId);

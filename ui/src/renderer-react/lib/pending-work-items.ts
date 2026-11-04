@@ -128,7 +128,7 @@ export function buildPendingWorkItems({
       source: 'operation',
       sessionId: draft.toolCall?.sessionId,
       state,
-      title: compactText(draft.title, '业务操作草稿'),
+      title: compactText(draft.title, '草稿箱'),
       summary: compactText(draft.summary, `${draft.channel} 操作等待处理`),
       context: compactText(draft.accountLabel || draft.accountId, draft.channel),
       createdAt: draft.updatedAt || draft.createdAt || now,

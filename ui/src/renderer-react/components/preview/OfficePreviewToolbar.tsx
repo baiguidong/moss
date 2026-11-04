@@ -46,7 +46,8 @@ export function OfficePreviewToolbar({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onRefresh}><RefreshCw className="h-3.5 w-3.5" />刷新预览</DropdownMenuItem>
-          {menuItems ?? <DropdownMenuItem onSelect={() => void shellIpc.openFile(filePath)}><ExternalLink className="h-3.5 w-3.5" />用系统应用打开</DropdownMenuItem>}
+          {menuItems}
+          <DropdownMenuItem onSelect={() => void shellIpc.openFile(filePath)}><ExternalLink className="h-3.5 w-3.5" />用系统应用打开</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </>

@@ -212,7 +212,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     id: 'tools', title: '工具与性能', icon: Wrench,
     keywords: ['工具', 'tool', 'performance', '权限', 'permission', 'streaming', '结果', 'mcp', 'read'],
     sections: [
-      { id: 'tools', title: '工具', keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
+      { id: 'tools', title: '工具', keywords: ['tool', '工具', '草稿箱', '草稿确认', 'draft', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
       { id: 'permission', title: '权限', keywords: ['permission', 'allow', '权限确认', 'bypass', 'bash', 'ast', '命令解析'] },
       { id: 'tool-performance', title: '工具与性能', keywords: ['tool', 'performance', 'streaming', 'fallback', '禁止失败恢复', '流式工具执行', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'] },
     ],
@@ -2082,6 +2082,21 @@ export function SettingsView({
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
                     />
+                    <SettingsGroup className="mt-3">
+                      <SettingsRow
+                        title="草稿箱"
+                        description="开启后，App 或 MCP 工具可以按工具设置先生成参数草稿，等待你确认后再执行。关闭后不会拦截工具调用，工具详情中的草稿确认设置也会暂时失效；重新开启后恢复原有设置。"
+                        controlClassName="sm:w-[56px]"
+                      >
+                        <div className="flex justify-start sm:justify-end">
+                          <Toggle
+                            checked={settingsDraft.toolCallDrafts?.enabled !== false}
+                            onCheckedChange={(enabled) => updateSetting('toolCallDrafts', { enabled })}
+                            label="启用草稿箱"
+                          />
+                        </div>
+                      </SettingsRow>
+                    </SettingsGroup>
                     <div className="mb-3 mt-8 px-1">
                       <h3 className="text-[15px] font-semibold text-foreground">App 提供的工具</h3>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground">工具范围由 App 统一声明，默认需在会话中选择。选中的 App 或子服务工具常驻；未选中的全局工具按需加载。</p>

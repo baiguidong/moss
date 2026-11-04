@@ -820,6 +820,9 @@ export type DesktopSettings = {
     model: string;
   };
   toolLoading: Record<string, 'always' | 'deferred'>;
+  toolCallDrafts?: {
+    enabled: boolean;
+  };
   runtimeLifecycle?: import('../runtime-lifecycle-settings.mjs').RuntimeLifecycleSettings;
   agentSettings?: {
     disabled?: string[];

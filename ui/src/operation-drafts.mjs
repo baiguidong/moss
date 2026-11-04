@@ -34,7 +34,7 @@ function normalizeDraft(input = {}, now = Date.now()) {
   const createdAt = Number(input.createdAt) || now;
   const status = OPERATION_DRAFT_STATUSES.includes(input.status) ? input.status : 'draft';
   const content = text(input.content, MAX_CONTENT_LENGTH);
-  if (!content) throw new Error('业务操作草稿内容不能为空。');
+  if (!content) throw new Error('草稿内容不能为空。');
   const target = input.target && typeof input.target === 'object' ? clone(input.target) : {};
   const attachments = Array.isArray(input.attachments)
     ? input.attachments.slice(0, 20).map(item => ({
@@ -51,7 +51,7 @@ function normalizeDraft(input = {}, now = Date.now()) {
     channel: text(input.channel, 120) || 'unknown',
     accountId: text(input.accountId, 240) || null,
     accountLabel: text(input.accountLabel, 240) || null,
-    title: text(input.title, 240) || '业务操作草稿',
+    title: text(input.title, 240) || '草稿箱',
     summary: text(input.summary, 1_000) || '等待检查后执行',
     target,
     content,
@@ -156,7 +156,7 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
       const pkg = await runtime?.getActivePackage?.(input.appId);
       const draft = normalizeDraft({ ...input, appVersion: pkg?.manifest?.version || null, owner: input.owner || runtime?.currentOwner?.(), status: 'draft', revision: 1, idempotencyKey: `draft:${randomUUID()}`, resultRef: null, error: null, createdAt: timestamp, updatedAt: timestamp }, timestamp);
       assertActionScope(draft);
-      if (!draft.appId) throw new Error('业务操作草稿必须绑定 App。');
+      if (!draft.appId) throw new Error('草稿必须绑定 App。');
       const drafts = await load();
       if (drafts.some(item => item.id === draft.id)) throw new Error('草稿 ID 已存在。');
       while (drafts.length >= MAX_DRAFTS) {
@@ -175,12 +175,12 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
     return transact(async () => {
       const drafts = await load();
       const draft = drafts.find(item => item.id === draftId);
-      if (!draft) throw new Error('业务操作草稿不存在。');
+      if (!draft) throw new Error('草稿不存在。');
       assertRevision(draft, expectedRevision);
       if (!EDITABLE.has(draft.status)) throw new Error('当前草稿已进入执行生命周期，不能编辑。');
       const allowed = ['title', 'summary', 'accountId', 'accountLabel', 'target', 'content', 'attachments', 'baseVersion', 'metadata'];
       for (const key of allowed) if (patch[key] !== undefined) draft[key] = clone(patch[key]);
-      if (!text(draft.content, MAX_CONTENT_LENGTH)) throw new Error('业务操作草稿内容不能为空。');
+      if (!text(draft.content, MAX_CONTENT_LENGTH)) throw new Error('草稿内容不能为空。');
       Object.assign(draft, normalizeDraft(draft, now()));
       draft.revision += 1;
       draft.idempotencyKey = `draft:${randomUUID()}`;
@@ -198,7 +198,7 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
     return transact(async () => {
       const drafts = await load();
       const draft = drafts.find(item => item.id === draftId);
-      if (!draft) throw new Error('业务操作草稿不存在。');
+      if (!draft) throw new Error('草稿不存在。');
       assertRevision(draft, expectedRevision);
       if (!EDITABLE.has(draft.status)) throw new Error('当前草稿不能取消，请先核实执行结果。');
       draft.status = 'cancelled'; draft.updatedAt = now(); draft.revision += 1;
@@ -269,13 +269,13 @@ export function createOperationDraftService({ filePath, getRuntime = () => null,
 
   async function queryResult({ draftId } = {}) {
     const draft = await transact(async () => (await load()).find(item => item.id === draftId));
-    if (!draft) throw new Error('业务操作草稿不存在。');
+    if (!draft) throw new Error('草稿不存在。');
     if (draft.status !== 'unknown') return toPublicDraft(draft);
     if (!draft.actionRefs.queryResult) throw new Error('此 App 尚不支持查询，请在来源系统核实结果；不要重复执行。');
     const result = normalizeResult(await invokeAction(draft, draft.actionRefs.queryResult, { draft, idempotencyKey: draft.idempotencyKey }));
     return transact(async () => {
       const drafts = await load(); const current = drafts.find(item => item.id === draftId);
-      if (!current) throw new Error('业务操作草稿不存在。');
+      if (!current) throw new Error('草稿不存在。');
       if (current.revision !== draft.revision || current.status !== 'unknown') return toPublicDraft(current);
       current.status = result.status; current.resultRef = clone(result.result);
       current.error = result.status === 'failed' ? text(result.result?.error, 4_000) || 'App 执行失败。' : null;

@@ -144,6 +144,7 @@ try{
  await pdf().locator('[data-annotation-editor]').waitFor();await capture('text-selection-editor');await pdf().locator('[data-annotation-editor]').getByRole('button',{name:'取消',exact:true}).click()
  mark('Native PDF text layer supports actual pointer text selection and opens a contextual editor')
  await open(slides)
+ await page.getByRole('button',{name:'预览模式',exact:true}).click();assert.equal(await page.getByRole('menuitemradio',{name:'原始预览',exact:true}).count(),1);assert.equal(await page.getByRole('menuitemradio',{name:'页面版式',exact:true}).count(),1);await page.getByRole('menuitemradio',{name:'原始预览',exact:true}).click();await pdf().waitFor({state:'detached'});mark('PPT keeps the original file preview as an additional opening mode');await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor()
 
  await pdf().getByRole('button',{name:'下一页',exact:true}).click();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'2')
  await page.getByRole('combobox',{name:'页面缩放'}).selectOption('1.25');await until(async()=>await pdf().locator('[data-pdf-page="2"] canvas[data-painted="true"]').count(),'zoom repaints')
@@ -159,8 +160,8 @@ try{
  const request=requests.find(body=>JSON.stringify(body.messages).includes('把第二页图表标题字号调大')),serialized=JSON.stringify(request.messages)
  assert.ok(serialized.includes('pageNumber'));assert.ok(serialized.includes(slides.artifacts[0].path));await until(async()=>await page.locator('[data-visualization-annotation]').count()===1,'annotation queue settled');await page.locator('[data-visualization-annotation] summary').click();await page.locator('[data-visualization-annotation]').getByText('第 2 页',{exact:true}).waitFor();await capture('page-annotation-in-main-chat')
  mark('Region annotation opens its local editor and sends original App resource + page/coordinates to the main model; conversation displays one annotation')
- await open(sheets);await selectMode('工作表');await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor()
- await selectMode('工作表');await page.getByRole('button',{name:'预算',exact:true}).click();
+ await open(sheets);await selectMode('交互表格');await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor()
+ await selectMode('交互表格');await page.getByRole('button',{name:'预算',exact:true}).click();
  await page.getByRole('button',{name:'更多预览操作',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'公式栏',exact:true}).click();await page.locator('[data-cell="B4"]').getByRole('button').click();assert.equal((await page.locator('[data-cell="B4"]').innerText()).trim(),'42,000');assert.ok((await page.locator('[data-cell-details]').innerText()).includes('=B2-B3'));await capture('excel-formatted-formula');
  await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor();
  mark('Excel switches between page layout and sheets with formatted values and clickable formulas')

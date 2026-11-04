@@ -121,7 +121,7 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
   overview: { label: "概览", icon: ChartNoAxesCombined },
   mail: { label: "协作邮箱", icon: Mail },
   cron: { label: "定时任务", icon: AlarmClock },
-  drafts: { label: "业务操作草稿", icon: FilePenLine },
+  drafts: { label: "草稿箱", icon: FilePenLine },
 };
 
 interface AppSidebarProps {

@@ -63,8 +63,17 @@ export function VisualizationSurface({ content, resourceUri, title, sessionId, p
   }, [identity, key, post]);
   React.useLayoutEffect(() => {
     if (!viewport.current) return;
-    const observer = new ResizeObserver(([entry]) => setSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
-    observer.observe(viewport.current); return () => observer.disconnect();
+    let frame = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = { width: entry.contentRect.width, height: entry.contentRect.height };
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setSize(current => current.width === next.width && current.height === next.height ? current : next);
+      });
+    });
+    observer.observe(viewport.current);
+    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
   }, []);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

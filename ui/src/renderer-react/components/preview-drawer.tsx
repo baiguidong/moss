@@ -190,6 +190,7 @@ export function PreviewDrawer({
   onCloseDrawer,
   standalone = false,
   navigation,
+  headerStatus,
   headerActions,
   onPopout,
   onReady,
@@ -206,6 +207,7 @@ export function PreviewDrawer({
   onCloseDrawer: () => void;
   standalone?: boolean;
   navigation?: React.ReactNode;
+  headerStatus?: React.ReactNode;
   headerActions?: React.ReactNode;
   onPopout?: () => void;
   onReady?: () => void;
@@ -553,6 +555,7 @@ export function PreviewDrawer({
           </DropdownMenuContent>
         </DropdownMenu>}
         </>}
+        {headerStatus}
         {headerActions}
         {compactOffice ? <div ref={setViewerToolbarContainer} data-office-toolbar className="flex shrink-0 items-center gap-1 pr-2" /> : <>
         {onPopout && <Button variant="ghost" size="icon-sm" className="mr-1 h-7 w-7 shrink-0 rounded-md" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={onPopout}><ExternalLink className="h-3.5 w-3.5" /></Button>}

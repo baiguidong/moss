@@ -92,6 +92,16 @@ function safeError(error, configs) {
     for (const value of [...Object.values(config?.env || {}), ...Object.values(config?.headers || {})]) {
       if (value) message = message.split(value).join('[已隐藏]')
     }
+    if (typeof config?.url === 'string') {
+      try {
+        const url = new URL(config.url)
+        const publicUrl = `${url.origin}${url.pathname}`
+        message = message.split(config.url).join(publicUrl)
+        for (const value of [url.username, url.password, ...url.searchParams.values()]) {
+          if (value) message = message.split(value).join('[已隐藏]')
+        }
+      } catch {}
+    }
   }
   return message.slice(0, 1200)
 }
@@ -153,11 +163,12 @@ async function resolveBundledMcpServers(servers, packageRoot) {
 
 /** Host-owned registry. MCP transport and tool execution remain in the agent runtime. */
 export class AppMcpHost {
-  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName = () => false }) {
-    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName })
+  constructor({ getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName = () => false, getConnectorServices = () => [] }) {
+    Object.assign(this, { getRuntime, readLegacy, clearLegacy, onChanged, onCatalogChanged, inspect, discoverTool, invokeTool, authenticate, clearAuth, getIdleTimeoutMs, prepareProvider, reservedName, getConnectorServices })
     this.providers = new Map()
     this.checks = new Map()
     this.catalogs = new Map()
+    this.connectorCatalogs = new Map()
     this.inspections = new Map()
     this.queue = Promise.resolve()
   }
@@ -337,8 +348,32 @@ export class AppMcpHost {
     }
     await this.refresh(null, { notify: false })
   }
+  connectorServices(appId = null) {
+    let services = []
+    try { services = this.getConnectorServices?.(appId) || [] } catch { services = [] }
+    return Array.isArray(services) ? services.filter(service => service && (!appId || service.appId === appId)) : []
+  }
+  connectorCatalogKey(service) { return `${service.appId}/${service.instanceId}/${service.serviceId}` }
+  connectorCatalog(service) {
+    const cached = this.connectorCatalogs.get(this.connectorCatalogKey(service))
+    return cached?.revision === service.revision ? cached : undefined
+  }
+  connectorToolCatalog(service) {
+    const cached = this.connectorCatalog(service)
+    return cached?.state === 'connected' ? cached.tools || [] : []
+  }
+  async inspectConnectorTools(appId) {
+    const services = this.connectorServices(appId)
+    await Promise.allSettled(services.map(service => this.inspectTools({
+      appId: service.appId, instanceId: service.instanceId, name: service.name, revision: service.revision,
+    })))
+    return this.toolCatalog(appId)
+  }
   serviceId(provider, entry) { return `mcp/${provider.instanceId}/${entry.id}` }
-  owner(provider, entry) { return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolLoading: this.getRuntime()?.getToolLoading?.(provider.appId, provider.toolLoading) ?? provider.toolLoading, toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) } }
+  owner(provider, entry) {
+    if (provider?.connector) return { appId: provider.appId, toolScope: 'session', toolLoading: 'on-demand', toolSelection: 'app', serviceId: entry.serviceId || provider.serviceId }
+    return { appId: provider.appId, toolScope: this.effectiveScope(provider), toolLoading: this.getRuntime()?.getToolLoading?.(provider.appId, provider.toolLoading) ?? provider.toolLoading, toolSelection: provider.toolSelection, serviceId: this.serviceId(provider, entry), ...(provider.mcpIdleTimeoutMs ? { mcpIdleTimeoutMs: this.getIdleTimeoutMs?.() ?? provider.mcpIdleTimeoutMs } : {}) }
+  }
   enabledServers(appIds, workspace, appServiceIds = []) {
     const result = {}
     for (const provider of this.providers.values()) {
@@ -352,9 +387,16 @@ export class AppMcpHost {
     return result
   }
   serverOwners() {
-    return Object.fromEntries([...this.providers.values()].filter(provider => this.sameOwner(provider)).flatMap(provider =>
+    const result = Object.fromEntries([...this.providers.values()].filter(provider => this.sameOwner(provider)).flatMap(provider =>
       Object.keys(provider.document.servers).map(name => [runtimeName(provider.appId, name, provider.owner), this.owner(provider, provider.document.servers[name])]),
     ))
+    const runtime = this.getRuntime()
+    for (const service of this.connectorServices()) {
+      const installation = runtime?.installations.get(service.appId), instance = runtime?.instances.get(service.instanceId)
+      if (!installation?.enabled || !instance?.enabled || !installation.grants?.includes('connector:use')) continue
+      result[service.runtimeName] = { appId: service.appId, toolScope: 'session', toolLoading: 'on-demand', toolSelection: 'app', serviceId: service.serviceId }
+    }
+    return result
   }
   effectiveScope(provider) { return this.getRuntime()?.getToolScope?.(provider.appId, provider.toolScope) ?? getAppToolScope(provider.toolScope) }
   findServer(name) {
@@ -364,6 +406,15 @@ export class AppMcpHost {
         if (runtimeName(provider.appId, localName, provider.owner) !== name) continue
         const config = restoreConfig(entry, provider.secrets)
         return config ? { ...entry, config: resolveMcpLaunchConfig(config), provider, localName } : null
+      }
+    }
+    const service = this.connectorServices().find(item => item.runtimeName === name || item.name === name)
+    if (service) {
+      const runtime = this.getRuntime(), installation = runtime?.installations.get(service.appId), instance = runtime?.instances.get(service.instanceId)
+      return {
+      id: service.serviceId, serviceId: service.serviceId, enabled: Boolean(service.enabled !== false && installation?.enabled && instance?.enabled && installation.grants?.includes('connector:use')), config: service.config,
+      provider: { ...(service.provider || {}), appId: service.appId, instanceId: service.instanceId, connector: true, serviceId: service.serviceId }, localName: service.name,
+      connector: true,
       }
     }
     return null
@@ -587,10 +638,60 @@ export class AppMcpHost {
           truncated: Boolean((live ? server.check.truncated : cached?.truncated) || tools.length < knownTools.length) })
       }
     }
+    for (const service of this.connectorServices(appId)) {
+      const installation = runtime?.installations.get(appId)
+      const instance = runtime?.instances.get(service.instanceId)
+      if (!installation || !instance || installation.activeVersion !== service.version) continue
+      const cached = this.connectorCatalog(service)
+      const knownTools = cached?.state === 'connected' ? cached.tools || [] : []
+      const tools = []
+      for (const tool of knownTools) {
+        const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1
+        if (bytes > budget) break
+        tools.push(tool); budget -= bytes
+      }
+      const status = !installation.enabled ? 'app-disabled' : !instance.enabled ? 'instance-disabled'
+        : !installation.grants?.includes('connector:use') ? 'unauthorized' : service.enabled === false ? 'disabled'
+          : cached?.state || 'unchecked'
+      result.push({ appId, instanceId: service.instanceId, name: service.name, serviceId: service.serviceId,
+        runtimeName: service.runtimeName, revision: service.revision, status, tools,
+        error: cached?.error, catalogSource: cached ? 'live' : 'unknown', checkedAt: cached?.checkedAt,
+        truncated: Boolean(cached?.truncated || tools.length < knownTools.length) })
+    }
     return result
   }
   async inspectTools(input) {
     record(input, ['appId', 'instanceId', 'name', 'revision'])
+    const connector = this.connectorServices(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
+    if (connector) {
+      if (connector.revision !== input.revision || connector.enabled === false) throw new Error('服务已停用或连接配置已变化，请重新加载。')
+      const runtime = this.getRuntime(), installation = runtime?.installations.get(input.appId), instance = runtime?.instances.get(input.instanceId)
+      if (!installation?.enabled || !instance?.enabled || !installation.grants?.includes('connector:use')) throw new Error('服务已停用或未授权，请在 App 管理中检查。')
+      const inspectionKey = `${input.appId}/${input.instanceId}/${input.name}/${input.revision}`
+      let pending = this.inspections.get(inspectionKey)
+      if (!pending) {
+        pending = (async () => {
+          try {
+            const check = await this.inspect(connector.runtimeName, connector.config, AbortSignal.timeout(300_000))
+            const state = check?.state || 'connected'
+            const tools = Array.isArray(check?.tools) ? check.tools : []
+            this.connectorCatalogs.set(this.connectorCatalogKey(connector), {
+              state, tools, revision: connector.revision, checkedAt: check?.checkedAt || Date.now(),
+              truncated: Boolean(check?.truncated), ...(check?.error ? { error: safeError(check.error, [connector.config]) } : {}),
+            })
+          } catch (error) {
+            this.connectorCatalogs.set(this.connectorCatalogKey(connector), {
+              state: 'failed', tools: [], revision: connector.revision, checkedAt: Date.now(),
+              error: safeError(error, [connector.config]),
+            })
+          }
+          this.onCatalogChanged?.()
+        })()
+        this.inspections.set(inspectionKey, pending)
+      }
+      try { await pending } finally { if (this.inspections.get(inspectionKey) === pending) this.inspections.delete(inspectionKey) }
+      return this.toolCatalog(input.appId).find(item => item.instanceId === input.instanceId && item.name === input.name)
+    }
     const provider = [...this.providers.values()].find(item => this.sameOwner(item) && item.appId === input.appId && item.instanceId === input.instanceId)
     const entry = provider?.document.servers[input.name]
     if (!entry || !this.active(provider) || !entry.enabled) throw new Error('服务已停用或未授权，请在 App 管理中检查。')

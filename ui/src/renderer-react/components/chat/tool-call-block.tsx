@@ -608,46 +608,54 @@ function StandardToolCallBlock({
             : "bg-[var(--color-repl-bg)] px-2.5 py-1.5",
         )}>
           {toolCall.toolName === 'moss_present' && <PresentationToolStatus raw={result?.rawContent} text={resultText}/>}
-          <div className="ml-3.5 min-w-0">
-            <TranscriptOutput
-              segments={segments}
-              expanded={outputExpanded}
-              emptyLabel={awaitingDraft ? '等待确认草稿，尚未执行' : inlineDiff
-                ? undefined
-                : executionState === "failed"
-                  ? "Failed"
-                  : executionState === "running"
-                    ? "Running…"
-                    : "Done"}
-              onExpand={() => setOutputExpanded(true)}
+          <div className="ml-3.5 flex min-w-0 items-start gap-2">
+            <img
+              src="./build/icon.png"
+              alt="Moss"
+              className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+              draggable={false}
             />
-
-            {outputExpanded && !inlineDiff && hasDetailInput ? (
-              <ExpandedInput
-                toolCall={toolCall}
-                kind={kind}
+            <div className="min-w-0 flex-1">
+              <TranscriptOutput
+                segments={segments}
+                expanded={outputExpanded}
+                emptyLabel={awaitingDraft ? '等待确认草稿，尚未执行' : inlineDiff
+                  ? undefined
+                  : executionState === "failed"
+                    ? "Failed"
+                    : executionState === "running"
+                      ? "Running…"
+                      : "Done"}
+                onExpand={() => setOutputExpanded(true)}
               />
-            ) : null}
 
-            {result?.attachments?.length ? (
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-[11px] text-[color:var(--color-repl-muted)]">
-                {result.attachments.map((attachment) => (
-                  <span key={`${attachment.kind}:${attachment.path}`}>{attachment.path}</span>
-                ))}
-              </div>
-            ) : null}
+              {outputExpanded && !inlineDiff && hasDetailInput ? (
+                <ExpandedInput
+                  toolCall={toolCall}
+                  kind={kind}
+                />
+              ) : null}
 
-            {children ? <div className="mt-2">{children}</div> : null}
+              {result?.attachments?.length ? (
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-[11px] text-[color:var(--color-repl-muted)]">
+                  {result.attachments.map((attachment) => (
+                    <span key={`${attachment.kind}:${attachment.path}`}>{attachment.path}</span>
+                  ))}
+                </div>
+              ) : null}
+
+              {children ? <div className="mt-2">{children}</div> : null}
+
+              {inlineDiff ? (
+                <ExpandedInput
+                  toolCall={toolCall}
+                  kind={kind}
+                  inlineDiff={inlineDiff}
+                  transcriptDiff
+                />
+              ) : null}
+            </div>
           </div>
-
-          {inlineDiff ? (
-            <ExpandedInput
-              toolCall={toolCall}
-              kind={kind}
-              inlineDiff={inlineDiff}
-              transcriptDiff
-            />
-          ) : null}
         </div>
       ) : null}
     </div>

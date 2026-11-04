@@ -120,6 +120,7 @@ import {
   getConnectorMcpServers,
   findConnectorMcpServer,
   listInstalledConnectors,
+  readConnectorSkill,
   getConnectorProviderAuthUrl,
   getConnectorProviderAuthContext,
   getRemoteDirectCredentials,
@@ -827,7 +828,12 @@ const toolCallDraftService = createToolCallDraftService({
   currentOwner: () => appRuntime?.currentOwner()?.key || 'host',
   onChanged: payload => emitToRenderer('operation-draft:changed', payload),
 });
-const reviewAppToolCall = createAppToolCallReviewer({ getRuntime: () => appRuntime, getMcpHost: () => appMcpHost, drafts: toolCallDraftService });
+const reviewAppToolCall = createAppToolCallReviewer({
+  getRuntime: () => appRuntime,
+  getMcpHost: () => appMcpHost,
+  drafts: toolCallDraftService,
+  isEnabled: () => desktopSettings?.toolCallDrafts?.enabled !== false,
+});
 let agentMailPoller = null;
 let agentMailStatus = {
   state: 'stopped',
@@ -2707,7 +2713,9 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   const appSkills = sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
   const connectorOwners = Object.fromEntries(connectorAppIds.flatMap(appId =>
     Object.keys(getConnectorMcpServers([getStoredConnectorId(appId)], connectorRuntimeCredentials))
-      .map(name => [name, { appId, toolScope: 'session', toolSelection: 'app' }])));
+      .map(name => [name, {
+        appId, toolScope: 'session', toolSelection: 'app', serviceId: `mcp/${appId}--default/connector-${getStoredConnectorId(appId)}-${name}`,
+      }])));
   const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: { ...(appMcpHost?.serverOwners() || {}), ...connectorOwners } };
   const appNames = new Map(listAllStoredApps().map(app => [app.id || app.name, app.displayName || app.title || app.name]));
   for (const owner of Object.values(appToolPolicy.mcpServers)) {
@@ -7187,6 +7195,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
   });
   appMcpHost = new AppMcpHost({
+    getConnectorServices: (appId) => {
+      const connectorId = getStoredConnectorId(appId)
+      if (!connectorId || !appRuntime?.getInstallation(appId)) return []
+      const servers = getConnectorMcpServers([connectorId], {}, { includeUnavailable: true })
+      const instanceId = `${appId}--default`
+      const version = appRuntime.getInstallation(appId)?.activeVersion || ''
+      return Object.entries(servers).map(([name, config]) => {
+        const serviceId = `mcp/${instanceId}/connector-${connectorId}-${name}`
+        const publicConfig = { ...config }
+        delete publicConfig.headers
+        const revision = createHash('sha256').update(JSON.stringify({ appId, connectorId, name, version, config: publicConfig })).digest('hex')
+        return { appId, connectorId, instanceId, version, name, runtimeName: name, serviceId, revision, config, enabled: true }
+      })
+    },
     prepareProvider: async provider => {
       if (!['moss.memory', 'moss.knowledge-rag'].includes(provider.appId)) return;
       const manifest = await appRuntime.getActivePackage(provider.appId);
@@ -7779,6 +7801,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     dialog,
     getRuntime: () => appRuntime,
     getMcpHost: () => appMcpHost,
+    readConnectorSkill,
+    isToolCallDraftsEnabled: () => desktopSettings?.toolCallDrafts?.enabled !== false,
     emitChanged: emitAppsChanged,
     emitProgress: emitAppInstallProgress,
     installArchivePackage: installAppPackage,
@@ -7875,7 +7899,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (installation?.enabled && installation.grants?.includes('connector:use') && pkg.manifest.connectorApp.capabilities.includes('cli')) result = await refreshConnectorCliStatus(id);
     }
     else if (action !== 'status') throw new Error('未知连接操作');
-    if (action !== 'status') { await resetLocalRuntimesForMcpReload(); await emitAppsChanged({ appId }); }
+    if (action !== 'status') {
+      await resetLocalRuntimesForMcpReload();
+      // Connector MCP tools are dynamic. Refresh their public catalog after a
+      // completed authentication, so App tool settings can show real tool
+      // names without requiring a first chat turn. An authorization URL being
+      // opened is not a completed connection and must remain non-blocking.
+      if (action !== 'auth' || result?.auth?.status === 'authenticated') await appMcpHost?.inspectConnectorTools(appId);
+      await emitAppsChanged({ appId });
+    }
     const connector = (await listInstalledConnectors()).find(item => item.id === id);
     return { connector, ...(result?.auth ? { auth: result.auth } : {}) };
   });
@@ -7898,7 +7930,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     getSessionRecord,
     updateSessionConnectors,
     emitConnectorsChanged: (payload) => emitToRenderer('connector-hub:changed', payload),
-    onMcpTokenSaved: () => resetLocalRuntimesForMcpReload(),
+    onMcpTokenSaved: async ({ connectorId } = {}) => {
+      const reload = await resetLocalRuntimesForMcpReload();
+      const app = listAllStoredApps().find(item => connectorIdFromApp(item.manifest) === connectorId || item.manifest?.connectorApp?.id === connectorId || item.connectorApp?.id === connectorId)
+      if (app) {
+        await appMcpHost?.inspectConnectorTools(app.id || app.name)
+        await emitAppsChanged({ appId: app.id || app.name })
+      }
+      return reload
+    },
   });
   registerAgentIpcHandlers();
   const resolveTerminalLaunch = async ({ sessionId, action } = {}) => {
@@ -10127,15 +10167,20 @@ async function listAppsForRenderer() {
           : observedStates.includes('starting') ? 'starting'
             : observedStates.includes('stopping') ? 'stopping'
               : 'stopped';
+    const connector = manifest?.connectorApp ? connectorRecords.get(manifest.connectorApp.id) : null;
+    const connectorSkillNames = Array.isArray(connector?.skillNames) ? connector.skillNames : connector?.skillName ? [connector.skillName] : [];
+    const declaredSkills = manifest?.contributes?.skills || (manifest?.connectorApp?.capabilities?.includes('skills') && connectorSkillNames.length
+      ? connectorSkillNames.map(id => ({ id, title: connector.name || id, description: connector.description || '', path: `.moss/skills/${id}/SKILL.md`, cli: '' }))
+      : []);
     results.push({
       ...appEntry,
       builtin: builtinApps?.has(stored.id) || false,
       overview: manifest?.overview,
       mcpPresentation: manifest?.mcpApp?.presentation,
       publisher: manifest?.publisher,
-      declaredSkills: manifest?.contributes?.skills || [],
+      declaredSkills,
       discovery: getAppDiscovery({ ...appEntry, discovery: manifest?.discovery }),
-      connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connectorRecords.get(manifest.connectorApp.id) || null } : undefined,
+      connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connector || null } : undefined,
       hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
       uiBuiltin: manifest?.ui?.builtin || appEntry.uiBuiltin || null,
       hasSettings: manifest

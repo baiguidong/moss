@@ -53,6 +53,9 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   toolLoading: {
     ...DEFAULT_MOSS_TOOL_LOADING,
   },
+  toolCallDrafts: {
+    enabled: true,
+  },
   agentSettings: {
     disabled: ['verification'],
   },
@@ -391,6 +394,19 @@ export function normalizeDesktopSettings(input, existing = {}) {
     source.toolLoading,
     result.toolLoading || DEFAULT_DESKTOP_SETTINGS.toolLoading,
   );
+  const sourceToolCallDrafts = source.toolCallDrafts && typeof source.toolCallDrafts === 'object'
+    ? source.toolCallDrafts
+    : {};
+  const existingToolCallDrafts = result.toolCallDrafts && typeof result.toolCallDrafts === 'object'
+    ? result.toolCallDrafts
+    : {};
+  result.toolCallDrafts = {
+    enabled: typeof sourceToolCallDrafts.enabled === 'boolean'
+      ? sourceToolCallDrafts.enabled
+      : typeof existingToolCallDrafts.enabled === 'boolean'
+        ? existingToolCallDrafts.enabled
+        : DEFAULT_DESKTOP_SETTINGS.toolCallDrafts.enabled,
+  };
   result.runtimeLifecycle = normalizeRuntimeLifecycle(source.runtimeLifecycle, result.runtimeLifecycle);
 
   const sourceImage = source.image && typeof source.image === 'object' ? source.image : objectField(sourceModels, 'image');

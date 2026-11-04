@@ -16,6 +16,15 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
   const [ready, setReady] = React.useState(false);
   const [saving, setSaving] = React.useState<string | null>(null);
   const [error, setError] = React.useState('');
+  const [draftsEnabled, setDraftsEnabled] = React.useState(true);
+  React.useEffect(() => {
+    const desktop = window.agentDesktop as any;
+    const apply = (settings: any) => setDraftsEnabled(settings?.toolCallDrafts?.enabled !== false);
+    const request = desktop.getSettings?.();
+    if (request?.then) void request.then(apply).catch(() => {});
+    const off = desktop.onSettingsChanged?.(apply);
+    return () => off?.();
+  }, []);
   React.useEffect(() => {
     let active = true; setReady(false); setError(''); setPolicies({});
     void window.agentDesktop.appToolCallPolicies({ appId }).then(value => { if (active) { setPolicies(value); setReady(true); } })
@@ -23,6 +32,7 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
     return () => { active = false; };
   }, [appId]);
   const change = async (identity: NonNullable<Parameters<typeof window.agentDesktop.appToolCallPolicies>[0]['identity']>, mode: 'normal' | 'draft') => {
+    if (!draftsEnabled) return;
     setSaving(toolCallPolicyKey(identity)); setError('');
     try { setPolicies(await window.agentDesktop.appToolCallPolicies({ appId, identity, mode })); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -48,6 +58,7 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
   const matches = tools.filter(tool => `${tool.name} ${tool.title} ${tool.description} ${tool.source}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <AppDetailsSection title="工具" count={tools.length}>
     <p className="mt-3 text-xs leading-5 text-muted-foreground">设为草稿确认后，会话中的调用会先等待你核对参数，再执行。正常调用沿用现有权限设置。</p>
+    {!draftsEnabled && <p role="status" className="mt-2 text-xs text-amber-600 dark:text-amber-400">草稿箱已关闭，工具调用按正常方式执行；开启后可配置草稿确认。</p>}
     {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
     <label className="my-4 flex items-center gap-2 rounded-md border bg-background px-3 py-2">
       <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -66,8 +77,8 @@ export function AppDetailsTools({ app, mcpTools = [] }: { app: StoredApp; mcpToo
         <div className="flex shrink-0 flex-col items-end gap-2">
           <span className="text-xs leading-6 text-muted-foreground">{tool.status}</span>
           <select aria-label={`${tool.name} 调用方式`} className="h-8 max-w-32 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
-            disabled={!ready || saving !== null || (tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId))}
-            value={tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId) ? 'normal' : policies[toolCallPolicyKey(tool.identity)] || 'normal'}
+            disabled={!draftsEnabled || !ready || saving !== null || (tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId))}
+            value={!draftsEnabled || (tool.identity.kind === 'mcp' && (!tool.identity.instanceId || !tool.identity.serviceId)) ? 'normal' : policies[toolCallPolicyKey(tool.identity)] || 'normal'}
             onChange={event => void change(tool.identity, event.target.value as 'normal' | 'draft')}>
             <option value="normal">正常调用</option><option value="draft">草稿确认</option>
           </select>

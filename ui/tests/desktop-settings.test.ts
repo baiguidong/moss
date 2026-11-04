@@ -94,6 +94,12 @@ describe('desktop settings', () => {
     expect(normalizeDesktopSettings({}).model).toBe('');
   });
 
+  it('enables the draft box by default and persists an explicit disabled value', () => {
+    expect(normalizeDesktopSettings({}).toolCallDrafts).toEqual({ enabled: true });
+    expect(normalizeDesktopSettings({ toolCallDrafts: { enabled: false } }).toolCallDrafts).toEqual({ enabled: false });
+    expect(normalizeDesktopSettings({}, { toolCallDrafts: { enabled: false } }).toolCallDrafts).toEqual({ enabled: false });
+  });
+
   it('preserves configured models through startup hydration and unrelated saves', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-startup-model-'));
     temporaryRoots.push(root);

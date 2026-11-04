@@ -17,10 +17,12 @@ export function registerAppRuntimeIpc(options) {
     getRuntime,
     emitChanged,
     emitProgress,
+    isToolCallDraftsEnabled = () => true,
     installArchivePackage,
     installArchive = installAppArchive,
     validatePackage = validateAppPackage,
     confirmInstallation = (manifest, permissions, details) => confirmAppInstallation(dialog, manifest, permissions, details),
+    readConnectorSkill = null,
   } = options
   const runtime = () => {
     const value = getRuntime()
@@ -195,6 +197,9 @@ export function registerAppRuntimeIpc(options) {
   ipcMain.handle('app:read-skill', async (_event, { appId, skillId }) => {
     const pkg = await runtime().getActivePackage(appId)
     const skill = pkg.manifest.contributes?.skills?.find(item => item.id === skillId)
+    if (!skill && pkg.manifest.connectorApp?.capabilities?.includes('skills') && typeof readConnectorSkill === 'function') {
+      return readConnectorSkill(pkg.manifest.connectorApp.id, skillId)
+    }
     if (!skill) throw new Error('App 未提供此技能')
     const root = await fs.realpath(pkg.root)
     const file = await fs.realpath(path.resolve(root, skill.path))
@@ -264,6 +269,7 @@ export function registerAppRuntimeIpc(options) {
     if (host.currentOwner().key !== owner) throw new Error('账号已变化，请重试。')
     const key = host.storageAppId(appId);
     if (mode !== undefined) {
+      if (!isToolCallDraftsEnabled()) throw new Error('草稿箱已关闭，请先在设置中开启。');
       toolCallPolicyKey(identity);
       if (identity.kind === 'app') {
         const { tools } = await host.listContributions({ appId, kinds: ['tools'], includeUnavailable: true });

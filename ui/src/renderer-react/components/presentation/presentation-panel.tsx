@@ -93,7 +93,6 @@ function ResourceNavigation({ resource, snapshot, action }: { resource: Presenta
   const { presentationTabbed } = React.useContext(WindowToolbarContext);
   const openedIds = new Set([...snapshot.state.openedIds, resource.id]);
   const items = snapshot.resources.filter(item => openedIds.has(item.id));
-  if (presentationTabbed && items.length < 2) return null;
   if (items.length < 2) return <span title={resource.title} className="block truncate px-2 text-xs">{resource.title}</span>;
   return <DropdownMenu>
     <DropdownMenuTrigger asChild>
@@ -147,11 +146,14 @@ function FileResource({ resource, snapshot, action, onReady, onError }: Renderer
   const loadedCreation = file.metadata?.creation as CreationInfo | undefined;
   // Status-only changes must not reload the PDF or reset its scroll/annotation state.
   const creation = loadedCreation?.quality?.state === 'stale' ? loadedCreation : (resource.creation as CreationInfo | undefined) || loadedCreation;
+  const compactOffice = !file.metadata?.documentComparison && ['excel', 'word', 'ppt'].includes(file.contentType);
+  const compactPresentation = compactOffice || file.metadata?.interactiveVisualization === true;
   return <div className="flex h-full min-h-0 flex-col">
     {error && <div role="status" className="px-3 py-2 text-xs text-amber-600">{error}</div>}
-    {creation && !file.metadata?.documentComparison && <CreationStatus creation={creation} sessionId={snapshot.sessionId} source={typeof file.metadata?.resourceUri === 'string' ? file.metadata.resourceUri : file.path} onError={setError} />}
+    {creation && !file.metadata?.documentComparison && !compactPresentation && <CreationStatus creation={creation} sessionId={snapshot.sessionId} source={typeof file.metadata?.resourceUri === 'string' ? file.metadata.resourceUri : file.path} onError={setError} />}
     <div className="min-h-0 flex-1"><PreviewDrawer
       navigation={<ResourceNavigation resource={resource} snapshot={snapshot} action={action}/>}
+      headerStatus={creation && compactPresentation ? <CreationStatus compact creation={creation} sessionId={snapshot.sessionId} source={typeof file.metadata?.resourceUri === 'string' ? file.metadata.resourceUri : file.path} onError={setError} /> : undefined}
       onPopout={() => void window.agentDesktop.presentation.popout({ sessionId: snapshot.sessionId, artifactId: resource.id }).catch(reason => setError(String(reason)))}
       onReady={loadedKey === loadKey ? onReady : undefined} onError={loadedKey === loadKey ? onError : undefined} visible tabs={[file]} activePath={file.path} standalone onActivate={() => {}} onUpdateTab={(_path, patch) => { setFile(current => ({ ...current, ...patch })); if (file.metadata?.remote && typeof patch.metadata?.dirty === 'boolean') action({ type: 'dirty', id: resource.id, value: patch.metadata.dirty }); }} onCloseTab={() => action({ type: 'dismiss', id: resource.id })} onCloseOthers={() => {}} onCloseAll={() => action({ type: 'dismiss', id: resource.id })} onCloseDrawer={() => action({ type: 'dismiss', id: resource.id })}/></div>
   </div>;

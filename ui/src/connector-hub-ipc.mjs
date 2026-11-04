@@ -1218,6 +1218,35 @@ export async function listInstalledConnectors() {
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'));
 }
 
+/** Read a Connector App skill for the App details view without exposing its on-disk root. */
+export async function readConnectorSkill(connectorId, skillId) {
+  const id = normalizeConnectorId(connectorId)
+  if (typeof skillId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(skillId)) throw new Error('技能标识无效。')
+  const connector = await readInstalledConnector(id)
+  const skillNames = Array.isArray(connector?.skillNames) ? connector.skillNames : connector?.skillName ? [connector.skillName] : []
+  if (!connector?.skillRoot || !skillNames.includes(skillId)) throw new Error('连接器未提供此技能。')
+  const root = await fsp.realpath(path.join(connector.skillRoot, skillId))
+  const file = await fsp.realpath(path.join(root, 'SKILL.md'))
+  const relative = path.relative(connector.skillRoot, file)
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('技能文件超出连接器目录。')
+  const handle = await fsp.open(file, 'r')
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size > 256 * 1024) throw new Error('技能文件不可用或超过 256 KiB。')
+    const buffer = Buffer.alloc(256 * 1024 + 1)
+    let bytesRead = 0
+    while (bytesRead < buffer.length) {
+      const next = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
+      if (!next.bytesRead) break
+      bytesRead += next.bytesRead
+    }
+    if (bytesRead > 256 * 1024) throw new Error('技能文件超过 256 KiB。')
+    const content = buffer.subarray(0, bytesRead).toString('utf8')
+    const title = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1]?.split(/\r?\n/).find(line => /^name:\s*/.test(line))?.replace(/^name:\s*/, '').trim().replace(/^['"]|['"]$/g, '') || skillId
+    return { title, content }
+  } finally { await handle.close() }
+}
+
 export async function listConnectorCatalog() {
   const { zip, connectors, zipPath, updatedAt, revision } = await loadCatalogZip();
   const installed = await listInstalledConnectorMap();
@@ -2676,7 +2705,7 @@ export async function uninstallConnector(connectorId) {
   return { ok: true, id };
 }
 
-export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {}) {
+export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {}, { includeUnavailable = false } = {}) {
   const result = {};
   const runtimeValues = isPlainObject(runtimeCredentialValues)
     ? Object.fromEntries(
@@ -2692,7 +2721,7 @@ export function getConnectorMcpServers(connectorIds, runtimeCredentialValues = {
     if (!isValidConnectorId(item)) continue;
     const baseDir = connectorDir(item);
     const meta = readJsonFile(path.join(baseDir, CONNECTOR_META_FILE), null);
-    if (!isPlainObject(meta) || !connectorAvailable(meta)) continue;
+    if (!isPlainObject(meta) || (!includeUnavailable && !connectorAvailable(meta))) continue;
     const rawMcp = readJsonFile(path.join(baseDir, 'mcp.json'), null);
     if (!isPlainObject(rawMcp)) continue;
     const credentialSchema = normalizeConnectorCredentialSchema(

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, FileText, Loader2, Table2 } from "lucide-react";
+import { ChevronDown, FileText, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { documentIpc } from "@/ipc/document.ipc";
@@ -11,7 +11,7 @@ import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
 import { PDFViewer } from "./PDFViewer";
 import { SpreadsheetGrid } from "./SpreadsheetGrid";
 import { parseCellRange } from "../../../../shared/document-location.mjs";
-import { officeParserFileName } from "./office-file-utils";
+import { browserOfficeCapability, officeParserFileName } from "./office-file-utils";
 import type { OfficeViewerProps } from "./OfficeDocumentViewer";
 
 const MAX_FALLBACK_ROWS = 500;
@@ -76,7 +76,9 @@ function buildSheetLayout(sheet: { data?: any[][]; merges?: SheetMerge[]; images
 
 export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMenuItems, downloadMenuItems, onDownload, downloadDisabled, previewPdfPath, onReady, onError, documentLocation, locationRequest, ...annotation }: OfficeViewerProps) {
   const [state, setState] = React.useState<{ key: string; pdfPath?: string; data?: any; error?: string; dataError?: string; pdfPending?: boolean; dataPending?: boolean }>();
-  const [mode, setMode] = React.useState<'pages' | 'sheets'>('sheets');
+  // Keep the established worksheet view as the initial view for ordinary
+  // workbooks. The browser-native file view is an explicit additional mode.
+  const [mode, setMode] = React.useState<'original' | 'sheets' | 'pages'>('sheets');
   const [pageControls, setPageControls] = React.useState<HTMLDivElement | null>(null);
   const [zoom, setZoom] = React.useState<number | 'fit'>(100);
   const [activeSheet, setActiveSheet] = React.useState('');
@@ -88,7 +90,6 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   React.useEffect(() => {
     try { localStorage.setItem(FORMULA_BAR_PREFERENCE, String(showFormulaBar)); } catch {}
   }, [showFormulaBar]);
-  const userSelectedMode = React.useRef(false);
   const tableRoot = React.useRef<HTMLDivElement>(null);
   const locationKey = JSON.stringify([documentLocation, locationRequest]);
   const range = documentLocation?.range ? parseCellRange(documentLocation.range) : null;
@@ -98,15 +99,12 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   React.useEffect(() => {
     let active = true;
     const pdfReady = Boolean(previewPdfPath);
-    userSelectedMode.current = false;
     setSelectedCell('');
     setState({ key, pdfPath: pdfReady ? previewPdfPath : undefined, pdfPending: false, dataPending: true });
     setMode(documentLocation?.sheet ? 'sheets' : pdfReady ? 'pages' : 'sheets');
     void documentIpc.convert({ filePath, to: 'excel-json' }).catch(error => ({ result: { success: false, error: String(error.message || error) } })).then(workbook => {
       if (!active) return;
       setState(current => ({ ...current!, key, dataPending: false, data: workbook.result?.success ? workbook.result.data : undefined, dataError: workbook.result?.error }));
-      // Keep the first usable view stable; parsing never steals a cached PDF.
-      if (workbook.result?.success && !pdfReady && !userSelectedMode.current && !documentLocation?.page) setMode('sheets');
     });
     return () => { active = false; };
   }, [key, filePath]);
@@ -115,21 +113,26 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   React.useEffect(() => { if (mode === 'sheets' && excelData) tableRoot.current?.querySelector('[data-citation-cell="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' }); }, [mode, activeSheet, excelData, locationKey]);
   const citationError = documentLocation?.sheet && excelData && !excelData.sheets?.some((sheet: any) => sheet.name === documentLocation.sheet) ? `引用的工作表「${documentLocation.sheet}」不存在` : '';
   if (state?.key !== key) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在渲染工作簿…</div>;
-  const showingSheets = mode === 'sheets' || !pdfPath;
+  // Selecting page layout without a cached PDF keeps the old usable worksheet
+  // fallback and explains why a rendered page view is unavailable.
+  const showingSheets = mode === 'sheets' || (mode === 'pages' && !pdfPath);
+  const showingPages = mode === 'pages' && Boolean(pdfPath);
+  const showingOriginal = mode === 'original';
   const toolbar = <OfficePreviewToolbar filePath={filePath} onRefresh={() => setAttempt(value => value + 1)} container={toolbarContainer} menuItems={<><DropdownMenuCheckboxItem checked={showFormulaBar} onCheckedChange={setShowFormulaBar}>公式栏</DropdownMenuCheckboxItem>{toolbarMenuItems}</>} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled}>
-    {showingSheets && <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={`单元格 ${selectedCell}`} />}
+    {(showingSheets || showingOriginal) && <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={showingSheets && selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={showingSheets ? `单元格 ${selectedCell}` : undefined} />}
     <div ref={setPageControls} className="flex shrink-0 items-center gap-1 empty:hidden" />
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs" aria-label="预览模式" title={state.pdfPending ? '正在生成页面版式' : `切换预览模式：${showingSheets ? '工作表' : '页面版式'}`}>
-          <span className="office-preview-mode-label">{showingSheets ? '工作表' : '页面版式'}</span>
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs" aria-label="预览模式" title="切换预览模式">
+          <span className="office-preview-mode-label">{showingSheets ? '交互表格' : showingPages ? '页面版式' : '原始预览'}</span>
           {showingSheets ? <Table2 className="office-preview-mode-icon h-3.5 w-3.5" /> : <FileText className="office-preview-mode-icon h-3.5 w-3.5" />}
-          {state.pdfPending ? <span role="status" aria-label="正在生成页面版式"><Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /></span> : <ChevronDown className="h-3 w-3" />}
+          <ChevronDown className="h-3 w-3" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuRadioGroup value={mode} onValueChange={value => { userSelectedMode.current = true; setMode(value as 'pages' | 'sheets'); }}>
-          <DropdownMenuRadioItem value="sheets">工作表</DropdownMenuRadioItem>
+        <DropdownMenuRadioGroup value={mode} onValueChange={value => setMode(value as 'original' | 'pages' | 'sheets')}>
+          <DropdownMenuRadioItem value="original">原始预览</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="sheets">交互表格</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="pages">页面版式</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
@@ -139,8 +142,9 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
       <Button variant="ghost" size="icon-sm" className="office-formula-toggle h-7 w-7 shrink-0 rounded-md font-serif italic aria-pressed:bg-muted" aria-label="公式栏" title={showFormulaBar ? '收起公式栏' : '展开公式栏'} aria-pressed={showFormulaBar} aria-expanded={showFormulaBar} aria-controls={formulaBarId} onClick={() => setShowFormulaBar(value => !value)}>ƒx</Button>
     </>}
   </OfficePreviewToolbar>;
-  if (mode === 'pages' && pdfPath) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><PDFViewer {...annotation} office toolbarContainer={pageControls} documentLocation={documentLocation} locationRequest={locationRequest} sourcePath={filePath} onReady={onReady} onError={onError} filePath={pdfPath} title={filePath} /></div></div>;
-  const notice = mode === 'pages' && !pdfPath ? <details open className="shrink-0 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground"><summary className="cursor-pointer">当前没有缓存的页面版式，显示工作表</summary><p role="status" className="pt-1">可直接使用工作表模式查看内容；页面版式仅在文件已有预生成 PDF 时提供。</p></details> : null;
+  if (showingOriginal) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><LazyOpenFileViewer filePath={filePath} fileName={officeParserFileName(filePath)} capability={browserOfficeCapability(filePath)} fit="width" onReady={onReady} onError={onError} /></div></div>;
+  if (showingPages) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><PDFViewer {...annotation} office toolbarContainer={pageControls} documentLocation={documentLocation} locationRequest={locationRequest} sourcePath={filePath} onReady={onReady} onError={onError} filePath={pdfPath!} title={filePath} /></div></div>;
+  const notice = mode === 'pages' && !pdfPath ? <details open className="shrink-0 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground"><summary className="cursor-pointer">当前没有缓存的页面版式，显示工作表</summary><p role="status" className="pt-1">可直接使用交互表格查看内容；页面版式仅在文件已有预生成 PDF 时提供。</p></details> : null;
   if (excelData?.sheets?.length) {
     const currentSheet = excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0];
     const cited = currentSheet.name === documentLocation?.sheet && range;

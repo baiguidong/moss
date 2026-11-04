@@ -28,12 +28,28 @@ function visualizationBridge(channel: string, token: string, initialState: unkno
     if (event.data.type === 'state') { state = event.data.payload; dispatchEvent(new CustomEvent('moss:state', { detail: state })); }
     if (event.data.type === 'theme') theme(event.data.payload === true);
   });
-  addEventListener('error', event => { failed = true; send('error', String(event.message).slice(0, 400)); });
+  addEventListener('error', event => {
+    // Chromium reports a ResizeObserver delivery warning through window.onerror
+    // even though the document is still healthy. Do not turn that layout warning
+    // into a recoverable-app error shown to the user.
+    const message = String(event.message || event.error?.message || '');
+    if (/ResizeObserver loop (completed with undelivered notifications|limit exceeded)/i.test(message)) {
+      event.preventDefault();
+      return;
+    }
+    failed = true; send('error', message.slice(0, 400));
+  });
   addEventListener('unhandledrejection', event => { failed = true; send('error', String(event.reason).slice(0, 400)); });
   addEventListener('DOMContentLoaded', () => {
-    let previous = 0;
+    let previous = 0, resizeFrame = 0, disposed = false;
     const measure = () => { const height = Math.ceil(document.body.getBoundingClientRect().height + 32); if (height !== previous) { previous = height; send('resize', height); } };
-    new ResizeObserver(measure).observe(document.body); measure(); if (!failed) send('ready', null);
+    const scheduleMeasure = () => {
+      if (disposed || resizeFrame) return;
+      resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; if (!disposed) measure(); });
+    };
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(document.body); measure(); if (!failed) send('ready', null);
+    addEventListener('pagehide', () => { disposed = true; observer.disconnect(); if (resizeFrame) cancelAnimationFrame(resizeFrame); }, { once: true });
   });
 }
 export function isolatedVisualizationDocument(content: string, options: { token?: string; state?: unknown; dark?: boolean } = {}) {

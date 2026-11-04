@@ -815,3 +815,18 @@ test('cross-App MCP bridge never exposes transport, credentials, or cancellation
     serviceId: descriptors[0].serviceId, revision: descriptors[0].revision, toolName: tool.name,
     arguments: {}, authorizeDispatch: () => {}, signal: canceled.signal }), APP_ERROR_CODES.actionCanceled)
 })
+
+test('Connector App MCP services expose tool settings and inspect through the shared catalog', async () => {
+  const f = await fixture()
+  const appId = 'moss.qq-mail', instanceId = `${appId}--default`
+  f.installations.set(appId, { appId, enabled: true, activeVersion: '0.1.1', grants: ['connector:use'] })
+  f.instances.set(instanceId, { id: instanceId, appId, enabled: true })
+  const service = { appId, connectorId: 'qq-mail', instanceId, version: '0.1.1', name: 'qq-mail', runtimeName: 'qq-mail',
+    serviceId: `mcp/${instanceId}/connector-qq-mail-qq-mail`, revision: 'qq-revision', config: { type: 'http', url: 'https://mail.example/mcp' }, enabled: true }
+  const host = new AppMcpHost({ ...f.options, getConnectorServices: () => [service] })
+  expect(host.toolCatalog(appId)).toMatchObject([{ name: 'qq-mail', serviceId: service.serviceId, status: 'unchecked', tools: [] }])
+  await host.inspectTools({ appId, instanceId, name: service.name, revision: service.revision })
+  expect(host.toolCatalog(appId)[0]).toMatchObject({ status: 'connected', tools: [{ name: 'search' }] })
+  expect(host.findServer('qq-mail')).toMatchObject({ connector: true, provider: { appId, instanceId, connector: true } })
+  expect(host.serverOwners()['qq-mail']).toMatchObject({ appId, serviceId: service.serviceId })
+})

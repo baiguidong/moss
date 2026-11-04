@@ -86,5 +86,27 @@ export function useSessionToolCallDrafts(sessionId?: string) {
 }
 
 export function SessionToolCallDrafts({ drafts }: { drafts: OperationDraft[] }) {
-  return drafts.length ? <div className="my-4 space-y-3" aria-label="会话工具草稿">{drafts.map(draft => <ToolCallDraftCard key={draft.id} draft={draft} />)}</div> : null;
+  return drafts.length ? (
+    <div className="my-4 space-y-3" aria-label="会话工具草稿">
+      {drafts.map(draft => (
+        <div
+          key={draft.id}
+          className="assistant-message group flex items-start justify-start gap-2"
+          style={{ marginBottom: 'var(--chat-message-spacing, 10px)' }}
+        >
+          <img
+            src="./build/icon.png"
+            alt="Moss"
+            className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+            draggable={false}
+          />
+          <div data-message-shell="assistant" className="relative flex w-full min-w-0 flex-col items-start gap-2">
+            <div data-message-body="assistant" className="w-full min-w-0 max-w-full text-foreground select-text">
+              <ToolCallDraftCard draft={draft} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : null;
 }
