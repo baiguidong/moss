@@ -1673,7 +1673,7 @@ export const fetchToolsForClient = memoizeWithLRU(
               }
 
               const startTime = Date.now()
-              const MAX_SESSION_RETRIES = 1
+              const MAX_SESSION_RETRIES = context.toolDraftConfirmed ? 0 : 1
               for (let attempt = 0; ; attempt++) {
                 try {
                   const connectedClient = await ensureConnectedClient(client)
@@ -1681,7 +1681,7 @@ export const fetchToolsForClient = memoizeWithLRU(
                   if (latest && catalogRevision(recursivelySanitizeUnicode(latest)) !== catalogRevision(tool) || (!latest && liveCatalogs.get(connectedClient.client)?.snapshot)) {
                     throw new Error(`MCP tool '${tool.name}' changed or was removed. Refresh the tool list before calling it again.`)
                   }
-                  const mcpResult = await callMCPToolWithUrlElicitationRetry({
+                  const mcpResult = await (context.toolDraftConfirmed ? callMCPTool : callMCPToolWithUrlElicitationRetry)({
                     client: connectedClient,
                     clientConnection: client,
                     tool: tool.name,

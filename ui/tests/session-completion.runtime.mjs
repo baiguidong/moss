@@ -36,7 +36,7 @@ try {
     permissionMode: 'bypassPermissions', allowedTools: [toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
     appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
     appTools: [{ id: 'moss.self-test/self_test', appId: 'moss.self-test', name: toolName, title: 'result', description: 'Submit a result', effect: 'write', inputSchemaDocument: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }],
-    onAppEvent: async event => { executed.push(event.input.input.n); session.completeTurn(); return { ok: true, result: { recorded: event.input.input.n } }; },
+    onAppEvent: async event => { if (event.type === 'tool_call_review') return { ok: true, result: await event.execute(event.input.arguments, false) }; executed.push(event.input.input.n); session.completeTurn(); return { ok: true, result: { recorded: event.input.input.n } }; },
     environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
   });
   const firstUserId = randomUUID(), secondUserId = randomUUID();

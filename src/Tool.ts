@@ -316,10 +316,13 @@ export type ToolUseContext = {
   /** Callback for MossTool to emit app-related events (save, launch, update, etc.) to main process.
    *  Returns a Promise with the result from the main process handler. */
   emitAppEvent?: (event: MossAppEvent) => Promise<MossAppEventResult>
+  /** An explicit user draft confirmation forbids automatic replay after uncertain failures. */
+  toolDraftConfirmed?: boolean
 }
 
 /** App event types for MossTool */
 export type MossAppEvent =
+  | { type: 'tool_call_review'; input: { kind: 'app' | 'mcp'; appId: string; contributionId?: string; serverName?: string; toolName: string; arguments: Record<string, unknown>; schema?: unknown; toolUseId: string }; signal: AbortSignal; execute: (input: Record<string, unknown>, reviewed: boolean, onDispatch?: () => Promise<void>) => Promise<unknown> }
   | { type: 'present'; input: Record<string, unknown>; presentationContext: { turnId: string; sessionId: string; epoch?: string; toolUseId: string; agentId?: string } }
   | { type: 'self_test'; input: { action: 'list' | 'start' | 'status' | 'record' | 'stop'; case_ids?: string[]; run_id?: string; case_id?: string; status?: 'passed' | 'failed' | 'blocked'; checks?: { index: number; passed: boolean; actual: string }[]; evidence?: string[]; notes?: string } }
   | { type: 'browser_open'; input: MossBrowserOpenInput }

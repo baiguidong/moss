@@ -12,6 +12,7 @@ import '@/globals.css';
 const api = window as any;
 const rpc = (method: string) => (input: unknown) => api.detailsRpc(method, input);
 api.agentDesktop = {
+  appToolCallPolicies: rpc('app:tool-call-policies'),
   inspectAppMcpTools: rpc('app:inspect-mcp-tools'),
   readAppSkill: rpc('app:read-skill'), setAppToolScope: rpc('app:set-tool-scope'), setAppEnabled: rpc('app:set-enabled'), setAppGrants: rpc('app:set-grants'),
   setAppInstanceEnabled: rpc('app:set-instance-enabled'), restartAppInstance: rpc('app:restart-instance'), getAppInstanceLogs: rpc('app:get-instance-logs'),

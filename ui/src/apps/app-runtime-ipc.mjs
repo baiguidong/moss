@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { loadJsonSchema } from '../../../packages/app-sdk/src/index.mjs'
+import { toolCallPolicyKey } from '../../../packages/app-runtime/src/tool-call-policy/index.mjs'
 import { appCapabilityDeclarationChanged, confirmAppInstallation, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_PERMISSION_CANCELLED = 'MOSS_APP_INSTALL_PERMISSION_CANCELLED'
@@ -256,6 +257,25 @@ export function registerAppRuntimeIpc(options) {
       if (!version || host.getInstallation(appId)?.activeVersion !== version) throw new Error('App 已更新，请重试')
     } }, scope, loading)
     return changed('tool-scope', appId, result)
+  })
+  ipcMain.handle('app:tool-call-policies', async (_event, { appId, identity, mode } = {}) => {
+    const host = runtime(), owner = host.currentOwner().key;
+    await host.getActivePackage(appId);
+    if (host.currentOwner().key !== owner) throw new Error('账号已变化，请重试。')
+    const key = host.storageAppId(appId);
+    if (mode !== undefined) {
+      toolCallPolicyKey(identity);
+      if (identity.kind === 'app') {
+        const { tools } = await host.listContributions({ appId, kinds: ['tools'], includeUnavailable: true });
+        if (!tools.some(tool => tool.id === identity.contributionId && tool.appId === appId)) throw new Error('App 工具不存在。');
+      } else {
+        const service = options.getMcpHost?.()?.toolCatalog(appId).find(s => s.instanceId === identity.instanceId && s.name === identity.server);
+        if (!service?.tools.some(tool => tool.name === identity.toolName)) throw new Error('MCP 工具不存在，请刷新工具目录。');
+      }
+      if (host.currentOwner().key !== owner) throw new Error('账号已变化，请重试。');
+      return host.toolCallPolicies.set(key, identity, mode);
+    }
+    return host.toolCallPolicies.list(key);
   })
   ipcMain.handle('app:inspect-mcp-tools', (_event, input) => {
     const host = options.getMcpHost?.()

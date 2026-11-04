@@ -121,11 +121,12 @@ export function buildPendingWorkItems({
 
   for (const draft of operationDrafts) {
     if (!draft?.id || ['cancelled', 'expired'].includes(draft.status)) continue;
-    const state = draft.status === 'executing' ? 'progress' : draft.status === 'succeeded' ? 'done' : draft.status === 'unknown' ? 'review' : 'attention';
+    const state = draft.status === 'executing' ? 'progress' : ['succeeded', 'returned'].includes(draft.status) ? 'done' : draft.status === 'unknown' ? 'review' : 'attention';
     if (state === 'done' && now - draft.updatedAt > doneWindowMs) continue;
     addItem(items, {
       id: `operation:${draft.id}`,
       source: 'operation',
+      sessionId: draft.toolCall?.sessionId,
       state,
       title: compactText(draft.title, '业务操作草稿'),
       summary: compactText(draft.summary, `${draft.channel} 操作等待处理`),

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2, "id": "fixture.tool-review", "version": "1.0.0", "displayName": "工具调用演示", "hostApi": "^3.17.0",
+  "toolScope": "session", "permissions": [],
+  "backend": { "entry": "backend.mjs", "runtime": "node", "apiVersion": 1, "lifecycle": "on-demand", "actions": [{"name":"record","inputSchema":"input.json"}, {"name":"inspect"}] },
+  "contributes": {
+    "tools": [{"id":"record","title":"记录演示消息","description":"在隔离演示数据中记录消息，不发送到外部系统。","effect":"write","action":"record","inputSchema":"input.json"}],
+    "commands": [{"id":"inspect","title":"查看本地演示记录","action":"inspect"}]
+  }
+}

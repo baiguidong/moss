@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle'
+import { reviewAppToolCall } from './appToolReview.js'
 import type {
   ContentBlockParam,
   ToolResultBlockParam,
@@ -1252,12 +1253,13 @@ async function checkPermissionsAndCallTool(
     callInput = processedInput
   }
   try {
-    const result = await tool.call(
-      callInput,
+    const result = await reviewAppToolCall(tool, callInput, { ...toolUseContext, toolUseId: toolUseID }, canUseTool, assistantMessage, (reviewedInput, reviewed) => tool.call(
+      reviewedInput,
       {
         ...toolUseContext,
         toolUseId: toolUseID,
         userModified: permissionDecision.userModified ?? false,
+        toolDraftConfirmed: reviewed,
       },
       canUseTool,
       assistantMessage,
@@ -1267,7 +1269,7 @@ async function checkPermissionsAndCallTool(
           data: progress.data,
         })
       },
-    )
+    ))
     const durationMs = Date.now() - startTime
     addToToolDuration(durationMs)
 

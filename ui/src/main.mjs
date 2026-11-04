@@ -351,6 +351,8 @@ import { createDesktopStateStore } from './desktop-state-store.mjs';
 import { createAppNotificationBroker } from './app-notification-broker.mjs';
 import { createDecisionBroker } from './decision-broker.mjs';
 import { createOperationDraftService } from './operation-drafts.mjs';
+import { createToolCallDraftService } from './tool-call-drafts.mjs';
+import { createAppToolCallReviewer } from './apps/app-tool-call-review.mjs';
 import { createAppOperationDraftHandlers } from './apps/app-operation-drafts.mjs';
 import {
   createEnterpriseAccountClient,
@@ -820,6 +822,12 @@ const operationDraftService = createOperationDraftService({
   getRuntime: () => appRuntime,
   onChanged: payload => emitToRenderer('operation-draft:changed', payload),
 });
+const toolCallDraftService = createToolCallDraftService({
+  filePath: path.join(MOSS_HOME, 'tool_call_drafts.json'),
+  currentOwner: () => appRuntime?.currentOwner()?.key || 'host',
+  onChanged: payload => emitToRenderer('operation-draft:changed', payload),
+});
+const reviewAppToolCall = createAppToolCallReviewer({ getRuntime: () => appRuntime, getMcpHost: () => appMcpHost, drafts: toolCallDraftService });
 let agentMailPoller = null;
 let agentMailStatus = {
   state: 'stopped',
@@ -5924,6 +5932,10 @@ async function resolveAgentMailEventConnection(sessionRecord, activeMailTurn = n
 }
 
 async function handleMossHostEvent(event, sessionRecord) {
+  if (event?.type === 'tool_call_review') {
+    try { return { ok: true, result: await reviewAppToolCall(event, sessionRecord) }; }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+  }
   if (event?.type === 'present') {
     const scope = event.presentationContext;
     if (!scope || scope.sessionId !== sessionRecord?.id || sessionRecord.deleted) return { ok: false, error: 'Presentation session is unavailable' };
@@ -8976,13 +8988,17 @@ ipcMain.handle('notification:mark-read', (_event, { id } = {}) => appNotificatio
 ipcMain.handle('notification:mark-all-read', () => appNotificationBroker.markAllRead());
 ipcMain.handle('notification:remove', (_event, { id } = {}) => appNotificationBroker.remove(id));
 ipcMain.handle('notification:clear', () => appNotificationBroker.clear());
-ipcMain.handle('operation-draft:list', () => operationDraftService.list());
-ipcMain.handle('operation-draft:get', (_event, payload = {}) => operationDraftService.get(payload));
+const draftServiceFor = payload => String(payload?.draftId || '').startsWith('tool-draft:') ? toolCallDraftService : operationDraftService;
+ipcMain.handle('operation-draft:list', async () => [...await operationDraftService.list(), ...await toolCallDraftService.list()].sort((a, b) => b.updatedAt - a.updatedAt));
+ipcMain.handle('operation-draft:get', (_event, payload = {}) => draftServiceFor(payload).get(payload));
 ipcMain.handle('operation-draft:create', (_event, payload = {}) => operationDraftService.create(payload));
-ipcMain.handle('operation-draft:update', (_event, payload = {}) => operationDraftService.update(payload));
-ipcMain.handle('operation-draft:cancel', (_event, payload = {}) => operationDraftService.cancel(payload));
-ipcMain.handle('operation-draft:confirm', (_event, payload = {}) => operationDraftService.confirm(payload));
-ipcMain.handle('operation-draft:query-result', (_event, payload = {}) => operationDraftService.queryResult(payload));
+ipcMain.handle('operation-draft:update', (_event, payload = {}) => draftServiceFor(payload).update(payload));
+ipcMain.handle('operation-draft:cancel', (_event, payload = {}) => draftServiceFor(payload).cancel(payload));
+ipcMain.handle('operation-draft:confirm', (_event, payload = {}) => draftServiceFor(payload).confirm(payload));
+ipcMain.handle('operation-draft:query-result', (_event, payload = {}) => {
+  if (draftServiceFor(payload) === toolCallDraftService) throw new Error('此工具未提供结果查询协议，请到来源系统核实，勿重复执行。');
+  return operationDraftService.queryResult(payload);
+});
 ipcMain.handle('decision:respond', (_event, { decisionId, allowed, choice } = {}) => {
   if (!appDecisionBroker) throw new Error('Moss decision broker is not ready.');
   return appDecisionBroker.respond({

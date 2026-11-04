@@ -1632,7 +1632,7 @@ export default function App() {
     if (item.sessionId) {
       await openSession(item.sessionId);
     }
-    if (item.source === 'operation' && item.actionRef) {
+    if (item.source === 'operation' && item.actionRef && !item.sessionId) {
       setSelectedOperationDraftId(item.actionRef);
       setActiveView('drafts');
     }

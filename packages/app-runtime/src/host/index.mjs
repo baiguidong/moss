@@ -15,6 +15,7 @@ import {
 import { AppActionBroker } from '../actions/index.mjs'
 import { AppCapabilityBroker, APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
 import { AppToolScopeStore } from '../tool-scope/index.mjs'
+import { AppToolCallPolicyStore } from '../tool-call-policy/index.mjs'
 import { getAppToolScope } from '../../../app-sdk/src/tool-scope.mjs'
 import builtinApps from '../../../app-sdk/src/builtin-apps.json' with { type: 'json' }
 import { HostRequests } from './requests.mjs'
@@ -142,6 +143,7 @@ export class AppRuntimeHost {
     }
     this.rootDir = path.resolve(options.rootDir)
     this.toolScopes = new AppToolScopeStore(path.join(this.rootDir, 'app-tool-scopes.json'))
+    this.toolCallPolicies = new AppToolCallPolicyStore(path.join(this.rootDir, 'app-tool-call-policies.json'))
     this.appsDir = path.resolve(options.appsDir || path.join(this.rootDir, 'apps'))
     this.dataDir = path.resolve(options.dataDir || path.join(this.rootDir, 'apps-data'))
     this.runtimeDir = path.resolve(options.runtimeDir || path.join(this.rootDir, 'apps-runtime'))

@@ -67,6 +67,7 @@ import {
   type ToolDisplayMode,
 } from "@/components/chat/tool-display-settings";
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
+import { PendingToolDraftContext, SessionToolCallDrafts, useSessionToolCallDrafts } from '@/components/tool-call-draft-card';
 import { AskUserQuestionCard, type AskUserQuestionCardProps } from "@/components/chat/ask-user-question-card";
 import { AgentTeamsStatus, AgentTeamsWorkbench } from "@/components/agent-teams-workbench";
 
@@ -2607,6 +2608,8 @@ export function ChatArea({
   homeShortcuts?: HomeShortcutOptions;
 }) {
   const composerDock = React.useRef<HTMLDivElement>(null);
+  const toolCallDrafts = useSessionToolCallDrafts(sessionId);
+  const pendingDraftTools = React.useMemo(() => new Set(toolCallDrafts.filter(d => d.status === 'draft').map(d => d.toolCall!.toolUseId)), [toolCallDrafts]);
   const [sideOpen, setSideOpen] = React.useState(false);
   React.useEffect(() => setSideOpen(false), [sessionId]);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
@@ -2679,12 +2682,12 @@ export function ChatArea({
     ? (busyStartedAt ?? fallbackBusyStartRef.current?.startedAt)
     : undefined;
   const composerActivity = React.useMemo(
-    () => deriveAgentActivity(messages, loading, {
+    () => pendingDraftTools.size ? { kind: 'waiting' as const, label: '等待确认工具草稿' } : deriveAgentActivity(messages, loading, {
       toolPermissionRequest,
       questionRequest,
       pendingPlanApproval: Boolean(pendingPlanApproval),
     }),
-    [messages, loading, pendingPlanApproval, questionRequest, toolPermissionRequest],
+    [messages, loading, pendingPlanApproval, questionRequest, toolPermissionRequest, pendingDraftTools],
   );
   const activityStartTime = loadingStartTime
     ?? (composerActivity?.kind === "waiting"
@@ -2869,6 +2872,7 @@ export function ChatArea({
       ) : (
         <div className="relative min-h-0 flex-1">
         <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? 'invisible pointer-events-none' : ''}`} inert={appWorkbench.open} aria-hidden={appWorkbench.open}>
+        <PendingToolDraftContext.Provider value={pendingDraftTools}>
         <ToolDisplaySettingsProvider key={sessionId} sessionId={sessionId} toolDisplayMode={toolDisplayMode}>
           <MessageListPane
             key={sessionId || "default"}
@@ -2887,9 +2891,10 @@ export function ChatArea({
             latestMessageActions={onForkSession ? (
               <ForkSessionButton onFork={onForkSession} forking={forkingSession} disabledReason={forkDisabledReason} />
             ) : undefined}
-            footer={appWorkbench.open ? undefined : <>{conversationRequest}{projectCreationReview}</>}
+            footer={appWorkbench.open ? undefined : <>{conversationRequest}{projectCreationReview}<SessionToolCallDrafts drafts={toolCallDrafts} /></>}
           />
         </ToolDisplaySettingsProvider>
+        </PendingToolDraftContext.Provider>
         </div>
         {appWorkbench.mounted && appWorkbench.entry && <div className={`absolute inset-0 flex min-h-0 flex-col ${appWorkbench.open ? '' : 'invisible pointer-events-none'}`} inert={!appWorkbench.open} aria-hidden={!appWorkbench.open}>
           <AppConversationWorkbench sessionId={sessionId} entries={appWorkbench.entries} entry={appWorkbench.entry} onSelect={appWorkbench.select} onClose={appWorkbench.close}/>

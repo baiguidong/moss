@@ -272,6 +272,7 @@ export function createMossClient(transport, platform = {}) {
   readAppSkill: (payload) => transport.invoke('app:read-skill', payload),
   appSettingsForm: (payload) => transport.invoke('app:settings-form', payload),
   setAppToolScope: (payload) => transport.invoke('app:set-tool-scope', payload),
+  appToolCallPolicies: (payload) => transport.invoke('app:tool-call-policies', payload),
   listAppResources: (payload) => transport.invoke('app:composer:list', payload),
   getAppAuthoring: () => transport.invoke('app:authoring:get'),
   prepareAppAuthoring: (appId) => transport.invoke('app:authoring:prepare', { appId }),

@@ -57,7 +57,7 @@ try {
       permissionMode: 'bypassPermissions', allowedTools: [name === 'b' ? 'app__moss_self_test__self_test' : toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
       appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
       appTools: [descriptor, { ...descriptor }],
-      onAppEvent: async event => { assert.equal(event.input.contributionId, descriptor.id); const n = event.input.input.n; executions.push(n); if (n === 1) { toolStarted(); await toolGate; } return { ok: true, result: { actualResult: n } }; },
+      onAppEvent: async event => { if (event.type === 'tool_call_review') return { ok: true, result: await event.execute(event.input.arguments, false) }; assert.equal(event.input.contributionId, descriptor.id); const n = event.input.input.n; executions.push(n); if (n === 1) { toolStarted(); await toolGate; } return { ok: true, result: { actualResult: n } }; },
       environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
     }); sessions.push(session); return session;
   }
@@ -119,7 +119,7 @@ try {
     permissionMode: 'bypassPermissions', allowedTools: [toolName], mcpServers: {}, addDirs: [], thinkingConfig: { type: 'disabled' },
     appToolPolicy: { appIds: ['moss.self-test'], mcpServers: {} },
     appTools: [descriptor],
-    onAppEvent: async () => ({ ok: true, result: { actualResult: 1 } }),
+    onAppEvent: async event => ({ ok: true, result: event.type === 'tool_call_review' ? await event.execute(event.input.arguments, false) : { actualResult: 1 } }),
     environment: { MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify({ enabled: false }), MOSS_RUNTIME_SESSION_MEMORY_SETTINGS: JSON.stringify({ enabled: false }) },
   });
   assert(resumed?.session);

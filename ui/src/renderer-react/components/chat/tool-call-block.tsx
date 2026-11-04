@@ -5,6 +5,7 @@ import { PresentationToolStatus, usePresentationToolResult, presentationResultLa
 "use client";
 
 import * as React from "react";
+import { PendingToolDraftContext } from '@/components/tool-call-draft-card';
 import {
   ArrowUpRight,
   ChevronDown,
@@ -348,6 +349,7 @@ function StandardToolCallBlock({
   chrome = "card",
 }: ToolCallBlockProps) {
   const { toolDisplayMode, disclosureOverrides, sessionId } = useToolDisplaySettings();
+  const awaitingDraft = React.useContext(PendingToolDraftContext).has(toolCall.toolUseId);
   const isRow = chrome === "row";
   const kind = getToolKind(toolCall.toolName, toolCall.input);
   const isRunning = toolCall.status === "running" || toolCall.status === "pending";
@@ -466,7 +468,7 @@ function StandardToolCallBlock({
     .join("\n");
   const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
   const headerSubject = normalizeToolHeaderSubject(subject, isRow);
-  const rowResultSummary = presentationResult ? presentationResultLabel(presentationResult) : executionState === "running"
+  const rowResultSummary = awaitingDraft ? '等待确认草稿' : presentationResult ? presentationResultLabel(presentationResult) : executionState === "running"
     ? "执行中"
     : executionState === "failed"
       ? "失败"
@@ -501,9 +503,9 @@ function StandardToolCallBlock({
         )}
       >
         {isRow ? (
-          <RowToolIcon active={executionState === "running"} />
+          <RowToolIcon active={!awaitingDraft && executionState === "running"} />
         ) : (
-          <StatusDot executionState={executionState} />
+          awaitingDraft ? <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50" title="等待确认草稿" /> : <StatusDot executionState={executionState} />
         )}
         <button
           type="button"
@@ -610,7 +612,7 @@ function StandardToolCallBlock({
             <TranscriptOutput
               segments={segments}
               expanded={outputExpanded}
-              emptyLabel={inlineDiff
+              emptyLabel={awaitingDraft ? '等待确认草稿，尚未执行' : inlineDiff
                 ? undefined
                 : executionState === "failed"
                   ? "Failed"

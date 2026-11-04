@@ -1,0 +1,9 @@
+{
+  "type": "object", "additionalProperties": false,
+  "properties": {
+    "recipient": {"type":"string","minLength":1,"title":"收件人","description":"仅用于本地演示，不发送邮件。"},
+    "message": {"type":"string","minLength":1,"title":"内容"},
+    "tags": {"type":"array","items":{"type":"string"},"title":"标签"}
+  },
+  "required": ["recipient", "message"]
+}

@@ -1658,6 +1658,7 @@ declare global {
       readAppSkill: (payload: { appId: string; skillId: string }) => Promise<{ title: string; content: string }>;
       appSettingsForm: (payload: { appId: string; version: string; settingId: string; operation: 'read' | 'save'; values?: Record<string, unknown> }) => Promise<{ schema: Record<string, any>; values: Record<string, any>; configuredFields?: string[] }>;
       setAppToolScope: (payload: { appId: string; scope: 'global' | 'session' | null; loading?: 'always' | 'on-demand' | null }) => Promise<{ scope: 'global' | 'session' }>;
+      appToolCallPolicies: (payload: { appId: string; identity?: { kind: 'app'; contributionId: string } | { kind: 'mcp'; instanceId: string; server: string; toolName: string }; mode?: 'normal' | 'draft' }) => Promise<Record<string, 'draft'>>;
       listAppResources: (payload: {sessionId?:string;workspace?:string;query?:string;offset?:number}) => Promise<{items:import('./lib/app-composer').AppComposerResource[];providers:Array<{id:string;title:string}>}>;
       getAppAuthoring: () => Promise<{available:boolean;reason:string|null;provider:{id:string;appId:string}|null}>;
       prepareAppAuthoring: (appId:string) => Promise<{ok:boolean}>;
