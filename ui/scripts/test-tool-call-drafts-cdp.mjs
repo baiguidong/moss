@@ -112,7 +112,9 @@ try {
   await card.getByLabel('收件人 *', { exact: true }).fill('修改后的收件人'); await card.getByLabel('内容 *', { exact: true }).fill('修改后的内容');
   await card.getByRole('button', { name: '保存修改', exact: true }).click(); await until(async () => (await drafts()).find(d => d.id === draft.id).revision === 2, 'edited native params');
   await page.screenshot({ path: path.join(output, 'conversation-draft.png') });
-  await page.reload(); await card.waitFor(); assert.equal((await nativeCalls()).length, 1);
+  await page.reload(); await page.getByRole('button', { name: /^待处理/ }).click();
+  await page.locator(`[data-pending-work-item="operation:${draft.id}"]`).click(); await card.waitFor();
+  assert.equal((await nativeCalls()).length, 1);
   await card.getByRole('button', { name: '确认执行', exact: true }).click(); assert.equal((await finished()).is_error || false, false);
   assert.deepEqual((await nativeCalls()).at(-1), { recipient: '修改后的收件人', message: '修改后的内容', tags: ['demo'] }); assert.equal((await nativeCalls()).length, 2);
   await card.getByText('工具已返回', { exact: true }).waitFor(); await page.screenshot({ path: path.join(output, 'conversation-result.png') });
