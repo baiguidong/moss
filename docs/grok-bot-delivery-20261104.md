@@ -62,4 +62,33 @@ manifest 声明 `operations:propose` 权限和 `moss.operations/v1` Host protoco
 
 个人环境使用 `webui.sh upgrade <env-id> <image>` 原容器内切换程序，保留 HOME、容器 ID、系统安装；gateway 使用 `.env` 的 `MOSS_WEB_IMAGE` 与 Compose 更新。不要用删除/重建个人容器或删除卷代替升级。升级脚本校验兼容性、检查空闲并支持失败自动退回；应用回滚也用同一入口指定上一镜像。原 `.env` 备份为 `.env.before-webui-0.1.21`。
 
-最终修订版发布、镜像摘要、部署与登录后 CDP 结果在执行完成后追加。
+## 最终发布与 181 验收（2026-11-04）
+
+最终修订版 **0.1.22** 已发布并更新到 [181 WebUI](https://10.0.1.181/)。本轮功能按独立提交保留；代码构建点为 `fb8c617fc8a77d6f6aa8d21c00e2b3d1e00b8a18`，本节是部署后的文档记录，不改变镜像代码。
+
+- [CI 41676825909](https://github.com/baiguidong/moss/actions/runs/41676825909) 成功；启用 `runtime_tests=true` 和镜像发布，未构建 Server。
+- 镜像：`ghcr.io/baiguidong/moss-webui:0.1.22`，Linux AMD64。
+- 发布摘要：`sha256:6ec8c39cd612b8411ccb86d5e9fa7d0fa8fb77cf87d8bea953158602e5780733`，已与 CI 推送日志和 181 实际镜像核对。
+- 个人环境通过 `webui.sh upgrade` 原地切换到 0.1.22，状态 `ready`、无错误；原容器 ID 和 `/home/moss` 数据卷均保持不变。实际程序位于 `/opt/moss-releases/6ec8c39cd612b8411ccb86d5e9fa7d0fa8fb77cf87d8bea953158602e5780733`。
+- `.env` 备份为 `/data/moss-server/.env.before-webui-0.1.22`；仅将 `MOSS_WEB_IMAGE` 更新到 0.1.22，并重建 `web-gateway`。个人环境、gateway、原 Server 均为 `running / healthy`。
+- Server 仍为 `moss-server:181-control-plane-phase2-20261102`，容器 ID 核对未变。
+
+### 验证结果
+
+本轮 56 项定向测试通过；UI 类型/静态检查与 renderer 构建通过。隔离桌面 CDP 已验证 App 生成草稿、待处理跳转、编辑确认与回执、刷新恢复、未知结果查询、CRM 版本冲突，以及 Cron 执行历史和会话跳转。六种创作 App 与真实 PDF 预览回归通过。全仓既有失败记录见上文，未将这些定向结果表述为全仓通过。
+
+CI 验收报告确认：真实浏览器、容器重启、双用户隔离、同一容器多会话、控制器重启、原容器停止/启动、原地升级、坏版本回滚、apt 与 `/etc` 保留均通过；缺失个人容器时不会擅自创建空环境。容器替换后的系统恢复不属于本轮已验证能力。
+
+181 登录后的 Chrome CDP 验收于北京时间 2026-11-04 09:14 完成：
+
+1. 登录网关后，Host API 和环境 API 返回已认证、`ready`、版本 0.1.22。
+2. 待处理页面正常展示，按项目/按状态可切换。
+3. 业务操作草稿列表、定时任务列表及刷新正常，无错误提示。
+4. 浏览器刷新后重新连接同一环境，版本和列表数量一致。
+5. 页面异常与请求失败均为 0；截图已检查，页面无布局溢出或遮挡。
+
+真实环境当时待处理项、业务草稿、定时任务均为 0，因此这里只验证空状态、API 与导航；不会把空状态冒烟测试等同于真实渠道执行成功。完整操作路径的证据来自上述隔离 App fixture。
+
+本地证据目录（忽略提交）：`output/webui-181-20261104/`，包含 `validation.json`、`deployment.json`、`image.json`、`ci-result.json`、页面截图及下载的 CI 验收报告。功能闭环证据保留在 `output/work-review-cdp/` 和 `output/creation-desktop-cdp/`。
+
+如需回滚个人程序，在 `/data/moss-server` 执行 `./webui.sh upgrade env-20a7006bd8bd828e8437aa50 ghcr.io/baiguidong/moss-webui:0.1.21`；网关将 `MOSS_WEB_IMAGE` 改回 0.1.21 后执行 `docker compose --env-file .env -f compose.yaml up -d --no-deps web-gateway`。仍使用原个人容器和数据卷。
