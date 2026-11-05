@@ -24,6 +24,12 @@ export type NewAppNotification = Pick<AppNotification, 'severity' | 'source' | '
 
 export const APP_NOTIFICATIONS_STORAGE_KEY = 'moss.app-notifications.v1';
 export const MAX_APP_NOTIFICATIONS = 200;
+const RESIZE_OBSERVER_LOOP_ERROR = /ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)/i;
+
+export function isResizeObserverLoopError(value: unknown): boolean {
+  const message = value instanceof Error ? value.message : String(value || '');
+  return RESIZE_OBSERVER_LOOP_ERROR.test(message);
+}
 const DEDUPE_WINDOW_MS = 10_000;
 const MAX_SOURCE_LENGTH = 120;
 const MAX_TITLE_LENGTH = 240;

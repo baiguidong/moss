@@ -27,7 +27,7 @@ describe('resource monitor display', () => {
     expect(html).not.toContain('磁盘');
   });
   test('does not present stale metrics as current healthy data', () => {
-    const html = renderToStaticMarkup(<ResourceMonitorContent snapshot={snapshot} now={time + 20_000} />);
+    const html = renderToStaticMarkup(<ResourceMonitorContent snapshot={snapshot} now={time + 40_000} />);
     expect(html).toContain('采样已过期');
     expect(html).not.toContain('>140.0%<');
     expect(html).toContain('待采集');

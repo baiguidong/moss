@@ -435,6 +435,7 @@ export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean 
   }, [cloudEnabled]);
 
   React.useEffect(() => {
+    if (activeTab !== 'usage') return;
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 60_000);
     const offSettingsChanged = window.agentDesktop.onSettingsChanged(() => void loadOverview(true));
@@ -443,7 +444,7 @@ export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean 
       window.clearInterval(interval);
       offSettingsChanged();
     };
-  }, [loadOverview]);
+  }, [activeTab, loadOverview]);
 
   const loading = local.loading || (cloudEnabled && cloud.loading);
   const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloudEnabled ? cloud.data?.generatedAt ?? 0 : 0);

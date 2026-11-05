@@ -69,6 +69,20 @@ test('bare path candidates do not alter web links, existing links or code blocks
   expect(tree.children[1]).toEqual({ type: 'code', value: '/tmp/c' });
 });
 
+test('recognizes fullwidth home paths in conversation text', () => {
+  const tree: any = { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', value: '图片：～/Downloads/123.jpeg' }] }] };
+  remarkFileReferences()(tree);
+  expect(tree.children[0].children.find((item: any) => item.type === 'link')?.url).toBe('～/Downloads/123.jpeg');
+  expect(markdownUrlTransform('～/Downloads/123.jpeg', 'href')).toBe('～/Downloads/123.jpeg');
+});
+
+test('opens a fullwidth home path in the owning session', async () => {
+  const opened: any[] = [];
+  const host = { ...setup().host, presentation: { open: async (input: any) => { opened.push(input); return { ok: true }; } } } as any;
+  await handleMarkdownLinkClick({ preventDefault() {} }, '～/Downloads/123.jpeg', host, 'session');
+  expect(opened).toEqual([{ sessionId: 'session', input: { items: [{ path: '～/Downloads/123.jpeg' }] } }]);
+});
+
 test('local file navigation retains the owning session and line suffix', async () => {
   const opened: any[] = [];
   const host = { ...setup().host, presentation: { open: async (input: any) => { opened.push(input); return { ok: true }; } } } as any;

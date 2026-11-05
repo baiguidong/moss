@@ -7,7 +7,7 @@ export function remarkFileReferences() {
       node.children = node.children.flatMap((child: any) => {
         if (child.type !== 'text') { walk(child); return [child]; }
         const value: string = child.value;
-        const pattern = /(^|[\s：，；（(])((?:\/(?!\/)|[A-Za-z]:[\\/]|\.{1,2}[\\/]|~[\\/])[^\s<>"'`，。；！？、）)\[\]{}]+)/g;
+        const pattern = /(^|[\s：，；（(])((?:\/(?!\/)|[A-Za-z]:[\\/]|\.{1,2}[\\/]|[~～][\\/])[^\s<>"'`，。；！？、）)\[\]{}]+)/g;
         const parts: any[] = []; let end = 0;
         for (const match of value.matchAll(pattern)) {
           const start = match.index! + match[1].length;

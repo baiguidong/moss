@@ -114,6 +114,27 @@ describe('presentation lifecycle', () => {
     expect((await resolver.loadResource(session, resource)).content).toBe('literal');
     await expect(resolver.resolveItem(session, { path: root })).rejects.toThrow('outside');
   });
+  test('manual links recover a uniquely renamed file in the same workspace directory', async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-link-')); roots.push(workspace);
+    const actual = path.join(workspace, '隐私推理与隐私训练调研.md');
+    await fs.writeFile(actual, 'final report');
+    await fs.writeFile(path.join(workspace, '隐私推理与隐私训练调研初步结论.md'), 'draft');
+    const resolver = createPresentationResolver({ resolveResourceFile: async () => { throw new Error('no provider'); }, readWorkspaceFile: async (_record: any, filePath: string) => ({ content: await fs.readFile(filePath, 'utf8') }) });
+    const session = { id: 'report', workspace, agentMode: 'local' };
+    const missing = path.join(workspace, '隐私推理与隐私训练最终版.md');
+    const recovered = await resolver.resolveItem(session, { path: missing }, { origin: 'manual' });
+    expect(recovered.source.path).toBe(await fs.realpath(actual));
+    expect((await resolver.loadResource(session, recovered)).content).toBe('final report');
+    const service = createPresentationService({ storageRoot: path.join(workspace, '.presentations'), getSessionRecord: () => session, ...resolver });
+    const opened = await service.present(session.id, { items: [{ path: missing }] }, { origin: 'manual' });
+    expect(opened.ok).toBe(true);
+    expect((await service.snapshot(session.id)).resources[0].source.path).toBe(await fs.realpath(actual));
+    await expect(resolver.resolveItem(session, { path: missing })).rejects.toThrow();
+    await fs.writeFile(path.join(workspace, '隐私推理与隐私训练终稿版.md'), 'another final');
+    await expect(resolver.resolveItem(session, { path: missing }, { origin: 'manual' })).rejects.toThrow();
+    await fs.writeFile(path.join(workspace, 'report-version-2.md'), 'v2');
+    await expect(resolver.resolveItem(session, { path: path.join(workspace, 'report-version-1.md') }, { origin: 'manual' })).rejects.toThrow();
+  });
   test('manual file links tolerate an atomic replace gap while the writer finishes', async () => {
     let attempts = 0;
     const { service } = await setup(async (_session: any, item: any) => {

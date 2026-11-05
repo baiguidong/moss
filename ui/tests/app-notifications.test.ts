@@ -4,6 +4,7 @@ import {
   MAX_APP_NOTIFICATIONS,
   appendAppNotification,
   cleanIpcErrorMessage,
+  isResizeObserverLoopError,
   loadAppNotifications,
   saveAppNotifications,
   type AppNotification,
@@ -23,6 +24,11 @@ function notification(id: string, createdAt: number): AppNotification {
 }
 
 describe('app notification history', () => {
+  it('recognizes Chromium ResizeObserver warnings without hiding other errors', () => {
+    expect(isResizeObserverLoopError('ResizeObserver loop completed with undelivered notifications.')).toBe(true);
+    expect(isResizeObserverLoopError(new Error('ResizeObserver loop limit exceeded'))).toBe(true);
+    expect(isResizeObserverLoopError('ResizeObserver callback failed')).toBe(false);
+  });
   it('removes the Electron IPC wrapper from the useful error reason', () => {
     expect(cleanIpcErrorMessage(
       "Error invoking remote method 'agent:mcp-authenticate': Error: OAuth callback timed out",

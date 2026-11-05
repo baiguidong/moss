@@ -1633,6 +1633,7 @@ declare global {
       }) => Promise<import('../../../packages/app-sdk/src/mcp/index.mjs').McpHostOutputMap[Method]>;
       resourceMonitor: {
         getSnapshot: (payload?: { since?: number; active?: boolean }) => Promise<import('./lib/resource-monitor-types').ResourceMonitorSnapshot>;
+        release: () => Promise<void>;
       };
       listAppVersions: (payload: { name: string }) => Promise<AppVersion[]>;
       launchApp: (payload: { name: string }) => Promise<{ ok: boolean; error?: string }>;

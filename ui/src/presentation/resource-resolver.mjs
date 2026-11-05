@@ -13,6 +13,43 @@ import { allowMediaFile } from '../media-protocol.mjs';
 const inside = (root, target) => { const relative = path.relative(root, target); return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)); };
 const revision = stat => [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
 
+function distanceWithin(a, b, limit) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + Number(a[i - 1] !== b[j - 1]));
+    if (Math.min(...current) > limit) return limit + 1;
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+async function nearbyFile(candidate, root) {
+  const parent = await fs.realpath(path.dirname(candidate)).catch(() => null);
+  if (!parent || !inside(root, parent)) return null;
+  const extension = path.extname(candidate).toLowerCase();
+  const stem = path.basename(candidate, path.extname(candidate));
+  if (stem.length < 8 || stem.length > 80 || !extension) return null;
+  const entries = await fs.readdir(parent, { withFileTypes: true }).catch(() => []);
+  if (entries.length > 200) return null;
+  const matches = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== extension) continue;
+    const other = entry.name.slice(0, -extension.length);
+    let prefix = 0;
+    while (prefix < Math.min(stem.length, other.length) && stem[prefix] === other[prefix]) prefix++;
+    if (prefix < Math.max(4, Math.ceil(Math.min(stem.length, other.length) * 0.75))) continue;
+    if ((stem.match(/\d+/g) || []).join(':') !== (other.match(/\d+/g) || []).join(':')) continue;
+    const distance = distanceWithin(stem, other, 3);
+    if (distance <= 3 && distance / Math.max(stem.length, other.length) <= 0.25) matches.push({ path: path.join(parent, entry.name), distance });
+  }
+  matches.sort((a, b) => a.distance - b.distance);
+  if (!matches.length || matches[1]?.distance <= matches[0].distance + 1) return null;
+  const resolved = await fs.realpath(matches[0].path).catch(() => null);
+  return resolved && inside(root, resolved) ? resolved : null;
+}
+
 export function createPresentationResolver({ readWorkspaceFile, resolveResourceFile }) {
   async function resolveItem(session, item, context = {}) {
     const located = splitDocumentReference(item.resource_uri || item.path);
@@ -47,7 +84,14 @@ export function createPresentationResolver({ readWorkspaceFile, resolveResourceF
     const literalExists = literal && await fs.lstat(literal).then(() => true, () => false);
     const candidate = literalExists ? literal : absolute(reference.path);
     if (!candidate) throw new Error('A workspace is required for relative file references');
-    const resolved = await fs.realpath(candidate), stat = await fs.stat(resolved);
+    let resolved;
+    try { resolved = await fs.realpath(candidate); }
+    catch (error) {
+      if (context.origin !== 'manual' || error.code !== 'ENOENT' || !root) throw error;
+      resolved = await nearbyFile(candidate, root);
+      if (!resolved) throw error;
+    }
+    const stat = await fs.stat(resolved);
     if (!stat.isFile() && !stat.isDirectory()) throw new Error('Only regular files and directories can be displayed');
     const within = root && inside(root, resolved);
     if (!within && context.origin !== 'manual') throw new Error('This file is outside the session workspace; use an authorized App resource or open it manually');

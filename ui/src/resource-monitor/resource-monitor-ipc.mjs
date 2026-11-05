@@ -57,8 +57,8 @@ export function buildProcessLabels({ app, webContents, getWindow, getRuntime, ge
 }
 
 export function registerResourceMonitorIpc(options) {
-  const { ipcMain, app, getWindow, log = () => {}, createMonitor = createResourceMonitor } = options;
-  const lag = monitorEventLoopDelay({ resolution: 100 });
+  const { ipcMain, app, getWindow, log = () => {}, createMonitor = createResourceMonitor, createLag = monitorEventLoopDelay } = options;
+  const lag = createLag({ resolution: 100 });
   let appNames = [];
   let namesReadAt = 0;
   const service = createMonitor({
@@ -72,14 +72,21 @@ export function registerResourceMonitorIpc(options) {
     getLoopDelay: () => { const value = Math.max(0, lag.max / 1e6 - 100); lag.reset(); return value; },
     onAlert: event => log(event.phase === 'started' ? 'warn' : 'info', 'resource-monitor', event.message, event),
   });
-  ipcMain.handle('resource-monitor:snapshot', (event, payload = {}) => {
+  const assertOwner = event => {
     const window = getWindow();
     const webOwner = event?.transport === 'web' && Boolean(event.principal?.userId);
     if (!webOwner && (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)) {
       throw new Error('资源监控请求来源无效');
     }
+  };
+  ipcMain.handle('resource-monitor:snapshot', (event, payload = {}) => {
+    assertOwner(event);
     lag.enable();
     return service.getSnapshot({ since: Number(payload?.since) || 0, active: payload?.active !== false });
+  });
+  ipcMain.handle('resource-monitor:release', event => {
+    assertOwner(event);
+    lag.disable(); lag.reset(); service.stop();
   });
   app.once('will-quit', () => { service.stop(); lag.disable(); });
   return service;

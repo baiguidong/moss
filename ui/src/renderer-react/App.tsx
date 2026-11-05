@@ -74,6 +74,7 @@ import {
   appendAppNotification,
   cleanIpcErrorMessage,
   getErrorMessage,
+  isResizeObserverLoopError,
   saveAppNotifications,
   type AppNotification,
   type AppNotificationSeverity,
@@ -105,13 +106,6 @@ import type {
   WorkspacePreviewData,
 } from './types';
 import type { OperationDraft } from './lib/operation-drafts';
-
-const RESIZE_OBSERVER_LOOP_ERROR = /ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)/i;
-
-function isResizeObserverLoopError(value: unknown): boolean {
-  const message = value instanceof Error ? value.message : String(value || '');
-  return RESIZE_OBSERVER_LOOP_ERROR.test(message);
-}
 
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -1050,7 +1044,14 @@ export default function App() {
     saveAppNotifications([], window.localStorage);
     return subscribeNotificationState({
       api: window.agentDesktop.notifications,
-      onChanged: setAppNotifications,
+      onChanged: notifications => {
+        const relevant = notifications.filter(item => {
+          if (item.source !== '界面运行时' || !isResizeObserverLoopError(item.message)) return true;
+          void window.agentDesktop.notifications.remove(item.id).catch(() => {});
+          return false;
+        });
+        setAppNotifications(relevant);
+      },
       reconnectTarget: window.mossWeb ? window : undefined,
     });
   }, []);

@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { createProcessSampler } from './process-sampler.mjs';
 
 export const HISTORY_MS = 15 * 60_000;
-export const SAMPLE_INTERVAL_MS = 5_000;
+export const SAMPLE_INTERVAL_MS = 10_000;
 const identity = row => `${row.pid}:${row.started}`;
 const validMetric = value => Number.isFinite(value) && value >= 0;
 
@@ -111,8 +111,8 @@ export function createResourceMonitor({
       const end = monotonic();
       const dt = previousMono === null ? null : (end - previousMono) / 1000;
       // Sleep, missed samples and clock changes must not create a fake continuous high-CPU interval.
-      const continuous = dt !== null && dt > 0 && dt <= 15 && previousTime !== null
-        && time > previousTime && time - previousTime <= 15_000;
+      const continuous = dt !== null && dt > 0 && dt <= 30 && previousTime !== null
+        && time > previousTime && time - previousTime <= 30_000;
       const selected = selectMossProcesses(raw, labels, rootPid, previous);
       const conditions = [];
       const next = new Map();

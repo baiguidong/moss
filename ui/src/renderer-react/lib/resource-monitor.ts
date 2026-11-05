@@ -24,7 +24,7 @@ export function chartSegments(points: ChartPoint[], x: (time: number) => number,
   let current: Array<[number, number]> = [];
   let lastTime = 0;
   for (const point of points) {
-    if (point.value === null || !Number.isFinite(point.value) || point.timestamp - lastTime > 15_000) {
+    if (point.value === null || !Number.isFinite(point.value) || point.timestamp - lastTime > 30_000) {
       if (current.length) segments.push(current);
       current = [];
     }

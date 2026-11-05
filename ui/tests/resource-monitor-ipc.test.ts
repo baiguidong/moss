@@ -9,11 +9,15 @@ test('monitor IPC only accepts the desktop main frame and stops sampling on quit
   let quit: () => void;
   let starts = 0;
   let stops = 0;
+  let enables = 0;
+  let disables = 0;
+  let resets = 0;
   const requests: any[] = [];
   registerResourceMonitorIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     app: { once: (_event, callback) => { quit = callback; } },
     getWindow: () => ({ webContents: sender, isDestroyed: () => destroyed }),
+    createLag: () => ({ max: 0, enable: () => enables++, disable: () => disables++, reset: () => resets++ }),
     createMonitor: () => ({ start: () => starts++, stop: () => stops++, getSnapshot: payload => { requests.push(payload); return {}; } }),
   });
   try {
@@ -25,9 +29,17 @@ test('monitor IPC only accepts the desktop main frame and stops sampling on quit
     destroyed = false;
     await handler({ sender, senderFrame: frame }, { since: 1234, pid: 99, active: false });
     expect(requests).toEqual([{ since: 1234, active: false }]);
+    expect(enables).toBe(1);
     expect(starts).toBe(0);
+    const release = handlers.get('resource-monitor:release');
+    expect(() => release({ sender: {}, senderFrame: frame })).toThrow('来源无效');
+    release({ sender, senderFrame: frame });
+    expect(stops).toBe(1);
+    expect(disables).toBe(1);
+    expect(resets).toBe(1);
   } finally { quit!(); }
-  expect(stops).toBe(1);
+  expect(stops).toBe(2);
+  expect(disables).toBe(2);
 });
 
 test('maps App backends and renderers to names and only allows management of the current desktop owner', () => {

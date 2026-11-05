@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { formatCpu, formatDuration, formatMemory, mergeResourceHistory, resourceSeries, type ResourceMetric } from '@/lib/resource-monitor';
 import type { ResourceMonitorSnapshot, ResourceProcess } from '@/lib/resource-monitor-types';
 
+const POLL_INTERVAL_MS = 10_000;
 const kindLabels = { main: '主进程', app: 'App 后端', renderer: '界面', child: '子进程', helper: '系统辅助' };
 const stateLabels: Record<string, string> = { running: '运行中', starting: '启动中', stopping: '停止中', stopped: '已停止', error: '运行异常', 'crash-loop': '反复崩溃' };
 type Selection = { id: string; name: string };
@@ -53,9 +54,14 @@ export function ResourceMonitorView() {
       } finally { pending = false; }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 5000);
-    document.addEventListener('visibilitychange', poll);
-    return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
+    const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    const release = () => { void window.agentDesktop.resourceMonitor.release().catch(() => {}); };
+    const visibilityChanged = () => {
+      if (document.visibilityState === 'hidden') release();
+      else void poll();
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', visibilityChanged); release(); };
   }, []);
 
   const runAction = async (row: ResourceProcess, action: 'logs' | 'restart') => {
@@ -93,7 +99,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
   const sparkFrames = frames.filter(frame => frame.timestamp >= now - 120_000);
   const alerts = snapshot?.alerts || [];
   const alertIds = new Set(alerts.map(alert => alert.processId));
-  const stale = Boolean(snapshot && (!snapshot.lastSuccessAt || now - snapshot.lastSuccessAt > 15_000));
+  const stale = Boolean(snapshot && (!snapshot.lastSuccessAt || now - snapshot.lastSuccessAt > 30_000));
   const unavailable = !snapshot || stale || Boolean(error || snapshot.error);
   const observedAt = unavailable ? snapshot?.lastSuccessAt || now : now;
   const rows = (snapshot?.processes || []).filter(row => {
@@ -117,7 +123,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
       <p className="text-xs text-muted-foreground">本机 Moss 及其进程 · CPU 100% 表示占满一个逻辑核</p>
       <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className={cn('h-1.5 w-1.5 rounded-full', !snapshot ? 'bg-muted-foreground' : unavailable ? 'bg-amber-500' : 'bg-emerald-500')} />
-        {!snapshot ? '正在采集' : unavailable ? '等待恢复' : '每 5 秒刷新'}
+        {!snapshot ? '正在采集' : unavailable ? '等待恢复' : '每 10 秒刷新'}
         {snapshot?.lastSuccessAt ? ` · ${new Date(snapshot.lastSuccessAt).toLocaleTimeString('zh-CN', { hour12: false })}` : ''}
       </span>
     </div>
