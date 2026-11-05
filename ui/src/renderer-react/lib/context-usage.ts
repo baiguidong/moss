@@ -1,5 +1,6 @@
 import type { AgentEvent, ModelContextInfo } from '../types';
 import { getContextUsageFromUsage } from '../../../../shared/context-token-usage';
+import { getKnownModelContextWindow, UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../../../shared/model-context-fallback';
 
 export type ContextUsageInfo = {
   used: number;
@@ -64,25 +65,23 @@ export function getRemoteModelContext(history: AgentEvent[] | undefined): ModelC
     if (Number.isSafeInteger(contextWindow) && contextWindow > 0) {
       return { model, contextWindow, isDefault: false };
     }
-    if (event.modelUsage?.[model]) return null;
+    if (event.modelUsage?.[model]) break;
   }
-  return null;
+  return { model, contextWindow: getKnownModelContextWindow(model) ?? UNKNOWN_MODEL_CONTEXT_WINDOW, isDefault: true };
 }
 
 export function formatTokenCount(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 100_000 === 0 ? 1 : 2)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(n);
 }
 
 export function contextUsagePresentation(usage: ContextUsageInfo) {
-  const limit = usage.modelContext?.contextWindow;
-  const pct = !usage.modelContext?.isDefault && typeof limit === 'number' && Number.isFinite(limit) && limit > 0
-    ? Math.min(1, Math.max(0, usage.used / limit))
-    : null;
-  const capacity = pct !== null
-    ? `${formatTokenCount(limit!)}（${Math.round(pct * 100)}%）`
-    : usage.loadingCapacity ? '容量读取中' : '容量未知';
+  const knownLimit = usage.modelContext?.contextWindow;
+  const limit = typeof knownLimit === 'number' && Number.isFinite(knownLimit) && knownLimit > 0
+    ? knownLimit : UNKNOWN_MODEL_CONTEXT_WINDOW;
+  const pct = Math.min(1, Math.max(0, usage.used / limit));
+  const capacity = `${formatTokenCount(limit)}（${Math.round(pct * 100)}%）`;
   return {
     pct,
     summary: `上下文已用 ${formatTokenCount(usage.used)} / ${capacity}`,

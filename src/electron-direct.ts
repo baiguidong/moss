@@ -471,6 +471,7 @@ export interface ClaudeSessionOptions {
   model?: string
   /** 用于检索、提取和摘要等轻量任务的模型名。 */
   fastModel?: string
+  declaredContextWindows?: Record<string, number>
   /** 覆盖默认 API base URL（仅应用于当前 embedded session） */
   url?: string
   /** 覆盖默认 API token（仅应用于当前 embedded session） */
@@ -705,7 +706,7 @@ async function runDesktopPermissionRequestHooks(
 function buildSessionApiOverrides(
   opts: Pick<
     ClaudeSessionOptions,
-    'url' | 'apiKey' | 'model' | 'fastModel' | 'webSearch'
+    'url' | 'apiKey' | 'model' | 'fastModel' | 'declaredContextWindows' | 'webSearch'
   >,
 ): SessionApiOverrides | undefined {
   const mossBaseUrl = normalizeMossBaseUrl(
@@ -725,6 +726,7 @@ function buildSessionApiOverrides(
     !mossAuthToken &&
     !mossModel &&
     !mossFastModel &&
+    !Object.keys(opts.declaredContextWindows ?? {}).length &&
     !opts.webSearch
   ) {
     return undefined
@@ -735,6 +737,8 @@ function buildSessionApiOverrides(
     ...(mossAuthToken ? { mossAuthToken } : {}),
     ...(mossModel ? { mossModel } : {}),
     ...(mossFastModel ? { mossFastModel } : {}),
+    ...(Object.keys(opts.declaredContextWindows ?? {}).length
+      ? { declaredContextWindows: opts.declaredContextWindows } : {}),
     ...(opts.webSearch ? { webSearch: opts.webSearch } : {}),
   }
 }

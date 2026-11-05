@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   buildThinkingConfig,
   createDesktopSettingsStore,
+  getDeclaredModelContextWindows,
   normalizeDesktopSettings,
   normalizeMossBaseUrl,
 } from '../src/desktop-settings.mjs';
@@ -19,6 +20,23 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('defaults selected models to 1M and persists a 20 wan token custom limit', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-context-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const store = createDesktopSettingsStore({ settingsPath });
+    store.save({ model: 'self-hosted', fastModel: 'fast-model' });
+    expect(getDeclaredModelContextWindows(store.value)).toEqual({
+      'self-hosted': 1_050_000, 'fast-model': 1_050_000,
+    });
+    store.save({ declaredContextByModel: { 'self-hosted': 200_000, 'fast-model': null } });
+    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text.declaredContextByModel)
+      .toEqual({ 'self-hosted': 200_000, 'fast-model': null });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'self-hosted': 200_000 });
+    restarted.save({ model: 'another-model' });
+    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'another-model': 1_050_000 });
+  });
   it('uses model defaults when thinking is unset or the legacy default option is blank', () => {
     for (const input of [{}, { thinkingMode: '' }, { models: { text: { thinking: { mode: '' } } } }]) {
       const settings = normalizeDesktopSettings(input);

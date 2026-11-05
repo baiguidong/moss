@@ -306,6 +306,7 @@ import {
   createDesktopSettingsStore,
   buildThinkingConfig,
   DEFAULT_DESKTOP_SETTINGS,
+  getDeclaredModelContextWindows,
   normalizeDesktopSettings,
 } from './desktop-settings.mjs';
 import {
@@ -2759,6 +2760,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     image: getRuntimeModelSettings().image ? { ...getRuntimeModelSettings().image } : undefined,
     model: getRuntimeModelSettings().model,
     fastModel: getRuntimeModelSettings().fastModel || undefined,
+    declaredContextWindows: getDeclaredModelContextWindows(getRuntimeModelSettings()),
     customSystemPrompt: sessionRecord?.appTestRunId
       ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_SYSTEM_PROMPT : TEST_SYSTEM_PROMPT)
       : [customSystemPrompt, projectCreationPrompt].filter(Boolean).join('\n\n') || undefined,
@@ -9441,10 +9443,12 @@ ipcMain.handle('agent:get-model-context', async (_event, { sessionId }) => {
     return sessionRecord.runtime.getModelContext();
   }
   const mod = await getClaudeRuntimeModule();
+  const modelSettings = getRuntimeModelSettings();
   return mod.resolveDesktopModelContext({
-    model: desktopSettings.model,
-    url: desktopSettings.url,
-    apiKey: desktopSettings.apiKey,
+    model: modelSettings.model,
+    url: modelSettings.url,
+    apiKey: modelSettings.apiKey,
+    declaredContextWindows: getDeclaredModelContextWindows(modelSettings),
   });
 });
 

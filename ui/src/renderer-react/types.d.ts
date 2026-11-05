@@ -793,6 +793,7 @@ export type DesktopSettings = {
   bypassPermissions: boolean;
   model: string;
   fastModel: string;
+  declaredContextByModel?: Record<string, number | null>;
   maxTurns: number;
   language: string;
   appendSystemPrompt: string;

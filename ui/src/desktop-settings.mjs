@@ -22,6 +22,7 @@ import {
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
+export const DEFAULT_DECLARED_CONTEXT_WINDOW = 1_050_000;
 
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   appWidgets: { enabled: true },
@@ -34,6 +35,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: '',
   fastModel: '',
+  declaredContextByModel: {},
   maxTurns: 100,
   runtimeLifecycle: { ...DEFAULT_RUNTIME_LIFECYCLE },
   language: 'chinese',
@@ -173,6 +175,25 @@ function normalizeAgentTypeList(value) {
     result.push(name);
   }
   return result;
+}
+
+function normalizeDeclaredContextByModel(value) {
+  if (!isPlainObject(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([name, limit]) =>
+    name.trim() && name.length <= 200 &&
+    (limit === null || (Number.isSafeInteger(limit) && limit >= 1024 && limit <= 10_000_000))
+  ).map(([name, limit]) => [name.trim(), limit]));
+}
+
+export function getDeclaredModelContextWindows(settings) {
+  const models = [...new Set([settings?.model, settings?.fastModel]
+    .filter(model => typeof model === 'string' && model.trim())
+    .map(model => model.trim()))];
+  const declarations = settings?.declaredContextByModel;
+  return Object.fromEntries(models.flatMap(model => {
+    const choice = declarations && Object.hasOwn(declarations, model) ? declarations[model] : undefined;
+    return choice === null ? [] : [[model, choice ?? DEFAULT_DECLARED_CONTEXT_WINDOW]];
+  }));
 }
 
 function isModelEndpointEnvKey(key) {
@@ -321,6 +342,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
     ownStringField(result, 'fastModel') ??
     ownStringField(existingText, 'fastModel') ??
     DEFAULT_DESKTOP_SETTINGS.fastModel;
+
+  result.declaredContextByModel = normalizeDeclaredContextByModel(
+    source.declaredContextByModel ?? sourceText.declaredContextByModel ??
+    result.declaredContextByModel ?? existingText.declaredContextByModel,
+  );
 
   if (source.appendSystemPrompt !== undefined) {
     result.appendSystemPrompt = source.appendSystemPrompt;
@@ -775,7 +801,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
 }
 
 const MODEL_RUNTIME_FIELDS = [
-  'model', 'fastModel', 'url', 'apiKey', 'maxTurns',
+  'model', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
   'thinkingMode', 'thinkingBudgetTokens', 'image',
 ];
 
@@ -789,6 +815,7 @@ function normalizePersistedDesktopSettings(parsed) {
   for (const [field, value] of Object.entries({
     model: text.model,
     fastModel: text.fastModel,
+    declaredContextByModel: text.declaredContextByModel,
     url: text.baseUrl,
     apiKey: text.apiKey,
     maxTurns: text.maxTurns,
@@ -939,6 +966,8 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
       apiKey: normalizedSettings.apiKey || '',
       model: normalizedSettings.model,
       fastModel: normalizedSettings.fastModel || '',
+      declaredContextByModel: Object.keys(normalizedSettings.declaredContextByModel).length
+        ? normalizedSettings.declaredContextByModel : undefined,
       maxTurns: normalizedSettings.maxTurns,
       thinking: {
         ...existingTextThinking,
@@ -972,6 +1001,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete toSave.enterpriseAccountProfileMode;
   delete toSave.model;
   delete toSave.fastModel;
+  delete toSave.declaredContextByModel;
   delete toSave.maxTurns;
   delete toSave.thinkingMode;
   delete toSave.thinkingBudgetTokens;

@@ -1,87 +1,25 @@
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
+import { getKnownModelContextWindow, UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../shared/model-context-fallback.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
+import { getSessionApiOverrides } from './sessionApiOverrides.js'
 
 // Fallback when the configured provider does not publish a context window.
-export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
+export const MODEL_CONTEXT_WINDOW_DEFAULT = UNKNOWN_MODEL_CONTEXT_WINDOW
+const CONTEXT_WINDOW_1M_DISABLED_CAP = 200_000
 
-/**
- * Static context-window values used only when the provider does not publish
- * model metadata. These are deliberately conservative, high-confidence
- * families rather than an exhaustive model list. Provider metadata always
- * wins, so a model upgrade can take effect without a Moss release.
- *
- * Values are based on public model specifications reviewed 2026-10-26. Keep
- * the date here so refreshing this table is an explicit maintenance task.
- */
-export const MODEL_CONTEXT_WINDOW_FALLBACKS = {
-  claude: 200_000,
-  gpt41: 1_047_576,
-  gpt4o: 128_000,
-  openaiReasoning: 200_000,
-  gemini: 1_048_576,
-  deepseek: 128_000,
-  mistralLarge: 128_000,
-  llama3: 128_000,
-} as const
+// Shared with the renderer so both sides report the same known-model limits.
+export { getKnownModelContextWindow, getKnownModelMaxInputTokens, MODEL_CONTEXT_WINDOW_FALLBACKS } from '../../shared/model-context-fallback.js'
 
-type ContextWindowFallbackRule = {
-  readonly pattern: RegExp
-  readonly contextWindow: number
-}
-
-// Match model families across common provider prefixes (for example
-// "openai/gpt-4.1" and "us.anthropic.claude-sonnet-4-5-v1:0"). Do not add a
-// generic provider prefix here: custom gateways may expose a different limit
-// for the same-looking name, and their metadata should be authoritative.
-const MODEL_CONTEXT_WINDOW_FALLBACK_RULES: readonly ContextWindowFallbackRule[] = [
-  {
-    pattern: /\bclaude-(?:3(?:-\d+)?|(?:opus|sonnet|haiku)-4)(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.claude,
-  },
-  {
-    pattern: /\bgpt-4\.1(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gpt41,
-  },
-  {
-    pattern: /\bgpt-4o(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gpt4o,
-  },
-  {
-    pattern: /\bo[134](?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.openaiReasoning,
-  },
-  {
-    pattern: /\bgemini-(?:1\.5|2(?:\.\d+)?|3)(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.gemini,
-  },
-  {
-    pattern: /\bdeepseek-(?:chat|reasoner|v3|r1)(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.deepseek,
-  },
-  {
-    pattern: /\bmistral-large(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.mistralLarge,
-  },
-  {
-    pattern: /\bllama-3(?:\.\d+)?(?:[-_.:]|$)/i,
-    contextWindow: MODEL_CONTEXT_WINDOW_FALLBACKS.llama3,
-  },
-]
-
-function normalizeModelForContextLookup(model: string): string {
-  return model.replace(/\[1m\]$/i, '').trim().toLowerCase()
-}
-
-/** Return a curated static value, if the model belongs to a known family. */
-export function getKnownModelContextWindow(model: string): number | undefined {
-  const normalized = normalizeModelForContextLookup(model)
-  if (!normalized) return undefined
-  return MODEL_CONTEXT_WINDOW_FALLBACK_RULES.find(rule =>
-    rule.pattern.test(normalized),
-  )?.contextWindow
+export function getDeclaredModelContextWindow(model: string): number | undefined {
+  const name = model.replace(/\[1m\]$/i, '').trim()
+  const declarations = getSessionApiOverrides()?.declaredContextWindows
+  if (!declarations || !Object.hasOwn(declarations, name)) return undefined
+  const limit = declarations[name]
+  return Number.isSafeInteger(limit) && limit >= 1024 && limit <= 10_000_000
+    ? limit : undefined
 }
 
 // Maximum output tokens for compact operations
@@ -136,15 +74,24 @@ export function resolveContextWindowForModel(
   model: string,
   betas?: string[],
 ): { contextWindow: number; isDefault: boolean } {
+  const declaredWindow = getDeclaredModelContextWindow(model)
+  if (declaredWindow !== undefined) {
+    return {
+      contextWindow: is1mContextDisabled()
+        ? Math.min(declaredWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
+        : declaredWindow,
+      isDefault: false,
+    }
+  }
   // A display suffix must not override the actual provider's advertised limit.
   const baseModel = model.replace(/\[1m\]$/i, '').trim()
   const cap = getModelCapability(model) ?? getModelCapability(baseModel)
-  const inputLimit = cap?.max_input_tokens
-  if (typeof inputLimit === 'number' && Number.isSafeInteger(inputLimit) && inputLimit > 0) {
+  const providerWindow = cap?.context_window ?? cap?.max_input_tokens
+  if (typeof providerWindow === 'number' && Number.isSafeInteger(providerWindow) && providerWindow > 0) {
     return {
       contextWindow: is1mContextDisabled()
-        ? Math.min(inputLimit, MODEL_CONTEXT_WINDOW_DEFAULT)
-        : inputLimit,
+        ? Math.min(providerWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
+        : providerWindow,
       isDefault: false,
     }
   }
@@ -162,13 +109,17 @@ export function resolveContextWindowForModel(
   if (knownContextWindow !== undefined) {
     return {
       contextWindow: is1mContextDisabled()
-        ? Math.min(knownContextWindow, MODEL_CONTEXT_WINDOW_DEFAULT)
+        ? Math.min(knownContextWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
         : knownContextWindow,
       isDefault: false,
     }
   }
 
-  return { contextWindow: MODEL_CONTEXT_WINDOW_DEFAULT, isDefault: true }
+  return {
+    contextWindow: is1mContextDisabled()
+      ? CONTEXT_WINDOW_1M_DISABLED_CAP : MODEL_CONTEXT_WINDOW_DEFAULT,
+    isDefault: true,
+  }
 }
 
 export function getSonnet1mExpTreatmentEnabled(model: string): boolean {
