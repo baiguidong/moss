@@ -468,6 +468,7 @@ function StandardToolCallBlock({
     .join("\n");
   const subject = buildSubject(toolCall, kind) || formatLocator(inlineDiff?.filePath) || "";
   const headerSubject = normalizeToolHeaderSubject(subject, isRow);
+  const sourceLabel = toolSourceLabel(toolCall.source);
   const rowResultSummary = awaitingDraft ? '等待确认草稿' : presentationResult ? presentationResultLabel(presentationResult) : executionState === "running"
     ? "执行中"
     : executionState === "failed"
@@ -527,7 +528,9 @@ function StandardToolCallBlock({
             )}>
               {isRow ? toolCall.displayName || toolCall.toolName : buildHeadline(toolCall, kind)}
             </span>
-            <span className="ml-2 text-[11px] font-normal text-muted-foreground" aria-label={`来源：${toolSourceLabel(toolCall.source)}`} title={[toolCall.source?.appId, toolCall.source?.serverName, toolCall.source?.contributionId].filter(Boolean).join(' · ')}>{toolSourceLabel(toolCall.source)}</span>
+            {toolCall.source?.kind !== "builtin" ? (
+              <span className="ml-2 text-[11px] font-normal text-muted-foreground" aria-label={`来源：${sourceLabel}`} title={[toolCall.source?.appId, toolCall.source?.serverName, toolCall.source?.contributionId].filter(Boolean).join(' · ')}>{sourceLabel}</span>
+            ) : null}
             {headerSubject ? (
               <span className={cn(
                 "ml-1",

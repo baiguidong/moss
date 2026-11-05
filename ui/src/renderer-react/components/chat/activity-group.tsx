@@ -34,6 +34,56 @@ type SummaryBucket = {
   label: (count: number) => string;
 };
 
+const MAX_VISIBLE_ACTIVITY_STEPS = 8;
+const ACTIVITY_SCROLL_BOTTOM_THRESHOLD = 24;
+
+function ToolActivityViewport({
+  children,
+  className,
+  itemCount,
+  followKey,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  itemCount: number;
+  followKey: unknown;
+}) {
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const shouldFollowLatestRef = React.useRef(true);
+  const isScrollable = itemCount > MAX_VISIBLE_ACTIVITY_STEPS;
+
+  React.useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || !isScrollable || !shouldFollowLatestRef.current) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [followKey, isScrollable]);
+
+  const handleScroll = React.useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldFollowLatestRef.current = distanceFromBottom <= ACTIVITY_SCROLL_BOTTOM_THRESHOLD;
+  }, []);
+
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      data-tool-activity-viewport={isScrollable ? "scrollable" : "static"}
+      className={cn(
+        className,
+        isScrollable && "max-h-[17rem] overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 function activityBucket(step: ActivityStep): Omit<SummaryBucket, "count"> {
   if (step.kind === "thinking") {
     return { key: "thinking", label: (count) => count === 1 ? "思考" : `思考 ${count} 次` };
@@ -219,7 +269,15 @@ function ExpandedActivitySteps({
     );
   }
   flushTools();
-  return <div className="min-w-0 space-y-1.5">{rows}</div>;
+  return (
+    <ToolActivityViewport
+      itemCount={steps.length}
+      followKey={steps}
+      className="min-w-0 space-y-1.5"
+    >
+      {rows}
+    </ToolActivityViewport>
+  );
 }
 
 export function ActivityGroup({
@@ -317,7 +375,11 @@ export function ActivityGroup({
         </button>
 
         {expanded ? (
-          <div className="ml-[3px] flex flex-col border-l border-border/70 pl-3">
+          <ToolActivityViewport
+            itemCount={steps.length}
+            followKey={steps}
+            className="ml-[3px] flex flex-col border-l border-border/70 pl-3"
+          >
             {steps.map((step) => step.kind === "thinking" ? (
               <ThinkingBlock
                 key={step.message.id}
@@ -333,7 +395,7 @@ export function ActivityGroup({
                 focusedToolUseId={focusedToolUseId}
               />
             ))}
-          </div>
+          </ToolActivityViewport>
         ) : null}
       </div>
     </div>

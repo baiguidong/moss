@@ -39,7 +39,7 @@ export function ImageGenerationCard({ toolCall, result, sessionId }: {
   return <div data-image-generation={running ? 'running' : failed ? 'failed' : 'completed'} className="my-3 max-w-2xl space-y-2">
     <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
       {running ? <LoaderCircle className="h-4 w-4 animate-spin" /> : failed ? <AlertCircle className="h-4 w-4 text-destructive" /> : <ImageIcon className="h-4 w-4" />}
-      <span>{label}</span><span className="ml-auto text-[10px]" aria-label="来源：Moss 内置">Moss 内置</span>
+      <span>{label}</span>
     </div>
     {running ? <div className="flex min-h-44 items-center justify-center rounded-xl border border-border/60 bg-muted/25 text-sm text-muted-foreground">正在绘制，请稍候</div> : null}
     {!failed && (output.src || output.path) ? <div className="overflow-hidden rounded-xl border border-border/50 bg-muted/20 p-1">
