@@ -106,6 +106,13 @@ import type {
 } from './types';
 import type { OperationDraft } from './lib/operation-drafts';
 
+const RESIZE_OBSERVER_LOOP_ERROR = /ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)/i;
+
+function isResizeObserverLoopError(value: unknown): boolean {
+  const message = value instanceof Error ? value.message : String(value || '');
+  return RESIZE_OBSERVER_LOOP_ERROR.test(message);
+}
+
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const minute = 60_000;
@@ -1057,6 +1064,12 @@ export default function App() {
 
   React.useEffect(() => {
     const handleWindowError = (event: ErrorEvent) => {
+      // Chromium reports this layout warning through window.onerror even when
+      // the document remains healthy. It is not an application failure.
+      if (isResizeObserverLoopError(event.error || event.message)) {
+        event.preventDefault();
+        return;
+      }
       const message = getErrorMessage(event.error || event.message);
       const location = event.filename
         ? `${event.filename}${event.lineno ? `:${event.lineno}:${event.colno || 0}` : ''}`
@@ -1070,6 +1083,10 @@ export default function App() {
       });
     };
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isResizeObserverLoopError(event.reason)) {
+        event.preventDefault();
+        return;
+      }
       const message = getErrorMessage(event.reason);
       pushAppNotification({
         severity: 'error',

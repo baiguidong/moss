@@ -114,6 +114,21 @@ describe('presentation lifecycle', () => {
     expect((await resolver.loadResource(session, resource)).content).toBe('literal');
     await expect(resolver.resolveItem(session, { path: root })).rejects.toThrow('outside');
   });
+  test('manual file links tolerate an atomic replace gap while the writer finishes', async () => {
+    let attempts = 0;
+    const { service } = await setup(async (_session: any, item: any) => {
+      attempts++;
+      if (attempts < 3) {
+        const error: any = new Error('ENOENT: file is being replaced');
+        error.code = 'ENOENT';
+        throw error;
+      }
+      return { kind: 'file', title: item.path, revision: '1', source: { type: 'file', path: item.path } };
+    });
+    const result = await service.present('a', { items: [{ path: '/a/updated.md' }] }, { origin: 'manual' });
+    expect(result.ok).toBe(true);
+    expect(attempts).toBe(3);
+  });
   test('identical provider call IDs in two sessions keep independent acknowledgements', async () => {
     const { service } = await setup();
     const first = await service.present('a', { items: [{ path: '/a/file' }] }, { requestId: 'shared-id', turnId: 'turn-a' });

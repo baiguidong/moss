@@ -5,6 +5,9 @@ import { initialPresentationState, transitionPresentation, validatePresentationI
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const failure = error => ({ ok: false, error: error instanceof Error ? error.message : String(error) });
+const retryableResolveError = error => error?.code === 'ENOENT' || error?.code === 'ENOTDIR'
+  || /(?:ENOENT|ENOTDIR|no such file|not a directory)/i.test(error instanceof Error ? error.message : String(error));
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 /** Host-owned resources. A transcript is never used as an imperative UI command log. */
 export function createPresentationService({ storageRoot, getSessionRecord, resolveItem, loadResource, emit, waitMs = 300 }) {
@@ -104,7 +107,24 @@ export function createPresentationService({ storageRoot, getSessionRecord, resol
           resource = ['file', 'provider'].includes(existing.source.type)
             ? await resolveItem(getSessionRecord(id), existing.source.type === 'file' ? { ...item, path: existing.source.path } : { ...item, resource_uri: existing.source.uri }, context)
             : existing;
-        } else resource = await resolveItem(getSessionRecord(id), item, context);
+        } else {
+          // Document and spreadsheet writers commonly replace a file with a
+          // temporary file and rename it into place. A manual click can land
+          // in that small gap, so retry only transient local-file failures.
+          let lastError;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              resource = await resolveItem(getSessionRecord(id), item, context);
+              lastError = undefined;
+              break;
+            } catch (error) {
+              lastError = error;
+              if (context.origin !== 'manual' || !retryableResolveError(error) || attempt === 2) throw error;
+              await wait(40 * (attempt + 1));
+            }
+          }
+          if (!resource && lastError) throw lastError;
+        }
         if ((await session(id)) !== value || value.epoch !== epoch || value.signature !== signatureAtStart) throw new Error('Workspace changed during presentation');
         resource = { ...resource, title: item.title || resource.title, view: item.view, role: item.role, turnId, sourceToolUseId: context.toolUseId,
           schema: 'moss.artifact/v1', id: resource.id || 'artifact_' + hash(JSON.stringify([value.signature, sourceIdentity(resource.source)])), updatedAt: Date.now(), sequence: seq };
@@ -120,7 +140,7 @@ export function createPresentationService({ storageRoot, getSessionRecord, resol
       } catch (error) { results.push({ input_index: index, status: 'unavailable', error: failure(error).error }); }
     }
     if (value.epoch !== epoch) return failure('Workspace changed during presentation');
-    if (!resources.length) return { ...failure('No resources are available'), schema: 'moss.presentation-result/v1', request_id: requestId, items: results, presentation: { state: 'unavailable', target: 'right' } };
+    if (!resources.length) return { ...failure('无法定位链接中的文件，请确认文件仍存在并重试。'), schema: 'moss.presentation-result/v1', request_id: requestId, items: results, presentation: { state: 'unavailable', target: 'right' } };
     let chosen = resources.find(resource => resource.role === 'primary') || (resources.length === 1 ? resources[0] : null);
     if (!chosen) {
       const groupId = 'collection_' + hash(id + ':' + (turnId || requestId));

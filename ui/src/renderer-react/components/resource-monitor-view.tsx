@@ -53,7 +53,7 @@ export function ResourceMonitorView() {
       } finally { pending = false; }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 2000);
+    const timer = window.setInterval(() => void poll(), 5000);
     document.addEventListener('visibilitychange', poll);
     return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', poll); };
   }, []);
@@ -117,7 +117,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
       <p className="text-xs text-muted-foreground">本机 Moss 及其进程 · CPU 100% 表示占满一个逻辑核</p>
       <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className={cn('h-1.5 w-1.5 rounded-full', !snapshot ? 'bg-muted-foreground' : unavailable ? 'bg-amber-500' : 'bg-emerald-500')} />
-        {!snapshot ? '正在采集' : unavailable ? '等待恢复' : '每 2 秒刷新'}
+        {!snapshot ? '正在采集' : unavailable ? '等待恢复' : '每 5 秒刷新'}
         {snapshot?.lastSuccessAt ? ` · ${new Date(snapshot.lastSuccessAt).toLocaleTimeString('zh-CN', { hour12: false })}` : ''}
       </span>
     </div>

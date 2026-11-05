@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { createProcessSampler } from './process-sampler.mjs';
 
 export const HISTORY_MS = 15 * 60_000;
+export const SAMPLE_INTERVAL_MS = 5_000;
 const identity = row => `${row.pid}:${row.started}`;
 const validMetric = value => Number.isFinite(value) && value >= 0;
 
@@ -66,7 +67,6 @@ export function createResourceMonitor({
   let pending = null;
   let timer = null;
   let running = false;
-  let visibleUntil = 0;
   let snapshot = {
     sampledAt: 0, lastSuccessAt: 0, cpuPercent: null, memoryBytes: null,
     cpuCount: os.cpus().length, processCount: 0, processes: [], loopDelayMs: null,
@@ -195,7 +195,7 @@ export function createResourceMonitor({
   function schedule() {
     if (!running) return;
     clearTimeout(timer);
-    timer = setTimeout(() => void sample(), now() < visibleUntil ? 2000 : 5000);
+    timer = setTimeout(() => void sample(), SAMPLE_INTERVAL_MS);
     timer.unref?.();
   }
 
@@ -209,9 +209,8 @@ export function createResourceMonitor({
     start() { if (!running) { running = true; void sample(); } },
     stop() { running = false; clearTimeout(timer); },
     sample,
-    async getSnapshot({ since = 0, active: foreground = true } = {}) {
-      if (foreground) visibleUntil = now() + 6000;
-      if (!snapshot.sampledAt || now() - snapshot.sampledAt >= 1950) await sample();
+    async getSnapshot({ since = 0 } = {}) {
+      if (!snapshot.sampledAt || now() - snapshot.sampledAt >= SAMPLE_INTERVAL_MS - 100) await sample();
       const cursor = Number.isFinite(since) && since <= snapshot.sampledAt ? since : 0;
       return { ...snapshot, history: history.filter(point => point.timestamp > cursor) };
     },
