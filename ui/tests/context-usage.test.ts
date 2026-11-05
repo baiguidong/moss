@@ -16,31 +16,31 @@ describe('composer context usage', () => {
     });
   });
 
-  test('updates percentage with model limits without treating the runtime default as a known capacity', () => {
+  test('updates percentage with model limits and the runtime fallback', () => {
     const smaller = { model: 'smaller-model', contextWindow: 128_000, isDefault: false };
     expect(contextUsagePresentation(deriveContextUsage([assistant], smaller)!).summary)
       .toBe('上下文已用 67.2K / 128.0K（53%）');
-    const fallback = { model: 'unknown', contextWindow: 200_000, isDefault: true };
+    const fallback = { model: 'unknown', contextWindow: 1_050_000, isDefault: true };
     expect(contextUsagePresentation(deriveContextUsage([assistant], fallback)!).summary)
-      .toBe('上下文已用 67.2K / 容量未知');
+      .toBe('上下文已用 67.2K / 1.05M（6%）');
   });
 
-  test('does not show a full context warning when reported usage exceeds the default capacity', () => {
-    const fallback = { model: 'gpt-6-sol', contextWindow: 200_000, isDefault: true };
+  test('uses the declared fallback for a GPT-6 model', () => {
+    const fallback = { model: 'gpt-6-sol', contextWindow: 1_050_000, isDefault: true };
     const event = { type: 'assistant', message: { usage: { input_tokens: 221_624 } } };
     expect(contextUsagePresentation(deriveContextUsage([event], fallback)!)).toEqual({
-      pct: null,
-      summary: '上下文已用 221.6K / 容量未知',
+      pct: 221_624 / 1_050_000,
+      summary: '上下文已用 221.6K / 1.05M（21%）',
       details: '输入 221.6K · 缓存读 0 · 缓存写 0 · 输出 0',
     });
   });
 
-  test('does not invent a limit or percentage while loading or after IPC fails', () => {
+  test('shows the fallback while loading or after IPC fails', () => {
     expect(contextUsagePresentation(deriveContextUsage([assistant], null, true)!)).toMatchObject({
-      pct: null, summary: '上下文已用 67.2K / 容量读取中',
+      pct: 67_200 / 1_050_000, summary: '上下文已用 67.2K / 1.05M（6%）',
     });
     expect(contextUsagePresentation(deriveContextUsage([assistant], null)!)).toMatchObject({
-      pct: null, summary: '上下文已用 67.2K / 容量未知',
+      pct: 67_200 / 1_050_000, summary: '上下文已用 67.2K / 1.05M（6%）',
     });
   });
 
@@ -69,17 +69,18 @@ describe('composer context usage', () => {
       { type: 'result', parent_tool_use_id: 'worker', modelUsage: { 'gpt-5.5': { contextWindow: 200_000 } } },
     ];
     expect(getRemoteModelContext(history)).toEqual(million);
-    expect(getRemoteModelContext([...history, { type: 'system', subtype: 'init', model: 'new-model' }])).toBeNull();
-    expect(getRemoteModelContext([assistant])).toBeNull();
+    expect(getRemoteModelContext([...history, { type: 'system', subtype: 'init', model: 'new-model' }]))
+      .toEqual({ model: 'new-model', contextWindow: 1_050_000, isDefault: true });
+    expect(getRemoteModelContext([assistant])).toEqual({ model: 'gpt-5.5', contextWindow: 1_050_000, isDefault: true });
     expect(getRemoteModelContext([...history, { type: 'result', modelUsage: {
       'gpt-5.5': { contextWindow: 0 },
-    } }])).toBeNull();
+    } }])).toEqual({ model: 'gpt-5.5', contextWindow: 1_050_000, isDefault: true });
   });
 
   test('bounds the ring and rejects invalid limits', () => {
     const usage = deriveContextUsage([assistant], { ...million, contextWindow: 32_000 })!;
     expect(contextUsagePresentation(usage).pct).toBe(1);
-    expect(contextUsagePresentation({ ...usage, modelContext: { ...million, contextWindow: 0 } }).pct).toBeNull();
+    expect(contextUsagePresentation({ ...usage, modelContext: { ...million, contextWindow: 0 } }).pct).toBe(67_200 / 1_050_000);
   });
 
   test('uses the final iteration for current context instead of cumulative billed usage', () => {
@@ -102,8 +103,8 @@ describe('composer context usage', () => {
     const usage = deriveContextUsage(history, null)!;
     expect(usage.used).toBe(23_480);
     expect(contextUsagePresentation(usage)).toEqual({
-      pct: null,
-      summary: '上下文已用 23.5K / 容量未知',
+      pct: 23_480 / 1_050_000,
+      summary: '上下文已用 23.5K / 1.05M（2%）',
       details: '输入 3 · 缓存读 22.8K · 缓存写 687 · 输出 13',
     });
   });

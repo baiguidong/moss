@@ -2,10 +2,45 @@ import { expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { AppToolSettingsTable, SettingsView, ToolLoadingSettingsTable } from '../src/renderer-react/components/settings-view';
+import { AppToolSettingsTable, SettingsView, ToolLoadingSettingsTable, parseContextWindowInWanTokens } from '../src/renderer-react/components/settings-view';
 import { DEFAULT_MOSS_TOOL_LOADING } from '../src/tool-loading-settings.mjs';
 import { normalizeDesktopSettings } from '../src/desktop-settings.mjs';
 import type { DesktopSettings, StoredApp } from '../src/renderer-react/types';
+
+test('model context controls default to 1M and show custom values in ten-thousand tokens', () => {
+  expect(parseContextWindowInWanTokens('20')).toBe(200_000);
+  expect(parseContextWindowInWanTokens('105')).toBe(1_050_000);
+  expect(parseContextWindowInWanTokens('')).toBeNull();
+  expect(parseContextWindowInWanTokens('0')).toBeNull();
+
+  const render = (settingsDraft: DesktopSettings) => renderToStaticMarkup(<SettingsView
+    settingsDraft={settingsDraft}
+    setSettingsDraft={() => {}}
+    settingsNotice=""
+    autoSaveSettings={async () => {}}
+    autoSaveImageSettings={async () => {}}
+    themeMode="light"
+    setThemeMode={() => {}}
+    cssThemeId="default"
+    setCssThemeId={() => {}}
+    onToolDisplayModeChange={() => {}}
+    onAppearancePreview={() => {}}
+    onAppearanceCommit={() => {}}
+    initialSection="model"
+  />);
+  const settings = normalizeDesktopSettings({
+    model: 'self-hosted', fastModel: 'fast-model',
+    declaredContextByModel: { 'self-hosted': 200_000, 'fast-model': null },
+  }) as DesktopSettings;
+  const html = render(settings);
+  expect(html).toContain('声明支持 1M');
+  expect(html).toContain('aria-label="self-hosted 上下文容量（万 Token）"');
+  expect(html).toContain('value="20"');
+  expect(html).toContain('万 Token');
+  expect(html).toMatch(/<option value="auto" selected="">自动识别<\/option>/);
+  expect(render(normalizeDesktopSettings({ model: 'new-model' }) as DesktopSettings))
+    .toMatch(/<option value="1m" selected="">1M<\/option>/);
+});
 
 test('tool loading settings renders grouped resident and deferred radio choices', () => {
   const html = renderToStaticMarkup(

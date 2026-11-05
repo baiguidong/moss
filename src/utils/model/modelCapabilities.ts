@@ -8,6 +8,7 @@ import { normalizeMossBaseUrl } from './modelBaseUrl.js'
 
 export type ModelCapability = {
   id: string
+  context_window?: number
   max_input_tokens?: number
   max_tokens?: number
 }
@@ -72,10 +73,11 @@ export async function loadModelCapabilities(
         for (const item of page.data) {
           const raw = item as unknown as Record<string, unknown>
           if (!raw || typeof raw.id !== 'string') continue
-          const maxInput = positiveCount(raw.context_window) ?? positiveCount(raw.max_input_tokens)
+          const contextWindow = positiveCount(raw.context_window)
+          const maxInput = positiveCount(raw.max_input_tokens)
           const maxOutput = positiveCount(raw.max_output_tokens) ?? positiveCount(raw.max_tokens)
-          if (maxInput || maxOutput) {
-            models.set(raw.id, { id: raw.id, max_input_tokens: maxInput, max_tokens: maxOutput })
+          if (contextWindow || maxInput || maxOutput) {
+            models.set(raw.id, { id: raw.id, context_window: contextWindow, max_input_tokens: maxInput, max_tokens: maxOutput })
           }
         }
         if (!page.hasNextPage()) break

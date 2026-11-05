@@ -84,6 +84,7 @@ import {
   tokenCountWithEstimation,
 } from './utils/tokens.js'
 import { ESCALATED_MAX_TOKENS } from './utils/context.js'
+import { resolveSessionMossModel } from './utils/sessionApiOverrides.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from './services/analytics/featureFlags.js'
 import { SLEEP_TOOL_NAME } from './tools/SleepTool/prompt.js'
 import { executePostSamplingHooks } from './utils/hooks/postSamplingHooks.js'
@@ -285,7 +286,7 @@ async function* queryLoop(
   } = params
   const deps = params.deps ?? productionDeps()
   await deps.loadModelCapabilities?.(
-    params.toolUseContext.options.mainLoopModel,
+    resolveSessionMossModel(params.toolUseContext.options.mainLoopModel, params.toolUseContext.options.modelRole),
     params.toolUseContext.abortController.signal,
   )
 
@@ -592,7 +593,7 @@ async function* queryLoop(
     ) {
       const { isAtBlockingLimit } = calculateTokenWarningState(
         tokenCountWithEstimation(messagesForQuery),
-        toolUseContext.options.mainLoopModel,
+        resolveSessionMossModel(toolUseContext.options.mainLoopModel, toolUseContext.options.modelRole),
       )
       if (isAtBlockingLimit) {
         yield createAssistantAPIErrorMessage({

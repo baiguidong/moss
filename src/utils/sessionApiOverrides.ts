@@ -5,6 +5,7 @@ export type SessionApiOverrides = {
   mossAuthToken?: string
   mossModel?: string
   mossFastModel?: string
+  declaredContextWindows?: Record<string, number>
   webSearch?: SessionWebSearchSettings
 }
 

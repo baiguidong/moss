@@ -81,7 +81,7 @@ type StoredCostState = {
 
 function getReportedContextWindow(model: string): number {
   const context = resolveContextWindowForModel(model, getSdkBetas())
-  return context.isDefault ? 0 : context.contextWindow
+  return context.contextWindow
 }
 
 /**

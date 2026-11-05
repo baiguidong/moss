@@ -129,7 +129,7 @@ describe('SDK final usage end-to-end', () => {
           expect(result?.subtype).toBe('success')
           expect(result?.usage).toMatchObject({ input_tokens: 3, cache_read_input_tokens: 191_863,
             cache_creation_input_tokens: 2565, output_tokens: 1122 })
-          expect(result?.modelUsage['gpt-6-sol'].contextWindow).toBe(0)
+          expect(result?.modelUsage['gpt-6-sol'].contextWindow).toBe(1_050_000)
           await flushSessionStorage()
           const transcript = (await readFile(join(root, `${sessionId}.jsonl`), 'utf8'))
             .split('\n').filter(Boolean).map(line => JSON.parse(line))
