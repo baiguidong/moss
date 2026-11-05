@@ -150,7 +150,23 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
         if (mutations.has(actionName)) throw new Error('请在会话中调用创作工具')
         return { input, options: { ...options, invocation: { ...invocation, storage: null } } }
       }
-      const storage = await scope(appId, instanceId, sessionId, { create: !isCleanup, allowClosing: isCleanup })
+      // Resource listings and other read-only calls happen whenever the chat
+      // composer refreshes. They must be able to inspect an App without
+      // provisioning a session workspace on disk. A session scope is created
+      // only by actions that can actually mutate App state; existing scopes
+      // remain available to read-only actions.
+      let storage
+      try {
+        storage = await scope(appId, instanceId, sessionId, {
+          create: !isCleanup && mutations.has(actionName),
+          allowClosing: isCleanup,
+        })
+      } catch (error) {
+        if (!isCleanup && !mutations.has(actionName) && error?.code === 'ENOENT') {
+          return { input, options: { ...options, invocation: { ...invocation, storage: null } } }
+        }
+        throw error
+      }
       const authorize = options.authorizeDispatch
       return { input, options: { ...options, invocation: { ...invocation, sessionId, workspace: storage.workspace, storage },
         authorizeDispatch: () => { record(sessionId, isCleanup); authorize?.() } } }

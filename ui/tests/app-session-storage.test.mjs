@@ -56,6 +56,28 @@ test('Host binds UI creation once, rejects forged session roots, and refuses cro
   } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
 
+test('read-only App inspection does not provision an unused session scope', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-storage-readonly-'))
+  const sessions = new Map([['one', { id: 'one', workspace: root }]])
+  const storage = createAppSessionStorage({ getSession: id => sessions.get(id), getRuntime: () => null })
+  const request = {
+    appId: 'test.creator', instanceId: 'default',
+    manifest: { backend: { storage: 'session' } }, actionName: 'composer.list', input: {},
+    options: { invocation: { surface: 'app', origin: 'composer', sessionId: 'one', workspace: root } },
+  }
+  try {
+    const listed = await storage.prepare(request)
+    expect(listed.options.invocation.storage).toBeNull()
+    expect(await fs.stat(path.join(root, 'artifacts')).catch(() => null)).toBeNull()
+
+    const started = await storage.prepare({ ...request, actionName: 'tasks.start' })
+    expect(started.options.invocation.storage.directory).toBe(path.join(await fs.realpath(root), 'artifacts', 'test.creator', 'one'))
+
+    const listedAgain = await storage.prepare(request)
+    expect(listedAgain.options.invocation.storage.directory).toBe(started.options.invocation.storage.directory)
+  } finally { await fs.rm(root, { recursive: true, force: true }) }
+})
+
 test('creation skills grant only resource reads and expose no private data or CLI mutation path', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-skills-'))
   try {
