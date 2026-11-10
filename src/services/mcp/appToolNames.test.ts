@@ -160,7 +160,7 @@ test('server cleanup and worker filtering use metadata for App tools', async () 
   expect(filterToolsByServer(pool, serverName)).toEqual(tools)
   expect(excludeToolsByServer(pool, serverName)).toEqual([...nested, pool.at(-1)!])
   expect(filterToolsForAgent({ tools, isBuiltIn: false, isAsync: true })).toEqual(tools)
-  const selection = { connectorServerNames: new Set([serverName]) } as ProjectWorkerResourceSelection
+  const selection = { appIds: [], connectorServerNames: new Set([serverName]) } as ProjectWorkerResourceSelection
   expect(filterToolsForProjectWorker(pool, selection)).toEqual([...tools, pool.at(-1)!])
 })
 
