@@ -62,10 +62,14 @@ try {
   for (let i = 0; i < 2; i++) assert.equal((await call('/api/v1/hosts/desktop-alice/usage', deviceToken, { events: [event] })).status, 200)
   assert.equal((await call('/api/v1/usage', alice.access_token)).body.totals.totalTokens, 15)
   assert.equal((await call('/api/v1/hosts/desktop-alice/usage', deviceToken, { events: [{ ...event, inputTokens: -1 }] })).status, 400)
-  updateSystemSettings({ models: { text: { model: 'enterprise-test', baseUrl: 'https://models.example.test', apiKey: 'fixture-secret' } } })
+  updateSystemSettings({ models: { text: {
+    model: 'enterprise-test', baseUrl: 'https://models.example.test', apiKey: 'fixture-secret',
+    declaredContextByModel: { 'enterprise-test': 800_000, 'enterprise-fast': 500_000 },
+  } } })
   await call('/api/v1/host-policy', admin.access_token, { settings: { useEnterpriseModel: true } }, 'PUT')
   report = await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)
   assert.equal(report.body.modelConfig.apiKey, 'fixture-secret')
+  assert.deepEqual(report.body.modelConfig.declaredContextByModel, { 'enterprise-test': 800_000, 'enterprise-fast': 500_000 })
   assert.equal(JSON.stringify((await call('/api/v1/hosts', alice.access_token)).body).includes('fixture-secret'), false)
   assert.equal(JSON.stringify((await call('/api/v1/host-policy', alice.access_token)).body).includes('fixture-secret'), false)
   await call('/api/v1/host-policy', admin.access_token, { settings: {} }, 'PUT')

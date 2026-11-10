@@ -34,6 +34,32 @@ describe('system settings model layout', () => {
     expect(mod.getSystemSettings().model).toBe('configured-model')
   })
 
+  test('normalizes per-model context windows to the shared four choices with a 200k fallback', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'moss-server-context-'))
+    process.env.MOSS_SERVER_HOME = tempRoot
+    const mod = await import(`../systemSettings.js?case=${randomUUID()}`)
+    expect(mod.getSystemSettings().declaredContextByModel).toEqual({})
+    const updated = mod.updateSystemSettings({
+      model: 'primary',
+      fastModel: 'fast',
+      declaredContextByModel: {
+        primary: 1_050_000,
+        fast: 256_000,
+        missing: null,
+        belowMinimum: 64_000,
+      },
+    })
+    expect(updated.declaredContextByModel).toEqual({
+      primary: 1_000_000,
+      fast: 200_000,
+      missing: 200_000,
+      belowMinimum: 200_000,
+    })
+    const persisted = JSON.parse(await readFile(join(tempRoot, 'settings.json'), 'utf8'))
+    expect(persisted.models.text.declaredContextByModel).toEqual(updated.declaredContextByModel)
+    expect(mod.getSystemSettings().declaredContextByModel).toEqual(updated.declaredContextByModel)
+  })
+
   test('reads models.text/models.image and saves only the new layout', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'moss-settings-'))
     const serverHome = join(tempRoot, 'server-home')
@@ -179,6 +205,12 @@ describe('system settings model layout', () => {
       apiKey: 'model-key-updated',
       model: 'updated-model',
       fastModel: 'updated-fast-model',
+      declaredContextByModel: {
+        'initial-model': 200_000,
+        'initial-fast-model': 200_000,
+        'updated-model': 200_000,
+        'updated-fast-model': 200_000,
+      },
       maxTurns: 34,
       thinking: {
         mode: 'disabled',

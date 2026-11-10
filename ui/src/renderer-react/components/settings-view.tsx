@@ -50,6 +50,11 @@ import {
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
 import type { DesktopSettings, ManagedRuntimeStatus, StoredApp } from '../types';
+import {
+  DEFAULT_DECLARED_CONTEXT_WINDOW,
+  DECLARED_CONTEXT_WINDOW_CHOICES,
+  normalizeDeclaredContextWindow,
+} from '../../../../shared/model-context-options.mjs';
 import { DEFAULT_RUNTIME_LIFECYCLE, type RuntimeLifecycleSettings } from '../../runtime-lifecycle-settings.mjs';
 import { AssistantMessage } from '@/components/chat/assistant-message';
 import { UserMessage } from '@/components/chat/user-message';
@@ -132,18 +137,15 @@ type NavigationGroupButtonProps = {
 const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
   model: 'gpt-image-2',
 };
-const DEFAULT_DECLARED_CONTEXT_WINDOW = 200_000;
-const MILLION_DECLARED_CONTEXT_WINDOW = 1_000_000;
 const CONTEXT_WINDOW_OPTIONS = [
-  { label: '200k', limit: DEFAULT_DECLARED_CONTEXT_WINDOW },
-  { label: '500k', limit: 500_000 },
-  { label: '800k', limit: 800_000 },
-  { label: '1M', limit: MILLION_DECLARED_CONTEXT_WINDOW },
+  { label: '200k', limit: DECLARED_CONTEXT_WINDOW_CHOICES[0] },
+  { label: '500k', limit: DECLARED_CONTEXT_WINDOW_CHOICES[1] },
+  { label: '800k', limit: DECLARED_CONTEXT_WINDOW_CHOICES[2] },
+  { label: '1M', limit: DECLARED_CONTEXT_WINDOW_CHOICES[3] },
 ];
 
 export function contextWindowFromCatalog(size: number | undefined): number {
-  return CONTEXT_WINDOW_OPTIONS.filter(option => size !== undefined && option.limit <= size).at(-1)?.limit
-    ?? DEFAULT_DECLARED_CONTEXT_WINDOW;
+  return normalizeDeclaredContextWindow(size);
 }
 
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {

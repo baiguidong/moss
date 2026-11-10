@@ -2,6 +2,10 @@ import { DEFAULT_SNAPSHOT_POLICY, normalizeSnapshotPolicy, validateSnapshotPolic
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import path from 'path'
 import { getMossServerHomeDir } from './lib/env.js'
+import {
+  DEFAULT_DECLARED_CONTEXT_WINDOW,
+  normalizeDeclaredContextWindow,
+} from '../../shared/model-context-options.mjs'
 
 export type ThinkingMode = 'adaptive' | 'enabled' | 'disabled'
 
@@ -25,6 +29,7 @@ export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
   fastModel: string
+  declaredContextByModel: Record<string, number>
   maxTurns: number
   thinkingMode: ThinkingMode
   thinkingBudgetTokens: number
@@ -62,6 +67,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: '',
   fastModel: '',
+  declaredContextByModel: {},
   maxTurns: 100,
   thinkingMode: 'adaptive',
   thinkingBudgetTokens: 16000,
@@ -149,6 +155,18 @@ function stringValue(
   return typeof source[key] === 'string' ? source[key].trim() : fallback
 }
 
+function normalizeDeclaredContextByModel(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(Object.entries(value).flatMap(([name, limit]) => {
+    const model = name.trim()
+    if (!model || model.length > 200) return []
+    if (limit === null || limit === undefined) return [[model, DEFAULT_DECLARED_CONTEXT_WINDOW]]
+    const parsed = typeof limit === 'number' ? limit : Number(limit)
+    if (!Number.isSafeInteger(parsed) || parsed < 1024 || parsed > 10_000_000) return []
+    return [[model, normalizeDeclaredContextWindow(parsed)]]
+  }))
+}
+
 function deleteManagedEndpointEnvKeys(env: Record<string, unknown>): void {
   for (const key of Object.keys(env)) {
     if (
@@ -187,6 +205,17 @@ function normalizeSystemSettings(
     stringField(result, 'fastModel') ??
     stringField(existingText, 'fastModel') ??
     DEFAULT_SYSTEM_SETTINGS.fastModel
+
+  const declaredContextByModel = normalizeDeclaredContextByModel(
+    source.declaredContextByModel ?? sourceText.declaredContextByModel ??
+    result.declaredContextByModel ?? existingText.declaredContextByModel,
+  )
+  for (const model of [result.model, result.fastModel]) {
+    if (typeof model === 'string' && model && !Object.hasOwn(declaredContextByModel, model)) {
+      declaredContextByModel[model] = DEFAULT_DECLARED_CONTEXT_WINDOW
+    }
+  }
+  result.declaredContextByModel = declaredContextByModel
 
   result.maxTurns =
     boundedInt(source.maxTurns, 1, 10_000) ??
@@ -358,6 +387,7 @@ function toSystemSettingsPayload(
     bypassPermissions: state.value.bypassPermissions,
     model: state.value.model,
     fastModel: state.value.fastModel,
+    declaredContextByModel: state.value.declaredContextByModel,
     maxTurns: state.value.maxTurns,
     thinkingMode: state.value.thinkingMode,
     thinkingBudgetTokens: state.value.thinkingBudgetTokens,
@@ -434,6 +464,8 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
         mode: nextSettings.thinkingMode,
         budgetTokens: nextSettings.thinkingBudgetTokens,
       },
+      ...(Object.keys(nextSettings.declaredContextByModel).length
+        ? { declaredContextByModel: nextSettings.declaredContextByModel } : {}),
     },
     image: imageModel,
   }
@@ -471,6 +503,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     bypassPermissions: nextSettings.bypassPermissions,
     model: nextSettings.model,
     fastModel: nextSettings.fastModel,
+    declaredContextByModel: nextSettings.declaredContextByModel,
     maxTurns: nextSettings.maxTurns,
     thinkingMode: nextSettings.thinkingMode,
     thinkingBudgetTokens: nextSettings.thinkingBudgetTokens,

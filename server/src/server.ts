@@ -37,7 +37,7 @@ import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
-import { fetchModelList } from '../../shared/model-list.mjs'
+import { fetchModelCatalog } from '../../shared/model-list.mjs'
 import { loadSessionContextFromTranscript } from './transcript.js'
 import { createTraceRoutes, TraceRouteError } from './traceRoutes.js'
 import type { ServerConfig, SessionRecord } from './types.js'
@@ -1476,11 +1476,11 @@ export function startServer(
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         try {
-          const models = await fetchModelList({
+          const catalog = await fetchModelCatalog({
             url: typeof body.url === 'string' ? body.url : '',
             apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
           })
-          writeJson(res, 200, models)
+          writeJson(res, 200, catalog)
         } catch (error) {
           throw new HttpError(502, error instanceof Error ? error.message : String(error))
         }

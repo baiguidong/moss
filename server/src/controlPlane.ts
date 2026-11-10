@@ -83,7 +83,14 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
       status: { tasks, activeSessions: count, paused: status.paused === true, policyRevision: Number(status.policyRevision) || 0 } })
     const settings = getSystemSettings()
     const modelConfig = response.access.allowed && response.policy?.settings.useEnterpriseModel === true
-      ? { model: settings.model, fastModel: settings.fastModel, url: settings.url, apiKey: settings.apiKey, image: settings.image } : null
+      ? {
+        model: settings.model,
+        fastModel: settings.fastModel,
+        declaredContextByModel: settings.declaredContextByModel,
+        url: settings.url,
+        apiKey: settings.apiKey,
+        image: settings.image,
+      } : null
     writeJson(res, 200, { ...response, modelConfig, ...(enrolling ? { token: await hosts.enroll(id) } : {}) })
     return true
   }

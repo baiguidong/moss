@@ -108,6 +108,7 @@
           "cron-task-store.mjs",
           "message-context.mjs",
           "model-list.mjs",
+          "model-context-options.mjs",
           "project-icon.mjs",
           "workspace-preview.mjs",
           "retired-app-authoring-resources.mjs",

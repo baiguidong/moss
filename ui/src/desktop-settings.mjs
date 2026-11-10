@@ -19,12 +19,13 @@ import {
   normalizePermissionMode,
   permissionModeFromLegacyBypass,
 } from './permission-modes.mjs';
+import {
+  DEFAULT_DECLARED_CONTEXT_WINDOW,
+  normalizeDeclaredContextWindow,
+} from '../../shared/model-context-options.mjs';
 
 const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
-export const DEFAULT_DECLARED_CONTEXT_WINDOW = 200_000;
-export const MILLION_DECLARED_CONTEXT_WINDOW = 1_000_000;
-const DECLARED_CONTEXT_WINDOW_CHOICES = [200_000, 500_000, 800_000, MILLION_DECLARED_CONTEXT_WINDOW];
 
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   appWidgets: { enabled: true },
@@ -184,8 +185,7 @@ function normalizeDeclaredContextByModel(value) {
   return Object.fromEntries(Object.entries(value).filter(([name, limit]) =>
     name.trim() && name.length <= 200 &&
     (limit === null || (Number.isSafeInteger(limit) && limit >= 1024 && limit <= 10_000_000))
-  ).map(([name, limit]) => [name.trim(), limit === null ? DEFAULT_DECLARED_CONTEXT_WINDOW
-    : DECLARED_CONTEXT_WINDOW_CHOICES.filter(choice => choice <= limit).at(-1) ?? DEFAULT_DECLARED_CONTEXT_WINDOW]));
+  ).map(([name, limit]) => [name.trim(), normalizeDeclaredContextWindow(limit)]));
 }
 
 export function getDeclaredModelContextWindows(settings) {
