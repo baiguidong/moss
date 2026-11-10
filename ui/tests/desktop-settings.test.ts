@@ -20,22 +20,24 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
-  it('defaults selected models to 1M and persists a 20 wan token custom limit', () => {
+  it('defaults selected models to 200k and persists separate context windows', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-context-settings-'));
     temporaryRoots.push(root);
     const settingsPath = path.join(root, 'settings.json');
     const store = createDesktopSettingsStore({ settingsPath });
     store.save({ model: 'self-hosted', fastModel: 'fast-model' });
     expect(getDeclaredModelContextWindows(store.value)).toEqual({
-      'self-hosted': 1_050_000, 'fast-model': 1_050_000,
+      'self-hosted': 200_000, 'fast-model': 200_000,
     });
-    store.save({ declaredContextByModel: { 'self-hosted': 200_000, 'fast-model': null } });
+    store.save({ declaredContextByModel: { 'self-hosted': 1_000_000, 'fast-model': 200_000 } });
     expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text.declaredContextByModel)
-      .toEqual({ 'self-hosted': 200_000, 'fast-model': null });
+      .toEqual({ 'self-hosted': 1_000_000, 'fast-model': 200_000 });
     const restarted = createDesktopSettingsStore({ settingsPath });
-    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'self-hosted': 200_000 });
+    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'self-hosted': 1_000_000, 'fast-model': 200_000 });
     restarted.save({ model: 'another-model' });
-    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'another-model': 1_050_000 });
+    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'another-model': 200_000, 'fast-model': 200_000 });
+    expect(normalizeDesktopSettings({ declaredContextByModel: { legacy: 258_000, auto: null, medium: 510_000, high: 790_000, large: 1_050_000 } }).declaredContextByModel)
+      .toEqual({ legacy: 200_000, auto: 200_000, medium: 500_000, high: 500_000, large: 1_000_000 });
   });
   it('uses model defaults when thinking is unset or the legacy default option is blank', () => {
     for (const input of [{}, { thinkingMode: '' }, { models: { text: { thinking: { mode: '' } } } }]) {

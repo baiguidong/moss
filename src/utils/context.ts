@@ -1,17 +1,12 @@
-import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
-import { getKnownModelContextWindow, UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../shared/model-context-fallback.js'
+import { UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../shared/model-context-fallback.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
 import { getSessionApiOverrides } from './sessionApiOverrides.js'
 
-// Fallback when the configured provider does not publish a context window.
+// Fallback when model settings do not declare a context window.
 export const MODEL_CONTEXT_WINDOW_DEFAULT = UNKNOWN_MODEL_CONTEXT_WINDOW
-const CONTEXT_WINDOW_1M_DISABLED_CAP = 200_000
-
-// Shared with the renderer so both sides report the same known-model limits.
-export { getKnownModelContextWindow, getKnownModelMaxInputTokens, MODEL_CONTEXT_WINDOW_FALLBACKS } from '../../shared/model-context-fallback.js'
 
 export function getDeclaredModelContextWindow(model: string): number | undefined {
   const name = model.replace(/\[1m\]$/i, '').trim()
@@ -72,53 +67,12 @@ export function getContextWindowForModel(
 /** The UI and request/compaction paths must agree on both capacity and provenance. */
 export function resolveContextWindowForModel(
   model: string,
-  betas?: string[],
+  _betas?: string[],
 ): { contextWindow: number; isDefault: boolean } {
   const declaredWindow = getDeclaredModelContextWindow(model)
-  if (declaredWindow !== undefined) {
-    return {
-      contextWindow: is1mContextDisabled()
-        ? Math.min(declaredWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
-        : declaredWindow,
-      isDefault: false,
-    }
-  }
-  // A display suffix must not override the actual provider's advertised limit.
-  const baseModel = model.replace(/\[1m\]$/i, '').trim()
-  const cap = getModelCapability(model) ?? getModelCapability(baseModel)
-  const providerWindow = cap?.context_window ?? cap?.max_input_tokens
-  if (typeof providerWindow === 'number' && Number.isSafeInteger(providerWindow) && providerWindow > 0) {
-    return {
-      contextWindow: is1mContextDisabled()
-        ? Math.min(providerWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
-        : providerWindow,
-      isDefault: false,
-    }
-  }
-
-  // Keep the known Claude opt-in when metadata is unavailable, but don't infer
-  // 1M support for arbitrary gateway models from a suffix or beta header.
-  if (modelSupports1M(model) && (
-    has1mContext(model) || betas?.includes(CONTEXT_1M_BETA_HEADER) ||
-    getSonnet1mExpTreatmentEnabled(model)
-  )) {
-    return { contextWindow: 1_000_000, isDefault: false }
-  }
-
-  const knownContextWindow = getKnownModelContextWindow(model)
-  if (knownContextWindow !== undefined) {
-    return {
-      contextWindow: is1mContextDisabled()
-        ? Math.min(knownContextWindow, CONTEXT_WINDOW_1M_DISABLED_CAP)
-        : knownContextWindow,
-      isDefault: false,
-    }
-  }
-
   return {
-    contextWindow: is1mContextDisabled()
-      ? CONTEXT_WINDOW_1M_DISABLED_CAP : MODEL_CONTEXT_WINDOW_DEFAULT,
-    isDefault: true,
+    contextWindow: declaredWindow ?? MODEL_CONTEXT_WINDOW_DEFAULT,
+    isDefault: declaredWindow === undefined,
   }
 }
 

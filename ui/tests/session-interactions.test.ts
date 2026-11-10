@@ -98,6 +98,7 @@ test('actual composer handler reuses uncertain request identity; side send never
   let rejectFirst = true, resolve: (value: any) => void = () => {};
   const context: any = { React: { useRef: (current: any) => ({ current }), useCallback: (fn: any) => fn }, crypto,
     activeSessionId: 'a', composerIntent: 'chat', activeDetail: { composerIntent: 'chat' },
+    activeDetailRef: { current: { composerIntent: 'chat' } },
     queueEpochs: { current: new Map() }, updateQueue: () => {},
     activeSessionIdRef: { current: 'a' }, inputDraftRef: { current: 'same prompt' }, setInput: (value: string) => cleared.push(value),
     window: { agentDesktop: { sessionInteraction: async ({ id }: any) => {
@@ -149,7 +150,7 @@ test('actual composer automatically schedules a declined supplement with all res
   let status = 'deferred', queue: any[] = [], flushed = 0;
   const context: any = { React: { useRef: (current: any) => ({ current }), useCallback: (fn: any) => fn }, crypto,
     activeSessionId: 'a', composerIntent: 'boss', activeDetail: { workspace: '/work' }, queueEpochs: { current: new Map() },
-    activeSessionIdRef: { current: 'a' }, inputDraftRef: { current: 'keep' }, setInput: () => {},
+    activeSessionIdRef: { current: 'a' }, activeDetailRef: { current: { workspace: '/work' } }, inputDraftRef: { current: 'keep' }, setInput: () => {},
     updateQueue: (_id: string, fn: any) => { queue = fn(queue); }, flushQueuedMessagesRef: { current: () => { flushed++; } },
     window: { agentDesktop: { sessionInteraction: async () => ({ status }), getSession: async () => ({ busy: false }) } } };
   vm.runInNewContext(new Bun.Transpiler({ loader: 'tsx' }).transformSync(segment) + '\nglobalThis.submitInteraction = handleSessionInteraction;', context);

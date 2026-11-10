@@ -24,7 +24,8 @@ describe('tool display settings', () => {
           type: 'tool_use', role: 'assistant', id: 'tool', toolUseId: 'call', timestamp: new Date(),
           toolName: 'visualize_create', displayName: 'visualize_create', status: 'success', source,
         } }));
-        expect(html).toContain(`aria-label="来源：${label}"`);
+        if (source?.kind === 'builtin') expect(html).not.toContain(`aria-label="来源：${label}"`);
+        else expect(html).toContain(`aria-label="来源：${label}"`);
         expect(html).toContain('visualize_create');
         expect(html).not.toContain('app__');
       }

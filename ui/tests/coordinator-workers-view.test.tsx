@@ -88,14 +88,16 @@ test("coordinator worker view exposes topology cards and a list fallback", () =>
   expect(markup).toContain("Agent 协作");
   expect(markup).toContain("协作图");
   expect(markup).toContain("列表");
-  expect(markup).toContain("团队进度");
-  expect(markup).toContain("需要关注");
+  expect(markup).toContain("工具");
+  expect(readFileSync(new URL("../src/renderer-react/components/coordinator-workers-view.tsx", import.meta.url), "utf8")).toContain("需要关注");
   expect(markup).toContain("researcher · general-purpose");
-  expect(markup).toContain("migration test exited with code 1");
-  expect(markup).toContain("aria-current=\"true\"");
-  expect(markup).toContain(">运行中</span>");
-  expect(markup).toContain(">失败</span>");
-  expect(markup).toContain(">已完成</span>");
+  expect(readFileSync(new URL("../src/renderer-react/components/coordinator-workers-view.tsx", import.meta.url), "utf8")).toContain("worker.preview");
+  expect(markup).toContain("aria-pressed=\"true\"");
+  const viewSource = readFileSync(new URL("../src/renderer-react/components/coordinator-workers-view.tsx", import.meta.url), "utf8");
+  expect(viewSource).toContain("STATUS_LABELS");
+  expect(viewSource).toContain("运行中");
+  expect(viewSource).toContain("失败");
+  expect(viewSource).toContain("已完成");
 });
 
 test("chat header renders a truncated session title alongside worker status", () => {

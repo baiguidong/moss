@@ -111,10 +111,17 @@ describe('app sidebar more menu', () => {
 });
 
 describe('app sidebar pending work', () => {
-  test('shows a compact pending entry and count', () => {
-    const html = renderSidebar({ pendingCount: 2 });
-    expect(html).toContain('待处理');
-    expect(html).toContain('待处理，2 项');
+  test('shows one icon after the computer selector with a count badge', () => {
+    for (const collapsed of [false, true]) {
+      const html = renderSidebar({ pendingCount: 2, collapsed });
+      expect(html.match(/title="待处理"/g)).toHaveLength(1);
+      expect(html).toContain('aria-label="待处理，2 项"');
+      expect(html).toContain('>2</span>');
+      expect(html.indexOf('aria-label="选择工作电脑"')).toBeLessThan(html.indexOf('title="待处理"'));
+      expect(html.indexOf('title="待处理"')).toBeLessThan(html.indexOf('title="搜索会话"'));
+    }
+    expect(renderSidebar({ pendingCount: 0 })).not.toContain('aria-label="待处理，0 项"');
+    expect(renderSidebar({ pendingCount: 100 })).toContain('>99+</span>');
   });
 });
 

@@ -49,7 +49,6 @@ import {
   MOSS_TOOL_GROUPS,
   type MossToolLoadingMode,
 } from '../../tool-loading-settings.mjs';
-import { UNKNOWN_MODEL_CONTEXT_WINDOW as DEFAULT_DECLARED_CONTEXT_WINDOW } from '../../../../shared/model-context-fallback';
 import type { DesktopSettings, ManagedRuntimeStatus, StoredApp } from '../types';
 import { DEFAULT_RUNTIME_LIFECYCLE, type RuntimeLifecycleSettings } from '../../runtime-lifecycle-settings.mjs';
 import { AssistantMessage } from '@/components/chat/assistant-message';
@@ -133,11 +132,18 @@ type NavigationGroupButtonProps = {
 const DEFAULT_IMAGE_SETTINGS: DesktopSettings['image'] = {
   model: 'gpt-image-2',
 };
+const DEFAULT_DECLARED_CONTEXT_WINDOW = 200_000;
+const MILLION_DECLARED_CONTEXT_WINDOW = 1_000_000;
+const CONTEXT_WINDOW_OPTIONS = [
+  { label: '200k', limit: DEFAULT_DECLARED_CONTEXT_WINDOW },
+  { label: '500k', limit: 500_000 },
+  { label: '800k', limit: 800_000 },
+  { label: '1M', limit: MILLION_DECLARED_CONTEXT_WINDOW },
+];
 
-export function parseContextWindowInWanTokens(raw: string): number | null {
-  const limit = Number(raw) * 10_000;
-  return raw.trim() && Number.isSafeInteger(limit) && limit >= 10_000 && limit <= 10_000_000
-    ? limit : null;
+export function contextWindowFromCatalog(size: number | undefined): number {
+  return CONTEXT_WINDOW_OPTIONS.filter(option => size !== undefined && option.limit <= size).at(-1)?.limit
+    ?? DEFAULT_DECLARED_CONTEXT_WINDOW;
 }
 
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
@@ -577,6 +583,30 @@ function SettingsRow({
   );
 }
 
+function ModelContextWindowControl({
+  model,
+  declared,
+  onChange,
+}: {
+  model: string;
+  declared: number | null | undefined;
+  onChange: (model: string, limit: number) => void;
+}) {
+  const selected = CONTEXT_WINDOW_OPTIONS.some(option => option.limit === declared)
+    ? declared : DEFAULT_DECLARED_CONTEXT_WINDOW;
+  return (
+    <select
+      className={cn(SELECT_CLASS_NAME, 'w-24 shrink-0 px-2')}
+      value={selected}
+      aria-label={`${model} 上下文窗口`}
+      title="上下文窗口"
+      onChange={event => onChange(model, Number(event.target.value))}
+    >
+      {CONTEXT_WINDOW_OPTIONS.map(option => <option key={option.limit} value={option.limit}>{option.label}</option>)}
+    </select>
+  );
+}
+
 function Toggle({ checked, onCheckedChange, label, disabled = false }: ToggleProps) {
   return (
     <label className={cn(
@@ -844,9 +874,9 @@ export function SettingsView({
   const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
   const [webSearchError, setWebSearchError] = React.useState('');
   const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [availableModelContextWindows, setAvailableModelContextWindows] = React.useState<Record<string, number>>({});
   const [modelListState, setModelListState] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [modelListError, setModelListError] = React.useState('');
-  const [customContextInputs, setCustomContextInputs] = React.useState<Record<string, string>>({});
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSectionValue]);
   const [activeSection, setActiveSection] = React.useState<SectionId>(initialSectionValue);
@@ -935,9 +965,6 @@ export function SettingsView({
     ];
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
   }, [availableModels, imageDraft.model, settingsDraft?.fastModel, settingsDraft?.model]);
-  const selectedTextModels = [...new Set([settingsDraft?.model, settingsDraft?.fastModel]
-    .filter((model): model is string => typeof model === 'string' && Boolean(model.trim()))
-    .map(model => model.trim()))];
 
   const fetchModels = React.useCallback(async () => {
     if (!settingsDraft?.url?.trim()) {
@@ -948,20 +975,35 @@ export function SettingsView({
     setModelListState('loading');
     setModelListError('');
     try {
-      const models = await window.agentDesktop.listModels({
+      const catalog = await window.agentDesktop.listModels({
         url: settingsDraft.url,
         apiKey: settingsDraft.apiKey || '',
       });
-      setAvailableModels(models);
+      setAvailableModels(catalog.models);
+      setAvailableModelContextWindows(catalog.contextWindows);
+      const declarations = { ...settingsDraft.declaredContextByModel };
+      let changed = false;
+      for (const model of new Set([settingsDraft.model, settingsDraft.fastModel].filter(Boolean))) {
+        if (Object.hasOwn(declarations, model)) continue;
+        const limit = contextWindowFromCatalog(catalog.contextWindows[model]);
+        declarations[model] = limit;
+        changed = true;
+      }
+      if (changed) {
+        setSettingsDraft(current => current ? { ...current, declaredContextByModel: declarations } : current);
+        void autoSaveSettings('declaredContextByModel', declarations);
+      }
       setModelListState('success');
     } catch (error) {
+      setAvailableModelContextWindows({});
       setModelListState('error');
       setModelListError(cleanIpcErrorMessage(error));
     }
-  }, [settingsDraft?.apiKey, settingsDraft?.url]);
+  }, [settingsDraft?.apiKey, settingsDraft?.url, settingsDraft?.model, settingsDraft?.fastModel, settingsDraft?.declaredContextByModel, setSettingsDraft, autoSaveSettings]);
 
   React.useEffect(() => {
     setAvailableModels([]);
+    setAvailableModelContextWindows({});
     setModelListState('idle');
     setModelListError('');
   }, [settingsDraft?.apiKey, settingsDraft?.url]);
@@ -1095,33 +1137,27 @@ export function SettingsView({
     void autoSaveSettings(key, value);
   };
 
-  const updateDeclaredContextMode = (model: string, mode: '1m' | 'custom' | 'auto') => {
-    const next = { ...settingsDraft?.declaredContextByModel };
-    if (mode === '1m') delete next[model];
-    else next[model] = mode === 'auto' ? null : DEFAULT_DECLARED_CONTEXT_WINDOW;
-    updateSetting('declaredContextByModel', next);
-    setCustomContextInputs(current => {
-      const updated = { ...current };
-      delete updated[model];
-      return updated;
+  const updateDeclaredContextWindow = (model: string, limit: number) => {
+    updateSetting('declaredContextByModel', {
+      ...settingsDraft?.declaredContextByModel,
+      [model]: limit,
     });
   };
 
-  const commitCustomContextWindow = (model: string) => {
-    const raw = customContextInputs[model];
-    if (raw === undefined) return;
-    const limit = parseContextWindowInWanTokens(raw);
-    if (limit !== null) {
-      updateSetting('declaredContextByModel', {
-        ...settingsDraft?.declaredContextByModel,
-        [model]: limit,
-      });
+  const selectTextModel = (key: 'model' | 'fastModel', model: string) => {
+    const name = model.trim();
+    const declarations = settingsDraft?.declaredContextByModel || {};
+    const limit = contextWindowFromCatalog(availableModelContextWindows[name]);
+    if (!name || Object.hasOwn(declarations, name)) {
+      updateSetting(key, model);
+      return;
     }
-    setCustomContextInputs(current => {
-      const updated = { ...current };
-      delete updated[model];
-      return updated;
-    });
+    const next = { ...declarations, [name]: limit };
+    setSettingsDraft(current => current ? { ...current, [key]: model, declaredContextByModel: next } : current);
+    void (async () => {
+      await autoSaveSettings('declaredContextByModel', next);
+      await autoSaveSettings(key, model);
+    })();
   };
 
   const updateToolLoading = (name: string, mode: MossToolLoadingMode) => {
@@ -2266,15 +2302,18 @@ export function SettingsView({
                         title="默认模型"
                         controlClassName="sm:w-[280px]"
                       >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={settingsDraft.model || ''}
-                          aria-label="默认模型"
-                          onChange={(event) => updateSetting('model', event.target.value)}
-                        >
-                          <option value="">请选择模型</option>
-                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-                        </select>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <select
+                            className={cn(SELECT_CLASS_NAME, 'min-w-0 flex-1')}
+                            value={settingsDraft.model || ''}
+                            aria-label="默认模型"
+                            onChange={(event) => selectTextModel('model', event.target.value)}
+                          >
+                            <option value="">请选择模型</option>
+                            {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                          </select>
+                          {settingsDraft.model && <ModelContextWindowControl model={settingsDraft.model} declared={settingsDraft.declaredContextByModel?.[settingsDraft.model]} onChange={updateDeclaredContextWindow} />}
+                        </div>
                       </SettingsRow>
 
                       <SettingsRow
@@ -2282,70 +2321,19 @@ export function SettingsView({
                         description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
                         controlClassName="sm:w-[280px]"
                       >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={settingsDraft.fastModel || ''}
-                          aria-label="快速模型"
-                          onChange={(event) => updateSetting('fastModel', event.target.value)}
-                        >
-                          <option value="">留空，使用默认模型</option>
-                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-                        </select>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <select
+                            className={cn(SELECT_CLASS_NAME, 'min-w-0 flex-1')}
+                            value={settingsDraft.fastModel || ''}
+                            aria-label="快速模型"
+                            onChange={(event) => selectTextModel('fastModel', event.target.value)}
+                          >
+                            <option value="">留空，使用默认模型</option>
+                            {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                          </select>
+                          {settingsDraft.fastModel && <ModelContextWindowControl model={settingsDraft.fastModel} declared={settingsDraft.declaredContextByModel?.[settingsDraft.fastModel]} onChange={updateDeclaredContextWindow} />}
+                        </div>
                       </SettingsRow>
-
-                      {selectedTextModels.length ? (
-                        <SettingsRow
-                          title="模型上下文"
-                          description="默认声明支持 1M；指定值优先用于容量和压缩计算。"
-                          controlClassName="sm:w-[380px]"
-                        >
-                          <div className="w-full space-y-3">
-                            {selectedTextModels.map(model => {
-                              const declarations = settingsDraft.declaredContextByModel;
-                              const declared = declarations && Object.hasOwn(declarations, model)
-                                ? declarations[model] : undefined;
-                              const mode = declared === null ? 'auto' : typeof declared === 'number' ? 'custom' : '1m';
-                              const role = model === settingsDraft.model
-                                ? model === settingsDraft.fastModel ? '默认 / 快速模型' : '默认模型'
-                                : '快速模型';
-                              return (
-                                <div key={model} className="flex min-w-0 flex-col gap-2 border-b border-border/60 pb-3 last:border-b-0 last:pb-0">
-                                  <span className="min-w-0 break-all text-xs text-muted-foreground">{role} · {model}</span>
-                                  <div className="flex min-w-0 flex-wrap gap-2">
-                                    <select
-                                      className={cn(SELECT_CLASS_NAME, 'w-[112px] shrink-0')}
-                                      value={mode}
-                                      aria-label={`${model} 上下文容量模式`}
-                                      onChange={event => updateDeclaredContextMode(model, event.target.value as '1m' | 'custom' | 'auto')}
-                                    >
-                                      <option value="1m">1M</option>
-                                      <option value="custom">指定</option>
-                                      <option value="auto">自动识别</option>
-                                    </select>
-                                    {mode === 'custom' ? (
-                                      <div className="flex min-w-[140px] flex-1 items-center gap-2">
-                                        <Input
-                                          type="number"
-                                          min={1}
-                                          max={1000}
-                                          step="any"
-                                          className={cn(FIELD_CLASS_NAME, 'min-w-0 flex-1')}
-                                          value={customContextInputs[model] ?? String(Number(declared) / 10_000)}
-                                          aria-label={`${model} 上下文容量（万 Token）`}
-                                          onChange={event => setCustomContextInputs(current => ({ ...current, [model]: event.target.value }))}
-                                          onBlur={() => commitCustomContextWindow(model)}
-                                          onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
-                                        />
-                                        <span className="shrink-0 text-xs text-muted-foreground">万 Token</span>
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </SettingsRow>
-                      ) : null}
 
                       <SettingsRow
                         title="图片模型"

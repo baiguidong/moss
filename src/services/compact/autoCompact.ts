@@ -1,15 +1,12 @@
 import { feature } from 'bun:bundle'
-import { UNKNOWN_MODEL_CONTEXT_WINDOW, UNKNOWN_MODEL_MAX_INPUT_TOKENS } from '../../../shared/model-context-fallback.js'
-import { getSdkBetas } from '../../bootstrap/state.js'
 import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from '../../types/message.js'
 import { getGlobalConfig } from '../../utils/config.js'
-import { getDeclaredModelContextWindow, getKnownModelMaxInputTokens, resolveContextWindowForModel } from '../../utils/context.js'
+import { resolveContextWindowForModel } from '../../utils/context.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
-import { getModelCapability } from '../../utils/model/modelCapabilities.js'
 import { resolveSessionMossModel } from '../../utils/sessionApiOverrides.js'
 import type { CacheSafeParams } from '../../utils/forkedAgent.js'
 import { logError } from '../../utils/log.js'
@@ -28,33 +25,13 @@ import { runPostCompactCleanup } from './postCompactCleanup.js'
 // Based on p99.99 of compact summary output being 17,387 tokens.
 const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 
-// Account for both the context window and any separate input ceiling.
 export function getEffectiveContextWindowSize(model: string): number {
-  const context = resolveContextWindowForModel(model, getSdkBetas())
+  const context = resolveContextWindowForModel(model)
   const reservedTokensForSummary = Math.min(
     getMaxOutputTokensForModel(model),
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   )
-  let contextWindow = context.contextWindow
-
-  const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  if (autoCompactWindow) {
-    const parsed = parseInt(autoCompactWindow, 10)
-    if (!isNaN(parsed) && parsed > 0) {
-      contextWindow = Math.min(contextWindow, parsed)
-    }
-  }
-
-  const declaredWindow = getDeclaredModelContextWindow(model)
-  const providerInputLimit = (
-    getModelCapability(model) ?? getModelCapability(model.replace(/\[1m\]$/i, '').trim())
-  )?.max_input_tokens
-  const maxInputTokens = declaredWindow !== undefined
-    ? declaredWindow === UNKNOWN_MODEL_CONTEXT_WINDOW
-      ? UNKNOWN_MODEL_MAX_INPUT_TOKENS : Number.POSITIVE_INFINITY
-    : providerInputLimit ?? getKnownModelMaxInputTokens(model) ??
-      (context.isDefault ? UNKNOWN_MODEL_MAX_INPUT_TOKENS : Number.POSITIVE_INFINITY)
-  return Math.min(contextWindow - reservedTokensForSummary, maxInputTokens)
+  return context.contextWindow - reservedTokensForSummary
 }
 
 export type AutoCompactTrackingState = {

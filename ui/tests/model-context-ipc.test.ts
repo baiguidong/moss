@@ -20,7 +20,7 @@ test('context IPC uses live runtime settings, resolves unopened sessions, and sk
     ipcMain: { handle: (_channel: string, fn: typeof handle) => { handle = fn; } },
     getSessionRecord: (id: string) => sessions[id],
     getRuntimeModelSettings: () => settings,
-    getDeclaredModelContextWindows: () => ({ 'gpt-5.5': 1_050_000 }),
+    getDeclaredModelContextWindows: () => ({ 'gpt-5.5': 1_000_000 }),
     getClaudeRuntimeModule: async () => {
       loads++;
       return { resolveDesktopModelContext: async (options: unknown) => { calls.push(options); return expected; } };
@@ -29,7 +29,7 @@ test('context IPC uses live runtime settings, resolves unopened sessions, and sk
   expect(await handle!(null, { sessionId: 'running' })).toMatchObject({ model: 'previous-model' });
   expect(loads).toBe(0);
   expect(await handle!(null, { sessionId: 'reopened' })).toEqual(expected);
-  expect(calls).toEqual([{ ...settings, declaredContextWindows: { 'gpt-5.5': 1_050_000 } }]);
+  expect(calls).toEqual([{ ...settings, declaredContextWindows: { 'gpt-5.5': 1_000_000 } }]);
   expect(await handle!(null, { sessionId: 'remote' })).toBeNull();
   expect(loads).toBe(1);
 });

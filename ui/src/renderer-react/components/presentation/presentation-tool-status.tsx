@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useToolDisplaySettings } from '@/components/chat/tool-display-settings';
 import type { PresentationResult } from '@/types';
 

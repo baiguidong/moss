@@ -20,7 +20,7 @@ describe('new session navigation', () => {
 
   test('keeps an embedded App mounted while navigating and ignores runtime-only refreshes', () => {
     expect(appSource).toContain("className={activeView === 'embedded-app' ? 'h-full min-h-0' : 'hidden'}");
-    expect(appSource).toContain("activeView === 'embedded-app' ? null : activeView === 'chat'");
+    expect(appSource).toContain("activeView === 'embedded-app' ? null : activeView === 'pending'");
     expect(appSource).toContain("payload?.action !== 'runtime'");
     expect(appSource).not.toContain("activeView === 'embedded-app' && embeddedAppName ? (");
   });

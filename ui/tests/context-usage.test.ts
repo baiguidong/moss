@@ -20,27 +20,27 @@ describe('composer context usage', () => {
     const smaller = { model: 'smaller-model', contextWindow: 128_000, isDefault: false };
     expect(contextUsagePresentation(deriveContextUsage([assistant], smaller)!).summary)
       .toBe('上下文已用 67.2K / 128.0K（53%）');
-    const fallback = { model: 'unknown', contextWindow: 1_050_000, isDefault: true };
+    const fallback = { model: 'unknown', contextWindow: 200_000, isDefault: true };
     expect(contextUsagePresentation(deriveContextUsage([assistant], fallback)!).summary)
-      .toBe('上下文已用 67.2K / 1.05M（6%）');
+      .toBe('上下文已用 67.2K / 200.0K（34%）');
   });
 
-  test('uses the declared fallback for a GPT-6 model', () => {
-    const fallback = { model: 'gpt-6-sol', contextWindow: 1_050_000, isDefault: true };
+  test('uses the same fallback for every model name', () => {
+    const fallback = { model: 'gpt-6-sol', contextWindow: 200_000, isDefault: true };
     const event = { type: 'assistant', message: { usage: { input_tokens: 221_624 } } };
     expect(contextUsagePresentation(deriveContextUsage([event], fallback)!)).toEqual({
-      pct: 221_624 / 1_050_000,
-      summary: '上下文已用 221.6K / 1.05M（21%）',
+      pct: 1,
+      summary: '上下文已用 221.6K / 200.0K（100%）',
       details: '输入 221.6K · 缓存读 0 · 缓存写 0 · 输出 0',
     });
   });
 
   test('shows the fallback while loading or after IPC fails', () => {
     expect(contextUsagePresentation(deriveContextUsage([assistant], null, true)!)).toMatchObject({
-      pct: 67_200 / 1_050_000, summary: '上下文已用 67.2K / 1.05M（6%）',
+      pct: 67_200 / 200_000, summary: '上下文已用 67.2K / 200.0K（34%）',
     });
     expect(contextUsagePresentation(deriveContextUsage([assistant], null)!)).toMatchObject({
-      pct: 67_200 / 1_050_000, summary: '上下文已用 67.2K / 1.05M（6%）',
+      pct: 67_200 / 200_000, summary: '上下文已用 67.2K / 200.0K（34%）',
     });
   });
 
@@ -70,17 +70,17 @@ describe('composer context usage', () => {
     ];
     expect(getRemoteModelContext(history)).toEqual(million);
     expect(getRemoteModelContext([...history, { type: 'system', subtype: 'init', model: 'new-model' }]))
-      .toEqual({ model: 'new-model', contextWindow: 1_050_000, isDefault: true });
-    expect(getRemoteModelContext([assistant])).toEqual({ model: 'gpt-5.5', contextWindow: 1_050_000, isDefault: true });
+      .toEqual({ model: 'new-model', contextWindow: 200_000, isDefault: true });
+    expect(getRemoteModelContext([assistant])).toEqual({ model: 'gpt-5.5', contextWindow: 200_000, isDefault: true });
     expect(getRemoteModelContext([...history, { type: 'result', modelUsage: {
       'gpt-5.5': { contextWindow: 0 },
-    } }])).toEqual({ model: 'gpt-5.5', contextWindow: 1_050_000, isDefault: true });
+    } }])).toEqual({ model: 'gpt-5.5', contextWindow: 200_000, isDefault: true });
   });
 
   test('bounds the ring and rejects invalid limits', () => {
     const usage = deriveContextUsage([assistant], { ...million, contextWindow: 32_000 })!;
     expect(contextUsagePresentation(usage).pct).toBe(1);
-    expect(contextUsagePresentation({ ...usage, modelContext: { ...million, contextWindow: 0 } }).pct).toBe(67_200 / 1_050_000);
+    expect(contextUsagePresentation({ ...usage, modelContext: { ...million, contextWindow: 0 } }).pct).toBe(67_200 / 200_000);
   });
 
   test('uses the final iteration for current context instead of cumulative billed usage', () => {
@@ -103,8 +103,8 @@ describe('composer context usage', () => {
     const usage = deriveContextUsage(history, null)!;
     expect(usage.used).toBe(23_480);
     expect(contextUsagePresentation(usage)).toEqual({
-      pct: 23_480 / 1_050_000,
-      summary: '上下文已用 23.5K / 1.05M（2%）',
+      pct: 23_480 / 200_000,
+      summary: '上下文已用 23.5K / 200.0K（12%）',
       details: '输入 3 · 缓存读 22.8K · 缓存写 687 · 输出 13',
     });
   });

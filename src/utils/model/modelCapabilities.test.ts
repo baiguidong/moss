@@ -1,23 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { resolveSessionMossModel, runWithSessionApiOverrides } from '../sessionApiOverrides.js'
+import { runWithSessionApiOverrides } from '../sessionApiOverrides.js'
 import { getModelCapability, loadModelCapabilities } from './modelCapabilities.js'
 
 mock.module('color-diff-napi', () => ({
   ColorDiff: {}, ColorFile: {}, getSyntaxTheme: () => ({}),
 }))
 
-const {
-  getContextWindowForModel,
-  getKnownModelContextWindow,
-  getKnownModelMaxInputTokens,
-  getModelMaxOutputTokens,
-  resolveContextWindowForModel,
-} = await import('../context.js')
+const { getContextWindowForModel, getModelMaxOutputTokens, resolveContextWindowForModel } = await import('../context.js')
 const { resolveDesktopModelContext } = await import('./desktopModelContext.js')
-const { calculateTokenWarningState, getAutoCompactThreshold, getEffectiveContextWindowSize, shouldAutoCompact } = await import('../../services/compact/autoCompact.js')
-const { createAssistantMessage } = await import('../messages.js')
-const { EMPTY_USAGE } = await import('../../services/api/emptyUsage.js')
-const { addToTotalSessionCost, getModelUsage } = await import('../../cost-tracker.js')
+const { calculateTokenWarningState, getAutoCompactThreshold, getEffectiveContextWindowSize } = await import('../../services/compact/autoCompact.js')
 
 const servers: ReturnType<typeof Bun.serve>[] = []
 const testGlobal = globalThis as typeof globalThis & { MACRO?: { VERSION: string } }
@@ -45,262 +36,61 @@ function withCatalog<T>(
   return runWithSessionApiOverrides({ mossBaseUrl: baseUrl, mossAuthToken: crypto.randomUUID() }, () => run(baseUrl))
 }
 
-describe('provider model capabilities', () => {
-  test('uses a declared 20 wan token limit before provider metadata and for an Agent model role', async () => {
-    await withCatalog(() => Response.json({ data: [
-      { id: 'custom-model', context_window: 1_050_000, max_input_tokens: 922_000 },
-      { id: 'fast-model', context_window: 1_050_000 },
-    ] }), async url => {
-      const overrides = {
-        mossBaseUrl: url, mossAuthToken: 'custom-account',
-        mossModel: 'custom-model', mossFastModel: 'fast-model',
-        declaredContextWindows: { 'custom-model': 200_000, 'fast-model': 200_000 },
-      }
-      await runWithSessionApiOverrides(overrides, async () => {
-        await loadModelCapabilities('custom-model')
-        expect(getContextWindowForModel('custom-model')).toBe(200_000)
-        expect(getEffectiveContextWindowSize('custom-model')).toBe(180_000)
-        expect(getAutoCompactThreshold('custom-model')).toBe(167_000)
-        const agentModel = resolveSessionMossModel('claude-haiku-4', 'fast')
-        expect(agentModel).toBe('fast-model')
-        expect(getAutoCompactThreshold(agentModel)).toBe(167_000)
-        expect(await resolveDesktopModelContext({ model: 'custom-model', url, apiKey: 'custom-account', declaredContextWindows: overrides.declaredContextWindows }))
-          .toMatchObject({ contextWindow: 200_000, isDefault: false })
-      })
-    })
-  })
-
-  test('uses known GPT-6 limits and a 922K input ceiling for the default 1M declaration', () => {
-    for (const model of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra']) {
-      expect(getKnownModelContextWindow(model)).toBe(1_050_000)
-      expect(getKnownModelMaxInputTokens(model)).toBe(922_000)
-      expect(getAutoCompactThreshold(model)).toBe(909_000)
-      expect(runWithSessionApiOverrides({ declaredContextWindows: { [model]: 1_050_000 } }, () => getAutoCompactThreshold(model)))
-        .toBe(909_000)
+describe('model context declarations', () => {
+  test('uses saved limits for compaction and falls back to 200k for every model name', () => {
+    for (const model of ['gpt-6.1-sol', 'gpt-4.1', 'claude-sonnet-4[1m]', 'unknown']) {
+      expect(resolveContextWindowForModel(model)).toEqual({ contextWindow: 200_000, isDefault: true })
+      expect(getAutoCompactThreshold(model)).toBe(167_000)
     }
+    runWithSessionApiOverrides({
+      declaredContextWindows: { 'gpt-6.1-sol': 1_000_000, 'fast-model': 500_000, 'claude-sonnet-4': 800_000 },
+    }, () => {
+      expect(resolveContextWindowForModel('gpt-6.1-sol')).toEqual({ contextWindow: 1_000_000, isDefault: false })
+      expect(getEffectiveContextWindowSize('gpt-6.1-sol')).toBe(980_000)
+      expect(getAutoCompactThreshold('gpt-6.1-sol')).toBe(967_000)
+      expect(getAutoCompactThreshold('fast-model')).toBe(467_000)
+      expect(getContextWindowForModel('claude-sonnet-4[1m]')).toBe(800_000)
+      expect(calculateTokenWarningState(967_000, 'gpt-6.1-sol').isAboveAutoCompactThreshold).toBe(true)
+    })
   })
 
-  test('honors small provider windows in the UI and compaction, including tagged names', async () => {
-    const windows = [32_768, 65_536, 131_072, 200_000, 1_000_000]
+  test('provider metadata does not change a saved context or the 200k fallback', async () => {
     await withCatalog(() => Response.json({ data: [
-      ...windows.map(size => ({ id: `model-${size}`, context_window: size, max_output_tokens: 4096 })),
-      { id: 'claude-sonnet-4', context_window: 65_536 },
-      { id: 'small-output', context_window: 32_768, max_output_tokens: 2048 },
+      { id: 'large-model', context_window: 1_050_000, max_input_tokens: 922_000, max_tokens: 128_000 },
+      { id: 'small-model', context_window: 65_536 },
     ] }), async url => {
-      for (const size of windows) {
-        const model = `model-${size}`
-        expect(await resolveDesktopModelContext({ model, url, apiKey: 'small-window' }))
-          .toEqual({ model, contextWindow: size, isDefault: false })
-        await runWithSessionApiOverrides({ mossBaseUrl: url, mossAuthToken: 'small-window' }, async () => {
-          expect(getContextWindowForModel(model)).toBe(size)
-          expect(getContextWindowForModel(`${model}[1m]`)).toBe(size)
-          expect(getAutoCompactThreshold(model)).toBeLessThan(size)
-          expect(getAutoCompactThreshold(model)).toBeGreaterThan(0)
-        })
-      }
-      expect(await resolveDesktopModelContext({ model: 'claude-sonnet-4[1m]', url, apiKey: 'small-window' }))
-        .toMatchObject({ contextWindow: 65_536, isDefault: false })
-      expect(await resolveDesktopModelContext({ model: 'unknown[1m]', url, apiKey: 'small-window' }))
-        .toMatchObject({ contextWindow: 1_050_000, isDefault: true })
-      await runWithSessionApiOverrides({ mossBaseUrl: url, mossAuthToken: 'small-window' }, async () => {
-        expect(getModelMaxOutputTokens('small-output')).toEqual({ default: 2048, upperLimit: 2048 })
+      await loadModelCapabilities('large-model')
+      expect(getModelCapability('large-model')?.context_window).toBe(1_050_000)
+      expect(getModelMaxOutputTokens('large-model')).toEqual({ default: 32_000, upperLimit: 128_000 })
+      expect(getContextWindowForModel('large-model')).toBe(200_000)
+      expect(getContextWindowForModel('small-model')).toBe(200_000)
+      expect(await resolveDesktopModelContext({ model: 'large-model', url })).toEqual({
+        model: 'large-model', contextWindow: 200_000, isDefault: true,
+      })
+      expect(await resolveDesktopModelContext({
+        model: 'large-model', url, declaredContextWindows: { 'large-model': 1_000_000 },
+      })).toEqual({ model: 'large-model', contextWindow: 1_000_000, isDefault: false })
+      runWithSessionApiOverrides({ declaredContextWindows: { 'large-model': 500_000 } }, () => {
+        expect(getContextWindowForModel('large-model')).toBe(500_000)
+        expect(getAutoCompactThreshold('large-model')).toBe(467_000)
       })
     })
   })
 
-  test('desktop lookup loads the same limits on reopen and follows model changes', async () => {
-    let requests = 0
-    await withCatalog(request => {
-      requests++
-      expect(request.headers.get('authorization')).toBe('Bearer desktop-account')
-      return Response.json({ data: [
-        { id: 'gpt-5.5', context_window: 1_000_000 },
-        { id: 'smaller-model', context_window: 128_000 },
-      ] })
-    }, async url => {
-      const options = { url, apiKey: 'desktop-account', model: 'gpt-5.5' }
-      expect(await resolveDesktopModelContext(options)).toEqual({
-        model: 'gpt-5.5', contextWindow: 1_000_000, isDefault: false,
-      })
-      expect(await resolveDesktopModelContext(options)).toMatchObject({ contextWindow: 1_000_000 })
-      expect(await resolveDesktopModelContext({ ...options, model: 'smaller-model' })).toEqual({
-        model: 'smaller-model', contextWindow: 128_000, isDefault: false,
-      })
-      expect(await resolveDesktopModelContext({ ...options, model: 'unknown-model' })).toEqual({
-        model: 'unknown-model', contextWindow: 1_050_000, isDefault: true,
-      })
-      expect(requests).toBe(1)
-    })
-  })
-
-  test('desktop lookup respects context policy and marks unavailable metadata as default', async () => {
-    await withCatalog(() => new Response('Not found', { status: 404 }), async url => {
-      expect(await resolveDesktopModelContext({ model: 'unknown', url })).toEqual({
-        model: 'unknown', contextWindow: 1_050_000, isDefault: true,
-      })
-      expect(await resolveDesktopModelContext({ model: 'claude-sonnet-4[1m]', url })).toMatchObject({
-        contextWindow: 1_000_000, isDefault: false,
-      })
-      expect(await resolveDesktopModelContext({ model: ' ', url })).toBeNull()
-    })
-  })
-
-  test('uses the gateway 1M window before applying compaction and blocking thresholds', async () => {
-    const requests: string[] = []
-    await withCatalog(request => {
-      requests.push(new URL(request.url).pathname)
-      return Response.json({ data: [{ id: 'gpt-5.5', context_window: 1_000_000, max_output_tokens: 128_000 }] })
-    }, async () => {
-      expect(getContextWindowForModel('gpt-5.5')).toBe(1_050_000)
-      await Promise.all([loadModelCapabilities('gpt-5.5'), loadModelCapabilities('gpt-5.5')])
-      await loadModelCapabilities('gpt-5.5')
-      expect(requests).toEqual(['/v1/models'])
-      expect(getContextWindowForModel('gpt-5.5')).toBe(1_000_000)
-      expect(getModelMaxOutputTokens('gpt-5.5')).toEqual({ default: 32_000, upperLimit: 128_000 })
-      expect(getAutoCompactThreshold('gpt-5.5')).toBe(967_000)
-      expect(calculateTokenWarningState(185_837, 'gpt-5.5')).toMatchObject({
-        isAboveAutoCompactThreshold: false, isAtBlockingLimit: false,
-      })
-      expect(calculateTokenWarningState(967_000, 'gpt-5.5').isAboveAutoCompactThreshold).toBe(true)
-      expect(calculateTokenWarningState(977_000, 'gpt-5.5').isAtBlockingLimit).toBe(true)
-    })
-  })
-
-  test('uses curated model-family fallbacks when the provider omits context metadata', async () => {
-    await withCatalog(() => Response.json({ data: [
-      { id: 'gpt-4.1' },
-      { id: 'gemini-2.5-pro' },
-      { id: 'openai/gpt-4o' },
-      { id: 'meta-llama/llama-3.3-70b-instruct' },
-    ] }), async () => {
-      await loadModelCapabilities('gpt-4.1')
-      await loadModelCapabilities('gemini-2.5-pro')
-      await loadModelCapabilities('openai/gpt-4o')
-      await loadModelCapabilities('meta-llama/llama-3.3-70b-instruct')
-
-      expect(getKnownModelContextWindow('gpt-4.1')).toBe(1_047_576)
-      expect(getKnownModelContextWindow('gemini-2.5-pro')).toBe(1_048_576)
-      expect(getKnownModelContextWindow('openai/gpt-4o')).toBe(128_000)
-      expect(getKnownModelContextWindow('meta-llama/llama-3.3-70b-instruct')).toBe(128_000)
-      expect(resolveContextWindowForModel('claude-sonnet-4')).toEqual({
-        contextWindow: 200_000,
-        isDefault: false,
-      })
-      expect(resolveContextWindowForModel('claude-sonnet-4[1m]')).toEqual({
-        contextWindow: 1_000_000,
-        isDefault: false,
-      })
-      expect(resolveContextWindowForModel('gpt-4.1')).toEqual({
-        contextWindow: 1_047_576,
-        isDefault: false,
-      })
-      expect(getAutoCompactThreshold('gpt-4.1')).toBe(1_014_576)
-    })
-  })
-
-  test('provider metadata overrides a static family fallback', async () => {
-    await withCatalog(() => Response.json({ data: [
-      { id: 'gpt-4.1', context_window: 131_072 },
-    ] }), async () => {
-      await loadModelCapabilities('gpt-4.1')
-      expect(resolveContextWindowForModel('gpt-4.1')).toEqual({
-        contextWindow: 131_072,
-        isDefault: false,
-      })
-    })
-  })
-
-  test('reads subsequent catalog pages and native Anthropic token fields', async () => {
-    const cursors: (string | null)[] = []
-    await withCatalog(request => {
-      const cursor = new URL(request.url).searchParams.get('after_id')
-      cursors.push(cursor)
-      return Response.json(cursor ? {
-        data: [{ id: 'gpt-5.5', max_input_tokens: 1_000_000, max_tokens: 128_000 }], has_more: false,
-      } : {
-        data: [{ id: 'first-model' }], has_more: true, last_id: 'first-model',
-      })
-    }, async () => {
-      await loadModelCapabilities('gpt-5.5')
-      expect(cursors).toEqual([null, 'first-model'])
-      expect(getContextWindowForModel('gpt-5.5')).toBe(1_000_000)
-    })
-  })
-
-  test('unknown capacity compacts at the 1M fallback', async () => {
-    await withCatalog(() => Response.json({ data: [{ id: 'unknown-capacity' }] }), async () => {
-      await loadModelCapabilities('unknown-capacity')
-      const usage = { ...EMPTY_USAGE, input_tokens: 1_500_000, output_tokens: 1122 }
-      const message = createAssistantMessage({ content: 'response', usage })
-      message.message.model = 'unknown-capacity'
-      expect(getAutoCompactThreshold('unknown-capacity')).toBe(909_000)
-      expect(await shouldAutoCompact([message], 'unknown-capacity', 'sdk')).toBe(true)
-      expect(calculateTokenWarningState(1_501_122, 'unknown-capacity')).toMatchObject({
-        isAboveAutoCompactThreshold: true, isAtBlockingLimit: true,
-        isAboveWarningThreshold: true, isAboveErrorThreshold: true,
-      })
-      addToTotalSessionCost(0, usage, 'unknown-capacity')
-      expect(getModelUsage()['unknown-capacity']?.contextWindow).toBe(1_050_000)
-    })
-  })
-
-  test('isolates limits by endpoint and credentials, including simultaneous sessions', async () => {
-    await withCatalog(request => Response.json({ data: [{
-      id: 'gpt-5.5', context_window: request.headers.get('authorization') === 'Bearer account-a' ? 1_000_000 : 200_000,
-    }] }), async baseUrl => {
-      await Promise.all([
-        runWithSessionApiOverrides({ mossBaseUrl: baseUrl, mossAuthToken: 'account-a' }, async () => {
-          await loadModelCapabilities('gpt-5.5')
-          expect(getContextWindowForModel('gpt-5.5')).toBe(1_000_000)
-        }),
-        runWithSessionApiOverrides({ mossBaseUrl: baseUrl, mossAuthToken: 'account-b' }, async () => {
-          expect(getModelCapability('gpt-5.5')).toBeUndefined()
-          await loadModelCapabilities('gpt-5.5')
-          expect(getContextWindowForModel('gpt-5.5')).toBe(200_000)
-        }),
-      ])
-      await withCatalog(() => Response.json({ data: [] }), async () => {
-        expect(getModelCapability('gpt-5.5')).toBeUndefined()
-        await loadModelCapabilities('gpt-5.5')
-        expect(getContextWindowForModel('gpt-5.5')).toBe(1_050_000)
-      })
-    })
-  })
-
-  test('ignores malformed limits and falls back for models without metadata', async () => {
-    await withCatalog(() => Response.json({ data: [
-      null, {}, { id: 'gpt-5.5', context_window: -1, max_output_tokens: '128000' },
-      { id: 'fractional', max_input_tokens: 100_000.5 },
-    ] }), async () => {
-      await loadModelCapabilities('gpt-5.5')
-      expect(getModelCapability('gpt-5.5')).toBeUndefined()
-      expect(getModelCapability('fractional')).toBeUndefined()
-      expect(getContextWindowForModel('gpt-5.5')).toBe(1_050_000)
-    })
-  })
-
-  test('keeps the fallback and backs off when the optional endpoint is unavailable', async () => {
+  test('catalog discovery still caches output capabilities and backs off on failure', async () => {
     let requests = 0
     await withCatalog(() => {
       requests++
       return new Response('Not found', { status: 404 })
     }, async () => {
-      await loadModelCapabilities('gpt-5.5')
-      await loadModelCapabilities('gpt-5.5')
+      await loadModelCapabilities('gpt-6.1-sol')
+      await loadModelCapabilities('gpt-6.1-sol')
       expect(requests).toBe(1)
-      expect(getContextWindowForModel('gpt-5.5')).toBe(1_050_000)
-      expect(getContextWindowForModel('gpt-4.1')).toBe(1_047_576)
+      expect(getContextWindowForModel('gpt-6.1-sol')).toBe(200_000)
     })
   })
 
-  test('skips discovery for an already cancelled query', async () => {
-    let requests = 0
-    await withCatalog(() => {
-      requests++
-      return Response.json({ data: [] })
-    }, async () => {
-      await loadModelCapabilities('gpt-5.5', AbortSignal.abort())
-      expect(requests).toBe(0)
-    })
+  test('desktop context requires a model name', async () => {
+    expect(await resolveDesktopModelContext({ model: ' ', url: 'https://example.test/v1' })).toBeNull()
   })
 })

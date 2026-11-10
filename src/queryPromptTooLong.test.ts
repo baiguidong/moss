@@ -23,7 +23,7 @@ describe('query prompt-too-long recovery', () => {
     const initialMessage = createUserMessage({ content: 'review the repository' })
     const previous = createAssistantMessage({ content: 'prior response' })
     previous.message.model = 'gpt-5.5'
-    previous.message.usage.input_tokens = 800_000
+    previous.message.usage.input_tokens = 100_000
     previous.message.usage.output_tokens = 1122
     const compactSummary = createUserMessage({
       content: 'Earlier repository review context.',

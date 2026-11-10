@@ -1,6 +1,6 @@
 import type { AgentEvent, ModelContextInfo } from '../types';
 import { getContextUsageFromUsage } from '../../../../shared/context-token-usage';
-import { getKnownModelContextWindow, UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../../../shared/model-context-fallback';
+import { UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../../../shared/model-context-fallback';
 
 export type ContextUsageInfo = {
   used: number;
@@ -67,7 +67,7 @@ export function getRemoteModelContext(history: AgentEvent[] | undefined): ModelC
     }
     if (event.modelUsage?.[model]) break;
   }
-  return { model, contextWindow: getKnownModelContextWindow(model) ?? UNKNOWN_MODEL_CONTEXT_WINDOW, isDefault: true };
+  return { model, contextWindow: UNKNOWN_MODEL_CONTEXT_WINDOW, isDefault: true };
 }
 
 export function formatTokenCount(n: number) {

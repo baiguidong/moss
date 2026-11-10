@@ -1,8 +1,6 @@
-import { getSdkBetas } from '../../bootstrap/state.js'
 import { resolveContextWindowForModel } from '../context.js'
 import { runWithSessionApiOverrides } from '../sessionApiOverrides.js'
 import { normalizeMossBaseUrl } from './modelBaseUrl.js'
-import { loadModelCapabilities } from './modelCapabilities.js'
 
 /** Use the query runtime's provider cache and context policy for desktop UI. */
 export async function resolveDesktopModelContext(options: {
@@ -19,10 +17,9 @@ export async function resolveDesktopModelContext(options: {
     mossAuthToken: options.apiKey?.trim() || undefined,
     declaredContextWindows: options.declaredContextWindows,
   }, async () => {
-    await loadModelCapabilities(model)
     return {
       model,
-      ...resolveContextWindowForModel(model, getSdkBetas()),
+      ...resolveContextWindowForModel(model),
     }
   })
 }

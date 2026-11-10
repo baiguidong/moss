@@ -21,7 +21,7 @@ export function getModelListUrl(value) {
   return url.toString();
 }
 
-export async function fetchModelList({ url, apiKey = '', timeoutMs = 15_000, fetchImpl = globalThis.fetch } = {}) {
+export async function fetchModelCatalog({ url, apiKey = '', timeoutMs = 15_000, fetchImpl = globalThis.fetch } = {}) {
   const endpoint = getModelListUrl(url);
   if (typeof fetchImpl !== 'function') throw new Error('当前环境不支持网络请求。');
   const controller = new AbortController();
@@ -48,11 +48,21 @@ export async function fetchModelList({ url, apiKey = '', timeoutMs = 15_000, fet
       .filter((id) => typeof id === 'string' && id.trim())
       .map((id) => id.trim()))];
     if (!models.length) throw new Error('接口未返回可用模型。');
-    return models;
+    const contextWindows = Object.fromEntries(entries.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const name = typeof (entry.id || entry.name) === 'string' ? (entry.id || entry.name).trim() : '';
+      const size = entry.context_window ?? entry.max_input_tokens;
+      return name && Number.isSafeInteger(size) && size > 0 ? [[name, size]] : [];
+    }));
+    return { models, contextWindows };
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('获取模型列表超时，请检查 API URL。');
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function fetchModelList(options = {}) {
+  return (await fetchModelCatalog(options)).models;
 }

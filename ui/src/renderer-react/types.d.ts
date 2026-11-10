@@ -1434,7 +1434,7 @@ declare global {
         ok: boolean; status: number | null; durationMs: number; message: string;
         thinking: string;
       }>;
-      listModels: (payload: Pick<DesktopSettings, 'url' | 'apiKey'>) => Promise<string[]>;
+      listModels: (payload: Pick<DesktopSettings, 'url' | 'apiKey'>) => Promise<import('../../../shared/model-list.mjs').ModelCatalog>;
       updateSettings: (payload: Partial<Omit<DesktopSettings, 'webSearch'>> & {
         webSearch?: Partial<NonNullable<DesktopSettings['webSearch']>>;
       }) => Promise<DesktopSettings>;

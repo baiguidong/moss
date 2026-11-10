@@ -443,9 +443,9 @@ export function AppSidebar({
   return (
     <div data-sidebar-shell className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col bg-sidebar/96 text-sidebar-foreground backdrop-blur overflow-hidden">
       <div className={cn(collapsed ? "px-2 py-3" : "px-3 py-3")}>
-        <div className={cn("flex items-center", collapsed ? "flex-col gap-2" : "justify-between gap-3")}>
+        <div className={cn("flex items-center", collapsed ? "flex-col gap-2" : "justify-between gap-1")}>
             <div className={cn("min-w-0", !collapsed && "ml-1.5")}>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <img src="./build/icon.png" alt="Moss" className="h-5 w-5 rounded-sm object-contain" />
                 {!collapsed && <>
                 <div className="text-sm font-semibold lowercase tracking-[0.14em] text-sidebar-foreground">
@@ -459,6 +459,17 @@ export function AppSidebar({
             </div>
           <div className={cn("flex shrink-0 items-center gap-1", collapsed && "flex-col")}>
             <WorkComputerSelector onLoginRequired={onCloudLoginRequired} />
+            <Button
+              variant={activeView === "pending" ? "secondary" : "ghost"}
+              size="icon-sm"
+              className="relative h-8 w-8 rounded-xl"
+              onClick={() => onChangeView("pending")}
+              title="待处理"
+              aria-label={`待处理${pendingCount > 0 ? `，${pendingCount} 项` : ''}`}
+            >
+              <Inbox className="h-4 w-4" />
+              {pendingCount > 0 && <span className="pointer-events-none absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground">{pendingCount > 99 ? '99+' : pendingCount}</span>}
+            </Button>
             {headerActions}
             <Button
               variant="ghost"
@@ -500,19 +511,6 @@ export function AppSidebar({
           >
             <PenSquare className="h-4 w-4" />
             {!collapsed && "新会话"}
-          </Button>
-          <Button
-            variant={activeView === "pending" ? "secondary" : "ghost"}
-            className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
-            onClick={() => onChangeView("pending")}
-            title="待处理"
-            aria-label={`待处理${pendingCount > 0 ? `，${pendingCount} 项` : ''}`}
-          >
-            <span className="relative">
-              <Inbox className="h-4 w-4" />
-              {pendingCount > 0 ? <span className="absolute -right-2 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground">{pendingCount > 99 ? '99+' : pendingCount}</span> : null}
-            </span>
-            {!collapsed && "待处理"}
           </Button>
           <Button
             variant={activeView === "projects" ? "secondary" : "ghost"}
