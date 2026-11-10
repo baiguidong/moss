@@ -1,3 +1,4 @@
+import { getRemoteDirectCredentials, getWebSearchCredentials, saveRemoteDirectCredentials, saveWebSearchCredentials } from './core-credentials.mjs';
 import { createManagedSchedules } from './host/managed-schedules.mjs';
 import { createHostControlClient } from './host/control-plane-client.mjs';
 import { createCloudComputerWindow } from './cloud-computer-window.mjs';
@@ -123,12 +124,8 @@ import {
   readConnectorSkill,
   getConnectorProviderAuthUrl,
   getConnectorProviderAuthContext,
-  getRemoteDirectCredentials,
-  getWebSearchCredentials,
   clearConnectorMcpAccessToken,
   registerConnectorHubIpcHandlers,
-  saveRemoteDirectCredentials,
-  saveWebSearchCredentials,
   setupConnectorCli,
   updateConnectorMcpAuthState,
 } from './connector-hub-ipc.mjs';
@@ -7778,6 +7775,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (!stored.connectorApp && !stored.manifest?.connectorApp) continue;
       await connectorAppHost.refresh(stored.id, { connectorApp: stored.connectorApp || stored.manifest?.connectorApp });
     }
+    if (!signal?.aborted) {
+      const upgrade = connectorAppHost.finishUpgrade(storedApps);
+      if (upgrade.retired) mossLog('info', 'app-service', 'Retired legacy connector storage', { archive: upgrade.archive });
+    }
   };
   const installAppPackage = (packageRoot, options = {}) => publishAppFromBuild(packageRoot, {
     reason: options.marketplaceSource ? 'marketplace' : 'installed',
@@ -7854,8 +7855,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return { ok: true };
     } catch (error) { return { ok: false, error: error.message }; }
   });
-  // Never adopt old connector folders during Host startup.
-  if (isWebHost) await connectorAppHost.refresh();
+  // Only installed App packages can activate services; legacy folders never install Apps.
+  if (isWebHost) {
+    await connectorAppHost.refresh();
+    connectorAppHost.finishUpgrade(listAllStoredApps());
+  }
   appMarketplaceService = createAppMarketplaceService({
     indexUrl: appMarketConfiguration.indexUrl,
     cachePath: path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'),

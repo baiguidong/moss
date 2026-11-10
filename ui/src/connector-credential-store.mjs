@@ -186,12 +186,12 @@ export function createConnectorCredentialStore({
   primaryKeyPath,
   backupKeyPath,
   identity = 'moss-credentials',
+  scope = 'connector-credentials',
 }) {
   const keyStore = createCredentialMasterKeyStore({
     primaryPath: primaryKeyPath,
     backupPath: backupKeyPath,
   });
-  const scope = 'connector-credentials';
 
   const readUnlocked = () => {
     if (!fs.existsSync(storagePath)) return {};

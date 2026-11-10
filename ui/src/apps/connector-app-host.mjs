@@ -1,7 +1,8 @@
 import { connectorIdFromApp } from '../../../packages/app-sdk/src/discovery.mjs'
 import { activateConnectorApp, removeConnectorAppData } from '../connector-hub-ipc.mjs'
+import { appServiceStorage, legacyUpgrade } from './app-service-context.mjs'
 
-/** Runs packages installed from moss-apps. No catalog, installation or migration. */
+/** Runs installed App packages; legacy data import cannot install an App. */
 export function createConnectorAppHost({ getRuntime, isCurrentActivation = () => false }) {
   const queues = new Map()
   const identities = new Map()
@@ -32,15 +33,21 @@ export function createConnectorAppHost({ getRuntime, isCurrentActivation = () =>
       })
     }
   }
-  async function remove(appId, options = {}) {
-    await enqueue(appId, async () => {
-      const runtime = getRuntime()
-      const pkg = await runtime?.getActivePackage?.(appId).catch(() => null)
-      const id = connectorIdFromApp(pkg?.manifest) || identities.get(appId)
-      if (!id) return
-      await removeConnectorAppData(id, options)
-      identities.delete(appId)
-    })
+  async function removeNow(appId, options = {}) {
+    const runtime = getRuntime()
+    const pkg = await runtime?.getActivePackage?.(appId).catch(() => null)
+    const id = connectorIdFromApp(pkg?.manifest) || identities.get(appId) || appServiceStorage.list().find(record => record.appId === appId)?.id
+    if (!id) return
+    await removeConnectorAppData(id, options)
+    identities.delete(appId)
   }
-  return { refresh, remove }
+  const remove = (appId, options = {}) => enqueue(appId, () => removeNow(appId, options))
+  const uninstall = (appId, options, action) => enqueue(appId, async () => {
+    const restore = options.deleteData && !options.deleteCredentials ? appServiceStorage.retainCredentials(appId) : null
+    try { await action() }
+    finally { restore?.() }
+    await removeNow(appId, options)
+  })
+  const finishUpgrade = installedApps => legacyUpgrade.finish(installedApps)
+  return { refresh, remove, uninstall, finishUpgrade }
 }

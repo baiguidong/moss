@@ -12,8 +12,12 @@ export function createAppUninstallHandler({ listApps, closeViews, appWindows, ge
       const runtime = getRuntime()
       if (runtime) {
         if (deleteCredentials) await clearConnectorAuth(appId)
-        await runtime.uninstall(appId, { deleteData, deleteCredentials })
-        await getConnectorHost()?.remove(appId, { deleteData, deleteCredentials })
+        const serviceHost = getConnectorHost(), options = { deleteData, deleteCredentials }
+        if (serviceHost?.uninstall) await serviceHost.uninstall(appId, options, () => runtime.uninstall(appId, options))
+        else {
+          await runtime.uninstall(appId, options)
+          await serviceHost?.remove(appId, options)
+        }
       }
       await removePackage(appId)
       await emitChanged({ action: 'deleted', name })

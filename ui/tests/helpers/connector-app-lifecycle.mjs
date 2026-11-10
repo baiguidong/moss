@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import JSZip from 'jszip'
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-connector-lifecycle-'))
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'moss-connector-lifecycle-')))
 process.env.MOSS_HOME = path.join(root, 'home')
 const hub = await import('../../src/connector-hub-ipc.mjs')
 const platform = await import('../../src/app-platform.mjs')
@@ -35,9 +35,14 @@ try {
   await fs.mkdir(path.join(payload, 'connector'), { recursive: true })
   const manifest = { schemaVersion: 2, id: appId, version: '1.0.0', displayName: 'Fixture CLI', category: 'development',
     hostApi: '^3.15.0', publisher: { id: 'moss', name: 'Moss' }, permissions: ['connector:use'], toolScope: 'session',
-    navigation: { location: 'none' }, discovery: { group: 'online', authMethods: ['browser'] }, connectorApp: { id, capabilities: ['cli'] } }
+    navigation: { location: 'none' }, discovery: { group: 'online', authMethods: ['browser'] }, connectorApp: { id, capabilities: ['cli', 'mcp', 'skills'] } }
   const json = (file, value) => fs.writeFile(path.join(payload, file), JSON.stringify(value))
-  await json('connector/connector.json', { id, name: 'Fixture CLI', type: 'cli', hasCli: true, enabled: true, skillNames: [], credentialSchema: { fields: [{ key: 'token', label: 'Token', type: 'password', required: true }] } })
+  await json('connector/connector.json', { id, name: 'Fixture CLI', type: 'cli', hasCli: true, hasMcp: true, enabled: true, skillNames: ['fixture'], credentialSchema: { fields: [{ key: 'token', label: 'Token', type: 'password', required: true }] } })
+  await json('connector/mcp.json', { mcpServers: {
+    fixture: { type: 'stdio', command: 'node', args: ['fixture-cli.mjs', 'status'], env: { APP_DATA: '${MOSS_APP_DATA_DIR}' } },
+  } })
+  await fs.mkdir(path.join(payload, 'connector/.moss/skills/fixture'), { recursive: true })
+  await fs.writeFile(path.join(payload, 'connector/.moss/skills/fixture/SKILL.md'), '# Fixture skill\n')
   await json('connector/token-schema.json', { fields: [{ key: 'token', label: 'Token', type: 'password', required: true }] })
   await json('connector/cli.json', { runtime: { type: 'node', version: '>=18' }, init: 'node fixture-cli.mjs init', auth: 'node fixture-cli.mjs auth', status: 'node fixture-cli.mjs status', statusMatch: 'ready' })
   await fs.writeFile(path.join(payload, 'connector/fixture-cli.mjs'), `import fs from 'node:fs'; const a=process.argv[2]; if(a==='init')fs.writeFileSync('local-state.txt','initialized'); if(a==='auth')fs.writeFileSync('auth-state.txt','synthetic'); if(a==='status'){if(fs.existsSync('auth-state.txt'))console.log('ready');else process.exitCode=1;}`)
@@ -86,6 +91,16 @@ try {
   assert(runtime.getInstallation(appId).grants.includes('connector:use'))
   await hub.saveConnectorCredentials(id, { token: 'synthetic-test-credential' })
   assert.equal((await hub.setupConnectorCli(id)).connected, true)
+  const activeRoot = (await runtime.getActivePackage(appId)).root
+  assert.deepEqual(hub.getConnectorAddDirs([id]), [path.join(activeRoot, 'connector')])
+  assert.equal((await hub.readConnectorSkill(id, 'fixture')).content, '# Fixture skill\n')
+  const mcp = hub.getConnectorMcpServers([id]).fixture
+  assert.equal(mcp.args[0], path.join(activeRoot, 'connector/fixture-cli.mjs'))
+  assert.equal(mcp.cwd, path.join(process.env.MOSS_HOME, 'apps-data', appId, 'service/workspace'))
+  assert.equal(mcp.env.APP_DATA, mcp.cwd)
+  assert.equal(hub.findConnectorMcpServer(id).config.cwd, mcp.cwd)
+  assert.equal(await fs.stat(path.join(process.env.MOSS_HOME, 'connectors/credentials.v3.json')).catch(() => null), null)
+
   await runtime.setAppEnabled(appId, false)
   await assert.rejects(hub.setupConnectorCli(id), /启用并授权/)
   await runtime.setAppEnabled(appId, true)
@@ -96,11 +111,14 @@ try {
   failActivation = true
   await assert.rejects(market.install({ appId }), /injected activation failure/)
   assert.equal(runtime.getInstallation(appId).activeVersion, '1.0.0')
+  assert.equal(hub.isConnectorAppActivationCurrent(appId, '1.0.0', id), true)
   await fs.rm(path.join(payload, 'connector/obsolete.txt'))
   await release('1.2.0'); await market.list({ forceRefresh: true })
   await market.install({ appId })
   assert.equal(hub.isConnectorAppActivationCurrent(appId, '1.2.0', id), true)
-  const dir = path.join(process.env.MOSS_HOME, 'connectors/installed', id)
+  assert.equal(await fs.stat(path.join(process.env.MOSS_HOME, 'connectors/installed', id)).catch(() => null), null)
+  assert.equal(await fs.stat(path.join((await runtime.getActivePackage(appId)).root, 'connector/local-state.txt')).catch(() => null), null)
+  const dir = path.join(process.env.MOSS_HOME, 'apps-data', appId, 'service/workspace')
   assert.equal(await fs.stat(path.join(dir, 'obsolete.txt')).catch(() => null), null)
   assert.equal(await fs.readFile(path.join(dir, 'local-state.txt'), 'utf8'), 'initialized')
   let uninstalledAppId
@@ -115,7 +133,7 @@ try {
   })
   await hub.uninstallConnector(id)
   assert.equal(uninstalledAppId, appId)
-  assert.equal(JSON.parse(await fs.readFile(path.join(dir, 'connector.json'), 'utf8')).enabled, false)
+  assert.equal(JSON.parse(await fs.readFile(path.join(dir, '../activation.json'), 'utf8')).enabled, false)
   assert.equal(hub.isConnectorAppActivationCurrent(appId, '1.2.0', id), false)
   await runtime.shutdown(); runtime = await createRuntime(); host = createConnectorAppHost({ getRuntime: () => runtime })
   await host.refresh()

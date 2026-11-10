@@ -10,7 +10,7 @@ const groups = [
   // category so storage users can distinguish them from App-owned data.
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes', 'server'] },
-  { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'connectors', 'expert-hub', 'library', 'knowledge', 'local-kb', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
+  { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'knowledge', 'local-kb', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
   { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'generated-apps', 'generated-app-data', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
   { id: 'history', label: '历史版本', roots: ['workspace-versions', 'turn-observations', 'preview-drafts', 'backups', 'file-history'] },
   { id: 'logs', label: '日志', roots: ['logs', 'debug', 'traces', 'startup-perf', 'desktop-dev.log'] },

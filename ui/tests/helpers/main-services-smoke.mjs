@@ -1,6 +1,6 @@
 // Run only through scripts/test-main-services.mjs, with a disposable MOSS_HOME.
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import electron from 'electron';
@@ -32,15 +32,18 @@ app.on('browser-window-created', (_event, window) => {
       const statePath = path.join(root, '.smoke-state.json');
       if (process.env.MOSS_CONNECTOR_APP_SMOKE === '1') {
         const installed = await invoke('app:list');
-        assert.deepEqual(installed, [], 'Startup must not install or migrate legacy Apps');
+        assert.deepEqual(installed.filter(app => app.connectorApp || app.manifest?.connectorApp), [], 'Startup must not install legacy services as Apps');
         assert.deepEqual((await invoke('connector-hub:get-installed')).data, [], 'Old connectors stay outside the App inventory');
-        const legacy = JSON.parse(await readFile(path.join(root, 'connectors/installed/tencent-map/connector.json'), 'utf8'));
+        const archives = await readdir(path.join(root, 'backups')).catch(() => []);
+        const archive = archives.find(name => name.startsWith('connectors-before-app-services-'));
+        const legacyRoot = archive ? path.join(root, 'backups', archive) : path.join(root, 'connectors');
+        const legacy = JSON.parse(await readFile(path.join(legacyRoot, 'installed/tencent-map/connector.json'), 'utf8'));
         assert.equal(legacy.appId, undefined, 'Old connector metadata must remain untouched');
         const { getConnectorMcpServers } = await import('../../src/connector-hub-ipc.mjs');
         assert.deepEqual(getConnectorMcpServers(['tencent-map']), {}, 'Uninstalled legacy tools must not execute');
         const source = await readFile(new URL('../../src/main.mjs', import.meta.url), 'utf8');
         assert.ok(!source.includes('combineAppMarketplaces('), 'Only the moss-apps marketplace supplies installs');
-        console.log(`CONNECTOR_APP_SMOKE: ${phase} — empty inventory, no legacy migration, no old tools`);
+        console.log(`CONNECTOR_APP_SMOKE: ${phase} — no legacy services in inventory, no old tools`);
       }
 
       if (phase === 'prepare') {
@@ -164,9 +167,10 @@ app.on('browser-window-created', (_event, window) => {
 });
 try {
   if (process.env.MOSS_CONNECTOR_APP_SMOKE === '1' && phase === 'prepare') {
-    const hub = await import('../../src/connector-hub-ipc.mjs');
-    await hub.initializeBundledConnectorCatalog({ bundledCatalogPath: new URL('../fixtures/connector-catalog/workbuddy-connectors-config.zip', import.meta.url).pathname });
-    await hub.installConnector('tencent-map');
+    const legacy = path.join(root, 'connectors/installed/tencent-map');
+    await mkdir(legacy, { recursive: true });
+    await writeFile(path.join(legacy, 'connector.json'), JSON.stringify({ id: 'tencent-map', enabled: true }));
+    await writeFile(path.join(legacy, 'mcp.json'), JSON.stringify({ mcpServers: { old: { type: 'http', url: 'https://example.invalid/mcp' } } }));
   }
   await import('../../src/main.mjs');
 } catch (error) { fail(error); }
